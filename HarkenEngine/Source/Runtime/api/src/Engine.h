@@ -7697,25 +7697,9 @@ public:
         busMuted.assign(resolved.maxBuses, 0);
         busSoloed.assign(resolved.maxBuses, 0);
         busSoloActiveCount = 0;
-        // Logic-side authoritative per-bus output fold config (multichannel
-        // amendment). Every bus starts unfolded (output layout == the mix
-        // layout); the master (index 0) presents at the device layout and
-        // carries the mix->device default matrix. A non-master bus's matrix is
-        // seeded to the identity — unused until Vn_SetBusOutputLayout narrows it
-        // (which reseeds a default from the new pair). FillPlan copies this into
-        // every published plan.
         busOutputLayout.assign(resolved.maxBuses, resolved.mixChannelLayout);
         busOutputLayout[0] = resolved.deviceChannelLayout;
-        busDownmixCoeffs.assign(
-            static_cast<std::size_t>(resolved.maxBuses) * 64, 0.0f);
-        DefaultDownmixMatrix(resolved.mixChannelLayout,
-                             resolved.deviceChannelLayout,
-                             busDownmixCoeffs.data());
-        for (std::uint32_t i = 1; i < resolved.maxBuses; ++i) {
-            DefaultDownmixMatrix(
-                resolved.mixChannelLayout, resolved.mixChannelLayout,
-                busDownmixCoeffs.data() + static_cast<std::size_t>(i) * 64);
-        }
+        busCustomDownmix.resize(resolved.maxBuses);
         // QPC rate cached here, on the logic thread, for the Vn_Update
         // self-measurement conversions.
         cpuTicksPerSecond = CpuClockTicksPerSecond();
@@ -15695,17 +15679,16 @@ public:
     };
     CanonicalPackSetTombstoneV1 packSetTombstone{};
 
-    // Logic-side authoritative per-bus output fold config (the multichannel
-    // amendment): busOutputLayout[i] is bus i's presented output layout (the
-    // master's is the device layout; a value equal to the mix layout means no
-    // fold), and busDownmixCoeffs[i*64..] its dst x src matrix (coeffs[r*8+c] =
-    // gain src c -> dst r). Sized to maxBuses at init. FillPlan copies these
-    // into every published plan, delivering Vn_SetBusOutputLayout /
-    // Vn_SetBusDownmixMatrix / Vn_ResetBusDownmixMatrix to the audio thread
-    // through the existing plan-swap command (zero new opcode). Logic thread
-    // only.
+    // Immutable custom tables are shared with published plans. Defaults own
+    // no matrix; only working rows keep a resolved runtime coefficient cache.
     std::vector<std::uint32_t> busOutputLayout;
-    std::vector<float> busDownmixCoeffs;
+    std::vector<BusCustomDownmix> busCustomDownmix;
+    void CopyBusDownmix(std::uint32_t bus, float* destination) const noexcept {
+        if (busCustomDownmix[bus])
+            std::copy_n(busCustomDownmix[bus]->data(), 64, destination);
+        else
+            DefaultDownmixMatrix(config.mixChannelLayout, busOutputLayout[bus], destination);
+    }
 
     // Logic-side mirror of the effect type installed in each bus slot, indexed
     // [dense bus index][chain slot]. Written at Vn_SetBusEffect, cleared at

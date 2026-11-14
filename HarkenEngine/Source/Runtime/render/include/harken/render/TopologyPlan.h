@@ -9,8 +9,8 @@
 // thread by command, and never touches it again. The audio thread consumes the
 // plan and NEVER frees it; a superseded plan is named on the retire queue by
 // the audio thread and returned to the freelist by the logic thread in
-// DrainRetire. Structural arrays are preallocated at Init; transaction token
-// lists are prepared on logic. Installing a plan never allocates.
+// DrainRetire. Structural arrays and transaction tokens are prepared on logic
+// when a plan is acquired. Installing a plan never allocates.
 #ifndef HARKEN_RENDER_TOPOLOGY_PLAN_H
 #define HARKEN_RENDER_TOPOLOGY_PLAN_H
 
@@ -18,6 +18,7 @@
 #include "harken/dsp/GainRamp.h"
 #include "harken/render/BusEffectChainUpdate.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <vector>
@@ -25,6 +26,9 @@
 #include <span>
 
 namespace harken {
+
+using BusDownmixMatrix = std::array<float, 64>;
+using BusCustomDownmix = std::shared_ptr<const BusDownmixMatrix>;
 
 class SignalRenderPlan;
 struct BusEffectChainAdoption;
@@ -115,15 +119,12 @@ struct TopologyPlanView {
         if (first < range.first + range.count && sendSlots[first] == slot) return first;
         return UINT32_MAX;
     }
-    // Per-bus output fold config (the multichannel amendment): outputLayouts is
-    // busCapacity VnChannelLayout values (each bus's presented output layout;
-    // the master's is the device layout, a value equal to the mix layout means
-    // no fold), and downmixCoeffs is busCapacity dst x src coefficient tables of
-    // 64 floats each, row-major with the destination the outer index. Carried
-    // in the plan so Vn_SetBusOutputLayout / Vn_SetBusDownmixMatrix reach the
-    // audio thread through the existing plan-swap command (zero new opcode).
+    // Default matrices derive from layouts; only authored custom matrices own
+    // immutable backing. Audio copies the selected matrix into its work row.
     const std::uint32_t* outputLayouts = nullptr;
-    const float* downmixCoeffs = nullptr;
+    const BusCustomDownmix* customDownmix = nullptr;
+    std::uint32_t mixLayout = 0;
+    void CopyDownmix(std::uint32_t bus, float* destination) const noexcept;
     // Per-slot tree parents and liveness (carried like the fold config, so a
     // reparent or destroy reaches the audio thread through the existing
     // plan-swap command with zero new opcodes). parents[i] is dense bus i's
@@ -208,7 +209,9 @@ public:
     // clears both to "no fold" so a builder that ignores them publishes a plan
     // that leaves every bus unfolded.
     std::uint32_t* OutputLayoutData(std::uint32_t planIndex);
-    float* DownmixCoeffsData(std::uint32_t planIndex);
+    void SetMixLayout(std::uint32_t planIndex, std::uint32_t layout) noexcept;
+    void SetCustomDownmix(std::uint32_t planIndex, std::uint32_t bus,
+                          BusCustomDownmix matrix) noexcept;
     // Tree-parent and liveness storage for a plan: busCapacity entries each.
     // Acquire() clears parents to kPlanParentUnset (leave-unchanged) and
     // liveness to alive, so a builder that ignores them publishes a plan that
@@ -260,7 +263,9 @@ private:
     std::vector<std::uint32_t> m_orderCount;  // capacity
     struct PlanStorage {
         std::vector<std::uint32_t> order, outputLayouts, parents, busGenerations, migrationTargets;
-        std::vector<float> downmixCoeffs, preparedBusVolumeDb, preparedBusOutputVolumeDb;
+        std::uint32_t mixLayout = 0;
+        std::vector<BusCustomDownmix> customDownmix;
+        std::vector<float> preparedBusVolumeDb, preparedBusOutputVolumeDb;
         std::vector<std::uint32_t> preparedBusVolumeRampMs;
         std::vector<std::uint8_t> alive, busVolumeApply;
         std::vector<VnBusId> busIds;

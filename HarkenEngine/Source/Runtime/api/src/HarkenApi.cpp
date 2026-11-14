@@ -74465,8 +74465,7 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
             row.previewEffectRevision = preview->revision;
         }
         row.outputLayout = busOutputLayout[busIndex];
-        std::copy_n(busDownmixCoeffs.data() + static_cast<std::size_t>(busIndex) * 64,
-                    64, row.downmixCoeffs);
+        CopyBusDownmix(busIndex, row.downmixCoeffs);
         float gain = 1;
         if (!TryVolumeGainFromDb(::WireBusVolumeDb(*this, busIndex,
                 busTargets.LastCommitted(busIndex, kBusTargetBusVolume)), &gain)) return fail(VN_INVALID_ARG);
@@ -79769,21 +79768,15 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
     prepareSendLevels(preparedSendLevelsA);
     prepareSendLevels(preparedSendLevelsB);
     std::uint32_t* layouts = plans.OutputLayoutData(planIndex);
-    float* coeffs = plans.DownmixCoeffsData(planIndex);
+    plans.SetMixLayout(planIndex, engine.config.mixChannelLayout);
     const std::uint32_t liveBusCount = engine.buses.BusCount();
     for (std::uint32_t i = 0; i < n; ++i) {
         if (i < liveBusCount) {
             layouts[i] = engine.busOutputLayout[i];
-            std::memcpy(coeffs + static_cast<std::size_t>(i) * 64,
-                        engine.busDownmixCoeffs.data() +
-                            static_cast<std::size_t>(i) * 64,
-                        64 * sizeof(float));
+            plans.SetCustomDownmix(planIndex, i, engine.busCustomDownmix[i]);
         } else {
             layouts[i] = engine.config.mixChannelLayout;
-            harken::DefaultDownmixMatrix(
-                engine.config.mixChannelLayout,
-                engine.config.mixChannelLayout,
-                coeffs + static_cast<std::size_t>(i) * 64);
+            plans.SetCustomDownmix(planIndex, i, {});
         }
     }
     // Tree parents and slot liveness ride every publish like the fold config:
@@ -80025,10 +80018,7 @@ void ResetBusLogicSlot(harken::Engine& engine,
     engine.busMuted[busIndex] = 0;
     engine.busSoloed[busIndex] = 0;
     engine.busOutputLayout[busIndex] = engine.config.mixChannelLayout;
-    harken::DefaultDownmixMatrix(
-        engine.config.mixChannelLayout, engine.config.mixChannelLayout,
-        engine.busDownmixCoeffs.data() +
-            static_cast<std::size_t>(busIndex) * 64);
+    engine.busCustomDownmix[busIndex].reset();
 
     engine.busSends.EraseIf([&](const auto& edge) { return edge.source == busIndex; });
 }
@@ -80789,7 +80779,7 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
     // cannot carry a prior Vn_SetBusOutputLayout into paired Preview.
     const std::uint32_t slotCount = plans.View(planIndex).slotCount;
     std::uint32_t* layouts = plans.OutputLayoutData(planIndex);
-    float* coeffs = plans.DownmixCoeffsData(planIndex);
+    plans.SetMixLayout(planIndex, engine.config.mixChannelLayout);
     float* volumeDb = plans.PreparedBusVolumeDbData(planIndex);
     float* outputVolumeDb = plans.PreparedBusOutputVolumeDbData(planIndex);
     std::uint32_t* volumeRampMs = plans.PreparedBusVolumeRampMsData(planIndex);
@@ -80803,8 +80793,7 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
             master ? engine.config.deviceChannelLayout
                    : engine.config.mixChannelLayout;
         layouts[i] = dstLayout;
-        harken::DefaultDownmixMatrix(engine.config.mixChannelLayout, dstLayout,
-                                    coeffs + static_cast<std::size_t>(i) * 64);
+        plans.SetCustomDownmix(planIndex, i, {});
         volumeDb[i] = 0.0f;
         outputVolumeDb[i] = 0.0f;
         volumeRampMs[i] = 0;
@@ -116382,16 +116371,11 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         engine->topologyPlans.BusVolumeApplyData(planIndex);
     std::uint32_t* outputLayouts =
         engine->topologyPlans.OutputLayoutData(planIndex);
-    float* downmix =
-        engine->topologyPlans.DownmixCoeffsData(planIndex);
     for (std::uint32_t i = 0; i < candidateCount; ++i) {
         migrationPlan[i] = migrationTargets[i];
         if (newSlot[i] != 0) {
             outputLayouts[i] = engine->config.mixChannelLayout;
-            harken::DefaultDownmixMatrix(
-                engine->config.mixChannelLayout,
-                engine->config.mixChannelLayout,
-                downmix + static_cast<std::size_t>(i) * 64);
+            engine->topologyPlans.SetCustomDownmix(planIndex, i, {});
         }
         if (alive[i] == 0) {
             continue;
@@ -116419,8 +116403,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         busVolumeRampPlan[0] = 0;
         engine->topologyPlans.PreparedBusOutputVolumeDbData(planIndex)[0] = 0.0f;
         outputLayouts[0] = engine->config.deviceChannelLayout;
-        harken::DefaultDownmixMatrix(engine->config.mixChannelLayout,
-            engine->config.deviceChannelLayout, downmix);
+        engine->topologyPlans.SetCustomDownmix(planIndex, 0, {});
     }
     harken::CommandQueue::BatchReservation reservation{};
     if (!AdmitSingleCommand(*engine) ||
@@ -116642,8 +116625,7 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
     prospective.sends = &engine->busSends;
     harken::FillLiveOrPreparedPlan(*engine, engine->topologyPlans, planIndex, &prospective);
     engine->topologyPlans.OutputLayoutData(planIndex)[newBusIndex] = engine->config.mixChannelLayout;
-    harken::DefaultDownmixMatrix(engine->config.mixChannelLayout, engine->config.mixChannelLayout,
-        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(newBusIndex) * 64);
+    engine->topologyPlans.SetCustomDownmix(planIndex, newBusIndex, {});
     if (!publication.Prepare()) return VN_BACKPRESSURE;
     engine->buses.CommitLogicSlot(newBusIndex, busId, parents[newBusIndex], generation);
     ResetBusLogicSlot(*engine, newBusIndex, 0, generation);
@@ -123432,17 +123414,13 @@ VnResult Vn_SetBusOutputLayout(VnBusId busId, uint32_t layout) {
     PreparedTopologyPublication publication(*engine, planIndex);
     FillPlan(*engine, planIndex);
     engine->topologyPlans.OutputLayoutData(planIndex)[busIndex] = layout;
-    harken::DefaultDownmixMatrix(engine->config.mixChannelLayout, layout,
-        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(busIndex) * 64);
+    engine->topologyPlans.SetCustomDownmix(planIndex, busIndex, {});
     if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Adopt the new output layout and (re)seed its default matrix for the
     // resolved mix -> layout fold; a later Vn_SetBusDownmixMatrix overrides it,
     // and Vn_ResetBusDownmixMatrix returns to this default.
     engine->busOutputLayout[busIndex] = layout;
-    harken::DefaultDownmixMatrix(
-        engine->config.mixChannelLayout, layout,
-        engine->busDownmixCoeffs.data() +
-            static_cast<std::size_t>(busIndex) * 64);
+    engine->busCustomDownmix[busIndex].reset();
     publication.Publish();
     return VN_OK;
 
@@ -123513,15 +123491,14 @@ VnResult Vn_SetBusDownmixMatrix(VnBusId busId, const VnDownmixMatrixDesc* desc) 
     }
     PreparedTopologyPublication publication(*engine, planIndex);
     FillPlan(*engine, planIndex);
-    std::copy_n(desc->coeffs, 64,
-        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(busIndex) * 64);
+    auto custom = std::make_shared<harken::BusDownmixMatrix>();
+    std::copy_n(desc->coeffs, 64, custom->data());
+    engine->topologyPlans.SetCustomDownmix(planIndex, busIndex, custom);
     if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Store the full 8x8 table as given (no normalization); the fold reads only
     // the sub-block the bus's (mix -> output) layouts define, which the match
     // above pinned to the desc's own layouts.
-    std::memcpy(engine->busDownmixCoeffs.data() +
-                    static_cast<std::size_t>(busIndex) * 64,
-                desc->coeffs, 64 * sizeof(float));
+    engine->busCustomDownmix[busIndex] = std::move(custom);
     publication.Publish();
     return VN_OK;
 
@@ -123551,16 +123528,12 @@ VnResult Vn_ResetBusDownmixMatrix(VnBusId busId) {
     }
     PreparedTopologyPublication publication(*engine, planIndex);
     FillPlan(*engine, planIndex);
-    harken::DefaultDownmixMatrix(engine->config.mixChannelLayout, engine->busOutputLayout[busIndex],
-        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(busIndex) * 64);
+    engine->topologyPlans.SetCustomDownmix(planIndex, busIndex, {});
     if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Recompute the Appendix A default for the bus's current fold (src = mix,
     // dst = the bus's output layout; for the master that output layout is the
     // device layout).
-    harken::DefaultDownmixMatrix(
-        engine->config.mixChannelLayout, engine->busOutputLayout[busIndex],
-        engine->busDownmixCoeffs.data() +
-            static_cast<std::size_t>(busIndex) * 64);
+    engine->busCustomDownmix[busIndex].reset();
     publication.Publish();
     return VN_OK;
 
@@ -131166,9 +131139,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
             const auto outputLayout = slot == 0
                 ? engine.config.deviceChannelLayout : engine.config.mixChannelLayout;
             engine.topologyPlans.OutputLayoutData(out.planIndex)[slot] = outputLayout;
-            DefaultDownmixMatrix(engine.config.mixChannelLayout, outputLayout,
-                engine.topologyPlans.DownmixCoeffsData(out.planIndex) +
-                    static_cast<std::size_t>(slot) * 64);
+            engine.topologyPlans.SetCustomDownmix(out.planIndex, slot, {});
         }
         if (!ValidateTopologyPlanVolumesV1(engine.topologyPlans.View(out.planIndex)))
             return VN_BAD_PACK;

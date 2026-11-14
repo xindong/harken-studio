@@ -612,8 +612,9 @@ std::uint32_t PrepareNeutralTestPlan(harken::Engine& engine,
         plans.BusIdsData(plan)[i] = bus.id;
         plans.GenerationsData(plan)[i] = bus.generation;
         plans.OutputLayoutData(plan)[i] = bus.outputLayout;
-        std::copy_n(bus.downmixCoeffs, 64,
-                    plans.DownmixCoeffsData(plan) + i * 64);
+        auto matrix = std::make_shared<harken::BusDownmixMatrix>();
+        std::copy_n(bus.downmixCoeffs, 64, matrix->data());
+        plans.SetCustomDownmix(plan, i, std::move(matrix));
     }
     plans.BusVolumeApplyData(plan)[selected] = mask;
     return plan;

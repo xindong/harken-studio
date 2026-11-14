@@ -506,8 +506,7 @@ void ResetNeutralBusPropertiesV1(Engine& engine, std::uint32_t slot) noexcept {
     engine.busFaderAfterSlots[slot] = engine.config.fxSlotsPerBus;
     const auto layout = slot == 0 ? engine.config.deviceChannelLayout : engine.config.mixChannelLayout;
     engine.busOutputLayout[slot] = layout;
-    DefaultDownmixMatrix(engine.config.mixChannelLayout, layout,
-        engine.busDownmixCoeffs.data() + static_cast<std::size_t>(slot) * 64);
+    engine.busCustomDownmix[slot].reset();
 }
 
 bool CanResetVolumeOnlyNonVolumePropertiesV2(const Engine& engine,
@@ -579,8 +578,7 @@ void ResetVolumeOnlyNonVolumePropertiesV2(Engine& engine,
     engine.busFaderAfterSlots[slot] = engine.config.fxSlotsPerBus;
     const auto layout = slot == 0 ? engine.config.deviceChannelLayout : engine.config.mixChannelLayout;
     engine.busOutputLayout[slot] = layout;
-    DefaultDownmixMatrix(engine.config.mixChannelLayout, layout,
-        engine.busDownmixCoeffs.data() + static_cast<std::size_t>(slot) * 64);
+    engine.busCustomDownmix[slot].reset();
 }
 
 bool CanRetireTopologyBusV1(const Engine& engine, BusSlotRef ref, std::uint64_t revision) noexcept {
@@ -1905,8 +1903,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                 continue;
             }
             engine.preparedTopologyPlans.OutputLayoutData(planIndex)[slot] = engine.busOutputLayout[slot];
-            std::copy_n(engine.busDownmixCoeffs.data() + static_cast<std::size_t>(slot) * 64, 64,
-                engine.preparedTopologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(slot) * 64);
+            engine.preparedTopologyPlans.SetCustomDownmix(planIndex, slot, engine.busCustomDownmix[slot]);
         }
         if (engine.topologyPlans.InUse() != liveInUse ||
             engine.commands.PublishedHead() != commandHeadBefore ||

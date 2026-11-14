@@ -326,17 +326,14 @@ TEST(BusTree, PreparedBusBatchMatchesOrdinaryCreationAndSupportsPlanApply) {
     parents[2] = 1;
     std::uint32_t* outputLayouts =
         engine->topologyPlans.OutputLayoutData(plan);
-    float* downmix = engine->topologyPlans.DownmixCoeffsData(plan);
     const std::uint32_t defaultLayout = buses.BusOutputLayout(0);
     const float* defaultDownmix = buses.BusDownmixCoeffs(0);
     ASSERT_NE(nullptr, defaultDownmix);
     for (std::uint32_t bus = 0; bus < 3; ++bus) {
         outputLayouts[bus] = defaultLayout;
-        for (std::uint32_t coefficient = 0; coefficient < 64;
-             ++coefficient) {
-            downmix[static_cast<std::size_t>(bus) * 64 + coefficient] =
-                defaultDownmix[coefficient];
-        }
+        auto matrix = std::make_shared<harken::BusDownmixMatrix>();
+        std::copy_n(defaultDownmix, 64, matrix->data());
+        engine->topologyPlans.SetCustomDownmix(plan, bus, std::move(matrix));
     }
 
     buses.ApplyTopologyPlan(plan, harken::kInvalidBusIndex,

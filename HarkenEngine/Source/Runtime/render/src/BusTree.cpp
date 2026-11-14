@@ -776,13 +776,11 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
     // publish a plan, which the block-boundary swap installs here. A plan with
     // no fold config (a fold layout of 0, e.g. one a test built directly) leaves
     // the bus at "no fold". The master's entry carries its device matrix.
-    if (plan.outputLayouts != nullptr && plan.downmixCoeffs != nullptr) {
+    if (plan.outputLayouts != nullptr) {
         for (std::uint32_t i = 0; i < m_audioCount; ++i) {
             if (!HasWorkRow(i)) continue;
             WorkState(i).outputLayout = plan.outputLayouts[i];
-            std::memcpy(WorkState(i).downmixCoeffs,
-                        plan.downmixCoeffs + static_cast<std::size_t>(i) * 64,
-                        64 * sizeof(float));
+            plan.CopyDownmix(i, WorkState(i).downmixCoeffs);
         }
     }
     if (plan.busVolumeApply != nullptr &&

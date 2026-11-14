@@ -1,4 +1,5 @@
 #include "harken/render/TopologyPlan.h"
+#include "harken/core/ChannelLayout.h"
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 
@@ -58,7 +59,7 @@ std::uint32_t TopologyPlanPool::AcquireImpl(bool legacyRows, std::uint32_t sendA
     try {
         storage.order.assign(m_busCapacity, 0);
         storage.outputLayouts.assign(m_busCapacity, 0);
-        storage.downmixCoeffs.assign(static_cast<std::size_t>(m_busCapacity) * 64, 0);
+        storage.customDownmix.resize(m_busCapacity);
         storage.parents.assign(m_busCapacity, kPlanParentUnset);
         storage.alive.assign(m_busCapacity, 1);
         storage.busIds.resize(m_busCapacity);
@@ -100,7 +101,8 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
         PlanStorage next;
         next.order = prior.order;
         next.outputLayouts = prior.outputLayouts;
-        next.downmixCoeffs = prior.downmixCoeffs;
+        next.customDownmix = prior.customDownmix;
+        next.mixLayout = prior.mixLayout;
         next.parents = prior.parents;
         next.alive = prior.alive;
         next.busIds = prior.busIds;
@@ -153,7 +155,7 @@ std::size_t TopologyPlanPool::StorageBytes() const noexcept {
         bytes(m_buildScratch.emitted) + bytes(m_buildScratch.sendCounts);
     for (const auto& row : m_storage)
         total += bytes(row.order) + bytes(row.outputLayouts) + bytes(row.parents) + bytes(row.busGenerations) +
-            bytes(row.migrationTargets) + bytes(row.downmixCoeffs) + bytes(row.preparedBusVolumeDb) +
+            bytes(row.migrationTargets) + bytes(row.customDownmix) + bytes(row.preparedBusVolumeDb) +
             bytes(row.preparedBusOutputVolumeDb) + bytes(row.preparedBusVolumeRampMs) + bytes(row.alive) +
             bytes(row.busVolumeApply) + bytes(row.busIds) + bytes(row.ranges) + bytes(row.slots) +
             bytes(row.generations) + bytes(row.targets) + bytes(row.levels) + bytes(row.apply) +
@@ -291,8 +293,20 @@ std::uint32_t* TopologyPlanPool::OutputLayoutData(std::uint32_t planIndex) {
     return m_storage[planIndex].outputLayouts.data();
 }
 
-float* TopologyPlanPool::DownmixCoeffsData(std::uint32_t planIndex) {
-    return m_storage[planIndex].downmixCoeffs.data();
+void TopologyPlanPool::SetMixLayout(std::uint32_t planIndex, std::uint32_t layout) noexcept {
+    m_storage[planIndex].mixLayout = layout;
+}
+
+void TopologyPlanPool::SetCustomDownmix(std::uint32_t planIndex, std::uint32_t bus,
+    BusCustomDownmix matrix) noexcept {
+    m_storage[planIndex].customDownmix[bus] = std::move(matrix);
+}
+
+void TopologyPlanView::CopyDownmix(std::uint32_t bus, float* destination) const noexcept {
+    if (customDownmix && customDownmix[bus])
+        std::copy_n(customDownmix[bus]->data(), 64, destination);
+    else
+        DefaultDownmixMatrix(mixLayout, outputLayouts ? outputLayouts[bus] : 0, destination);
 }
 
 std::uint32_t* TopologyPlanPool::ParentsData(std::uint32_t planIndex) {
@@ -363,7 +377,8 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     v.sendStates = sends.states.data();
     v.slotsPerBus = m_slotsPerBus;
     v.outputLayouts = m_storage[planIndex].outputLayouts.data();
-    v.downmixCoeffs = m_storage[planIndex].downmixCoeffs.data();
+    v.customDownmix = m_storage[planIndex].customDownmix.data();
+    v.mixLayout = m_storage[planIndex].mixLayout;
     v.parents = m_storage[planIndex].parents.data();
     v.alive = m_storage[planIndex].alive.data();
     v.busIds = m_storage[planIndex].busIds.data();

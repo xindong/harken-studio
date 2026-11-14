@@ -723,7 +723,7 @@ TEST(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
     ASSERT_TRUE(plan.valid);
     ASSERT_GE(plan.slotCount, 1u);
     ASSERT_NE(plan.outputLayouts, nullptr);
-    ASSERT_NE(plan.downmixCoeffs, nullptr);
+    ASSERT_NE(plan.customDownmix, nullptr);
     ASSERT_NE(plan.busIds, nullptr);
     ASSERT_NE(plan.alive, nullptr);
     ASSERT_NE(plan.busVolumeApply, nullptr);
@@ -744,14 +744,17 @@ TEST(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
         EXPECT_FLOAT_EQ(0.0f, plan.preparedBusVolumeDb[i]);
         EXPECT_FLOAT_EQ(0.0f, plan.preparedBusOutputVolumeDb[i]);
         EXPECT_EQ(0u, plan.preparedBusVolumeRampMs[i]);
-        const float* coeffs =
-            plan.downmixCoeffs + static_cast<std::size_t>(i) * 64;
+        float coeffs[64];
+        plan.CopyDownmix(i, coeffs);
+        EXPECT_FALSE(plan.customDownmix[i]);
         if (plan.busIds[i] == VN_BUS_MASTER) {
             sawMaster = true;
             EXPECT_EQ(plan.outputLayouts[i], VN_CHANNEL_LAYOUT_STEREO);
             EXPECT_EQ(std::memcmp(coeffs, expectedMaster, sizeof(expectedMaster)),
                       0);
-            EXPECT_NE(std::memcmp(coeffs, engine->busDownmixCoeffs.data(),
+            float liveCoeffs[64];
+            engine->CopyBusDownmix(0, liveCoeffs);
+            EXPECT_NE(std::memcmp(coeffs, liveCoeffs,
                                   sizeof(expectedMaster)),
                       0);
         } else {

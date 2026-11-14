@@ -235,7 +235,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                 }
                 row.parentIndex = topology.parents[bus];
                 row.outputLayout = topology.outputLayouts[bus];
-                std::copy_n(topology.downmixCoeffs + static_cast<std::size_t>(bus) * 64, 64, row.downmixCoeffs);
+                topology.CopyDownmix(bus, row.downmixCoeffs);
                 preparedRows.push_back(work);
             }
             working.push_back({host, work});
