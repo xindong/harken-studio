@@ -532,7 +532,7 @@ public:
         float fxBypassTarget[kMaxFxSlotsPerBus] = {};
         bool fxBypassRamping[kMaxFxSlotsPerBus] = {};
         EffectInstanceRef fxSlotEffectRef[kMaxFxSlotsPerBus];
-        EffectChainUpdate* fxChainTransition = nullptr;
+        BusEffectChainState* fxChainTransition = nullptr;
         std::uint64_t previewEffectOwner = 0;
         std::uint64_t previewEffectRevision = 0;
         double signalSlotHistory[kMaxFxSlotsPerBus] = {};
@@ -636,7 +636,8 @@ private:
                            std::uint32_t parentIndex,
                            std::uint32_t generation) noexcept;
     void RetireBusSlotEffects(Bus& bus) noexcept;
-    void RetirePreviewEffectReferences(EffectChainUpdate& update, bool quiescent = false) noexcept;
+    bool TryRetirePreviewEffectReferences(BusEffectChainState& state, bool quiescent) noexcept;
+    void RetirePreviewEffectReferences(BusEffectChainState& state, bool quiescent = false) noexcept;
     void ReleasePreviewEffectChain(Bus& bus, bool quiescent = false) noexcept;
     void FinishPreviewEffectChain(Bus& bus, std::uint32_t frames) noexcept;
 
@@ -749,6 +750,7 @@ private:
         return m_workSlots[busIndex]->bus;
     }
     GrowingRowStorage<std::atomic<BusEffectChainState*>> m_previewEffectStates;
+    BusEffectChainState* m_retiringPreviewEffects = nullptr;
     std::atomic<std::uint32_t> m_pendingPreviewEffects{0};
     // Logic-owned tree-parent shadow and slot liveness, indexed by dense bus
     // index and sized to capacity at init. CreateBus (and a live reparent)

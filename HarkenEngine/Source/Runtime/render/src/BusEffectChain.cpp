@@ -39,7 +39,7 @@ bool BusTree::PreviewEffectOwned(BusSlotRef ref) const noexcept {
 bool BusTree::PreviewMasterEffectsClaimedByOther(std::uint64_t owner) const noexcept {
     const auto* state = m_previewEffectStates[0].load(std::memory_order_acquire);
     if (state == nullptr) return false;
-    const auto phase = state->update.phase.load(std::memory_order_acquire);
+    const auto phase = state->phase.load(std::memory_order_acquire);
     if (phase == Phase::Preparing && state->preparedOwner == owner) return false;
     if (state->owner == owner) return false;
     if (phase != Phase::Free) return true;
@@ -68,10 +68,11 @@ VnResult BusTree::PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner
         for (std::uint32_t i = 0; i < m_fxSlots; ++i)
             identical = identical && SameEntry(state->accepted[i], targets[i]);
         if (identical) return VN_OK;
-        auto& update = state->update;
-        if (update.phase.load(std::memory_order_acquire) != Phase::Free) return VN_BACKPRESSURE;
+        if (state->phase.load(std::memory_order_acquire) != Phase::Free) return VN_BACKPRESSURE;
         if (retained && state->revision == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
-        update.phase.store(Phase::Preparing, std::memory_order_release);
+        state->update = std::make_unique<EffectChainUpdate>();
+        auto& update = *state->update;
+        state->phase.store(Phase::Preparing, std::memory_order_release);
         out.changes = true;
         state->preparedOwner = owner;
         update.host = host.Packed();
@@ -148,16 +149,17 @@ VnResult BusTree::PreparePreviewEffectOwnerRelease(BusSlotRef host, std::uint64_
     auto* state = PreviewEffectState(host);
     if (state == nullptr || state->owner == 0) return VN_OK;
     if (state->owner != owner) return VN_IN_USE;
-    auto& update = state->update;
-    if (update.phase.load(std::memory_order_acquire) != Phase::Free) return VN_BACKPRESSURE;
+    if (state->phase.load(std::memory_order_acquire) != Phase::Free) return VN_BACKPRESSURE;
     if (state->revision == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
+    try { state->update = std::make_unique<EffectChainUpdate>(); } catch (...) { return VN_DEVICE_ERROR; }
+    auto& update = *state->update;
     out = {state, host, state->owner, state->revision, true, true};
     state->preparedOwner = owner;
     update.host = host.Packed();
     update.baseRevision = state->revision;
     update.targetRevision = state->revision + 1;
     update.ownedTargets = update.ownedOld = 0;
-    update.phase.store(Phase::Preparing, std::memory_order_release);
+    state->phase.store(Phase::Preparing, std::memory_order_release);
     return VN_OK;
 }
 
@@ -165,21 +167,21 @@ bool BusTree::CanCommitPreviewEffectChain(const PreparedBusEffectChain& prepared
     const auto* state = prepared.state;
     return state != nullptr && state->owner == prepared.expectedOwner &&
         state->revision == prepared.expectedRevision &&
-        (!prepared.changes || (state->update.phase.load(std::memory_order_acquire) == Phase::Preparing &&
-            state->update.host == prepared.host.Packed()));
+        (!prepared.changes || (state->phase.load(std::memory_order_acquire) == Phase::Preparing &&
+            state->update->host == prepared.host.Packed()));
 }
 
 void BusTree::CancelPreviewEffectChain(PreparedBusEffectChain& prepared) noexcept {
     if (prepared.changes && prepared.state != nullptr) {
-        auto& update = prepared.state->update;
-        if (update.phase.load(std::memory_order_acquire) == Phase::Preparing &&
-            update.host == prepared.host.Packed()) {
+        auto& state = *prepared.state;
+        if (state.phase.load(std::memory_order_acquire) == Phase::Preparing &&
+            state.update->host == prepared.host.Packed()) {
+            auto& update = *state.update;
             for (std::uint32_t i = 0; i < m_fxSlots; ++i)
                 if ((update.ownedTargets & (1u << i)) != 0) m_effectBank.Recycle(update.targetRefs[i]);
             update.ownedTargets = 0;
-            std::vector<float>().swap(update.scratch);
-            update.dry = update.alternate = {};
-            update.phase.store(Phase::Free, std::memory_order_release);
+            state.update.reset();
+            state.phase.store(Phase::Free, std::memory_order_release);
         }
     }
     prepared = {};
@@ -188,20 +190,20 @@ void BusTree::CancelPreviewEffectChain(PreparedBusEffectChain& prepared) noexcep
 void BusTree::CommitPreviewEffectChain(const PreparedBusEffectChain& prepared) noexcept {
     if (!prepared.changes) return;
     auto& state = *prepared.state;
-    auto& update = state.update;
+    auto& update = *state.update;
     state.acceptedHost = prepared.host;
     state.owner = prepared.releaseOwner ? 0 : state.preparedOwner;
     state.revision = update.targetRevision;
     state.accepted = prepared.releaseOwner ? decltype(state.accepted){} : update.targets;
     m_pendingPreviewEffects.fetch_add(1, std::memory_order_relaxed);
-    update.phase.store(Phase::Queued, std::memory_order_release);
+    state.phase.store(Phase::Queued, std::memory_order_release);
 }
 
 void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) noexcept {
     if (adoption.state == nullptr) return;
     auto& state = *adoption.state;
-    auto& update = state.update;
-    if (update.phase.load(std::memory_order_acquire) != Phase::Queued) return;
+    if (state.phase.load(std::memory_order_acquire) != Phase::Queued) return;
+    auto& update = *state.update;
     if (adoption.host != update.host || adoption.owner != state.preparedOwner ||
         adoption.revision != update.targetRevision) return;
     const auto host = BusSlotRef::FromPacked(update.host);
@@ -212,7 +214,7 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
         const bool empty = update.ownedTargets == 0 && update.ownedOld == 0 &&
             std::all_of(update.oldRefs.begin(), update.oldRefs.end(), [](auto ref) { return ref.type == kEffectTypeNone; }) &&
             std::all_of(update.targetRefs.begin(), update.targetRefs.end(), [](auto ref) { return ref.type == kEffectTypeNone; });
-        if (adoption.releaseOwner || empty) update.phase.store(Phase::Complete, std::memory_order_release);
+        if (adoption.releaseOwner || empty) state.phase.store(Phase::Complete, std::memory_order_release);
         return;
     }
     auto& bus = WorkState(host.index);
@@ -225,7 +227,7 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
             bus.previewEffectOwner = 0;
             bus.previewEffectRevision = update.targetRevision;
         }
-        update.phase.store(Phase::Complete, std::memory_order_release);
+        state.phase.store(Phase::Complete, std::memory_order_release);
         return;
     }
     // Deleted hosts adopt their empty chain after the new topology is installed.
@@ -235,8 +237,8 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
     for (std::uint32_t i = 0; valid && i < m_fxSlots; ++i)
         valid = SameRef(bus.fxSlotEffectRef[i], update.oldRefs[i]);
     if (!valid) {
-        update.phase.store(Phase::Retiring, std::memory_order_release);
-        RetirePreviewEffectReferences(update);
+        state.phase.store(Phase::Retiring, std::memory_order_release);
+        RetirePreviewEffectReferences(state);
         return;
     }
     NoteWorkMutation(bus);
@@ -285,11 +287,11 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
     bus.previewEffectOwner = state.preparedOwner;
     bus.previewEffectRevision = update.targetRevision;
     if (update.changedMask != 0) {
-        bus.fxChainTransition = &update;
-        update.phase.store(Phase::Active, std::memory_order_release);
+        bus.fxChainTransition = &state;
+        state.phase.store(Phase::Active, std::memory_order_release);
     } else {
-        update.phase.store(Phase::Retiring, std::memory_order_release);
-        RetirePreviewEffectReferences(update);
+        state.phase.store(Phase::Retiring, std::memory_order_release);
+        RetirePreviewEffectReferences(state);
     }
 }
 
@@ -307,7 +309,8 @@ void BusTree::ApplyPreviewEffectControl(BusSlotRef host, std::uint64_t owner,
     NoteWorkMutation(bus);
 }
 
-void BusTree::RetirePreviewEffectReferences(EffectChainUpdate& update, bool quiescent) noexcept {
+bool BusTree::TryRetirePreviewEffectReferences(BusEffectChainState& state, bool quiescent) noexcept {
+    auto& update = *state.update;
     const auto retire = [&](auto& refs, auto& owned) {
         for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
             const auto bit = 1u << i;
@@ -319,29 +322,39 @@ void BusTree::RetirePreviewEffectReferences(EffectChainUpdate& update, bool quie
     };
     retire(update.oldRefs, update.ownedOld);
     retire(update.targetRefs, update.ownedTargets);
-    if (update.ownedOld == 0 && update.ownedTargets == 0)
-        update.phase.store(Phase::Complete, std::memory_order_release);
+    return update.ownedOld == 0 && update.ownedTargets == 0;
+}
+
+void BusTree::RetirePreviewEffectReferences(BusEffectChainState& state, bool quiescent) noexcept {
+    if (TryRetirePreviewEffectReferences(state, quiescent)) {
+        state.phase.store(Phase::Complete, std::memory_order_release);
+    } else {
+        state.retiringNext = m_retiringPreviewEffects;
+        m_retiringPreviewEffects = &state;
+    }
 }
 
 void BusTree::FinishPreviewEffectChain(Bus& bus, std::uint32_t frames) noexcept {
-    auto* update = bus.fxChainTransition;
-    if (update == nullptr) return;
-    update->done += std::min(frames, update->totalFrames - update->done);
-    if (update->done != update->totalFrames) return;
+    auto* state = bus.fxChainTransition;
+    if (state == nullptr) return;
+    auto& update = *state->update;
+    update.done += std::min(frames, update.totalFrames - update.done);
+    if (update.done != update.totalFrames) return;
     bus.fxChainTransition = nullptr;
-    update->phase.store(Phase::Retiring, std::memory_order_release);
-    RetirePreviewEffectReferences(*update);
+    state->phase.store(Phase::Retiring, std::memory_order_release);
+    RetirePreviewEffectReferences(*state);
 }
 
 void BusTree::ReleasePreviewEffectChain(Bus& bus, bool quiescent) noexcept {
     // The exact transition is borrowed by this work incarnation. The stable
     // Bus slot may already name a newer owner's state when this row retires.
     if (bus.fxChainTransition == nullptr) return;
-    auto& update = *bus.fxChainTransition;
-    const auto phase = update.phase.load(std::memory_order_acquire);
+    auto& state = *bus.fxChainTransition;
+    const auto phase = state.phase.load(std::memory_order_acquire);
     // A published replacement has not adopted yet. Ordinary topology swaps
     // cannot remove its host before the queued adoption command is consumed.
     if (phase != Phase::Active && phase != Phase::Retiring) return;
+    auto& update = *state.update;
     for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
         update.targetRefs[i] = bus.fxSlotEffectRef[i];
         if (update.targetRefs[i].type != kEffectTypeNone) update.ownedTargets |= 1u << i;
@@ -350,8 +363,8 @@ void BusTree::ReleasePreviewEffectChain(Bus& bus, bool quiescent) noexcept {
     }
     bus.fxChainTransition = nullptr;
     bus.previewEffectOwner = bus.previewEffectRevision = 0;
-    update.phase.store(Phase::Retiring, std::memory_order_release);
-    RetirePreviewEffectReferences(update, quiescent);
+    state.phase.store(Phase::Retiring, std::memory_order_release);
+    RetirePreviewEffectReferences(state, quiescent);
 }
 
 void BusTree::ForgetPreviewEffectOwner(BusSlotRef ref) noexcept {
@@ -359,11 +372,17 @@ void BusTree::ForgetPreviewEffectOwner(BusSlotRef ref) noexcept {
 }
 
 void BusTree::ServicePreviewEffectRetirements() noexcept {
-    if (m_pendingPreviewEffects.load(std::memory_order_acquire) == 0) return;
-    for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i) {
-        auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
-        if (state != nullptr && state->update.phase.load(std::memory_order_acquire) == Phase::Retiring)
-            RetirePreviewEffectReferences(state->update);
+    auto** link = &m_retiringPreviewEffects;
+    while (*link != nullptr) {
+        auto& state = **link;
+        if (TryRetirePreviewEffectReferences(state, false)) {
+            *link = state.retiringNext;
+            state.retiringNext = nullptr;
+            // The control owner may delete the payload immediately after this.
+            state.phase.store(Phase::Complete, std::memory_order_release);
+        } else {
+            link = &state.retiringNext;
+        }
     }
 }
 
@@ -371,21 +390,22 @@ void BusTree::DrainPreviewEffectChains() noexcept {
     if (m_pendingPreviewEffects.load(std::memory_order_acquire) == 0) return;
     for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
-        if (state == nullptr || state->update.phase.load(std::memory_order_acquire) != Phase::Complete) continue;
+        if (state == nullptr || state->phase.load(std::memory_order_acquire) != Phase::Complete) continue;
         m_effectBank.DrainRetire();
-        std::vector<float>().swap(state->update.scratch);
-        state->update.dry = state->update.alternate = {};
-        state->update.phase.store(Phase::Free, std::memory_order_release);
+        state->update.reset();
+        state->phase.store(Phase::Free, std::memory_order_release);
         m_pendingPreviewEffects.fetch_sub(1, std::memory_order_release);
     }
 }
 
 void BusTree::ShutdownPreviewEffectChains() noexcept {
     // Engine destruction excludes callbacks before this owner is destroyed.
+    m_retiringPreviewEffects = nullptr;
     for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
-        if (state == nullptr) continue;
-        RetirePreviewEffectReferences(state->update, true);
+        if (state == nullptr || !state->update) continue;
+        state->retiringNext = nullptr;
+        RetirePreviewEffectReferences(*state, true);
     }
 }
 

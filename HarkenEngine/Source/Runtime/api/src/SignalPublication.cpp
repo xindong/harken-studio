@@ -369,8 +369,9 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                     const auto view = engine.topologyPlans.View(index);
                     for (std::uint32_t i = 0; view.valid && i < view.effectUpdateCount; ++i) {
                         const auto& update = view.effectUpdates[i];
-                        if (update.host == host.Packed() && !update.releaseOwner && update.state != nullptr)
-                            entry.effects = update.state->update.targetRefs;
+                        if (update.host == host.Packed() && !update.releaseOwner)
+                            if (const auto* preparedUpdate = PreparedBusEffectUpdate(update))
+                                entry.effects = preparedUpdate->targetRefs;
                     }
                 };
                 for (const auto& command : commands) {
@@ -586,6 +587,9 @@ bool PreparedBusCommandBatch::Prepare(std::span<const CommandRecord> commands) n
     if (proof_.Valid() || commands.size() > UINT32_MAX) return false;
     commands_ = commands;
     if (commands.empty()) return true;
+    for (const auto& command : commands)
+        if (command.opcode == kOpcodeSetBusFilter &&
+            !engine_.busFilterSettings.Prepare(command.payload.setBusFilter.busIndex)) return false;
     return engine_.commands.ReserveBatch(static_cast<std::uint32_t>(commands.size()), &reservation_) &&
         engine_.commands.ProvePreparedBatch(&reservation_, commands.data(),
             static_cast<std::uint32_t>(commands.size()), &proof_) &&

@@ -279,6 +279,8 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
         plan->beforeDetach.reserve(adoptsTopology ? topology.effectUpdateCount : 0);
         for (std::uint32_t i = 0; adoptsTopology && i < topology.effectUpdateCount; ++i) {
             const auto& adoption = topology.effectUpdates[i];
+            const auto* preparedUpdate = PreparedBusEffectUpdate(adoption);
+            if (preparedUpdate == nullptr) continue;
             const auto host = BusSlotRef::FromPacked(adoption.host);
             if (!host.Valid() || (host.index < topology.slotCount &&
                 topology.alive[host.index] != 0 && topology.generations[host.index] == host.generation)) continue;
@@ -286,8 +288,7 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
             if (work.Valid()) {
                 if (!RetainWorkRow(work)) return nullptr;
             } else {
-                if (adoption.state == nullptr) return nullptr;
-                const auto& update = adoption.state->update;
+                const auto& update = *preparedUpdate;
                 if (!adoption.releaseOwner && (update.ownedTargets != 0 || update.ownedOld != 0 ||
                     std::any_of(update.oldRefs.begin(), update.oldRefs.end(), [](auto ref) { return ref.type != kEffectTypeNone; }) ||
                     std::any_of(update.targetRefs.begin(), update.targetRefs.end(), [](auto ref) { return ref.type != kEffectTypeNone; })))

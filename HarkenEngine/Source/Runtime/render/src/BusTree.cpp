@@ -955,7 +955,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
         auto* limiter = bus.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER
             ? static_cast<LimiterState*>(bus.fxSlots[slot].state) : nullptr;
         if (limiter != nullptr) LimiterBeginRender(*limiter, blockEpoch, sourceFrameBegin);
-        auto* transition = bus.fxChainTransition;
+        auto* transition = bus.fxChainTransition != nullptr ? bus.fxChainTransition->update.get() : nullptr;
         ProcessChainSlot(bus.fxSlots[slot], bus.fxBypassRamping[slot],
             bus.fxBypassMix[slot], bus.fxBypassTarget[slot],
             planes, dry, m_mixChannels, 0, blockFrames, input, limiter);
@@ -1036,7 +1036,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
     };
     const auto processRange = [&](std::uint32_t first, std::uint32_t end) {
         for (auto slot = first; slot < end; ++slot) {
-            auto* transition = bus.fxChainTransition;
+            auto* transition = bus.fxChainTransition != nullptr ? bus.fxChainTransition->update.get() : nullptr;
             auto next = slot + 1;
             if (transition == nullptr || (transition->changedMask & (1u << slot)) == 0) {
                 if (bus.fxSlots[slot].process != nullptr) processSlot(slot);

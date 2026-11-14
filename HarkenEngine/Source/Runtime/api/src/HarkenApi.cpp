@@ -74404,12 +74404,12 @@ bool MakeVariableEffectParamCommand(
 void Engine::NoteBusSettingCommand(const CommandRecord& command) noexcept {
     if (command.opcode == kOpcodeSetBusFilter) {
         const auto& filter = command.payload.setBusFilter;
-        if (filter.busIndex < busFilterSettings.size() &&
+        if (filter.busIndex < buses.BusCount() &&
             (filter.busGeneration == 0 || filter.busGeneration == buses.GenerationAt(filter.busIndex))) {
             const auto section = (filter.outputOnly ? 2u : 0u) +
                 (filter.filterKind == kFilterKindHighpass ? 1u : 0u);
-            busFilterSettings[filter.busIndex][section] =
-                {filter.cutoffHz, filter.q, filter.enable != 0, true};
+            busFilterSettings.Set(filter.busIndex, section,
+                {filter.cutoffHz, filter.q, filter.enable != 0, true});
         }
     } else if (command.opcode == kOpcodeSetBusVolume) {
         const auto& volume = command.payload.setBusVolume;
@@ -74481,7 +74481,7 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
         std::array<BusTree::Bus::ToneSection*, 4> sections{
             &row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
         for (std::uint32_t index = 0; index < sections.size(); ++index) {
-            const auto& setting = busFilterSettings[busIndex][index];
+            const auto setting = busFilterSettings.Get(busIndex, index);
             if (!setting.configured) continue;
             PreparedFilterSection prepared;
             if (!::PrepareFilterSection(static_cast<float>(config.mixRate.SampleRate()),
@@ -80015,7 +80015,7 @@ void ResetBusLogicSlot(harken::Engine& engine,
     engine.busEffects.ClearBus(busIndex);
     engine.SetBusEffectRefs(busIndex, {});
 
-    engine.busFilterSettings[busIndex] = {};
+    engine.busFilterSettings.Clear(busIndex);
     engine.busVolumePublished[busIndex] = 0;
 
     if (busIndex < engine.busEffectSlotBypass.size()) {

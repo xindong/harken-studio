@@ -610,7 +610,7 @@ void ClearRetiredBusPropertiesV1(Engine& engine, BusSlotRef ref) noexcept {
         engine.BusRetirement(ref.index)->generation == ref.generation &&
         engine.buses.RetirementRevisionAt(ref.index) != 0);
     engine.busTargets.RetireBusGeneration(ref.index, ref.generation);
-    engine.busFilterSettings[ref.index] = {};
+    engine.busFilterSettings.Clear(ref.index);
     engine.busVolumePublished[ref.index] = 0;
     engine.effectParamTargets.ClearObject(EffectParamTargetStore::Scope::Bus, ref.index, ref.generation);
     engine.busEffects.ClearBus(ref.index);
@@ -2046,7 +2046,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
             const auto result = engine.buses.PreparePreviewEffectChain(host, view.ownerId, targets, refs,
                 engine.CurrentProjectId(), effects.back());
             if (result != VN_OK || !effects.back().changes) return result;
-            const auto& update = effects.back().state->update;
+            const auto& update = *effects.back().state->update;
             for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot) {
                 if ((update.changedMask & (1u << slot)) == 0 || targets[slot].effectType == kEffectTypeNone)
                     continue;
@@ -2098,7 +2098,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         std::vector<BusEffectChainAdoption> adoptions;
         for (const auto& row : effects) if (row.changes)
             adoptions.push_back({row.state, row.host.Packed(), row.state->preparedOwner,
-                row.state->update.targetRevision, row.releaseOwner});
+                row.state->update->targetRevision, row.releaseOwner});
         engine.preparedTopologyPlans.SetEffectUpdates(planIndex, std::move(adoptions));
     } catch (...) {
         for (auto& row : effects) engine.buses.CancelPreviewEffectChain(row);
@@ -2393,7 +2393,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         if (prepared.effects_) targetStorageReady &= prepared.effects_->AppendSettingsWrites(effectWrites);
         for (const auto& chain : prepared.effectChains_) {
             if (!chain.changes || chain.releaseOwner) continue;
-            const auto& update = chain.state->update;
+            const auto& update = *chain.state->update;
             for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot)
                 if (update.targets[slot].effectType != kEffectTypeNone)
                     effectWrites.push_back({chain.host.index, slot, {update.targets[slot].effectType,
@@ -2448,7 +2448,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         engine.buses.CommitPreviewEffectChain(row);
         if (!row.changes || row.releaseOwner) continue;
         const auto slot = row.host.index;
-        const auto& update = row.state->update;
+        const auto& update = *row.state->update;
         for (std::uint32_t i = 0; i < engine.config.fxSlotsPerBus; ++i) {
             engine.busEffects.Set(slot, i, {update.targets[i].effectType,
                 engine.effectBank.ObjectIdentity(update.targetRefs[i]),

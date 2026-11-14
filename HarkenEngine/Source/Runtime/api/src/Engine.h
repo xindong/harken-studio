@@ -6,6 +6,7 @@
 #define HARKEN_API_ENGINE_H
 
 #include "BusEffectSettings.h"
+#include "BusFilterSettings.h"
 #include <harken/ObjectId.h>
 #include "DeviceBackend.h"
 #include "EngineFrontierOwnerLedger.h"
@@ -7670,7 +7671,6 @@ public:
         // Logic-side mirror of the effect type installed in each bus slot, used
         // to validate Vn_SetBusEffectParam against the correct type (the voice
         // effectSlotTypes analogue). Only installed slots own effect settings.
-        busFilterSettings.resize(resolved.maxBuses);
         busVolumePublished.assign(resolved.maxBuses, 0);
         busEffectSlotBypass.assign(resolved.maxBuses, 0);
         busFaderAfterSlots.assign(resolved.maxBuses, resolved.fxSlotsPerBus);
@@ -13742,7 +13742,6 @@ public:
             };
             grow(influenceVisited, 0); grow(influenceStack, 0);
             grow(busOwnerCookies, 0); grow(busTopologyOwnerIds, 0);
-            busFilterSettings.reserve(count); busFilterSettings.resize(count);
             grow(busVolumePublished, 0); grow(busEffectSlotBypass, 0);
             grow(busFaderAfterSlots, config.fxSlotsPerBus);
             grow(busMuted, 0); grow(busSoloed, 0); grow(busOutputLayout, config.mixChannelLayout);
@@ -15742,15 +15741,7 @@ public:
 
     // Logic-owned settings survive sleep. Effect parameters remain in the
     // target store; bypass bits also survive an empty slot for later installs.
-    struct BusFilterSetting {
-        float cutoffHz = 0;
-        float q = 0;
-        bool enabled = false;
-        bool configured = false;
-    };
-    // Authored settings survive physical DSP-instance retirement. Parameters
-    // remain authoritative in BusTargetStore and EffectParamTargetStore.
-    std::vector<std::array<BusFilterSetting, 4>> busFilterSettings;
+    BusFilterSettings busFilterSettings;
     BusEffectSettings busEffects;
     std::vector<std::uint8_t> busVolumePublished;
 

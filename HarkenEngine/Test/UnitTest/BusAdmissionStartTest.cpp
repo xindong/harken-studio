@@ -2828,7 +2828,7 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
         }
         engine.nullBackend.Pump(8);
         ASSERT_EQ(VN_OK, Vn_Update());
-        EXPECT_EQ(state->update.phase.load(), EffectChainUpdate::Phase::Free);
+        EXPECT_EQ(state->phase.load(), EffectChainUpdate::Phase::Free);
         EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), change == 2 || change == 4 ? 0u : 1u);
         if (change == 2) {
             EXPECT_FALSE(engine.buses.FindRef(child).Valid());
@@ -3035,7 +3035,7 @@ TEST(BusAdmissionStart, LiveBusV5DirectBypassAdvancesNewBranchAndClearRetirement
     engine.nullBackend.Pump(4);
     auto* state = engine.buses.PreviewEffectState(engine.buses.RefAt(0));
     ASSERT_NE(nullptr, state);
-    EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->update.phase.load());
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->phase.load());
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     EXPECT_FALSE(harken::PreviewMasterCompatible(engine, harken::NeutralMasterFingerprintV1(engine)));
     LiveBusPublication other(engine, fixture.image, 5);
@@ -3045,7 +3045,7 @@ TEST(BusAdmissionStart, LiveBusV5DirectBypassAdvancesNewBranchAndClearRetirement
     ASSERT_EQ(VN_OK, Vn_Update());
     engine.nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, state->update.phase.load());
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, state->phase.load());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     CommitAndConsumeLiveBus(engine, other);
     ASSERT_FALSE(HasFatalFailure());
@@ -3091,7 +3091,7 @@ TEST(BusAdmissionStart, LiveBusV5DeletionRetainsRetirementAndReusesNewGeneration
     // Release the previous receipt, then let the sole audio producer retire.
     engine.buses.DrainActivities();
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->update.phase.load());
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->phase.load());
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     ASSERT_EQ(VN_OK, Vn_Update());
     engine.nullBackend.Pump(1);
@@ -3224,7 +3224,7 @@ TEST(BusAdmissionStart, LiveBusV5CancelAndFinalPreflightRefusalReleaseOnlyPrepar
         ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
             harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
         EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
-        EXPECT_EQ(harken::EffectChainUpdate::Phase::Preparing, state->update.phase.load());
+        EXPECT_EQ(harken::EffectChainUpdate::Phase::Preparing, state->phase.load());
         if (refuseCommit) {
             harken::detail::ArmLogicAllocFaultForTests(1,
                 harken::detail::LogicAllocSite::ProjectFinalPreflight);
@@ -3241,7 +3241,7 @@ TEST(BusAdmissionStart, LiveBusV5CancelAndFinalPreflightRefusalReleaseOnlyPrepar
         ASSERT_GT(engine.mixer.BlocksRendered(), block);
         EXPECT_NEAR(limited, engine.nullBackend.LastBlock()[0], 1e-6f);
         harken::CancelPreparedProjectGenerationV1(engine, std::move(prepared));
-        EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, state->update.phase.load());
+        EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, state->phase.load());
         EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
         EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(old));
         EXPECT_EQ(0u, engine.preparedTopologyPlans.InUse());

@@ -1478,13 +1478,13 @@ TEST(MonitorMeasure, EffectExactInstanceStalesOnDirectClearAndLiveChainChanges) 
                 // Different rows can carry the same generation; the old exact tap
                 // must stale at adoption, before any new-branch samples are emitted.
                 ASSERT_NE(master->fxSlotEffectRef[0].poolIndex,
-                    prepared.state->update.targetRefs[0].poolIndex);
-                ASSERT_EQ(generation, prepared.state->update.targetRefs[0].generation);
+                    prepared.state->update->targetRefs[0].poolIndex);
+                ASSERT_EQ(generation, prepared.state->update->targetRefs[0].generation);
             }
             ASSERT_TRUE(buses.CanCommitPreviewEffectChain(prepared));
             buses.CommitPreviewEffectChain(prepared);
             buses.ApplyPreviewEffectChain({prepared.state, prepared.host.Packed(), 1,
-                prepared.state->update.targetRevision, false});
+                prepared.state->update->targetRevision, false});
         }
         session.Engine()->nullBackend.Pump(2);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
