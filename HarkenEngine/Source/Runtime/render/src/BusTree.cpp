@@ -1338,6 +1338,13 @@ std::size_t BusTree::SignalRoutingEdgeCapacity(SignalBusMapping mapping) const n
     return result;
 }
 
+std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
+    std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+    std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept {
+    return SignalRoutingSnapshot(buses, edges, frames, schedules, nodeOffset,
+        SignalBusMapping::Dense(m_audioCount));
+}
+
 std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
     std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
     std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset,

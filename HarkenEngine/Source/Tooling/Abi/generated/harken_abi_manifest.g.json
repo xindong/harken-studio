@@ -25042,16 +25042,16 @@
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "2e165412624fe49c1212765c31afc16733b4fadfe2c871b4e5848dfc95818ced",
-      "size": 252631
+      "sha256": "4b4130ac17699a33e2274ad95ff83bdf3a83685f7c645a8278436f8e01df0792",
+      "size": 247249
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "5521dfb880ff89897e6651c4adf135d3cf55a41cb47e407667540e99cb06e8fd",
-      "size": 20273
+      "sha256": "c3814b4b779fa45ffd2309d5e9527f56c5e27187a6d27d252488762d40c0865b",
+      "size": 19910
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",
@@ -25066,8 +25066,8 @@
       "size": 30778
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "1e4627c57832b53a7c77c13c02b32a913265d8fcf1eba8d325c0f5ad05589e93",
-      "size": 277275
+      "sha256": "e9075f49bad089b544d6c61b40c3a113232bcc1666893a0d7faf914f3b35c2dd",
+      "size": 264536
     }
   }
 }

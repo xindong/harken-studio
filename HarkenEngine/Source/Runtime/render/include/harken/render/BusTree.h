@@ -439,10 +439,7 @@ public:
     std::size_t SignalRoutingExtraNodes(SignalBusMapping mapping) const noexcept;
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
         std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
-        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept {
-        return SignalRoutingSnapshot(buses, edges, frames, schedules, nodeOffset,
-            SignalBusMapping::Dense(m_audioCount));
-    }
+        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept;
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
         std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
         std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset,
