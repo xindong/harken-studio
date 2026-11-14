@@ -79777,7 +79777,7 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
     for (std::uint32_t i = 0; i < n; ++i) {
         if (i < liveBusCount) {
             layouts[i] = engine.busOutputLayout[i];
-            plans.SetCustomDownmix(planIndex, i, engine.busCustomDownmix[i]);
+            plans.SetCustomDownmix(planIndex, i, engine.CustomDownmix(i));
         } else {
             layouts[i] = engine.config.mixChannelLayout;
             plans.SetCustomDownmix(planIndex, i, {});
@@ -80022,7 +80022,7 @@ void ResetBusLogicSlot(harken::Engine& engine,
     engine.busMuted[busIndex] = 0;
     engine.busSoloed[busIndex] = 0;
     engine.busOutputLayout[busIndex] = engine.config.mixChannelLayout;
-    engine.busCustomDownmix[busIndex].reset();
+    engine.busCustomDownmix.erase(busIndex);
 
     engine.busSends.EraseIf([&](const auto& edge) { return edge.source == busIndex; });
 }
@@ -123422,7 +123422,7 @@ VnResult Vn_SetBusOutputLayout(VnBusId busId, uint32_t layout) {
     // resolved mix -> layout fold; a later Vn_SetBusDownmixMatrix overrides it,
     // and Vn_ResetBusDownmixMatrix returns to this default.
     engine->busOutputLayout[busIndex] = layout;
-    engine->busCustomDownmix[busIndex].reset();
+    engine->busCustomDownmix.erase(busIndex);
     publication.Publish();
     return VN_OK;
 
@@ -123500,7 +123500,7 @@ VnResult Vn_SetBusDownmixMatrix(VnBusId busId, const VnDownmixMatrixDesc* desc) 
     // Store the full 8x8 table as given (no normalization); the fold reads only
     // the sub-block the bus's (mix -> output) layouts define, which the match
     // above pinned to the desc's own layouts.
-    engine->busCustomDownmix[busIndex] = std::move(custom);
+    engine->busCustomDownmix.insert_or_assign(busIndex, std::move(custom));
     publication.Publish();
     return VN_OK;
 
@@ -123535,7 +123535,7 @@ VnResult Vn_ResetBusDownmixMatrix(VnBusId busId) {
     // Recompute the Appendix A default for the bus's current fold (src = mix,
     // dst = the bus's output layout; for the master that output layout is the
     // device layout).
-    engine->busCustomDownmix[busIndex].reset();
+    engine->busCustomDownmix.erase(busIndex);
     publication.Publish();
     return VN_OK;
 
@@ -128609,22 +128609,28 @@ void ActivatePendingPackRevisions(Engine& engine) {
             prospective.emittedFeeders =
                 revision.topologyEmittedFeeders.data();
             prospective.emitted = revision.topologyEmitted.data();
-            FillPlan(
-                engine, revision.planIndex, nullptr, false,
-                kInvalidBusIndex, 0xFFFFFFFFu,
-                revision.dynamicRouteCandidates.empty()
-                    ? nullptr
-                    : revision.dynamicRouteCandidates.data(),
-                static_cast<std::uint32_t>(
-                    revision.dynamicRouteCandidates.size()),
-                revision.dynamicRouteRemovals.empty()
-                    ? nullptr
-                    : revision.dynamicRouteRemovals.data(),
-                static_cast<std::uint32_t>(
-                    revision.dynamicRouteRemovals.size()),
-                &revision.addSends, &revision.relevelSends,
-                nullptr, 0, nullptr, 0, &prospective);
-            StampRevisionMigrationTargets(engine, revision);
+            try {
+                FillPlan(
+                    engine, revision.planIndex, nullptr, false,
+                    kInvalidBusIndex, 0xFFFFFFFFu,
+                    revision.dynamicRouteCandidates.empty()
+                        ? nullptr
+                        : revision.dynamicRouteCandidates.data(),
+                    static_cast<std::uint32_t>(
+                        revision.dynamicRouteCandidates.size()),
+                    revision.dynamicRouteRemovals.empty()
+                        ? nullptr
+                        : revision.dynamicRouteRemovals.data(),
+                    static_cast<std::uint32_t>(
+                        revision.dynamicRouteRemovals.size()),
+                    &revision.addSends, &revision.relevelSends,
+                    nullptr, 0, nullptr, 0, &prospective);
+                StampRevisionMigrationTargets(engine, revision);
+            } catch (...) {
+                ReleaseRevisionActivationAttempt(engine, revision);
+                ++i;
+                continue;
+            }
             revision.activationAttemptPrepared = true;
             revision.activationAttemptTopologyPlanCount =
                 engine.topologyPlanCount;

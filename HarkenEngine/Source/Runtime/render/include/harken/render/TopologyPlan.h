@@ -29,6 +29,7 @@ namespace harken {
 
 using BusDownmixMatrix = std::array<float, 64>;
 using BusCustomDownmix = std::shared_ptr<const BusDownmixMatrix>;
+struct BusCustomDownmixEntry { std::uint32_t bus; BusCustomDownmix matrix; };
 
 class SignalRenderPlan;
 struct BusEffectChainAdoption;
@@ -122,7 +123,8 @@ struct TopologyPlanView {
     // Default matrices derive from layouts; only authored custom matrices own
     // immutable backing. Audio copies the selected matrix into its work row.
     const std::uint32_t* outputLayouts = nullptr;
-    const BusCustomDownmix* customDownmix = nullptr;
+    std::span<const BusCustomDownmixEntry> customDownmix;
+    const BusDownmixMatrix* CustomDownmixFor(std::uint32_t bus) const noexcept;
     std::uint32_t mixLayout = 0;
     void CopyDownmix(std::uint32_t bus, float* destination) const noexcept;
     // Per-slot tree parents and liveness (carried like the fold config, so a
@@ -211,7 +213,7 @@ public:
     std::uint32_t* OutputLayoutData(std::uint32_t planIndex);
     void SetMixLayout(std::uint32_t planIndex, std::uint32_t layout) noexcept;
     void SetCustomDownmix(std::uint32_t planIndex, std::uint32_t bus,
-                          BusCustomDownmix matrix) noexcept;
+                          BusCustomDownmix matrix);
     // Tree-parent and liveness storage for a plan: busCapacity entries each.
     // Acquire() clears parents to kPlanParentUnset (leave-unchanged) and
     // liveness to alive, so a builder that ignores them publishes a plan that
@@ -264,7 +266,7 @@ private:
     struct PlanStorage {
         std::vector<std::uint32_t> order, outputLayouts, parents, busGenerations, migrationTargets;
         std::uint32_t mixLayout = 0;
-        std::vector<BusCustomDownmix> customDownmix;
+        std::vector<BusCustomDownmixEntry> customDownmix;
         std::vector<float> preparedBusVolumeDb, preparedBusOutputVolumeDb;
         std::vector<std::uint32_t> preparedBusVolumeRampMs;
         std::vector<std::uint8_t> alive, busVolumeApply;

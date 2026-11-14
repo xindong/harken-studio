@@ -59,7 +59,6 @@ std::uint32_t TopologyPlanPool::AcquireImpl(bool legacyRows, std::uint32_t sendA
     try {
         storage.order.assign(m_busCapacity, 0);
         storage.outputLayouts.assign(m_busCapacity, 0);
-        storage.customDownmix.resize(m_busCapacity);
         storage.parents.assign(m_busCapacity, kPlanParentUnset);
         storage.alive.assign(m_busCapacity, 1);
         storage.busIds.resize(m_busCapacity);
@@ -298,13 +297,25 @@ void TopologyPlanPool::SetMixLayout(std::uint32_t planIndex, std::uint32_t layou
 }
 
 void TopologyPlanPool::SetCustomDownmix(std::uint32_t planIndex, std::uint32_t bus,
-    BusCustomDownmix matrix) noexcept {
-    m_storage[planIndex].customDownmix[bus] = std::move(matrix);
+    BusCustomDownmix matrix) {
+    auto& rows = m_storage[planIndex].customDownmix;
+    const auto it = std::lower_bound(rows.begin(), rows.end(), bus,
+        [](const auto& row, auto value) { return row.bus < value; });
+    if (it != rows.end() && it->bus == bus) {
+        if (matrix) it->matrix = std::move(matrix);
+        else rows.erase(it);
+    } else if (matrix) rows.insert(it, {bus, std::move(matrix)});
+}
+
+const BusDownmixMatrix* TopologyPlanView::CustomDownmixFor(std::uint32_t bus) const noexcept {
+    const auto it = std::lower_bound(customDownmix.begin(), customDownmix.end(), bus,
+        [](const auto& row, auto value) { return row.bus < value; });
+    return it != customDownmix.end() && it->bus == bus ? it->matrix.get() : nullptr;
 }
 
 void TopologyPlanView::CopyDownmix(std::uint32_t bus, float* destination) const noexcept {
-    if (customDownmix && customDownmix[bus])
-        std::copy_n(customDownmix[bus]->data(), 64, destination);
+    if (const auto* custom = CustomDownmixFor(bus))
+        std::copy_n(custom->data(), 64, destination);
     else
         DefaultDownmixMatrix(mixLayout, outputLayouts ? outputLayouts[bus] : 0, destination);
 }
@@ -377,7 +388,7 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     v.sendStates = sends.states.data();
     v.slotsPerBus = m_slotsPerBus;
     v.outputLayouts = m_storage[planIndex].outputLayouts.data();
-    v.customDownmix = m_storage[planIndex].customDownmix.data();
+    v.customDownmix = m_storage[planIndex].customDownmix;
     v.mixLayout = m_storage[planIndex].mixLayout;
     v.parents = m_storage[planIndex].parents.data();
     v.alive = m_storage[planIndex].alive.data();

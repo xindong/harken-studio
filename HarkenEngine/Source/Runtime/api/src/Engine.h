@@ -7686,7 +7686,6 @@ public:
         busSoloActiveCount = 0;
         busOutputLayout.assign(resolved.maxBuses, resolved.mixChannelLayout);
         busOutputLayout[0] = resolved.deviceChannelLayout;
-        busCustomDownmix.resize(resolved.maxBuses);
         // QPC rate cached here, on the logic thread, for the Vn_Update
         // self-measurement conversions.
         cpuTicksPerSecond = CpuClockTicksPerSecond();
@@ -15680,10 +15679,15 @@ public:
     // Immutable custom tables are shared with published plans. Defaults own
     // no matrix; only working rows keep a resolved runtime coefficient cache.
     std::vector<std::uint32_t> busOutputLayout;
-    std::vector<BusCustomDownmix> busCustomDownmix;
+    std::map<std::uint32_t, BusCustomDownmix> busCustomDownmix;
+    const BusCustomDownmix& CustomDownmix(std::uint32_t bus) const noexcept {
+        const auto it = busCustomDownmix.find(bus);
+        static const BusCustomDownmix empty;
+        return it != busCustomDownmix.end() ? it->second : empty;
+    }
     void CopyBusDownmix(std::uint32_t bus, float* destination) const noexcept {
-        if (busCustomDownmix[bus])
-            std::copy_n(busCustomDownmix[bus]->data(), 64, destination);
+        if (const auto& custom = CustomDownmix(bus))
+            std::copy_n(custom->data(), 64, destination);
         else
             DefaultDownmixMatrix(config.mixChannelLayout, busOutputLayout[bus], destination);
     }

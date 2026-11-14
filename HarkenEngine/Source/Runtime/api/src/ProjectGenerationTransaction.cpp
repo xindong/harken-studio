@@ -508,7 +508,7 @@ void ResetNeutralBusPropertiesV1(Engine& engine, std::uint32_t slot) noexcept {
     engine.busFaderAfterSlots[slot] = engine.config.fxSlotsPerBus;
     const auto layout = slot == 0 ? engine.config.deviceChannelLayout : engine.config.mixChannelLayout;
     engine.busOutputLayout[slot] = layout;
-    engine.busCustomDownmix[slot].reset();
+    engine.busCustomDownmix.erase(slot);
 }
 
 bool CanResetVolumeOnlyNonVolumePropertiesV2(const Engine& engine,
@@ -579,7 +579,7 @@ void ResetVolumeOnlyNonVolumePropertiesV2(Engine& engine,
     engine.busFaderAfterSlots[slot] = engine.config.fxSlotsPerBus;
     const auto layout = slot == 0 ? engine.config.deviceChannelLayout : engine.config.mixChannelLayout;
     engine.busOutputLayout[slot] = layout;
-    engine.busCustomDownmix[slot].reset();
+    engine.busCustomDownmix.erase(slot);
 }
 
 bool CanRetireTopologyBusV1(const Engine& engine, BusSlotRef ref, std::uint64_t revision) noexcept {
@@ -1908,7 +1908,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                 continue;
             }
             engine.preparedTopologyPlans.OutputLayoutData(planIndex)[slot] = engine.busOutputLayout[slot];
-            engine.preparedTopologyPlans.SetCustomDownmix(planIndex, slot, engine.busCustomDownmix[slot]);
+            engine.preparedTopologyPlans.SetCustomDownmix(planIndex, slot, engine.CustomDownmix(slot));
         }
         if (engine.topologyPlans.InUse() != liveInUse ||
             engine.commands.PublishedHead() != commandHeadBefore ||

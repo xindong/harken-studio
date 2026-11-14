@@ -723,7 +723,7 @@ TEST(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
     ASSERT_TRUE(plan.valid);
     ASSERT_GE(plan.slotCount, 1u);
     ASSERT_NE(plan.outputLayouts, nullptr);
-    ASSERT_NE(plan.customDownmix, nullptr);
+    EXPECT_TRUE(plan.customDownmix.empty());
     ASSERT_NE(plan.busIds, nullptr);
     ASSERT_NE(plan.alive, nullptr);
     ASSERT_NE(plan.busVolumeApply, nullptr);
@@ -746,7 +746,7 @@ TEST(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
         EXPECT_EQ(0u, plan.preparedBusVolumeRampMs[i]);
         float coeffs[64];
         plan.CopyDownmix(i, coeffs);
-        EXPECT_FALSE(plan.customDownmix[i]);
+        EXPECT_EQ(plan.CustomDownmixFor(i), nullptr);
         if (plan.busIds[i] == VN_BUS_MASTER) {
             sawMaster = true;
             EXPECT_EQ(plan.outputLayouts[i], VN_CHANNEL_LAYOUT_STEREO);
