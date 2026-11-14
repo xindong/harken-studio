@@ -979,6 +979,13 @@ std::uint32_t EffectParamTargetStore::TargetRevision(
     return record == nullptr ? 0 : record->revision;
 }
 
+std::uint32_t EffectParamTargetStore::InstalledSlotRevision(
+    Scope scope, std::uint64_t objectId, std::uint32_t generation,
+    std::uint32_t slot, std::uint32_t type) const noexcept {
+    const auto* record = FindExact(scope, objectId, generation, slot, 0, false);
+    return record != nullptr && record->effectType == type ? record->revision : 0;
+}
+
 bool EffectParamTargetStore::ExactTargetRevision(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
     std::uint32_t paramIndex, std::uint32_t expectedEffectType,

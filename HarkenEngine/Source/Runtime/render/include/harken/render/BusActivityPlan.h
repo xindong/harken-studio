@@ -26,18 +26,18 @@ struct BusDormantCapture {
     BusSlotRef bus;
     std::array<BusTree::DormantToneSection, 4> filters;
     std::array<BuiltinEffectDormantState, kMaxFxSlotsPerBus> effects;
-    std::array<EffectObjectIdentity, kMaxFxSlotsPerBus> identities;
+    std::array<std::uint32_t, kMaxFxSlotsPerBus> revisions{};
+    std::array<EffectInstanceRef, kMaxFxSlotsPerBus> expectedEffects{};
     std::array<ToneDormantState, kMaxFxSlotsPerBus> tones;
 };
 
 struct BusDormantWork {
-    struct Filter { std::uint32_t section; BusTree::DormantToneSection state; };
-    struct Effect { std::uint32_t slot; BuiltinEffectDormantState state; EffectObjectIdentity identity; };
-    struct Tone { std::uint32_t slot; ToneDormantState state; };
     BusSlotRef bus;
-    std::vector<Filter> filters;
-    std::vector<Effect> effects;
-    std::vector<Tone> tones;
+    std::vector<std::byte> payload;
+    std::uint32_t sampleRate = 0;
+    std::array<std::uint8_t, kMaxFxSlotsPerBus> types{};
+    std::uint8_t filterMask = 0;
+    std::uint8_t renderedMask = 0;
 };
 
 // Control-owned immutable residuals, independent of retired work-row storage.

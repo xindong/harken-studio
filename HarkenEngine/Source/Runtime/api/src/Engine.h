@@ -7416,6 +7416,11 @@ public:
         }
         if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
         effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
+        buses.AttachEffectRevisionReader(this, [](const void* context, BusSlotRef bus,
+            std::uint32_t slot, std::uint32_t type) noexcept {
+            return static_cast<const Engine*>(context)->effectParamTargets.InstalledSlotRevision(
+                EffectParamTargetStore::Scope::Bus, bus.index, bus.generation, slot, type);
+        });
         variables.AttachTargetRetirementStorage(this, [](void* context) noexcept {
             auto& engine = *static_cast<Engine*>(context);
             return engine.params.PrepareRetiringTargetStorage() && engine.busTargets.PrepareRetiringTargetStorage();

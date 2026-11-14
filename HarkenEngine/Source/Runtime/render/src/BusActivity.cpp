@@ -2,6 +2,7 @@
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/render/VoicePool.h"
 #include <bit>
+#include <cstring>
 #include <stdexcept>
 
 namespace harken {
@@ -29,21 +30,47 @@ bool DefaultDormantWork(const BusDormantCapture& saved) noexcept {
         });
 }
 
+std::size_t DormantValueBytes(std::uint32_t type) noexcept {
+    switch (type) {
+    case VN_EFFECT_GAIN: return sizeof(float);
+    case VN_EFFECT_LIMITER: return sizeof(double);
+    case VN_EFFECT_COMPRESSOR: return sizeof(BuiltinEffectDormantState::Values::compressor);
+    case VN_EFFECT_FEEDBACK_DELAY: return sizeof(BuiltinEffectDormantState::Values::delay);
+    default: return 0;
+    }
+}
+
 std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture& saved) {
     auto result = std::make_shared<BusDormantWork>();
     result->bus = saved.bus;
-    result->filters.reserve(std::count_if(saved.filters.begin(), saved.filters.end(),
-        [](const auto& value) { return !DefaultDormantFilter(value); }));
-    result->effects.reserve(std::count_if(saved.effects.begin(), saved.effects.end(),
-        [](const auto& value) { return value.type != kEffectTypeNone; }));
-    result->tones.reserve(std::count_if(saved.effects.begin(), saved.effects.end(),
-        [](const auto& value) { return value.type == VN_EFFECT_THREE_BAND_TONE; }));
+    std::size_t size = 0;
     for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
-        if (!DefaultDormantFilter(saved.filters[i])) result->filters.push_back({i, saved.filters[i]});
+        if (!DefaultDormantFilter(saved.filters[i])) {
+            result->filterMask |= 1u << i;
+            size += sizeof(saved.filters[i]);
+        }
     for (std::uint32_t i = 0; i < saved.effects.size(); ++i) {
-        if (saved.effects[i].type == kEffectTypeNone) continue;
-        result->effects.push_back({i, saved.effects[i], saved.identities[i]});
-        if (saved.effects[i].type == VN_EFFECT_THREE_BAND_TONE) result->tones.push_back({i, saved.tones[i]});
+        const auto& effect = saved.effects[i];
+        if (effect.type == kEffectTypeNone) continue;
+        result->types[i] = static_cast<std::uint8_t>(effect.type);
+        if (effect.hasRendered) result->renderedMask |= 1u << i;
+        if (effect.sampleRate != 0) result->sampleRate = effect.sampleRate;
+        size += sizeof(saved.revisions[i]) + DormantValueBytes(effect.type);
+        if (effect.type == VN_EFFECT_THREE_BAND_TONE) size += sizeof(ToneDormantState);
+    }
+    result->payload.resize(size);
+    auto* cursor = result->payload.data();
+    const auto append = [&](const void* value, std::size_t bytes) {
+        if (bytes != 0) { std::memcpy(cursor, value, bytes); cursor += bytes; }
+    };
+    for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
+        if ((result->filterMask & (1u << i)) != 0) append(&saved.filters[i], sizeof(saved.filters[i]));
+    for (std::uint32_t i = 0; i < saved.effects.size(); ++i) {
+        const auto type = saved.effects[i].type;
+        if (type == kEffectTypeNone) continue;
+        append(&saved.revisions[i], sizeof(saved.revisions[i]));
+        append(&saved.effects[i].values, DormantValueBytes(type));
+        if (type == VN_EFFECT_THREE_BAND_TONE) append(&saved.tones[i], sizeof(saved.tones[i]));
     }
     return result;
 }
@@ -333,6 +360,13 @@ bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
             block = fact->blockSequence;
             auto saved = std::make_shared<BusDormantCapture>();
             saved->bus = binding.bus;
+            saved->expectedEffects = LogicEffects(binding.bus);
+            for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
+                const auto type = saved->expectedEffects[i].type;
+                if (type == kEffectTypeNone) continue;
+                saved->revisions[i] = InstalledEffectRevision(binding.bus, i, type);
+                if (saved->revisions[i] == 0) throw std::invalid_argument("missing installed effect revision");
+            }
             if (!RetainWorkRow(binding.work)) throw std::invalid_argument("expired sleep row");
             plan.sleeping.push_back({*fact, std::move(saved)});
         }
@@ -414,20 +448,32 @@ bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
         if (entry->bus != host) continue;
         const auto& saved = *entry;
         const std::array sections{&row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
-        for (const auto& filter : saved.filters)
-            RestoreDormantToneSection(*sections[filter.section], filter.state);
-        for (const auto& stored : saved.effects) {
-            const auto slot = stored.slot;
-            if (slot >= m_fxSlots) continue;
-            const auto& effect = row.fxSlotEffectRef[slot];
-            const auto identity = m_effectBank.ObjectIdentity(effect);
-            if (effect.type == kEffectTypeNone || effect.type != stored.state.type ||
-                identity.effectId != stored.identity.effectId ||
-                identity.projectId != stored.identity.projectId) continue;
-            const auto tone = std::find_if(saved.tones.begin(), saved.tones.end(),
-                [slot](const auto& value) { return value.slot == slot; });
-            if (!RestoreBuiltinEffectDormantState(row.fxSlots[slot].state,
-                    stored.state, tone != saved.tones.end() ? &tone->state : nullptr)) return false;
+        const auto* cursor = saved.payload.data();
+        const auto read = [&](void* value, std::size_t bytes) {
+            if (bytes != 0) { std::memcpy(value, cursor, bytes); cursor += bytes; }
+        };
+        for (std::uint32_t i = 0; i < sections.size(); ++i) {
+            if ((saved.filterMask & (1u << i)) == 0) continue;
+            DormantToneSection state;
+            read(&state, sizeof(state));
+            RestoreDormantToneSection(*sections[i], state);
+        }
+        for (std::uint32_t slot = 0; slot < saved.types.size(); ++slot) {
+            const auto type = saved.types[slot];
+            if (type == kEffectTypeNone) continue;
+            std::uint32_t revision = 0;
+            BuiltinEffectDormantState state;
+            ToneDormantState tone;
+            state.type = type;
+            state.sampleRate = saved.sampleRate;
+            state.hasRendered = (saved.renderedMask & (1u << slot)) != 0;
+            read(&revision, sizeof(revision));
+            read(&state.values, DormantValueBytes(type));
+            if (type == VN_EFFECT_THREE_BAND_TONE) read(&tone, sizeof(tone));
+            if (slot >= m_fxSlots || row.fxSlotEffectRef[slot].type != type ||
+                revision == 0 || InstalledEffectRevision(host, slot, type) != revision) continue;
+            if (!RestoreBuiltinEffectDormantState(row.fxSlots[slot].state, state,
+                    type == VN_EFFECT_THREE_BAND_TONE ? &tone : nullptr)) return false;
         }
         break;
     }
@@ -516,10 +562,12 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
                 if (!CaptureDormantToneSection(*sections[i], m_mixChannels, saved.filters[i])) return reject();
             for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
                 const auto& ref = row->bus.fxSlotEffectRef[i];
+                const auto& prepared = saved.expectedEffects[i];
+                if (ref.type != prepared.type || ref.poolIndex != prepared.poolIndex || ref.generation != prepared.generation)
+                    return reject();
                 if (ref.type == kEffectTypeNone) continue;
                 if (!CaptureBuiltinEffectDormantState(ref.type, row->bus.fxSlots[i].state,
                         m_mixChannels, saved.effects[i], &saved.tones[i])) return reject();
-                saved.identities[i] = m_effectBank.ObjectIdentity(ref);
             }
         }
         if (plan.dormantSignals != nullptr &&

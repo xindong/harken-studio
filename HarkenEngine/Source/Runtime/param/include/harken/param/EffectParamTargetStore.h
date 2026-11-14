@@ -312,6 +312,10 @@ public:
                           TargetClaimOwner owner, float* resolved,
                           std::uint32_t* revision,
                           std::uint32_t* effectType) const noexcept;
+    // Logic-only identity of the live installed slot, including non-bindable parameters.
+    std::uint32_t InstalledSlotRevision(Scope scope, std::uint64_t objectId,
+        std::uint32_t generation, std::uint32_t slot, std::uint32_t type) const noexcept;
+
     std::uint32_t TargetRevision(Scope scope, std::uint64_t objectId,
                                  std::uint32_t slot,
                                  std::uint32_t paramIndex) const noexcept;

@@ -1196,10 +1196,9 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     buses.AcknowledgeSleep();
     const auto residual = buses.DormantWorkFor(bus);
     ASSERT_NE(residual, nullptr);
-    EXPECT_TRUE(residual->filters.empty());
-    ASSERT_EQ(residual->effects.size(), 1u);
-    EXPECT_EQ(residual->effects[0].slot, 0u);
-    EXPECT_TRUE(residual->tones.empty());
+    EXPECT_EQ(residual->filterMask, 0u);
+    EXPECT_EQ(residual->types[0], VN_EFFECT_GAIN);
+    EXPECT_EQ(std::count(residual->types.begin(), residual->types.end(), kEffectTypeNone), 7);
     buses.DrainActivities();
     engine.nullBackend.Pump(1);
     buses.DrainActivities();

@@ -147,6 +147,12 @@ public:
     void ServiceWorkRowRetirements() noexcept;
     std::uint32_t WorkRowsInUse() const noexcept { return m_workRowsInUse; }
 
+    using EffectRevisionReader = std::uint32_t (*)(const void*, BusSlotRef, std::uint32_t, std::uint32_t) noexcept;
+    // Control-owner only. Audio consumes the prepared token, never this reader.
+    void AttachEffectRevisionReader(const void* context, EffectRevisionReader reader) noexcept {
+        m_effectRevisionContext = context;
+        m_effectRevisionReader = reader;
+    }
     void AttachActivitySnapshots(const SnapshotBuffer* source) noexcept { m_activitySnapshots = source; }
     std::uint64_t AudioActivityPublication() const noexcept;
     const BusActivityPlan* ObservedActivity(std::uint64_t publication) const noexcept;
@@ -611,6 +617,11 @@ private:
     std::span<const std::uint32_t> WorkingOrder() const noexcept;
     std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
     const SnapshotBuffer* m_activitySnapshots = nullptr;
+    const void* m_effectRevisionContext = nullptr;
+    EffectRevisionReader m_effectRevisionReader = nullptr;
+    std::uint32_t InstalledEffectRevision(BusSlotRef bus, std::uint32_t slot, std::uint32_t type) const noexcept {
+        return m_effectRevisionReader != nullptr ? m_effectRevisionReader(m_effectRevisionContext, bus, slot, type) : 0;
+    }
     std::uint64_t m_nextActivityPublication = 0;
     std::unique_ptr<BusDormantRegistry> m_dormant;
     BusActivityPlan* m_lastQueuedActivity = nullptr;
