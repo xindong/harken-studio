@@ -138,6 +138,7 @@ public:
                 const auto found = Lower(capture->bus.index);
                 if (found == m_rows.end() || found->bus != capture->bus.index) continue;
                 Prepared next{}; next.bus = capture->bus.index; next.extra.bus = next.bus;
+                std::size_t payloadBytes = 0;
                 for (std::uint32_t slot = 0; slot < kMaxFxSlotsPerBus; ++slot) {
                     const auto& state = capture->effects[slot];
                     const auto seed = capture->revisions[slot];
@@ -148,17 +149,21 @@ public:
                     next.seeds[slot] = seed;
                     if (state.type == VN_EFFECT_GAIN) next.values[slot] = std::bit_cast<std::uint32_t>(state.values.gain);
                     else {
-                        next.values[slot] = static_cast<std::uint32_t>(next.extra.payload.size());
+                        next.values[slot] = static_cast<std::uint32_t>(payloadBytes);
                         next.extra.sampleRate = state.sampleRate;
-                        const auto bytes = ValueBytes(state.type);
-                        const auto old = next.extra.payload.size();
-                        next.extra.payload.resize(old + bytes);
-                        const void* source = state.type == VN_EFFECT_THREE_BAND_TONE
-                            ? static_cast<const void*>(&capture->tones[slot]) : &state.values;
-                        std::memcpy(next.extra.payload.data() + old, source, bytes);
+                        payloadBytes += ValueBytes(state.type);
                     }
                 }
-                if (!next.extra.payload.empty()) ++additional;
+                next.extra.payload.resize(payloadBytes);
+                for (std::uint32_t slot = 0; slot < kMaxFxSlotsPerBus; ++slot) {
+                    const auto& state = capture->effects[slot];
+                    if (!(next.mask & (1u << slot)) || state.type == VN_EFFECT_GAIN) continue;
+                    const void* source = state.type == VN_EFFECT_THREE_BAND_TONE
+                        ? static_cast<const void*>(&capture->tones[slot]) : &state.values;
+                    std::memcpy(next.extra.payload.data() + next.values[slot], source, ValueBytes(state.type));
+                }
+                const auto extra = ColdLower(next.bus);
+                if (payloadBytes != 0 && (extra == m_coldExtras.end() || extra->bus != next.bus)) ++additional;
                 prepared.push_back(std::move(next));
             }
             if (additional > m_coldExtras.max_size() - m_coldExtras.size()) return false;

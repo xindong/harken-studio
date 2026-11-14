@@ -61,11 +61,7 @@ bool PrepareBusActivitySelection(const TopologyPlanView& topology,
     };
     try {
         std::vector<std::pair<std::uint32_t, std::uint32_t>> edges;
-        std::vector<std::size_t> offsets(static_cast<std::size_t>(count) + 1);
-        const auto edge = [&](std::uint32_t from, std::uint32_t to) {
-            edges.emplace_back(from, to);
-            ++offsets[from + 1];
-        };
+        const auto edge = [&](std::uint32_t from, std::uint32_t to) { edges.emplace_back(from, to); };
         std::vector<std::uint8_t> live(topology.slotCount);
         for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
             const auto bus = topology.order[i];
@@ -73,14 +69,12 @@ bool PrepareBusActivitySelection(const TopologyPlanView& topology,
             if (bus != 0) {
                 const auto parent = topology.parents[bus];
                 if (parent >= topology.slotCount || !topology.alive[parent]) return false;
-                edge(bus, parent);
             }
             const auto sends = topology.Sends(bus);
             for (std::uint32_t s = 0; s < sends.count; ++s) {
                 const auto target = topology.sendTargets[sends.first + s];
                 if (target == kEmptySendTarget) continue;
                 if (target >= topology.slotCount || !topology.alive[target]) return false;
-                edge(bus, target);
             }
         }
         if (!live[0]) return false;
@@ -120,10 +114,18 @@ bool PrepareBusActivitySelection(const TopologyPlanView& topology,
             if (member.signalNode >= signalCount || !validBus(member.bus)) return false;
             edge(topology.slotCount + member.signalNode, member.bus.index);
         }
-        for (std::uint32_t i = 0; i < count; ++i) offsets[i + 1] += offsets[i];
-        auto cursor = offsets;
-        std::vector<std::uint32_t> outgoing(edges.size());
-        for (const auto& [from, to] : edges) outgoing[cursor[from]++] = to;
+        // Parent and Send edges already belong to the immutable topology.
+        // Only relationships absent from that representation need adjacency storage.
+        std::vector<std::size_t> offsets;
+        std::vector<std::uint32_t> outgoing;
+        if (!edges.empty()) {
+            offsets.resize(static_cast<std::size_t>(count) + 1);
+            for (const auto& [from, to] : edges) ++offsets[from + 1];
+            for (std::uint32_t i = 0; i < count; ++i) offsets[i + 1] += offsets[i];
+            auto cursor = offsets;
+            outgoing.resize(edges.size());
+            for (const auto& [from, to] : edges) outgoing[cursor[from]++] = to;
+        }
         std::vector<std::uint8_t> selected(count);
         std::vector<std::uint32_t> queue;
         queue.reserve(count);
@@ -138,12 +140,26 @@ bool PrepareBusActivitySelection(const TopologyPlanView& topology,
             if (node >= signalCount) return false;
             select(topology.slotCount + node);
         }
-        for (std::size_t i = 0; i < queue.size(); ++i)
-            for (auto j = offsets[queue[i]]; j < offsets[queue[i] + 1]; ++j) select(outgoing[j]);
+        for (std::size_t i = 0; i < queue.size(); ++i) {
+            const auto node = queue[i];
+            if (node < topology.slotCount) {
+                if (!live[node]) return false;
+                if (node != 0) select(topology.parents[node]);
+                const auto sends = topology.Sends(node);
+                for (std::uint32_t send = 0; send < sends.count; ++send) {
+                    const auto target = topology.sendTargets[sends.first + send];
+                    if (target != kEmptySendTarget) select(target);
+                }
+            }
+            if (!offsets.empty())
+                for (auto j = offsets[node]; j < offsets[node + 1]; ++j) select(outgoing[j]);
+        }
         // Plane zero remains available even for an entirely silent engine.
         // Its existence alone must not keep every Master sidechain awake.
         selected[0] = 1;
         BusActivitySelection next;
+        next.buses.reserve(std::min<std::size_t>(topology.slotCount, queue.size() + 1));
+        next.signalNodes.reserve(std::min<std::size_t>(signalCount, queue.size()));
         for (std::uint32_t i = 0; i < topology.orderCount; ++i)
             if (selected[topology.order[i]]) next.buses.push_back(topology.order[i]);
         for (std::uint32_t i = 0; i < topology.slotCount; ++i)

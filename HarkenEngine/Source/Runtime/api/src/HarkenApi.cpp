@@ -74453,7 +74453,6 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
     // a fresh, unpublished row and may not pass the currently rendering row.
     for (const auto& ref : row.fxSlotEffectRef)
         if (ref.type != kEffectTypeNone) return VN_IN_USE;
-    row = {};
     const auto fail = [&](VnResult result) {
         CancelBusWorkState(row);
         return result;
@@ -80131,7 +80130,7 @@ bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
         const auto installed = [&](VnVoiceHandle render, BusSlotRef dry, const VoiceSendConfigs& sends) {
             std::uint32_t count = 0;
             const auto slot = static_cast<std::uint32_t>(render);
-            if (render != 0 && slot < engine.playbackPaths.size() &&
+            if (signals != nullptr && render != 0 && slot < engine.playbackPaths.size() &&
                 engine.playbackPaths[slot].voiceInstance == render) {
                 const auto path = engine.playbackPaths[slot].Capture();
                 count = member({path.path.rows, path.path.rowCount});

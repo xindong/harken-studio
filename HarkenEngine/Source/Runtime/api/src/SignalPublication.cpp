@@ -238,7 +238,7 @@ static bool SelectRetainedBusActivity(Engine& engine, const TopologyPlanView& to
                 engine.voices.IsAlive((static_cast<std::uint64_t>(route.sourceGeneration) << 32) | route.sourceIndex))
                 roots.buses.push_back(target);
         };
-        engine.dynamicRoutes.ForEachDefinition(detector);
+        if (engine.dynamicRoutes.ActiveRouteCount() != 0) engine.dynamicRoutes.ForEachDefinition(detector);
         for (const auto& command : commands) {
             std::uint32_t index = kInvalidDynamicRoutePlanIndex;
             switch (command.opcode) {
@@ -274,16 +274,18 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     } privateRows{engine.buses};
     BusActivityPlan* activity = nullptr;
     try {
-        BusActivitySelection selection;
-        if (selected != nullptr) selection = *selected;
-        else if (!SelectRetainedBusActivity(engine, topology, commands, providedWork, selection)) return false;
+        BusActivitySelection ownedSelection;
+        if (selected == nullptr) {
+            if (!SelectRetainedBusActivity(engine, topology, commands, providedWork, ownedSelection)) return false;
+            selected = &ownedSelection;
+        }
+        const auto& selection = *selected;
         std::vector<BusTree::WorkBinding> working;
-        std::vector<BusTree::WorkRef> preparedRows;
+        std::size_t preparedCount = 0;
         std::vector<SignalRenderNodeInput> busBindings;
         working.reserve(selection.buses.size());
-        busBindings.reserve(selection.buses.size());
+        if (topology.signals != nullptr) busBindings.reserve(selection.buses.size());
         privateRows.rows.reserve(selection.buses.size());
-        preparedRows.reserve(selection.buses.size());
         for (const auto bus : selection.buses) {
             const BusSlotRef host{bus, topology.generations[bus]};
             auto work = engine.buses.AcceptedWorkRef(host);
@@ -315,14 +317,16 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                 row.parentIndex = topology.parents[bus];
                 row.outputLayout = topology.outputLayouts[bus];
                 topology.CopyDownmix(bus, row.downmixCoeffs);
-                preparedRows.push_back(work);
+                ++preparedCount;
             }
             working.push_back({host, work});
-            SignalRenderNodeInput node;
-            node.busIndex = bus;
-            node.busId = node.stableId = topology.busIds[bus];
-            node.busGeneration = host.generation;
-            busBindings.push_back(node);
+            if (topology.signals != nullptr) {
+                SignalRenderNodeInput node;
+                node.busIndex = bus;
+                node.busId = node.stableId = topology.busIds[bus];
+                node.busGeneration = host.generation;
+                busBindings.push_back(node);
+            }
         }
         const auto* previous = engine.buses.HasAcceptedActivity()
             ? engine.buses.AcceptedActivitySignals() : engine.acceptedSignalPlan.get();
@@ -352,9 +356,12 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         activity->meterLanes.reserve(working.size());
         for (const auto& binding : working)
             activity->meterLanes.push_back(engine.meterRing.PrepareLane(binding.bus.index));
-        activity->preparedEffects.reserve(preparedRows.size());
-        for (const auto ref : preparedRows) {
-            const auto& row = *engine.buses.PreparedWorkRow(ref);
+        activity->preparedEffects.reserve(preparedCount);
+        for (const auto& binding : working) {
+            const auto ref = binding.work;
+            const auto* preparedRow = engine.buses.PreparedWorkRow(ref);
+            if (preparedRow == nullptr) continue;
+            const auto& row = *preparedRow;
             const BusSlotRef host{row.busIndex, row.generation};
             {
                 BusActivityPlan::PreparedEffects entry;
