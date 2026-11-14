@@ -1147,6 +1147,15 @@ namespace Harken
             Off(f, "VnStreamSourceInfoV1", "state", Marshal.OffsetOf<VnStreamSourceInfoV1>("state"), 4);
             Off(f, "VnStreamSourceInfoV1", "result", Marshal.OffsetOf<VnStreamSourceInfoV1>("result"), 8);
             Off(f, "VnStreamSourceInfoV1", "reserved0", Marshal.OffsetOf<VnStreamSourceInfoV1>("reserved0"), 12);
+            Size(f, "VnBusState", Marshal.SizeOf<VnBusState>(), 48);
+            Off(f, "VnBusState", "busId", Marshal.OffsetOf<VnBusState>("busId"), 0);
+            Off(f, "VnBusState", "blockSequence", Marshal.OffsetOf<VnBusState>("blockSequence"), 16);
+            Off(f, "VnBusState", "busIndex", Marshal.OffsetOf<VnBusState>("busIndex"), 24);
+            Off(f, "VnBusState", "busGeneration", Marshal.OffsetOf<VnBusState>("busGeneration"), 28);
+            Off(f, "VnBusState", "flags", Marshal.OffsetOf<VnBusState>("flags"), 32);
+            Off(f, "VnBusState", "peakPreFader", Marshal.OffsetOf<VnBusState>("peakPreFader"), 36);
+            Off(f, "VnBusState", "peakPostFader", Marshal.OffsetOf<VnBusState>("peakPostFader"), 40);
+            Off(f, "VnBusState", "peakPostEffects", Marshal.OffsetOf<VnBusState>("peakPostEffects"), 44);
             return f;
         }
 

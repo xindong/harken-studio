@@ -111,6 +111,8 @@ struct BusActivityPlan {
     BusActivityPlan* sleepPrevious = nullptr;
     VoicePool* sleepVoices = nullptr;
     std::uint32_t logicPins = 0;
+    std::uint64_t publication = 0;
+    bool reclaimCandidate = false; // logic-only, captured before the completed receipt
     BusTree& tree;
     CommandQueue::BusActivityAttachment attachment{};
     std::atomic<Phase> phase{Phase::Preparing};

@@ -108,6 +108,111 @@ bool PollUntilAudioChunk(VnMonitorSessionHandle handle,
 
 } // namespace
 
+TEST(MonitorMeasure, BusStatesPaginateBeyondLegacySnapshotWithoutWakingColdDefinitions) {
+    harkentest::EngineSession session(MeasurementRegistryConfig(2, 256));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    for (std::uint32_t i = 1; i <= 80; ++i) {
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(20000 + i), VN_BUS_MASTER));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    const auto head = engine.commands.PublishedHead();
+    const auto working = engine.buses.WorkingPlaneCount();
+    std::uint32_t count = 99, next = UINT32_MAX;
+    ASSERT_EQ(VN_OK, Vn_CaptureBusStates(0, nullptr, 0, &count, &next));
+    EXPECT_EQ(0u, count);
+    EXPECT_EQ(0u, next);
+    std::array<VnBusState, 7> rows{};
+    std::uint32_t total = 0;
+    do {
+        ASSERT_EQ(VN_OK, Vn_CaptureBusStates(next, rows.data(), rows.size(), &count, &next));
+        for (std::uint32_t i = 0; i < count; ++i) {
+            EXPECT_EQ(total, rows[i].busIndex);
+            EXPECT_NE(0u, rows[i].flags & VN_BUS_STATE_VALID);
+            EXPECT_GT(rows[i].blockSequence, 0u);
+            if (total != 0) {
+                EXPECT_EQ(harkentest::ObjectId(20000 + total), rows[i].busId);
+                EXPECT_EQ(VN_BUS_STATE_VALID, rows[i].flags);
+                EXPECT_EQ(0, rows[i].peakPostEffects);
+            }
+            ++total;
+        }
+    } while (next != UINT32_MAX);
+    EXPECT_EQ(81u, total);
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+    EXPECT_EQ(working, engine.buses.WorkingPlaneCount());
+    EXPECT_EQ(VN_INVALID_ARG, Vn_CaptureBusStates(0, nullptr, 1, &count, &next));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_CaptureBusStates(0, rows.data(), 1, nullptr, &next));
+}
+
+TEST(MonitorMeasure, BusStatesPublishFreshPeaksAndCompletedSleepWakeMembership) {
+    harkentest::EngineSession session(MeasurementRegistryConfig(2, 256));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto busId = harkentest::ObjectId(21001);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(busId, VN_BUS_MASTER));
+    const auto index = engine.buses.FindRef(busId).index;
+    VnBusState row{};
+    std::uint32_t count = 0, next = 0;
+    const auto capture = [&]() {
+        EXPECT_EQ(VN_OK, Vn_CaptureBusStates(index, &row, 1, &count, &next));
+        EXPECT_EQ(1u, count);
+        EXPECT_EQ(busId, row.busId);
+    };
+    capture();
+    EXPECT_EQ(0u, row.flags);
+    engine.nullBackend.Pump(1);
+    capture();
+    ASSERT_EQ(VN_BUS_STATE_VALID, row.flags);
+    const auto coldBlock = row.blockSequence;
+    std::vector<float> samples(512, .125f);
+    std::fill(samples.begin() + 256, samples.end(), .5f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    const auto sound = harkentest::ObjectId(21002);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    play.busId = busId;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    capture();
+    EXPECT_EQ(VN_BUS_STATE_VALID, row.flags);
+    EXPECT_EQ(coldBlock, row.blockSequence);
+    engine.nullBackend.Pump(1);
+    capture();
+    ASSERT_EQ(VN_BUS_STATE_VALID | VN_BUS_STATE_WORKING | VN_BUS_STATE_RENDERED, row.flags);
+    EXPECT_GT(row.blockSequence, coldBlock);
+    EXPECT_FLOAT_EQ(.125f, row.peakPreFader);
+    EXPECT_FLOAT_EQ(.125f, row.peakPostFader);
+    EXPECT_FLOAT_EQ(.125f, row.peakPostEffects);
+    const auto firstBlock = row.blockSequence;
+    engine.nullBackend.Pump(1);
+    capture();
+    EXPECT_GT(row.blockSequence, firstBlock);
+    EXPECT_FLOAT_EQ(.5f, row.peakPostEffects);
+    engine.nullBackend.Pump(110);
+    capture();
+    const auto beforeSleep = row.blockSequence;
+    ASSERT_NE(0u, row.flags & VN_BUS_STATE_WORKING);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    capture();
+    EXPECT_NE(0u, row.flags & VN_BUS_STATE_WORKING);
+    EXPECT_EQ(beforeSleep, row.blockSequence);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    capture();
+    EXPECT_GT(row.blockSequence, beforeSleep);
+    EXPECT_EQ(VN_BUS_STATE_VALID, row.flags);
+    EXPECT_EQ(0, row.peakPostEffects);
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    capture();
+    EXPECT_EQ(VN_BUS_STATE_VALID, row.flags);
+    engine.nullBackend.Pump(1);
+    capture();
+    EXPECT_EQ(VN_BUS_STATE_VALID | VN_BUS_STATE_WORKING | VN_BUS_STATE_RENDERED, row.flags);
+    EXPECT_FLOAT_EQ(.125f, row.peakPostEffects);
+}
+
 TEST(MonitorMeasure, RegistryListsFirstBatchKinds) {
     harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());

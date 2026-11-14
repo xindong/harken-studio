@@ -671,6 +671,13 @@ namespace Harken
         VN_REMOTE_FAILED = 3,
     }
 
+    internal enum VnBusStateFlags : uint
+    {
+        VN_BUS_STATE_VALID = 1,
+        VN_BUS_STATE_WORKING = 2,
+        VN_BUS_STATE_RENDERED = 4,
+    }
+
     /// <summary>Harken.h #define constants.</summary>
     public static class VnConstants
     {
@@ -2257,6 +2264,19 @@ namespace Harken
     public uint state;
     public int result;
     public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnBusState
+    {
+    public VnObjectId busId;
+    public ulong blockSequence;
+    public uint busIndex;
+    public uint busGeneration;
+    public uint flags;
+    public float peakPreFader;
+    public float peakPostFader;
+    public float peakPostEffects;
     }
 
 }

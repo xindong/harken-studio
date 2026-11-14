@@ -30,18 +30,11 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
         StableRowStorage<Payload> payloads;
         if (!payloads.Reserve(payloadCapacity)) return false;
         std::vector<std::uint32_t> freeRows, freePayloads;
-        freeRows.reserve(capacity);
-        freePayloads.reserve(payloadCapacity);
         std::vector<FreeRange> freeRanges;
-        freeRanges.reserve(static_cast<std::size_t>(payloadCapacity) + 1);
+        freeRanges.reserve(1);
         if (targetPoolCapacity != 0) {
             freeRanges.push_back({0, targetPoolCapacity});
         }
-        for (std::uint32_t slot = 0; slot < capacity; ++slot) {
-            freeRows.push_back(capacity - slot - 1u);
-        }
-        for (std::uint32_t slot = payloadCapacity; slot > 0; --slot)
-            freePayloads.push_back(slot - 1u);
         rows_.Swap(rows);
         payloads_.Swap(payloads);
         freeRows_ = std::move(freeRows);
@@ -54,6 +47,7 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
     } catch (const std::length_error&) {
         return false;
     }
+    nextUnusedRow_ = nextUnusedPayload_ = 0;
     capacity_ = capacity;
     maxTargetsPerSlice_ = maxTargetsPerSlice;
     targetPoolCapacity_ = targetPoolCapacity;
@@ -102,8 +96,8 @@ VariableSliceTable::ReservationStatus VariableSliceTable::ReservationAvailabilit
     std::uint32_t exactTargetCount) const noexcept {
     if (exactTargetCount > maxTargetsPerSlice_ || exactTargetCount > targetPoolCapacity_)
         return ReservationStatus::TargetLimit;
-    if (freeRows_.empty()) return ReservationStatus::ProofCapacity;
-    if (freePayloads_.empty()) return ReservationStatus::PayloadCapacity;
+    if (FreeRowCount() == 0) return ReservationStatus::ProofCapacity;
+    if (FreePayloadCount() == 0) return ReservationStatus::PayloadCapacity;
     if (exactTargetCount != 0 && std::none_of(freeRanges_.begin(), freeRanges_.end(),
             [&](const FreeRange& range) { return range.count >= exactTargetCount; }))
         return ReservationStatus::TargetSpan;
@@ -121,7 +115,7 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
     }
     *out = {};
     if (ReservationAvailability(exactTargetCount) != ReservationStatus::Ready) return false;
-    const auto freeSlot = freeRows_.back();
+    const auto freeSlot = freeRows_.empty() ? nextUnusedRow_ : freeRows_.back();
     std::size_t rangeIndex = freeRanges_.size();
     for (std::size_t i = 0; exactTargetCount != 0 && i < freeRanges_.size(); ++i) {
         if (freeRanges_[i].count >= exactTargetCount) {
@@ -134,10 +128,15 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
     }
 
     const std::uint32_t spanOffset = exactTargetCount == 0 ? 0 : freeRanges_[rangeIndex].offset;
-    const auto payloadSlot = freePayloads_.back();
+    const auto payloadSlot = freePayloads_.empty() ? nextUnusedPayload_ : freePayloads_.back();
     if (!PrepareRow(freeSlot) || !payloads_.ConstructThrough(payloadSlot + 1u)) return false;
     auto& payload = payloads_[payloadSlot];
     try {
+        // Prepare every later recycle before publishing the reservation.
+        freeRows_.reserve(static_cast<std::size_t>(nextUnusedRow_) + (freeRows_.empty() ? 1u : 0u));
+        const auto payloadPeak = static_cast<std::size_t>(nextUnusedPayload_) + (freePayloads_.empty() ? 1u : 0u);
+        freePayloads_.reserve(payloadPeak);
+        freeRanges_.reserve(payloadPeak + 1u);
         payload.targets.resize(exactTargetCount);
         payload.sourceBits.resize(sourceWords_);
     } catch (...) {
@@ -158,9 +157,11 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
     Row& row = rows_[freeSlot];
     const std::uint64_t identity =
         row.identity.load(std::memory_order_acquire);
-    freeRows_.pop_back();
-    row.payload = freePayloads_.back();
-    freePayloads_.pop_back();
+    if (freeRows_.empty()) ++nextUnusedRow_;
+    else freeRows_.pop_back();
+    row.payload = payloadSlot;
+    if (freePayloads_.empty()) ++nextUnusedPayload_;
+    else freePayloads_.pop_back();
     const VariableSliceRef ref{freeSlot, static_cast<std::uint32_t>(identity >> 32)};
     row.source = {ref, world, transport, ticket, bankOrdinal};
     row.effectiveFrame = effectiveFrame;
@@ -869,7 +870,7 @@ std::uint32_t VariableSliceTable::FreeTargetCapacity() const noexcept {
 }
 
 std::uint32_t VariableSliceTable::FreeRowCount() const noexcept {
-    return static_cast<std::uint32_t>(freeRows_.size());
+    return capacity_ - nextUnusedRow_ + static_cast<std::uint32_t>(freeRows_.size());
 }
 
 bool VariableSliceTable::SetFreeRowGenerationForTest(

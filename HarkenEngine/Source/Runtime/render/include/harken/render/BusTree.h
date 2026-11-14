@@ -44,6 +44,8 @@
 
 namespace harken {
 class VoicePool;
+class SnapshotBuffer;
+struct SnapshotPayload;
 struct SignalFeedbackEdge;
 struct SignalBusRoutingInfo;
 struct BusActivityPlan;
@@ -145,10 +147,18 @@ public:
     void ServiceWorkRowRetirements() noexcept;
     std::uint32_t WorkRowsInUse() const noexcept { return m_workRowsInUse; }
 
+    void AttachActivitySnapshots(const SnapshotBuffer* source) noexcept { m_activitySnapshots = source; }
+    std::uint64_t AudioActivityPublication() const noexcept;
+    const BusActivityPlan* ObservedActivity(std::uint64_t publication) const noexcept;
+    void CaptureObservedBusState(BusSlotRef bus, const SnapshotPayload& receipt,
+        const BusActivityPlan* activity, VnBusState& out) noexcept;
+
     struct WorkObservation {
         BusSlotRef bus;
         WorkRef work;
         std::uint64_t blockSequence = 0, frameEnd = 0;
+        std::uint64_t activityPublication = 0;
+        float peakPreFader = 0, peakPostFader = 0, peakPostEffects = 0;
         std::uint64_t graphRevision = 0, stateRevision = 0;
         std::uint64_t commandFrontier = 0, initialSourceFrontier = 0;
         std::uint64_t quietFrames = 0, recoveryProbeFrame = 0;
@@ -600,6 +610,8 @@ private:
     void ShutdownActivities() noexcept;
     std::span<const std::uint32_t> WorkingOrder() const noexcept;
     std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
+    const SnapshotBuffer* m_activitySnapshots = nullptr;
+    std::uint64_t m_nextActivityPublication = 0;
     std::unique_ptr<BusDormantRegistry> m_dormant;
     BusActivityPlan* m_lastQueuedActivity = nullptr;
     BusActivityPlan* m_activeActivity = nullptr;

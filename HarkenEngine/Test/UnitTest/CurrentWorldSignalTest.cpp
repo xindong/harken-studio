@@ -404,4 +404,41 @@ TEST(CurrentWorldSignal, PendingPlanBackingIsReleasedOnlyAfterRetirementDrain) {
     engine.mixer.ArenaForTests().RestoreCapacityForTests();
     engine.topologyPlans.Recycle(newer);
 }
+
+TEST(CurrentWorldSignal, HighBusIdentityOnlyPreparesScratchForWorkingSignalNodes) {
+    std::size_t firstCommit = 0;
+    for (const auto count : {32u, 512u}) {
+        SCOPED_TRACE(count);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(2, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        for (std::uint32_t i = 1; i < count; ++i) {
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10000 + i), VN_BUS_MASTER));
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -3, 100));
+        SignalWorld fixture;
+        fixture.receivers[0].target.stableId = harkentest::ObjectId(10000 + count - 1);
+        fixture.relations[0].source.stableId = VN_BUS_MASTER;
+        fixture.relations[0].target = fixture.receivers[0].target;
+        fixture.world.signalRelationCount = fixture.world.signalReceiverCount = 1;
+        fixture.Refresh();
+        ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+        const auto before = engine.mixer.Arena().OverflowCount();
+        engine.nullBackend.Pump(1);
+        const auto* signals = engine.buses.InstalledSignals();
+        ASSERT_NE(nullptr, signals);
+        EXPECT_EQ(1u, signals->RelationCount());
+        EXPECT_EQ(2u, signals->BusNodeCount());
+        EXPECT_EQ(2u, engine.buses.WorkingPlaneCount());
+        EXPECT_GE(signals->RoutingBusSlotBound(), count);
+        EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
+        EXPECT_EQ(before, engine.mixer.Arena().OverflowCount());
+        const auto committed = engine.mixer.Arena().CommittedBytes();
+        if (firstCommit == 0) firstCommit = committed;
+        EXPECT_EQ(firstCommit, committed);
+    }
+}
+
 } // namespace

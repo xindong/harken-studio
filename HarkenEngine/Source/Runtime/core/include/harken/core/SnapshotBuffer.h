@@ -71,6 +71,8 @@ inline float StageTapPeak(const float* const* channels,
 // torn across the payload.
 struct SnapshotPayload {
     std::uint64_t blockIndex = 0; // canary: the writer fills this first
+    std::uint64_t busActivityPublication = 0;
+    bool busBlockRendered = false;
     std::uint32_t activeVoiceCount = 0;
     std::uint32_t reserved0 = 0; // keeps 8-byte alignment stable
     VnVoiceSnapshot voices[VN_SNAPSHOT_MAX_VOICES] = {};

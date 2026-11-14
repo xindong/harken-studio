@@ -7443,4 +7443,32 @@ TEST(PackLogicReplace,
     engine->nullBackend.Pump(1);
 }
 
+
+TEST(PackLogicLoad, MoreThanSixtyFourBusOwnersLoadAndRetireIndependently) {
+    auto config = PackLogicConfig(2, 64, 48000);
+    config.maxBusTopologyOwners = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::array<VnPackHandle, 80> packs{};
+    for (std::uint32_t i = 0; i < packs.size(); ++i) {
+        V2Builder builder(harken::kPackKindResident);
+        builder.AddBus(harkentest::ObjectId(50000 + i), VN_BUS_MASTER);
+        const auto path = TempPath("bus_owner_growth_" + std::to_string(i) + ".pack");
+        WriteFileBytes(path, builder.Build());
+        ASSERT_EQ(VN_OK, LoadPack(path, &packs[i])) << i;
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(80u, engine.packs.LoadedCount());
+    EXPECT_EQ(81u, engine.buses.ActiveBusCount());
+    for (std::uint32_t i = 0; i < packs.size(); ++i) {
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(packs[i])) << i;
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine.packs.LoadedCount());
+    EXPECT_EQ(1u, engine.buses.ActiveBusCount());
+}
+
 } // namespace

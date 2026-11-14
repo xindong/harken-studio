@@ -7807,6 +7807,44 @@ TABLE_JSON = r'''
           "u32"
         ]
       ]
+    },
+    "VnBusState": {
+      "fields": [
+        [
+          "busId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "blockSequence",
+          "u64"
+        ],
+        [
+          "busIndex",
+          "u32"
+        ],
+        [
+          "busGeneration",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "peakPreFader",
+          "f32"
+        ],
+        [
+          "peakPostFader",
+          "f32"
+        ],
+        [
+          "peakPostEffects",
+          "f32"
+        ]
+      ]
     }
   },
   "functions": [
@@ -10859,6 +10897,40 @@ TABLE_JSON = r'''
         }
       ],
       "note": "Logic-thread native observation; no remote opcode. Required member count is returned in outInfo.memberCount."
+    },
+    {
+      "name": "Vn_CaptureBusStates",
+      "params": [
+        {
+          "name": "firstBusIndex",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "states",
+          "ctype": "VnBusState*",
+          "wire": "outrows",
+          "type": "VnBusState",
+          "capacityParam": "capacity",
+          "countParam": "outCount"
+        },
+        {
+          "name": "capacity",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "outCount",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        },
+        {
+          "name": "outNextBusIndex",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        }
+      ],
+      "note": "Passive logic-thread native Bus observation with caller storage and pagination; no remote opcode."
     }
   ],
   "binding_overloads": [
@@ -11031,7 +11103,8 @@ TABLE_JSON = r'''
       "VnMonitorChunkKind": "u32",
       "VnMonitorChunkFlags": "u32",
       "VnStreamSourceRequest": "u64",
-      "VnPlaybackReadinessState": "u32"
+      "VnPlaybackReadinessState": "u32",
+      "VnBusStateFlags": "u32"
     },
     "results": {
       "backing": "i32",
@@ -12111,6 +12184,14 @@ TABLE_JSON = r'''
           "VN_PLAYBACK_READINESS_FAILED": 4,
           "VN_PLAYBACK_READINESS_CANCELLED": 5,
           "VN_PLAYBACK_READINESS_TERMINAL": 6
+        }
+      },
+      "VnBusStateFlags": {
+        "backing": "u32",
+        "values": {
+          "VN_BUS_STATE_VALID": 1,
+          "VN_BUS_STATE_WORKING": 2,
+          "VN_BUS_STATE_RENDERED": 4
         }
       }
     },

@@ -1888,4 +1888,64 @@ TEST(PackCanonicalFormat, ParserAcceptsCanonicalBindingScopes) {
     }
 }
 
+
+TEST(PackCanonicalFormat, MoreThan4096BusDefinitionsRoundTripThroughCanonicalReader) {
+    constexpr std::uint32_t count = 4100;
+    auto fixture = harkentest::packfoundation::DefaultRuntimeBusFixture();
+    PackCanonicalImage source;
+    source.hasBusDefinitionSnapshot = true;
+    auto& header = source.busDefinitionSnapshotHeader;
+    ASSERT_TRUE(ReadPackBusDefinitionSnapshotHeader(fixture.snapshot.data(), fixture.snapshot.size(), &header));
+    header.busCount = header.downmixCount = count;
+    header.coefficientCount = std::uint64_t{count} * 64;
+    header.busOffset = header.headerBytes;
+    header.sendOffset = header.busOffset + std::uint64_t{count} * kPackBusDefinitionBusBytes;
+    header.effectOffset = header.effectParameterOffset = header.downmixOffset = header.sendOffset;
+    header.coefficientOffset = header.downmixOffset + std::uint64_t{count} * kPackBusDefinitionDownmixBytes;
+    header.payloadBytes = header.coefficientOffset + header.coefficientCount * sizeof(float) - header.headerBytes;
+    source.busDefinitionCoefficients.assign(header.coefficientCount, 0);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        PackBusDefinitionBus bus{};
+        bus.busId = i == 0 ? VN_BUS_MASTER : harkentest::ObjectId(10000 + i);
+        bus.parentId = i == 0 ? VnObjectId{} : VN_BUS_MASTER;
+        bus.faderAfterSlot = busfingerprint::kNeutralFaderAfterSlotV1;
+        bus.outputLayout = VN_CHANNEL_LAYOUT_STEREO;
+        bus.downmixFirst = i; bus.downmixCount = 1;
+        source.busDefinitionBusesV2.push_back(bus);
+        PackBusDefinitionDownmix downmix{};
+        downmix.busId = bus.busId;
+        downmix.sourceLayout = downmix.destinationLayout = VN_CHANNEL_LAYOUT_STEREO;
+        downmix.coefficientFirst = std::uint64_t{i} * 64; downmix.coefficientCount = 64;
+        source.busDefinitionDownmixesV2.push_back(downmix);
+        DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
+            source.busDefinitionCoefficients.data() + std::size_t{i} * 64);
+    }
+    header.publishedBusFingerprint = CanonicalVolumeBusFingerprint(source);
+    header.contentGeneration = header.publishedBusFingerprint;
+    fixture.triple = {header.contentGeneration, header.publishedBusFingerprint, header.compileTargetProfileFingerprint};
+    fixture.snapshot.assign(header.headerBytes + header.payloadBytes, 0);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        SerializePackBusDefinitionBus(source.busDefinitionBusesV2[i], fixture.snapshot.data() + header.busOffset + std::uint64_t{i} * kPackBusDefinitionBusBytes);
+        SerializePackBusDefinitionDownmix(source.busDefinitionDownmixesV2[i], fixture.snapshot.data() + header.downmixOffset + std::uint64_t{i} * kPackBusDefinitionDownmixBytes);
+    }
+    for (std::size_t i = 0; i < source.busDefinitionCoefficients.size(); ++i)
+        SerializePackBusDefinitionCoefficient(source.busDefinitionCoefficients[i], fixture.snapshot.data() + header.coefficientOffset + i * sizeof(float));
+    SerializePackBusDefinitionSnapshotHeader(header, fixture.snapshot.data());
+    StampSnapshotChecksum(&fixture.snapshot);
+    harkentest::packfoundation::ImageBuilder builder(kPackKindInit);
+    constexpr auto packId = harkentest::packfoundation::kInitPackStableId;
+    std::uint64_t bodyBytes = 0;
+    auto partition = harkentest::packfoundation::PartitionPayload(packId, 1, 0, 0, &bodyBytes, 64, {}, fixture.triple);
+    builder.AddEntry(kPackEntryKindPackRequirementBlock, packId,
+        harkentest::packfoundation::RequirementPayload(packId, 1, 1, 0, bodyBytes, fixture.triple));
+    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packId, std::move(partition));
+    builder.AddEntry(kPackEntryKindBusDefinitionSnapshot, 1, fixture.snapshot);
+    const auto bytes = builder.Build();
+    PackCanonicalImage parsed;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &parsed));
+    EXPECT_EQ(count, parsed.busDefinitionBusesV2.size());
+    EXPECT_EQ(source.busDefinitionBusesV2.back().busId, parsed.busDefinitionBusesV2.back().busId);
+    EXPECT_EQ(header.publishedBusFingerprint, CanonicalVolumeBusFingerprint(parsed));
+}
+
 } // namespace

@@ -119929,6 +119929,34 @@ VnResult Vn_QueryVariableCatalog(VnVariableCatalogInfoV1* out) {
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
+                           uint32_t capacity, uint32_t* outCount,
+                           uint32_t* outNextBusIndex) {
+    auto* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (outCount == nullptr || outNextBusIndex == nullptr || (capacity != 0 && states == nullptr))
+        return VN_INVALID_ARG;
+    *outCount = 0;
+    *outNextBusIndex = UINT32_MAX;
+    harken::SnapshotPayload receipt{};
+    const bool captured = engine->mixer.Snapshots().Capture(receipt);
+    const auto* activity = captured ? engine->buses.ObservedActivity(receipt.busActivityPublication) : nullptr;
+    const auto end = engine->buses.BusCount();
+    auto index = std::min(firstBusIndex, end);
+    for (; index < end; ++index) {
+        if (!engine->buses.AliveAt(index)) continue;
+        if (*outCount == capacity) { *outNextBusIndex = index; break; }
+        auto& state = states[(*outCount)++];
+        state = {};
+        state.busId = engine->buses.IdAt(index);
+        state.busIndex = index;
+        state.busGeneration = engine->buses.GenerationAt(index);
+        if (captured) engine->buses.CaptureObservedBusState(
+            {index, state.busGeneration}, receipt, activity, state);
+    }
+    return VN_OK;
+}
+
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     try {
     harken::Engine* engine = harken::detail::g_engine;

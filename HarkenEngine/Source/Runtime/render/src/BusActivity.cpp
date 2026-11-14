@@ -1,4 +1,5 @@
 #include "harken/render/BusActivityPlan.h"
+#include "harken/core/SnapshotBuffer.h"
 #include "harken/render/VoicePool.h"
 #include <bit>
 #include <stdexcept>
@@ -172,7 +173,9 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
             (signals != nullptr && signals->SameContinuityDomain(*replacedSignals)))) return nullptr;
     } else if (replacedSignals != nullptr) return nullptr;
     try {
+        if (m_nextActivityPublication == UINT64_MAX) return nullptr;
         auto plan = std::make_unique<BusActivityPlan>(*this);
+        plan->publication = ++m_nextActivityPublication;
         plan->adoptsTopology = adoptsTopology;
         if (adoptsTopology) {
             plan->topologyDefinition = topology;
@@ -563,10 +566,8 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
     }
     for (const auto& entry : plan.beforeDetach) AudioReleaseWorkRow(entry.work);
     plan.beforeDetachReleased = true;
-    if (previous != nullptr) {
-        for (const auto& binding : previous->working) AudioReleaseWorkRow(binding.work);
-        previous->workingReleased = true;
-    }
+    // The last completed-block receipt may still name the previous plan.
+    // Its immutable working leases retire with the plan on the logic owner.
     m_activeActivity = &plan;
     plan.phase.store(BusActivityPlan::Phase::Active, std::memory_order_release);
     if (previous != nullptr)
@@ -576,9 +577,16 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
 }
 
 void BusTree::DrainActivities() noexcept {
+    // First acquire retirement, then capture the completed receipt. A plan
+    // that retires after this pass may still publish that latest receipt.
+    for (auto& plan : m_activities)
+        plan->reclaimCandidate = plan.get() != m_pendingSleep && plan->logicPins == 0 &&
+            plan->phase.load(std::memory_order_acquire) == BusActivityPlan::Phase::Retired;
+    SnapshotPayload receipt;
+    if (m_activitySnapshots != nullptr && !m_activitySnapshots->Capture(receipt)) return;
     std::erase_if(m_activities, [&](const auto& plan) {
-        if (plan.get() == m_pendingSleep || plan->logicPins != 0 ||
-            plan->phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Retired) return false;
+        if (!plan->reclaimCandidate || (m_activitySnapshots != nullptr &&
+            plan->publication == receipt.busActivityPublication)) return false;
         if (m_lastQueuedActivity == plan.get()) m_lastQueuedActivity = nullptr;
         return true;
     });

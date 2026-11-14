@@ -1493,6 +1493,38 @@ typedef struct VnSnapshot {
  * VN_NOT_INITIALIZED. */
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot);
 
+typedef uint32_t VnBusStateFlags;
+enum {
+    VN_BUS_STATE_VALID = 1,
+    VN_BUS_STATE_WORKING = 2,
+    VN_BUS_STATE_RENDERED = 4
+};
+
+typedef struct VnBusState {
+    VnBusId busId;
+    uint64_t blockSequence;
+    uint32_t busIndex;
+    uint32_t busGeneration;
+    VnBusStateFlags flags;
+    float peakPreFader;
+    float peakPostFader;
+    float peakPostEffects;
+} VnBusState;
+
+/* Logic-thread, passive enumeration of live Bus definitions into caller storage.
+ * Start at firstBusIndex = 0 and continue at outNextBusIndex until UINT32_MAX.
+ * Entries carry their own completed audio blockSequence (one-based); they need
+ * not come from the same block. VALID absent means no matching audio publication
+ * is available yet, never proof of silence. VALID without WORKING is dormant
+ * with zero peaks. WORKING without RENDERED describes a degraded silent block.
+ * Queries neither wake Buses nor advance Update. Caller serializes with other
+ * logic APIs; enumeration may change between calls when definitions change.
+ * states may be NULL only when capacity is zero. outCount and outNextBusIndex
+ * are required. This API has no fixed Bus count or array-length limit. */
+VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
+                           uint32_t capacity, uint32_t* outCount,
+                           uint32_t* outNextBusIndex);
+
 typedef VnObjectId VnAttenuationId;
 
 /* Values for VnAttenuationDesc.rolloff: how the built-in distance rolloff

@@ -207,7 +207,7 @@ public:
     std::uint32_t FreeRowCount() const noexcept;
     std::uint32_t PayloadCapacity() const noexcept { return payloadCapacity_; }
     std::uint32_t FreePayloadCount() const noexcept {
-        return static_cast<std::uint32_t>(freePayloads_.size());
+        return payloadCapacity_ - nextUnusedPayload_ + static_cast<std::uint32_t>(freePayloads_.size());
     }
     std::size_t FreeRangeCount() const noexcept { return freeRanges_.size(); }
     bool SetFreeRowGenerationForTest(std::uint32_t slot,
@@ -266,6 +266,7 @@ private:
     std::uint32_t targetPoolCapacity_ = 0;
     StableRowStorage<Row> rows_;
     StableRowStorage<Payload> payloads_;
+    std::uint32_t nextUnusedRow_ = 0, nextUnusedPayload_ = 0;
     std::vector<std::uint32_t> freeRows_;
     std::vector<std::uint32_t> freePayloads_;
     std::vector<std::uint32_t> subscribedSources_;

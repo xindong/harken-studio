@@ -139,6 +139,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     if (!m_currentSliceScratch.Reserve(timelinePool != nullptr ? CurrentSliceScratchCapacity(config) : 0))
         throw std::bad_alloc{};
     m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
+    m_buses.AttachActivitySnapshots(&m_snapshots);
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
             return static_cast<MixerLoop*>(context)->PreparePreparedChannelBacking(count);
@@ -2140,6 +2141,8 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
     // capture whose canaries agree was not torn across the payload.
     SnapshotPayload& payload = m_snapshots.BeginWrite();
     payload.blockIndex = blockIndex;
+    payload.busActivityPublication = m_buses.AudioActivityPublication();
+    payload.busBlockRendered = blockRendered;
     m_voices.GatherSnapshot(payload);
     // The rendered structure is the audio-visible one: a bus created this block
     // but whose swap has not applied is not yet part of the mix, so it is not

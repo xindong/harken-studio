@@ -1,4 +1,6 @@
 #include "harken/render/BusTree.h"
+#include "harken/render/BusActivityPlan.h"
+#include "harken/core/SnapshotBuffer.h"
 #include "harken/render/BuiltinEffectDormancy.h"
 
 namespace harken {
@@ -70,6 +72,10 @@ void BusTree::PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t
         fact.bus = row.host;
         fact.work = m_workSlots[index];
         fact.blockSequence = blockSequence;
+        fact.activityPublication = AudioActivityPublication();
+        fact.peakPreFader = rendered ? bus.preFaderPeak : 0;
+        fact.peakPostFader = rendered ? bus.postFaderPeak : 0;
+        fact.peakPostEffects = rendered ? bus.outputPeak : 0;
         fact.frameEnd = frameEnd;
         fact.graphRevision = InstalledGraphRevision();
         fact.stateRevision = bus.activityRevision;
@@ -140,6 +146,57 @@ void BusTree::PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t
     const auto order = WorkingOrder();
     if (!order.empty()) for (auto index : order) publish(index);
     else for (std::uint32_t i = 0; i < m_audioCount; ++i) if (HasWorkRow(i)) publish(i);
+}
+
+
+std::uint64_t BusTree::AudioActivityPublication() const noexcept {
+    return m_activeActivity ? m_activeActivity->publication : 0;
+}
+
+const BusActivityPlan* BusTree::ObservedActivity(std::uint64_t publication) const noexcept {
+    if (publication == 0) return nullptr;
+    for (const auto& plan : m_activities)
+        if (plan->publication == publication) return plan.get();
+    return nullptr;
+}
+
+void BusTree::CaptureObservedBusState(BusSlotRef bus, const SnapshotPayload& receipt,
+    const BusActivityPlan* activity, VnBusState& out) noexcept {
+    if (!bus.Valid() || receipt.blocksRendered == 0) return;
+    WorkRef work;
+    if (receipt.busActivityPublication == 0) {
+        // The bootstrap Master is never asleep; published fixed-size peaks
+        // suffice until the first immutable activity plan is adopted.
+        if (bus.index != 0) return;
+        out.blockSequence = receipt.blocksRendered;
+        out.flags = VN_BUS_STATE_VALID | VN_BUS_STATE_WORKING |
+            (receipt.busBlockRendered ? VN_BUS_STATE_RENDERED : 0);
+        out.peakPreFader = receipt.busPeaksPreFader[0];
+        out.peakPostFader = receipt.busPeaksPostFader[0];
+        out.peakPostEffects = receipt.busPeaks[0];
+        return;
+    }
+    if (activity == nullptr || activity->publication != receipt.busActivityPublication ||
+        bus.index >= activity->directory.size()) return;
+    const auto& entry = activity->directory[bus.index];
+    if (entry.generation != bus.generation) return;
+    if (entry.plane == UINT32_MAX) {
+        out.blockSequence = receipt.blocksRendered;
+        out.flags = VN_BUS_STATE_VALID;
+        return;
+    }
+    if (entry.plane >= activity->working.size()) return;
+    work = activity->working[entry.plane].work;
+    WorkObservation fact;
+    if (!CaptureWorkObservation(bus, work, fact) ||
+        fact.activityPublication != activity->publication ||
+        fact.blockSequence < receipt.blocksRendered) return;
+    out.blockSequence = fact.blockSequence;
+    out.flags = VN_BUS_STATE_VALID | VN_BUS_STATE_WORKING |
+        (fact.rendered ? VN_BUS_STATE_RENDERED : 0);
+    out.peakPreFader = fact.peakPreFader;
+    out.peakPostFader = fact.peakPostFader;
+    out.peakPostEffects = fact.peakPostEffects;
 }
 
 } // namespace harken

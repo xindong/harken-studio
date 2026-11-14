@@ -1684,3 +1684,30 @@ TEST(BusCapacityGrowth, OwnerAllocationFailureKeepsAllPublishedLengthsAndCanRetr
         EXPECT_EQ(UINT32_MAX, engine.preparedPreviewOwnerSlots.back());
     }
 }
+
+TEST(BusCapacityGrowth, PublicDefinitionsGrowBeyond4096WhilePlaybackContinues) {
+    auto config = harkentest::MakeNullConfig(2, 64, 48000);
+    config.maxBuses = 2;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto sound = harkentest::ObjectId(90000);
+    const auto samples = harkentest::MakeDC(64 * 4200, .125f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    for (std::uint32_t i = 1; i < 4100; ++i) {
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10000 + i), VN_BUS_MASTER)) << i;
+        harkentest::Capture out;
+        harkentest::PumpAndCapture(&engine, 1, out);
+        ASSERT_FALSE(out.left.empty());
+        EXPECT_FLOAT_EQ(.125f, out.left.back()) << i;
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(4100u, engine.buses.ActiveBusCount());
+    EXPECT_EQ(1u, engine.buses.WorkingPlaneCount());
+    EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
+    EXPECT_EQ(0u, engine.mixer.Arena().OverflowCount());
+}

@@ -262,7 +262,8 @@ VariableServiceV1::VariableServiceV1(
         !settledRows_.Reserve(historyCapacity) || !supersedeRows_.Reserve(historyCapacity) ||
         !scheduledGroups_.Reserve(historyCapacity) || !outcomes_.Reserve(historyCapacity)) throw std::bad_alloc{};
     historyGenerations_.resize(historyCapacity, 1);
-    dependencyVisited_.resize(completionCapacity_);
+    // Only history slices form source dependencies; meter withdrawals do not.
+    dependencyVisited_.resize(historyCapacity);
     if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
     readCutCapacity_ = static_cast<std::uint32_t>(readCutCapacity);
     if (!readCuts_.Reserve(readCutCapacity_)) throw std::bad_alloc{};
@@ -4437,7 +4438,7 @@ bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
                 [&](const auto prior) { return prior.slot == next->slice.slot &&
                     prior.generation == next->slice.generation; });
             if (seen) continue;
-            // The completion pool bounds the private dependency graph.
+            // Retained history bounds the private dependency graph.
             if (count == visited.size()) return true;
             visited[count++] = next->slice;
         }

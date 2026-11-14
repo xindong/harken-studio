@@ -85,6 +85,9 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment, bo
     address_ = address;
     pageBytes_ = pageBytes;
     reservedBytes_ = reservedBytes;
+    // Reservation granularity may be larger than a page. The descending end
+    // covers the caller's requested extent, not inaccessible alignment slack.
+    if (!RoundUp(bytes, pageBytes, &suffixEndBytes_)) std::terminate();
     committedPages_.swap(committedPages);
     committedPageWords_ = committedPageWords;
     return true;
@@ -97,14 +100,38 @@ void StablePageReservation::FailNextReservationForTests() noexcept {
 bool StablePageReservation::CommitThrough(std::size_t bytes) noexcept {
     if (memguard::IsAudioTagged() || bytes > reservedBytes_) return false;
     if (committedPages_ != nullptr) return CommitRange(0, bytes);
-    if (bytes <= committedBytes_) return true;
+    const auto prefix = committedBytes_ - suffixCommittedBytes_;
+    if (bytes <= prefix) return true;
     std::size_t target = 0;
     if (!RoundUp(bytes, pageBytes_, &target) || target > reservedBytes_) return false;
-    const auto requested = (target - committedBytes_) / pageBytes_;
-    const auto committed = CommitPages(committedBytes_, requested);
+    if (suffixCommittedBytes_ != 0) {
+        if (target > suffixEndBytes_) return false;
+        target = std::min(target, suffixEndBytes_ - suffixCommittedBytes_);
+    }
+    const auto requested = (target - prefix) / pageBytes_;
+    const auto committed = CommitPages(prefix, requested);
     // Each successful page stays charged, including an unconstructed failure prefix.
     committedBytes_ += committed * pageBytes_;
     return committed == requested;
+}
+
+bool StablePageReservation::CommitSuffixFrom(std::size_t offset) noexcept {
+    if (memguard::IsAudioTagged() || committedPages_ != nullptr || offset > suffixEndBytes_)
+        return false;
+    if (offset == suffixEndBytes_) return true;
+    const auto prefix = committedBytes_ - suffixCommittedBytes_;
+    if (prefix > suffixEndBytes_) return false;
+    const auto target = std::max(prefix, (offset / pageBytes_) * pageBytes_);
+    auto begin = suffixEndBytes_ - suffixCommittedBytes_;
+    // Descending commitment keeps every partial success contiguous. Never touch
+    // an already committed page, which may hold an active audio worker's data.
+    while (begin > target) {
+        if (!CommitPage(begin - pageBytes_)) return false;
+        begin -= pageBytes_;
+        suffixCommittedBytes_ += pageBytes_;
+        committedBytes_ += pageBytes_;
+    }
+    return true;
 }
 
 std::size_t StablePageReservation::CommitPages(std::size_t offset, std::size_t count) noexcept {
@@ -169,6 +196,8 @@ void StablePageReservation::Swap(StablePageReservation& other) noexcept {
     std::swap(address_, other.address_);
     std::swap(reservedBytes_, other.reservedBytes_);
     std::swap(committedBytes_, other.committedBytes_);
+    std::swap(suffixCommittedBytes_, other.suffixCommittedBytes_);
+    std::swap(suffixEndBytes_, other.suffixEndBytes_);
     std::swap(pageBytes_, other.pageBytes_);
     std::swap(remainingPagesForTests_, other.remainingPagesForTests_);
     committedPages_.swap(other.committedPages_);
