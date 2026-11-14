@@ -1,5 +1,6 @@
 #include "harken/render/SignalRoutingTypes.h"
 #include "harken/render/SignalRenderPlan.h"
+#include "harken/render/BusActivityPlan.h"
 #include "harken/render/MixerLoop.h"
 
 #include "MonitorCaptureHub.h"
@@ -119,10 +120,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_installAckSideTable(ackSideTable),
       m_installAckSideTableCapacity(ackSideTableCapacity),
       m_installAckRing(installAckRing),
-      m_meterTapScratch(static_cast<std::size_t>(kMeterTapLaneCount) *
-                            config.maxBuses,
-                        0.0f),
-      m_meterGenerationScratch(config.maxBuses, 0),
+      m_bootstrapMeterLanes{meterRing.PrepareLane(0)},
       m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
       m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
                       config.mixChannelCount * config.blockFrames * sizeof(float)),
@@ -2055,30 +2053,16 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 #else
     if (m_meterRing.Armed()) {
 #endif
-        const std::uint32_t meterBuses = m_buses.AudioBusCount();
-        const std::uint32_t span =
-            meterBuses < m_maxBuses ? meterBuses : m_maxBuses;
-        float* const postEffectsPeaks =
-            m_meterTapScratch.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_POST_EFFECTS,
-                           m_maxBuses);
-        float* const preFaderPeaks =
-            m_meterTapScratch.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_PRE_FADER, m_maxBuses);
-        float* const postFaderPeaks =
-            m_meterTapScratch.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_POST_FADER, m_maxBuses);
-        for (std::uint32_t i = 0; i < m_maxBuses; ++i) {
-            const bool live = planesOk && i < span;
-            preFaderPeaks[i] = live ? m_buses.PreFaderPeak(i) : 0.0f;
-            postFaderPeaks[i] = live ? m_buses.PostFaderPeak(i) : 0.0f;
-            postEffectsPeaks[i] = live ? m_buses.OutputPeak(i) : 0.0f;
-            m_meterGenerationScratch[i] =
-                i < span ? m_buses.AudioGenerationAt(i) : 0;
-        }
-        m_meterRing.PushTaps(blockIndex, preFaderPeaks, postFaderPeaks,
-                             postEffectsPeaks, m_maxBuses,
-                             m_meterGenerationScratch.data());
+        const auto* activity = m_buses.AudioActivity();
+        const std::span<const MeterBlockRing::Lease> lanes = activity != nullptr
+            ? std::span<const MeterBlockRing::Lease>(activity->meterLanes)
+            : std::span<const MeterBlockRing::Lease>(m_bootstrapMeterLanes);
+        m_meterRing.PushCaptured(blockIndex, lanes, [&](auto bus, auto& generation, auto& peaks) {
+            generation = m_buses.AudioGenerationAt(bus);
+            peaks[VN_BUS_METER_TAP_POST_EFFECTS] = planesOk ? m_buses.OutputPeak(bus) : 0;
+            peaks[VN_BUS_METER_TAP_PRE_FADER] = planesOk ? m_buses.PreFaderPeak(bus) : 0;
+            peaks[VN_BUS_METER_TAP_POST_FADER] = planesOk ? m_buses.PostFaderPeak(bus) : 0;
+        });
     }
 
     // Parking and source-timed controls share one coherent audio-owned cut.

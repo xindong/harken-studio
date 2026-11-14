@@ -335,11 +335,8 @@ private:
     void* m_currentSliceFrontierHookContextForTest = nullptr;
     TimelineFinalizedHookForTest m_timelineFinalizedHookForTest = nullptr;
     void* m_timelineFinalizedHookContextForTest = nullptr;
-    // Preallocated record scratch for the three meter tap lanes,
-    // written and handed to PushTaps() on the audio thread — sized at init, so
-    // the append allocates nothing.
-    std::vector<float> m_meterTapScratch;
-    std::vector<std::uint32_t> m_meterGenerationScratch;
+    // The initial Master can render before any activity plan is installed.
+    std::array<MeterBlockRing::Lease, 1> m_bootstrapMeterLanes;
     SnapshotBuffer m_snapshots;
     BlockArena m_arena;
     std::uint64_t m_arenaLowBytes = 0;

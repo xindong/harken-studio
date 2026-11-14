@@ -345,6 +345,9 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             replace ? BusTree::SignalTransition::ReplaceContent : BusTree::SignalTransition::Preserve,
             replace ? previous : nullptr, adoptsTopology);
         if (activity == nullptr) return false;
+        activity->meterLanes.reserve(working.size());
+        for (const auto& binding : working)
+            activity->meterLanes.push_back(engine.meterRing.PrepareLane(binding.bus.index));
         activity->preparedEffects.reserve(preparedRows.size());
         for (const auto ref : preparedRows) {
             const auto& row = *engine.buses.PreparedWorkRow(ref);

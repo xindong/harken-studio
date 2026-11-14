@@ -1,6 +1,7 @@
 #pragma once
 
 #include "harken/render/BusTree.h"
+#include "harken/core/MeterBlockRing.h"
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/BuiltinEffectDormancy.h"
 
@@ -103,6 +104,7 @@ struct BusActivityPlan {
     CommandQueue::BusActivityAttachment attachment{};
     std::atomic<Phase> phase{Phase::Preparing};
     std::vector<BusTree::WorkBinding> working;
+    std::vector<MeterBlockRing::Lease> meterLanes;
     std::vector<BusRenderSlot> directory;
     std::vector<std::uint32_t> order;
     std::unique_ptr<SignalRenderPlan> signals;

@@ -162,6 +162,8 @@ public:
     void SetAutomaticSleepEnabledForTest(bool enabled) noexcept { m_automaticSleepForTest = enabled; }
 #endif
     const BusActivityPlan* AcceptedActivity() const noexcept { return m_lastQueuedActivity; }
+    // Audio coordinator only; the installed plan owns all borrowed resources.
+    const BusActivityPlan* AudioActivity() const noexcept { return m_activeActivity; }
     const SignalRenderPlan* AcceptedActivityAlternate() const noexcept;
     bool PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept;
     // Single logic reader; a retained WorkRef protects the snapshot storage.

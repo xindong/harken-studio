@@ -7190,7 +7190,7 @@ public:
                          resolved.mixRate.SampleRate()),
           meterProbes(resolved.maxBindingAttachments,
                       resolved.maxPropertiesPerCurrentSlice),
-          meterRing(resolved.meterRingBlocks, resolved.maxBuses),
+          meterRing(resolved.meterRingBlocks, resolved.maxBuses, false),
           spatial(resolved, 0),
           emitters(resolved, handleFloors.emitter),
           monitorEmitters(emitters, resolved.maxEmitters, monitorRequests.EngineInstance()),

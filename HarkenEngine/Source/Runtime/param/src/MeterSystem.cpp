@@ -46,13 +46,10 @@ void AdvanceEnvelope(MeterSystem::Probe& probe, float peak) noexcept {
 
 MeterSystem::MeterSystem(std::uint32_t maxProbes, std::uint32_t blockFrames,
                          std::uint32_t sampleRate)
-    : probes_(maxProbes), blockFrames_(blockFrames),
-      sampleRate_(sampleRate),
-      overflowScratch_(static_cast<std::size_t>(kMeterTapLaneCount) *
-                           maxProbes,
-                       0.0f),
-      overflowGenerationScratch_(
-          static_cast<std::size_t>(kMeterTapLaneCount) * maxProbes, 0) {}
+    : blockFrames_(blockFrames), sampleRate_(sampleRate) {
+    (void)maxProbes; // Legacy sizing hint; storage follows installed probes.
+}
+
 
 MeterSystem::Probe* MeterSystem::Find(VnObjectId probeStableId) noexcept {
     for (Probe& probe : probes_) {
@@ -99,8 +96,12 @@ VnResult MeterSystem::Install(VnObjectId probeStableId,
         }
     }
     if (free == nullptr) {
-        ++refusalCount_;
-        return VN_NO_BINDING;
+        const auto slot = probes_.ConstructedCount();
+        if (slot == UINT32_MAX || !probes_.ConstructThrough(slot + 1)) {
+            ++refusalCount_;
+            return VN_BACKPRESSURE;
+        }
+        free = &probes_[slot];
     }
     if (probeGenerationExhausted_) {
         ++refusalCount_;
@@ -206,15 +207,7 @@ std::uint32_t MeterSystem::DrainUpTo(MeterBlockRing& ring,
                                      std::uint64_t boundary) {
     std::uint32_t drained = 0;
     std::uint64_t blockIndex = 0;
-    const float* preFaderPeaks = nullptr;
-    const float* postFaderPeaks = nullptr;
-    const float* postEffectsPeaks = nullptr;
-    const std::uint32_t* generations = nullptr;
-    while (ring.FrontPosition() < boundary &&
-           ring.FrontTaps(&blockIndex, &preFaderPeaks, &postFaderPeaks,
-                          &postEffectsPeaks, &generations)) {
-        const float* tapRows[kMeterTapLaneCount] = {
-            postEffectsPeaks, preFaderPeaks, postFaderPeaks};
+    while (ring.FrontPosition() < boundary && ring.FrontBlock(&blockIndex)) {
         // The record's append position, exact and consumer-owned: a probe
         // consumes only records appended at or after its epoch — peaks
         // another consumer kept flowing before this probe existed must not
@@ -225,12 +218,9 @@ std::uint32_t MeterSystem::DrainUpTo(MeterBlockRing& ring,
                 position < probe.epochPosition) {
                 continue;
             }
-            const std::uint32_t bus = probe.sourceBusIndex;
-            if (bus >= ring.MaxBuses() ||
-                generations[bus] != probe.identity.sourceBusGeneration) {
-                continue;
-            }
-            AdvanceEnvelope(probe, tapRows[probe.identity.tap][bus]);
+            float peak = 0;
+            if (ring.FrontSample(probe.sourceBusIndex, probe.identity.sourceBusGeneration,
+                                 probe.identity.tap, peak)) AdvanceEnvelope(probe, peak);
         }
         ring.PopFront();
         ++drained;
@@ -254,37 +244,17 @@ std::uint32_t MeterSystem::DrainUpTo(MeterBlockRing& ring,
     const std::uint64_t counted = ring.OverflowCount();
     if (counted != lastSeenOverflowCount_ &&
         ring.OverflowPosition() <= ring.FrontPosition()) {
-        float* const overflowPostEffectsPeaks =
-            overflowScratch_.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_POST_EFFECTS, ring.MaxBuses());
-        float* const overflowPreFaderPeaks =
-            overflowScratch_.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_PRE_FADER, ring.MaxBuses());
-        float* const overflowPostFaderPeaks =
-            overflowScratch_.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_POST_FADER, ring.MaxBuses());
-        ring.TakeOverflowTaps(overflowPreFaderPeaks, overflowPostFaderPeaks,
-                              overflowPostEffectsPeaks,
-                              overflowGenerationScratch_.data());
+        ring.TakeOverflowSnapshot();
         if (ring.OverflowPosition() > ring.FrontPosition()) {
-            ring.MergeBackOverflowTaps(overflowPreFaderPeaks,
-                                       overflowPostFaderPeaks,
-                                       overflowPostEffectsPeaks,
-                                       overflowGenerationScratch_.data());
+            ring.MergeBackOverflowSnapshot();
         } else {
             for (Probe& probe : probes_) {
                 if (probe.state != State::Installed) {
                     continue;
                 }
-                const std::size_t lane =
-                    MeterTapOffset(probe.identity.tap, ring.MaxBuses()) +
-                    probe.sourceBusIndex;
-                if (lane >= overflowScratch_.size() ||
-                    overflowGenerationScratch_[lane] !=
-                        probe.identity.sourceBusGeneration) {
-                    continue;
-                }
-                AdvanceEnvelope(probe, overflowScratch_[lane]);
+                float peak = 0;
+                if (ring.OverflowSample(probe.sourceBusIndex, probe.identity.sourceBusGeneration,
+                                        probe.identity.tap, peak)) AdvanceEnvelope(probe, peak);
             }
             ++drained;
             // The watermark takes the PRE-take counter read: a merge
@@ -296,8 +266,10 @@ std::uint32_t MeterSystem::DrainUpTo(MeterBlockRing& ring,
             // all-silent release step — the release-conservative
             // residual in the ring header.
             lastSeenOverflowCount_ = counted;
+            ring.AcknowledgeOverflow(counted);
         }
     }
+    ring.ReclaimConsumed();
     return drained;
 }
 
