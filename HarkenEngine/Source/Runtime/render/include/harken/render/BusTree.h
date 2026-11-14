@@ -22,8 +22,11 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#include "harken/render/BusRenderView.h"
 
 #include "harken/core/BusSlotRef.h"
+#include "harken/core/GrowingRowStorage.h"
+#include "harken/core/PinnedSnapshot3.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/dsp/GainRamp.h"
@@ -33,14 +36,22 @@
 #include "harken/render/InsertEffect.h"
 #include "harken/render/TopologyPlan.h"
 #include "harken/render/SignalPathBounds.h"
+#include "harken/render/SignalRoutingTypes.h"
 
 #include <cstdint>
 #include <atomic>
 #include <vector>
 
 namespace harken {
+class VoicePool;
+class SnapshotBuffer;
+struct SnapshotPayload;
 struct SignalFeedbackEdge;
 struct SignalBusRoutingInfo;
+struct BusActivityPlan;
+struct BusDormantRegistry;
+struct BusDormantWork;
+struct BusDormantCapture;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -83,17 +94,109 @@ public:
         std::uint32_t generation = 0;
     };
 
-    // Prepared Pack activation seam. Capacity and append-position validation
-    // happens before the non-failing materialization/commit tail. Hidden slots
-    // are fully initialized in preallocated storage but remain outside every
-    // logic-visible range until one visibility commit publishes the batch.
-    bool CanMaterializePreparedBusSlots(std::uint32_t firstIndex,
-                                        std::uint32_t slotCount) const noexcept;
-    void MaterializePreparedBusSlots(std::uint32_t firstIndex,
-                                     const PreparedBusSlot* slots,
-                                     std::uint32_t slotCount) noexcept;
-    void CommitPreparedBusVisibility(std::uint32_t firstIndex,
-                                     std::uint32_t slotCount) noexcept;
+    struct WorkRef {
+        std::uint32_t slot = UINT32_MAX;
+        std::uint64_t generation = 0;
+        bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+        bool operator==(const WorkRef&) const = default;
+    };
+    struct Bus;
+    struct WorkBinding { BusSlotRef bus; WorkRef work; };
+    enum class SignalTransition : std::uint8_t { Preserve, ReplaceContent };
+    // Logic prepares a complete projection. The queue attachment transfers it
+    // at the original publication boundary; its address remains stable until
+    // cancellation or audio retirement has been drained on logic.
+    BusActivityPlan* PrepareActivity(const TopologyPlanView& topology,
+        std::span<const WorkBinding> working,
+        std::unique_ptr<SignalRenderPlan> signals = {},
+        SignalTransition signalTransition = SignalTransition::Preserve,
+        const SignalRenderPlan* replacedSignals = nullptr,
+        bool adoptsTopology = false) noexcept;
+    void CancelActivity(BusActivityPlan* plan) noexcept;
+    void DrainActivities() noexcept;
+    CommandQueue::BusActivityAttachment* ActivityAttachment(BusActivityPlan* plan) noexcept;
+    WorkRef AcceptedWorkRef(BusSlotRef bus) const noexcept;
+    using LogicEffectReferences = std::array<EffectInstanceRef, kMaxFxSlotsPerBus>;
+    const LogicEffectReferences& LogicEffects(BusSlotRef bus) const noexcept;
+    void SetLogicEffects(BusSlotRef bus, const LogicEffectReferences& effects) noexcept;
+    void SetLogicEffects(WorkRef work, BusSlotRef bus, const LogicEffectReferences& effects) noexcept;
+    bool HasAcceptedActivity() const noexcept { return m_lastQueuedActivity != nullptr; }
+    const SignalRenderPlan* AcceptedActivitySignals() const noexcept;
+    // Logic-only latest published structural definition. Its pool slot cannot
+    // retire until a successor publication replaces this view on logic.
+    // Mutable Send state is deliberately excluded from this borrowed view.
+    TopologyPlanView AcceptedTopology() const noexcept { return m_acceptedTopology; }
+    std::uint64_t NextActivitySignalPublication(const SignalRenderPlan* previous) noexcept;
+    std::uint32_t WorkingPlaneCount() const noexcept;
+    std::span<float*> AudioPlanes() noexcept;
+    BusRenderView RenderView(float* const* planes) noexcept;
+    std::uint64_t ActivityFallbackCount() const noexcept { return m_activityFallbacks; }
+    // Logic owns candidate leases; the audio directory owns a separate lease.
+    // Only a private row may be initialized. Published rows are never reset by
+    // preparing another candidate, even when they are temporarily detached.
+    WorkRef PrepareWorkRow() noexcept;
+    Bus* PreparedWorkRow(WorkRef ref) noexcept;
+    bool RetainWorkRow(WorkRef ref) noexcept;
+    void ReleaseWorkRow(WorkRef ref) noexcept;
+    bool PublishWorkRow(WorkRef ref) noexcept;
+    void DrainWorkRows() noexcept;
+    // Audio coordinator, outside worker execution. A captured directory lease
+    // must be retained before the coordinator can replace or detach the row.
+    WorkRef AudioWorkRef(std::uint32_t index) const noexcept;
+    bool AudioAdoptWorkRow(BusSlotRef bus, WorkRef ref) noexcept;
+    bool AudioDetachWorkRow(BusSlotRef bus) noexcept;
+    void ServiceWorkRowRetirements() noexcept;
+    std::uint32_t WorkRowsInUse() const noexcept { return m_workRowsInUse; }
+
+    using EffectRevisionReader = std::uint32_t (*)(const void*, BusSlotRef, std::uint32_t, std::uint32_t) noexcept;
+    // Control-owner only. Audio consumes the prepared token, never this reader.
+    void AttachEffectRevisionReader(const void* context, EffectRevisionReader reader) noexcept {
+        m_effectRevisionContext = context;
+        m_effectRevisionReader = reader;
+    }
+    void AttachActivitySnapshots(const SnapshotBuffer* source) noexcept { m_activitySnapshots = source; }
+    std::uint64_t AudioActivityPublication() const noexcept;
+    const BusActivityPlan* ObservedActivity(std::uint64_t publication) const noexcept;
+    void CaptureObservedBusState(BusSlotRef bus, const SnapshotPayload& receipt,
+        const BusActivityPlan* activity, VnBusState& out) noexcept;
+
+    struct WorkObservation {
+        BusSlotRef bus;
+        WorkRef work;
+        std::uint64_t blockSequence = 0, frameEnd = 0;
+        std::uint64_t activityPublication = 0;
+        float peakPreFader = 0, peakPostFader = 0, peakPostEffects = 0;
+        std::uint64_t graphRevision = 0, stateRevision = 0;
+        std::uint64_t commandFrontier = 0, initialSourceFrontier = 0;
+        std::uint64_t quietFrames = 0, recoveryProbeFrame = 0;
+        std::uint32_t sendTailFrames = 0, outputTailFrames = 0;
+        bool rendered = false, physicalVoice = false;
+        bool inputActive = false, detectorActive = false, localRecoveryReady = false;
+    };
+    // Conditional removal retains its predecessor and every removed work row
+    // until logic acknowledges the decision. Queued wakes own independent leases.
+    bool PrepareConditionalSleep(BusActivityPlan& plan,
+        std::span<const WorkObservation> observations, VoicePool& voices) noexcept;
+    BusActivityPlan* PendingSleep() const noexcept { return m_pendingSleep; }
+    bool AcknowledgeSleep() noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    bool AutomaticSleepEnabledForTest() const noexcept { return m_automaticSleepForTest; }
+    void SetAutomaticSleepEnabledForTest(bool enabled) noexcept { m_automaticSleepForTest = enabled; }
+#endif
+    const BusActivityPlan* AcceptedActivity() const noexcept { return m_lastQueuedActivity; }
+    // Audio coordinator only; the installed plan owns all borrowed resources.
+    const BusActivityPlan* AudioActivity() const noexcept { return m_activeActivity; }
+    const SignalRenderPlan* AcceptedActivityAlternate() const noexcept;
+    bool PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept;
+    // Single logic reader; a retained WorkRef protects the snapshot storage.
+    // Local readiness is a sleep proposal, not a complete dependency proof.
+    bool CaptureWorkObservation(BusSlotRef bus, WorkRef work, WorkObservation& out) noexcept;
+    // Audio coordinator only, after the worker join and before publication.
+    void BeginWorkObservations() noexcept;
+    void NoteAudioBusUser(BusSlotRef bus) noexcept;
+    void PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t frameEnd,
+        std::uint32_t frames, bool rendered, std::uint64_t commandFrontier = 0,
+        std::uint64_t initialSourceFrontier = 0) noexcept;
 
     // Creates a bus under an existing parent. Logic thread. Refusals:
     // id 0 -> VN_INVALID_ARG, id already present (including the master id)
@@ -134,6 +237,8 @@ public:
     // bus. The topology planner and the create preflight (logic thread) read
     // it. The audio thread must NOT read this — it learns of a new bus only
     // through AudioBusCount(), which advances at the plan swap.
+    bool PrepareDefinitionCapacity(std::uint32_t count) noexcept;
+    std::uint32_t DefinitionCapacity() const noexcept { return m_capacity; }
     std::uint32_t BusCount() const { return m_count; }
     std::uint32_t ActiveBusCount() const { return m_activeCount; }
     std::uint32_t FreeBusSlotCount() const;
@@ -164,9 +269,7 @@ public:
     // never before — the mixer sizes its plane set, folds, and snapshots
     // against this. Audio thread.
     std::uint32_t AudioBusCount() const { return m_audioCount; }
-    std::uint32_t AudioGenerationAt(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].generation : 0;
-    }
+    std::uint32_t AudioGenerationAt(std::uint32_t busIndex) const;
 
     // Tree parent of a bus (itself for the master), from the LOGIC-side parent
     // shadow: the topology planner reads it to include tree edges in the
@@ -243,8 +346,9 @@ public:
                            std::uint32_t connectTo, float connectLevelDb,
                            std::uint64_t acceptedGraphRevision = 0);
     // Logic thread: include every plan that can still be consumed on audio.
-    std::uint64_t RetainedSignalScratchBytes(std::uint64_t extraNodes,
+    std::uint64_t RetainedSignalScratchBytes(std::uint32_t dynamicCapacity,
         std::uint64_t extraEdges, std::uint32_t frames) const noexcept;
+    std::uint32_t RetainedSendCount() const noexcept;
     std::uint64_t InstalledGraphRevision() const noexcept {
         return m_installedGraphRevision.load(std::memory_order_acquire);
     }
@@ -262,7 +366,8 @@ public:
     void ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
                               float levelDb, std::uint32_t rampMs,
                               std::uint32_t fromGeneration = 0,
-                              std::uint32_t toGeneration = 0);
+                              std::uint32_t toGeneration = 0,
+                              std::uint64_t sendGeneration = 0);
 
     // Bus insert-effect chain apply methods (audio thread, at block start).
     // Pure mirrors of the voice-pool effect apply path: install an already-built
@@ -321,27 +426,28 @@ public:
     // result back into the mix-width planes before its parent sum and sends;
     // the master->device fold is applied downstream by the mixer at the device
     // boundary. Audio thread.
-    bool MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+    bool MixDown(const BusRenderView& busPlanes, std::uint32_t blockFrames,
                  std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
                  SignalRenderPlan* signals = nullptr);
     std::size_t SignalRoutingEdgeCapacity() const noexcept {
-        return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1) +
-            SignalRoutingExtraNodes() + m_dynamicRoutes.InstalledPlan().rowCount;
+        return SignalRoutingEdgeCapacity(SignalBusMapping::Dense(m_audioCount));
     }
     std::size_t SignalRoutingExtraNodes() const noexcept {
-        const auto plan = m_dynamicRoutes.InstalledPlan();
-        for (std::uint32_t i = 0; i < plan.rowCount; ++i)
-            if (plan.rows[i].sourceKind == VN_DYNAMIC_SOURCE_BUS)
-                return static_cast<std::size_t>(m_audioCount) * (m_fxSlots + 2ull);
-        return 0;
+        return SignalRoutingExtraNodes(SignalBusMapping::Dense(m_audioCount));
     }
+    std::size_t SignalRoutingEdgeCapacity(SignalBusMapping mapping) const noexcept;
+    std::size_t SignalRoutingExtraNodes(SignalBusMapping mapping) const noexcept;
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
         std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
         std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept;
-    bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept;
-    SignalRenderPlan* InstalledSignals() const {
-        return m_plans.View(m_currentPlanIndex).signals;
-    }
+    std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
+        std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset,
+        SignalBusMapping mapping) noexcept;
+    bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles,
+        SignalBusMapping mapping) const noexcept;
+    SignalRenderPlan* InstalledSignals() const;
+    TopologyPlanView InstalledTopology() const { return m_plans.View(m_currentPlanIndex); }
 
     // The mix-layout channel count every bus renders at (resolved config).
     std::uint32_t MixChannels() const { return m_mixChannels; }
@@ -355,13 +461,13 @@ public:
     // ApplyTopologyPlan, seeded to the Appendix A default at construction.
     // Audio thread.
     const float* BusDownmixCoeffs(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].downmixCoeffs
+        return HasWorkRow(busIndex) ? WorkState(busIndex).downmixCoeffs
                                        : nullptr;
     }
     // A bus's configured output layout (VnChannelLayout); for the master this
     // is the device layout. Audio thread.
     std::uint32_t BusOutputLayout(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].outputLayout : 0;
+        return HasWorkRow(busIndex) ? WorkState(busIndex).outputLayout : 0;
     }
 
     // OutputPeak is the existing Post Effects bus meter: the peak absolute
@@ -374,18 +480,18 @@ public:
     // during MixDown; the mixer copies it into the snapshot payload and the
     // meter block ring in the same block.
     float OutputPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].outputPeak : 0.0f;
+        return HasWorkRow(busIndex) ? WorkState(busIndex).outputPeak : 0.0f;
     }
     float OutputChannelPeak(std::uint32_t busIndex, std::uint32_t channel) const {
-        return busIndex < m_audioCount && channel < m_mixChannels
-            ? m_buses[busIndex].outputChannelPeaks[channel] : 0.0f;
+        return HasWorkRow(busIndex) && channel < m_mixChannels
+            ? WorkState(busIndex).outputChannelPeaks[channel] : 0.0f;
     }
     float PreFaderPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].preFaderPeak
+        return HasWorkRow(busIndex) ? WorkState(busIndex).preFaderPeak
                                        : 0.0f;
     }
     float PostFaderPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].postFaderPeak
+        return HasWorkRow(busIndex) ? WorkState(busIndex).postFaderPeak
                                        : 0.0f;
     }
 
@@ -395,8 +501,11 @@ public:
     // golden technique — and so future host diagnostics can read chain state.
     struct Bus {
         VnBusId id{};
+        std::uint32_t busIndex = 0;
         std::uint32_t generation = 0;
         std::uint32_t parentIndex = 0;
+        std::uint64_t activityRevision = 1;
+        bool activityInput = false, activityDetector = false;
         OutputGain gain;
         OutputGain outputGain;
         // First ApplyVolume snaps even if rampMs != 0 (no fictitious prior
@@ -421,7 +530,7 @@ public:
         float fxBypassTarget[kMaxFxSlotsPerBus] = {};
         bool fxBypassRamping[kMaxFxSlotsPerBus] = {};
         EffectInstanceRef fxSlotEffectRef[kMaxFxSlotsPerBus];
-        EffectChainUpdate* fxChainTransition = nullptr;
+        BusEffectChainState* fxChainTransition = nullptr;
         std::uint64_t previewEffectOwner = 0;
         std::uint64_t previewEffectRevision = 0;
         double signalSlotHistory[kMaxFxSlotsPerBus] = {};
@@ -471,6 +580,47 @@ public:
         ToneSection outputHpf;
     };
 
+    // Stored only for filters with retained history, not for every definition.
+    struct DormantToneSection {
+        BiquadCoeffs coefficients;
+        SignalBiquadBound signalBound;
+        double signalHighWater = 1;
+        float lastInput[kMaxChannels]{};
+        float log2Hz = 0, log2Q = 0, gainDb = 0;
+        std::uint32_t tailFrames = 0, zeroSigns = 0;
+        bool enabled = false;
+    };
+    // Audio owner, after actual section input is silent. Failure leaves out intact.
+    static bool CaptureDormantToneSection(const Bus::ToneSection& section,
+        std::uint32_t channels, DormantToneSection& out) noexcept;
+    // Unpublished work row, same identity, format and authoritative parameters.
+    static void RestoreDormantToneSection(Bus::ToneSection& section,
+        const DormantToneSection& saved) noexcept;
+    struct DormantEffectReceipt {
+        std::uint64_t publication = 0;
+        std::uint8_t mask = 0;
+        bool operator==(const DormantEffectReceipt&) const = default;
+    };
+    struct DormantSource {
+        std::shared_ptr<const BusDormantWork> filters;
+        DormantEffectReceipt effects;
+        bool operator==(const DormantSource&) const = default;
+    };
+    // Control-owned cold FX live with their logical installation settings.
+    struct DormantEffects {
+        void* context = nullptr;
+        bool (*commit)(void*, std::span<const BusDormantCapture* const>, std::uint64_t) noexcept = nullptr;
+        bool (*restore)(const void*, Bus&) noexcept = nullptr;
+        DormantEffectReceipt (*receipt)(const void*, BusSlotRef) noexcept = nullptr;
+        void (*consume)(void*, BusSlotRef) noexcept = nullptr;
+    };
+    void AttachDormantEffects(DormantEffects owner) noexcept { m_dormantEffects = owner; }
+    DormantSource DormantSourceFor(BusSlotRef bus) const noexcept;
+    std::shared_ptr<const BusDormantWork> DormantWorkFor(BusSlotRef bus) const noexcept;
+    bool RestoreDormantWork(Bus& row) const noexcept;
+    bool PrepareDormantSignalContinuity(SignalRenderPlan& next,
+        const SignalRenderPlan& previous) const noexcept;
+
     // Render state of a bus by dense index, or nullptr out of range. Internal
     // (non-ABI) accessor mirroring VoicePool::Resolve; see Bus. Bounded by the
     // logic-visible count so a just-created bus is reachable before its first
@@ -478,13 +628,35 @@ public:
     Bus* BusState(std::uint32_t busIndex);
 
 private:
+    friend struct BusActivityPlan;
+    bool AdoptActivity(BusActivityPlan& plan) noexcept;
+    void QueueActivity(BusActivityPlan& plan) noexcept;
+    void ShutdownActivities() noexcept;
+    std::span<const std::uint32_t> WorkingOrder() const noexcept;
+    std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
+    const SnapshotBuffer* m_activitySnapshots = nullptr;
+    const void* m_effectRevisionContext = nullptr;
+    EffectRevisionReader m_effectRevisionReader = nullptr;
+    std::uint32_t InstalledEffectRevision(BusSlotRef bus, std::uint32_t slot, std::uint32_t type) const noexcept {
+        return m_effectRevisionReader != nullptr ? m_effectRevisionReader(m_effectRevisionContext, bus, slot, type) : 0;
+    }
+    std::uint64_t m_nextActivityPublication = 0;
+    DormantEffects m_dormantEffects;
+    std::unique_ptr<BusDormantRegistry> m_dormant;
+    BusActivityPlan* m_lastQueuedActivity = nullptr;
+    BusActivityPlan* m_activeActivity = nullptr;
+    BusActivityPlan* m_pendingSleep = nullptr;
+    TopologyPlanView m_acceptedTopology;
+    std::uint64_t m_activityFallbacks = 0;
+    std::uint64_t m_activitySignalPublication = 0;
     SignalBusRoutingInfo SignalBusBounds(std::uint32_t bus, std::uint32_t frames,
                                         std::span<SignalBiquadSegment> schedules) noexcept;
     void InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
                            std::uint32_t parentIndex,
                            std::uint32_t generation) noexcept;
     void RetireBusSlotEffects(Bus& bus) noexcept;
-    void RetirePreviewEffectReferences(EffectChainUpdate& update, bool quiescent = false) noexcept;
+    bool TryRetirePreviewEffectReferences(BusEffectChainState& state, bool quiescent) noexcept;
+    void RetirePreviewEffectReferences(BusEffectChainState& state, bool quiescent = false) noexcept;
     void ReleasePreviewEffectChain(Bus& bus, bool quiescent = false) noexcept;
     void FinishPreviewEffectChain(Bus& bus, std::uint32_t frames) noexcept;
 
@@ -492,16 +664,7 @@ private:
     // the authoritative topology-plan membership slot; equal slot+target keeps
     // this level and ramp across ordinary republishes. Send still uses the
     // whole-block GainRamp plan; Bus Volume does not.
-    struct SendEdge {
-        std::uint32_t toIndex = kInvalidBusIndex; // invalid = empty level slot
-        std::uint32_t toGeneration = 0;
-        GainRamp gain;
-        bool ramping = false;
-        float rampStartGain = 1.0f;
-        float rampEndGain = 1.0f;
-        std::uint64_t rampBlocksTotal = 0;
-        std::uint64_t rampBlocksDone = 0;
-    };
+    using SendEdge = BusSendState;
 
     // Renders one bus's §7.3 pipeline over its accumulated planes for this
     // block: pre-fader fx slots [0, faderAfterSlot) -> pre-fader tap ->
@@ -533,7 +696,6 @@ private:
 
     // Row of send-level slots for a from-bus. Returns nullptr for the master's
     // row only if out of range (never in practice).
-    SendEdge* SendRow(std::uint32_t fromBus);
     // Finds the level slot addressing `toBus` in a from-bus's row, or nullptr.
     SendEdge* FindEdge(std::uint32_t fromBus, std::uint32_t toBus);
     // Applies a send ramp request to a GainRamp + its multi-block plan
@@ -552,9 +714,62 @@ private:
     std::uint32_t m_currentPlanIndex = kInvalidTopologyPlanIndex;
 
     // Resized to capacity at Init. [0, m_count) is logic-visible;
-    // [m_count, m_materializedCount) may hold one hidden prepared append batch.
-    std::vector<Bus> m_buses;
-    std::unique_ptr<std::atomic<BusEffectChainState*>[]> m_previewEffectStates;
+    enum class WorkPhase : std::uint8_t { Free, Preparing, Published, Retired };
+    struct WorkRow {
+        Bus bus;
+        // Bound by logic before publication and never rewritten by topology
+        // adoption. A new logical incarnation requires a new prepared row.
+        BusSlotRef host{};
+        VnBusId hostId{};
+        // Logic-only publication mirror; never inspect the audio-owned chain.
+        LogicEffectReferences logicEffects{};
+        std::atomic<std::uint32_t> references{0};
+        std::atomic<WorkPhase> phase{WorkPhase::Free};
+        std::uint64_t generation = 0;
+        std::uint32_t slot = UINT32_MAX;
+        WorkRow* next = nullptr;
+        PinnedSnapshot3<WorkObservation> observation;
+        WorkObservation observed;
+        std::uint64_t nextRecoveryProbeFrame = 0;
+        std::uint32_t recoveryProbeDelay = 0;
+    };
+    // Offline direct-construction seam; normal publication uses activity planes.
+    std::vector<float*> m_directPlanes;
+    GrowingRowStorage<WorkRow> m_workRows;
+    // Each audio slot retains its stable row until it clears this pointer.
+    GrowingRowStorage<WorkRow*> m_workSlots;
+    std::vector<std::uint32_t> m_freeWorkRows;
+    std::atomic<WorkRow*> m_workRetireRequests{nullptr};
+    std::atomic<WorkRow*> m_workRetired{nullptr};
+    std::uint32_t m_workRowsInUse = 0;
+    static WorkRef WorkReference(const WorkRow* row) noexcept {
+        return row != nullptr ? WorkRef{row->slot, row->generation} : WorkRef{};
+    }
+    WorkRow* ResolveWorkRow(WorkRef ref) noexcept;
+    WorkRef LogicEffectWorkRef(BusSlotRef bus) const noexcept;
+    void AudioReleaseWorkRow(WorkRef ref) noexcept;
+    void RetireWorkRow(WorkRow& row) noexcept;
+    void RecycleWorkRow(WorkRow& row) noexcept;
+    void ShutdownWorkRows() noexcept;
+    void BindInitialWorkIdentity(std::uint32_t busIndex) noexcept;
+    static void NoteWorkMutation(Bus& bus) noexcept {
+        if (bus.activityRevision != UINT64_MAX) ++bus.activityRevision;
+    }
+    bool LocalRecoveryReady(const Bus& bus) const noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    bool m_automaticSleepForTest = true;
+#endif
+    bool HasWorkRow(std::uint32_t index) const noexcept {
+        return index < m_audioCount && m_workSlots[index] != nullptr;
+    }
+    Bus& WorkState(std::uint32_t busIndex) noexcept {
+        return m_workSlots[busIndex]->bus;
+    }
+    const Bus& WorkState(std::uint32_t busIndex) const noexcept {
+        return m_workSlots[busIndex]->bus;
+    }
+    GrowingRowStorage<std::atomic<BusEffectChainState*>> m_previewEffectStates;
+    BusEffectChainState* m_retiringPreviewEffects = nullptr;
     std::atomic<std::uint32_t> m_pendingPreviewEffects{0};
     // Logic-owned tree-parent shadow and slot liveness, indexed by dense bus
     // index and sized to capacity at init. CreateBus (and a live reparent)
@@ -575,18 +790,11 @@ private:
     // covers the installed plan's orderCount, at or below it.
     std::uint32_t m_audioCount = 0;
     std::uint64_t m_invalidVolumeApplies = 0;
-    // Send-level table, row-major by from-bus: m_sends[from*m_sendSlots + s].
-    // Audio-thread state; sized to capacity at init and never resized.
-    std::vector<SendEdge> m_sends;
-    std::uint32_t m_sendSlots = 0;
     std::uint32_t m_count = 0;
     std::uint32_t m_activeCount = 0;
     std::uint32_t m_quarantinedCount = 0;
     std::uint64_t m_slotReuseCount = 0;
     std::atomic<std::uint64_t> m_installedGraphRevision{0};
-    // Physical append bound. It may temporarily lead m_count while a prepared
-    // Pack batch owns hidden, fully initialized Bus slots.
-    std::uint32_t m_materializedCount = 0;
     std::uint32_t m_capacity = 0;
     std::uint32_t m_blockFrames = 0;
     std::uint32_t m_sampleRate = 0;

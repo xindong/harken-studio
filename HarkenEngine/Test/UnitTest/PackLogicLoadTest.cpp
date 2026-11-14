@@ -431,6 +431,13 @@ VnSnapshot Snap() {
     return snapshot;
 }
 
+harken::BusSendRecord LogicalSendAt(const harken::Engine& engine,
+    std::uint32_t source, std::uint32_t slot) {
+    for (const auto& edge : engine.busSends.From(source))
+        if (edge.slot == slot) return edge;
+    return {};
+}
+
 std::uint32_t FindBusSendSlot(const harken::Engine& engine,
                               VnBusId fromBusId, VnBusId toBusId) {
     const std::uint32_t from = engine.buses.FindIndex(fromBusId);
@@ -439,14 +446,8 @@ std::uint32_t FindBusSendSlot(const harken::Engine& engine,
         to == harken::kInvalidBusIndex) {
         return engine.config.busSendSlotsPerBus;
     }
-    const std::uint32_t slots = engine.config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    for (std::uint32_t slot = 0; slot < slots; ++slot) {
-        if (engine.busSendAdj[base + slot] == to) {
-            return slot;
-        }
-    }
-    return slots;
+    const auto* edge = engine.busSends.Find(from, to);
+    return edge ? edge->slot : engine.config.busSendSlotsPerBus;
 }
 
 // Drains every pending logic log record (no log callback is configured,
@@ -889,7 +890,7 @@ MixedResidentState ObserveMixedResidentState(
     }
     state.sendSlot = FindBusSendSlot(engine, sourceBus, VN_BUS_MASTER);
     EXPECT_LT(state.sendSlot, engine.config.busSendSlotsPerBus);
-    state.effect = engine.busEffectInstanceRefs[state.targetIndex][0];
+    state.effect = engine.BusEffectRefs(state.targetIndex)[0];
     const harken::DynamicRouteDefinition* route =
         engine.dynamicRoutes.Find(targetBus, 0, 0);
     EXPECT_NE(nullptr, route);
@@ -928,14 +929,14 @@ void ExpectMixedResidentStateUnchanged(
     const std::uint32_t sendFlat =
         before.sourceIndex * engine.config.busSendSlotsPerBus +
         before.sendSlot;
-    EXPECT_EQ(pack, engine.busSendOwnerCookies[sendFlat]);
+    EXPECT_EQ(pack, LogicalSendAt(engine, before.sourceIndex, before.sendSlot).ownerCookie);
     const harken::EffectInstanceRef effect =
-        engine.busEffectInstanceRefs[before.targetIndex][0];
+        engine.BusEffectRefs(before.targetIndex)[0];
     EXPECT_EQ(before.effect.type, effect.type);
     EXPECT_EQ(before.effect.poolIndex, effect.poolIndex);
     EXPECT_EQ(before.effect.generation, effect.generation);
     EXPECT_EQ(pack,
-              engine.busEffectOwnerCookies[before.targetIndex][0]);
+              engine.busEffects.Get(before.targetIndex, 0).owner);
     const harken::DynamicRouteDefinition* route =
         engine.dynamicRoutes.Find(targetBus, 0, 0);
     ASSERT_NE(nullptr, route);
@@ -1147,8 +1148,7 @@ TEST(PackLogicLoad, BusAndSendOwnershipCookiesTrackLiveSlots) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12001), harkentest::ObjectId(12002));
     ASSERT_LT(sendSlot, engine->config.busSendSlotsPerBus);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  first * engine->config.busSendSlotsPerBus + sendSlot]);
+              LogicalSendAt(*engine, first, sendSlot).ownerCookie);
 
     const harken::PackLogicRecord* record =
         engine->logicPacks.RecordFor(pack);
@@ -1692,6 +1692,7 @@ TEST(PackLogicReplace, SingleStageOverflowLeavesLoadedRevisionIntact) {
         WriteFileBytes(firstPath, first.Build());
         VnPackHandle pack = 0;
         ASSERT_EQ(VN_OK, LoadPack(firstPath, &pack));
+        ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(harkentest::ObjectId(13193), engine->config.fxSlotsPerBus));
         engine->nullBackend.Pump(1);
         const std::uint32_t index = engine->buses.FindIndex(harkentest::ObjectId(13193));
         ASSERT_NE(harken::kInvalidBusIndex, index);
@@ -1936,6 +1937,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact)
         VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &probeGeneration));
     ASSERT_NE(0u, probeGeneration);
 
+    ASSERT_TRUE(engine->busTargets.PrepareActivity(index, harken::kBusTargetBusVolume));
     engine->busTargets.BeginMeterProbeSweep();
     engine->busTargets.AccumulateMeterProbe(
         index, generation, harken::kBusTargetBusVolume, 3.0e38f, true, 17);
@@ -1963,6 +1965,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact)
     EXPECT_FLOAT_EQ(
         -6.0f, engine->busTargets.Reduce(
                    index, harken::kBusTargetBusVolume));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(harkentest::ObjectId(13172), engine->config.fxSlotsPerBus));
     engine->nullBackend.Pump(1);
     harken::BusTree::Bus* bus = engine->buses.BusState(index);
     ASSERT_NE(nullptr, bus);
@@ -3010,9 +3013,9 @@ TEST(PackLogicLoad, LegacyVariableEntryKindsRefuseWithZeroSideEffects) {
 // --- staging atomicity ---
 
 
-TEST(PackLogicStaging, BusPoolExhaustionRefusesWholeLoad) {
+TEST(PackLogicStaging, BusDefinitionAllocationFailureRefusesWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
-    config.maxBuses = 3; // master + 2: three pack buses cannot fit
+    config.maxBuses = 3; // Growth failure must preserve the existing world.
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3026,12 +3029,17 @@ TEST(PackLogicStaging, BusPoolExhaustionRefusesWholeLoad) {
            { "id": "3da91a64-b947-4560-0000-000000000323", "parent": "00000000-0000-0000-0000-000000000001" } ])")));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BUS, LoadPack(packPath, &pack));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusDefinitionStorage);
+    const auto result = LoadPack(packPath, &pack);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(VN_BACKPRESSURE, result);
 
     // Zero mutation: no bus landed.
     EXPECT_EQ(1u, engine->buses.BusCount()); // the master alone
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(801), -1.0f, 0));
     EXPECT_EQ(0u, engine->packs.LoadedCount());
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
+    EXPECT_EQ(4u, engine->buses.BusCount());
 }
 
 TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
@@ -3420,9 +3428,9 @@ TEST(PackLogicReplace,
     const auto oldPublished = engine->commands.PublishedHead();
     const auto oldConsumed = engine->commands.ConsumedCount();
     const auto oldFreeSlots = engine->commands.FreeSlots();
-    const auto oldEffectType = engine->busEffectSlotTypes[oldBusIndex][0];
+    const auto oldEffectType = engine->busEffects.Get(oldBusIndex, 0).type;
     const auto oldEffectOwner =
-        engine->busEffectOwnerCookies[oldBusIndex][0];
+        engine->busEffects.Get(oldBusIndex, 0).owner;
     const std::uint32_t oldLoadedPacks = engine->packs.LoadedCount();
     const harken::PackLogicRecord* oldRecord =
         engine->logicPacks.RecordFor(pack);
@@ -3461,9 +3469,9 @@ TEST(PackLogicReplace,
     EXPECT_EQ(oldConsumed, engine->commands.ConsumedCount());
     EXPECT_EQ(oldFreeSlots, engine->commands.FreeSlots());
     EXPECT_EQ(oldEffectType,
-              engine->busEffectSlotTypes[oldBusIndex][0]);
+              engine->busEffects.Get(oldBusIndex, 0).type);
     EXPECT_EQ(oldEffectOwner,
-              engine->busEffectOwnerCookies[oldBusIndex][0]);
+              engine->busEffects.Get(oldBusIndex, 0).owner);
     EXPECT_EQ(oldLoadedPacks, engine->packs.LoadedCount());
     const harken::PackLogicRecord* liveRecord =
         engine->logicPacks.RecordFor(pack);
@@ -3808,6 +3816,7 @@ TEST(PackLogicInitialAtomicity,
     ASSERT_TRUE(BuildInitialAtomicityTopologyPack(
         "plia_media_with_live_ticket", packPath, kTarget, kSource));
 
+    const auto rowsBefore = engine->buses.WorkRowsInUse();
     const std::uint32_t busesBefore = engine->buses.BusCount();
     const std::uint64_t sendsBefore = engine->busSendActive;
     const std::uint32_t packsBefore = engine->packs.LoadedCount();
@@ -3821,6 +3830,7 @@ TEST(PackLogicInitialAtomicity,
     const std::uint32_t effectsBefore =
         engine->effectBank.InUseOf(VN_EFFECT_COMPRESSOR);
     const auto expectUntouched = [&]() {
+        EXPECT_EQ(rowsBefore, engine->buses.WorkRowsInUse());
         EXPECT_EQ(busesBefore, engine->buses.BusCount());
         EXPECT_EQ(harken::kInvalidBusIndex,
                   engine->buses.FindIndex(kTarget));
@@ -4135,16 +4145,12 @@ TEST(PackLogicAggregateCapacity, AttenuationSumPreparesWholeLoadBeyond64) {
 }
 
 
-TEST(PackLogicAggregateCapacity, SendSlotBudgetSumRefusesWholeLoad) {
+TEST(PackLogicAggregateCapacity, SendRowsGrowBeyondLegacyBudget) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    // Six pack buses and five send edges, all FROM the same pack bus to
-    // five distinct pack buses. Any single edge fits the default
-    // four-slot per-bus budget; only the per-from-bus SUM over the
-    // combined graph exceeds it, and no per-edge check ever counts that
-    // sum.
+    // Five edges from one source exceed the former default four-slot limit.
     const std::string packPath = TempPath("plagg_send_budget.pack");
     ASSERT_TRUE(BuildPackFile(
         "plagg_send_budget",
@@ -4162,14 +4168,14 @@ TEST(PackLogicAggregateCapacity, SendSlotBudgetSumRefusesWholeLoad) {
               { "from": "3da91a64-b947-4560-0000-00000000041b", "to": "3da91a64-b947-4560-0000-000000000420", "levelDb": -3.0 } ])")));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_SEND, LoadPack(packPath, &pack));
-
-    // Zero mutation: no bus landed and the discrete declaration did
-    // not happen.
-    EXPECT_EQ(1u, engine->buses.BusCount());
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(1051), -1.0f, 0));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(1056), -1.0f, 0));
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    ASSERT_EQ(VN_OK, LoadPack(packPath, &pack));
+    EXPECT_EQ(7u, engine->buses.BusCount());
+    EXPECT_EQ(5u, engine->busSends.Count());
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+    EXPECT_EQ(0u, engine->busSends.Count());
 }
 
 // --- unload ---
@@ -4208,7 +4214,7 @@ TEST(PackLogicUnload,
     ASSERT_EQ(VN_OK, Vn_Update());
     const std::uint32_t target = engine->buses.FindIndex(harkentest::ObjectId(13001));
     ASSERT_NE(harken::kInvalidBusIndex, target);
-    ASSERT_EQ(pack, engine->busEffectOwnerCookies[target][0]);
+    ASSERT_EQ(pack, engine->busEffects.Get(target, 0).owner);
     ASSERT_EQ(1u, engine->effectBank.InUseOf(VN_EFFECT_COMPRESSOR));
 
     ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
@@ -4222,7 +4228,9 @@ TEST(PackLogicUnload,
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(13001), 0.0f, 0));
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(13002), 0.0f, 0));
     EXPECT_EQ(harken::kEffectTypeNone,
-              engine->busEffectInstanceRefs[target][0].type);
+              engine->BusEffectRefs(target)[0].type);
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine->effectBank.InUseOf(VN_EFFECT_COMPRESSOR));
     EXPECT_EQ(nullptr, engine->logicPacks.RecordFor(pack));
     EXPECT_EQ(0u, engine->packs.LoadedCount());
@@ -4274,9 +4282,8 @@ TEST(PackLogicUnload,
     ASSERT_EQ(0u, engine->busOwnerCookies[source]);
     ASSERT_EQ(0u, engine->busOwnerCookies[target]);
     ASSERT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  source * engine->config.busSendSlotsPerBus + sendSlot]);
-    ASSERT_EQ(pack, engine->busEffectOwnerCookies[target][0]);
+              LogicalSendAt(*engine, source, sendSlot).ownerCookie);
+    ASSERT_EQ(pack, engine->busEffects.Get(target, 0).owner);
     ASSERT_NE(nullptr, engine->dynamicRoutes.Find(kTarget, 0, 0));
 
     ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
@@ -4287,8 +4294,8 @@ TEST(PackLogicUnload,
     EXPECT_EQ(engine->config.busSendSlotsPerBus,
               FindBusSendSlot(*engine, kSource, kTarget));
     EXPECT_EQ(harken::kEffectTypeNone,
-              engine->busEffectInstanceRefs[target][0].type);
-    EXPECT_EQ(0u, engine->busEffectOwnerCookies[target][0]);
+              engine->BusEffectRefs(target)[0].type);
+    EXPECT_EQ(0u, engine->busEffects.Get(target, 0).owner);
     EXPECT_EQ(nullptr, engine->dynamicRoutes.Find(kTarget, 0, 0));
     EXPECT_EQ(nullptr, engine->logicPacks.RecordFor(pack));
 
@@ -4416,22 +4423,22 @@ TEST(PackLogicUnload,
     const std::uint32_t bus = engine->buses.FindIndex(harkentest::ObjectId(13011));
     ASSERT_NE(harken::kInvalidBusIndex, bus);
     const harken::EffectInstanceRef owned =
-        engine->busEffectInstanceRefs[bus][0];
+        engine->BusEffectRefs(bus)[0];
     const harken::EffectInstanceRef foreign =
-        engine->busEffectInstanceRefs[bus][1];
-    ASSERT_EQ(pack, engine->busEffectOwnerCookies[bus][0]);
-    ASSERT_EQ(0u, engine->busEffectOwnerCookies[bus][1]);
+        engine->BusEffectRefs(bus)[1];
+    ASSERT_EQ(pack, engine->busEffects.Get(bus, 0).owner);
+    ASSERT_EQ(0u, engine->busEffects.Get(bus, 1).owner);
 
     EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(pack));
     EXPECT_EQ(bus, engine->buses.FindIndex(harkentest::ObjectId(13011)));
-    EXPECT_EQ(owned.type, engine->busEffectInstanceRefs[bus][0].type);
+    EXPECT_EQ(owned.type, engine->BusEffectRefs(bus)[0].type);
     EXPECT_EQ(owned.poolIndex,
-              engine->busEffectInstanceRefs[bus][0].poolIndex);
-    EXPECT_EQ(foreign.type, engine->busEffectInstanceRefs[bus][1].type);
+              engine->BusEffectRefs(bus)[0].poolIndex);
+    EXPECT_EQ(foreign.type, engine->BusEffectRefs(bus)[1].type);
     EXPECT_EQ(foreign.poolIndex,
-              engine->busEffectInstanceRefs[bus][1].poolIndex);
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[bus][0]);
-    EXPECT_EQ(0u, engine->busEffectOwnerCookies[bus][1]);
+              engine->BusEffectRefs(bus)[1].poolIndex);
+    EXPECT_EQ(pack, engine->busEffects.Get(bus, 0).owner);
+    EXPECT_EQ(0u, engine->busEffects.Get(bus, 1).owner);
     EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
     EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
@@ -4463,8 +4470,8 @@ TEST(PackLogicUnload,
     const std::uint32_t bus = engine->buses.FindIndex(kBus);
     ASSERT_NE(harken::kInvalidBusIndex, bus);
     const harken::EffectInstanceRef effect =
-        engine->busEffectInstanceRefs[bus][0];
-    ASSERT_EQ(pack, engine->busEffectOwnerCookies[bus][0]);
+        engine->BusEffectRefs(bus)[0];
+    ASSERT_EQ(pack, engine->busEffects.Get(bus, 0).owner);
 
     const VnBindingDesc binding = MakeBusEffectParamBinding(
         harkentest::ObjectId(13162), VN_EFFECT_COMPRESSOR, 0,
@@ -4478,12 +4485,12 @@ TEST(PackLogicUnload,
 
     EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(pack));
     EXPECT_EQ(bus, engine->buses.FindIndex(kBus));
-    EXPECT_EQ(effect.type, engine->busEffectInstanceRefs[bus][0].type);
+    EXPECT_EQ(effect.type, engine->BusEffectRefs(bus)[0].type);
     EXPECT_EQ(effect.poolIndex,
-              engine->busEffectInstanceRefs[bus][0].poolIndex);
+              engine->BusEffectRefs(bus)[0].poolIndex);
     EXPECT_EQ(effect.generation,
-              engine->busEffectInstanceRefs[bus][0].generation);
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[bus][0]);
+              engine->BusEffectRefs(bus)[0].generation);
+    EXPECT_EQ(pack, engine->busEffects.Get(bus, 0).owner);
     EXPECT_TRUE(engine->bindings.HasAttachment(
         harkentest::ObjectId(13163), VN_TARGET_SCOPE_BUS_EFFECT_PARAM, kBus));
     EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
@@ -4544,8 +4551,7 @@ TEST(PackLogicUnload,
     EXPECT_EQ(routeGeneration, after->generation);
     EXPECT_EQ(VN_DYNAMIC_ROUTE_OWNER_CALLER, after->ownerKind);
     EXPECT_EQ(pack,
-              engine->busEffectOwnerCookies[
-                  engine->buses.FindIndex(kTarget)][0]);
+              engine->busEffects.Get(engine->buses.FindIndex(kTarget), 0).owner);
     EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
 }
 
@@ -4745,13 +4751,13 @@ TEST(PackLogicUnload,
         pending.active = true;
         pending.busIndex = voiceSend ? 0 : bus;
         if (voiceSend) {
-            pending.voiceSends[0] = {true, bus, -6.0f};
+            pending.voiceSends = pending.voiceSends.WithSet({true, bus, -6.0f, engine->buses.GenerationAt(bus), 0});
         }
 
         EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(pack));
         EXPECT_TRUE(pending.active);
         EXPECT_EQ(voiceSend ? 0u : bus, pending.busIndex);
-        EXPECT_EQ(voiceSend, pending.voiceSends[0].active);
+        EXPECT_EQ(voiceSend, pending.voiceSends.Find(0) != nullptr);
         EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
         pending.Reset();
     }
@@ -4775,13 +4781,13 @@ TEST(PackLogicUnload,
         parked.active = true;
         parked.facts.busIndex = voiceSend ? 0 : bus;
         if (voiceSend) {
-            parked.voiceSends[0] = {true, bus, -9.0f};
+            parked.voiceSends = parked.voiceSends.WithSet({true, bus, -9.0f, engine->buses.GenerationAt(bus), 0});
         }
 
         EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(pack));
         EXPECT_TRUE(parked.active);
         EXPECT_EQ(voiceSend ? 0u : bus, parked.facts.busIndex);
-        EXPECT_EQ(voiceSend, parked.voiceSends[0].active);
+        EXPECT_EQ(voiceSend, parked.voiceSends.Find(0) != nullptr);
         EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
         parked = harken::ParkRecord{};
     }
@@ -4887,8 +4893,7 @@ TEST(PackLogicUnload,
             FindBusSendSlot(*engine, harkentest::ObjectId(13091), harkentest::ObjectId(13092));
         ASSERT_LT(slot, engine->config.busSendSlotsPerBus);
         ASSERT_EQ(pack,
-                  engine->busSendOwnerCookies[
-                      from * engine->config.busSendSlotsPerBus + slot]);
+                  LogicalSendAt(*engine, from, slot).ownerCookie);
 
         EXPECT_EQ(VN_OK, Vn_UnloadPack(pack));
         EXPECT_EQ(harken::kInvalidBusIndex,
@@ -5884,8 +5889,7 @@ TEST(PackLogicReplace, BusSendRelevelRetainsOwnerCookie) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12101), harkentest::ObjectId(12102));
     ASSERT_LT(oldSlot, engine->config.busSendSlotsPerBus);
     ASSERT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + oldSlot]);
+              LogicalSendAt(*engine, from, oldSlot).ownerCookie);
 
     ASSERT_EQ(VN_OK, ReplacePack(pack, v2Path));
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -5893,8 +5897,7 @@ TEST(PackLogicReplace, BusSendRelevelRetainsOwnerCookie) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12101), harkentest::ObjectId(12102));
     EXPECT_EQ(oldSlot, liveSlot);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + liveSlot]);
+              LogicalSendAt(*engine, from, liveSlot).ownerCookie);
     const harken::PackLogicRecord* record =
         engine->logicPacks.RecordFor(pack);
     ASSERT_NE(nullptr, record);
@@ -5950,15 +5953,13 @@ TEST(PackLogicReplace, BusSendRemoveAndAddUpdateOwnerCookies) {
     ASSERT_NE(harken::kInvalidBusIndex, addedBus);
     EXPECT_EQ(pack, engine->busOwnerCookies[addedBus]);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + newSlot]);
+              LogicalSendAt(*engine, from, newSlot).ownerCookie);
     for (std::uint32_t slot = 0;
          slot < engine->config.busSendSlotsPerBus; ++slot) {
         if (slot != newSlot) {
             EXPECT_EQ(
                 0u,
-                engine->busSendOwnerCookies[
-                    from * engine->config.busSendSlotsPerBus + slot]);
+                LogicalSendAt(*engine, from, slot).ownerCookie);
         }
     }
 }
@@ -6009,22 +6010,19 @@ TEST(PackLogicLoad, DirectMutationCannotTakeOverPackOwnedSend) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12401), harkentest::ObjectId(12402));
     ASSERT_LT(oldSlot, engine->config.busSendSlotsPerBus);
     ASSERT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + oldSlot]);
+              LogicalSendAt(*engine, from, oldSlot).ownerCookie);
 
     ASSERT_EQ(VN_IN_USE,
               Vn_SetBusSendLevel(harkentest::ObjectId(12401), harkentest::ObjectId(12402), -7.0f, 0));
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + oldSlot]);
+              LogicalSendAt(*engine, from, oldSlot).ownerCookie);
     ASSERT_EQ(VN_IN_USE, Vn_DisconnectBusSend(harkentest::ObjectId(12401), harkentest::ObjectId(12402)));
     ASSERT_EQ(VN_IN_USE, Vn_ConnectBusSend(harkentest::ObjectId(12401), harkentest::ObjectId(12402), -9.0f));
     const std::uint32_t newSlot =
         FindBusSendSlot(*engine, harkentest::ObjectId(12401), harkentest::ObjectId(12402));
     ASSERT_LT(newSlot, engine->config.busSendSlotsPerBus);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + newSlot]);
+              LogicalSendAt(*engine, from, newSlot).ownerCookie);
 }
 
 TEST(PackLogicReplace, DirectParentDriftIsBlockedByOwnership) {
@@ -6139,8 +6137,7 @@ TEST(PackLogicReplace, DirectSendOwnershipDriftIsBlocked) {
     ASSERT_LT(recycledSlot, engine->config.busSendSlotsPerBus);
     ASSERT_EQ(packSlot, recycledSlot);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + recycledSlot]);
+              LogicalSendAt(*engine, from, recycledSlot).ownerCookie);
 
     EXPECT_EQ(VN_OK, ReplacePack(pack, packPath));
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -6189,14 +6186,14 @@ TEST(CanonicalPackSetActivate, ReplacementAndUnloadPreserveForeignPackSendSlot) 
     ASSERT_GT(physicalSlot, 0u);
     const auto flat = static_cast<std::size_t>(sourceIndex) * slotsPerBus +
         physicalSlot;
-    const auto ownerId = engine->busSendTopologyOwnerIds[flat];
+    const auto ownerId = LogicalSendAt(*engine, sourceIndex, physicalSlot).topologyOwnerId;
     const auto checkForeignSend = [&] {
         EXPECT_EQ(sourceIndex, engine->buses.FindIndex(source));
         EXPECT_EQ(physicalSlot, FindBusSendSlot(*engine, source, target));
-        EXPECT_EQ(engine->buses.FindIndex(target), engine->busSendAdj[flat]);
-        EXPECT_FLOAT_EQ(expectedLevelDb, engine->busSendLevelDb[flat]);
-        EXPECT_EQ(ownerId, engine->busSendTopologyOwnerIds[flat]);
-        EXPECT_EQ(foreignPack, engine->busSendOwnerCookies[flat]);
+        EXPECT_EQ(engine->buses.FindIndex(target), LogicalSendAt(*engine, sourceIndex, physicalSlot).target);
+        EXPECT_FLOAT_EQ(expectedLevelDb, LogicalSendAt(*engine, sourceIndex, physicalSlot).levelDb);
+        EXPECT_EQ(ownerId, LogicalSendAt(*engine, sourceIndex, physicalSlot).topologyOwnerId);
+        EXPECT_EQ(foreignPack, LogicalSendAt(*engine, sourceIndex, physicalSlot).ownerCookie);
     };
     checkForeignSend();
 
@@ -6353,15 +6350,15 @@ TEST(PackLogicLoad, BusCompressorAndDynamicRouteInstallAsPackOwnedBatch) {
     const std::uint32_t target = engine->buses.FindIndex(harkentest::ObjectId(8401));
     ASSERT_NE(harken::kInvalidBusIndex, target);
     EXPECT_EQ(VN_EFFECT_COMPRESSOR,
-              engine->busEffectSlotTypes[target][0]);
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[target][0]);
+              engine->busEffects.Get(target, 0).type);
+    EXPECT_EQ(pack, engine->busEffects.Get(target, 0).owner);
     const harken::PackLogicRecord* record =
         engine->logicPacks.RecordFor(pack);
     ASSERT_NE(nullptr, record);
     ASSERT_EQ(1u, record->busEffects.size());
     ASSERT_EQ(1u, record->dynamicRoutes.size());
     const harken::EffectInstanceRef ownedRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
 
     VnEffectDynamicRouteInfo route{};
     route.structSize = sizeof(route);
@@ -6420,11 +6417,11 @@ TEST(PackLogicLoad, BusCompressorAndDynamicRouteInstallAsPackOwnedBatch) {
     EXPECT_FLOAT_EQ(route.levelDb, after.levelDb);
     EXPECT_EQ(route.ownerKind, after.ownerKind);
     EXPECT_EQ(ownedRef.type,
-              engine->busEffectInstanceRefs[target][0].type);
+              engine->BusEffectRefs(target)[0].type);
     EXPECT_EQ(ownedRef.poolIndex,
-              engine->busEffectInstanceRefs[target][0].poolIndex);
+              engine->BusEffectRefs(target)[0].poolIndex);
     EXPECT_EQ(ownedRef.generation,
-              engine->busEffectInstanceRefs[target][0].generation);
+              engine->BusEffectRefs(target)[0].generation);
     engine->nullBackend.Pump(1);
 }
 
@@ -6462,7 +6459,7 @@ TEST(PackLogicReplace,
     const std::uint32_t target = engine->buses.FindIndex(kTargetBus);
     ASSERT_NE(harken::kInvalidBusIndex, target);
     const harken::EffectInstanceRef oldRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     const harken::DynamicRouteDefinition* oldRoute =
         engine->dynamicRoutes.Find(kTargetBus, 0, 0);
     ASSERT_NE(nullptr, oldRoute);
@@ -6481,20 +6478,20 @@ TEST(PackLogicReplace,
     EXPECT_FLOAT_EQ(-18.0f, gapRecord->busEffects[0].params[0]);
     EXPECT_FLOAT_EQ(-3.0f, gapRecord->dynamicRoutes[0].levelDb);
     EXPECT_EQ(oldRef.type,
-              engine->busEffectInstanceRefs[target][0].type);
+              engine->BusEffectRefs(target)[0].type);
     EXPECT_EQ(oldRef.poolIndex,
-              engine->busEffectInstanceRefs[target][0].poolIndex);
+              engine->BusEffectRefs(target)[0].poolIndex);
     EXPECT_EQ(oldRef.generation,
-              engine->busEffectInstanceRefs[target][0].generation);
+              engine->BusEffectRefs(target)[0].generation);
 
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(nullptr, engine->logicPacks.PendingFor(pack));
     const harken::EffectInstanceRef liveRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(oldRef.type, liveRef.type);
     EXPECT_EQ(oldRef.poolIndex, liveRef.poolIndex);
     EXPECT_EQ(oldRef.generation, liveRef.generation);
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[target][0]);
+    EXPECT_EQ(pack, engine->busEffects.Get(target, 0).owner);
 
     const harken::DynamicRouteDefinition* liveRoute =
         engine->dynamicRoutes.Find(kTargetBus, 0, 0);
@@ -6555,7 +6552,7 @@ TEST(PackLogicReplace,
     const std::uint32_t target = engine->buses.FindIndex(kTargetBus);
     ASSERT_NE(harken::kInvalidBusIndex, target);
     const harken::EffectInstanceRef oldRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     ASSERT_EQ(VN_EFFECT_COMPRESSOR, oldRef.type);
     ASSERT_NE(nullptr, engine->dynamicRoutes.Find(kTargetBus, 0, 0));
 
@@ -6563,11 +6560,11 @@ TEST(PackLogicReplace,
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(nullptr, engine->logicPacks.PendingFor(pack));
     const harken::EffectInstanceRef liveRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(VN_EFFECT_GAIN, liveRef.type);
     EXPECT_NE(oldRef.type, liveRef.type);
-    EXPECT_EQ(VN_EFFECT_GAIN, engine->busEffectSlotTypes[target][0]);
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[target][0]);
+    EXPECT_EQ(VN_EFFECT_GAIN, engine->busEffects.Get(target, 0).type);
+    EXPECT_EQ(pack, engine->busEffects.Get(target, 0).owner);
     EXPECT_EQ(nullptr, engine->dynamicRoutes.Find(kTargetBus, 0, 0));
 
     const harken::PackLogicRecord* liveRecord =
@@ -6616,7 +6613,7 @@ TEST(PackLogicReplace,
     const std::uint32_t target = engine->buses.FindIndex(kTargetBus);
     ASSERT_NE(harken::kInvalidBusIndex, target);
     const harken::EffectInstanceRef oldRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     const harken::DynamicRouteDefinition* oldRoute =
         engine->dynamicRoutes.Find(kTargetBus, 0, 0);
     ASSERT_NE(nullptr, oldRoute);
@@ -6643,7 +6640,7 @@ TEST(PackLogicReplace,
 
     EXPECT_NE(nullptr, engine->logicPacks.PendingFor(pack));
     const harken::EffectInstanceRef failedRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(oldRef.type, failedRef.type);
     EXPECT_EQ(oldRef.poolIndex, failedRef.poolIndex);
     EXPECT_EQ(oldRef.generation, failedRef.generation);
@@ -6680,7 +6677,7 @@ TEST(PackLogicReplace,
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(nullptr, engine->logicPacks.PendingFor(pack));
     const harken::EffectInstanceRef liveRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(VN_EFFECT_GAIN, liveRef.type);
     EXPECT_EQ(nullptr, engine->dynamicRoutes.Find(kTargetBus, 0, 0));
     const harken::PackLogicRecord* liveRecord =
@@ -6729,7 +6726,7 @@ TEST(PackLogicReplace,
     const std::uint32_t target = engine->buses.FindIndex(kTargetBus);
     ASSERT_NE(harken::kInvalidBusIndex, target);
     const harken::EffectInstanceRef oldRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     const harken::DynamicRouteDefinition* oldRoute =
         engine->dynamicRoutes.Find(kTargetBus, 0, 0);
     ASSERT_NE(nullptr, oldRoute);
@@ -6758,7 +6755,7 @@ TEST(PackLogicReplace,
     EXPECT_FLOAT_EQ(-18.0f, deferredRecord->busEffects[0].params[0]);
     EXPECT_FLOAT_EQ(-3.0f, deferredRecord->dynamicRoutes[0].levelDb);
     const harken::EffectInstanceRef deferredRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(oldRef.type, deferredRef.type);
     EXPECT_EQ(oldRef.poolIndex, deferredRef.poolIndex);
     EXPECT_EQ(oldRef.generation, deferredRef.generation);
@@ -6782,7 +6779,7 @@ TEST(PackLogicReplace,
     EXPECT_FLOAT_EQ(-12.0f, liveRecord->busEffects[0].params[0]);
     EXPECT_FLOAT_EQ(-9.0f, liveRecord->dynamicRoutes[0].levelDb);
     const harken::EffectInstanceRef liveRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(oldRef.type, liveRef.type);
     EXPECT_EQ(oldRef.poolIndex, liveRef.poolIndex);
     EXPECT_EQ(oldRef.generation, liveRef.generation);
@@ -6888,8 +6885,8 @@ TEST(PackLogicReplace,
     EXPECT_LT(FindBusSendSlot(*engine, kAddedBus, kOldBus),
               engine->config.busSendSlotsPerBus);
     EXPECT_EQ(VN_EFFECT_COMPRESSOR,
-              engine->busEffectSlotTypes[added][0]);
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[added][0]);
+              engine->busEffects.Get(added, 0).type);
+    EXPECT_EQ(pack, engine->busEffects.Get(added, 0).owner);
     EXPECT_NE(nullptr, engine->dynamicRoutes.Find(kAddedBus, 0, 0));
     const harken::PackLogicRecord* liveRecord =
         engine->logicPacks.RecordFor(pack);
@@ -7113,7 +7110,7 @@ TEST(PackLogicReplace,
     const std::uint32_t target = engine->buses.FindIndex(kTargetBus);
     ASSERT_NE(harken::kInvalidBusIndex, target);
     const harken::EffectInstanceRef oldRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     const harken::DynamicRouteDefinition* oldRoute =
         engine->dynamicRoutes.Find(kTargetBus, 0, 0);
     ASSERT_NE(nullptr, oldRoute);
@@ -7131,7 +7128,7 @@ TEST(PackLogicReplace,
     EXPECT_NE(nullptr, engine->logicPacks.PendingFor(pack));
     EXPECT_EQ(oldTopologyPublications, engine->topologyPlanCount);
     const harken::EffectInstanceRef failedRef =
-        engine->busEffectInstanceRefs[target][0];
+        engine->BusEffectRefs(target)[0];
     EXPECT_EQ(oldRef.type, failedRef.type);
     EXPECT_EQ(oldRef.poolIndex, failedRef.poolIndex);
     EXPECT_EQ(oldRef.generation, failedRef.generation);
@@ -7446,6 +7443,34 @@ TEST(PackLogicReplace,
               engine->dynamicRoutes.LastIssuedPlanRevision());
     EXPECT_EQ(topologyBefore + 1, engine->topologyPlanCount);
     engine->nullBackend.Pump(1);
+}
+
+
+TEST(PackLogicLoad, MoreThanSixtyFourBusOwnersLoadAndRetireIndependently) {
+    auto config = PackLogicConfig(2, 64, 48000);
+    config.maxBusTopologyOwners = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::array<VnPackHandle, 80> packs{};
+    for (std::uint32_t i = 0; i < packs.size(); ++i) {
+        V2Builder builder(harken::kPackKindResident);
+        builder.AddBus(harkentest::ObjectId(50000 + i), VN_BUS_MASTER);
+        const auto path = TempPath("bus_owner_growth_" + std::to_string(i) + ".pack");
+        WriteFileBytes(path, builder.Build());
+        ASSERT_EQ(VN_OK, LoadPack(path, &packs[i])) << i;
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(80u, engine.packs.LoadedCount());
+    EXPECT_EQ(81u, engine.buses.ActiveBusCount());
+    for (std::uint32_t i = 0; i < packs.size(); ++i) {
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(packs[i])) << i;
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine.packs.LoadedCount());
+    EXPECT_EQ(1u, engine.buses.ActiveBusCount());
 }
 
 } // namespace

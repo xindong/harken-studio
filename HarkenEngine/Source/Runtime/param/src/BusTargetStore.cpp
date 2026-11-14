@@ -1,6 +1,10 @@
 #include "harken/param/BusTargetStore.h"
+#include "harken/param/BindingTable.h"
+#include "harken/core/LogicAllocCheckpoint.h"
+#include <cassert>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <exception>
 #include <new>
@@ -11,62 +15,167 @@ namespace harken {
 BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                                std::uint32_t retiringTargetCapacity)
     : m_maxBuses(maxBuses),
-      m_activeGenerations(maxBuses, 0),
-      m_meterProbeAccum(static_cast<std::size_t>(maxBuses) *
-                            kBusTargetCount,
-                        0.0f),
-      m_meterProbeRampMs(static_cast<std::size_t>(maxBuses) *
-                            kBusTargetCount,
-                        0),
-      m_meterProbeDepartureRampMs(
-          static_cast<std::size_t>(maxBuses) * kBusTargetCount, 0),
-      m_meterProbeSeen(static_cast<std::size_t>(maxBuses) *
-                           kBusTargetCount,
-                       0) {
+      m_activeGenerations(maxBuses, 0) {
     if (!m_retiringTargets.Reserve(retiringTargetCapacity)) throw std::bad_alloc{};
-    m_slots.assign(static_cast<std::size_t>(maxBuses) * kBusTargetCount *
-                       kSlotCountPerTarget,
-                   Slot{});
-    m_publish.assign(static_cast<std::size_t>(maxBuses) * kBusTargetCount,
-                     PublishState{});
-    m_projection.resize(m_publish.size());
-    // Seed every changed-only reference to the target's neutral base: with
-    // every slot inactive the reduction returns the base, so an untouched
-    // bus target never publishes — the M5 no-binding identity.
-    for (std::uint32_t bus = 0; bus < maxBuses; ++bus) {
-        for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-            const TargetMeta* meta = FindTargetMeta(kTargetScopeBus, t);
-            m_publish[PubIndexOf(bus, t)].lastCommitted =
-                meta != nullptr ? meta->neutral : 0.0f;
-        }
-    }
+
 }
 
 BusTargetStore::BusTargetStore(const BusTargetStore& other)
-    : m_maxBuses(other.m_maxBuses), m_slots(other.m_slots), m_publish(other.m_publish),
-      m_projection(other.m_projection), m_projectionActive(other.m_projectionActive),
+    : m_maxBuses(other.m_maxBuses), m_settings(other.m_settings),
+      m_projectionActive(other.m_projectionActive),
       m_projectionDemandCount(other.m_projectionDemandCount),
       m_projectionPendingInputMarks(other.m_projectionPendingInputMarks),
-      m_activeGenerations(other.m_activeGenerations), m_meterProbeAccum(other.m_meterProbeAccum),
-      m_meterProbeRampMs(other.m_meterProbeRampMs),
-      m_meterProbeDepartureRampMs(other.m_meterProbeDepartureRampMs),
-      m_meterProbeSeen(other.m_meterProbeSeen), m_demandCount(other.m_demandCount),
+      m_activeGenerations(other.m_activeGenerations), m_demandCount(other.m_demandCount),
       m_variableSlotCount(other.m_variableSlotCount), m_pendingInputMarks(other.m_pendingInputMarks),
       m_flushTick(other.m_flushTick), m_flushCursor(other.m_flushCursor) {
+    for (auto& row : m_settings) row.value.activity = nullptr;
+    m_activities.reserve(other.m_activities.size());
+    for (const auto& activity : other.m_activities) {
+        auto copy = std::make_unique<Activity>(*activity);
+        MutableSettings(copy->flat).activity = copy.get();
+        m_activities.push_back(std::move(copy));
+    }
     if (!m_retiringTargets.Reserve(other.m_retiringTargets.Capacity()) ||
         !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount())) throw std::bad_alloc{};
     std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
 }
 
+bool BusTargetStore::PrepareBusCapacity(std::uint32_t count) noexcept {
+    if (count <= m_maxBuses) return true;
+    if (m_projectionActive) return false;
+    try {
+        m_activeGenerations.reserve(count); m_activeGenerations.resize(count);
+        m_maxBuses = count;
+        return true;
+    } catch (...) { return false; }
+}
+
+BusTargetStore::Settings* BusTargetStore::FindSettings(std::size_t flat) noexcept {
+    const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
+        [](const auto& row, auto key) { return row.flat < key; });
+    return it != m_settings.end() && it->flat == flat ? &it->value : nullptr;
+}
+
+const BusTargetStore::Settings& BusTargetStore::ReadSettings(std::size_t flat) const noexcept {
+    const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
+        [](const auto& row, auto key) { return row.flat < key; });
+    if (it != m_settings.end() && it->flat == flat) return it->value;
+    static const auto neutral = [] {
+        std::array<Settings, kBusTargetCount> rows{};
+        for (std::uint32_t target = 0; target < kBusTargetCount; ++target) {
+            const auto* meta = FindTargetMeta(kTargetScopeBus, target);
+            rows[target].lastCommitted = meta ? meta->neutral : 0;
+        }
+        return rows;
+    }();
+    return neutral[flat % kBusTargetCount];
+}
+
+BusTargetStore::Settings& BusTargetStore::MutableSettings(std::size_t flat) {
+    const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
+        [](const auto& row, auto key) { return row.flat < key; });
+    if (it != m_settings.end() && it->flat == flat) return it->value;
+    if (m_projectionActive) throw std::bad_alloc{};
+    detail::CheckedGrow(m_settings, m_settings.size() + 1, detail::LogicAllocSite::BusTargetSettings);
+    Settings value{};
+    const auto* meta = FindTargetMeta(kTargetScopeBus, static_cast<std::uint32_t>(flat % kBusTargetCount));
+    value.lastCommitted = meta ? meta->neutral : 0;
+    return m_settings.insert(it, {flat, value})->value;
+}
+
+bool BusTargetStore::PrepareSettings(std::uint32_t bus, std::uint32_t target) noexcept {
+    if (!InRange(bus, target, 0)) return false;
+    try { (void)MutableSettings(PubIndexOf(bus, target)); return true; }
+    catch (...) { return false; }
+}
+
+bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) noexcept {
+    if (!PrepareSettings(bus, target)) return false;
+    auto& settings = MutableSettings(PubIndexOf(bus, target));
+    if (settings.activity) return true;
+    if (m_projectionActive) return false;
+    try {
+        auto activity = std::make_unique<Activity>();
+        activity->flat = PubIndexOf(bus, target);
+        m_activities.push_back(std::move(activity));
+        settings.activity = m_activities.back().get();
+        return true;
+    } catch (...) { return false; }
+}
+
+BusTargetStore::Activity* BusTargetStore::FindActivity(std::uint32_t bus, std::uint32_t target) noexcept {
+    return InRange(bus, target, 0) ? ReadSettings(PubIndexOf(bus, target)).activity : nullptr;
+}
+
+const BusTargetStore::PublishState& BusTargetStore::Publication(std::uint32_t bus,
+    std::uint32_t target) const noexcept {
+    static const PublishState empty;
+    const auto* activity = ReadSettings(PubIndexOf(bus, target)).activity;
+    return activity ? activity->publish : empty;
+}
+
+BusTargetStore::Slot BusTargetStore::ReadSlot(std::uint32_t bus, std::uint32_t target,
+    std::uint32_t slot) const noexcept {
+    const auto& setting = ReadSettings(PubIndexOf(bus, target));
+    if (slot < kSlotVariableIndex)
+        return {setting.values[slot], (setting.activeMask & (1u << slot)) != 0};
+    if (!setting.activity) return {};
+    return slot == kSlotVariableIndex ? setting.activity->variable : setting.activity->meter;
+}
+
+void BusTargetStore::ReleaseUnusedActivities(BindingTable& bindings) noexcept {
+    if (m_projectionActive || m_activities.empty()) return;
+    for (auto& activity : m_activities) activity->attached = false;
+    const auto mark = [&](const auto& attachment, const auto& definition) {
+        if (attachment.scopeKind != kTargetScopeBus ||
+            (attachment.targetGeneration != 0 &&
+             attachment.targetGeneration != ActiveGeneration(attachment.busIndex))) return;
+        if (auto* activity = FindActivity(attachment.busIndex, definition.targetId)) activity->attached = true;
+    };
+    bindings.ForEachBusAttachment(mark);
+    bindings.ForEachProbeAttachment(mark);
+    // A callback can detach after evaluation but before this service cleanup.
+    // Even an unset contribution leaves a dirty retired dependency until the
+    // next fold. Its no-fail variable notification still needs this backing.
+    BindingDirtyTarget pending;
+    auto& dependencies = bindings.Dependencies();
+    for (std::uint32_t cursor = 0; dependencies.DirtyTargetAt(cursor, &pending); ++cursor) {
+        BindingDependencyIdentity identity;
+        if (!dependencies.TargetIdentity(pending, &identity) ||
+            identity.scope != kTargetScopeBus ||
+            identity.detail != static_cast<std::uint32_t>(BindingSourceKind::Variable)) continue;
+        const auto bus = static_cast<std::uint32_t>(identity.object);
+        if (identity.generation != 0 && identity.generation != ActiveGeneration(bus)) continue;
+        if (auto* activity = FindActivity(bus, identity.target)) activity->attached = true;
+    }
+    for (std::size_t i = 0; i < m_activities.size();) {
+        const auto& activity = *m_activities[i];
+        const auto& state = activity.publish;
+        if (activity.attached || activity.variable.active || activity.meter.active ||
+            state.dirty || state.pendingInput || state.pendingRampMs != 0 ||
+            state.preparedOwner.Valid() || state.publicationRefCount != 0 ||
+            state.preparedRampMs != 0 || state.candidateBaselineValid ||
+            state.claimSnapshotCaptured || state.suppressClaimRamp || activity.meterDepartureRampMs != 0) {
+            ++i; continue;
+        }
+        MutableSettings(activity.flat).activity = nullptr;
+        if (i + 1 != m_activities.size()) m_activities[i] = std::move(m_activities.back());
+        m_activities.pop_back();
+    }
+}
+
+std::uint64_t BusTargetStore::StorageBytes() const noexcept {
+    return m_settings.capacity() * sizeof(SettingsRow) + m_activities.capacity() * sizeof(std::unique_ptr<Activity>) +
+        m_activities.size() * sizeof(Activity) + m_activeGenerations.capacity() * sizeof(std::uint32_t) +
+        m_retiringTargets.CommittedBytes();
+}
+
 bool BusTargetStore::BeginVariableProjection() noexcept {
     if (m_projectionActive) return false;
-    for (std::uint32_t bus = 0; bus < m_maxBuses; ++bus) {
-        for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-            const auto index = PubIndexOf(bus, t);
-            const auto& state = m_publish[index];
-            m_projection[index] = {m_slots[IndexOf(bus, t, kSlotVariableIndex)],
-                state.pendingRampMs, state.dirty, state.pendingInput, state.suppressClaimRamp};
-        }
+    for (auto& activity : m_activities) {
+        const auto& state = activity->publish;
+        activity->projection = {activity->variable, state.pendingRampMs,
+            state.dirty, state.pendingInput, state.suppressClaimRamp};
     }
     m_projectionDemandCount = m_demandCount;
     m_projectionPendingInputMarks = m_pendingInputMarks;
@@ -79,7 +188,9 @@ std::uint32_t BusTargetStore::TakePublicationRamp(std::uint32_t busIndex,
     TargetClaimOwner owner) noexcept {
     if (!owner.Shared() || !InRange(busIndex, targetId, 0) ||
         ActiveGeneration(busIndex) != busGeneration) return 0;
-    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return 0;
+    auto& state = activity->publish;
     if (state.preparedOwner != owner) return 0;
     return std::exchange(state.pendingRampMs, 0u);
 }
@@ -89,7 +200,9 @@ void BusTargetStore::RestorePublicationRamp(std::uint32_t busIndex,
     TargetClaimOwner owner, std::uint32_t rampMs) noexcept {
     if (!owner.Shared() || !InRange(busIndex, targetId, 0) ||
         ActiveGeneration(busIndex) != busGeneration || rampMs == 0) return;
-    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return;
+    auto& state = activity->publish;
     if (state.preparedOwner != owner) return;
     state.pendingRampMs = std::max(state.pendingRampMs, rampMs);
     SetDirty(state);
@@ -97,20 +210,16 @@ void BusTargetStore::RestorePublicationRamp(std::uint32_t busIndex,
 
 void BusTargetStore::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
-    for (std::uint32_t bus = 0; bus < m_maxBuses; ++bus) {
-        for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-            const auto index = PubIndexOf(bus, t);
-            auto& state = m_publish[index];
-            const auto& saved = m_projection[index];
-            auto& variable = m_slots[IndexOf(bus, t, kSlotVariableIndex)];
-            m_variableSlotCount -= variable.active;
-            variable = saved.variable;
-            m_variableSlotCount += variable.active;
-            state.pendingRampMs = saved.pendingRampMs;
-            state.dirty = saved.dirty;
-            state.pendingInput = saved.pendingInput;
-            state.suppressClaimRamp = saved.suppressClaimRamp;
-        }
+    for (auto& activity : m_activities) {
+        auto& state = activity->publish;
+        const auto& saved = activity->projection;
+        m_variableSlotCount -= activity->variable.active;
+        activity->variable = saved.variable;
+        m_variableSlotCount += activity->variable.active;
+        state.pendingRampMs = saved.pendingRampMs;
+        state.dirty = saved.dirty;
+        state.pendingInput = saved.pendingInput;
+        state.suppressClaimRamp = saved.suppressClaimRamp;
     }
     m_demandCount = m_projectionDemandCount;
     m_pendingInputMarks = m_projectionPendingInputMarks;
@@ -118,7 +227,7 @@ void BusTargetStore::RestoreVariableProjection() noexcept {
 }
 
 std::uint64_t BusTargetStore::VariableProjectionStorageBytes() const noexcept {
-    return m_projection.size() * sizeof(VariableEvaluation);
+    return m_activities.size() * sizeof(VariableEvaluation);
 }
 
 bool BusTargetStore::InRange(std::uint32_t busIndex, std::uint32_t targetId,
@@ -127,104 +236,94 @@ bool BusTargetStore::InRange(std::uint32_t busIndex, std::uint32_t targetId,
            slot < kSlotCountPerTarget;
 }
 
-std::size_t BusTargetStore::IndexOf(std::uint32_t busIndex,
-                                    std::uint32_t targetId,
-                                    std::uint32_t slot) const {
-    return (static_cast<std::size_t>(busIndex) * kBusTargetCount + targetId) *
-               kSlotCountPerTarget +
-           slot;
-}
-
 void BusTargetStore::SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
                              std::uint32_t slot, double domainValue) {
-    if (!InRange(busIndex, targetId, slot)) {
+    if (!InRange(busIndex, targetId, slot)) return;
+    auto& settings = MutableSettings(PubIndexOf(busIndex, targetId));
+    if (slot < kSlotVariableIndex) {
+        settings.values[slot] = domainValue;
+        settings.activeMask |= 1u << slot;
         return;
     }
-    Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
-    if (!s.active && slot == kSlotVariableIndex) ++m_variableSlotCount;
-    s.value = domainValue;
-    s.active = true;
+    if (!PrepareActivity(busIndex, targetId)) throw std::bad_alloc{};
+    auto& current = slot == kSlotVariableIndex ? settings.activity->variable : settings.activity->meter;
+    if (!current.active && slot == kSlotVariableIndex) ++m_variableSlotCount;
+    current = {domainValue, true};
 }
 
 void BusTargetStore::ClearSlot(std::uint32_t busIndex, std::uint32_t targetId,
                                std::uint32_t slot) {
-    if (!InRange(busIndex, targetId, slot)) {
+    if (!InRange(busIndex, targetId, slot)) return;
+    auto* existing = FindSettings(PubIndexOf(busIndex, targetId));
+    if (!existing) return;
+    auto& settings = *existing;
+    if (slot < kSlotVariableIndex) {
+        settings.values[slot] = 0;
+        settings.activeMask &= ~(1u << slot);
         return;
     }
-    auto& current = m_slots[IndexOf(busIndex, targetId, slot)];
+    if (!settings.activity) return;
+    auto& current = slot == kSlotVariableIndex ? settings.activity->variable : settings.activity->meter;
     if (current.active && slot == kSlotVariableIndex) --m_variableSlotCount;
-    current = Slot{};
+    current = {};
 }
 
 void BusTargetStore::BeginMeterProbeSweep() noexcept {
-    std::fill(m_meterProbeSeen.begin(), m_meterProbeSeen.end(), 0);
-    std::fill(m_meterProbeRampMs.begin(), m_meterProbeRampMs.end(), 0);
+    for (auto& activity : m_activities) {
+        activity->meterSeen = false;
+        activity->meterRampMs = 0;
+    }
 }
 
 void BusTargetStore::AccumulateMeterProbe(
     std::uint32_t busIndex, std::uint32_t busGeneration,
     std::uint32_t targetId, float contribution, bool changed,
     std::uint32_t transitionMs) noexcept {
-    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
-        m_activeGenerations[busIndex] != busGeneration) {
-        return;
-    }
-    const TargetMeta* meta = FindTargetMeta(kTargetScopeBus, targetId);
-    if (meta == nullptr) {
-        return;
-    }
-    const std::size_t flat = PubIndexOf(busIndex, targetId);
-    if (m_meterProbeSeen[flat] == 0) {
-        m_meterProbeAccum[flat] = contribution;
-        m_meterProbeSeen[flat] = 1;
-    } else {
-        m_meterProbeAccum[flat] =
-            CombineValue(meta->domain, m_meterProbeAccum[flat], contribution);
-    }
-    if (changed) {
-        m_meterProbeRampMs[flat] =
-            std::max(m_meterProbeRampMs[flat], transitionMs);
-    }
+    if (!InRange(busIndex, targetId, 0) || ActiveGeneration(busIndex) != busGeneration) return;
+    const auto* meta = FindTargetMeta(kTargetScopeBus, targetId);
+    if (!meta) return;
+    auto* activity = FindActivity(busIndex, targetId);
+    assert(activity != nullptr);
+    if (!activity) std::terminate();
+    activity->meterAccum = activity->meterSeen
+        ? CombineValue(meta->domain, activity->meterAccum, contribution) : contribution;
+    activity->meterSeen = true;
+    if (changed) activity->meterRampMs = std::max(activity->meterRampMs, transitionMs);
 }
 
 void BusTargetStore::NoteMeterProbeRemoved(
     std::uint32_t busIndex, std::uint32_t busGeneration,
     std::uint32_t targetId, std::uint32_t transitionMs) noexcept {
-    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
-        m_activeGenerations[busIndex] != busGeneration) {
-        return;
-    }
-    const std::size_t flat = PubIndexOf(busIndex, targetId);
-    m_meterProbeDepartureRampMs[flat] =
-        std::max(m_meterProbeDepartureRampMs[flat], transitionMs);
+    if (!InRange(busIndex, targetId, 0) || ActiveGeneration(busIndex) != busGeneration) return;
+    auto* activity = FindActivity(busIndex, targetId);
+    assert(activity != nullptr);
+    if (!activity) std::terminate();
+    activity->meterDepartureRampMs = std::max(activity->meterDepartureRampMs, transitionMs);
 }
 
 void BusTargetStore::EndMeterProbeSweep() {
-    for (std::uint32_t busIndex = 0; busIndex < m_maxBuses; ++busIndex) {
-        if (m_activeGenerations[busIndex] == 0) {
-            continue;
-        }
-        for (std::uint32_t targetId = 0; targetId < kBusTargetCount;
-             ++targetId) {
-            const std::size_t flat = PubIndexOf(busIndex, targetId);
-            Slot& slot =
-                m_slots[IndexOf(busIndex, targetId, kSlotMeterProbeIndex)];
-            const bool seen = m_meterProbeSeen[flat] != 0;
+    for (auto& entry : m_activities) {
+        auto& activity = *entry;
+        const auto busIndex = static_cast<std::uint32_t>(activity.flat / kBusTargetCount);
+        const auto targetId = static_cast<std::uint32_t>(activity.flat % kBusTargetCount);
+        if (m_activeGenerations[busIndex] == 0) continue;
+        Slot& slot = activity.meter;
+        const bool seen = activity.meterSeen;
             const bool aggregateChanged =
                 slot.active != seen ||
-                (seen && slot.value != m_meterProbeAccum[flat]);
+                (seen && slot.value != activity.meterAccum);
             if (aggregateChanged) {
                 bool apply = true;
                 if (seen) {
                     const float prospective = ReduceWithSlot(
                         busIndex, targetId, kSlotMeterProbeIndex,
-                        m_meterProbeAccum[flat]);
+                        activity.meterAccum);
                     if (std::isfinite(prospective)) {
-                        slot.value = m_meterProbeAccum[flat];
+                        slot.value = activity.meterAccum;
                         slot.active = true;
                     } else {
                         apply = false;
-                        m_meterProbeAccum[flat] =
+                        activity.meterAccum =
                             slot.active ? slot.value : 0.0f;
                     }
                 } else {
@@ -233,12 +332,11 @@ void BusTargetStore::EndMeterProbeSweep() {
                 if (apply) {
                     MarkVariableChanged(
                         busIndex, targetId,
-                        std::max(m_meterProbeRampMs[flat],
-                                 m_meterProbeDepartureRampMs[flat]));
+                        std::max(activity.meterRampMs,
+                                 activity.meterDepartureRampMs));
                 }
             }
-            m_meterProbeDepartureRampMs[flat] = 0;
-        }
+            activity.meterDepartureRampMs = 0;
     }
 }
 
@@ -247,7 +345,7 @@ bool BusTargetStore::SlotActive(std::uint32_t busIndex, std::uint32_t targetId,
     if (!InRange(busIndex, targetId, slot)) {
         return false;
     }
-    return m_slots[IndexOf(busIndex, targetId, slot)].active;
+    return ReadSlot(busIndex, targetId, slot).active;
 }
 
 float BusTargetStore::Reduce(std::uint32_t busIndex,
@@ -258,7 +356,7 @@ float BusTargetStore::Reduce(std::uint32_t busIndex,
     }
     double accumulated = meta->neutral;
     for (std::uint32_t slot = 0; slot < kSlotCountPerTarget; ++slot) {
-        const Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
+        const Slot& s = ReadSlot(busIndex, targetId, slot);
         if (s.active) {
             accumulated = CombineValue(meta->domain, accumulated, s.value);
         }
@@ -287,7 +385,7 @@ float BusTargetStore::ReduceWithSlot(std::uint32_t busIndex,
                 CombineValue(meta->domain, accumulated, domainValue);
             continue;
         }
-        const Slot& s = m_slots[IndexOf(busIndex, targetId, candidate)];
+        const Slot& s = ReadSlot(busIndex, targetId, candidate);
         if (s.active) {
             accumulated = CombineValue(meta->domain, accumulated, s.value);
         }
@@ -301,28 +399,24 @@ float BusTargetStore::ReduceWithSlot(std::uint32_t busIndex,
 }
 
 void BusTargetStore::ResetActiveRows(std::uint32_t busIndex) noexcept {
-    if (busIndex >= m_maxBuses) {
-        return;
-    }
+    if (busIndex >= m_maxBuses) return;
     for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-        for (std::uint32_t slot = 0; slot < kSlotCountPerTarget; ++slot) {
-            ClearSlot(busIndex, t, slot);
+        auto* existing = FindSettings(PubIndexOf(busIndex, t));
+        if (!existing) continue;
+        auto& settings = *existing;
+        auto* activity = settings.activity;
+        if (activity) {
+            if (activity->publish.dirty || activity->publish.pendingInput) --m_demandCount;
+            if (activity->publish.pendingInput) --m_pendingInputMarks;
+            m_variableSlotCount -= activity->variable.active;
+            const auto flat = activity->flat;
+            *activity = {};
+            activity->flat = flat;
         }
-        PublishState& state = m_publish[PubIndexOf(busIndex, t)];
-        if (state.dirty || state.pendingInput) {
-            --m_demandCount;
-        }
-        if (state.pendingInput && m_pendingInputMarks > 0) {
-            --m_pendingInputMarks;
-        }
-        state = PublishState{};
-        const TargetMeta* meta = FindTargetMeta(kTargetScopeBus, t);
-        state.lastCommitted = meta != nullptr ? meta->neutral : 0.0f;
-        const std::size_t flat = PubIndexOf(busIndex, t);
-        m_meterProbeAccum[flat] = 0.0f;
-        m_meterProbeRampMs[flat] = 0;
-        m_meterProbeDepartureRampMs[flat] = 0;
-        m_meterProbeSeen[flat] = 0;
+        settings = {};
+        settings.activity = activity;
+        const auto* meta = FindTargetMeta(kTargetScopeBus, t);
+        settings.lastCommitted = meta ? meta->neutral : 0;
     }
 }
 
@@ -342,7 +436,9 @@ void BusTargetStore::RetireBusGeneration(
     }
     for (std::uint32_t targetId = 0; targetId < kBusTargetCount;
          ++targetId) {
-        PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+        auto* activity = FindActivity(busIndex, targetId);
+        if (!activity) continue;
+        auto& state = activity->publish;
         if (!state.preparedOwner.Valid()) {
             continue;
         }
@@ -408,7 +504,8 @@ void BusTargetStore::MarkVariableChanged(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (!PrepareActivity(busIndex, targetId)) throw std::bad_alloc{};
+    auto& state = FindActivity(busIndex, targetId)->publish;
     SetDirty(state);
     if (!state.suppressClaimRamp &&
         transitionMs > state.pendingRampMs) {
@@ -421,7 +518,8 @@ void BusTargetStore::MarkPendingInput(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (!FindActivity(busIndex, targetId)) std::terminate();
+    auto& state = FindActivity(busIndex, targetId)->publish;
     if (state.pendingInput) {
         return;
     }
@@ -436,7 +534,8 @@ void BusTargetStore::ConsumePendingInput() {
     if (m_pendingInputMarks == 0) {
         return; // guarded sweep: zero marks, zero work
     }
-    for (PublishState& state : m_publish) {
+    for (auto& activity : m_activities) {
+        auto& state = activity->publish;
         if (!state.pendingInput) {
             continue;
         }
@@ -452,46 +551,27 @@ void BusTargetStore::NoteApiDirect(std::uint32_t busIndex,
                                    std::uint32_t targetId, float domainValue,
                                    std::uint32_t rampMs,
                                    float committedResolved) {
-    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
-        return;
-    }
-    Slot& api = m_slots[IndexOf(busIndex, targetId, kSlotApiDirectIndex)];
-    api.value = domainValue;
-    api.active = true;
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    // The direct setter committed the reduced value in the same call
-    // (section 10.3), so the flush must not re-publish it: the reference
-    // updates and the plain dirty mark cleans. A pending-input mark stays —
-    // its demand belongs to the next evaluation, not to this setter — and
-    // the pending binding-ramp aggregate stays with it (the voice-side
-    // SetApiDirect discipline). Several same-tick setters fold their
-    // rampMs by max, order-free like the rest of the aggregation.
-    state.lastCommitted = committedResolved;
-    CleanDirty(state);
-    // The direct setter's own command carried this rampMs — record it for
-    // attribution capture like any committed publication.
-    state.lastPublishedRampMs = rampMs;
-    if (state.apiRampTick == m_flushTick) {
-        if (rampMs > state.apiRampMs) {
-            state.apiRampMs = rampMs;
-        }
-    } else {
-        state.apiRampMs = rampMs;
-        state.apiRampTick = m_flushTick;
-    }
+    if (!InRange(busIndex, targetId, 0)) return;
+    SetSlot(busIndex, targetId, kSlotApiDirectIndex, domainValue);
+    auto& settings = MutableSettings(PubIndexOf(busIndex, targetId));
+    settings.lastCommitted = committedResolved;
+    if (settings.activity) CleanDirty(settings.activity->publish);
+    settings.lastPublishedRampMs = rampMs;
+    if (settings.apiRampTick == m_flushTick) settings.apiRampMs = std::max(settings.apiRampMs, rampMs);
+    else { settings.apiRampMs = rampMs; settings.apiRampTick = m_flushTick; }
 }
 
 void BusTargetStore::MarkCommitted(std::uint32_t busIndex,
                                    std::uint32_t targetId, float resolved,
                                    std::uint32_t rampMs) {
-    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
-        return;
+    if (!InRange(busIndex, targetId, 0)) return;
+    auto& settings = MutableSettings(PubIndexOf(busIndex, targetId));
+    settings.lastCommitted = resolved;
+    settings.lastPublishedRampMs = rampMs;
+    if (settings.activity) {
+        CleanDirty(settings.activity->publish);
+        settings.activity->publish.pendingRampMs = 0;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    state.lastCommitted = resolved;
-    CleanDirty(state);
-    state.pendingRampMs = 0;
-    state.lastPublishedRampMs = rampMs;
 }
 
 void BusTargetStore::MarkDropped(std::uint32_t busIndex,
@@ -502,7 +582,9 @@ void BusTargetStore::MarkDropped(std::uint32_t busIndex,
     // Consumed without a command: clean dirty so the value never
     // re-presents on its own, but leave lastCommitted and the published
     // ramp on the last audio-accepted value — no command existed.
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return;
+    auto& state = activity->publish;
     CleanDirty(state);
     state.pendingRampMs = 0;
 }
@@ -521,8 +603,8 @@ bool BusTargetStore::TryClaim(std::uint32_t busIndex,
                               TargetClaimOwner owner,
                               std::uint32_t expectedRevision) noexcept {
     if (!CanClaim(busIndex, busGeneration, targetId, owner, expectedRevision) ||
-        !PrepareRetiringTargetStorage()) return false;
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+        !PrepareActivity(busIndex, targetId) || !PrepareRetiringTargetStorage()) return false;
+    PublishState& state = FindActivity(busIndex, targetId)->publish;
     if (state.preparedOwner.Valid()) {
         ++state.publicationRefCount;
         return true;
@@ -543,7 +625,7 @@ bool BusTargetStore::CanClaim(std::uint32_t busIndex, std::uint32_t busGeneratio
     std::uint32_t targetId, TargetClaimOwner owner, std::uint32_t expectedRevision) const noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount || !owner.Valid() ||
         m_activeGenerations[busIndex] != busGeneration) return false;
-    const auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    const auto& state = Publication(busIndex, targetId);
     if (state.revision != expectedRevision) return false;
     return state.preparedOwner.Valid()
         ? owner.Shared() && state.preparedOwner == owner && state.publicationRefCount != UINT32_MAX
@@ -558,15 +640,17 @@ bool BusTargetStore::CaptureCandidateBaseline(
         !owner.Valid() || m_activeGenerations[busIndex] != busGeneration) {
         return false;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return false;
+    auto& state = activity->publish;
     if (state.preparedOwner != owner ||
         state.preparedRampMs != 0 || state.claimSnapshotCaptured) {
         return false;
     }
     if (!state.candidateBaselineValid) {
         state.preCandidatePendingRampMs = state.pendingRampMs;
-        state.preCandidateApiRampMs = state.apiRampMs;
-        state.preCandidateApiRampTick = state.apiRampTick;
+        state.preCandidateApiRampMs = ReadSettings(PubIndexOf(busIndex, targetId)).apiRampMs;
+        state.preCandidateApiRampTick = ReadSettings(PubIndexOf(busIndex, targetId)).apiRampTick;
         state.candidateBaselineValid = true;
     }
     return true;
@@ -579,7 +663,9 @@ void BusTargetStore::ClearCandidateBaseline(
         m_activeGenerations[busIndex] != busGeneration) {
         return;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return;
+    auto& state = activity->publish;
     if (state.preparedOwner != owner) {
         return;
     }
@@ -597,7 +683,9 @@ void BusTargetStore::DropClaimedPublication(
         m_activeGenerations[busIndex] != busGeneration) {
         return;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return;
+    auto& state = activity->publish;
     if (state.preparedOwner != owner) {
         return;
     }
@@ -618,7 +706,9 @@ void BusTargetStore::DropClaimedBaseline(std::uint32_t busIndex,
                                         TargetClaimOwner owner) noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         m_activeGenerations[busIndex] != busGeneration) return;
-    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return;
+    auto& state = activity->publish;
     if (state.preparedOwner != owner) return;
     MarkDropped(busIndex, targetId);
     state.preCandidatePendingRampMs = 0;
@@ -640,8 +730,8 @@ void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
-    if (m_activeGenerations[busIndex] == busGeneration) {
-        PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (m_activeGenerations[busIndex] == busGeneration && FindActivity(busIndex, targetId)) {
+        auto& state = FindActivity(busIndex, targetId)->publish;
         if (state.preparedOwner == owner) {
             if (owner.Shared()) {
                 if (state.publicationRefCount == 0 || --state.publicationRefCount != 0) return;
@@ -652,8 +742,8 @@ void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
             if (reason == ClaimReleaseReason::RejectCandidate) {
                 if (state.candidateBaselineValid) {
                     state.pendingRampMs = state.preCandidatePendingRampMs;
-                    state.apiRampMs = state.preCandidateApiRampMs;
-                    state.apiRampTick = state.preCandidateApiRampTick;
+                    MutableSettings(PubIndexOf(busIndex, targetId)).apiRampMs = state.preCandidateApiRampMs;
+                    MutableSettings(PubIndexOf(busIndex, targetId)).apiRampTick = state.preCandidateApiRampTick;
                 }
             } else if (state.preparedRampMs > state.pendingRampMs) {
                 state.pendingRampMs = state.preparedRampMs;
@@ -694,7 +784,7 @@ bool BusTargetStore::SnapshotForClaim(
         return false;
     }
     if (m_activeGenerations[busIndex] == busGeneration) {
-        const PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+        const PublishState& state = Publication(busIndex, targetId);
         if (state.preparedOwner == owner) {
             *resolved = Reduce(busIndex, targetId);
             *rampMs = state.pendingRampMs;
@@ -721,8 +811,8 @@ bool BusTargetStore::CaptureSnapshotForClaim(
         return false;
     }
     if (busIndex < m_maxBuses && targetId < kBusTargetCount &&
-        m_activeGenerations[busIndex] == busGeneration) {
-        PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+        m_activeGenerations[busIndex] == busGeneration && FindActivity(busIndex, targetId)) {
+        auto& state = FindActivity(busIndex, targetId)->publish;
         if (state.preparedOwner == owner) {
             if (owner.Shared()) {
                 *resolved = Reduce(busIndex, targetId);
@@ -762,7 +852,9 @@ void BusTargetStore::SetClaimRampSuppressed(
         m_activeGenerations[busIndex] != busGeneration) {
         return;
     }
-    PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    auto* activity = FindActivity(busIndex, targetId);
+    if (!activity) return;
+    auto& state = activity->publish;
     if (state.preparedOwner == owner) {
         state.suppressClaimRamp = suppressed;
     }
@@ -778,7 +870,7 @@ std::uint32_t BusTargetStore::TargetRevision(
     std::uint32_t targetId) const noexcept {
     if (busIndex < m_maxBuses && targetId < kBusTargetCount &&
         m_activeGenerations[busIndex] == busGeneration) {
-        return m_publish[PubIndexOf(busIndex, targetId)].revision;
+        return Publication(busIndex, targetId).revision;
     }
     for (const RetiringTarget& retiring : m_retiringTargets) {
         if (retiring.used && retiring.busIndex == busIndex &&
@@ -800,7 +892,7 @@ bool BusTargetStore::ForeignClaim(std::uint32_t busIndex,
                                   std::uint32_t targetId) const noexcept {
     if (busIndex < m_maxBuses && targetId < kBusTargetCount &&
         m_activeGenerations[busIndex] == busGeneration &&
-        m_publish[PubIndexOf(busIndex, targetId)].preparedOwner.Valid()) {
+        Publication(busIndex, targetId).preparedOwner.Valid()) {
         return true;
     }
     for (const RetiringTarget& retiring : m_retiringTargets) {
@@ -827,11 +919,11 @@ void BusTargetStore::MarkSliceCommitted(
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
-    if (m_activeGenerations[busIndex] == busGeneration) {
-        PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (m_activeGenerations[busIndex] == busGeneration && FindActivity(busIndex, targetId)) {
+        auto& state = FindActivity(busIndex, targetId)->publish;
         if (state.preparedOwner == owner) {
-            state.lastCommitted = resolved;
-            state.lastPublishedRampMs = rampMs;
+            MutableSettings(PubIndexOf(busIndex, targetId)).lastCommitted = resolved;
+            MutableSettings(PubIndexOf(busIndex, targetId)).lastPublishedRampMs = rampMs;
             if (owner.Shared()) {
                 if (Reduce(busIndex, targetId) != resolved || state.pendingInput || state.pendingRampMs != 0)
                     SetDirty(state);
@@ -900,7 +992,7 @@ float BusTargetStore::LastCommitted(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return 0.0f;
     }
-    return m_publish[PubIndexOf(busIndex, targetId)].lastCommitted;
+    return ReadSettings(PubIndexOf(busIndex, targetId)).lastCommitted;
 }
 
 float BusTargetStore::SlotValue(std::uint32_t busIndex,
@@ -909,7 +1001,7 @@ float BusTargetStore::SlotValue(std::uint32_t busIndex,
     if (!InRange(busIndex, targetId, slot)) {
         return 0.0f;
     }
-    const Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
+    const Slot& s = ReadSlot(busIndex, targetId, slot);
     return s.active ? NarrowResolvedValue(s.value) : 0.0f;
 }
 
@@ -918,7 +1010,7 @@ bool BusTargetStore::PendingPublication(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return false;
     }
-    const PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    const PublishState& state = Publication(busIndex, targetId);
     return state.dirty || state.pendingInput;
 }
 
@@ -928,7 +1020,7 @@ BusTargetStore::LastPublishedRampMs(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return 0;
     }
-    return m_publish[PubIndexOf(busIndex, targetId)].lastPublishedRampMs;
+    return ReadSettings(PubIndexOf(busIndex, targetId)).lastPublishedRampMs;
 }
 
 std::uint32_t BusTargetStore::PendingRampMs(std::uint32_t busIndex,
@@ -936,10 +1028,10 @@ std::uint32_t BusTargetStore::PendingRampMs(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return 0;
     }
-    const PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
+    const PublishState& state = Publication(busIndex, targetId);
     std::uint32_t rampMs = state.pendingRampMs;
-    if (state.apiRampTick == m_flushTick && state.apiRampMs > rampMs) {
-        rampMs = state.apiRampMs;
+    if (ReadSettings(PubIndexOf(busIndex, targetId)).apiRampTick == m_flushTick && ReadSettings(PubIndexOf(busIndex, targetId)).apiRampMs > rampMs) {
+        rampMs = ReadSettings(PubIndexOf(busIndex, targetId)).apiRampMs;
     }
     return rampMs;
 }

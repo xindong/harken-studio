@@ -592,6 +592,31 @@ TEST(BindingLiveness, DirtyBusTargetRebuildsEveryContributionAndDepartureInOrigi
     EXPECT_FLOAT_EQ(0, store.Reduce(0, harken::kBusTargetBusVolume));
 }
 
+TEST(BindingLiveness, UnsetDetachAfterEvaluationKeepsPendingDependencyStorage) {
+    harken::BindingTable table(1, 1, 1);
+    harken::BusTargetStore store(1);
+    harken::ParamSystem params(harken::EngineConfig{});
+    const auto binding = harkentest::ObjectId(1);
+    const auto variable = harkentest::ObjectId(11);
+    const auto bus = harkentest::ObjectId(50);
+    const harken::CurvePoint points[] = {{0, 0}, {1, -6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, -6}};
+    store.InitializeBusGeneration(0, 1);
+    ASSERT_TRUE(store.PrepareActivity(0, harken::kBusTargetBusVolume));
+    ASSERT_EQ(VN_OK, table.RegisterBinding(binding, variable, harken::kTargetScopeBus,
+        harken::kBusTargetBusVolume, points, handles, 2, 10, nullptr));
+    ASSERT_EQ(VN_OK, table.Attach(binding, harken::kTargetScopeBus, bus, 0, nullptr, 0, 1));
+    table.EvaluateDirtyBusAttachments(params, store);
+    ASSERT_EQ(VN_OK, table.Detach(binding, harken::kTargetScopeBus, bus, &store));
+    store.ReleaseUnusedActivities(table);
+    EXPECT_EQ(1u, store.ActivityCount());
+    table.NoteBusVariableWrite(variable, store);
+    table.EvaluateDirtyBusAttachments(params, store);
+    store.ReleaseUnusedActivities(table);
+    EXPECT_EQ(0u, store.ActivityCount());
+    EXPECT_EQ(0u, store.DemandCount());
+}
+
 TEST(BindingLiveness, ReusedBusGenerationRejectsOldInputsAndDepartures) {
     for (bool preparedDetach : {false, true}) {
         harken::BindingTable table(2, 2, 1);

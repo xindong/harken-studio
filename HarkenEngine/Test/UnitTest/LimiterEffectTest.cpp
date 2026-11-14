@@ -3047,9 +3047,6 @@ TEST(CompressorDynamicRoute,
         VnConfig config = harkentest::MakeNullConfig(2, kBlock, kRate);
         config.fxSlotsPerBus = 1;
         config.compressorEffectPoolCapacity = 1;
-        if (degradeTarget) {
-            config.arenaBytes = 64;
-        }
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -3083,6 +3080,7 @@ TEST(CompressorDynamicRoute,
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&sourcePlay, &sourceVoice));
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&targetPlay, &targetVoice));
 
+        if (degradeTarget) session.Engine()->mixer.ArenaForTests().SetCapacityForTests(64);
         Capture rendered;
         harkentest::PumpAndCapture(session.Engine(), 1, rendered);
         std::uint32_t required = 0;
@@ -3127,6 +3125,17 @@ TEST(CompressorDynamicRoute,
     const VnLimiterDesc limiter = LimiterDesc(-1.0f, 100.0f);
     const VnEffectDynamicRouteDesc route = RawBusRoute(kSourceBus);
     std::uint32_t required = 0;
+    const auto checkAcceptedTopology = [&] {
+        auto& engine = *session.Engine();
+        const auto accepted = engine.buses.AcceptedTopology();
+        EXPECT_TRUE(accepted.valid);
+        EXPECT_EQ(nullptr, accepted.sendStates);
+        bool retained = false;
+        for (std::uint32_t i = 0; i < engine.topologyPlans.Capacity(); ++i)
+            if (engine.topologyPlans.IsAcquired(i) &&
+                engine.topologyPlans.View(i).order == accepted.order) retained = true;
+        EXPECT_TRUE(retained) << "the latest logic definition must survive audio retirement";
+    };
 
     ASSERT_EQ(VN_OK,
               Vn_SetBusEffect(kTargetBus, 0, VN_EFFECT_COMPRESSOR,
@@ -3135,6 +3144,8 @@ TEST(CompressorDynamicRoute,
               Vn_SetBusEffectDynamicRoute(kTargetBus, 0, 0, &route));
     Capture rendered;
     harkentest::PumpAndCapture(session.Engine(), 1, rendered);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkAcceptedTopology();
 
     ASSERT_EQ(VN_OK,
               Vn_SetBusEffect(kTargetBus, 0, VN_EFFECT_COMPRESSOR,
@@ -3143,6 +3154,8 @@ TEST(CompressorDynamicRoute,
               Vn_CaptureEffectDynamicRoutes(nullptr, 0, &required));
     EXPECT_EQ(1u, required) << "same-type replacement preserves route identity";
     harkentest::PumpAndCapture(session.Engine(), 1, rendered);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkAcceptedTopology();
 
     ASSERT_EQ(VN_OK, Vn_ClearBusEffect(kTargetBus, 0));
     ASSERT_EQ(VN_OK,
@@ -3150,14 +3163,20 @@ TEST(CompressorDynamicRoute,
     EXPECT_EQ(0u, required)
         << "the logic view clears in the same accepted effect transaction";
     harkentest::PumpAndCapture(session.Engine(), 1, rendered);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkAcceptedTopology();
 
     ASSERT_EQ(VN_OK,
               Vn_SetBusEffect(kTargetBus, 0, VN_EFFECT_COMPRESSOR,
                               AsBase(&compressor)));
     harkentest::PumpAndCapture(session.Engine(), 1, rendered);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkAcceptedTopology();
     ASSERT_EQ(VN_OK,
               Vn_SetBusEffectDynamicRoute(kTargetBus, 0, 0, &route));
     harkentest::PumpAndCapture(session.Engine(), 1, rendered);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkAcceptedTopology();
     ASSERT_EQ(VN_OK,
               Vn_SetBusEffect(kTargetBus, 0, VN_EFFECT_LIMITER,
                               AsBase(&limiter)));
@@ -3166,6 +3185,8 @@ TEST(CompressorDynamicRoute,
     EXPECT_EQ(0u, required)
         << "a non-Compressor replacement clears target routes atomically";
     harkentest::PumpAndCapture(session.Engine(), 1, rendered);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkAcceptedTopology();
     const std::uint32_t targetIndex =
         session.Engine()->buses.FindIndex(kTargetBus);
     const harken::BusTree::Bus* bus =

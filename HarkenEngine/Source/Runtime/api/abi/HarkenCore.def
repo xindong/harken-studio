@@ -15,6 +15,7 @@ EXPORTS
     Vn_BeginStreamSource
     Vn_BindVoiceAttenuation
     Vn_CancelStreamSource
+    Vn_CaptureBusStates
     Vn_CaptureCompressorRuntimeInfo
     Vn_CaptureEffectCapabilities
     Vn_CaptureEffectDynamicCapabilities

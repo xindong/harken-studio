@@ -1,0 +1,744 @@
+#include "harken/render/BusActivityPlan.h"
+#include "harken/core/SnapshotBuffer.h"
+#include "harken/render/VoicePool.h"
+#include <bit>
+#include <cstring>
+#include <stdexcept>
+
+namespace harken {
+
+namespace {
+template<class Bus, class Visit>
+void VisitSignalHistory(Bus& bus, Visit&& visit) noexcept {
+    visit(0, bus.signalGainHistory);
+    visit(1, bus.signalOutputHistory);
+    visit(2, bus.signalLayoutHistory);
+    for (std::uint32_t slot = 0; slot < kMaxFxSlotsPerBus; ++slot) {
+        visit(3 + slot * 4, bus.signalSlotHistory[slot]);
+        for (std::uint32_t band = 0; band < 3; ++band)
+            visit(4 + slot * 4 + band, bus.signalToneHistory[slot][band]);
+    }
+}
+
+bool DefaultDormantFilter(const BusTree::DormantToneSection& value) noexcept {
+    const BusTree::DormantToneSection initial;
+    const auto same = [](float a, float b) { return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b); };
+    const auto& a = value.coefficients;
+    const auto& b = initial.coefficients;
+    return !value.enabled && value.zeroSigns == 0 && value.tailFrames == 0 &&
+        same(a.b0, b.b0) && same(a.b1, b.b1) && same(a.b2, b.b2) && same(a.a1, b.a1) && same(a.a2, b.a2) &&
+        same(value.log2Hz, initial.log2Hz) && same(value.log2Q, initial.log2Q) && same(value.gainDb, initial.gainDb) &&
+        std::bit_cast<std::uint64_t>(value.signalHighWater) == std::bit_cast<std::uint64_t>(initial.signalHighWater) &&
+        value.signalBound.SameState(initial.signalBound) &&
+        std::all_of(std::begin(value.lastInput), std::end(value.lastInput), [](float sample) {
+            return std::bit_cast<std::uint32_t>(sample) == 0;
+        });
+}
+
+std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture& saved) {
+    auto result = std::make_shared<BusDormantWork>();
+    result->bus = saved.bus;
+    std::size_t size = 0;
+    for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
+        if (!DefaultDormantFilter(saved.filters[i])) {
+            result->filterMask |= 1u << i;
+            size += sizeof(saved.filters[i]);
+        }
+    for (std::uint32_t i = 0; i < saved.signalHistory.size(); ++i)
+        if (saved.signalHistory[i] > 1) {
+            result->signalHistoryMask |= UINT64_C(1) << i;
+            size += sizeof(double);
+        }
+    result->payload.resize(size);
+    auto* cursor = result->payload.data();
+    const auto append = [&](const void* value, std::size_t bytes) {
+        if (bytes != 0) { std::memcpy(cursor, value, bytes); cursor += bytes; }
+    };
+    for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
+        if ((result->filterMask & (1u << i)) != 0) append(&saved.filters[i], sizeof(saved.filters[i]));
+    for (std::uint32_t i = 0; i < saved.signalHistory.size(); ++i)
+        if ((result->signalHistoryMask & (UINT64_C(1) << i)) != 0)
+            append(&saved.signalHistory[i], sizeof(double));
+    return result;
+}
+}
+
+bool PrepareBusActivitySelection(const TopologyPlanView& topology,
+    const SignalRenderPlan* signals, std::span<const BusSlotRef> busRoots,
+    std::span<const std::uint32_t> signalRoots,
+    std::span<const BusActivityDetectorDependency> detectors,
+    std::span<const BusActivityMemberRoute> members,
+    BusActivitySelection& out) noexcept {
+    if (!topology.valid || topology.slotCount == 0 || topology.alive == nullptr ||
+        topology.generations == nullptr || topology.parents == nullptr || topology.busIds == nullptr ||
+        topology.order == nullptr || !topology.alive[0]) return false;
+    const auto signalCount = signals != nullptr ? signals->NodeCount() : 0u;
+    if (signalCount > UINT32_MAX - topology.slotCount) return false;
+    const auto count = topology.slotCount + signalCount;
+    const auto validBus = [&](BusSlotRef bus) {
+        return bus.Valid() && bus.index < topology.slotCount && topology.alive[bus.index] &&
+            topology.generations[bus.index] == bus.generation;
+    };
+    try {
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> edges;
+        const auto edge = [&](std::uint32_t from, std::uint32_t to) { edges.emplace_back(from, to); };
+        std::vector<std::uint8_t> live(topology.slotCount);
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
+            const auto bus = topology.order[i];
+            if (bus >= topology.slotCount || !topology.alive[bus] || live[bus]++) return false;
+            if (bus != 0) {
+                const auto parent = topology.parents[bus];
+                if (parent >= topology.slotCount || !topology.alive[parent]) return false;
+            }
+            const auto sends = topology.Sends(bus);
+            for (std::uint32_t s = 0; s < sends.count; ++s) {
+                const auto target = topology.sendTargets[sends.first + s];
+                if (target == kEmptySendTarget) continue;
+                if (target >= topology.slotCount || !topology.alive[target]) return false;
+            }
+        }
+        if (!live[0]) return false;
+        std::vector<std::uint8_t> formal(signalCount);
+        if (signals != nullptr) {
+            for (const auto& relation : signals->Relations()) {
+                if (relation.source >= signalCount || relation.target >= signalCount) return false;
+                formal[relation.source] = formal[relation.target] = 1;
+                edge(topology.slotCount + relation.source, topology.slotCount + relation.target);
+                edge(topology.slotCount + relation.target, topology.slotCount + relation.source);
+            }
+            for (const auto& path : signals->DefinitionPaths()) {
+                if (path.source >= signalCount || path.target >= signalCount) return false;
+                edge(topology.slotCount + path.source, topology.slotCount + path.target);
+            }
+            for (std::uint32_t i = 0; i < signalCount; ++i) {
+                const auto node = signals->NodeDefinition(i);
+                if (node.kind != SignalEndpointKindV1::Bus || node.busIndex >= topology.slotCount ||
+                    !topology.alive[node.busIndex]) continue;
+                // Formal deleted endpoints stay connected silence, rather than
+                // silently attaching to a new incarnation in the same slot.
+                if ((formal[i] || node.receiver) &&
+                    (node.busId != topology.busIds[node.busIndex] ||
+                     node.busGeneration != topology.generations[node.busIndex])) continue;
+                edge(node.busIndex, topology.slotCount + i);
+                edge(topology.slotCount + i, node.busIndex);
+            }
+        }
+        for (const auto& detector : detectors) {
+            if (!validBus(detector.target) || !validBus(detector.source)) return false;
+            // A live detector advances a silent Compressor's release state.
+            // Conversely an active receiver needs its connected zero source.
+            edge(detector.target.index, detector.source.index);
+            edge(detector.source.index, detector.target.index);
+        }
+        for (const auto& member : members) {
+            if (member.signalNode >= signalCount || !validBus(member.bus)) return false;
+            edge(topology.slotCount + member.signalNode, member.bus.index);
+        }
+        // Parent and Send edges already belong to the immutable topology.
+        // Only relationships absent from that representation need adjacency storage.
+        std::vector<std::size_t> offsets;
+        std::vector<std::uint32_t> outgoing;
+        if (!edges.empty()) {
+            offsets.resize(static_cast<std::size_t>(count) + 1);
+            for (const auto& [from, to] : edges) ++offsets[from + 1];
+            for (std::uint32_t i = 0; i < count; ++i) offsets[i + 1] += offsets[i];
+            auto cursor = offsets;
+            outgoing.resize(edges.size());
+            for (const auto& [from, to] : edges) outgoing[cursor[from]++] = to;
+        }
+        std::vector<std::uint8_t> selected(count);
+        std::vector<std::uint32_t> queue;
+        queue.reserve(count);
+        const auto select = [&](std::uint32_t node) {
+            if (!selected[node]) { selected[node] = 1; queue.push_back(node); }
+        };
+        for (const auto bus : busRoots) {
+            if (!validBus(bus)) return false;
+            select(bus.index);
+        }
+        for (const auto node : signalRoots) {
+            if (node >= signalCount) return false;
+            select(topology.slotCount + node);
+        }
+        for (std::size_t i = 0; i < queue.size(); ++i) {
+            const auto node = queue[i];
+            if (node < topology.slotCount) {
+                if (!live[node]) return false;
+                if (node != 0) select(topology.parents[node]);
+                const auto sends = topology.Sends(node);
+                for (std::uint32_t send = 0; send < sends.count; ++send) {
+                    const auto target = topology.sendTargets[sends.first + send];
+                    if (target != kEmptySendTarget) select(target);
+                }
+            }
+            if (!offsets.empty())
+                for (auto j = offsets[node]; j < offsets[node + 1]; ++j) select(outgoing[j]);
+        }
+        // Plane zero remains available even for an entirely silent engine.
+        // Its existence alone must not keep every Master sidechain awake.
+        selected[0] = 1;
+        BusActivitySelection next;
+        next.buses.reserve(std::min<std::size_t>(topology.slotCount, queue.size() + 1));
+        next.signalNodes.reserve(std::min<std::size_t>(signalCount, queue.size()));
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i)
+            if (selected[topology.order[i]]) next.buses.push_back(topology.order[i]);
+        for (std::uint32_t i = 0; i < topology.slotCount; ++i)
+            if (selected[i] && !live[i]) return false;
+        for (std::uint32_t i = 0; i < signalCount; ++i)
+            if (selected[topology.slotCount + i]) next.signalNodes.push_back(i);
+        out = std::move(next);
+        return true;
+    } catch (...) { return false; }
+}
+
+BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
+    std::span<const WorkBinding> working, std::unique_ptr<SignalRenderPlan> signals,
+    SignalTransition signalTransition, const SignalRenderPlan* replacedSignals, bool adoptsTopology) noexcept {
+    if (!topology.valid || topology.slotCount == 0 || topology.slotCount > m_capacity ||
+        topology.parents == nullptr || topology.generations == nullptr || topology.alive == nullptr || topology.busIds == nullptr ||
+        working.empty() || working.size() > topology.orderCount ||
+        (topology.signals != nullptr && signals == nullptr)) return nullptr;
+    if (signalTransition == SignalTransition::ReplaceContent) {
+        if (replacedSignals != nullptr && (replacedSignals->PublicationIdentity() == 0 ||
+            (signals != nullptr && signals->SameContinuityDomain(*replacedSignals)))) return nullptr;
+    } else if (replacedSignals != nullptr) return nullptr;
+    try {
+        if (m_nextActivityPublication == UINT64_MAX) return nullptr;
+        auto plan = std::make_unique<BusActivityPlan>(*this);
+        plan->publication = ++m_nextActivityPublication;
+        plan->adoptsTopology = adoptsTopology;
+        if (adoptsTopology) {
+            plan->topologyDefinition = topology;
+            plan->topologyDefinition.sendStates = nullptr;
+        }
+        plan->signalTransition = signalTransition;
+        plan->replacedSignalPublication = replacedSignals != nullptr ? replacedSignals->PublicationIdentity() : 0;
+        if (signalTransition == SignalTransition::ReplaceContent && m_pendingSleep != nullptr &&
+            m_lastQueuedActivity == m_pendingSleep && replacedSignals == m_pendingSleep->signals.get()) {
+            const auto* alternate = AcceptedActivityAlternate();
+            if (alternate != nullptr) plan->replacedSignalAlternate = alternate->PublicationIdentity();
+        }
+        plan->planes.resize(working.size() * m_mixChannels);
+        plan->working.reserve(working.size());
+        plan->directory.resize(topology.slotCount);
+        plan->order.reserve(working.size());
+        for (std::uint32_t i = 0; i < topology.slotCount; ++i)
+            plan->directory[i] = {UINT32_MAX, topology.generations[i], topology.parents[i]};
+        // Master always occupies plane zero, independent of feeds-first order.
+        for (const auto& binding : working) {
+            const auto bus = binding.bus;
+            if (!bus.Valid() || bus.index >= topology.slotCount || topology.alive[bus.index] == 0 ||
+                topology.generations[bus.index] != bus.generation ||
+                plan->directory[bus.index].plane != UINT32_MAX) return nullptr;
+            auto* row = ResolveWorkRow(binding.work);
+            if (row != nullptr && row->phase.load(std::memory_order_acquire) == WorkPhase::Preparing) {
+                row->host = {row->bus.busIndex, row->bus.generation};
+                row->hostId = row->bus.id;
+            }
+            if (row == nullptr || row->host != bus || row->hostId != topology.busIds[bus.index] ||
+                !RetainWorkRow(binding.work)) return nullptr;
+            plan->working.push_back(binding);
+            plan->directory[bus.index].plane = bus.index == 0 ? 0 : 1;
+        }
+        if (plan->directory[0].plane != 0) return nullptr;
+        const auto master = std::find_if(plan->working.begin(), plan->working.end(),
+            [](const auto& binding) { return binding.bus.index == 0; });
+        std::rotate(plan->working.begin(), master, master + 1);
+        std::uint32_t plane = 1;
+        for (auto& binding : plan->working)
+            if (binding.bus.index != 0) plan->directory[binding.bus.index].plane = plane++;
+        for (const auto& binding : plan->working) {
+            const auto bus = binding.bus.index;
+            if (bus != 0 && (topology.parents[bus] >= topology.slotCount ||
+                plan->directory[topology.parents[bus]].plane == UINT32_MAX)) return nullptr;
+            const auto sends = topology.Sends(bus);
+            for (std::uint32_t s = 0; s < sends.count; ++s) {
+                const auto target = topology.sendTargets[sends.first + s];
+                if (target != kEmptySendTarget && (target >= topology.slotCount ||
+                    plan->directory[target].plane == UINT32_MAX)) return nullptr;
+            }
+        }
+        std::vector<std::uint8_t> seen(topology.slotCount);
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
+            const auto bus = topology.order[i];
+            if (bus >= topology.slotCount || seen[bus]++) return nullptr;
+            if (plan->directory[bus].plane != UINT32_MAX) plan->order.push_back(bus);
+        }
+        if (plan->order.size() != working.size()) return nullptr;
+        if (signals != nullptr) {
+            if (signals->PublicationIdentity() == 0 || !signals->UsesActualRouting() ||
+                signals->RoutingBusSlotBound() != topology.slotCount) return nullptr;
+            for (std::uint32_t i = 0; i < signals->NodeCount(); ++i) {
+                const auto node = signals->NodeDefinition(i);
+                if (node.kind != SignalEndpointKindV1::Bus || node.busIndex == UINT32_MAX) continue;
+                if (node.busIndex >= topology.slotCount || plan->directory[node.busIndex].plane == UINT32_MAX ||
+                    node.busId != topology.busIds[node.busIndex] || node.busGeneration != topology.generations[node.busIndex])
+                    return nullptr;
+            }
+            for (const auto& binding : plan->working)
+                if (signals->NodeForBus(binding.bus.index, topology.busIds[binding.bus.index],
+                        binding.bus.generation) == UINT32_MAX) return nullptr;
+        }
+        plan->beforeDetach.reserve(adoptsTopology ? topology.effectUpdateCount : 0);
+        for (std::uint32_t i = 0; adoptsTopology && i < topology.effectUpdateCount; ++i) {
+            const auto& adoption = topology.effectUpdates[i];
+            const auto* preparedUpdate = PreparedBusEffectUpdate(adoption);
+            if (preparedUpdate == nullptr) continue;
+            const auto host = BusSlotRef::FromPacked(adoption.host);
+            if (!host.Valid() || (host.index < topology.slotCount &&
+                topology.alive[host.index] != 0 && topology.generations[host.index] == host.generation)) continue;
+            const auto work = AcceptedWorkRef(host);
+            if (work.Valid()) {
+                if (!RetainWorkRow(work)) return nullptr;
+            } else {
+                const auto& update = *preparedUpdate;
+                if (!adoption.releaseOwner && (update.ownedTargets != 0 || update.ownedOld != 0 ||
+                    std::any_of(update.oldRefs.begin(), update.oldRefs.end(), [](auto ref) { return ref.type != kEffectTypeNone; }) ||
+                    std::any_of(update.targetRefs.begin(), update.targetRefs.end(), [](auto ref) { return ref.type != kEffectTypeNone; })))
+                    return nullptr;
+            }
+            plan->beforeDetach.push_back({adoption, work});
+        }
+        if (m_dormant != nullptr) {
+            auto remaining = std::make_unique<BusDormantRegistry>();
+            for (const auto& saved : m_dormant->buses) {
+                const auto bus = saved->bus;
+                if (bus.index < topology.slotCount && topology.alive[bus.index] &&
+                    topology.generations[bus.index] == bus.generation &&
+                    plan->directory[bus.index].plane == UINT32_MAX)
+                    remaining->buses.push_back(saved);
+            }
+            if (signals != nullptr) for (const auto& saved : m_dormant->signals) {
+                std::shared_ptr<const SignalRenderPlan::DormantState> rest;
+                if (!signals->PruneDormantState(saved, rest)) return nullptr;
+                if (rest) remaining->signals.push_back(std::move(rest));
+            }
+            plan->remainingDormant = std::move(remaining);
+        }
+        plan->signals = std::move(signals);
+        auto* result = plan.get();
+        m_activities.push_back(std::move(plan));
+        return result;
+    } catch (...) { return nullptr; }
+}
+
+CommandQueue::BusActivityAttachment* BusTree::ActivityAttachment(BusActivityPlan* plan) noexcept {
+    return plan != nullptr && &plan->tree == this &&
+        plan->phase.load(std::memory_order_acquire) == BusActivityPlan::Phase::Preparing
+        ? &plan->attachment : nullptr;
+}
+
+void BusTree::CancelActivity(BusActivityPlan* plan) noexcept {
+    if (plan == nullptr || &plan->tree != this) return;
+    auto expected = BusActivityPlan::Phase::Preparing;
+    plan->phase.compare_exchange_strong(expected, BusActivityPlan::Phase::Retired,
+        std::memory_order_release, std::memory_order_relaxed);
+}
+
+bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
+    std::span<const WorkObservation> observations, VoicePool& voices) noexcept {
+    auto* previous = m_lastQueuedActivity;
+    if (&plan.tree != this || plan.phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Preparing ||
+        plan.adoptsTopology || previous == nullptr || m_pendingSleep != nullptr ||
+        plan.sleepPrevious != nullptr || plan.signalTransition != SignalTransition::Preserve ||
+        previous->logicPins == UINT32_MAX) return false;
+    try {
+        plan.sleepPrevious = previous;
+        ++previous->logicPins;
+        plan.sleepVoices = &voices;
+        plan.sleeping.reserve(observations.size());
+        std::uint64_t block = 0;
+        for (const auto& binding : previous->working) {
+            const auto retained = std::find_if(plan.working.begin(), plan.working.end(),
+                [&](const auto& next) { return next.bus == binding.bus; });
+            if (retained != plan.working.end()) {
+                if (retained->work != binding.work) throw std::invalid_argument("sleep replaced a retained row");
+                continue;
+            }
+            const auto fact = std::find_if(observations.begin(), observations.end(),
+                [&](const auto& value) { return value.bus == binding.bus && value.work == binding.work; });
+            if (binding.bus.index == 0 || fact == observations.end() || !fact->rendered ||
+                !fact->localRecoveryReady || fact->inputActive || fact->detectorActive || fact->physicalVoice ||
+                fact->quietFrames < m_sampleRate / 2 || (block != 0 && block != fact->blockSequence))
+                throw std::invalid_argument("invalid sleep observation");
+            block = fact->blockSequence;
+            auto saved = std::make_shared<BusDormantCapture>();
+            saved->bus = binding.bus;
+            saved->expectedEffects = LogicEffects(binding.bus);
+            for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
+                const auto type = saved->expectedEffects[i].type;
+                if (type == kEffectTypeNone) continue;
+                saved->revisions[i] = InstalledEffectRevision(binding.bus, i, type);
+                if (saved->revisions[i] == 0) throw std::invalid_argument("missing installed effect revision");
+            }
+            if (!RetainWorkRow(binding.work)) throw std::invalid_argument("expired sleep row");
+            plan.sleeping.push_back({*fact, std::move(saved)});
+        }
+        if (plan.sleeping.size() != observations.size() ||
+            plan.working.size() + plan.sleeping.size() != previous->working.size())
+            throw std::invalid_argument("sleep must be a strict subset");
+        bool removesSignals = false;
+        if (previous->signals != nullptr) {
+            if (plan.signals == nullptr) throw std::invalid_argument("missing sleep signals");
+            for (std::uint32_t i = 0; i < plan.signals->NodeCount(); ++i)
+                if (!previous->signals->ContainsNodeDefinition(*plan.signals, i))
+                    throw std::invalid_argument("sleep introduced a signal node");
+            plan.dormantSignals = plan.signals->PrepareDormantState(*previous->signals);
+            if (!plan.dormantSignals) throw std::bad_alloc();
+            if (!plan.signals->PrepareSleepObservation(*previous->signals, *plan.dormantSignals, block, removesSignals))
+                throw std::invalid_argument("invalid signal sleep observation");
+            plan.sleepSignalScratch.resize(previous->signals->NodeCount());
+        }
+        if (plan.sleeping.empty() && !removesSignals)
+            throw std::invalid_argument("sleep must remove work");
+        plan.sleepDecision.store(BusActivityPlan::SleepDecision::Pending, std::memory_order_release);
+        return true;
+    } catch (...) {
+        plan.ReleaseSleepHolds();
+        plan.dormantSignals.reset();
+        return false;
+    }
+}
+
+bool BusTree::AcknowledgeSleep() noexcept {
+    if (m_pendingSleep == nullptr) return true;
+    auto& plan = *m_pendingSleep;
+    const auto decision = plan.sleepDecision.load(std::memory_order_acquire);
+    if (decision == BusActivityPlan::SleepDecision::Pending) return false;
+    if (decision == BusActivityPlan::SleepDecision::Accepted) {
+        // Allocate before releasing S's only ownership. Failed preparation
+        // leaves the ACK and all payloads intact for a subsequent update.
+        try {
+            auto next = m_dormant != nullptr ? std::make_unique<BusDormantRegistry>(*m_dormant)
+                                           : std::make_unique<BusDormantRegistry>();
+            const auto* latest = m_lastQueuedActivity;
+            if (latest == nullptr) return false;
+            std::vector<const BusDormantCapture*> effects;
+            effects.reserve(plan.sleeping.size());
+            for (const auto& row : plan.sleeping) {
+                const auto bus = row.saved->bus;
+                if (!LogicRefMatches(bus) || bus.index >= latest->directory.size() ||
+                    latest->directory[bus.index].generation != bus.generation ||
+                    latest->directory[bus.index].plane != UINT32_MAX) continue;
+                std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });
+                // Exact defaults reconstruct without history. Disabled filters
+                // with frozen input or non-default certificates remain owned.
+                if (!std::all_of(row.saved->filters.begin(), row.saved->filters.end(), DefaultDormantFilter) ||
+                    std::any_of(row.saved->signalHistory.begin(), row.saved->signalHistory.end(),
+                        [](double value) { return value > 1; }))
+                    next->buses.push_back(CompactDormantWork(*row.saved));
+                effects.push_back(row.saved.get());
+            }
+            if (plan.dormantSignals && latest->signals) {
+                std::shared_ptr<const SignalRenderPlan::DormantState> rest;
+                if (!latest->signals->PruneDormantState(plan.dormantSignals, rest)) return false;
+                if (rest) next->signals.push_back(std::move(rest));
+            }
+            if (m_dormantEffects.commit != nullptr &&
+                !m_dormantEffects.commit(m_dormantEffects.context, effects, plan.publication)) return false;
+            m_dormant.swap(next);
+        } catch (...) { return false; }
+    }
+    if (m_lastQueuedActivity == &plan && decision == BusActivityPlan::SleepDecision::Rejected)
+        m_lastQueuedActivity = plan.sleepPrevious;
+    plan.ReleaseSleepHolds();
+    plan.dormantSignals.reset();
+    m_pendingSleep = nullptr;
+    return true;
+}
+
+std::shared_ptr<const BusDormantWork> BusTree::DormantWorkFor(BusSlotRef bus) const noexcept {
+    if (m_dormant != nullptr)
+        for (const auto& row : m_dormant->buses) if (row->bus == bus) return row;
+    return {};
+}
+
+BusTree::DormantSource BusTree::DormantSourceFor(BusSlotRef bus) const noexcept {
+    return {DormantWorkFor(bus), m_dormantEffects.receipt != nullptr
+        ? m_dormantEffects.receipt(m_dormantEffects.context, bus) : DormantEffectReceipt{}};
+}
+
+bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
+    if (m_dormantEffects.restore != nullptr && !m_dormantEffects.restore(m_dormantEffects.context, row)) return false;
+    if (m_dormant == nullptr) return true;
+    const BusSlotRef host{row.busIndex, row.generation};
+    for (const auto& entry : m_dormant->buses) {
+        if (entry->bus != host) continue;
+        const auto& saved = *entry;
+        const std::array sections{&row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
+        const auto* cursor = saved.payload.data();
+        const auto read = [&](void* value, std::size_t bytes) {
+            if (bytes != 0) { std::memcpy(value, cursor, bytes); cursor += bytes; }
+        };
+        for (std::uint32_t i = 0; i < sections.size(); ++i) {
+            if ((saved.filterMask & (1u << i)) == 0) continue;
+            DormantToneSection state;
+            read(&state, sizeof(state));
+            RestoreDormantToneSection(*sections[i], state);
+        }
+        VisitSignalHistory(row, [&](std::uint32_t index, double& value) {
+            if ((saved.signalHistoryMask & (UINT64_C(1) << index)) != 0) read(&value, sizeof(value));
+        });
+        break;
+    }
+    return true;
+}
+
+bool BusTree::PrepareDormantSignalContinuity(SignalRenderPlan& next,
+    const SignalRenderPlan& previous) const noexcept {
+    if (m_dormant == nullptr) return true;
+    for (const auto& saved : m_dormant->signals)
+        if (!next.PrepareDormantContinuity(previous, saved)) return false;
+    return true;
+}
+
+const SignalRenderPlan* BusTree::AcceptedActivityAlternate() const noexcept {
+    return m_lastQueuedActivity != nullptr && m_lastQueuedActivity == m_pendingSleep &&
+        m_pendingSleep->sleepPrevious != nullptr ? m_pendingSleep->sleepPrevious->signals.get() : nullptr;
+}
+
+bool BusTree::PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept {
+    return m_lastQueuedActivity != m_pendingSleep || m_pendingSleep == nullptr ||
+        m_pendingSleep->dormantSignals == nullptr ||
+        next.PrepareDormantContinuity(*m_pendingSleep->signals, m_pendingSleep->dormantSignals);
+}
+
+void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
+    assert(plan.phase.load(std::memory_order_relaxed) == BusActivityPlan::Phase::Preparing);
+    // Only successful publication consumes the prepared registry projection.
+    // A cancelled proof leaves the original cold records available.
+    if (plan.remainingDormant != nullptr) m_dormant = std::move(plan.remainingDormant);
+    for (const auto& binding : plan.working) {
+        if (m_dormantEffects.consume != nullptr) m_dormantEffects.consume(m_dormantEffects.context, binding.bus);
+        if (PreparedWorkRow(binding.work) != nullptr) {
+            const bool published = PublishWorkRow(binding.work);
+            assert(published);
+            (void)published;
+        }
+    }
+    if (plan.sleepDecision.load(std::memory_order_relaxed) == BusActivityPlan::SleepDecision::Pending) {
+        assert(m_pendingSleep == nullptr);
+        m_pendingSleep = &plan;
+    }
+    if (plan.adoptsTopology) m_acceptedTopology = plan.topologyDefinition;
+    m_lastQueuedActivity = &plan;
+    if (plan.logicQueued != nullptr) plan.logicQueued(plan.logicContext, plan);
+    plan.phase.store(BusActivityPlan::Phase::Queued, std::memory_order_release);
+}
+
+bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
+    if (plan.phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Queued) return false;
+    for (const auto& binding : plan.working) {
+        const auto* row = ResolveWorkRow(binding.work);
+        if (row == nullptr || row->phase.load(std::memory_order_acquire) != WorkPhase::Published ||
+            row->references.load(std::memory_order_relaxed) >= UINT32_MAX - 1 ||
+            row->bus.busIndex != binding.bus.index || row->bus.generation != binding.bus.generation) return false;
+    }
+    for (const auto& entry : plan.beforeDetach) {
+        const auto host = BusSlotRef::FromPacked(entry.adoption.host);
+        if (AudioWorkRef(host.index) != entry.work || !AudioRefMatches(host)) return false;
+    }
+    const bool sleeping = plan.sleepDecision.load(std::memory_order_relaxed) == BusActivityPlan::SleepDecision::Pending;
+    if (sleeping) {
+        const auto reject = [&] {
+            plan.phase.store(BusActivityPlan::Phase::Retired, std::memory_order_release);
+            plan.sleepDecision.store(BusActivityPlan::SleepDecision::Rejected, std::memory_order_release);
+            return true;
+        };
+        if (m_activeActivity != plan.sleepPrevious || plan.sleepVoices == nullptr) return reject();
+        // Commands earlier in this same drain may already have installed a
+        // Voice since the completed-block observation was published.
+        plan.sleepVoices->MarkPhysicalBusUsers(*this);
+        for (auto& entry : plan.sleeping) {
+            const auto& expected = entry.expected;
+            auto* row = ResolveWorkRow(expected.work);
+            if (row == nullptr || AudioWorkRef(expected.bus.index) != expected.work || row->host != expected.bus)
+                return reject();
+            const auto& current = row->observed;
+            if (!current.rendered || current.blockSequence < expected.blockSequence ||
+                current.graphRevision != expected.graphRevision || InstalledGraphRevision() != expected.graphRevision ||
+                row->bus.activityRevision != expected.stateRevision || current.stateRevision != expected.stateRevision ||
+                current.physicalVoice || current.inputActive || current.detectorActive ||
+                !current.localRecoveryReady || current.quietFrames < m_sampleRate / 2 || !LocalRecoveryReady(row->bus))
+                return reject();
+            auto& saved = *entry.saved;
+            // These high-water bounds affect feedback receiver gain even after
+            // the original gain/effect is changed. Zero and one are equivalent
+            // before the next max(1, history, value); larger values must survive.
+            VisitSignalHistory(row->bus, [&](std::uint32_t index, double value) {
+                saved.signalHistory[index] = std::max(1.0, value);
+            });
+            const std::array sections{&row->bus.busLpf, &row->bus.busHpf, &row->bus.outputLpf, &row->bus.outputHpf};
+            for (std::size_t i = 0; i < sections.size(); ++i)
+                if (!CaptureDormantToneSection(*sections[i], m_mixChannels, saved.filters[i])) return reject();
+            for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
+                const auto& ref = row->bus.fxSlotEffectRef[i];
+                const auto& prepared = saved.expectedEffects[i];
+                if (ref.type != prepared.type || ref.poolIndex != prepared.poolIndex || ref.generation != prepared.generation)
+                    return reject();
+                if (ref.type == kEffectTypeNone) continue;
+                if (!CaptureBuiltinEffectDormantState(ref.type, row->bus.fxSlots[i].state,
+                        m_mixChannels, saved.effects[i], &saved.tones[i])) return reject();
+            }
+        }
+        if (plan.dormantSignals != nullptr &&
+            (!plan.signals->ValidateSleepObservation(*plan.sleepPrevious->signals, *plan.dormantSignals) ||
+             plan.sleepVoices->UsesRemovedSignalNodes(*plan.sleepPrevious->signals, *plan.signals, plan.sleepSignalScratch) ||
+             !plan.signals->CaptureDormantState(*plan.sleepPrevious->signals, *plan.dormantSignals))) return reject();
+    }
+    auto* previousSignals = InstalledSignals();
+    if (plan.signalTransition == SignalTransition::ReplaceContent) {
+        // Content replacement is an explicit prepared transition, never a
+        // fallback for a failed same-content continuity mapping.
+        const auto identity = previousSignals != nullptr ? previousSignals->PublicationIdentity() : 0;
+        if (identity != plan.replacedSignalPublication &&
+            (plan.replacedSignalAlternate == 0 || identity != plan.replacedSignalAlternate)) return false;
+    } else if (previousSignals != nullptr) {
+        if (plan.signals == nullptr || !plan.signals->AdoptContinuityFrom(*previousSignals)) return false;
+    }
+    for (const auto& entry : plan.beforeDetach) ApplyPreviewEffectChain(entry.adoption);
+    // Only the coordinator mutates the directory, after all prior workers join.
+    // Every incoming candidate already owns a lease; none can retire here.
+    for (const auto& binding : plan.working) {
+        const auto bus = binding.bus.index;
+        NoteWorkMutation(ResolveWorkRow(binding.work)->bus);
+        if (WorkReference(m_workSlots[bus]) == binding.work) continue;
+        const bool retained = RetainWorkRow(binding.work);
+        assert(retained);
+        if (!retained) std::terminate();
+        const auto old = WorkReference(m_workSlots[bus]);
+        m_workSlots[bus] = ResolveWorkRow(binding.work);
+        AudioReleaseWorkRow(old);
+    }
+    const auto remove = [&](std::uint32_t bus) {
+        if (bus < plan.directory.size() && plan.directory[bus].plane != UINT32_MAX) return;
+        const auto old = WorkReference(m_workSlots[bus]);
+        m_workSlots[bus] = {};
+        AudioReleaseWorkRow(old);
+    };
+    auto* previous = m_activeActivity;
+    if (previous != nullptr) {
+        for (auto bus : previous->order) remove(bus);
+    } else {
+        // Bootstrap only: subsequent adoptions visit the previous work set.
+        for (std::uint32_t bus = 0; bus < m_audioCount; ++bus) remove(bus);
+    }
+    for (const auto& entry : plan.beforeDetach) AudioReleaseWorkRow(entry.work);
+    plan.beforeDetachReleased = true;
+    // The last completed-block receipt may still name the previous plan.
+    // Its immutable working leases retire with the plan on the logic owner.
+    m_activeActivity = &plan;
+    plan.phase.store(BusActivityPlan::Phase::Active, std::memory_order_release);
+    if (previous != nullptr)
+        previous->phase.store(BusActivityPlan::Phase::Retired, std::memory_order_release);
+    if (sleeping) plan.sleepDecision.store(BusActivityPlan::SleepDecision::Accepted, std::memory_order_release);
+    return true;
+}
+
+void BusTree::DrainActivities() noexcept {
+    // First acquire retirement, then capture the completed receipt. A plan
+    // that retires after this pass may still publish that latest receipt.
+    for (auto& plan : m_activities)
+        plan->reclaimCandidate = plan.get() != m_pendingSleep && plan->logicPins == 0 &&
+            plan->phase.load(std::memory_order_acquire) == BusActivityPlan::Phase::Retired;
+    SnapshotPayload receipt;
+    if (m_activitySnapshots != nullptr && !m_activitySnapshots->Capture(receipt)) return;
+    std::erase_if(m_activities, [&](const auto& plan) {
+        if (!plan->reclaimCandidate || (m_activitySnapshots != nullptr &&
+            plan->publication == receipt.busActivityPublication)) return false;
+        if (m_lastQueuedActivity == plan.get()) m_lastQueuedActivity = nullptr;
+        return true;
+    });
+    DrainWorkRows();
+}
+
+void BusTree::ShutdownActivities() noexcept {
+    m_activeActivity = m_lastQueuedActivity = m_pendingSleep = nullptr;
+    // Release backward pins before destroying any predecessor object.
+    for (auto& plan : m_activities) plan->ReleaseSleepHolds();
+    m_activities.clear();
+    m_dormant.reset();
+}
+
+std::uint32_t BusTree::WorkingPlaneCount() const noexcept {
+    return m_activeActivity != nullptr ? static_cast<std::uint32_t>(m_activeActivity->working.size()) : m_audioCount;
+}
+
+BusRenderView BusTree::RenderView(float* const* planes) noexcept {
+    return m_activeActivity != nullptr ? BusRenderView(planes, m_activeActivity->directory, &m_activityFallbacks)
+        : BusRenderView(planes);
+}
+
+std::span<const std::uint32_t> BusTree::WorkingOrder() const noexcept {
+    if (m_activeActivity != nullptr) return m_activeActivity->order;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    return plan.valid ? std::span<const std::uint32_t>(plan.order, plan.orderCount)
+        : std::span<const std::uint32_t>{};
+}
+
+SignalRenderPlan* BusTree::InstalledSignals() const {
+    return m_activeActivity != nullptr ? m_activeActivity->signals.get() : m_plans.View(m_currentPlanIndex).signals;
+}
+
+BusTree::WorkRef BusTree::AcceptedWorkRef(BusSlotRef bus) const noexcept {
+    if (!bus.Valid()) return {};
+    if (m_lastQueuedActivity != nullptr) {
+        const auto& plan = *m_lastQueuedActivity;
+        if (bus.index < plan.directory.size()) {
+            const auto plane = plan.directory[bus.index].plane;
+            if (plane < plan.working.size() && plan.working[plane].bus == bus) return plan.working[plane].work;
+        }
+        if (&plan == m_pendingSleep)
+            for (const auto& removed : plan.sleeping)
+                if (removed.expected.bus == bus) return removed.expected.work;
+        return {};
+    }
+    // Before the first activity publication, inspect immutable bootstrap
+    // identities only. Never borrow the audio-owned installed directory.
+    for (const auto& row : m_workRows) {
+        if (row.host == bus && row.phase.load(std::memory_order_acquire) == WorkPhase::Published &&
+            row.references.load(std::memory_order_acquire) != 0)
+            return {row.slot, row.generation};
+    }
+    return {};
+}
+
+const SignalRenderPlan* BusTree::AcceptedActivitySignals() const noexcept {
+    return m_lastQueuedActivity != nullptr ? m_lastQueuedActivity->signals.get() : nullptr;
+}
+
+BusTree::WorkRef BusTree::LogicEffectWorkRef(BusSlotRef bus) const noexcept {
+    const auto accepted = AcceptedWorkRef(bus);
+    if (accepted.Valid()) return accepted;
+    // A later W can omit a Bus removed by S before S has been acknowledged.
+    // S still pins its old physical owner; a newer W containing it wins above.
+    if (m_pendingSleep != nullptr)
+        for (const auto& row : m_pendingSleep->sleeping)
+            if (row.expected.bus == bus) return row.expected.work;
+    return {};
+}
+
+const BusTree::LogicEffectReferences& BusTree::LogicEffects(BusSlotRef bus) const noexcept {
+    const auto ref = LogicEffectWorkRef(bus);
+    const auto* row = m_workRows.TryAt(ref.slot);
+    static const LogicEffectReferences empty{};
+    return row != nullptr && row->generation == ref.generation && row->host == bus
+        ? row->logicEffects : empty;
+}
+
+void BusTree::SetLogicEffects(BusSlotRef bus, const LogicEffectReferences& effects) noexcept {
+    SetLogicEffects(LogicEffectWorkRef(bus), bus, effects);
+}
+
+void BusTree::SetLogicEffects(WorkRef work, BusSlotRef bus, const LogicEffectReferences& effects) noexcept {
+    auto* row = ResolveWorkRow(work);
+    if (row != nullptr && row->host == bus) row->logicEffects = effects;
+}
+
+std::uint64_t BusTree::NextActivitySignalPublication(const SignalRenderPlan* previous) noexcept {
+    if (previous != nullptr) m_activitySignalPublication =
+        std::max(m_activitySignalPublication, previous->PublicationIdentity());
+    return m_activitySignalPublication == UINT64_MAX ? 0 : ++m_activitySignalPublication;
+}
+
+} // namespace harken

@@ -321,12 +321,6 @@ namespace Harken
             {
                 return VnResult.VN_PACK_CATALOG_CAPACITY;
             }
-            if (config.maxActions != 0 &&
-                inspection.RecommendedMaxActions != 0 &&
-                config.maxActions < inspection.RecommendedMaxActions)
-            {
-                return VnResult.VN_PACK_RESIDENT_CAPACITY;
-            }
             if (config.maxResidentDefinitionBytes != 0 &&
                 config.maxResidentDefinitionBytes <
                     inspection.RecommendedResidentDefinitionBytes)
@@ -338,11 +332,6 @@ namespace Harken
             {
                 config.maxCatalogEntries =
                     inspection.RecommendedMaxCatalogEntries;
-            }
-            if (config.maxActions == 0 &&
-                inspection.RecommendedMaxActions != 0)
-            {
-                config.maxActions = inspection.RecommendedMaxActions;
             }
             if (config.maxCatalogBytes == 0)
             {

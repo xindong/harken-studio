@@ -27,6 +27,8 @@ public:
     bool Reserve(std::size_t bytes, std::size_t alignment, bool sparse = false) noexcept;
     bool CommitThrough(std::size_t bytes) noexcept;
     bool CommitRange(std::size_t offset, std::size_t bytes) noexcept;
+    // Monotone two-ended backing without a per-page sparse directory.
+    bool CommitSuffixFrom(std::size_t offset) noexcept;
     void Swap(StablePageReservation& other) noexcept;
     void* Address() const noexcept { return address_; }
     std::size_t ReservedBytes() const noexcept { return reservedBytes_; }
@@ -42,6 +44,8 @@ private:
     void* address_ = nullptr;
     std::size_t reservedBytes_ = 0;
     std::size_t committedBytes_ = 0;
+    std::size_t suffixCommittedBytes_ = 0;
+    std::size_t suffixEndBytes_ = 0;
     std::size_t pageBytes_ = 0;
     std::size_t remainingPagesForTests_ = SIZE_MAX;
     std::unique_ptr<std::uint64_t[]> committedPages_;

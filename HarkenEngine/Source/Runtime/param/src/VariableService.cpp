@@ -223,14 +223,13 @@ WorldInstallResult InstallContainerWorldV1(
 VariableServiceV1::VariableServiceV1(
     std::uint32_t maxEmitters, std::uint32_t overridesPerEmitter,
     std::uint32_t maxPropertiesPerCurrentSlice,
-    std::uint32_t maxActionDefinitions,
+    std::uint32_t /*maxActionDefinitions*/,
     LogicCommitCoordinator& commits, TransportEpochOwner& transport,
     VariableSliceTable& slices, ScheduledTransactionPool& timeline,
     std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity,
-    std::uint32_t meterProbeCapacity)
+    std::uint32_t withdrawalSliceCapacity)
     : maxEmitters_(maxEmitters),
       overridesPerEmitter_(overridesPerEmitter),
-      maxActionDefinitions_(maxActionDefinitions),
       censusScratch_(maxPropertiesPerCurrentSlice <=
                              kVariableSliceTargetHardLimit
                          ? maxPropertiesPerCurrentSlice
@@ -249,11 +248,11 @@ VariableServiceV1::VariableServiceV1(
     queryHistoryCapacity_ = static_cast<std::uint32_t>(std::max<std::uint64_t>(kVariableHistoryCapacity, cells));
     const auto revisions = cells + queryHistoryCapacity_;
     const auto storage = revisions + kVariableBatchWriteCapacity;
-    const auto proofs = storage + 2ull * meterProbeCapacity;
+    const auto proofs = storage + static_cast<std::uint64_t>(withdrawalSliceCapacity);
     if (proofs > UINT32_MAX) throw std::length_error("variable revision capacity overflow");
     revisionCapacity_ = static_cast<std::uint32_t>(revisions);
     completionCapacity_ = static_cast<std::uint32_t>(proofs);
-    applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + 2ull * meterProbeCapacity);
+    applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + static_cast<std::uint64_t>(withdrawalSliceCapacity));
     const auto historyCapacity = static_cast<std::uint32_t>(storage);
     if (!history_.Reserve(historyCapacity) ||
         !preparedWritePlacements_.Reserve(historyCapacity) ||
@@ -263,7 +262,8 @@ VariableServiceV1::VariableServiceV1(
         !settledRows_.Reserve(historyCapacity) || !supersedeRows_.Reserve(historyCapacity) ||
         !scheduledGroups_.Reserve(historyCapacity) || !outcomes_.Reserve(historyCapacity)) throw std::bad_alloc{};
     historyGenerations_.resize(historyCapacity, 1);
-    dependencyVisited_.resize(completionCapacity_);
+    // Only history slices form source dependencies; meter withdrawals do not.
+    dependencyVisited_.resize(historyCapacity);
     if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
     readCutCapacity_ = static_cast<std::uint32_t>(readCutCapacity);
     if (!readCuts_.Reserve(readCutCapacity_)) throw std::bad_alloc{};
@@ -494,10 +494,6 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         return result;
     }
     const ContainerWorldInstallViewV1& install = installInput;
-    if (install.actionCount > maxActionDefinitions_) {
-        result.status = WorldInstallStatus::Capacity;
-        return result;
-    }
     if (install.variableCount > install.capacity.maxVariableDefinitions) {
         result.status = WorldInstallStatus::Capacity;
         return result;
@@ -571,9 +567,6 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         return worldStatus;
     }
     const ContainerWorldInstallViewV1& install = installInput;
-    if (install.actionCount > maxActionDefinitions_) {
-        return WorldInstallStatus::Capacity;
-    }
     if (install.variableCount > install.capacity.maxVariableDefinitions) {
         return WorldInstallStatus::Capacity;
     }
@@ -3136,6 +3129,7 @@ void VariableServiceV1::CommitSliceTargets(Engine& engine,
                     ? target->command.payload.setVoicePan.pan2d : 0.0f);
             break;
         case VariableTargetScope::Bus:
+            engine.NoteBusSettingCommand(target->command);
             engine.busTargets.MarkSliceCommitted(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration, target->locator.targetId,
@@ -3601,7 +3595,9 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.state = RowState::SlicePrepared;
             SyncBatchState(row);
         }
-        if (!slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
+        PreparedBusCommandBatch wake(engine);
+        if ((!row.reserved && !wake.PrepareWake()) ||
+            !slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
                 row.requiredInitialSourceFrontier) ||
             !PinHistorySlice(row) || (row.used && !slices_.Publish(row.slice))) {
             cancelPlacement();
@@ -3612,6 +3608,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.preparedEngine = &engine;
             continue;
         }
+        wake.Publish();
         const bool released = timeline_.ReleaseHeldCurrentSlice(&held);
         assert(released);
         (void)released;
@@ -4441,7 +4438,7 @@ bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
                 [&](const auto prior) { return prior.slot == next->slice.slot &&
                     prior.generation == next->slice.generation; });
             if (seen) continue;
-            // The completion pool bounds the private dependency graph.
+            // Retained history bounds the private dependency graph.
             if (count == visited.size()) return true;
             visited[count++] = next->slice;
         }

@@ -65,7 +65,6 @@ namespace Harken.Unity.Tests
                 Assert.That(fresh.EnableCommunicationInBuilds, Is.True);
                 Assert.That(fresh.MaxVoices, Is.EqualTo(HarkenProjectSettings.DefaultMaxVoices));
                 Assert.That(fresh.MaxPacks, Is.EqualTo(256u));
-                Assert.That(fresh.MaxActions, Is.EqualTo(256u));
                 Assert.That(fresh.MaxActionFirings, Is.EqualTo(256u));
                 Assert.That(fresh.SuppressUnityAudio, Is.False);
             }
@@ -73,7 +72,7 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void FreshAssetPersistsFourStartupCapacitiesAt256()
+        public void FreshAssetPersistsConcurrentAndPackCapacitiesAt256()
         {
             if (!existed)
             {
@@ -81,13 +80,13 @@ namespace Harken.Unity.Tests
                 var generated = new SerializedObject(settings);
                 Assert.That(generated.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
                 Assert.That(generated.FindProperty("maxPacks").longValue, Is.EqualTo(256L));
-                Assert.That(generated.FindProperty("maxActions").longValue, Is.EqualTo(256L));
+                Assert.That(generated.FindProperty("maxActions"), Is.Null);
                 Assert.That(generated.FindProperty("maxActionFirings").longValue, Is.EqualTo(256L));
                 var config = new VnConfig();
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
                 Assert.That(config.maxVoices, Is.EqualTo(256u));
                 Assert.That(config.maxPacks, Is.EqualTo(256u));
-                Assert.That(config.maxActions, Is.EqualTo(256u));
+                Assert.That(config.maxActions, Is.Zero);
                 Assert.That(config.maxActionFirings, Is.EqualTo(256u));
             }
             string path = Path.GetDirectoryName(settingsPath)?.Replace('\\', '/') +
@@ -103,7 +102,7 @@ namespace Harken.Unity.Tests
                 var serialized = new SerializedObject(asset);
                 Assert.That(serialized.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
                 Assert.That(serialized.FindProperty("maxPacks").longValue, Is.EqualTo(256L));
-                Assert.That(serialized.FindProperty("maxActions").longValue, Is.EqualTo(256L));
+                Assert.That(serialized.FindProperty("maxActions"), Is.Null);
                 Assert.That(serialized.FindProperty("maxActionFirings").longValue, Is.EqualTo(256L));
             }
             finally { AssetDatabase.DeleteAsset(path); }
@@ -127,7 +126,6 @@ namespace Harken.Unity.Tests
             var serialized = new SerializedObject(settings);
             serialized.FindProperty("maxVoices").longValue = 111;
             serialized.FindProperty("maxPacks").longValue = 112;
-            serialized.FindProperty("maxActions").longValue = 113;
             serialized.FindProperty("maxActionFirings").longValue = 114;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(settings);
@@ -138,7 +136,19 @@ namespace Harken.Unity.Tests
             HarkenProjectSettings.ApplyStartupCapacity(ref config);
             Assert.That(config.maxVoices, Is.EqualTo(111u));
             Assert.That(config.maxPacks, Is.EqualTo(112u));
-            Assert.That(config.maxActions, Is.EqualTo(113u));
+            Assert.That(config.maxActions, Is.Zero);
+            Assert.That(config.maxActionFirings, Is.EqualTo(114u));
+        }
+
+        [Test]
+        public void LegacyActionCapacityDoesNotRequireAssetMigration()
+        {
+            JsonUtility.FromJsonOverwrite("{\"maxActions\":1,\"maxVoices\":111,\"maxPacks\":112,\"maxActionFirings\":114}", settings);
+            var config = new VnConfig();
+            HarkenProjectSettings.ApplyStartupCapacity(ref config);
+            Assert.That(config.maxActions, Is.Zero);
+            Assert.That(config.maxVoices, Is.EqualTo(111u));
+            Assert.That(config.maxPacks, Is.EqualTo(112u));
             Assert.That(config.maxActionFirings, Is.EqualTo(114u));
         }
 

@@ -46,6 +46,11 @@ enum class LogicAllocSite : unsigned int {
     ActionPlayContainerStorage,
     PlayableTreeStorage,
     FrontierOwnerLedgerStorage,
+    BusSendStorage,
+    VoiceSendStorage,
+    BusOwnerStorage,
+    BusDefinitionStorage,
+    BusTargetSettings,
 };
 
 struct LogicAllocFaultState {

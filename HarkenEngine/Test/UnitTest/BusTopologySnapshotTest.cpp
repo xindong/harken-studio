@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 
@@ -151,24 +152,24 @@ TEST(BusTopologySnapshot,
     EXPECT_EQ(planCount + 1u, engine->topologyPlanCount);
 }
 
-TEST(BusTopologySnapshot, ThirtyBusGraphAndSendLevelRevisionUseOneCommandEach) {
+TEST(BusTopologySnapshot, ThreeHundredSendGraphAndLevelRevisionUseOneCommandEach) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
-    config.maxBuses = 31;
+    config.maxBuses = 302;
     config.busSendSlotsPerBus = 1;
     config.commandQueueDepth = 2;
     config.topologyPlanPoolCapacity = 2;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
-    std::array<VnBusTopologyBus, 30> buses{};
+    std::array<VnBusTopologyBus, 301> buses{};
     for (std::size_t i = 0; i < buses.size(); ++i) {
         buses[i] = Bus(harkentest::ObjectId(10 + i), VN_BUS_MASTER);
     }
 
-    std::array<VnBusTopologySend, 15> sends{};
+    std::array<VnBusTopologySend, 300> sends{};
     for (std::size_t i = 0; i < sends.size(); ++i) {
-        const VnBusId from = harkentest::ObjectId(10 + i * 2);
-        sends[i] = Send(from, harkentest::ObjectId(11 + i * 2), -3.0f, 10);
+        const VnBusId from = harkentest::ObjectId(10);
+        sends[i] = Send(from, harkentest::ObjectId(11 + i), -3.0f, 10);
     }
 
     VnBusTopologyDesc desc =
@@ -179,7 +180,7 @@ TEST(BusTopologySnapshot, ThirtyBusGraphAndSendLevelRevisionUseOneCommandEach) {
 
     Pump(session.Engine());
     const VnSnapshot installed = Snapshot();
-    EXPECT_EQ(31u, installed.activeBusCount);
+    EXPECT_EQ(302u, installed.activeBusCount);
     EXPECT_EQ(1u, installed.installedBusTopologyRevision);
 
     for (VnBusTopologySend& send : sends) {
@@ -227,7 +228,7 @@ TEST(BusTopologySnapshot, FullCapacityReplacementReusesGenerationalSlots) {
     const VnSnapshot after = Snapshot();
     EXPECT_EQ(3u, after.busCount);
     EXPECT_EQ(3u, after.activeBusCount);
-    EXPECT_EQ(0u, after.freeBusSlotCount);
+    EXPECT_EQ(session.Engine()->BusCapacity() - after.activeBusCount, after.freeBusSlotCount);
     EXPECT_EQ(before.busSlotReuseCount + 2, after.busSlotReuseCount);
     EXPECT_GT(after.busGenerations[1], before.busGenerations[1]);
     EXPECT_GT(after.busGenerations[2], before.busGenerations[2]);
@@ -253,17 +254,19 @@ TEST(BusTopologySnapshot, PureRemovalWaitsForAudioAcknowledgementBeforeSlotReuse
     const auto revision = engine->acceptedBusTopologyRevision;
     EXPECT_FALSE(engine->buses.AliveAt(index));
     EXPECT_EQ(revision, engine->buses.RetirementRevisionAt(index));
-    EXPECT_EQ(generation, engine->busRetirements[index].generation);
-    EXPECT_EQ(kOwner, engine->busRetirements[index].ownerId);
+    ASSERT_NE(nullptr, engine->BusRetirement(index));
+    EXPECT_EQ(generation, engine->BusRetirement(index)->generation);
+    EXPECT_EQ(kOwner, engine->BusRetirement(index)->ownerId);
     EXPECT_EQ(kOwner, engine->busTopologyOwnerIds[index]);
-    EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(30), VN_BUS_MASTER));
+    EXPECT_NE(index, engine->buses.FindIndex(harkentest::ObjectId(30)));
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(revision, engine->buses.RetirementRevisionAt(index));
 
     Pump(engine);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine->buses.RetirementRevisionAt(index));
-    EXPECT_EQ(0u, engine->busRetirements[index].revision);
+    EXPECT_EQ(nullptr, engine->BusRetirement(index));
     EXPECT_EQ(0u, engine->busTopologyOwnerIds[index]);
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
     EXPECT_EQ(index, engine->buses.FindIndex(harkentest::ObjectId(20)));
@@ -325,26 +328,26 @@ TEST(BusTopologySnapshot, PublishedTimelineIdentityMigratesOffRemovedSlot) {
     pending.active = true;
     pending.busIndex = index;
     pending.busGeneration = generation;
-    pending.voiceSends[0] = {true, index, -2.0f, generation};
+    pending.voiceSends = pending.voiceSends.WithSet({true, index, -2.0f, generation, 0});
     auto& parked = engine->parkRecords[0];
     parked.active = true;
     parked.facts.busIndex = index;
     parked.facts.busGeneration = generation;
-    parked.voiceSends[0] = {true, index, -8.0f, generation};
+    parked.voiceSends = parked.voiceSends.WithSet({true, index, -8.0f, generation, 0});
     auto& identity = engine->timelineVoiceInstallIdentities[0];
     identity.renderHandle = 1;
     identity.busIndex = index;
     identity.busGeneration = generation;
-    identity.voiceSends[0] = {true, index, -4.0f, generation};
+    identity.voiceSends = identity.voiceSends.WithSet({true, index, -4.0f, generation, 0});
     auto remove = Topology(1, 2, nullptr, 0);
     ASSERT_EQ(VN_OK, Vn_ApplyBusTopology(&remove));
     EXPECT_EQ(0u, identity.busIndex);
     EXPECT_EQ(engine->buses.GenerationAt(0), identity.busGeneration);
-    EXPECT_FALSE(identity.voiceSends[0].active);
+    EXPECT_EQ(nullptr, identity.voiceSends.Find(0));
     EXPECT_EQ(0u, pending.busIndex);
-    EXPECT_FALSE(pending.voiceSends[0].active);
+    EXPECT_EQ(nullptr, pending.voiceSends.Find(0));
     EXPECT_EQ(0u, parked.facts.busIndex);
-    EXPECT_FALSE(parked.voiceSends[0].active);
+    EXPECT_EQ(nullptr, parked.voiceSends.Find(0));
     EXPECT_NE(0u, engine->buses.RetirementRevisionAt(index));
     EXPECT_EQ(0u, harken::DrainTopologyRetirementsV1(*engine));
     pending.active = false;
@@ -387,7 +390,8 @@ TEST(BusTopologySnapshot, RemovedSourceMetersRetireForPureAndReusedSlots) {
             EXPECT_EQ(0u, engine->buses.RetirementRevisionAt(old.index));
         } else {
             EXPECT_NE(0u, engine->buses.RetirementRevisionAt(old.index));
-            EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(30), VN_BUS_MASTER));
+            EXPECT_NE(old.index, engine->buses.FindIndex(harkentest::ObjectId(30)));
         }
         for (std::uint32_t i = 0; i < 4; ++i) {
             Pump(engine);
@@ -466,3 +470,33 @@ TEST(BusTopologySnapshot, RevisionAndDescriptorValidationAreDeterministic) {
 }
 
 } // namespace
+
+TEST(BusTopologySnapshot, SparseStorageFailureRecyclesPlanAndKeepsAcceptedGraph) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 10;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::array<VnBusTopologyBus, 9> buses{};
+    std::array<VnBusTopologySend, 8> sends{};
+    for (std::size_t i = 0; i < buses.size(); ++i) buses[i] = Bus(harkentest::ObjectId(10 + i), VN_BUS_MASTER);
+    for (std::size_t i = 0; i < sends.size(); ++i) sends[i] = Send(buses[0].busId, buses[i + 1].busId);
+    auto desc = Topology(0, 1, buses.data(), buses.size(), sends.data(), sends.size());
+    const auto plans = engine->topologyPlans.InUse();
+    const auto revision = engine->acceptedBusTopologyRevision;
+    const auto commands = engine->commands.PublishedHead();
+    for (std::size_t failure = 1; failure <= 15; ++failure) {
+        SCOPED_TRACE(failure);
+        harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::BusSendStorage);
+        const auto result = Vn_ApplyBusTopology(&desc);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        ASSERT_NE(VN_OK, result);
+        EXPECT_EQ(plans, engine->topologyPlans.InUse());
+        EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
+        EXPECT_EQ(commands, engine->commands.PublishedHead());
+        EXPECT_TRUE(engine->busSends.Empty());
+        EXPECT_EQ(1u, engine->buses.BusCount());
+    }
+    EXPECT_EQ(VN_OK, Vn_ApplyBusTopology(&desc));
+    EXPECT_EQ(8u, engine->busSends.Count());
+}

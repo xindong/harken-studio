@@ -166,6 +166,10 @@ public:
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
+    // Logic-owned pending payloads keep exact target incarnations alive until
+    // application is acknowledged; retained history alone is not a user.
+    bool VisitPendingTargets(void* context,
+        bool (*visit)(void*, VariableSliceRef, const VariableTargetLocator&)) const;
     bool Publish(VariableSliceRef ref) noexcept;
     bool CanPublishPrepared(VariableSliceRef ref, bool allowPreparedSources = false) const noexcept;
     VariableSliceInvalidationResult Invalidate(
@@ -176,7 +180,8 @@ public:
                void (*apply)(void*,
                              const VariableSliceTarget&) noexcept,
                std::uint64_t settledCommandFrontier = UINT64_MAX,
-               std::uint64_t settledInitialSourceFrontier = UINT64_MAX) noexcept;
+               std::uint64_t settledInitialSourceFrontier = UINT64_MAX,
+               bool (*ready)(void*, const VariableSliceTarget&) noexcept = nullptr) noexcept;
     VariableSliceState State(VariableSliceRef ref) const noexcept;
     std::uint64_t AppliedBlockSequence(VariableSliceRef ref) const noexcept;
     std::uint32_t TargetCount(VariableSliceRef ref) const noexcept;
@@ -202,7 +207,7 @@ public:
     std::uint32_t FreeRowCount() const noexcept;
     std::uint32_t PayloadCapacity() const noexcept { return payloadCapacity_; }
     std::uint32_t FreePayloadCount() const noexcept {
-        return static_cast<std::uint32_t>(freePayloads_.size());
+        return payloadCapacity_ - nextUnusedPayload_ + static_cast<std::uint32_t>(freePayloads_.size());
     }
     std::size_t FreeRangeCount() const noexcept { return freeRanges_.size(); }
     bool SetFreeRowGenerationForTest(std::uint32_t slot,
@@ -261,6 +266,7 @@ private:
     std::uint32_t targetPoolCapacity_ = 0;
     StableRowStorage<Row> rows_;
     StableRowStorage<Payload> payloads_;
+    std::uint32_t nextUnusedRow_ = 0, nextUnusedPayload_ = 0;
     std::vector<std::uint32_t> freeRows_;
     std::vector<std::uint32_t> freePayloads_;
     std::vector<std::uint32_t> subscribedSources_;

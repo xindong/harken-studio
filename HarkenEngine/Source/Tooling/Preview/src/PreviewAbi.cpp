@@ -139,16 +139,20 @@ VnPreviewResult VnPreview_CapturePlaybackPaths(
     if (requiredCount == nullptr || (capacity != 0 && outPaths == nullptr))
         return VN_PREVIEW_INVALID_ARG;
     static_assert(VN_PREVIEW_PATH_ROW_CAPACITY == harken::kPlaybackPathRowCapacity);
-    static_assert(VN_PREVIEW_PATH_SEND_CAPACITY == harken::kTimelineMaxVoiceSends);
     struct Capture {
         VnPreviewPlaybackPathV1* paths;
         uint32_t capacity;
         uint32_t count;
+        bool sendsOverflow = false;
     } capture{outPaths, capacity, 0};
     const bool available = harken::ObserveCurrentPlaybackPaths(
         [](const harken::PlaybackPathObservation& source, void* context) {
             auto& result = *static_cast<Capture*>(context);
             const uint32_t index = result.count++;
+            if (source.sendCount > VN_PREVIEW_PATH_SEND_CAPACITY) {
+                result.sendsOverflow = true;
+                return;
+            }
             if (index >= result.capacity) return;
             auto& path = result.paths[index];
             path = {};
@@ -169,7 +173,59 @@ VnPreviewResult VnPreview_CapturePlaybackPaths(
         }, &capture);
     if (!available) return VN_PREVIEW_HOST_ERROR;
     *requiredCount = capture.count;
-    return capture.count > capacity ? VN_PREVIEW_RESULT_CAPACITY : VN_PREVIEW_OK;
+    return capture.sendsOverflow || capture.count > capacity ? VN_PREVIEW_RESULT_CAPACITY : VN_PREVIEW_OK;
+}
+
+VnPreviewResult VnPreview_CapturePlaybackPathsV2(
+    VnPreviewPlaybackPathV2* outPaths, uint32_t capacity, uint32_t* requiredCount,
+    VnPreviewPlaybackSendV1* outSends, uint64_t sendCapacity, uint64_t* requiredSendCount) {
+    if (requiredCount != nullptr) *requiredCount = 0;
+    if (requiredSendCount != nullptr) *requiredSendCount = 0;
+    if (!kGateOpen) return VN_PREVIEW_DEVELOPMENT_API_DISABLED;
+    if (requiredCount == nullptr || requiredSendCount == nullptr ||
+        (capacity != 0 && outPaths == nullptr) || (sendCapacity != 0 && outSends == nullptr) ||
+        sendCapacity > SIZE_MAX / sizeof(VnPreviewPlaybackSendV1)) return VN_PREVIEW_INVALID_ARG;
+    struct Capture {
+        VnPreviewPlaybackPathV2* paths;
+        VnPreviewPlaybackSendV1* sends;
+        uint32_t capacity;
+        uint64_t sendCapacity;
+        uint32_t count = 0;
+        uint64_t sendCount = 0;
+    } capture{outPaths, outSends, capacity, sendCapacity};
+    const bool available = harken::ObserveCurrentPlaybackPaths(
+        [](const harken::PlaybackPathObservation& source, void* context) {
+            auto& result = *static_cast<Capture*>(context);
+            const auto index = result.count++;
+            const auto offset = result.sendCount;
+            result.sendCount += source.sendCount;
+            if (index >= result.capacity) return;
+            auto& path = result.paths[index];
+            path = {};
+            path.structSize = sizeof(path);
+            path.voiceInstance = source.voiceInstance;
+            path.soundId = source.soundId;
+            path.outputBusId = source.outputBusId;
+            path.rowCount = source.path.rowCount;
+            path.sendOffset = offset;
+            path.sendCount = source.sendCount;
+            for (uint32_t row = 0; row < path.rowCount; ++row) {
+                path.rows[row].stableId = source.path.rows[row].stableId;
+                path.rows[row].occurrenceOrdinal = source.path.rows[row].occurrenceOrdinal;
+            }
+            if (result.sendCount > result.sendCapacity) return;
+            for (uint32_t send = 0; send < path.sendCount; ++send) {
+                auto& target = result.sends[offset + send];
+                target = {};
+                target.targetBusId = source.sends[send].targetBusId;
+                target.levelDb = source.sends[send].levelDb;
+            }
+        }, &capture);
+    if (!available) return VN_PREVIEW_HOST_ERROR;
+    *requiredCount = capture.count;
+    *requiredSendCount = capture.sendCount;
+    return capture.count > capacity || capture.sendCount > sendCapacity
+        ? VN_PREVIEW_RESULT_CAPACITY : VN_PREVIEW_OK;
 }
 
 VnPreviewResult VnPreview_PlayPlayable(

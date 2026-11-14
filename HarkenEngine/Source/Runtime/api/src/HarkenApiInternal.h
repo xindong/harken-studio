@@ -56,7 +56,7 @@ PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
     const PackPartitionLease* leaseOrNull = nullptr) noexcept;
 
 TimelineVoiceInstallDesc ProjectTimelineVoiceInstall(
-    const CapturedTimelineVoiceInstall& captured) noexcept;
+    const CapturedTimelineVoiceInstall& captured);
 
 VnResult PreflightTimelineVoiceStart(
     const Engine& engine, const TimelineVoiceInstallDesc& install) noexcept;

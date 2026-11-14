@@ -6686,15 +6686,23 @@ TEST(PackComposition, CompositeRowAggregateExactThenPlusOneKeepsPublication) {
         combined.push_back(PackComposition::Keep(
             publishedBefore->owners[0]));
         combined.push_back(std::move(secondOwner));
-        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
-                  composition.Commit(std::move(combined), nullptr, 0, 8, 0));
-        EXPECT_EQ(generationBefore, composition.CompositeGeneration());
-        EXPECT_EQ(publishedBefore, composition.PublishedHandle());
-        ASSERT_EQ(1u, composition.Published()->owners.size());
+        if (item.row == CompositeAggregateRow::Action) {
+            ASSERT_EQ(VN_OK, composition.Commit(std::move(combined), nullptr, 0, 1, 0));
+            EXPECT_EQ(generationBefore + 1, composition.CompositeGeneration());
+            ASSERT_EQ(2u, composition.Published()->owners.size());
+            EXPECT_NE(nullptr, composition.FindAction(harkentest::OffsetObjectId(firstStableId, 1)));
+            EXPECT_NE(nullptr, composition.FindAction(harkentest::OffsetObjectId(secondStableId, 1)));
+        } else {
+            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
+                      composition.Commit(std::move(combined), nullptr, 0, 8, 0));
+            EXPECT_EQ(generationBefore, composition.CompositeGeneration());
+            EXPECT_EQ(publishedBefore, composition.PublishedHandle());
+            ASSERT_EQ(1u, composition.Published()->owners.size());
+        }
     }
 }
 
-TEST(PackComposition, LargeActionStepAggregateRefusesBeforePublicationAndRecovers) {
+TEST(PackComposition, ActionStepFormatBudgetAppliesPerPartition) {
     constexpr std::uint32_t stepCount = 10000;
     constexpr VnObjectId firstAction = harkentest::ObjectId(7100);
     constexpr VnObjectId secondAction = harkentest::ObjectId(8100);
@@ -6760,15 +6768,15 @@ TEST(PackComposition, LargeActionStepAggregateRefusesBeforePublicationAndRecover
 
     ASSERT_EQ(VN_OK, prepare(33, VnPackHandle{2} << 32, secondAction,
         harkentest::ObjectId(9200), stepCount + 1, &second));
-    std::vector<PackComposition::CandidateOwner> refused;
-    refused.push_back(PackComposition::Keep(accepted->owners[0]));
-    refused.push_back(std::move(second));
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
-        composition.Commit(std::move(refused), nullptr, 0, 8, 0));
-    EXPECT_EQ(accepted, composition.PublishedHandle());
-    EXPECT_EQ(generation, composition.CompositeGeneration());
-    EXPECT_EQ(acceptedAction, composition.FindAction(firstAction));
-    EXPECT_EQ(nullptr, composition.FindAction(secondAction));
+    std::vector<PackComposition::CandidateOwner> combined;
+    combined.push_back(PackComposition::Keep(accepted->owners[0]));
+    combined.push_back(std::move(second));
+    ASSERT_EQ(VN_OK, composition.Commit(std::move(combined), nullptr, 0, 1, 0));
+    EXPECT_EQ(generation + 1, composition.CompositeGeneration());
+    ASSERT_NE(nullptr, composition.FindAction(firstAction));
+    EXPECT_EQ(stepCount, composition.FindAction(firstAction)->stepCount);
+    ASSERT_NE(nullptr, composition.FindAction(secondAction));
+    EXPECT_EQ(stepCount + 1, composition.FindAction(secondAction)->stepCount);
 
     ASSERT_EQ(VN_OK, prepare(33, VnPackHandle{2} << 32, secondAction,
         harkentest::ObjectId(9200), stepCount, &second));

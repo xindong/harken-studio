@@ -61519,11 +61519,9 @@ TEST(ActionFiringApi,
         VnResult destroyResult = VN_DEVICE_ERROR;
         std::uint32_t commandCount = 0;
         std::uint32_t headerCount = 0;
-        std::uint32_t sendIndex = UINT32_MAX;
         VnVoiceHandle handle = 0;
         std::uint32_t dryBefore = UINT32_MAX;
         std::uint32_t sendTargetBefore = UINT32_MAX;
-        std::uint16_t opcodeAfter = 0;
         std::uint32_t dryAfter = UINT32_MAX;
         bool sendActiveAfter = true;
         bool stillPrepared = false;
@@ -61561,20 +61559,15 @@ TEST(ActionFiringApi,
         harken::EngineTimelineVoiceInstallIdentity before{};
         ASSERT_TRUE(current.CaptureTimelineVoiceInstallIdentity(original.renderHandle, &before));
         state.dryBefore = before.busIndex;
-        state.sendTargetBefore = before.voiceSends[0].targetBusIndex;
-        ASSERT_TRUE(before.voiceSends[0].active);
-        for (std::uint32_t i = 1; i < original.commandCount; ++i) {
-            if (original.commands[i].opcode != harken::kOpcodeSetVoiceSend) continue;
-            state.sendIndex = i;
-            break;
-        }
-        ASSERT_NE(UINT32_MAX, state.sendIndex);
+        ASSERT_NE(nullptr, before.voiceSends.Find(0));
+        state.sendTargetBefore = before.voiceSends.Find(0)->targetBusIndex;
+        for (std::uint32_t i = 1; i < original.commandCount; ++i)
+            ASSERT_NE(harken::kOpcodeSetVoiceSend, original.commands[i].opcode);
         state.destroyResult = Vn_DestroyBus(state.destroyId);
         harken::EngineTimelineVoiceInstallIdentity after{};
         ASSERT_TRUE(current.CaptureTimelineVoiceInstallIdentity(original.renderHandle, &after));
-        state.opcodeAfter = original.commands[state.sendIndex].opcode;
         state.dryAfter = after.busIndex;
-        state.sendActiveAfter = after.voiceSends[0].active;
+        state.sendActiveAfter = after.voiceSends.Find(0) != nullptr;
         state.stillPrepared = original.prepared;
         state.routingPrepared =
             current.voices.CapturePreparedRoutingV1(original.renderHandle, &state.routingAfter);
@@ -61599,14 +61592,14 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_OK, probe.destroyResult);
     EXPECT_EQ(busB.index, probe.dryBefore);
     EXPECT_EQ(busA.index, probe.sendTargetBefore);
-    EXPECT_EQ(harken::kOpcodeClearVoiceSend, probe.opcodeAfter);
     EXPECT_EQ(probe.commandCount, probe.headerCount);
     EXPECT_EQ(0u, probe.dryAfter);
     EXPECT_FALSE(probe.sendActiveAfter);
     EXPECT_TRUE(probe.stillPrepared);
     EXPECT_TRUE(probe.routingPrepared);
     EXPECT_EQ(0u, probe.routingAfter.busIndex);
-    EXPECT_FALSE(probe.routingAfter.sends[0].active);
+    ASSERT_EQ(1u, probe.routingAfter.SendRoutes().size());
+    EXPECT_FALSE(probe.routingAfter.SendRoutes()[0].active);
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(kBusA, 0.0f, 0));
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(kBusB, 0.0f, 0));
 

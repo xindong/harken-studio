@@ -3677,6 +3677,25 @@ static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288,
 static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292,
               "wire table offset drift: VnMonitorStreamFactV1.reserved0");
 
+static_assert(sizeof(VnBusState) == 48,
+              "wire table size drift: VnBusState");
+static_assert(offsetof(VnBusState, busId) == 0,
+              "wire table offset drift: VnBusState.busId");
+static_assert(offsetof(VnBusState, blockSequence) == 16,
+              "wire table offset drift: VnBusState.blockSequence");
+static_assert(offsetof(VnBusState, busIndex) == 24,
+              "wire table offset drift: VnBusState.busIndex");
+static_assert(offsetof(VnBusState, busGeneration) == 28,
+              "wire table offset drift: VnBusState.busGeneration");
+static_assert(offsetof(VnBusState, flags) == 32,
+              "wire table offset drift: VnBusState.flags");
+static_assert(offsetof(VnBusState, peakPreFader) == 36,
+              "wire table offset drift: VnBusState.peakPreFader");
+static_assert(offsetof(VnBusState, peakPostFader) == 40,
+              "wire table offset drift: VnBusState.peakPostFader");
+static_assert(offsetof(VnBusState, peakPostEffects) == 44,
+              "wire table offset drift: VnBusState.peakPostEffects");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

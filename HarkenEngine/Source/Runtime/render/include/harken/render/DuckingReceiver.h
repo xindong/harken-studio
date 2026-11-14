@@ -57,6 +57,12 @@ inline bool PrepareDuckingParameters(std::uint32_t sampleRate, float attackMs,
     return true;
 }
 
+struct DuckingDormantState {
+    std::array<double, kMaxChannels> energy{};
+    double mainEnvelope = 0, preReference = 0, postReference = 0, gain = 1;
+    std::uint32_t channels = 0, sampleRate = 0;
+};
+
 // One instance belongs to a target definition, not to an input connection or
 // a voice. It produces one trajectory shared by all target members/channels.
 class DuckingReceiver {
@@ -82,6 +88,50 @@ public:
         m_postReference = previous.m_postReference;
         m_gain = previous.m_gain;
         m_channels = previous.m_channels;
+    }
+
+    // Audio owner only, after all actual main/detector/reference inputs are
+    // proven silent. Probe the real branch and FP environment on a copy;
+    // changing channels here would reset history and invalidate the proof.
+    bool CaptureDormantState(std::uint32_t channels, bool connected, bool feedback,
+                             double slope, bool boundMain,
+                             DuckingDormantState& out) const noexcept {
+        if (channels == 0 || channels != m_channels || channels > kMaxChannels ||
+            !std::isfinite(m_mainEnvelope) || !std::isfinite(m_preReference) ||
+            !std::isfinite(m_postReference) || !std::isfinite(m_gain)) return false;
+        for (double energy : m_energy) if (!std::isfinite(energy)) return false;
+        auto trial = *this;
+        float zero = 0;
+        const float* planes[kMaxChannels];
+        std::fill_n(planes, channels, &zero);
+        double reference = 0, gain = 1;
+        if (!trial.Process(planes, connected ? planes : nullptr, channels, 1,
+            feedback ? &reference : nullptr, feedback ? &reference : nullptr,
+            slope, &gain, boundMain)) return false;
+        const auto same = [](double a, double b) {
+            return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+        };
+        if (!same(m_mainEnvelope, trial.m_mainEnvelope) ||
+            !same(m_preReference, trial.m_preReference) ||
+            !same(m_postReference, trial.m_postReference) || !same(m_gain, trial.m_gain)) return false;
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            if (!same(m_energy[ch], trial.m_energy[ch])) return false;
+        out = {m_energy, m_mainEnvelope, m_preReference, m_postReference, m_gain,
+               m_channels, m_parameters.sampleRate};
+        return true;
+    }
+
+    // Only for an unpublished receiver with matching identity and parameters.
+    bool RestoreDormantState(const DuckingDormantState& saved) noexcept {
+        if (saved.sampleRate == 0 || saved.sampleRate != m_parameters.sampleRate ||
+            saved.channels == 0 || saved.channels > kMaxChannels) return false;
+        m_energy = saved.energy;
+        m_mainEnvelope = saved.mainEnvelope;
+        m_preReference = saved.preReference;
+        m_postReference = saved.postReference;
+        m_gain = saved.gain;
+        m_channels = saved.channels;
+        return true;
     }
 
     // References are admitted members' absolute sums at pre/post Out Vol,

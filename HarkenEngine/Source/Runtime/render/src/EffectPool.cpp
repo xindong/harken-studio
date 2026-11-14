@@ -274,6 +274,11 @@ bool EffectPoolBank::CancelPrepared(const EffectInstanceRef& ref) {
 }
 
 void EffectPoolBank::Dispose(PoolTypeSlot& slot, const EffectInstanceRef& ref) {
+    // Disposal is logic-owned after audio retirement, or before publication
+    // on cancellation. Clear the large delay line here so a later Bus wake
+    // does not pay for its previous owner's samples on the start path.
+    if (slot.effectType == VN_EFFECT_FEEDBACK_DELAY)
+        DelayReset(slot.StateAt(ref.poolIndex));
     slot.rows[ref.poolIndex].identity = {};
     slot.rows[ref.poolIndex].installed = 0;
     --slot.inUse;

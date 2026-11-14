@@ -200,7 +200,13 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     ASSERT_NE(engine.acceptedSignalPlan, nullptr);
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(nullptr, engine.buses.InstalledSignals());
+    EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(0u, engine.buses.InstalledSignals()->RelationCount());
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_OBJECT_ID(0, 2), 0, 0));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
     const auto identity = engine.acceptedSignalPlan->WorldIdentity();
     for (unsigned i = 0; i < 2; ++i) members[i].expectedHandle = rows[i].handle;
     content.bytes = SignalContentPack(2, -6);
@@ -210,7 +216,27 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     EXPECT_EQ(engine.acceptedSignalPlan->WorldIdentity(), identity);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(nullptr, engine.buses.InstalledSignals());
+    EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
+    for (const auto& expected : engine.acceptedSignalPlan->Relations()) {
+        const auto relations = engine.buses.InstalledSignals()->Relations();
+        const auto found = std::find_if(relations.begin(), relations.end(),
+            [&](const auto& relation) { return relation.stableId == expected.stableId; });
+        ASSERT_NE(found, relations.end());
+        EXPECT_FLOAT_EQ(found->level, expected.level);
+        const auto source = engine.buses.InstalledSignals()->NodeDefinition(found->source);
+        const auto target = engine.buses.InstalledSignals()->NodeDefinition(found->target);
+        EXPECT_EQ(source.stableId, engine.acceptedSignalPlan->NodeDefinition(expected.source).stableId);
+        EXPECT_EQ(source.kind, engine.acceptedSignalPlan->NodeDefinition(expected.source).kind);
+        const auto receiver = engine.acceptedSignalPlan->NodeDefinition(expected.target);
+        EXPECT_EQ(target.stableId, receiver.stableId);
+        EXPECT_EQ(target.kind, receiver.kind);
+        EXPECT_EQ(target.receiver, receiver.receiver);
+        EXPECT_FLOAT_EQ(target.attackMs, receiver.attackMs);
+        EXPECT_FLOAT_EQ(target.releaseMs, receiver.releaseMs);
+    }
     VnCanonicalPackSetUnloadDescV1 unload{};
     unload.structSize = sizeof(unload);
     unload.expectedInitHandle = report.initHandle;
@@ -272,6 +298,14 @@ TEST(PackSignalRelation, RetainedPreparedAndLiveLeasesKeepExactProofUntilLastRel
     row.source.ownerRevision = 2;
     EXPECT_EQ(engine.acceptedSignalPlan->MatchMember({&row, 1}, matched), 1u);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(nullptr, engine.buses.InstalledSignals());
+    EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(0u, engine.buses.InstalledSignals()->RelationCount());
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0, 0));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
+    EXPECT_EQ(engine.buses.InstalledSignals()->MatchMember({&row, 1}, matched), 1u);
+    row.source.ownerRevision = 1;
+    EXPECT_EQ(engine.buses.InstalledSignals()->MatchMember({&row, 1}, matched), 0u);
 }
 } // namespace

@@ -678,6 +678,9 @@ static_assert(static_cast<int>(VN_PLAYBACK_READINESS_APPLIED) == 3, "binding enu
 static_assert(static_cast<int>(VN_PLAYBACK_READINESS_FAILED) == 4, "binding enum drift: VN_PLAYBACK_READINESS_FAILED");
 static_assert(static_cast<int>(VN_PLAYBACK_READINESS_CANCELLED) == 5, "binding enum drift: VN_PLAYBACK_READINESS_CANCELLED");
 static_assert(static_cast<int>(VN_PLAYBACK_READINESS_TERMINAL) == 6, "binding enum drift: VN_PLAYBACK_READINESS_TERMINAL");
+static_assert(static_cast<int>(VN_BUS_STATE_VALID) == 1, "binding enum drift: VN_BUS_STATE_VALID");
+static_assert(static_cast<int>(VN_BUS_STATE_WORKING) == 2, "binding enum drift: VN_BUS_STATE_WORKING");
+static_assert(static_cast<int>(VN_BUS_STATE_RENDERED) == 4, "binding enum drift: VN_BUS_STATE_RENDERED");
 
 // #define constants.
 static_assert(static_cast<std::uint64_t>(VN_EMITTER_CREATE_STATE_ONLY) == 1ull, "binding define drift: VN_EMITTER_CREATE_STATE_ONLY");
@@ -2536,6 +2539,15 @@ static_assert(offsetof(VnMonitorStreamFactV1, producedFrames) == 280, "binding o
 static_assert(offsetof(VnMonitorStreamFactV1, starved) == 284, "binding offset drift: VnMonitorStreamFactV1.starved");
 static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288, "binding offset drift: VnMonitorStreamFactV1.readStatus");
 static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292, "binding offset drift: VnMonitorStreamFactV1.reserved0");
+static_assert(sizeof(VnBusState) == 48, "binding size drift: VnBusState");
+static_assert(offsetof(VnBusState, busId) == 0, "binding offset drift: VnBusState.busId");
+static_assert(offsetof(VnBusState, blockSequence) == 16, "binding offset drift: VnBusState.blockSequence");
+static_assert(offsetof(VnBusState, busIndex) == 24, "binding offset drift: VnBusState.busIndex");
+static_assert(offsetof(VnBusState, busGeneration) == 28, "binding offset drift: VnBusState.busGeneration");
+static_assert(offsetof(VnBusState, flags) == 32, "binding offset drift: VnBusState.flags");
+static_assert(offsetof(VnBusState, peakPreFader) == 36, "binding offset drift: VnBusState.peakPreFader");
+static_assert(offsetof(VnBusState, peakPostFader) == 40, "binding offset drift: VnBusState.peakPostFader");
+static_assert(offsetof(VnBusState, peakPostEffects) == 44, "binding offset drift: VnBusState.peakPostEffects");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY
@@ -2706,6 +2718,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CancelStreamSource)(VnStreamSourceRequest) = &Vn_CancelStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CommitStreamSource)(VnStreamSourceRequest) = &Vn_CommitStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryActionPlaybackReadiness)(VnActionFiringHandle, VnActionPlaybackReadinessV1*, VnPlaybackReadinessMemberV1*, uint32_t) = &Vn_QueryActionPlaybackReadiness;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_CaptureBusStates)(uint32_t, VnBusState*, uint32_t, uint32_t*, uint32_t*) = &Vn_CaptureBusStates;
 }
 
 #endif // HARKEN_BINDING_ABI_PIN_H

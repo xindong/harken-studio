@@ -17,6 +17,7 @@
 #include "Common/TestUtil.h"
 
 #include "harken/render/BuiltinEffects.h"
+#include "harken/render/BusActivityPlan.h"
 
 #include <algorithm>
 #include <array>
@@ -121,10 +122,10 @@ TEST(BusEffect, SlotsProcessInAscendingOrder) {
         play.busId = kBusA;
         VnVoiceHandle handle = 0;
         EXPECT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-        // Inject the synthetic pair straight into the bus's chain (the bus is
-        // reachable by dense index the moment it is created; it renders once the
-        // create swap applies on the pump below).
+        // Inject the synthetic pair into the published audio work row.
         const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+        // Install the private work row before injecting synthetic DSP.
+        session.Engine()->mixer.DrainQueuedCommands(1);
         harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
         EXPECT_NE(nullptr, bus);
         bus->fxSlots[0].process = addFirst ? AddConstantProcess : MultiplyProcess;
@@ -167,6 +168,8 @@ TEST(BusEffect, PerSlotBypassIsClickFree) {
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    session.Engine()->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = MultiplyProcess;
@@ -213,6 +216,8 @@ TEST(BusEffect, PreFaderVsPostFaderSplitDiffersAsComputed) {
         VnVoiceHandle handle = 0;
         EXPECT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
         const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+        // Install the private work row before injecting synthetic DSP.
+        session.Engine()->mixer.DrainQueuedCommands(1);
         harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
         EXPECT_NE(nullptr, bus);
         bus->fxSlots[0].process = AddConstantProcess;
@@ -255,6 +260,8 @@ TEST(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
 
     harken::Engine* const engine = session.Engine();
     const std::uint32_t busIndex = engine->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    engine->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* const bus = engine->buses.BusState(busIndex);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = AddConstantProcess;
@@ -281,19 +288,16 @@ TEST(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
     EXPECT_NEAR(payload.busPeaks[busIndex], expectedEffects, 1e-5f);
 
     std::uint64_t blockIndex = 0;
-    const float* prePeaks = nullptr;
-    const float* postPeaks = nullptr;
-    const float* effectsPeaks = nullptr;
-    ASSERT_TRUE(engine->meterRing.FrontTaps(
-        &blockIndex, &prePeaks, &postPeaks, &effectsPeaks));
+    ASSERT_TRUE(engine->meterRing.FrontBlock(&blockIndex));
     EXPECT_EQ(blockIndex, 0u);
-    EXPECT_NEAR(prePeaks[busIndex], expectedPre, 1e-5f);
-    EXPECT_NEAR(postPeaks[busIndex], expectedPost, 1e-5f);
-    EXPECT_NEAR(effectsPeaks[busIndex], expectedEffects, 1e-5f);
-
-    const float* legacyPeaks = nullptr;
-    ASSERT_TRUE(engine->meterRing.Front(&blockIndex, &legacyPeaks));
-    EXPECT_NEAR(legacyPeaks[busIndex], expectedEffects, 1e-5f);
+    float peak = 0;
+    const auto generation = engine->buses.GenerationAt(busIndex);
+    ASSERT_TRUE(engine->meterRing.FrontSample(busIndex, generation, VN_BUS_METER_TAP_PRE_FADER, peak));
+    EXPECT_NEAR(peak, expectedPre, 1e-5f);
+    ASSERT_TRUE(engine->meterRing.FrontSample(busIndex, generation, VN_BUS_METER_TAP_POST_FADER, peak));
+    EXPECT_NEAR(peak, expectedPost, 1e-5f);
+    ASSERT_TRUE(engine->meterRing.FrontSample(busIndex, generation, VN_BUS_METER_TAP_POST_EFFECTS, peak));
+    EXPECT_NEAR(peak, expectedEffects, 1e-5f);
 }
 
 TEST(BusEffect, MeterProbesSelectAllThreeSignalTaps) {
@@ -318,6 +322,8 @@ TEST(BusEffect, MeterProbesSelectAllThreeSignalTaps) {
 
     harken::Engine* engine = session.Engine();
     const std::uint32_t busIndex = engine->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    engine->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* const bus = engine->buses.BusState(busIndex);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = AddConstantProcess;
@@ -409,6 +415,8 @@ TEST(BusEffect, FaderMoveAppliesAtBlockBoundaryWithoutClick) {
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    session.Engine()->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = MultiplyProcess;
@@ -602,8 +610,9 @@ std::uint32_t PrepareNeutralTestPlan(harken::Engine& engine,
         plans.BusIdsData(plan)[i] = bus.id;
         plans.GenerationsData(plan)[i] = bus.generation;
         plans.OutputLayoutData(plan)[i] = bus.outputLayout;
-        std::copy_n(bus.downmixCoeffs, 64,
-                    plans.DownmixCoeffsData(plan) + i * 64);
+        auto matrix = std::make_shared<harken::BusDownmixMatrix>();
+        std::copy_n(bus.downmixCoeffs, 64, matrix->data());
+        plans.SetCustomDownmix(plan, i, std::move(matrix));
     }
     plans.BusVolumeApplyData(plan)[selected] = mask;
     return plan;
@@ -787,10 +796,30 @@ TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
             engine, index, harken::kApplyBusNeutralProperties);
         ASSERT_NE(harken::kInvalidTopologyPlanIndex, plan);
         engine.topologyPlans.GenerationsData(plan)[index] = generation;
-        ApplyNeutralTestPlan(engine, plan);
+        harken::CommandRecord command{};
+        command.opcode = harken::kOpcodeSetBusTopologyPlan;
+        command.payload.setBusTopologyPlan.planIndex = plan;
+        command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = harken::kInvalidDynamicRoutePlanIndex;
+        command.payload.setBusTopologyPlan.connectFrom = harken::kInvalidBusIndex;
+        command.payload.setBusTopologyPlan.connectTo = harken::kInvalidBusIndex;
+        command.payload.setBusTopologyPlan.batchCommandCount = 1;
+        harken::CommandQueue::BatchReservation reservation;
+        harken::CommandQueue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        const harken::BusActivitySelection selected{{index, 0}, {}};
+        ASSERT_TRUE(harken::PrepareTopologyActivity(engine, engine.topologyPlans.View(plan),
+            reservation, {&command, 1}, proof, &selected));
+        ASSERT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
+        const auto hits = harken::memguard::HitCount();
+        engine.mixer.DrainQueuedCommands(1);
+        EXPECT_EQ(hits, harken::memguard::HitCount());
         EXPECT_EQ(generation, engine.buses.BusState(index)->generation);
         EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     }
+    // Command adoption alone cannot invalidate the last completed receipt.
+    engine.nullBackend.Pump(1);
+    engine.buses.DrainActivities();
+    engine.nullBackend.Pump(1);
     EXPECT_EQ(1u, engine.effectBank.DrainRetire());
     EXPECT_EQ(0u, engine.effectBank.DrainRetire());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
@@ -915,8 +944,8 @@ TEST(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
     const std::uint32_t recordsBefore =
         engine->effectParamTargets.LiveRecordCount();
     const harken::EffectInstanceRef instanceBefore =
-        engine->busEffectInstanceRefs[busIndex][0];
-    const VnPackHandle ownerBefore = engine->busEffectOwnerCookies[busIndex][0];
+        engine->BusEffectRefs(busIndex)[0];
+    const VnPackHandle ownerBefore = engine->busEffects.Get(busIndex, 0).owner;
     const std::uint32_t demandBefore =
         engine->effectParamTargets.DemandCount();
     const std::uint32_t reservedBefore =
@@ -975,13 +1004,13 @@ TEST(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
     EXPECT_EQ(retiringBefore,
               engine->effectParamTargets.RetiringRecordCountForTests());
     EXPECT_EQ(VN_EFFECT_FEEDBACK_DELAY,
-              engine->busEffectSlotTypes[busIndex][0]);
+              engine->busEffects.Get(busIndex, 0).type);
     const harken::EffectInstanceRef instanceAfter =
-        engine->busEffectInstanceRefs[busIndex][0];
+        engine->BusEffectRefs(busIndex)[0];
     EXPECT_EQ(instanceBefore.type, instanceAfter.type);
     EXPECT_EQ(instanceBefore.poolIndex, instanceAfter.poolIndex);
     EXPECT_EQ(instanceBefore.generation, instanceAfter.generation);
-    EXPECT_EQ(ownerBefore, engine->busEffectOwnerCookies[busIndex][0]);
+    EXPECT_EQ(ownerBefore, engine->busEffects.Get(busIndex, 0).owner);
     std::uint32_t observedRevision = 0;
     ASSERT_TRUE(engine->effectParamTargets.ExactTargetRevision(
         harken::EffectParamTargetStore::Scope::Bus,
@@ -1177,3 +1206,249 @@ TEST(BusEffect, PreparedToneUpdatePreservesStateAndOtherSections) {
 }
 
 } // namespace
+
+
+TEST(BusSettings, ColdReconstructionPreservesSettingsAndFirstSound) {
+    const auto render = [](bool reconstruct, Capture& output) {
+        auto config = MakeNullConfig(2, kBlock);
+        config.maxBuses = 4;
+        config.fxSlotsPerBus = 3;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto busB = harkentest::ObjectId(11);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_CreateBus(busB, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, busB, -12));
+        ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(kBusA, busB, -9, 0));
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(kBusA, -3, 0));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -2, 0));
+        for (const auto kind : {harken::kFilterKindLowpass, harken::kFilterKindHighpass}) {
+            const auto cutoff = kind == harken::kFilterKindLowpass ? 6000.f : 80.f;
+            ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusA, kind, cutoff, .707f, 1, 0));
+            ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusA, kind, cutoff * 1.2f, .8f, 1, 0));
+        }
+        VnGainDesc gain{};
+        gain.structSize = sizeof(gain);
+        gain.effectId = harkentest::ObjectId(100);
+        gain.gainDb = -1;
+        ASSERT_EQ(VN_OK, Vn_SetBusEffect(kBusA, 0, VN_EFFECT_GAIN,
+            reinterpret_cast<const VnEffectDesc*>(&gain)));
+        ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(kBusA, 0, 0, -4));
+        ASSERT_EQ(VN_OK, Vn_SetBusEffectBypass(kBusA, 2, 1));
+        ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kBusA, 1));
+        engine.nullBackend.Pump(200);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto index = engine.buses.FindIndex(kBusA);
+        auto* live = engine.buses.BusState(index);
+        ASSERT_NE(nullptr, live);
+        struct PreparedRow {
+            harken::Engine& engine;
+            harken::BusTree::Bus row{};
+            ~PreparedRow() { engine.CancelBusWorkState(row); }
+        } prepared{engine};
+        // Audibility is derived from the existing combine/mute/solo authority.
+        ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 1, 0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(index, prepared.row));
+        EXPECT_FLOAT_EQ(live->gain.target, prepared.row.gain.target);
+        engine.CancelBusWorkState(prepared.row);
+        ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 0, 0));
+        ASSERT_EQ(VN_OK, Vn_SetBusSolo(busB, 1, 0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(index, prepared.row));
+        EXPECT_FLOAT_EQ(live->gain.target, prepared.row.gain.target);
+        engine.CancelBusWorkState(prepared.row);
+        ASSERT_EQ(VN_OK, Vn_SetBusSolo(busB, 0, 0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(index, prepared.row));
+        EXPECT_FLOAT_EQ(live->gain.target, prepared.row.gain.target);
+        EXPECT_FLOAT_EQ(live->outputGain.target, prepared.row.outputGain.target);
+        EXPECT_EQ(live->gainStarted, prepared.row.gainStarted);
+        EXPECT_EQ(live->faderAfterSlot, prepared.row.faderAfterSlot);
+        EXPECT_EQ(live->outputLayout, prepared.row.outputLayout);
+        for (std::size_t i = 0; i < 64; ++i)
+            EXPECT_FLOAT_EQ(live->downmixCoeffs[i], prepared.row.downmixCoeffs[i]);
+        const auto compare = [](const auto& expected, const auto& actual) {
+            EXPECT_EQ(expected.enabled, actual.enabled);
+            EXPECT_FLOAT_EQ(expected.coeffs.b0, actual.coeffs.b0);
+            EXPECT_FLOAT_EQ(expected.coeffs.b1, actual.coeffs.b1);
+            EXPECT_FLOAT_EQ(expected.coeffs.b2, actual.coeffs.b2);
+            EXPECT_FLOAT_EQ(expected.coeffs.a1, actual.coeffs.a1);
+            EXPECT_FLOAT_EQ(expected.coeffs.a2, actual.coeffs.a2);
+        };
+        compare(live->busLpf, prepared.row.busLpf);
+        compare(live->busHpf, prepared.row.busHpf);
+        compare(live->outputLpf, prepared.row.outputLpf);
+        compare(live->outputHpf, prepared.row.outputHpf);
+        EXPECT_FLOAT_EQ(live->fxBypassMix[2], prepared.row.fxBypassMix[2]);
+        ASSERT_EQ(VN_EFFECT_GAIN, prepared.row.fxSlotEffectRef[0].type);
+        EXPECT_FLOAT_EQ(static_cast<harken::GainState*>(live->fxSlots[0].state)->targetGainLinear,
+            static_cast<harken::GainState*>(prepared.row.fxSlots[0].state)->targetGainLinear);
+        EXPECT_EQ(gain.effectId, engine.effectBank.ObjectIdentity(prepared.row.fxSlotEffectRef[0]).effectId);
+        if (reconstruct) {
+            // Null backend is quiescent: transfer the newly prepared row without
+            // reading or duplicating running DSP state.
+            engine.buses.ApplyClearBusEffect(index, 0, engine.buses.GenerationAt(index));
+            engine.effectBank.DrainRetire();
+            ASSERT_TRUE(engine.effectBank.CommitPrepared(prepared.row.fxSlotEffectRef[0]));
+            engine.effectBank.PublishInstalled(prepared.row.fxSlotEffectRef[0]);
+            engine.SetBusEffectRef(index, 0, prepared.row.fxSlotEffectRef[0]);
+            *live = prepared.row;
+            prepared.row = {};
+        } else engine.CancelBusWorkState(prepared.row);
+        auto dc = MakeDC(kRate, .25f);
+        const auto pcm = MonoDesc(dc, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+        auto play = MakePlayDesc(harkentest::ObjectId(1), 0);
+        play.busId = kBusA;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        PumpAndCapture(&engine, 8, output);
+    };
+    Capture normal, rebuilt;
+    ASSERT_NO_FATAL_FAILURE(render(false, normal));
+    ASSERT_NO_FATAL_FAILURE(render(true, rebuilt));
+    ASSERT_FALSE(normal.left.empty());
+    EXPECT_EQ(normal.left, rebuilt.left);
+    EXPECT_EQ(normal.right, rebuilt.right);
+}
+
+TEST(BusSettings, ReconstructionFailureReturnsEveryPreparedEffect) {
+    auto config = MakeNullConfig(1, kBlock);
+    config.fxSlotsPerBus = 2;
+    config.gainEffectPoolCapacity = 2;
+    config.limiterEffectPoolCapacity = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    VnLimiterDesc limiter{};
+    limiter.structSize = sizeof(limiter);
+    limiter.ceilingDb = -1;
+    limiter.releaseMs = 100;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 1, VN_EFFECT_LIMITER,
+        reinterpret_cast<const VnEffectDesc*>(&limiter)));
+    engine.nullBackend.Pump(1);
+    const auto head = engine.commands.PublishedHead();
+    harken::BusTree::Bus row{};
+    EXPECT_EQ(VN_NO_EFFECT, engine.PrepareBusWorkState(0, row));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+    EXPECT_EQ(harken::kEffectTypeNone, row.fxSlotEffectRef[0].type);
+    EXPECT_EQ(harken::kEffectTypeNone, row.fxSlotEffectRef[1].type);
+}
+
+
+TEST(BusSettings, ReusedLimiterHasDeterministicColdFirstParameterBehavior) {
+    auto config = MakeNullConfig(1, kBlock);
+    config.fxSlotsPerBus = 1;
+    config.limiterEffectPoolCapacity = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnLimiterDesc descriptor{};
+    descriptor.structSize = sizeof(descriptor);
+    descriptor.ceilingDb = -2;
+    descriptor.releaseMs = 100;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_LIMITER,
+        reinterpret_cast<const VnEffectDesc*>(&descriptor)));
+    engine.nullBackend.Pump(1);
+    const auto used = engine.effectBank.Acquire(VN_EFFECT_LIMITER);
+    ASSERT_EQ(VN_EFFECT_LIMITER, used.type);
+    auto* storage = engine.effectBank.StateFor(used.type, used.poolIndex);
+    auto effect = harken::BuildEffect(used.type, storage);
+    effect.reset(storage);
+    harken::ApplyEffectDesc(used.type, &descriptor, storage);
+    std::array<float, kBlock> silence{};
+    float* planes[]{silence.data()};
+    effect.process(storage, planes, 1, 0, kBlock);
+    ASSERT_TRUE(static_cast<harken::LimiterState*>(storage)->hasRendered);
+    engine.effectBank.Recycle(used);
+    harken::BusTree::Bus row{};
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(0, row));
+    auto* rebuilt = static_cast<harken::LimiterState*>(row.fxSlots[0].state);
+    ASSERT_NE(nullptr, rebuilt);
+    EXPECT_EQ(used.poolIndex, row.fxSlotEffectRef[0].poolIndex);
+    EXPECT_FALSE(rebuilt->hasRendered);
+    float prepared = 0;
+    ASSERT_TRUE(harken::PrepareLimiterParam(harken::kLimiterParamCeilingDb, -6,
+        rebuilt->sampleRate, &prepared));
+    harken::LimiterRequestPreparedParam(rebuilt, harken::kLimiterParamCeilingDb, prepared, 64);
+    EXPECT_EQ(0u, rebuilt->transitionFramesRemaining);
+    EXPECT_FLOAT_EQ(prepared, rebuilt->ceilingLinear);
+    engine.CancelBusWorkState(row);
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}
+
+TEST(BusSettings, DormantFiltersPreserveFrozenSeedsAndSettledRetargeting) {
+    using namespace harken;
+    const auto render = [](bool reconstruct, Capture& output) {
+        EngineSession session(MakeNullConfig(2, kBlock));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(kBusA, 0, 0));
+        engine.nullBackend.Pump(1);
+        auto* bus = engine.buses.BusState(engine.buses.FindIndex(kBusA));
+        ASSERT_NE(nullptr, bus);
+        BusTree::Bus::ToneSection* sections[]{&bus->busLpf, &bus->busHpf,
+            &bus->outputLpf, &bus->outputHpf};
+        for (unsigned i = 0; i != 4; ++i) {
+            auto& section = *sections[i];
+            section.enabled = (i % 2 == 0);
+            section.coeffs = MakeLowpass(48000.f, 6000.f, .707f);
+            section.tailFrames = EstimateBiquadTailFrames(section.coeffs);
+            section.glide.Snap(123.45f, .83f, 0);
+            section.glide.Retarget(6789.12f, .91f, 0, 17);
+            section.glide.Advance(17);
+            section.signalHighWater = section.signalBound.Advance(section.enabled,
+                section.coeffs, section.transition, 1);
+            if (!section.enabled) {
+                section.transition.lastInput[0] = .125f;
+                section.transition.lastInput[1] = -.375f;
+                section.state[0].SetFloat(.7f, -.2f);
+            }
+            BusTree::DormantToneSection saved;
+            ASSERT_TRUE(BusTree::CaptureDormantToneSection(section, 2, saved));
+            if (reconstruct) BusTree::RestoreDormantToneSection(section, saved);
+        }
+        // Real public filter updates exercise frozen DC seeds and finished
+        // glide coordinates; both affect the next audible transition.
+        ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusA, kFilterKindLowpass, 3400.f, .81f, 1, 20));
+        ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusA, kFilterKindHighpass, 120.f, .8f, 1, 20));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusA, kFilterKindLowpass, 4500.f, .73f, 1, 20));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusA, kFilterKindHighpass, 60.f, .72f, 1, 20));
+        auto dc = MakeDC(kRate, .25f);
+        auto pcm = MonoDesc(dc, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+        auto play = MakePlayDesc(harkentest::ObjectId(1), 0);
+        play.busId = kBusA;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        PumpAndCapture(&engine, 8, output);
+    };
+    Capture normal, restored;
+    render(false, normal); render(true, restored);
+    ASSERT_FALSE(normal.left.empty());
+    ASSERT_EQ(normal.left.size(), restored.left.size());
+    ASSERT_EQ(normal.right.size(), restored.right.size());
+    EXPECT_EQ(0, std::memcmp(normal.left.data(), restored.left.data(), normal.left.size() * sizeof(float)));
+    EXPECT_EQ(0, std::memcmp(normal.right.data(), restored.right.data(), normal.right.size() * sizeof(float)));
+
+    BusTree::Bus::ToneSection section;
+    section.enabled = true;
+    section.signalHighWater = section.signalBound.Advance(true, section.coeffs, section.transition, 1);
+    BusTree::DormantToneSection saved;
+    ASSERT_TRUE(BusTree::CaptureDormantToneSection(section, 2, saved));
+    section.state[0].SetFloat(std::numeric_limits<float>::denorm_min(), 0);
+    EXPECT_FALSE(BusTree::CaptureDormantToneSection(section, 2, saved));
+    section.state[0].Reset(); section.transition.lastInput[0] = .1f;
+    EXPECT_FALSE(BusTree::CaptureDormantToneSection(section, 2, saved));
+    section.transition.lastInput[0] = 0; section.glide.active = true;
+    EXPECT_FALSE(BusTree::CaptureDormantToneSection(section, 2, saved));
+}

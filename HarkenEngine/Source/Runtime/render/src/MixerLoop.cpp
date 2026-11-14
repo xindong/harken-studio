@@ -1,5 +1,6 @@
 #include "harken/render/SignalRoutingTypes.h"
 #include "harken/render/SignalRenderPlan.h"
+#include "harken/render/BusActivityPlan.h"
 #include "harken/render/MixerLoop.h"
 
 #include "MonitorCaptureHub.h"
@@ -94,8 +95,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                      std::uint32_t ackSideTableCapacity,
                      ProjectGenerationInstallAckRingV1* installAckRing,
                      OriginalSourceSubmissionRegistry* originalSources)
-    : m_maxBuses(config.maxBuses),
-      m_blockFrames(config.blockFrames),
+    : m_blockFrames(config.blockFrames),
       m_maxCommandsPerQuantum(config.maxControlCommandsPerQuantum),
       m_voices(voices),
       m_buses(buses),
@@ -119,14 +119,10 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_installAckSideTable(ackSideTable),
       m_installAckSideTableCapacity(ackSideTableCapacity),
       m_installAckRing(installAckRing),
-      m_meterTapScratch(static_cast<std::size_t>(kMeterTapLaneCount) *
-                            config.maxBuses,
-                        0.0f),
-      m_meterGenerationScratch(config.maxBuses, 0),
+      m_bootstrapMeterLanes{meterRing.PrepareLane(0)},
       m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
-      m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
-                      config.mixChannelCount * config.blockFrames * sizeof(float)),
-      m_busSendSlots(config.busSendSlotsPerBus),
+      m_arenaLowBytes(static_cast<std::uint64_t>(config.mixChannelCount) *
+                      config.blockFrames * sizeof(float)),
       m_busFxSlots(config.fxSlotsPerBus),
       m_dynamicRouteCapacity(config.dynamicRouteCapacity),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
@@ -134,9 +130,6 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
               std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
           config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
       m_arenaBatchAllowance(config.renderWorkerCount == 0 ? 1u : 2u),
-      m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
-                      config.mixChannelCount,
-                  nullptr),
       m_mixChannels(config.mixChannelCount),
       m_deviceChannels(config.deviceChannelCount),
       m_mixLayout(config.mixChannelLayout),
@@ -146,6 +139,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     if (!m_currentSliceScratch.Reserve(timelinePool != nullptr ? CurrentSliceScratchCapacity(config) : 0))
         throw std::bad_alloc{};
     m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
+    m_buses.AttachActivitySnapshots(&m_snapshots);
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
             return static_cast<MixerLoop*>(context)->PreparePreparedChannelBacking(count);
@@ -200,8 +194,23 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     }
 }
 
+bool MixerLoop::PrepareBusBacking(std::uint32_t count) noexcept {
+    const auto low = std::max(m_arenaLowBytes,
+        static_cast<std::uint64_t>(count) * m_mixChannels * m_blockFrames * sizeof(float));
+    const auto slots = m_voices.ConstructedSlotCount();
+    const auto high = slots == 0 ? 0u : m_voices.PreparedCascadeChannelRows(m_mixChannels, slots) *
+        m_voices.BlockFrames() * sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
+    const auto signals = RetainedSignalScratchBytes(slots);
+    if (low > m_arena.CapacityBytes() || signals > m_arena.CapacityBytes() ||
+        low + signals + high > m_arena.CapacityBytes() ||
+        !m_arena.PrepareBacking(low + signals, high)) return false;
+    m_arenaLowBytes = low;
+    return true;
+}
+
 bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
+    if (!m_buses.HasAcceptedActivity() && !PrepareBusBacking(m_buses.BusCount())) return false;
     // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
     const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
     const auto signalBytes = RetainedSignalScratchBytes(std::max(count, m_voices.ConstructedSlotCount()));
@@ -210,24 +219,24 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     return m_arena.PrepareBacking(m_arenaLowBytes + signalBytes, highBytes);
 }
 
-std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
+std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes, std::uint32_t buses,
                                            std::size_t relations) const noexcept {
     if (nodes == 0) return 0;
     const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
+        static_cast<std::uint64_t>(buses) * (m_busFxSlots + 2ull);
     const auto graphNodes = nodes + extra;
     if (graphNodes > UINT32_MAX) return UINT64_MAX;
     const std::uint64_t edges = extra + m_dynamicRouteCapacity +
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+        static_cast<std::uint64_t>(buses) + m_buses.RetainedSendCount() +
         relations + m_voices.PreparedSignalPathRows(slots) +
-        static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
-    return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), m_maxBuses, edges, m_blockFrames);
+        static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();
+    return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), buses, edges, m_blockFrames);
 }
 
 bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
     const auto slots = m_voices.ConstructedSlotCount();
     const auto scratch = std::max(RetainedSignalScratchBytes(slots),
-        SignalScratchBytes(slots, plan.NodeCount(), plan.RelationCount()));
+        SignalScratchBytes(slots, plan.NodeCount(), plan.BusNodeCount(), plan.RelationCount()));
     const auto high = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots) *
         m_voices.BlockFrames() * sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
     if (scratch > m_arena.CapacityBytes() || m_arenaLowBytes + scratch + high > m_arena.CapacityBytes()) return false;
@@ -235,17 +244,19 @@ bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
 }
 
 std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const noexcept {
-    const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
-    const auto edges = extra + m_dynamicRouteCapacity +
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+    // Consult every retained owner, including queued and retiring activities,
+    // before scanning voice paths and topology Sends that only signals need.
+    if (m_buses.RetainedSignalScratchBytes(m_dynamicRouteCapacity, 0, m_blockFrames) == 0)
+        return 0;
+    const auto edges = m_buses.RetainedSendCount() +
         m_voices.PreparedSignalPathRows(slots) +
-        static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
-    return m_buses.RetainedSignalScratchBytes(extra, edges, m_blockFrames);
+        static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();
+    return m_buses.RetainedSignalScratchBytes(m_dynamicRouteCapacity, edges, m_blockFrames);
 }
 
 bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
+    if (!m_buses.HasAcceptedActivity() && !PrepareBusBacking(m_buses.BusCount())) return false;
     // Source columns precede this callback and never shrink. Include high slots
     // when a low slot widens, with the complete future blend/send allowance.
     const auto slots = std::max(count, m_voices.ConstructedSlotCount());
@@ -446,6 +457,11 @@ void MixerLoop::ApplyCommandRecord(const CommandRecord& command,
         }
         break;
     case kOpcodeSetVoiceSend:
+        if (command.flags == kCommandFlagVoiceSendSet) {
+            auto* set = reinterpret_cast<VoiceSendSet*>(command.payload.setVoiceSend.setAddress);
+            if (set != nullptr) m_voices.ApplyVoiceSendSet(*set, m_buses);
+            break;
+        }
         m_voices.ApplySetVoiceSend(
             command.payload.setVoiceSend.handle,
             command.payload.setVoiceSend.sendSlot,
@@ -456,14 +472,14 @@ void MixerLoop::ApplyCommandRecord(const CommandRecord& command,
     case kOpcodeClearVoiceSend:
         m_voices.ApplyClearVoiceSend(
             command.payload.clearVoiceSend.handle,
-            command.payload.clearVoiceSend.sendSlot);
+            command.payload.clearVoiceSend.sendSlot, command.payload.clearVoiceSend.incarnation);
         break;
     case kOpcodeSetVoiceSendLevel:
         m_voices.ApplySetVoiceSendLevel(
             command.payload.setVoiceSendLevel.handle,
             command.payload.setVoiceSendLevel.sendSlot,
             command.payload.setVoiceSendLevel.levelDb,
-            command.payload.setVoiceSendLevel.rampMs);
+            command.payload.setVoiceSendLevel.rampMs, command.payload.setVoiceSendLevel.incarnation);
         break;
     case kOpcodeSetBusEffectParam:
         if (command.flags == kCommandFlagPreviewBusEffect) {
@@ -699,7 +715,15 @@ void MixerLoop::ApplyStagedCurrentSlices(
                             target.toneBand)) return;
                     mixer->ApplyCommandRecord(target.command, 0);
                 }
-            }, m_commands.SettledFrontier(), m_commands.InitialSourceSettledFrontier());
+            }, m_commands.SettledFrontier(), m_commands.InitialSourceSettledFrontier(),
+            [](void* context, const VariableSliceTarget& target) noexcept {
+                auto& buses = static_cast<ApplyContext*>(context)->mixer->m_buses;
+                if (target.locator.scope != VariableTargetScope::Bus &&
+                    target.locator.scope != VariableTargetScope::BusEffect) return true;
+                const BusSlotRef host{static_cast<std::uint32_t>(target.locator.object),
+                    target.locator.objectGeneration};
+                return !buses.AudioRefMatches(host) || buses.AudioWorkRef(host.index).Valid();
+            });
         const auto state = m_variableSlices->State(ref);
         if (state != VariableSliceState::PageCommitted && state != VariableSliceState::AudioClaimed)
             pending.active = false;
@@ -972,6 +996,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
     // every raw prefix before an initial-installation barrier.
     m_voices.ServiceEffectChainRetirements();
     m_buses.ServicePreviewEffectRetirements();
+    m_buses.ServiceWorkRowRetirements();
     std::uint32_t rawApplied = 0;
     std::uint32_t initialApplied = 0;
     const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
@@ -983,6 +1008,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
             (m_originalSources->pending_ != nullptr &&
                 m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource) ||
             initialBudget - initialApplied < 3u) break;
+        if (!m_commands.AdoptInitialBusActivity(*entry)) break;
         std::uint64_t owed = 3;
         if (!DrainOriginalSource(blockIndex, owed, initialApplied, 3, entry)) break;
     }
@@ -1030,6 +1056,7 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
         if (remaining == 0) {
             break;
         }
+        if (!m_commands.AdoptRawBusActivity()) break;
         if (const auto* range = m_commands.OriginalRangeAtFront()) {
             if (range->Kind() == CommandQueue::OriginalRangeKind::ControlHeader) {
                 if (!DrainOriginalControlHeader(blockIndex, owed, applied)) break;
@@ -1502,7 +1529,8 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.setBusSendLevel.levelDb,
                 command.payload.setBusSendLevel.rampMs,
                 command.payload.setBusSendLevel.fromGeneration,
-                command.payload.setBusSendLevel.toGeneration);
+                command.payload.setBusSendLevel.toGeneration,
+                command.payload.setBusSendLevel.sendGeneration);
             break;
         case kOpcodeSetBusEffect:
             m_buses.ApplySetBusEffect(command.payload.setBusEffect.busIndex,
@@ -1549,6 +1577,10 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.setBusEffectBypass.action,
                 command.payload.setBusEffectBypass.expectedEffectType,
                 command.payload.setBusEffectBypass.busGeneration);
+            break;
+        case kOpcodeSetBusActivity:
+            // The queue adopts (or conditionally rejects) the attached state
+            // before consuming this record. No structural plan is replaced.
             break;
         case kOpcodeSetBusFaderPoint:
             m_buses.ApplySetBusFaderPoint(
@@ -1762,9 +1794,12 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         // plan swap this block is already in effect): a bus not yet swapped in has
         // no plane and is not folded, and no voice can be routed to it because its
         // routing command necessarily drains after that swap.
-        const std::uint32_t busCount = m_buses.AudioBusCount();
+        const std::uint32_t busCount = m_buses.WorkingPlaneCount();
 
-        for (std::uint32_t i = 0; i < busCount * m_mixChannels; ++i) {
+        m_busPlanes = m_buses.AudioPlanes();
+        const auto planeCount = static_cast<std::size_t>(busCount) * m_mixChannels;
+        planesOk = m_busPlanes.size() >= planeCount;
+        for (std::size_t i = 0; planesOk && i < planeCount; ++i) {
             m_busPlanes[i] = m_arena.AllocFloats(frames);
             if (m_busPlanes[i] == nullptr) {
                 planesOk = false;
@@ -1828,7 +1863,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     std::uint64_t ticksBuses = ticksDrained;
     if (planesOk) {
         const VoicePool::RenderAllResult voicesOutcome =
-            m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
+            m_voices.RenderAll(m_arena, m_buses.RenderView(m_busPlanes.data()), frames,
                                m_notifications, blockIndex,
                                workerDeadlineAt != 0 ? workerDeadlineAt : ticksEntry + m_jobDeadlineTicks,
                                static_cast<std::uint64_t>(blockIndex) * frames, signals, &m_buses);
@@ -1851,10 +1886,12 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         m_renderDeferred = false;
 
         ticksVoices = CpuClockTicks();
+        m_buses.BeginWorkObservations();
+        m_voices.MarkPhysicalBusUsers(m_buses);
 
         // Bottom-up bus fold; afterwards the master planes (m_busPlanes[0..
         // m_mixChannels)) hold the final mix at the mix layout.
-        signalOk = signalOk && m_buses.MixDown(m_busPlanes.data(), frames, blockIndex,
+        signalOk = signalOk && m_buses.MixDown(m_buses.RenderView(m_busPlanes.data()), frames, blockIndex,
                         static_cast<std::uint64_t>(blockIndex) * frames, signals);
         // Lay the master's mix-width output into the device buffer at the
         // device boundary. Three cases; the first is the M4 path (stereo mix,
@@ -1957,6 +1994,11 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         }
     }
     m_dynamicRoutes.EndBlock(blockIndex);
+    m_workObservationFrames = frames > UINT64_MAX - m_workObservationFrames
+        ? UINT64_MAX : m_workObservationFrames + frames;
+    m_buses.PublishWorkObservations(blockIndex + 1,
+        m_workObservationFrames, frames, planesOk && signalOk,
+        m_commands.ConsumedCount(), m_commands.InitialSourcesConsumed());
 
     if (m_arena.OverflowCount() != overflowsBefore) {
         // One notification per degraded block, not one per failed allocation: the
@@ -2028,30 +2070,16 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 #else
     if (m_meterRing.Armed()) {
 #endif
-        const std::uint32_t meterBuses = m_buses.AudioBusCount();
-        const std::uint32_t span =
-            meterBuses < m_maxBuses ? meterBuses : m_maxBuses;
-        float* const postEffectsPeaks =
-            m_meterTapScratch.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_POST_EFFECTS,
-                           m_maxBuses);
-        float* const preFaderPeaks =
-            m_meterTapScratch.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_PRE_FADER, m_maxBuses);
-        float* const postFaderPeaks =
-            m_meterTapScratch.data() +
-            MeterTapOffset(VN_BUS_METER_TAP_POST_FADER, m_maxBuses);
-        for (std::uint32_t i = 0; i < m_maxBuses; ++i) {
-            const bool live = planesOk && i < span;
-            preFaderPeaks[i] = live ? m_buses.PreFaderPeak(i) : 0.0f;
-            postFaderPeaks[i] = live ? m_buses.PostFaderPeak(i) : 0.0f;
-            postEffectsPeaks[i] = live ? m_buses.OutputPeak(i) : 0.0f;
-            m_meterGenerationScratch[i] =
-                i < span ? m_buses.AudioGenerationAt(i) : 0;
-        }
-        m_meterRing.PushTaps(blockIndex, preFaderPeaks, postFaderPeaks,
-                             postEffectsPeaks, m_maxBuses,
-                             m_meterGenerationScratch.data());
+        const auto* activity = m_buses.AudioActivity();
+        const std::span<const MeterBlockRing::Lease> lanes = activity != nullptr
+            ? std::span<const MeterBlockRing::Lease>(activity->meterLanes)
+            : std::span<const MeterBlockRing::Lease>(m_bootstrapMeterLanes);
+        m_meterRing.PushCaptured(blockIndex, lanes, [&](auto bus, auto& generation, auto& peaks) {
+            generation = m_buses.AudioGenerationAt(bus);
+            peaks[VN_BUS_METER_TAP_POST_EFFECTS] = planesOk ? m_buses.OutputPeak(bus) : 0;
+            peaks[VN_BUS_METER_TAP_PRE_FADER] = planesOk ? m_buses.PreFaderPeak(bus) : 0;
+            peaks[VN_BUS_METER_TAP_POST_FADER] = planesOk ? m_buses.PostFaderPeak(bus) : 0;
+        });
     }
 
     // Parking and source-timed controls share one coherent audio-owned cut.
@@ -2117,6 +2145,8 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
     // capture whose canaries agree was not torn across the payload.
     SnapshotPayload& payload = m_snapshots.BeginWrite();
     payload.blockIndex = blockIndex;
+    payload.busActivityPublication = m_buses.AudioActivityPublication();
+    payload.busBlockRendered = blockRendered;
     m_voices.GatherSnapshot(payload);
     // The rendered structure is the audio-visible one: a bus created this block
     // but whose swap has not applied is not yet part of the mix, so it is not

@@ -3108,7 +3108,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         world.trackScheduleCount > world.capacity.maxTrackSchedulePrograms ||
         world.segmentScheduleCount > world.capacity.maxSegmentSchedulePrograms ||
         world.containerCount > world.capacity.maxContainerPrograms ||
-        world.actionCount > world.capacity.maxActionDefinitions ||
+        (composite == nullptr && world.actionCount > world.capacity.maxActionDefinitions) ||
         world.capacity.maxVariableDefinitions > kHardVariableDefinitionCapacity ||
         world.capacity.maxContainerPrograms > kHardContainerProgramCapacity ||
         world.capacity.maxPlayablePropertyPrograms >
@@ -4148,7 +4148,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return WorldInstallStatus::InvalidWorld;
         }
         actionStepTotal += action.stepCount;
-        if (actionStepTotal > world.capacity.maxActionStepsTotal ||
+        if ((composite == nullptr && actionStepTotal > world.capacity.maxActionStepsTotal) ||
             (action.directFeatureMask & ~15u) != 0 ||
             (action.transitiveFeatureMask & ~15u) != 0 ||
             action.expandedStepOccurrenceCount == 0 ||

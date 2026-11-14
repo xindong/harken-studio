@@ -60,7 +60,7 @@ VnResult ActivateFixture(const std::filesystem::path& directory,
 
 TEST(PackFoundationQualification, ExplicitMembersDefineResidentWindow) {
     Fixture fixture;
-    ASSERT_TRUE(BuildFixture(64, &fixture));
+    ASSERT_TRUE(BuildFixture(1025, &fixture));
     const std::filesystem::path directory =
         FixtureDirectory("f3-resident-window");
     ASSERT_TRUE(WriteFixture(directory, fixture));
@@ -75,7 +75,9 @@ TEST(PackFoundationQualification, ExplicitMembersDefineResidentWindow) {
     EXPECT_EQ(0u, inspection.catalogEntries);
     EXPECT_EQ(0u, inspection.catalogBytes);
 
-    EngineSession session(QualificationConfig(fixture));
+    VnConfig config = QualificationConfig(fixture);
+    config.maxActions = 1;
+    EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     VnCanonicalPackSetMemberResultV1 rows[2]{};
     VnCanonicalPackSetActivationReportV1 activation{};
@@ -141,23 +143,12 @@ TEST(PackFoundationQualification, ResidentBudgetsPinMinusExactPlus) {
         VnCanonicalPackSetMemberResultV1 initialRows[2]{};
         VnCanonicalPackSetActivationReportV1 initial{};
         ASSERT_EQ(VN_OK, ActivateFixture(directory, false, initialRows, initial));
-        const auto generation = session.Engine()->packComposition.CompositeGeneration();
-        VnCanonicalPackSetMemberResultV1 refusedRows[2]{};
-        VnCanonicalPackSetActivationReportV1 rejection{};
-        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
-                  ActivateFixture(directory, true, refusedRows, rejection,
+        VnCanonicalPackSetMemberResultV1 acceptedRows[2]{};
+        VnCanonicalPackSetActivationReportV1 accepted{};
+        EXPECT_EQ(VN_OK,
+                  ActivateFixture(directory, true, acceptedRows, accepted,
                                   initial.initHandle, initial.resultSetRevision));
-        EXPECT_EQ(0u, refusedRows[1].handle);
-        EXPECT_EQ(generation, session.Engine()->packComposition.CompositeGeneration());
-        EXPECT_EQ(harken::PackIdentityReadiness::Absent,
-                  session.Engine()->packComposition.Lookup(harkentest::ObjectId(kActionBase))
-                      .readiness);
-        EXPECT_EQ(fixture.residentCount,
-                  session.Engine()->packComposition.Facts()
-                      .lastRefusalRequired);
-        EXPECT_EQ(fixture.residentCount - 1,
-                  session.Engine()->packComposition.Facts()
-                      .lastRefusalConfigured);
+        EXPECT_NE(0u, acceptedRows[1].handle);
     }
     {
         EngineSession session(QualificationConfig(fixture));

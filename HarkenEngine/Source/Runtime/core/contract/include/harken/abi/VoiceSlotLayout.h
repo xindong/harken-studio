@@ -16,10 +16,8 @@
 
 namespace harken {
 
-// Compile-time upper bound on a voice's send slots. This is the POD-layout
-// constant sizing the per-voice send array and the ceiling the resolved
-// voiceSendSlots config value may not exceed; the active count per voice is the
-// resolved config value at or below it. Single definition point.
+// Legacy fixed-layout observation width. Runtime Send sets are actual-size
+// storage with sparse uint32 slot labels; this is not an admission limit.
 inline constexpr std::uint32_t kMaxVoiceSendSlots = 8;
 
 // Compile-time upper bound on a voice's insert-effect slots. This is the

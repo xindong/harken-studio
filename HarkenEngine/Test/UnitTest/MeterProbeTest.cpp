@@ -998,22 +998,38 @@ TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
     ASSERT_TRUE(engine.variableSlices.Reset(4, 8, 8, 2));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kTargetBus, engine.config.fxSlotsPerBus));
     const auto targetIndex = engine.buses.FindIndex(kTargetBus);
     for (int iteration = 0; iteration < 6; ++iteration) {
         SCOPED_TRACE(iteration);
         std::uint32_t generation = 0;
         ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
             VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
-        DefineSidechain(&engine, kSidechain, kProbe, generation);
+        if (iteration == 0)
+            DefineConstantProbeBinding(&engine, kSidechain, kProbe, generation,
+                VN_TARGET_SCOPE_BUS, harken::kBusTargetBusVolume, 0.0f, 0);
+        else DefineSidechain(&engine, kSidechain, kProbe, generation);
         ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain,
             VN_TARGET_SCOPE_BUS, kTargetBus, 0,
             engine.buses.GenerationAt(targetIndex)));
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(2);
+        if (iteration == 0) {
+            EXPECT_FALSE(engine.buses.BusState(targetIndex)->gainStarted);
+            EXPECT_EQ(0u, engine.busVolumePublished[targetIndex]);
+        }
         ASSERT_EQ(VN_OK, harken::UninstallMeterProbe(engine, kProbe, generation));
         for (int step = 0; step < 12; ++step) {
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        if (iteration == 0) {
+            EXPECT_TRUE(engine.buses.BusState(targetIndex)->gainStarted);
+            EXPECT_EQ(1u, engine.busVolumePublished[targetIndex]);
+            harken::BusTree::Bus rebuilt{};
+            ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(targetIndex, rebuilt));
+            EXPECT_TRUE(rebuilt.gainStarted);
+            engine.CancelBusWorkState(rebuilt);
         }
         EXPECT_FALSE(engine.meterDetectors.IsProbe(kProbe));
         EXPECT_EQ(0u, engine.meterProbeWithdrawalCount);
@@ -1037,8 +1053,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     const auto proofCapacity = engine.variableSlices.Capacity();
     const auto payloadCapacity = engine.variableSlices.PayloadCapacity();
     const auto targetCapacity = engine.variableSlices.TargetPoolCapacity();
-    EXPECT_EQ(engine.variables.RevisionStorageCapacity() + 2 * config.maxBuses, proofCapacity);
-    EXPECT_EQ(engine.variables.PendingCapacity() + 2 * config.maxBuses, payloadCapacity);
+    EXPECT_EQ(engine.variables.RevisionStorageCapacity() + engine.variableSlices.TargetPoolCapacity(), proofCapacity);
+    EXPECT_EQ(engine.variables.PendingCapacity() + engine.variableSlices.TargetPoolCapacity(), payloadCapacity);
     ASSERT_EQ(proofCapacity, engine.variableSlices.FreeRowCount());
     ASSERT_EQ(payloadCapacity, engine.variableSlices.FreePayloadCount());
     ASSERT_TRUE(engine.variableSlices.Reset(proofCapacity, 1, targetCapacity, payloadCapacity));

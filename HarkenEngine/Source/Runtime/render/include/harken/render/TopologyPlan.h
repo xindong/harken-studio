@@ -9,20 +9,27 @@
 // thread by command, and never touches it again. The audio thread consumes the
 // plan and NEVER frees it; a superseded plan is named on the retire queue by
 // the audio thread and returned to the freelist by the logic thread in
-// DrainRetire. Structural arrays are preallocated at Init; transaction token
-// lists are prepared on logic. Installing a plan never allocates.
+// DrainRetire. Structural arrays and transaction tokens are prepared on logic
+// when a plan is acquired. Installing a plan never allocates.
 #ifndef HARKEN_RENDER_TOPOLOGY_PLAN_H
 #define HARKEN_RENDER_TOPOLOGY_PLAN_H
 
 #include "harken/core/EngineConfig.h"
+#include "harken/dsp/GainRamp.h"
 #include "harken/render/BusEffectChainUpdate.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <span>
 
 namespace harken {
+
+using BusDownmixMatrix = std::array<float, 64>;
+using BusCustomDownmix = std::shared_ptr<const BusDownmixMatrix>;
+struct BusCustomDownmixEntry { std::uint32_t bus; BusCustomDownmix matrix; };
 
 class SignalRenderPlan;
 struct BusEffectChainAdoption;
@@ -48,33 +55,77 @@ inline constexpr std::uint32_t kPlanParentUnset = 0xFFFFFFFFu;
 // to copy; both threads use it (the audio thread walks it every block, the logic
 // thread reads membership to reconcile). Non-owning: valid while the plan slot
 // stays live.
+struct TopologySendRange {
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+};
+
+// Logic-only workspace owned by one structural publication. It is prepared before
+// a direct API commits its authoritative settings.
+struct TopologyBuildScratch {
+    std::vector<std::uint32_t> feeders;
+    std::vector<std::uint32_t> emittedFeeders;
+    std::vector<std::uint8_t> emitted;
+};
+
+// Prepared on logic, exclusively mutated on audio after adoption. The owning
+// plan is reclaimed only after the audio retirement handoff.
+struct BusSendState {
+    std::uint32_t toIndex = kEmptySendTarget;
+    std::uint32_t toGeneration = 0;
+    GainRamp gain;
+    bool ramping = false;
+    float rampStartGain = 1.0f;
+    float rampEndGain = 1.0f;
+    std::uint64_t rampBlocksTotal = 0;
+    std::uint64_t rampBlocksDone = 0;
+};
+
 struct TopologyPlanView {
     const std::uint32_t* order = nullptr; // orderCount dense bus indices,
                                           // feeds-first (every bus after all
                                           // buses that feed it; master last)
     std::uint32_t orderCount = 0;
-    const std::uint32_t* sendTargets = nullptr; // busCapacity rows of
-                                                 // slotsPerBus entries, row-major
-                                                 // by from-bus. Slot identity is
-                                                 // authoritative and stable;
-                                                 // kEmptySendTarget marks unused.
-    // Optional per-membership-slot level action, indexed exactly like
-    // sendTargets. A set flag snaps that exact audio edge slot to the prepared
-    // logic-side linear gain and clears its ramp bookkeeping; a clear flag
-    // preserves the live level/ramp only when slot and target both match.
+    // Compact, source-grouped membership. Legacy input views may omit ranges.
+    const TopologySendRange* sendRanges = nullptr;
+    const std::uint32_t* sendSlots = nullptr;
+    const std::uint64_t* sendGenerations = nullptr;
+    const std::uint32_t* sendTargets = nullptr;
     const float* preparedSendLevels = nullptr;
     const std::uint8_t* sendLevelApply = nullptr;
     const std::uint32_t* sendLevelRampMs = nullptr;
+    std::uint32_t sendCount = 0;
+    BusSendState* sendStates = nullptr;
     std::uint32_t slotsPerBus = 0;
-    // Per-bus output fold config (the multichannel amendment): outputLayouts is
-    // busCapacity VnChannelLayout values (each bus's presented output layout;
-    // the master's is the device layout, a value equal to the mix layout means
-    // no fold), and downmixCoeffs is busCapacity dst x src coefficient tables of
-    // 64 floats each, row-major with the destination the outer index. Carried
-    // in the plan so Vn_SetBusOutputLayout / Vn_SetBusDownmixMatrix reach the
-    // audio thread through the existing plan-swap command (zero new opcode).
+
+    TopologySendRange Sends(std::uint32_t bus) const noexcept {
+        return sendRanges != nullptr ? sendRanges[bus]
+            : TopologySendRange{bus * slotsPerBus, slotsPerBus};
+    }
+    std::uint32_t LogicalSendSlot(std::uint32_t offset) const noexcept {
+        return sendSlots != nullptr ? sendSlots[offset] : offset % slotsPerBus;
+    }
+    std::uint32_t SendOffset(std::uint32_t bus, std::uint32_t slot) const noexcept {
+        const auto range = Sends(bus);
+        if (sendSlots == nullptr)
+            return slot < range.count ? range.first + slot : UINT32_MAX;
+        // Builders keep logical slots sorted within each compact source row.
+        std::uint32_t first = range.first, last = first + range.count;
+        while (first < last) {
+            const auto middle = first + (last - first) / 2;
+            if (sendSlots[middle] < slot) first = middle + 1;
+            else last = middle;
+        }
+        if (first < range.first + range.count && sendSlots[first] == slot) return first;
+        return UINT32_MAX;
+    }
+    // Default matrices derive from layouts; only authored custom matrices own
+    // immutable backing. Audio copies the selected matrix into its work row.
     const std::uint32_t* outputLayouts = nullptr;
-    const float* downmixCoeffs = nullptr;
+    std::span<const BusCustomDownmixEntry> customDownmix;
+    const BusDownmixMatrix* CustomDownmixFor(std::uint32_t bus) const noexcept;
+    std::uint32_t mixLayout = 0;
+    void CopyDownmix(std::uint32_t bus, float* destination) const noexcept;
     // Per-slot tree parents and liveness (carried like the fold config, so a
     // reparent or destroy reaches the audio thread through the existing
     // plan-swap command with zero new opcodes). parents[i] is dense bus i's
@@ -114,7 +165,13 @@ public:
     // Takes a free plan slot to build into, or kInvalidTopologyPlanIndex when
     // the pool is exhausted. The slot's contents are cleared (order empty, every
     // send target kEmptySendTarget) so a builder only writes what it populates.
+    bool PrepareBusCapacity(std::uint32_t count) noexcept;
+    // Only unpublished private plans may grow; acquired audio plans stay fixed.
+    void PreparePlanBusCapacity(std::uint32_t index, std::uint32_t count);
     std::uint32_t Acquire();
+    // Production builders prepare only actual edges. The allowance covers any
+    // no-throw direct mutation between reservation and publication.
+    std::uint32_t AcquireSparse(std::uint32_t sendAllowance = 0);
     // Logic-owned references keep mutable audio state alive through ordinary
     // topology swaps. No shared_ptr operation runs on the audio coordinator.
     void SetEffectUpdates(std::uint32_t plan, std::vector<BusEffectChainAdoption> updates);
@@ -137,6 +194,10 @@ public:
     // pointers address stable pool storage for the plan's life.
     std::uint32_t* OrderData(std::uint32_t planIndex);
     void SetOrderCount(std::uint32_t planIndex, std::uint32_t count);
+    // Replaces only logic-owned, unpublished Send storage. Failure leaves it intact.
+    bool PrepareSendRows(std::uint32_t planIndex, std::span<const std::uint32_t> counts);
+    std::uint32_t* SendSlotsRow(std::uint32_t planIndex, std::uint32_t fromBus);
+    std::uint64_t* SendGenerationsRow(std::uint32_t planIndex, std::uint32_t fromBus);
     std::uint32_t* SendTargetsRow(std::uint32_t planIndex,
                                   std::uint32_t fromBus);
     float* PreparedSendLevelsRow(std::uint32_t planIndex,
@@ -151,7 +212,9 @@ public:
     // clears both to "no fold" so a builder that ignores them publishes a plan
     // that leaves every bus unfolded.
     std::uint32_t* OutputLayoutData(std::uint32_t planIndex);
-    float* DownmixCoeffsData(std::uint32_t planIndex);
+    void SetMixLayout(std::uint32_t planIndex, std::uint32_t layout) noexcept;
+    void SetCustomDownmix(std::uint32_t planIndex, std::uint32_t bus,
+                          BusCustomDownmix matrix);
     // Tree-parent and liveness storage for a plan: busCapacity entries each.
     // Acquire() clears parents to kPlanParentUnset (leave-unchanged) and
     // liveness to alive, so a builder that ignores them publishes a plan that
@@ -188,44 +251,38 @@ public:
     std::uint32_t Capacity() const { return m_capacity; }
     std::uint32_t InUse() const { return m_inUse; }
     std::uint32_t HighWater() const { return m_highWater; }
+    std::size_t StorageBytes() const noexcept;
 
 private:
-    std::size_t OrderBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity;
-    }
-    std::size_t EdgeBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity *
-               m_slotsPerBus;
-    }
-    std::size_t FoldBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity;
-    }
-    std::size_t CoeffBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity * 64;
-    }
+    std::uint32_t AcquireImpl(bool legacyRows, std::uint32_t sendAllowance);
+    bool ReserveSendCapacity(std::uint32_t planIndex, std::uint32_t count);
 
     std::uint32_t m_capacity;
     std::uint32_t m_busCapacity;
     std::uint32_t m_slotsPerBus;
 
-    // Flat, index-addressed storage sized once at construction.
-    std::vector<std::uint32_t> m_order;       // capacity * busCapacity
+    // Only acquired plans own Bus arrays. Published arrays remain immutable
+    // until audio retirement reaches the serialized logic-side recycler.
     std::vector<std::uint32_t> m_orderCount;  // capacity
-    std::vector<std::uint32_t> m_sendTargets; // capacity * busCapacity * slots
-    std::vector<float> m_preparedSendLevels;  // same shape as m_sendTargets
-    std::vector<std::uint8_t> m_sendLevelApply; // same shape, 0 = preserve
-    std::vector<std::uint32_t> m_sendLevelRampMs; // same shape
-    std::vector<std::uint32_t> m_outputLayouts; // capacity * busCapacity
-    std::vector<float> m_downmixCoeffs;         // capacity * busCapacity * 64
-    std::vector<std::uint32_t> m_parents;       // capacity * busCapacity
-    std::vector<std::uint8_t> m_alive;          // capacity * busCapacity
-    std::vector<VnBusId> m_busIds;         // capacity * busCapacity
-    std::vector<std::uint32_t> m_generations;    // capacity * busCapacity
-    std::vector<std::uint32_t> m_migrationTargets; // capacity * busCapacity
-    std::vector<float> m_preparedBusVolumeDb;      // capacity * busCapacity
-    std::vector<float> m_preparedBusOutputVolumeDb;
-    std::vector<std::uint32_t> m_preparedBusVolumeRampMs;
-    std::vector<std::uint8_t> m_busVolumeApply;
+    struct PlanStorage {
+        std::vector<std::uint32_t> order, outputLayouts, parents, busGenerations, migrationTargets;
+        std::uint32_t mixLayout = 0;
+        std::vector<BusCustomDownmixEntry> customDownmix;
+        std::vector<float> preparedBusVolumeDb, preparedBusOutputVolumeDb;
+        std::vector<std::uint32_t> preparedBusVolumeRampMs;
+        std::vector<std::uint8_t> alive, busVolumeApply;
+        std::vector<VnBusId> busIds;
+        std::vector<TopologySendRange> ranges;
+        std::vector<std::uint32_t> slots;
+        std::vector<std::uint64_t> generations;
+        std::vector<std::uint32_t> targets;
+        std::vector<float> levels;
+        std::vector<std::uint8_t> apply;
+        std::vector<std::uint32_t> ramps;
+        mutable std::vector<BusSendState> states;
+    };
+    static void GrowBusStorage(PlanStorage& storage, std::uint32_t count);
+    std::vector<PlanStorage> m_storage;
     std::vector<std::uint32_t> m_slotCount;     // capacity
 
     std::vector<std::shared_ptr<SignalRenderPlan>> m_signals;

@@ -72,6 +72,10 @@ public:
     const BlockArena& Arena() const { return m_arena; }
     BlockArena& ArenaForTests() { return m_arena; }
     bool PrepareVoiceBacking(std::uint32_t count) noexcept;
+    bool PrepareBusBacking(std::uint32_t count) noexcept;
+    // Reprepare actual claimed channel and Send demand without reserving the
+    // worst-case channel width of every constructed physical slot.
+    bool PreparePreparedChannelBacking(std::uint32_t count) noexcept;
     bool PrepareSignalBacking(const SignalRenderPlan& plan) noexcept;
 
     // The audio-published observability payload: RenderBlock publishes
@@ -233,7 +237,6 @@ private:
     void PublishSourceCursors(std::uint64_t blockIndex,
                               std::uint64_t outputFrame);
 
-    const std::uint32_t m_maxBuses;
     const std::uint32_t m_blockFrames;
     // The per-quantum command ceiling. Read by two threads -- the audio thread
     // each block in DrainCommands, and the logic thread on every command
@@ -332,27 +335,20 @@ private:
     void* m_currentSliceFrontierHookContextForTest = nullptr;
     TimelineFinalizedHookForTest m_timelineFinalizedHookForTest = nullptr;
     void* m_timelineFinalizedHookContextForTest = nullptr;
-    // Preallocated record scratch for the three meter tap lanes,
-    // written and handed to PushTaps() on the audio thread — sized at init, so
-    // the append allocates nothing.
-    std::vector<float> m_meterTapScratch;
-    std::vector<std::uint32_t> m_meterGenerationScratch;
+    // The initial Master can render before any activity plan is installed.
+    std::array<MeterBlockRing::Lease, 1> m_bootstrapMeterLanes;
     SnapshotBuffer m_snapshots;
     BlockArena m_arena;
     std::uint64_t m_arenaLowBytes = 0;
-    std::uint32_t m_busSendSlots = 0;
     std::uint32_t m_busFxSlots = 0, m_dynamicRouteCapacity = 0;
-    std::uint64_t SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
+    std::uint64_t SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes, std::uint32_t buses,
                                     std::size_t relations) const noexcept;
     std::uint64_t RetainedSignalScratchBytes(std::uint32_t slots) const noexcept;
     std::uint64_t m_arenaBytesPerSlot = 0;
     std::uint32_t m_arenaBatchAllowance = 1;
     VoicePool::SlotStorageRegistration m_arenaStorageRegistration;
-    bool PreparePreparedChannelBacking(std::uint32_t count) noexcept;
-    // Per-bus accumulator plane pointers, bus-major (m_mixChannels per bus).
-    // Sized once at init; the audio thread only rewrites the pointers each
-    // block — the planes themselves come from the arena.
-    std::vector<float*> m_busPlanes;
+    // Audio borrows the active activity's prepared pointer array through its ACK.
+    std::span<float*> m_busPlanes;
     // Mix and device layouts (resolved config). The bus tree renders at the mix
     // width; after the fold, RenderBlock lays the master's mix-width output into
     // the device buffer — direct interleave when the device layout matches the
@@ -365,6 +361,8 @@ private:
     std::uint32_t m_deviceLayout;
     std::uint32_t m_sampleRate;
     std::atomic<std::uint64_t> m_blocksRendered{0};
+    // Audio-owned elapsed frames for recovery holds, including variable quanta.
+    std::uint64_t m_workObservationFrames = 0;
     // QPC tick rate, fetched once at construction (logic thread) so the
     // audio thread only ever reads the cached value.
     std::uint64_t m_cpuTicksPerSecond = 0;

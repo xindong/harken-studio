@@ -178,6 +178,8 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
         ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
     const auto source = fixture.receivers[0].target.stableId;
     ASSERT_EQ(Vn_SetBusOutputLayout(source, VN_CHANNEL_LAYOUT_MONO), VN_OK);
+    // Exercise publication with a working receiver; unused definitions may stay cold.
+    ASSERT_EQ(Vn_SetBusFaderPoint(fixture.receivers[0].target.stableId, engine.config.fxSlotsPerBus), VN_OK);
     engine.nullBackend.Pump(1);
     const auto before = engine.commands.FreeSlots();
     const auto installed = InstallContainerWorldV1(engine, fixture.world);
@@ -200,7 +202,11 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(engine.variables.CurrentWorldGeneration(), generation);
     EXPECT_EQ(engine.acceptedSignalPlan.get(), first);
     engine.nullBackend.Pump(8);
-    EXPECT_EQ(engine.buses.InstalledSignals(), first);
+    ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.buses.AcceptedActivitySignals());
+    EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), first->ContentIdentity());
+    EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), first->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*first));
     const auto bus = engine.buses.FindIndex(source);
     EXPECT_EQ(engine.buses.BusOutputLayout(bus), static_cast<std::uint32_t>(VN_CHANNEL_LAYOUT_MONO));
     VariableServiceV1::PreparedCurrentWorldImageV1 stale;
@@ -221,7 +227,28 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(second->WorldIdentity(), first->WorldIdentity());
     ASSERT_EQ(Vn_CreateBus(harkentest::ObjectId(99), VN_BUS_MASTER), VN_OK);
     engine.nullBackend.Pump(2);
-    EXPECT_EQ(engine.buses.InstalledSignals(), second);
+    ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.buses.AcceptedActivitySignals());
+    EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), second->ContentIdentity());
+    EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), second->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*second));
+    for (const auto& expected : second->Relations()) {
+        const auto relations = engine.buses.InstalledSignals()->Relations();
+        const auto found = std::find_if(relations.begin(), relations.end(),
+            [&](const auto& relation) { return relation.stableId == expected.stableId; });
+        ASSERT_NE(found, relations.end());
+        EXPECT_FLOAT_EQ(found->level, expected.level);
+        const auto source = engine.buses.InstalledSignals()->NodeDefinition(found->source);
+        const auto target = engine.buses.InstalledSignals()->NodeDefinition(found->target);
+        EXPECT_EQ(source.stableId, second->NodeDefinition(expected.source).stableId);
+        EXPECT_EQ(source.kind, second->NodeDefinition(expected.source).kind);
+        const auto receiver = second->NodeDefinition(expected.target);
+        EXPECT_EQ(target.stableId, receiver.stableId);
+        EXPECT_EQ(target.kind, receiver.kind);
+        EXPECT_EQ(target.receiver, receiver.receiver);
+        EXPECT_FLOAT_EQ(target.attackMs, receiver.attackMs);
+        EXPECT_FLOAT_EQ(target.releaseMs, receiver.releaseMs);
+    }
     const auto current = engine.variables.CurrentWorldGeneration();
     fixture.relations[0].source.stableId = harkentest::ObjectId(999);
     fixture.Refresh();
@@ -261,6 +288,73 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
               playbackFingerprint);
 }
 
+TEST(CurrentWorldSignal, FeedbackGainHistorySurvivesBusSleepAndWake) {
+    for (unsigned gainKind = 0; gainKind < 3; ++gainKind) {
+        SCOPED_TRACE(gainKind);
+        std::vector<float> reference;
+        for (bool sleep : {false, true}) {
+            SCOPED_TRACE(sleep);
+            harkentest::EngineSession session(harkentest::MakeNullConfig(2, 64, 48000));
+            ASSERT_EQ(session.InitResult(), VN_OK);
+            auto& engine = *session.Engine();
+            engine.buses.SetAutomaticSleepEnabledForTest(sleep);
+            SignalWorld fixture;
+            fixture.world.signalRelationCount = fixture.world.signalReceiverCount = 1;
+            fixture.Refresh();
+            const auto child = fixture.receivers[0].target.stableId;
+            const auto parent = fixture.relations[0].source.stableId;
+            ASSERT_EQ(Vn_CreateBus(parent, VN_BUS_MASTER), VN_OK);
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(Vn_CreateBus(child, parent), VN_OK);
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+            const auto setGain = [&](float db) {
+                if (gainKind == 0) return Vn_SetBusVolume(parent, db, 0);
+                if (gainKind == 1) return Vn_SetBusOutputVolume(parent, db, 0);
+                VnGainDesc effect{};
+                effect.structSize = sizeof(effect);
+                effect.gainDb = db;
+                return Vn_SetBusEffect(parent, 0, VN_EFFECT_GAIN,
+                    reinterpret_cast<const VnEffectDesc*>(&effect));
+            };
+            ASSERT_EQ(setGain(12), VN_OK);
+            engine.nullBackend.Pump(32);
+            ASSERT_EQ(setGain(0), VN_OK);
+            engine.nullBackend.Pump(32);
+            const auto parentRef = engine.buses.FindRef(parent);
+            ASSERT_NE(engine.buses.BusState(parentRef.index), nullptr);
+            const auto history = [&] {
+                const auto& bus = *engine.buses.BusState(parentRef.index);
+                return gainKind == 0 ? bus.signalGainHistory : gainKind == 1
+                    ? bus.signalOutputHistory : bus.signalSlotHistory[0];
+            };
+            const double expected = history();
+            ASSERT_GT(expected, 3.9);
+            for (unsigned block = 0; block < 1600; ++block) {
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(Vn_Update(), VN_OK);
+            }
+            ASSERT_EQ(engine.buses.AcceptedWorkRef(parentRef).Valid(), !sleep);
+            auto pcm = harkentest::MakeDC(8192, .125f);
+            const auto desc = harkentest::MonoDesc(pcm, 48000);
+            const auto sound = harkentest::ObjectId(771);
+            ASSERT_EQ(Vn_RegisterPCM(sound, &desc), VN_OK);
+            auto play = harkentest::MakePlayDesc(sound);
+            play.busId = child;
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+            harkentest::Capture captured;
+            harkentest::PumpAndCapture(&engine, 64, captured);
+            ASSERT_NE(engine.buses.BusState(parentRef.index), nullptr);
+            EXPECT_DOUBLE_EQ(history(), expected);
+            ASSERT_TRUE(std::any_of(captured.left.begin(), captured.left.end(), [](float value) { return value != 0; }));
+            if (!sleep) reference = captured.left;
+            else EXPECT_EQ(captured.left, reference);
+            EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+        }
+    }
+}
+
 TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyCommand) {
     auto config = harkentest::MakeNullConfig(2, 64, 48000);
     config.maxBuses = 4;
@@ -270,6 +364,8 @@ TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyComma
     SignalWorld fixture;
     for (const auto& receiver : fixture.receivers)
         ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
+    // Exercise publication with a working receiver; unused definitions may stay cold.
+    ASSERT_EQ(Vn_SetBusFaderPoint(fixture.receivers[0].target.stableId, engine.config.fxSlotsPerBus), VN_OK);
     engine.nullBackend.Pump(1);
     ProjectGenerationInstallViewV1 view;
     view.token = {11, 2, 3, 4};
@@ -290,7 +386,64 @@ TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyComma
     ASSERT_NE(engine.acceptedSignalPlan, nullptr);
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.buses.AcceptedActivitySignals());
+    EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), engine.acceptedSignalPlan->ContentIdentity());
+    EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), engine.acceptedSignalPlan->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
+}
+
+TEST(CurrentWorldSignal, MasterTailAndUnrenderedCommandsRootNewSignalDependencies) {
+    for (unsigned mode = 0; mode != 3; ++mode) {
+        SCOPED_TRACE(mode);
+        auto config = harkentest::MakeNullConfig(2, 64, 48000);
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto& engine = *session.Engine();
+        const auto target = harkentest::ObjectId(42);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(target, VN_BUS_MASTER));
+        engine.nullBackend.Pump(2);
+        BusTree::WorkObservation fact;
+        const auto master = engine.buses.RefAt(0);
+        const auto work = engine.buses.AcceptedWorkRef(master);
+        ASSERT_TRUE(engine.buses.CaptureWorkObservation(master, work, fact));
+        ASSERT_TRUE(fact.localRecoveryReady);
+        if (mode == 1) {
+            VnFeedbackDelayDesc delay{};
+            delay.structSize = sizeof(delay);
+            delay.delayMs = 50; delay.feedback = .5f; delay.wet = 1; delay.dry = 0;
+            ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_FEEDBACK_DELAY,
+                reinterpret_cast<const VnEffectDesc*>(&delay)));
+            auto pcm = harkentest::MakeDC(64, .25f);
+            const auto desc = harkentest::MonoDesc(pcm, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(43), &desc));
+            const auto play = harkentest::MakePlayDesc(harkentest::ObjectId(43));
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            engine.nullBackend.Pump(4);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_TRUE(engine.buses.CaptureWorkObservation(master, work, fact));
+            ASSERT_FALSE(fact.physicalVoice);
+            ASSERT_GT(fact.outputTailFrames, 0u);
+        } else if (mode == 2) {
+            ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -3, 100));
+            ASSERT_TRUE(engine.buses.CaptureWorkObservation(master, work, fact));
+            ASSERT_TRUE(fact.localRecoveryReady);
+            ASSERT_LT(fact.commandFrontier, engine.commands.PublishedHead());
+        }
+        SignalWorld fixture;
+        fixture.receivers[0].target.stableId = target;
+        fixture.relations[0].source.stableId = VN_BUS_MASTER;
+        fixture.relations[0].target = fixture.receivers[0].target;
+        fixture.world.signalRelationCount = fixture.world.signalReceiverCount = 1;
+        fixture.Refresh();
+        ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+        engine.nullBackend.Pump(1);
+        ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+        EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), mode == 0 ? 0u : 1u);
+        EXPECT_EQ(engine.buses.WorkingPlaneCount(), mode == 0 ? 1u : 2u);
+        EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+    }
 }
 
 TEST(CurrentWorldSignal, PendingPlanBackingIsReleasedOnlyAfterRetirementDrain) {
@@ -318,4 +471,41 @@ TEST(CurrentWorldSignal, PendingPlanBackingIsReleasedOnlyAfterRetirementDrain) {
     engine.mixer.ArenaForTests().RestoreCapacityForTests();
     engine.topologyPlans.Recycle(newer);
 }
+
+TEST(CurrentWorldSignal, HighBusIdentityOnlyPreparesScratchForWorkingSignalNodes) {
+    std::size_t firstCommit = 0;
+    for (const auto count : {32u, 512u}) {
+        SCOPED_TRACE(count);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(2, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        for (std::uint32_t i = 1; i < count; ++i) {
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10000 + i), VN_BUS_MASTER));
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -3, 100));
+        SignalWorld fixture;
+        fixture.receivers[0].target.stableId = harkentest::ObjectId(10000 + count - 1);
+        fixture.relations[0].source.stableId = VN_BUS_MASTER;
+        fixture.relations[0].target = fixture.receivers[0].target;
+        fixture.world.signalRelationCount = fixture.world.signalReceiverCount = 1;
+        fixture.Refresh();
+        ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+        const auto before = engine.mixer.Arena().OverflowCount();
+        engine.nullBackend.Pump(1);
+        const auto* signals = engine.buses.InstalledSignals();
+        ASSERT_NE(nullptr, signals);
+        EXPECT_EQ(1u, signals->RelationCount());
+        EXPECT_EQ(2u, signals->BusNodeCount());
+        EXPECT_EQ(2u, engine.buses.WorkingPlaneCount());
+        EXPECT_GE(signals->RoutingBusSlotBound(), count);
+        EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
+        EXPECT_EQ(before, engine.mixer.Arena().OverflowCount());
+        const auto committed = engine.mixer.Arena().CommittedBytes();
+        if (firstCommit == 0) firstCommit = committed;
+        EXPECT_EQ(firstCommit, committed);
+    }
+}
+
 } // namespace

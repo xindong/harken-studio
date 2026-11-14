@@ -36,6 +36,7 @@
 #include "harken/core/generated/harken_playable_property_runtime.g.h"
 #include "harken/BusDefinitionFingerprintValue.h"
 #include "harken/render/DynamicRoute.h"
+#include "harken/render/BusActivityPlan.h"
 #include "harken/core/ResamplerAdvance.h"
 #include "harken/core/PackReadinessContract.h"
 #include "harken/render/BuiltinEffects.h"
@@ -491,7 +492,7 @@ private:
         std::uint32_t sends, std::uint32_t effects,
         CapturedTimelineVoiceInstall::ColumnRange (&ranges)[4], std::size_t& bytes) noexcept {
         if (bindings > kMaxVoiceBindingInstanceSlots || path > kPlaybackPathRowCapacity ||
-            sends > kTimelineMaxVoiceSends || effects > kTimelineMaxVoiceEffects) return false;
+            effects > kTimelineMaxVoiceEffects) return false;
         bytes = sizeof(CapturedTimelineVoiceInstall::Header);
         return Append<TimelineVoiceBindingInstall>(bytes, bindings, ranges[0]) &&
             Append<PlaybackPathRow>(bytes, path, ranges[1]) &&
@@ -5617,6 +5618,10 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     // via the update's fold+flush), not through the property publisher's
     // transaction, so they do not consume its section-10.4 worst-case budget.
     const bool usesPublisher = scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    if (scopeKind == kTargetScopeBus && definition != nullptr &&
+        !engine.busTargets.PrepareActivity(busIndex, definition->targetId)) {
+        return VN_BACKPRESSURE;
+    }
     if (usesPublisher &&
         !engine.propertyPublisher.TryGrowWorstCase(1, &engine.logicLogRing)) {
         return VN_INVALID_CONFIG;
@@ -6695,7 +6700,7 @@ VnResult CaptureCompressorRuntimeInfo(
         for (std::uint32_t effectSlot = 0;
              effectSlot < engine.config.fxSlotsPerBus; ++effectSlot) {
             const EffectInstanceRef& ref =
-                engine.busEffectInstanceRefs[bus][effectSlot];
+                engine.BusEffectRefs(bus)[effectSlot];
             if (ref.type == VN_EFFECT_COMPRESSOR) {
                 const VnBusId busId = engine.buses.IdAt(bus);
                 emit(ref, VN_EFFECT_HOST_SCOPE_BUS, bus, busId, 0, 0,
@@ -7031,6 +7036,8 @@ struct ImmediateActionPlan {
     harken::CommandQueue::PreparedBatchDispositionReceipt playCommandsDisposition;
     bool playCommandsReserved = false;
     bool playCommandsCancelledUnpublished = false;
+    bool prepareActivityAfterSources = false;
+    std::optional<harken::PreparedBusCommandBatch> busWake;
     std::uint32_t variableWriteCount = 0;
     std::uint32_t deferredCount = 0;
     std::uint32_t deferredPreparedCount = 0;
@@ -7278,12 +7285,18 @@ void ServicePendingImmediateStopIntents(
 // definitions.
 class AdmittedCommandWriter;
 void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot);
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                         std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                         float levelDb);
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                        std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                        float levelDb, AdmittedCommandWriter& writer);
+void ResetFreeVoiceSendMirror(harken::Engine& engine, std::uint32_t slot);
+VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
+    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) noexcept;
+void CancelPreparedVoiceSends(harken::Engine& engine, harken::PreparedVoiceSends& prepared) noexcept;
+VnResult PrepareFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept;
+VnResult InstallFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept;
+
+VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends);
+std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine);
 
 // The shared raw-Voice start implementation. actionEmitterPlay=true marks an
 // Action PLAY Step
@@ -8017,7 +8030,8 @@ void PublishTimelineEffectMirror(harken::Engine& engine,
 bool PrepareVoiceCommandBatch(harken::Engine& engine,
     harken::CommandQueue::BatchReservation* reservation,
     std::span<const harken::CommandRecord> commands,
-    harken::CommandQueue::PreparedBatchDispositionReceipt* disposition = nullptr) noexcept {
+    harken::CommandQueue::PreparedBatchDispositionReceipt* disposition = nullptr,
+    bool prepareActivity = true) noexcept {
     auto& proof = engine.preparedVoiceCommandBatchProof;
     if (proof.Valid()) return false;
     proof.Release();
@@ -8077,6 +8091,10 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
         } else ++offset;
     }
     } catch (...) {
+        proof.Release();
+        return false;
+    }
+    if (prepareActivity && !harken::PrepareBusActivityWake(engine, *reservation, commands, proof)) {
         proof.Release();
         return false;
     }
@@ -8225,9 +8243,9 @@ harken::EnginePlayableMemberRecord* RetainQueueProgramMemberAt(
 VnResult ValidateTimelineVoiceInstallInputShape(
     const harken::TimelineVoiceInstallInput& input) noexcept {
     if (input.facts == nullptr) return VN_INVALID_ARG;
-    if (input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
+    if (input.sends.size() > UINT32_MAX ||
+        input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
         input.pathRows.size() > harken::kPlaybackPathRowCapacity ||
-        input.sends.size() > harken::kTimelineMaxVoiceSends ||
         input.effects.size() > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
     return VN_OK;
 }
@@ -8236,7 +8254,7 @@ VnResult ValidateLegacyTimelineVoiceInstallCounts(
     const harken::TimelineVoiceInstallDesc& source) noexcept {
     if (source.bindingCount > harken::kMaxVoiceBindingInstanceSlots ||
         source.playbackPath.rowCount > harken::kPlaybackPathRowCapacity ||
-        source.sendCount > harken::kTimelineMaxVoiceSends ||
+        source.sendCount > source.sends.size() ||
         source.effectCount > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
     return VN_OK;
 }
@@ -8288,7 +8306,7 @@ public:
         facts_ = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallFacts>(source);
         input_ = {&facts_, {source.bindingStorage, source.bindingCount},
             {source.playbackPath.rows, source.playbackPath.rowCount},
-            {source.sends, source.sendCount}, {source.effects, source.effectCount}};
+            source.sends.first(source.sendCount), {source.effects, source.effectCount}};
     }
 
     LegacyTimelineVoiceInstallProjection(const LegacyTimelineVoiceInstallProjection&) = delete;
@@ -8375,7 +8393,7 @@ harken::PlayableStartStatus PrepareNativeVoiceCapture(
 
 // Transitional value projection for readers that still own a legacy descriptor.
 harken::TimelineVoiceInstallDesc ProjectLegacyTimelineVoiceInstall(
-    const harken::CapturedTimelineVoiceInstall& captured) noexcept {
+    const harken::CapturedTimelineVoiceInstall& captured) {
     if (!captured.Valid()) return {};
     const auto input = captured.Input();
     assert(ValidateTimelineVoiceInstallInputShape(input) == VN_OK);
@@ -8386,7 +8404,7 @@ harken::TimelineVoiceInstallDesc ProjectLegacyTimelineVoiceInstall(
     result.effectCount = static_cast<std::uint32_t>(input.effects.size());
     std::copy(input.bindings.begin(), input.bindings.end(), result.bindingStorage);
     std::copy(input.pathRows.begin(), input.pathRows.end(), result.playbackPath.rows);
-    std::copy(input.sends.begin(), input.sends.end(), result.sends);
+    result.SetSends({input.sends.begin(), input.sends.end()});
     std::copy(input.effects.begin(), input.effects.end(), result.effects);
     return result;
 }
@@ -8448,7 +8466,6 @@ VnResult TimelineVoiceStartCommandBudget(
     const auto status = ValidateTimelineVoiceInstallInputShape(input);
     if (status != VN_OK) return status;
     *out = 3u + static_cast<std::uint32_t>(input.bindings.size()) +
-        static_cast<std::uint32_t>(input.sends.size()) +
         static_cast<std::uint32_t>(input.effects.size()) +
         SpatialStartCommandDemand(input.facts->spatialized, input.facts->attenuationResolved);
     for (const auto& effect : input.effects) *out += (effect.flags & 1u) != 0;
@@ -8460,7 +8477,7 @@ VnResult TimelineVoiceStartCommandBudget(
     if (out == nullptr) return VN_INVALID_ARG;
     const auto status = ValidateLegacyTimelineVoiceInstallCounts(install);
     if (status != VN_OK) return status;
-    *out = 3u + install.sendCount + install.effectCount + install.bindingCount +
+    *out = 3u + install.effectCount + install.bindingCount +
         SpatialStartCommandDemand(install.spatialized, install.attenuationResolved);
     for (std::uint32_t index = 0; index < install.effectCount; ++index)
         *out += (install.effects[index].flags & 1u) != 0;
@@ -8523,9 +8540,10 @@ void ReleaseTimelineVoiceBindings(harken::Engine& engine, VnVoiceHandle render,
     engine.params.RetireVoiceTargets(render);
     engine.propertyPublisher.ShrinkWorstCase(
         engine.params.PurgeVoiceInstances(render, snapshotOnly));
-    if (!snapshotOnly)
+    if (!snapshotOnly) {
         engine.effectParamTargets.ClearObject(harken::EffectParamTargetStore::Scope::Voice,
             static_cast<std::uint64_t>(render), static_cast<std::uint32_t>(render >> 32));
+    }
 }
 
 VnResult PreflightTimelineVoiceStart(
@@ -8563,8 +8581,7 @@ VnResult PreflightTimelineVoiceStart(
         install.spatializationMix < 0.0f || install.spatializationMix > 1.0f) {
         return VN_INVALID_ARG;
     }
-    if (input.sends.size() > engine.config.voiceSendSlots ||
-        input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
+    if (input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
         commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         return VN_INVALID_CONFIG;
@@ -8961,8 +8978,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         return result;
     }
     commandCount += static_cast<std::uint32_t>(variableWeight != nullptr);
-    if (input.sends.size() > engine.config.voiceSendSlots ||
-        input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
+    if (input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
         commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         result.status = VN_INVALID_CONFIG;
@@ -9180,6 +9196,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             (void)engine.originalSourceSubmissions.DisposeUnpublishedVoice(arm);
         else if (!engine.voices.CancelPreparedVoice(render))
             (void)engine.voices.AbortClaimedVoice(render);
+        ResetFreeVoiceSendMirror(engine, static_cast<std::uint32_t>(render));
         const bool queueReturned = engine.ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(arm);
         const bool singleReturned = engine.ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(arm);
         const bool pendingReturned = engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(arm);
@@ -9212,7 +9229,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         return result;
     };
     if (!engine.voices.BindPreparedSignalPath(render, input.pathRows) ||
-        !engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
+        !engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size(), input.sends.size()))
         return rollback(VN_BACKPRESSURE);
     engine.params.OnVoiceStarted(render, install.volumeDb, install.pitchRatio, emitter);
     engine.voicePlayFacts[renderSlot].outputBusVolumeDb = install.outputBusVolumeDb;
@@ -9318,25 +9335,23 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             variableWeight->bank.generation;
     }
 
-    std::array<harken::VoiceSendConfig, harken::kMaxVoiceSendSlots> timelineSends{};
-    for (std::uint32_t send = 0; send < input.sends.size(); ++send) {
-        const harken::BusSlotRef target =
-            engine.buses.FindRef(input.sends[send].targetBusId);
-        if (!target.Valid()) {
-            return rollback(VN_UNKNOWN_ID);
+    harken::VoiceSendConfigs timelineSends;
+    try {
+        harken::VoiceSendConfigs::Records records;
+        records.reserve(input.sends.size());
+        for (std::uint32_t send = 0; send < input.sends.size(); ++send) {
+            const auto target = engine.buses.FindRef(input.sends[send].targetBusId);
+            if (!target.Valid()) return rollback(VN_UNKNOWN_ID);
+            records.push_back({true, target.index, input.sends[send].levelDb,
+                target.generation, send, NextVoiceSendIncarnation(engine)});
         }
-        harken::CommandRecord& sendCommand =
-            engine.playLedBatchScratch[commandIndex++];
-        sendCommand = {};
-        sendCommand.opcode = harken::kOpcodeSetVoiceSend;
-        sendCommand.payload.setVoiceSend.handle = render;
-        sendCommand.payload.setVoiceSend.sendSlot = send;
-        sendCommand.payload.setVoiceSend.targetBusIndex = target.index;
-        sendCommand.payload.setVoiceSend.targetBusGeneration =
-            target.generation;
-        sendCommand.payload.setVoiceSend.levelDb =
-            input.sends[send].levelDb;
-        timelineSends[send] = {true, target.index, input.sends[send].levelDb, target.generation};
+        timelineSends = harken::VoiceSendConfigs::From(std::move(records));
+        const auto sendStatus = PrepareInitialVoiceSends(engine, render, timelineSends);
+        if (sendStatus != VN_OK) return rollback(sendStatus);
+        if (!engine.voices.CapturePreparedRoutingV1(render, &voicePreparation.routing))
+            return rollback(VN_STALE_HANDLE);
+    } catch (...) {
+        return rollback(VN_DEVICE_ERROR);
     }
 
     for (const auto& source : input.effects) {
@@ -9778,7 +9793,7 @@ engine.runtimeRecreateRequired = true;
     observedPath.outputBusId = install.outputBusId;
     observedPath.AssignPath(input.pathRows);
     observedPath.sendCount = static_cast<std::uint32_t>(input.sends.size());
-    std::copy(input.sends.begin(), input.sends.end(), observedPath.sends);
+    std::copy(input.sends.begin(), input.sends.end(), observedPath.sends.begin());
     result.status = VN_OK;
     result.renderHandle = render;
     result.sourceTerminal = sourceTerminal;
@@ -9893,6 +9908,7 @@ bool CancelPreparedTimelineVoiceStart(
               engine.voices.AbortClaimedVoice(prepared->renderHandle) ||
               !engine.voices.IsAlive(prepared->renderHandle);
         if (disposed) {
+            ResetFreeVoiceSendMirror(engine, static_cast<std::uint32_t>(prepared->renderHandle));
             prepared->voiceOwnershipHeld = false;
         } else {
             ok = false;
@@ -10180,6 +10196,7 @@ bool RollbackCommittedTimelineVoiceStart(
         if (!disposed) {
             return false;
         }
+        ResetFreeVoiceSendMirror(engine, static_cast<std::uint32_t>(prepared->renderHandle));
         prepared->voiceOwnershipHeld = false;
     }
     if (prepared->ledgerOwnershipHeld) {
@@ -22938,17 +22955,8 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
         (streamed ? streamFacts.channelCount : media.channelCount) > 2) {
         return harken::PlayableStartStatus::InvalidInput;
     }
-    if (cut.sendCount > harken::kTimelineMaxVoiceSends ||
-        cut.sendCount > engine.config.voiceSendSlots ||
-        cut.effectNodeCount > harken::kTimelineMaxVoiceEffects ||
-        cut.effectNodeCount > engine.config.fxSlotsPerVoice) {
-        return cut.sendCount > harken::kTimelineMaxVoiceSends ||
-                       cut.sendCount > engine.config.voiceSendSlots ||
-                       cut.effectNodeCount > harken::kTimelineMaxVoiceEffects ||
-                       cut.effectNodeCount > engine.config.fxSlotsPerVoice
-                   ? harken::PlayableStartStatus::Capacity
-                   : harken::PlayableStartStatus::CapabilityUnavailable;
-    }
+    if (cut.effectNodeCount > harken::kTimelineMaxVoiceEffects ||
+        cut.effectNodeCount > engine.config.fxSlotsPerVoice) return harken::PlayableStartStatus::Capacity;
     auto& voice = source.facts;
     voice.streamed = streamed;
     if (streamed) {
@@ -23122,17 +23130,22 @@ harken::PlayableStartStatus BuildTimelineVoiceInstallFromCut(
     const auto resolved = ResolveTimelineVoiceInstallSource(
         engine, cut, leaseOrNull, allowDirectActionStream, source);
     if (resolved != harken::PlayableStartStatus::Accepted) return resolved;
-    auto voice = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallDesc>(source.facts);
-    voice.bindingCount = source.bindingCount;
-    voice.playbackPath.rowCount = cut.pathCount;
-    voice.sendCount = cut.sendCount;
-    voice.effectCount = cut.effectNodeCount;
-    const auto populated = PopulateTimelineVoiceInstallColumns(engine, cut, source,
-        {voice.bindingStorage, voice.bindingCount}, {voice.playbackPath.rows, cut.pathCount},
-        {voice.sends, voice.sendCount}, {voice.effects, voice.effectCount});
-    if (populated != harken::PlayableStartStatus::Accepted) return populated;
-    *out = voice;
-    return harken::PlayableStartStatus::Accepted;
+    try {
+        auto voice = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallDesc>(source.facts);
+        voice.bindingCount = source.bindingCount;
+        voice.playbackPath.rowCount = cut.pathCount;
+        voice.effectCount = cut.effectNodeCount;
+        std::vector<harken::TimelineVoiceSendInstall> sends(cut.sendCount);
+        const auto populated = PopulateTimelineVoiceInstallColumns(engine, cut, source,
+            {voice.bindingStorage, voice.bindingCount}, {voice.playbackPath.rows, cut.pathCount},
+            sends, {voice.effects, voice.effectCount});
+        if (populated != harken::PlayableStartStatus::Accepted) return populated;
+        voice.SetSends(std::move(sends));
+        *out = std::move(voice);
+        return harken::PlayableStartStatus::Accepted;
+    } catch (...) {
+        return harken::PlayableStartStatus::Capacity;
+    }
 }
 
 harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
@@ -53014,8 +53027,7 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
             installation.releaseObserver.slot != source.installation.releaseObserver.slot ||
             installation.releaseObserver.targetSequence != source.installation.releaseObserver.targetSequence ||
             installation.busIndex != source.installation.busIndex || installation.busGeneration != source.installation.busGeneration ||
-            std::memcmp(installation.voiceSends.data(), source.installation.voiceSends.data(),
-                sizeof(installation.voiceSends)) != 0) { fail(harken::ActionTerminalReason::RuntimeError); return; }
+            !(installation.voiceSends == source.installation.voiceSends)) { fail(harken::ActionTerminalReason::RuntimeError); return; }
         if (!source.bound) {
             if (!engine.timelineArms.BindPendingImmediateStart(source.original.event.armToken,
                     source.chosenOnset, source.chosenOnset)) return;
@@ -63214,7 +63226,7 @@ PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
 }
 
 TimelineVoiceInstallDesc ProjectTimelineVoiceInstall(
-    const CapturedTimelineVoiceInstall& captured) noexcept {
+    const CapturedTimelineVoiceInstall& captured) {
     return ProjectLegacyTimelineVoiceInstall(captured);
 }
 
@@ -63886,7 +63898,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             for (auto& captured : slot.side.Captures()) {
                 if (!allow() || CapturedTimelineVoiceInstallBuilder::Reserve(
                         std::min({columns.bindings, config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots}),
-                        columns.path, std::min({columns.sends, config.voiceSendSlots, kTimelineMaxVoiceSends}),
+                        columns.path, columns.sends,
                         std::min({columns.effects, config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), &captured.voice) !=
                             PlayableStartStatus::Accepted) return false;
             }
@@ -64242,7 +64254,7 @@ static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
             const auto& columns = result.profile.voice;
             return CapturedTimelineVoiceInstallBuilder::Reserve(
                 std::min({columns.bindings, engine.config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots}),
-                columns.path, std::min({columns.sends, engine.config.voiceSendSlots, kTimelineMaxVoiceSends}),
+                columns.path, columns.sends,
                 std::min({columns.effects, engine.config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), out) ==
                     PlayableStartStatus::Accepted;
         }
@@ -74244,102 +74256,79 @@ float WireBusVolumeDb(const harken::Engine& engine, std::uint32_t busIndex,
                                                    : kBusMuteFloorDb;
 }
 
-// Publish-phase queue view handed to the publisher: capacity via
-// CommandQueueFreeSlots above, and this push translating one staged commit
-// into its wire command. Only called after the whole set was admitted.
-bool PushPropertyCommit(void* ctx, const harken::PropertyCommit& commit) {
-    harken::Engine* engine = static_cast<harken::Engine*>(ctx);
-    if (commit.scopeKind == harken::kTargetScopeBus) {
-        /* Bus Volume and Bus Output Volume share kOpcodeSetBusVolume.
-         * outputOnly is keyed off targetId, never the opcode: Output
-         * Volume must not hit Bus.gain (Send would follow). Mute floor
-         * applies only to Bus Volume. */
-        const std::uint32_t busIndex =
-            static_cast<std::uint32_t>(commit.objectId);
-        const bool outputOnly =
-            commit.targetId == harken::kBusTargetBusOutputVolume;
-        harken::CommandRecord command{};
-        command.opcode = harken::kOpcodeSetBusVolume;
-        command.payload.setBusVolume.busIndex = busIndex;
-        command.payload.setBusVolume.volumeDb =
-            outputOnly ? commit.resolved
-                       : WireBusVolumeDb(*engine, busIndex, commit.resolved);
-        command.payload.setBusVolume.rampMs = commit.rampMs;
-        command.payload.setBusVolume.outputOnly = outputOnly ? 1u : 0u;
-        command.payload.setBusVolume.busGeneration =
-            engine->buses.GenerationAt(busIndex);
-        if (!engine->commands.TryPush(command)) {
-            return false; // unreachable under SPSC: the set was admitted
+// Translate the whole admitted set before any target is marked committed.
+// Tone grouping writes only per-flush scratch; a refused batch is rebuilt.
+bool PublishPropertyCommits(void* ctx, std::span<const harken::PropertyCommit> commits) {
+    auto& engine = *static_cast<harken::Engine*>(ctx);
+    try {
+        std::vector<harken::CommandRecord> commands;
+        std::vector<std::uint32_t> ramps;
+        commands.reserve(commits.size());
+        ramps.reserve(commits.size());
+        for (const auto& commit : commits) {
+            ramps.push_back(commit.rampMs);
+            if (commit.scopeKind == harken::kTargetScopeBus) {
+                const auto bus = static_cast<std::uint32_t>(commit.objectId);
+                const bool output = commit.targetId == harken::kBusTargetBusOutputVolume;
+                auto& command = commands.emplace_back();
+                command.opcode = harken::kOpcodeSetBusVolume;
+                command.payload.setBusVolume.busIndex = bus;
+                command.payload.setBusVolume.busGeneration = engine.buses.GenerationAt(bus);
+                command.payload.setBusVolume.volumeDb = output ? commit.resolved
+                    : WireBusVolumeDb(engine, bus, commit.resolved);
+                command.payload.setBusVolume.rampMs = commit.rampMs;
+                command.payload.setBusVolume.outputOnly = output ? 1u : 0u;
+                continue;
+            }
+            harken::ParamCommit resolved;
+            resolved.handle = commit.objectId;
+            resolved.targetId = commit.targetId;
+            resolved.rampMs = commit.rampMs;
+            resolved.resolved = commit.resolved;
+            resolved.pan2d = commit.pan2d;
+            if (commit.spatialMask == 0) {
+                const auto section = ToneSectionOfTarget(resolved.targetId);
+                if (section < 4) {
+                    const auto slot = static_cast<std::uint32_t>(resolved.handle);
+                    if (slot >= engine.toneSectionCommandsPublished.size()) return false;
+                    const auto bit = static_cast<std::uint8_t>(1u << section);
+                    const auto index = static_cast<std::size_t>(slot) * 4 + section;
+                    if ((engine.toneSectionCommandsPublished[slot] & bit) != 0) {
+                        ramps.back() = engine.toneSectionPublishedRampMs[index];
+                        continue;
+                    }
+                    engine.toneSectionCommandsPublished[slot] |= bit;
+                    ramps.back() = ToneSectionRampMs(engine, resolved.handle, section);
+                    engine.toneSectionPublishedRampMs[index] = ramps.back();
+                }
+            }
+            auto& command = commands.emplace_back();
+            if (!MakeParamCommand(engine, resolved, &command)) return false;
+            if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0 &&
+                (commit.spatialMask & harken::kSpatialPropertyWidth) != 0) {
+                command.payload.setVoicePan.width = commit.spatialWidth;
+                command.payload.setVoicePan.hasWidth = 1;
+            }
         }
-        engine->busTargets.MarkCommitted(
-            static_cast<std::uint32_t>(commit.objectId), commit.targetId,
-            commit.resolved, commit.rampMs);
+        harken::PreparedBusCommandBatch publication(engine);
+        if (!publication.Prepare(commands)) return false;
+        publication.Publish();
+        for (std::size_t i = 0; i < commits.size(); ++i) {
+            const auto& commit = commits[i];
+            if (commit.scopeKind == harken::kTargetScopeBus) {
+                engine.busTargets.MarkCommitted(static_cast<std::uint32_t>(commit.objectId),
+                    commit.targetId, commit.resolved, commit.rampMs);
+            } else if (commit.spatialMask != 0) {
+                if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0)
+                    engine.params.MarkCommitted(commit.objectId, harken::kTargetVoicePan,
+                        commit.resolved, 0, commit.pan2d);
+                if ((commit.spatialMask & harken::kSpatialPropertyWidth) != 0)
+                    engine.params.MarkCommitted(commit.objectId, harken::kTargetVoiceWidth, commit.spatialWidth);
+            } else engine.params.MarkCommitted(commit.objectId, commit.targetId,
+                commit.resolved, ramps[i], commit.pan2d);
+        }
         return true;
-    }
-    harken::ParamCommit resolved;
-    resolved.handle = commit.objectId;
-    resolved.targetId = commit.targetId;
-    resolved.rampMs = commit.rampMs;
-    /* Verbatim translation: the staged value IS current, because the batch
-     * is rebuilt by a fresh gather every tick — a deferred batch's targets
-     * stay dirty and re-collect at current resolved values, and a target a
-     * direct setter consumed during the deferral window is clean and never
-     * re-stages. One command per target per tick, no stale overwrite. */
-    resolved.resolved = commit.resolved;
-    resolved.pan2d = commit.pan2d;
-    if (commit.spatialMask != 0) {
-        harken::CommandRecord command{};
-        if (!MakeParamCommand(*engine, resolved, &command)) return false;
-        if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0 &&
-            (commit.spatialMask & harken::kSpatialPropertyWidth) != 0) {
-            command.payload.setVoicePan.width = commit.spatialWidth;
-            command.payload.setVoicePan.hasWidth = 1;
-        }
-        if (!engine->commands.TryPush(command)) return false;
-        if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0)
-            engine->params.MarkCommitted(resolved.handle, harken::kTargetVoicePan,
-                                         resolved.resolved, 0, resolved.pan2d);
-        if ((commit.spatialMask & harken::kSpatialPropertyWidth) != 0)
-            engine->params.MarkCommitted(resolved.handle, harken::kTargetVoiceWidth,
-                                         commit.spatialWidth);
-        return true;
-    }
-    const std::uint32_t toneSection =
-        ToneSectionOfTarget(resolved.targetId);
-    std::uint32_t publishedRampMs = resolved.rampMs;
-    if (toneSection < 4) {
-        const std::uint32_t voiceSlot =
-            static_cast<std::uint32_t>(resolved.handle);
-        if (voiceSlot >= engine->toneSectionCommandsPublished.size()) {
-            return false;
-        }
-        const std::uint8_t bit =
-            static_cast<std::uint8_t>(1u << toneSection);
-        const std::size_t rampIndex =
-            static_cast<std::size_t>(voiceSlot) * 4 + toneSection;
-        if ((engine->toneSectionCommandsPublished[voiceSlot] & bit) != 0) {
-            publishedRampMs =
-                engine->toneSectionPublishedRampMs[rampIndex];
-            engine->params.MarkCommitted(
-                resolved.handle, resolved.targetId, resolved.resolved,
-                publishedRampMs);
-            return true;
-        }
-        engine->toneSectionCommandsPublished[voiceSlot] |= bit;
-        publishedRampMs =
-            ToneSectionRampMs(*engine, resolved.handle, toneSection);
-        engine->toneSectionPublishedRampMs[rampIndex] = publishedRampMs;
-    }
-    harken::CommandRecord command;
-    if (!MakeParamCommand(*engine, resolved, &command)) {
-        return false; // unreachable: staged values were wire-probed at gather
-    }
-    if (!engine->commands.TryPush(command)) {
-        return false; // unreachable under SPSC: the preflight admitted the set
-    }
-    engine->params.MarkCommitted(resolved.handle, resolved.targetId,
-                                 resolved.resolved, publishedRampMs, resolved.pan2d);
-    return true;
+    } catch (...) { return false; }
 }
 
 // Shared global Variable write for internal Action and legacy meter callers.
@@ -74410,6 +74399,130 @@ bool MakeVariableEffectParamCommand(
         out->payload.setBusEffectParam.transitionFrames = frames;
     }
     return true;
+}
+
+void Engine::NoteBusSettingCommand(const CommandRecord& command) noexcept {
+    if (command.opcode == kOpcodeSetBusFilter) {
+        const auto& filter = command.payload.setBusFilter;
+        if (filter.busIndex < buses.BusCount() &&
+            (filter.busGeneration == 0 || filter.busGeneration == buses.GenerationAt(filter.busIndex))) {
+            const auto section = (filter.outputOnly ? 2u : 0u) +
+                (filter.filterKind == kFilterKindHighpass ? 1u : 0u);
+            busFilterSettings.Set(filter.busIndex, section,
+                {filter.cutoffHz, filter.q, filter.enable != 0, true});
+        }
+    } else if (command.opcode == kOpcodeSetBusVolume) {
+        const auto& volume = command.payload.setBusVolume;
+        if (!volume.outputOnly && volume.busIndex < busVolumePublished.size() &&
+            (volume.busGeneration == 0 || volume.busGeneration == buses.GenerationAt(volume.busIndex)))
+            busVolumePublished[volume.busIndex] = 1;
+    } else if (command.opcode == kOpcodeSetBusTopologyPlan) {
+        const auto plan = topologyPlans.View(command.payload.setBusTopologyPlan.planIndex);
+        if (!plan.valid || plan.busVolumeApply == nullptr) return;
+        const auto count = plan.slotCount != 0 ? plan.slotCount : plan.orderCount;
+        for (std::uint32_t bus = 0; bus < count && bus < busVolumePublished.size(); ++bus) {
+            if ((plan.busVolumeApply[bus] & kApplyBusVolume) != 0 &&
+                (plan.alive == nullptr || plan.alive[bus] != 0) &&
+                (plan.generations == nullptr || plan.generations[bus] == buses.GenerationAt(bus)))
+                busVolumePublished[bus] = 1;
+        }
+    }
+}
+
+bool Engine::PublishBusSettingCommand(const CommandRecord& command) noexcept {
+    PreparedBusCommandBatch prepared(*this);
+    if (!prepared.Prepare({&command, 1})) return false;
+    prepared.Publish();
+    return true;
+}
+
+void Engine::CancelBusWorkState(BusTree::Bus& row) noexcept {
+    for (auto& ref : row.fxSlotEffectRef) {
+        if (ref.type != kEffectTypeNone) {
+            const bool cancelled = effectBank.CancelPrepared(ref);
+            assert(cancelled);
+            (void)cancelled;
+        }
+    }
+    row = {};
+}
+
+VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) noexcept {
+    if (busIndex >= buses.BusCount() || !buses.AliveAt(busIndex)) return VN_UNKNOWN_ID;
+    // This function owns only its newly acquired references; callers provide
+    // a fresh, unpublished row and may not pass the currently rendering row.
+    for (const auto& ref : row.fxSlotEffectRef)
+        if (ref.type != kEffectTypeNone) return VN_IN_USE;
+    const auto fail = [&](VnResult result) {
+        CancelBusWorkState(row);
+        return result;
+    };
+    try {
+        row.id = buses.IdAt(busIndex);
+        row.busIndex = busIndex;
+        row.generation = buses.GenerationAt(busIndex);
+        row.parentIndex = buses.ParentOf(busIndex);
+        row.faderAfterSlot = busFaderAfterSlots[busIndex];
+        if (const auto* preview = buses.PreviewEffectState(buses.RefAt(busIndex))) {
+            row.previewEffectOwner = preview->owner;
+            row.previewEffectRevision = preview->revision;
+        }
+        row.outputLayout = busOutputLayout[busIndex];
+        CopyBusDownmix(busIndex, row.downmixCoeffs);
+        float gain = 1;
+        if (!TryVolumeGainFromDb(::WireBusVolumeDb(*this, busIndex,
+                busTargets.LastCommitted(busIndex, kBusTargetBusVolume)), &gain)) return fail(VN_INVALID_ARG);
+        row.gain.Set(gain);
+        row.gainStarted = busVolumePublished[busIndex] != 0;
+        if (!TryVolumeGainFromDb(busTargets.LastCommitted(busIndex, kBusTargetBusOutputVolume), &gain))
+            return fail(VN_INVALID_ARG);
+        row.outputGain.Set(gain);
+        std::array<BusTree::Bus::ToneSection*, 4> sections{
+            &row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
+        for (std::uint32_t index = 0; index < sections.size(); ++index) {
+            const auto setting = busFilterSettings.Get(busIndex, index);
+            if (!setting.configured) continue;
+            PreparedFilterSection prepared;
+            if (!::PrepareFilterSection(static_cast<float>(config.mixRate.SampleRate()),
+                    (index & 1u) ? kFilterKindHighpass : kFilterKindLowpass,
+                    setting.cutoffHz, setting.q, setting.enabled, prepared)) return fail(VN_INVALID_ARG);
+            auto& section = *sections[index];
+            section.enabled = prepared.enabled;
+            section.coeffs = RestoreBiquadCoeffs(PrepareBiquadCoeffs(prepared.coeffs));
+            section.tailFrames = prepared.enabled ? EstimateBiquadTailFrames(prepared.coeffs) : 0;
+            section.transition.targetCoeffs = section.coeffs;
+            section.transition.targetTailFrames = section.tailFrames;
+            if (prepared.enabled) section.glide.Snap(prepared.cutoffHz, setting.q, 0);
+        }
+        for (std::uint32_t slot = 0; slot < config.fxSlotsPerBus; ++slot) {
+            row.fxBypassMix[slot] = row.fxBypassTarget[slot] = BusEffectBypass(busIndex, slot) ? 1.f : 0.f;
+            const auto type = busEffects.Get(busIndex, slot).type;
+            if (type == kEffectTypeNone) continue;
+            const auto ref = effectBank.AcquirePrepared(type, busEffects.Get(busIndex, slot).identity);
+            if (ref.type == kEffectTypeNone) return fail(VN_NO_EFFECT);
+            row.fxSlotEffectRef[slot] = ref;
+            void* state = effectBank.StateFor(ref.type, ref.poolIndex);
+            if (type == VN_EFFECT_LIMITER) {
+                // Live LimiterReset intentionally preserves parameter history.
+                // A newly prepared cold owner must not inherit its pool user's
+                // first-render flag or unfinished parameter transition.
+                auto& limiter = *static_cast<LimiterState*>(state);
+                const auto sampleRate = limiter.sampleRate;
+                limiter = LimiterState{};
+                limiter.sampleRate = sampleRate;
+            }
+            auto effect = BuildEffect(type, state);
+            // Free Delay instances have a zero line and default state. Their
+            // previous owner was reset on logic disposal, outside this start.
+            if (effect.reset && type != VN_EFFECT_FEEDBACK_DELAY) effect.reset(state);
+            if (effect.setParam)
+                for (std::uint32_t param = 0; param < EffectParamCount(type); ++param)
+                    effect.setParam(state, param, effectParamTargets.LastCommitted(
+                        EffectParamTargetStore::Scope::Bus, busIndex, slot, param));
+            row.fxSlots[slot] = effect;
+        }
+        return VN_OK;
+    } catch (...) { return fail(VN_DEVICE_ERROR); }
 }
 
 float VariableBusWireValue(const Engine& engine, std::uint32_t busIndex,
@@ -74605,10 +74718,9 @@ private:
     harken::Engine& engine_;
 };
 
-// The logic thread is the command queue's only producer. Once admission has
-// reserved `limit` slots, this writer fills the engine-owned fixed scratch and
-// publishes the entire play-led batch with one head release. Helper-emitted
-// records share the same writer so no partial prefix becomes audio-visible.
+// Admission bounds the scratch; Prepare reserves and freezes the actual run
+// before any irreversible Voice commit. Publish consumes that exact proof.
+// Helper-emitted records share this writer and never expose a partial prefix.
 class AdmittedCommandWriter {
 public:
     AdmittedCommandWriter(harken::Engine& engine, std::uint32_t limit,
@@ -74621,8 +74733,13 @@ public:
         assert(batchKind_ != harken::PlayLedBatchKind::None);
     }
 
+    ~AdmittedCommandWriter() {
+        proof_.Release();
+        engine_.commands.CancelReservedBatch(&reservation_);
+    }
+
     bool Push(harken::CommandRecord command) {
-        if (count_ >= limit_) {
+        if (proof_.Valid() || count_ >= limit_) {
             overflowed_ = true;
             return false;
         }
@@ -74641,21 +74758,36 @@ public:
     std::uint32_t Count() const noexcept { return count_; }
     bool Overflowed() const noexcept { return overflowed_; }
 
-    void VerifyComplete() {
-        if (count_ == 0 || count_ > limit_ || overflowed_) {
-            assert(false && "play-led writer exceeded admitted scratch");
-            return;
+    VnResult Prepare() noexcept {
+        if (count_ == 0 || count_ > limit_ || overflowed_ || proof_.Valid())
+            return VN_INVALID_CONFIG;
+        engine_.playLedBatchScratch[0].payload.play.batch.batchCommandCount = count_;
+        if (!engine_.commands.ReserveBatch(count_, &reservation_)) return VN_BACKPRESSURE;
+        if (!engine_.commands.ProvePreparedBatch(&reservation_,
+                engine_.playLedBatchScratch.data(), count_, &proof_)) {
+            engine_.commands.CancelReservedBatch(&reservation_);
+            return VN_DEVICE_ERROR;
         }
-        engine_.playLedBatchScratch[0].payload.play.batch.batchCommandCount =
-            count_;
-        const bool pushed = engine_.commands.TryPushBatch(
-            engine_.playLedBatchScratch.data(), count_);
-        assert(pushed);
+        if (!harken::PrepareBusActivityWake(engine_, reservation_,
+                {engine_.playLedBatchScratch.data(), count_}, proof_)) {
+            proof_.Release();
+            return VN_DEVICE_ERROR;
+        }
+        return VN_OK;
+    }
+
+    void Publish() noexcept {
+        assert(proof_.Valid());
+        const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
+        assert(published.Count() == count_);
+        (void)published;
         count_ = 0;
     }
 
 private:
     harken::Engine& engine_;
+    harken::CommandQueue::BatchReservation reservation_{};
+    harken::CommandQueue::PreparedBatchProof proof_;
     std::uint32_t limit_ = 0;
     std::uint32_t count_ = 0;
     bool overflowed_ = false;
@@ -75603,6 +75735,7 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
 // logic-side notification queue (it has no render block, so its timestamp is 0).
 void CancelPendingEffectSeeds(harken::Engine& engine,
                               harken::PendingStartRecord& rec) {
+    CancelPreparedVoiceSends(engine, rec.preparedSends);
     for (auto& token : rec.preparedSeedTokens) {
         engine.effectParamTargets.CancelPreparedInstalledEffectSeed(&token);
     }
@@ -75615,7 +75748,7 @@ bool PreparePendingEffectSeeds(harken::Engine& engine,
                                VnVoiceHandle renderHandle) {
     if (rec.effectSeedsPrepared &&
         rec.preparedSeedRenderHandle == renderHandle) {
-        return true;
+        return PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) == VN_OK;
     }
     if (rec.effectSeedsPrepared) {
         CancelPendingEffectSeeds(engine, rec);
@@ -75638,6 +75771,10 @@ bool PreparePendingEffectSeeds(harken::Engine& engine,
     }
     rec.preparedSeedRenderHandle = renderHandle;
     rec.effectSeedsPrepared = true;
+    if (PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) != VN_OK) {
+        CancelPendingEffectSeeds(engine, rec);
+        return false;
+    }
     return true;
 }
 
@@ -75701,6 +75838,7 @@ bool IsParkedRenderHandle(const harken::Engine& engine,
 
 void CancelPreparedParkReturn(harken::Engine& engine,
                               harken::ParkRecord& rec) {
+    CancelPreparedVoiceSends(engine, rec.preparedSends);
     for (std::uint32_t i = 0; i < rec.returnEffectCount; ++i) {
         engine.effectParamTargets.CancelPreparedInstalledEffectSeed(
             &rec.returnSeedTokens[i]);
@@ -76205,9 +76343,6 @@ std::uint32_t PendingStartCommandDemand(harken::Engine& engine,
     }
     for (bool bypassed : rec.effectBypass) {
         needed += bypassed ? 1u : 0u;
-    }
-    for (const harken::VoiceSendConfig& send : rec.voiceSends) {
-        needed += send.active ? 1u : 0u;
     }
     needed += UniquePinnedTargetCount(engine, rec.pinnedBindings.data(),
                                       rec.pinnedBindingCount);
@@ -76734,17 +76869,8 @@ PendingStartOutcome StartDeferredVoice(
     // command room is protected by the single-producer admission writer. A
     // refusal here therefore indicates broken bookkeeping, not a runtime path.
     if (!recipePrimed) return PendingStartOutcome::InvalidInput;
-    // Replay the staged voice sends through the shared live path (mirror +
-    // command + high-water). Command room for these was included in the
-    // deferred-start batch budget.
-    for (std::uint32_t s = 0; s < engine.config.voiceSendSlots &&
-                              s < rec.voiceSends.size();
-         ++s) {
-        if (rec.voiceSends[s].active) {
-            ApplyVoiceSendLive(engine, render, s, rec.voiceSends[s].targetBusIndex,
-                               rec.voiceSends[s].levelDb, commands);
-        }
-    }
+    if (InstallFutureVoiceSends(engine, render, rec.voiceSends, rec.preparedSends) != VN_OK)
+        return PendingStartOutcome::Unavailable;
     // Onset of the pinned attachment set (section 5.7): instantiate the
     // identities pinned at acceptance against the CURRENT definition
     // revisions and publish the resolved initial targets into this same
@@ -76765,6 +76891,9 @@ PendingStartOutcome StartDeferredVoice(
         return PendingStartOutcome::InvalidInput;
     }
     if (commands.Overflowed()) return PendingStartOutcome::BatchTooLarge;
+    const auto preparedCommands = commands.Prepare();
+    if (preparedCommands != VN_OK) return preparedCommands == VN_BACKPRESSURE
+        ? PendingStartOutcome::QueueFull : PendingStartOutcome::DeviceError;
     if (!variableCut.BindVoice(render)) return PendingStartOutcome::BankBlocked;
     if (!engine.voices.CommitPreparedVoice(render)) return PendingStartOutcome::DeviceError;
     engine.params.CommitStagedVoiceBindings(render);
@@ -76784,7 +76913,7 @@ PendingStartOutcome StartDeferredVoice(
                     rec.outputBusVolumeDb);
     for (std::uint32_t slot = 0; slot < rec.effects.size(); ++slot)
         if (rec.effects[slot].set) engine.effectBank.PublishInstalled(engine.voiceEffectInstanceRefs[renderSlot][slot]);
-    commands.VerifyComplete();
+    commands.Publish();
     variableCut.ReleaseCalendar();
     preparationGuard.armed = false;
     rec.Reset();
@@ -78012,9 +78141,6 @@ std::uint32_t ParkReturnCommandDemand(harken::Engine& engine,
          ++slot) {
         needed += rec.effectBypass[slot] ? 1u : 0u;
     }
-    for (const harken::VoiceSendConfig& send : rec.voiceSends) {
-        needed += send.active ? 1u : 0u;
-    }
     return needed;
 }
 
@@ -78044,7 +78170,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     const auto prepareEffects = [&](VnVoiceHandle renderHandle) {
         if (rec.returnEffectsPrepared &&
             rec.returnPreparedRenderHandle == renderHandle) {
-            return true;
+            return PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) == VN_OK;
         }
         if (rec.returnEffectsPrepared) {
             recyclePreparedEffects();
@@ -78071,6 +78197,10 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         }
         rec.returnPreparedRenderHandle = renderHandle;
         rec.returnEffectsPrepared = true;
+        if (PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) != VN_OK) {
+            recyclePreparedEffects();
+            return false;
+        }
         return true;
     };
     harken::VoiceManager::FreeRender target;
@@ -78502,20 +78632,9 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // that never allocates and cannot be refused — the reservation guarantees
     // the restore is all-or-nothing.
     if (!PrimeParkedEffectBindings(engine, rec, publicHandle, newRender, commands, variableCut.Reader())) return false;
-    // Re-issue the captured voice sends on the fresh render slot (mirror +
-    // command + high-water). Bus destruction scrubs tombstoned targets from
-    // the captured record before a return; command room was reserved above.
-    for (std::uint32_t s = 0; s < engine.config.voiceSendSlots &&
-                              s < rec.voiceSends.size();
-         ++s) {
-        if (rec.voiceSends[s].active) {
-            ApplyVoiceSendLive(engine, newRender, s,
-                               rec.voiceSends[s].targetBusIndex,
-                               rec.voiceSends[s].levelDb, commands);
-        }
-    }
-    if (commands.Overflowed() || !variableCut.BindVoice(newRender) ||
-        !engine.voices.CommitPreparedVoice(newRender)) return false;
+    if (InstallFutureVoiceSends(engine, newRender, rec.voiceSends, rec.preparedSends) != VN_OK) return false;
+    if (commands.Overflowed() || commands.Prepare() != VN_OK ||
+        !variableCut.BindVoice(newRender) || !engine.voices.CommitPreparedVoice(newRender)) return false;
     engine.params.CommitStagedVoiceBindings(newRender);
     rec.preparedBindings.clear();
     variableCut.Commit();
@@ -78549,7 +78668,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
                                             : nullptr,
                     rec.facts.outputBusVolumeDb);
 
-    commands.VerifyComplete();
+    commands.Publish();
     variableCut.ReleaseCalendar();
     preparationGuard.armed = false;
     engine.ledger.ReturnPark(ledgerSlot, newRender);
@@ -79279,6 +79398,22 @@ void RunAudibilityPass(harken::Engine& engine) {
 // scratch is logic-side heap).
 using ProspectiveTopologyView = harken::ProspectiveTopologyView;
 
+template<class Visitor>
+void ForEachTopologySend(const harken::Engine& engine,
+    const ProspectiveTopologyView* prospective, std::uint32_t source, Visitor&& visit,
+    const harken::BusSendTable* sendsOverride = nullptr) {
+    if (sendsOverride != nullptr) {
+        for (const auto& edge : sendsOverride->From(source))
+            visit(edge, sendsOverride->IndexOf(edge));
+    } else if (prospective != nullptr) {
+        prospective->ForEachSend(source, engine.config.busSendSlotsPerBus,
+            std::forward<Visitor>(visit));
+    } else {
+        for (const auto& edge : engine.busSends.From(source))
+            visit(edge, engine.busSends.IndexOf(edge));
+    }
+}
+
 bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
                    std::uint32_t extraTo, std::uint32_t* order,
                    std::uint32_t treeChild = harken::kInvalidBusIndex,
@@ -79300,7 +79435,9 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
                    std::uint32_t excludedBusCount = 0,
                    const std::uint8_t* removedSendSlots = nullptr,
                    std::uint32_t removedSendSlotCount = 0,
-                   const ProspectiveTopologyView* prospective = nullptr) {
+                   const ProspectiveTopologyView* prospective = nullptr,
+                   harken::TopologyBuildScratch* buildScratch = nullptr,
+                   const harken::BusSendTable* sendsOverride = nullptr) {
     const std::uint32_t n =
         prospective != nullptr ? prospective->busCount
                                : engine.buses.BusCount();
@@ -79342,6 +79479,13 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
         std::fill_n(feederCount, n, 0u);
         std::fill_n(emittedFeeders, n, 0u);
         std::fill_n(emitted, n, static_cast<std::uint8_t>(0));
+    } else if (buildScratch != nullptr) {
+        feederCount = buildScratch->feeders.data();
+        emittedFeeders = buildScratch->emittedFeeders.data();
+        emitted = buildScratch->emitted.data();
+        std::fill_n(feederCount, n, 0u);
+        std::fill_n(emittedFeeders, n, 0u);
+        std::fill_n(emitted, n, static_cast<std::uint8_t>(0));
     } else {
         localFeederCount.assign(n, 0);
         localEmittedFeeders.assign(n, 0);
@@ -79367,22 +79511,12 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
         }
     }
     auto forEachSendTarget = [&](std::uint32_t from, auto&& fn) {
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t s = 0; s < slots; ++s) {
-            const std::uint32_t flat = base + s;
-            if (removedSendSlots != nullptr &&
-                flat < removedSendSlotCount &&
-                removedSendSlots[flat] != 0) {
-                continue;
-            }
-            const std::uint32_t to =
-                prospective != nullptr
-                    ? prospective->sendTargets[base + s]
-                    : engine.busSendAdj[base + s];
-            if (to != harken::kInvalidBusIndex && !excluded(to)) {
-                fn(to);
-            }
-        }
+        ForEachTopologySend(engine, prospective, from, [&](const harken::BusSendRecord& edge,
+                                                         std::uint32_t index) {
+            if (removedSendSlots != nullptr && index < removedSendSlotCount &&
+                removedSendSlots[index] != 0) return;
+            if (!excluded(edge.target)) fn(edge.target);
+        }, sendsOverride);
         if (from == extraFrom && extraTo != harken::kInvalidBusIndex &&
             !excluded(extraTo)) {
             fn(extraTo);
@@ -79539,12 +79673,18 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
               const std::uint8_t* removedSendSlots = nullptr,
               std::uint32_t removedSendSlotCount = 0,
               const ProspectiveTopologyView* prospective = nullptr,
-              harken::TopologyPlanPool* destinationPool = nullptr) {
+              harken::TopologyPlanPool* destinationPool = nullptr,
+              const harken::BusSendTable* sendsOverride = nullptr) {
     harken::TopologyPlanPool& plans =
         destinationPool != nullptr ? *destinationPool : engine.topologyPlans;
     const std::uint32_t n =
         prospective != nullptr ? prospective->busCount
                                : engine.buses.BusCount();
+    plans.PreparePlanBusCapacity(planIndex, n);
+    harken::TopologyBuildScratch scratch;
+    scratch.feeders.resize(n);
+    scratch.emittedFeeders.resize(n);
+    scratch.emitted.resize(n);
     const std::uint32_t slots = engine.config.busSendSlotsPerBus;
     const auto excluded = [excludedBuses, excludedBusCount](
                               std::uint32_t index) {
@@ -79560,38 +79700,40 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                         clearTargetBusIndex, clearTargetEffectSlot,
                         routeUpserts, routeUpsertCount, routeRemovals,
                         routeRemovalCount, excludedBuses, excludedBusCount,
-                        removedSendSlots, removedSendSlotCount, prospective);
+                        removedSendSlots, removedSendSlotCount, prospective,
+                        &scratch, sendsOverride);
     plans.SetOrderCount(planIndex, liveCount);
+    const auto included = [&](std::uint32_t from, const harken::BusSendRecord& edge,
+                              std::uint32_t index) {
+        return !(removedSendSlots != nullptr && index < removedSendSlotCount &&
+                 removedSendSlots[index] != 0) && !excluded(from) && !excluded(edge.target);
+    };
+    auto& sendCounts = scratch.feeders;
+    std::fill(sendCounts.begin(), sendCounts.end(), 0u);
+    for (std::uint32_t from = 0; from < n; ++from)
+        ForEachTopologySend(engine, prospective, from, [&](const auto& edge, auto index) {
+            if (included(from, edge, index)) ++sendCounts[from];
+        }, sendsOverride);
+    if (!plans.PrepareSendRows(planIndex, std::span(sendCounts.data(), n)))
+        throw std::bad_alloc{};
     for (std::uint32_t from = 0; from < n; ++from) {
-        std::uint32_t* row = plans.SendTargetsRow(planIndex, from);
-        float* prepared = plans.PreparedSendLevelsRow(planIndex, from);
-        std::uint8_t* apply = plans.SendLevelApplyRow(planIndex, from);
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t s = 0; s < slots; ++s) {
-            const std::uint32_t flat = base + s;
-            const std::uint32_t target =
-                prospective != nullptr
-                    ? prospective->sendTargets[flat]
-                    : engine.busSendAdj[flat];
-            const bool removed =
-                (removedSendSlots != nullptr &&
-                 flat < removedSendSlotCount &&
-                 removedSendSlots[flat] != 0) ||
-                excluded(from) ||
-                (target != harken::kInvalidBusIndex && excluded(target));
-            row[s] = removed ? harken::kInvalidBusIndex
-                             : target; // sentinels coincide
-            prepared[s] =
-                prospective != nullptr &&
-                        prospective->sendLevels != nullptr
-                    ? prospective->sendLevels[flat]
-                    : 0.0f;
-            apply[s] =
-                prospective != nullptr &&
-                        prospective->sendLevelApply != nullptr
-                    ? prospective->sendLevelApply[flat]
-                    : 0;
-        }
+        auto* row = plans.SendTargetsRow(planIndex, from);
+        auto* identities = plans.SendSlotsRow(planIndex, from);
+        auto* generations = plans.SendGenerationsRow(planIndex, from);
+        auto* prepared = plans.PreparedSendLevelsRow(planIndex, from);
+        auto* apply = plans.SendLevelApplyRow(planIndex, from);
+        auto* ramps = plans.SendLevelRampMsRow(planIndex, from);
+        std::uint32_t used = 0;
+        ForEachTopologySend(engine, prospective, from, [&](const auto& edge, auto index) {
+            if (!included(from, edge, index)) return;
+            row[used] = edge.target;
+            identities[used] = edge.slot;
+            generations[used] = edge.generation;
+            prepared[used] = edge.preparedGain;
+            apply[used] = (prospective != nullptr || sendsOverride != nullptr) && edge.applyLevel ? 1 : 0;
+            ramps[used] = (prospective != nullptr || sendsOverride != nullptr) ? edge.rampMs : 0;
+            ++used;
+        }, sendsOverride);
     }
     const auto prepareSendLevels =
         [&](const std::vector<harken::PackBusSendEntry>* sends) {
@@ -79620,7 +79762,7 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                 std::uint32_t* row = plans.SendTargetsRow(planIndex, from);
                 float* prepared = plans.PreparedSendLevelsRow(planIndex, from);
                 std::uint8_t* apply = plans.SendLevelApplyRow(planIndex, from);
-                for (std::uint32_t s = 0; s < slots; ++s) {
+                for (std::uint32_t s = 0; s < sendCounts[from]; ++s) {
                     if (row[s] != to) {
                         continue;
                     }
@@ -79636,21 +79778,15 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
     prepareSendLevels(preparedSendLevelsA);
     prepareSendLevels(preparedSendLevelsB);
     std::uint32_t* layouts = plans.OutputLayoutData(planIndex);
-    float* coeffs = plans.DownmixCoeffsData(planIndex);
+    plans.SetMixLayout(planIndex, engine.config.mixChannelLayout);
     const std::uint32_t liveBusCount = engine.buses.BusCount();
     for (std::uint32_t i = 0; i < n; ++i) {
         if (i < liveBusCount) {
             layouts[i] = engine.busOutputLayout[i];
-            std::memcpy(coeffs + static_cast<std::size_t>(i) * 64,
-                        engine.busDownmixCoeffs.data() +
-                            static_cast<std::size_t>(i) * 64,
-                        64 * sizeof(float));
+            plans.SetCustomDownmix(planIndex, i, engine.CustomDownmix(i));
         } else {
             layouts[i] = engine.config.mixChannelLayout;
-            harken::DefaultDownmixMatrix(
-                engine.config.mixChannelLayout,
-                engine.config.mixChannelLayout,
-                coeffs + static_cast<std::size_t>(i) * 64);
+            plans.SetCustomDownmix(planIndex, i, {});
         }
     }
     // Tree parents and slot liveness ride every publish like the fold config:
@@ -79683,6 +79819,21 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
     }
     plans.SetSlotCount(planIndex, n);
     plans.SetSignals(planIndex, engine.acceptedSignalPlan);
+    if (&plans == &engine.topologyPlans &&
+        !engine.mixer.PrepareVoiceBacking(engine.voices.ConstructedSlotCount())) throw std::bad_alloc{};
+}
+
+bool PrepareBusSendTopology(harken::Engine& engine, std::uint32_t index,
+                            const harken::BusSendTable& sends) {
+    try {
+        FillPlan(engine, index, nullptr, false, harken::kInvalidBusIndex, UINT32_MAX,
+            nullptr, 0, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr, 0,
+            nullptr, nullptr, &sends);
+        return true;
+    } catch (...) {
+        engine.topologyPlans.Recycle(index);
+        return false;
+    }
 }
 
 // Reserves the two resources a structural change needs: one free plan slot and
@@ -79707,7 +79858,7 @@ std::uint32_t ReserveTopologyChange(harken::Engine& engine,
         ++engine.topologyRefusedCount;
         return harken::kInvalidTopologyPlanIndex;
     }
-    const std::uint32_t planIndex = engine.topologyPlans.Acquire();
+    const std::uint32_t planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         // Plan-pool shortage: clears after Vn_Update drains plan retires.
         ++engine.topologyRefusedCount;
@@ -79717,37 +79868,68 @@ std::uint32_t ReserveTopologyChange(harken::Engine& engine,
     return planIndex;
 }
 
-// Fills the reserved plan and pushes the single atomic plan-swap command. For a
-// connect, connectFrom/To/level ride the same record so the edge's level snaps
-// with the swap; a create or disconnect passes connectFrom == kInvalidBusIndex.
-void PublishPlan(harken::Engine& engine, std::uint32_t planIndex,
-                 std::uint32_t connectFrom, std::uint32_t connectTo,
-                 float connectLevelDb,
-                 std::uint32_t dynamicRoutePlanIndex =
-                     harken::kInvalidDynamicRoutePlanIndex) {
-    FillPlan(engine, planIndex);
-    harken::CommandRecord cmd{};
-    cmd.opcode = harken::kOpcodeSetBusTopologyPlan;
-    cmd.payload.setBusTopologyPlan.planIndex = planIndex;
-    cmd.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        dynamicRoutePlanIndex;
-    cmd.payload.setBusTopologyPlan.connectFrom = connectFrom;
-    cmd.payload.setBusTopologyPlan.connectTo = connectTo;
-    cmd.payload.setBusTopologyPlan.connectLevelDb = connectLevelDb;
-    cmd.payload.setBusTopologyPlan.connectFromGeneration =
-        connectFrom == harken::kInvalidBusIndex
-            ? 0
-            : engine.buses.GenerationAt(connectFrom);
-    cmd.payload.setBusTopologyPlan.connectToGeneration =
-        connectTo == harken::kInvalidBusIndex
-            ? 0
-            : engine.buses.GenerationAt(connectTo);
-    cmd.payload.setBusTopologyPlan.acceptedGraphRevision =
-        ++engine.acceptedBusTopologyRevision;
-    cmd.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine.commands.TryPush(cmd); // admission verified in Reserve
-    ++engine.topologyPlanCount;
-}
+// Own the existing plan slot and queue proof through preparation. All fallible
+// work precedes logical edits; publication consumes the already frozen batch.
+class PreparedTopologyPublication {
+public:
+    PreparedTopologyPublication(harken::Engine& engine, std::uint32_t index,
+        std::uint32_t ownedDynamicPlan = harken::kInvalidDynamicRoutePlanIndex)
+        : engine_(engine), index_(index), ownedDynamicPlan_(ownedDynamicPlan) {}
+    ~PreparedTopologyPublication() {
+        proof_.Release();
+        engine_.buses.DrainActivities();
+        engine_.commands.CancelReservedBatch(&reservation_);
+        if (index_ != harken::kInvalidTopologyPlanIndex) engine_.topologyPlans.Recycle(index_);
+        if (ownedDynamicPlan_ != harken::kInvalidDynamicRoutePlanIndex)
+            engine_.dynamicRoutes.AbandonPlan(ownedDynamicPlan_);
+    }
+    bool Prepare(std::span<const harken::CommandRecord> following = {},
+                 std::uint32_t dynamicPlan = harken::kInvalidDynamicRoutePlanIndex) {
+        if (following.size() >= UINT32_MAX || engine_.acceptedBusTopologyRevision == UINT64_MAX) return false;
+        std::vector<harken::CommandRecord> commands(1);
+        auto& command = commands.front();
+        command.opcode = harken::kOpcodeSetBusTopologyPlan;
+        command.payload.setBusTopologyPlan.planIndex = index_;
+        command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = dynamicPlan;
+        command.payload.setBusTopologyPlan.connectFrom = harken::kInvalidBusIndex;
+        command.payload.setBusTopologyPlan.connectTo = harken::kInvalidBusIndex;
+        revision_ = engine_.acceptedBusTopologyRevision + 1;
+        command.payload.setBusTopologyPlan.acceptedGraphRevision = revision_;
+        count_ = static_cast<std::uint32_t>(following.size() + 1);
+        command.payload.setBusTopologyPlan.batchCommandCount = count_;
+        commands.insert(commands.end(), following.begin(), following.end());
+        return engine_.commands.ReserveBatch(count_, &reservation_) &&
+            harken::PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_), reservation_, commands, proof_);
+    }
+    bool PrepareEmbedded(const harken::CommandRecord& command) noexcept {
+        const auto index = command.opcode == harken::kOpcodeSetBusEffect
+            ? command.payload.setBusEffect.topologyPlanIndex
+            : command.opcode == harken::kOpcodeClearBusEffect
+                ? command.payload.clearBusEffect.topologyPlanIndex : harken::kInvalidTopologyPlanIndex;
+        if (index == harken::kInvalidTopologyPlanIndex || index != index_ || proof_.Valid()) return false;
+        count_ = 1;
+        return engine_.commands.ReserveBatch(count_, &reservation_) &&
+            harken::PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_),
+                reservation_, {&command, 1}, proof_);
+    }
+    void Publish() noexcept {
+        assert(proof_.Valid() && (revision_ == 0 || revision_ == engine_.acceptedBusTopologyRevision + 1));
+        if (revision_ != 0) engine_.acceptedBusTopologyRevision = revision_;
+        const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
+        assert(published.Count() == count_);
+        (void)published;
+        ++engine_.topologyPlanCount;
+        index_ = harken::kInvalidTopologyPlanIndex;
+        ownedDynamicPlan_ = harken::kInvalidDynamicRoutePlanIndex;
+    }
+private:
+    harken::Engine& engine_;
+    std::uint32_t index_, count_ = 0;
+    std::uint32_t ownedDynamicPlan_;
+    std::uint64_t revision_ = 0;
+    harken::CommandQueue::BatchReservation reservation_{};
+    harken::CommandQueue::PreparedBatchProof proof_;
+};
 
 } // namespace
 
@@ -79818,7 +80000,7 @@ void ResetBusLogicSlot(harken::Engine& engine,
                        std::uint32_t busIndex,
                        std::uint32_t retiringGeneration,
                        std::uint32_t newGeneration) noexcept {
-    if (busIndex >= engine.config.maxBuses) {
+    if (busIndex >= engine.BusCapacity()) {
         return;
     }
     if (retiringGeneration != 0) {
@@ -79831,11 +80013,14 @@ void ResetBusLogicSlot(harken::Engine& engine,
     if (newGeneration != 0) {
         engine.busTargets.InitializeBusGeneration(busIndex, newGeneration);
     }
-    engine.busEffectSlotTypes[busIndex].fill(harken::kEffectTypeNone);
-    engine.busEffectInstanceRefs[busIndex].fill(harken::EffectInstanceRef{});
-    engine.busEffectOwnerCookies[busIndex].fill(0);
+    engine.busEffects.ClearBus(busIndex);
+    engine.SetBusEffectRefs(busIndex, {});
+
+    engine.busFilterSettings.Clear(busIndex);
+    engine.busVolumePublished[busIndex] = 0;
+
     if (busIndex < engine.busEffectSlotBypass.size()) {
-        engine.busEffectSlotBypass[busIndex].fill(0);
+        engine.busEffectSlotBypass[busIndex] = 0;
     }
     engine.busFaderAfterSlots[busIndex] = engine.config.fxSlotsPerBus;
     engine.busOwnerCookies[busIndex] = 0;
@@ -79843,21 +80028,9 @@ void ResetBusLogicSlot(harken::Engine& engine,
     engine.busMuted[busIndex] = 0;
     engine.busSoloed[busIndex] = 0;
     engine.busOutputLayout[busIndex] = engine.config.mixChannelLayout;
-    harken::DefaultDownmixMatrix(
-        engine.config.mixChannelLayout, engine.config.mixChannelLayout,
-        engine.busDownmixCoeffs.data() +
-            static_cast<std::size_t>(busIndex) * 64);
+    engine.busCustomDownmix.erase(busIndex);
 
-    const std::uint32_t base =
-        busIndex * engine.config.busSendSlotsPerBus;
-    for (std::uint32_t slot = 0;
-         slot < engine.config.busSendSlotsPerBus; ++slot) {
-        const std::uint32_t flat = base + slot;
-        engine.busSendAdj[flat] = harken::kInvalidBusIndex;
-        engine.busSendOwnerCookies[flat] = 0;
-        engine.busSendTopologyOwnerIds[flat] = 0;
-        engine.busSendLevelDb[flat] = 0.0f;
-    }
+    engine.busSends.EraseIf([&](const auto& edge) { return edge.source == busIndex; });
 }
 
 namespace {
@@ -79907,14 +80080,7 @@ bool SameTimelineRoutingIdentity(const EngineTimelineVoiceInstallIdentity& a,
         x.subjectGuidHigh != y.subjectGuidHigh || x.subjectGuidLow != y.subjectGuidLow ||
         x.trackId != y.trackId || x.clipId != y.clipId || x.subjectId != y.subjectId ||
         x.loopIteration != y.loopIteration || x.occurrenceOrdinal != y.occurrenceOrdinal) return false;
-    for (std::size_t i = 0; i < a.voiceSends.size(); ++i) {
-        const auto& xSend = a.voiceSends[i];
-        const auto& ySend = b.voiceSends[i];
-        if (xSend.active != ySend.active || xSend.targetBusIndex != ySend.targetBusIndex ||
-            xSend.targetBusGeneration != ySend.targetBusGeneration ||
-            std::memcmp(&xSend.levelDb, &ySend.levelDb, sizeof(float)) != 0) return false;
-    }
-    return true;
+    return a.voiceSends == b.voiceSends;
 }
 
 bool CandidateRetainsRef(const Engine& engine, const TopologyPlanView& candidate,
@@ -79929,6 +80095,157 @@ bool ValidRoutingCandidate(const TopologyPlanView& candidate) noexcept {
         candidate.busIds != nullptr && candidate.generations != nullptr && candidate.migrationTargets != nullptr;
 }
 
+}
+
+bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
+    std::span<const CommandRecord> prospective, BusActivityRoots& out) noexcept {
+    if (!topology.valid || topology.slotCount == 0 || topology.alive == nullptr ||
+        topology.generations == nullptr || !topology.alive[0]) return false;
+    try {
+        BusActivityRoots next;
+        const auto* signals = topology.signals;
+        std::vector<std::uint32_t> matches(signals != nullptr ? signals->NodeCount() : 0);
+        const auto valid = [&](BusSlotRef ref) {
+            return ref.index < topology.slotCount && topology.alive[ref.index] &&
+                topology.generations[ref.index] == ref.generation;
+        };
+        const auto dryTarget = [&](BusSlotRef ref) {
+            if (valid(ref)) return ref;
+            const auto migrated = ref.index < topology.slotCount && topology.migrationTargets != nullptr
+                ? topology.migrationTargets[ref.index] : 0u;
+            const auto index = migrated < topology.slotCount && topology.alive[migrated] ? migrated : 0u;
+            return BusSlotRef{index, topology.generations[index]};
+        };
+        const auto member = [&](std::span<const PlaybackPathRow> path) {
+            const auto count = signals != nullptr ? signals->MatchMember(path, matches) : 0u;
+            if (count == UINT32_MAX) return UINT32_MAX;
+            next.signals.insert(next.signals.end(), matches.begin(), matches.begin() + count);
+            return count;
+        };
+        const auto route = [&](BusSlotRef ref, std::uint32_t members, bool dry) {
+            if (dry) ref = dryTarget(ref);
+            else if (!valid(ref)) return;
+            next.buses.push_back(ref);
+            // MatchMember preserves the actual inner-to-outer carrier order.
+            if (members != 0) next.members.push_back({matches[members - 1], ref});
+        };
+        const auto installed = [&](VnVoiceHandle render, BusSlotRef dry, const VoiceSendConfigs& sends) {
+            std::uint32_t count = 0;
+            const auto slot = static_cast<std::uint32_t>(render);
+            if (signals != nullptr && render != 0 && slot < engine.playbackPaths.size() &&
+                engine.playbackPaths[slot].voiceInstance == render) {
+                const auto path = engine.playbackPaths[slot].Capture();
+                count = member({path.path.rows, path.path.rowCount});
+                if (count == UINT32_MAX) return false;
+            }
+            route(dry, count, true);
+            for (const auto& send : sends) if (send.active)
+                route({send.targetBusIndex, send.targetBusGeneration}, count, false);
+            return true;
+        };
+        const auto prepared = [&](VnVoiceHandle render) {
+            VoicePool::PreparedRoutingV1 routing;
+            std::span<const PlaybackPathRow> path;
+            if (!engine.voices.CapturePreparedRoutingV1(render, &routing, &path)) return false;
+            const auto count = member(path);
+            if (count == UINT32_MAX) return false;
+            route({routing.busIndex, routing.busGeneration}, count, true);
+            for (const auto& send : routing.SendRoutes()) if (send.active)
+                route({send.busIndex, send.busGeneration}, count, false);
+            return true;
+        };
+        for (std::size_t slot = 0; slot < engine.voicePlayFacts.size(); ++slot) {
+            const auto& facts = engine.voicePlayFacts[slot];
+            if (facts.valid && facts.renderHandle != 0 && engine.voices.IsAlive(facts.renderHandle) &&
+                !installed(facts.renderHandle, {facts.busIndex, facts.busGeneration}, engine.voiceSendConfig[slot]))
+                return false;
+        }
+        for (std::size_t slot = 0; slot < engine.timelineVoiceInstallIdentities.size(); ++slot) {
+            const auto& identity = engine.timelineVoiceInstallIdentities[slot];
+            if (identity.renderHandle != 0 && engine.voices.IsAlive(identity.renderHandle) &&
+                !installed(identity.renderHandle, {identity.busIndex, identity.busGeneration}, engine.voiceSendConfig[slot]))
+                return false;
+        }
+        bool ok = true;
+        engine.ledger.ForEachPending([&](std::uint32_t slot, VnVoiceHandle handle) {
+            const auto& pending = engine.pendingStarts[slot];
+            if (pending.active && pending.publicHandle == handle)
+                ok &= installed(0, {pending.busIndex, pending.busGeneration}, pending.voiceSends);
+        });
+        engine.ledger.ForEachParked([&](std::uint32_t slot, VnVoiceHandle) {
+            const auto& park = engine.parkRecords[slot];
+            if (park.active)
+                ok &= installed(park.facts.renderHandle, {park.facts.busIndex, park.facts.busGeneration}, park.voiceSends);
+        });
+        if (!ok || !VisitPreparedRoutingOwners(engine,
+            [&](RoutingStore, std::uint32_t, std::uint32_t, std::uint64_t,
+                EnginePlayableServiceRow*, EnginePreparedTimelineVoiceStart& start) {
+                return prepared(start.renderHandle);
+            })) return false;
+        struct SliceRoots { const TopologyPlanView& topology; BusActivityRoots& roots; };
+        SliceRoots sliceRoots{topology, next};
+        if (!engine.variableSlices.VisitPendingTargets(&sliceRoots,
+            [](void* context, VariableSliceRef, const VariableTargetLocator& target) {
+                auto& data = *static_cast<SliceRoots*>(context);
+                if (target.scope != VariableTargetScope::Bus && target.scope != VariableTargetScope::BusEffect)
+                    return true;
+                if (target.object >= data.topology.slotCount) return true;
+                const auto bus = static_cast<std::uint32_t>(target.object);
+                if (data.topology.alive[bus] && data.topology.generations[bus] == target.objectGeneration)
+                    data.roots.buses.push_back({bus, target.objectGeneration});
+                return true;
+            })) return false;
+        const auto setting = [&](std::uint32_t bus, std::uint32_t generation) {
+            if (bus < topology.slotCount)
+                route({bus, generation != 0 ? generation : topology.generations[bus]}, 0, false);
+        };
+        for (const auto& command : prospective) {
+            switch (command.opcode) {
+            case kOpcodeSetBusVolume:
+                setting(command.payload.setBusVolume.busIndex, command.payload.setBusVolume.busGeneration); break;
+            case kOpcodeSetBusFilter:
+                setting(command.payload.setBusFilter.busIndex, command.payload.setBusFilter.busGeneration); break;
+            case kOpcodeSetBusSendLevel:
+                setting(command.payload.setBusSendLevel.fromBus, command.payload.setBusSendLevel.fromGeneration);
+                setting(command.payload.setBusSendLevel.toBus, command.payload.setBusSendLevel.toGeneration); break;
+            case kOpcodeSetBusEffect:
+                setting(command.payload.setBusEffect.busIndex, command.payload.setBusEffect.busGeneration); break;
+            case kOpcodeClearBusEffect:
+                setting(command.payload.clearBusEffect.busIndex, command.payload.clearBusEffect.busGeneration); break;
+            case kOpcodeSetBusEffectParam:
+                if (command.flags == kCommandFlagPreviewBusEffect) {
+                    const auto bus = BusSlotRef::FromPacked(command.payload.previewBusEffectControl.host);
+                    setting(bus.index, bus.generation);
+                } else if (command.flags == kCommandFlagPreparedCompressor) {
+                    const auto bus = BusSlotRef::FromPacked(command.payload.setCompressorEffectParam.host);
+                    setting(bus.index, bus.generation);
+                } else setting(command.payload.setBusEffectParam.busIndex, command.payload.setBusEffectParam.busGeneration);
+                break;
+            case kOpcodeSetBusEffectBypass:
+                if (command.flags == kCommandFlagPreviewBusEffect) {
+                    const auto bus = BusSlotRef::FromPacked(command.payload.previewBusEffectControl.host);
+                    setting(bus.index, bus.generation);
+                } else setting(command.payload.setBusEffectBypass.busIndex, command.payload.setBusEffectBypass.busGeneration);
+                break;
+            case kOpcodeSetBusFaderPoint:
+                setting(command.payload.setBusFaderPoint.busIndex, command.payload.setBusFaderPoint.busGeneration); break;
+            default: break;
+            }
+            if (command.opcode == kOpcodePlay &&
+                command.payload.play.batch.batchKind != PlayLedBatchKind::TimelineControlArm &&
+                !prepared(command.payload.play.handle)) return false;
+            if (command.opcode == kOpcodeSetVoiceSend) {
+                if ((command.flags & kCommandFlagVoiceSendSet) == 0) return false;
+                const auto* set = reinterpret_cast<const VoiceSendSet*>(command.payload.setVoiceSend.setAddress);
+                if (set == nullptr || set->preparedRoutes == nullptr ||
+                    set->host != command.payload.setVoiceSend.handle) return false;
+                for (const auto& send : *set->preparedRoutes) if (send.active)
+                    route({send.busIndex, send.busGeneration}, 0, false);
+            }
+        }
+        out = std::move(next);
+        return true;
+    } catch (...) { return false; }
 }
 
 bool ValidatePreparedTimelineVoiceStartRoutingV1(Engine& engine,
@@ -79970,34 +80287,22 @@ bool ValidatePreparedTimelineVoiceStartRoutingV1(Engine& engine,
             command.payload.play.batch.batchCommandCount != 1 ||
             command.payload.play.batch.armToken != ((static_cast<std::uint64_t>(resource.arm.generation) << 32) | resource.arm.slot)) return false;
     }
-    std::array<bool, kMaxVoiceSendSlots> represented{};
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-        const auto& send = identity.voiceSends[i];
-        if (send.active && !engine.buses.LogicRefMatches({send.targetBusIndex, send.targetBusGeneration})) return false;
-        if (routing.sends[i].active) {
-            if (!send.active || send.targetBusIndex != routing.sends[i].busIndex ||
-                send.targetBusGeneration != routing.sends[i].busGeneration) return false;
-            represented[i] = true;
-        }
+    const auto routes = routing.SendRoutes();
+    std::size_t active = 0;
+    for (const auto& route : routes) {
+        if (!route.active) continue;
+        const auto* send = identity.voiceSends.Find(route.slot);
+        if (send == nullptr || !send->active || send->targetBusIndex != route.busIndex ||
+            send->targetBusGeneration != route.busGeneration || send->incarnation != route.incarnation ||
+            !engine.buses.LogicRefMatches({route.busIndex, route.busGeneration})) return false;
+        ++active;
     }
-    for (std::uint32_t i = 1; i < prepared.commandCount; ++i) {
-        const auto& command = prepared.commands[i];
-        if (command.opcode == kOpcodeSetVoiceSend) {
-            const auto& send = command.payload.setVoiceSend;
-            if (send.handle != prepared.renderHandle || send.sendSlot >= kMaxVoiceSendSlots) return false;
-            const auto& expected = identity.voiceSends[send.sendSlot];
-            if (!expected.active || expected.targetBusIndex != send.targetBusIndex ||
-                expected.targetBusGeneration != send.targetBusGeneration || !std::isfinite(send.levelDb)) return false;
-            represented[send.sendSlot] = true;
-        } else if (command.opcode == kOpcodeClearVoiceSend) {
-            const auto& send = command.payload.clearVoiceSend;
-            if (send.handle != prepared.renderHandle || send.sendSlot >= kMaxVoiceSendSlots ||
-                identity.voiceSends[send.sendSlot].active) return false;
-        }
-    }
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-        if (identity.voiceSends[i].active && !represented[i]) return false;
-    }
+    if (active != identity.voiceSends.size()) return false;
+    // Initial membership is owned by the prepared Voice; no per-Send command
+    // may bypass that exact routing proof.
+    for (std::uint32_t i = 1; i < prepared.commandCount; ++i)
+        if (prepared.commands[i].opcode == kOpcodeSetVoiceSend ||
+            prepared.commands[i].opcode == kOpcodeClearVoiceSend) return false;
     return true;
 }
 
@@ -80007,6 +80312,8 @@ bool PrepareUnpublishedTimelineRoutingV1(Engine& engine, const TopologyPlanView&
     const auto domain = engine.projectGenerationReservationDomain;
     if (domain == nullptr || !domain->live || domain->liveEngine != &engine) return false;
     out.rows.clear();
+    out.sendMirrors = PrepareVoiceSendMirrorMigrationV1(engine,
+        candidate.generations, candidate.alive, candidate.slotCount);
     std::vector<VnVoiceHandle> handles;
     const bool captured = VisitPreparedRoutingOwners(engine,
         [&](RoutingStore store, std::uint32_t outer, std::uint32_t index,
@@ -80049,23 +80356,15 @@ bool PrepareUnpublishedTimelineRoutingV1(Engine& engine, const TopologyPlanView&
             row.identityAfter.busGeneration = candidate.generations[target];
             row.changed = true;
         }
-        for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-            const auto& before = row.identityBefore.voiceSends[i];
-            if (before.active && !CandidateRetainsRef(engine, candidate, before.targetBusIndex, before.targetBusGeneration)) {
-                row.identityAfter.voiceSends[i] = {};
-                if (row.after.sends[i].active) row.after.sends[i] = {};
-                row.changed = true;
-            }
-        }
-        for (auto& command : row.nextCommands) {
-            if (command.opcode != kOpcodeSetVoiceSend) continue;
-            const auto slot = command.payload.setVoiceSend.sendSlot;
-            if (row.identityAfter.voiceSends[slot].active) continue;
-            CommandRecord replacement{};
-            replacement.opcode = kOpcodeClearVoiceSend;
-            replacement.payload.clearVoiceSend.handle = row.handle;
-            replacement.payload.clearVoiceSend.sendSlot = slot;
-            command = replacement;
+        row.identityAfter.voiceSends = row.identityBefore.voiceSends.Without([&](const auto& send) {
+            return !CandidateRetainsRef(engine, candidate, send.targetBusIndex, send.targetBusGeneration);
+        });
+        if (!(row.identityAfter.voiceSends == row.identityBefore.voiceSends)) {
+            const auto routes = row.before.SendRoutes();
+            auto changed = std::make_shared<std::vector<VoiceSendRoute>>(routes.begin(), routes.end());
+            for (auto& route : *changed)
+                if (!row.identityAfter.voiceSends.Find(route.slot)) route.active = false;
+            row.after.sends = std::move(changed);
             row.changed = true;
         }
         if (!engine.voices.CanCommitPreparedRoutingMigrationV1(row.handle, row.before, row.after)) return false;
@@ -80089,6 +80388,7 @@ bool CanCommitUnpublishedTimelineRoutingV1(Engine& engine, const TopologyPlanVie
     if (prepared.owner != &engine || domain == nullptr || !domain->live || domain->liveEngine != &engine ||
         domain->epoch != prepared.domainEpoch || prepared.graphRevision != engine.acceptedBusTopologyRevision ||
         !ValidRoutingCandidate(candidate)) return false;
+    if (!CanCommitVoiceSendMirrorMigrationV1(prepared.sendMirrors)) return false;
     std::size_t cursor = 0;
     const bool matched = VisitPreparedRoutingOwners(engine,
         [&](RoutingStore store, std::uint32_t outer, std::uint32_t index,
@@ -80127,6 +80427,7 @@ void CommitUnpublishedTimelineRoutingV1(Engine& engine,
         if (row.changed && !engine.voices.CanCommitPreparedRoutingMigrationV1(
                 row.handle, row.before, row.after)) return;
     }
+    CommitVoiceSendMirrorMigrationV1(engine, prepared.sendMirrors);
     for (const auto& row : prepared.rows) {
         if (!row.changed) continue;
         engine.voices.CommitPreparedRoutingMigrationV1(row.handle, row.before, row.after);
@@ -80149,59 +80450,143 @@ void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot) {
     if (slot >= engine.voiceSendConfig.size()) {
         return;
     }
-    for (harken::VoiceSendConfig& c : engine.voiceSendConfig[slot]) {
+    for (const harken::VoiceSendConfig& c : engine.voiceSendConfig[slot]) {
         if (c.active && engine.voiceSendActive > 0) {
             --engine.voiceSendActive;
         }
     }
-    engine.voiceSendConfig[slot].fill(harken::VoiceSendConfig{});
+    engine.voiceSendConfig[slot] = {};
 }
 
-// Applies one voice send to a live render slot: updates the logic mirror (and
-// the live count on a newly active slot), then pushes the set-voice-send
-// command. Shared by the live setter and the pending/return replays. Logic
-// thread only.
-template <typename Writer>
-void ApplyVoiceSendLiveWith(
-    harken::Engine& engine, VnVoiceHandle render, std::uint32_t sendSlot,
-    std::uint32_t targetBusIndex, float levelDb, Writer& writer) {
-    const std::uint32_t slot = static_cast<std::uint32_t>(render);
-    if (slot < engine.voiceSendConfig.size()) {
-        harken::VoiceSendConfig& c = engine.voiceSendConfig[slot][sendSlot];
-        if (!c.active) {
-            ++engine.voiceSendActive;
-        }
-        c.active = true;
-        c.targetBusIndex = targetBusIndex;
-        c.targetBusGeneration =
-            engine.buses.GenerationAt(targetBusIndex);
-        c.levelDb = levelDb;
+void ResetFreeVoiceSendMirror(harken::Engine& engine, std::uint32_t slot) {
+    // Only the logic thread claims slots. An old source's release observer
+    // cannot prove that the physical slot is still unoccupied after reuse.
+    std::uint32_t generation = 0;
+    if (slot < engine.voiceSendConfig.size() && !engine.voiceSendConfig[slot].empty() &&
+        engine.voices.FreeSlotGeneration(slot, &generation)) {
+        ResetVoiceSendMirror(engine, slot);
     }
-    harken::CommandRecord cmd{};
-    cmd.opcode = harken::kOpcodeSetVoiceSend;
-    cmd.payload.setVoiceSend.handle = render;
-    cmd.payload.setVoiceSend.sendSlot = sendSlot;
-    cmd.payload.setVoiceSend.targetBusIndex = targetBusIndex;
-    cmd.payload.setVoiceSend.targetBusGeneration =
-        engine.buses.GenerationAt(targetBusIndex);
-    cmd.payload.setVoiceSend.levelDb = levelDb;
-    (void)writer.Push(cmd);
+}
+
+std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine) {
+    if (engine.nextVoiceSendIncarnation == UINT64_MAX) throw std::bad_alloc{};
+    return engine.nextVoiceSendIncarnation++;
+}
+
+VnResult PrepareVoiceSendBacking(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, bool resetEdited, std::uint32_t editedSlot,
+    harken::VoiceSendSet** out) noexcept {
+    *out = nullptr;
+    try {
+    std::vector<harken::VoiceSendDefinition> definitions;
+    definitions.reserve(sends.size());
+    for (const auto& send : sends) {
+        if (!send.active) continue;
+        definitions.push_back({send.slot, send.targetBusIndex, send.targetBusGeneration,
+            send.levelDb, send.incarnation});
+    }
+    const auto status = engine.voices.PrepareVoiceSendSet(render, definitions, resetEdited, editedSlot, out);
+    if (status != VN_OK) return status;
+    if (!engine.mixer.PreparePreparedChannelBacking(engine.voices.ConstructedSlotCount())) {
+        engine.voices.CancelVoiceSendSet(**out);
+        *out = nullptr;
+        engine.voices.DrainVoiceSendSets();
+        return VN_DEVICE_ERROR;
+    }
+    return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
+}
+
+void CommitVoiceSendMirror(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends) noexcept {
+    const auto slot = static_cast<std::uint32_t>(render);
+    ResetVoiceSendMirror(engine, slot);
+    engine.voiceSendConfig[slot] = sends;
+    engine.voiceSendActive += sends.size();
     UpdateSendHighWater(engine);
 }
 
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                        std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                        float levelDb) {
-    CommandQueueWriter writer(engine);
-    ApplyVoiceSendLiveWith(engine, render, sendSlot, targetBusIndex, levelDb,
-                           writer);
+void CancelPreparedVoiceSends(harken::Engine& engine, harken::PreparedVoiceSends& prepared) noexcept {
+    if (prepared.set != nullptr) engine.voices.CancelVoiceSendSet(*prepared.set);
+    prepared = {};
 }
 
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                        std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                        float levelDb, AdmittedCommandWriter& writer) {
-    ApplyVoiceSendLiveWith(engine, render, sendSlot, targetBusIndex, levelDb,
-                           writer);
+VnResult PrepareFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept {
+    if (prepared.render == render && prepared.snapshot == sends) return VN_OK;
+    harken::VoiceSendSet* next = nullptr;
+    if (!sends.empty()) {
+        const auto status = PrepareVoiceSendBacking(engine, render, sends, false, 0, &next);
+        if (status != VN_OK) return status;
+    }
+    CancelPreparedVoiceSends(engine, prepared);
+    prepared.set = next;
+    prepared.render = render;
+    prepared.snapshot = sends;
+    return VN_OK;
+}
+
+VnResult InstallFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept {
+    if (prepared.render != render || !(prepared.snapshot == sends)) return VN_STALE_HANDLE;
+    if (prepared.set != nullptr && !engine.voices.InstallPreparedVoiceSendSet(render, *prepared.set))
+        return VN_STALE_HANDLE;
+    prepared = {};
+    CommitVoiceSendMirror(engine, render, sends);
+    return VN_OK;
+}
+
+VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends) {
+    if (sends.empty()) {
+        CommitVoiceSendMirror(engine, render, sends);
+        return VN_OK;
+    }
+    harken::VoiceSendSet* set = nullptr;
+    const auto status = PrepareVoiceSendBacking(engine, render, sends, false, 0, &set);
+    if (status != VN_OK) return status;
+    if (!engine.voices.InstallPreparedVoiceSendSet(render, *set)) {
+        engine.voices.CancelVoiceSendSet(*set);
+        return VN_STALE_HANDLE;
+    }
+    CommitVoiceSendMirror(engine, render, sends);
+    return VN_OK;
+}
+
+VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
+    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) noexcept {
+    try {
+    const auto slot = static_cast<std::uint32_t>(render);
+    auto candidate = engine.voiceSendConfig[slot].WithSet({true, targetBusIndex, levelDb,
+        engine.buses.GenerationAt(targetBusIndex), sendSlot, NextVoiceSendIncarnation(engine)});
+    harken::VoiceSendSet* set = nullptr;
+    const auto status = PrepareVoiceSendBacking(engine, render, candidate, true, sendSlot, &set);
+    if (status != VN_OK) return status;
+    harken::CommandRecord command{};
+    command.opcode = harken::kOpcodeSetVoiceSend;
+    command.flags = harken::kCommandFlagVoiceSendSet;
+    command.payload.setVoiceSend.handle = render;
+    command.payload.setVoiceSend.setAddress = reinterpret_cast<std::uint64_t>(set);
+    harken::CommandQueue::BatchReservation reservation;
+    harken::CommandQueue::PreparedBatchProof proof;
+    if (!engine.commands.ReserveBatch(1, &reservation)) {
+        engine.voices.CancelVoiceSendSet(*set);
+        return VN_BACKPRESSURE;
+    }
+    if (!engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof) ||
+        !harken::PrepareBusActivityWake(engine, reservation, {&command, 1}, proof)) {
+        proof.Release();
+        engine.commands.CancelReservedBatch(&reservation);
+        engine.voices.CancelVoiceSendSet(*set);
+        return VN_DEVICE_ERROR;
+    }
+    set->phase.store(harken::VoiceSendSet::Phase::Queued, std::memory_order_release);
+    const auto published = engine.commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == 1);
+    (void)published;
+    CommitVoiceSendMirror(engine, render, candidate);
+    return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
 }
 
 bool DynamicInfluenceReaches(
@@ -80232,13 +80617,7 @@ bool DynamicInfluenceReaches(
         if (bus != 0) {
             visit(engine.buses.ParentOf(bus));
         }
-        const std::uint32_t base = bus * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t target = engine.busSendAdj[base + slot];
-            if (target != harken::kInvalidBusIndex) {
-                visit(target);
-            }
-        }
+        for (const auto& edge : engine.busSends.From(bus)) visit(edge.target);
         bool replacementSeen = false;
         engine.dynamicRoutes.ForEachDefinition(
             [&](const harken::DynamicRouteDefinition& live) {
@@ -80410,7 +80789,7 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
     // cannot carry a prior Vn_SetBusOutputLayout into paired Preview.
     const std::uint32_t slotCount = plans.View(planIndex).slotCount;
     std::uint32_t* layouts = plans.OutputLayoutData(planIndex);
-    float* coeffs = plans.DownmixCoeffsData(planIndex);
+    plans.SetMixLayout(planIndex, engine.config.mixChannelLayout);
     float* volumeDb = plans.PreparedBusVolumeDbData(planIndex);
     float* outputVolumeDb = plans.PreparedBusOutputVolumeDbData(planIndex);
     std::uint32_t* volumeRampMs = plans.PreparedBusVolumeRampMsData(planIndex);
@@ -80424,8 +80803,7 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
             master ? engine.config.deviceChannelLayout
                    : engine.config.mixChannelLayout;
         layouts[i] = dstLayout;
-        harken::DefaultDownmixMatrix(engine.config.mixChannelLayout, dstLayout,
-                                    coeffs + static_cast<std::size_t>(i) * 64);
+        plans.SetCustomDownmix(planIndex, i, {});
         volumeDb[i] = 0.0f;
         outputVolumeDb[i] = 0.0f;
         volumeRampMs[i] = 0;
@@ -82520,15 +82898,14 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
         return VN_IN_USE;
     std::uint32_t slot = engine->config.fxSlotsPerBus;
     for (std::uint32_t index = 0; index < engine->config.fxSlotsPerBus; ++index) {
-        if (engine->busEffectSlotTypes[bus][index] == effectType
-            && engine->effectBank.ObjectIdentity(
-                engine->busEffectInstanceRefs[bus][index]).effectId == effectId) {
+        if (engine->busEffects.Get(bus, index).type == effectType
+            && engine->busEffects.Get(bus, index).identity.effectId == effectId) {
             slot = index;
             break;
         }
     }
     if (slot == engine->config.fxSlotsPerBus) return VN_UNKNOWN_ID;
-    if (engine->busEffectOwnerCookies[bus][slot] != ownerId) return VN_IN_USE;
+    if (engine->busEffects.Get(bus, slot).owner != ownerId) return VN_IN_USE;
     if (liveState && HasPreviewEffectAttachment(*engine, host))
         return VN_IN_USE;
     const auto generation = engine->buses.GenerationAt(bus);
@@ -82570,7 +82947,7 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
     }
     if (commandCount != 0 && (effectType == VN_EFFECT_COMPRESSOR || effectType == VN_EFFECT_THREE_BAND_TONE) &&
         engine->effectParamTargets.ForeignClaimInSlot(scope, bus, generation, slot)) return VN_BACKPRESSURE;
-    if (engine->busEffectSlotBypass[bus][slot] != bypass) {
+    if (engine->BusEffectBypass(bus, slot) != bypass) {
         auto& command = commands[commandCount++];
         command.opcode = kOpcodeSetBusEffectBypass;
         if (liveState) {
@@ -82589,9 +82966,11 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
         for (std::uint32_t i = 0; i < commandCount; ++i)
             commands[i].payload.previewBusEffectControl.revision = liveState->revision + i + 1;
     }
+    PreparedBusCommandBatch publication(*engine);
     if (commandCount != 0 && (!AtomicBatchFitsCapacities(*engine, commandCount)
         || !AdmitCommandBatch(*engine, commandCount)
-        || !engine->commands.TryPushBatch(commands.data(), commandCount))) return VN_BACKPRESSURE;
+        || !publication.Prepare({commands.data(), commandCount}))) return VN_BACKPRESSURE;
+    if (commandCount != 0) publication.Publish();
     for (std::uint32_t index = 0; index < parameterCount; ++index) {
         if (!changed[index]) continue;
         if (bound[index])
@@ -82605,8 +82984,8 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
         liveState->accepted[slot].releaseMs = parameters[1];
         liveState->accepted[slot].bypass = bypass != 0;
     }
-    engine->busEffectSlotBypass[bus][slot] = static_cast<std::uint8_t>(bypass);
-    const auto& reference = engine->busEffectInstanceRefs[bus][slot];
+    engine->SetBusEffectBypass(bus, slot, static_cast<std::uint8_t>(bypass));
+    const auto& reference = engine->BusEffectRefs(bus)[slot];
     MonitorEffectFacts facts{};
     facts.bypass01 = bypass;
     void* storage = engine->effectBank.StateFor(reference.type, reference.poolIndex);
@@ -82719,7 +83098,9 @@ VnResult SetPreviewVoiceEffectChain(std::uint64_t render,
     if (!engine->commands.ReserveBatch(1, &reservation)) return VN_BACKPRESSURE;
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
+    engine->voices.DrainVoiceSendSets();
     engine->buses.DrainPreviewEffectChains();
+    engine->buses.DrainActivities();
     EffectChainUpdate* update = nullptr;
     auto dspMask = parameterMask;
     for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i)
@@ -82830,9 +83211,11 @@ VnResult SetPreviewVoiceProperty(std::uint64_t render,
         for (std::uint32_t slot = 0; slot < path.sendCount; ++slot) {
             if (path.sends[slot].targetBusId != sendBusId) continue;
             const auto& pinned = engine->timelineVoiceInstallIdentities[static_cast<std::uint32_t>(render)].voiceSends;
-            if (slot >= pinned.size()) return VN_INVALID_ARG;
+            const auto* send = pinned.Find(slot);
+            if (send == nullptr) return VN_INVALID_ARG;
             if (!AdmitSingleCommand(*engine)) return VN_BACKPRESSURE;
-            ApplyVoiceSendLive(*engine, render, slot, pinned[slot].targetBusIndex, value);
+            const auto status = ApplyVoiceSendLive(*engine, render, slot, send->targetBusIndex, value);
+            if (status != VN_OK) return status;
             path.sends[slot].levelDb = value;
             return VN_OK;
         }
@@ -86064,9 +86447,24 @@ void CancelImmediateActionPreparedVariables(
 
 bool SealImmediateActionVariableSources(ImmediateActionPlan& plan) noexcept {
     if (plan.engine == nullptr) return false;
-    return plan.deferredParentFiring != 0
-        ? plan.engine->variables.SealPreparedActionSources(*plan.engine, plan.deferredChildIdentity)
-        : plan.engine->variables.SealPreparedActionSources(plan.originalSingleIssue);
+    auto& engine = *plan.engine;
+    const bool sealed = plan.deferredParentFiring != 0
+        ? engine.variables.SealPreparedActionSources(engine, plan.deferredChildIdentity)
+        : engine.variables.SealPreparedActionSources(plan.originalSingleIssue);
+    if (!sealed) { plan.result = VN_STALE_HANDLE; return false; }
+    bool ready = true;
+    if (plan.playCommandsReserved) {
+        ready = harken::PrepareBusActivityWake(engine, plan.playCommands,
+            {engine.actionPlayCommandScratch.data(), plan.playCommandCount}, engine.preparedVoiceCommandBatchProof);
+    } else if (plan.queueReplacementCommandsReserved) {
+        ready = harken::PrepareBusActivityWake(engine, plan.queueReplacementCommands,
+            {engine.playLedBatchScratch.data(), plan.queueReplacementCommandCount}, engine.preparedVoiceCommandBatchProof);
+    } else {
+        plan.busWake.emplace(engine);
+        ready = plan.busWake->PrepareWake();
+    }
+    if (!ready) plan.result = VN_BACKPRESSURE;
+    return ready;
 }
 
 bool FinishOrdinaryDeferredRollback(
@@ -104483,7 +104881,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
               singleSource) ||
           !PrepareVoiceCommandBatch(engine, &plan->playCommands,
               {engine.actionPlayCommandScratch.data(), plan->playCommandCount},
-              &plan->playCommandsDisposition)))) {
+              &plan->playCommandsDisposition, !plan->prepareActivityAfterSources)))) {
         (void)ReleaseImmediateActionStops(*plan);
         for (std::uint32_t prior = preparedCount;
              prior-- > 0;) {
@@ -107602,7 +108000,8 @@ bool ReserveImmediateActionCommandHead(void* opaque, std::uint32_t count) noexce
     if (plan->nativeMusicResetPlaysFirst && plan->playCommandCount != 0 && !plan->playCommandsReserved) {
         if (!ReserveVoiceCommandTransport(engine, plan->playCommandCount, &plan->playCommands) ||
             !PrepareVoiceCommandBatch(engine, &plan->playCommands,
-                {engine.actionPlayCommandScratch.data(), plan->playCommandCount}, &plan->playCommandsDisposition)) {
+                {engine.actionPlayCommandScratch.data(), plan->playCommandCount}, &plan->playCommandsDisposition,
+                !plan->prepareActivityAfterSources)) {
             engine.commands.CancelReservedBatch(&plan->playCommands);
             plan->result = VN_BACKPRESSURE;
             return false;
@@ -107624,8 +108023,10 @@ bool ReserveImmediateActionCommandHead(void* opaque, std::uint32_t count) noexce
     return matched;
 }
 
-void ReleaseImmediateActionCommandHead(void*, std::uint32_t) noexcept {
-    // Reverse bundle release returns the actual reservation through its owner.
+void ReleaseImmediateActionCommandHead(void* opaque, std::uint32_t) noexcept {
+    // Play/replacement reservations return through their original owner.
+    auto* plan = static_cast<ImmediateActionPlan*>(opaque);
+    if (plan != nullptr) plan->busWake.reset();
 }
 
 void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
@@ -107694,6 +108095,10 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
         else
             engine.commands.CancelReservedBatch(&plan->queueReplacementCommands);
         plan->queueReplacementCommandsReserved = false;
+    }
+    if (plan->busWake) {
+        if (ownersCommitted) plan->busWake->Publish();
+        plan->busWake.reset();
     }
     if (ownersCommitted) {
         for (auto& row : engine.playableServices) {
@@ -109858,7 +110263,8 @@ bool ReserveImmediateActionQueueReplacements(
                 plan->queueReplacementCommandCount,
                 &plan->queueReplacementCommands) ||
             !PrepareVoiceCommandBatch(*plan->engine, &plan->queueReplacementCommands,
-                {plan->engine->playLedBatchScratch.data(), plan->queueReplacementCommandCount})) {
+                {plan->engine->playLedBatchScratch.data(), plan->queueReplacementCommandCount}, nullptr,
+                !plan->prepareActivityAfterSources)) {
             for (std::uint32_t prior = plan->queueReplacementCount;
                  prior-- > 0;) {
                 (void)ReleaseImmediateActionQueueReplacement(
@@ -110990,6 +111396,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     plan.playbackRequest = firing.playbackRequest;
     plan.emitterOrigin = firing.emitterOrigin;
     plan.engine = &engine;
+    plan.prepareActivityAfterSources = true;
     const auto cleanup = [&]() noexcept -> VnResult {
         if (plan.originalActionFiringFactoryCommitted && !plan.originalActionFiringCommitSucceeded) {
             engine.runtimeRecreateRequired = true;
@@ -111157,7 +111564,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     }
     if (!SealImmediateActionVariableSources(plan)) {
         bundle.Abandon();
-        return finish(ActionStepState::Failed, VN_STALE_HANDLE, ActionTerminalReason::TargetGone);
+        return finish(ActionStepState::Failed, plan.result, ActionDeferredTerminalReason(plan.result));
     }
     if (plan.nativeResetScope.Valid() || plan.continuationResetPrepared) {
         harken::LogicCommitSequence accepted = 0;
@@ -111956,7 +112363,13 @@ VnResult Vn_Update(void) {
      * returns each retired instance to its pool here. */
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
+    engine->voices.DrainVoiceSendSets();
+    for (std::uint32_t slot = 0; slot < engine->voiceSendConfig.size(); ++slot) {
+        ResetFreeVoiceSendMirror(*engine, slot);
+    }
     engine->buses.DrainPreviewEffectChains();
+    (void)harken::AcknowledgeBusSleep(*engine);
+    engine->buses.DrainActivities();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
      * decrements the shared use counters; all freeing happens here on the
@@ -112025,8 +112438,8 @@ VnResult Vn_Update(void) {
             } else {
                 const std::uint32_t busIndex =
                     static_cast<std::uint32_t>(objectId);
-                if (busIndex < engine->busEffectSlotTypes.size()) {
-                    effectType = engine->busEffectSlotTypes[busIndex][slot];
+                if (busIndex < engine->busOwnerCookies.size()) {
+                    effectType = engine->busEffects.Get(busIndex, slot).type;
                 }
             }
             harken::CommandRecord command{};
@@ -112041,7 +112454,8 @@ VnResult Vn_Update(void) {
                 engine->commands.NoteBackpressure();
                 return false; // queue full: stays dirty, retries next update
             }
-            return engine->commands.TryPush(command);
+            return scope == harken::EffectParamTargetStore::Scope::Bus
+                ? engine->PublishBusSettingCommand(command) : engine->commands.TryPush(command);
         });
     /* Property publication: the tick's
      * property commits cross to the audio thread as one transaction — all
@@ -112198,8 +112612,7 @@ VnResult Vn_Update(void) {
               engine->toneSectionCommandsPublished.end(), 0);
     std::fill(engine->toneSectionPublishedRampMs.begin(),
               engine->toneSectionPublishedRampMs.end(), 0);
-    (void)publisher.Publish(&CommandQueueFreeSlots, &PushPropertyCommit,
-                            engine);
+    (void)publisher.Publish(&CommandQueueFreeSlots, nullptr, engine, &PublishPropertyCommits);
     /* Audibility parking runs after the combine flush so each voice's metric
      * (the resolved per-voice volume) is current: eligible inaudible voices
      * park (freeing their render slot), parked voices advance virtual time and
@@ -112280,9 +112693,11 @@ VnResult Vn_Update(void) {
      * accounting exact. */
     engine->meterProbes.EndService(*engine);
     engine->variables.EndService(*engine);
+    engine->busTargets.ReleaseUnusedActivities(engine->bindings);
     engine->variables.AcknowledgeFinishedNativeReadCuts();
     engine->CompleteVariableOperation();
     engine->variables.ReleaseUnusedReadCutBacking();
+    harken::ServiceBusActivity(*engine);
     while (engine->logicLogRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;
@@ -114361,6 +114776,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
+    const auto preparedCommands = writer.Prepare();
+    if (preparedCommands != VN_OK) return preparedCommands;
     if (!variableCut.BindVoice(renderHandle)) return VN_BACKPRESSURE;
     if (!engine->voices.CommitPreparedVoice(renderHandle)) return VN_DEVICE_ERROR;
     engine->params.CommitStagedVoiceBindings(renderHandle);
@@ -114377,7 +114794,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     for (std::uint32_t slot = 0; slot < recipeEffects.size(); ++slot)
         if (recipeEffects[slot].set)
             engine->effectBank.PublishInstalled(engine->voiceEffectInstanceRefs[slotIndex][slot]);
-    writer.VerifyComplete();
+    writer.Publish();
     variableCut.ReleaseCalendar();
     directPreparationGuard.armed = false;
     recipeGuard.armed = false;
@@ -115393,14 +115810,8 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         topology->sendStructSize != sizeof(VnBusTopologySend)) {
         return refuse(VN_INVALID_ARG, kTopologyRefusalValidation);
     }
-    if (topology->busCount >= engine->config.maxBuses) {
-        return refuse(VN_NO_BUS, kTopologyRefusalCapacity);
-    }
-    if (topology->sendCount >
-        static_cast<std::uint64_t>(engine->config.maxBuses) *
-            engine->config.busSendSlotsPerBus) {
-        return refuse(VN_NO_SEND, kTopologyRefusalCapacity);
-    }
+    if (topology->busCount == UINT32_MAX) return refuse(VN_INVALID_ARG, kTopologyRefusalValidation);
+
 
     struct CanonicalBus {
         VnBusId busId{};
@@ -115528,8 +115939,12 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     if (disposition == harken::TopologyOwnerRevisionDispositionV1::Retry) return VN_OK;
     if (disposition == harken::TopologyOwnerRevisionDispositionV1::Conflict)
         return refuse(VN_REVISION_CONFLICT, kTopologyRefusalRevision);
-    if (ownerRecord == nullptr && freeOwnerRecord == nullptr)
-        return refuse(VN_NO_TOPOLOGY_OWNER, kTopologyRefusalCapacity);
+    if (ownerRecord == nullptr && freeOwnerRecord == nullptr) {
+        const auto next = engine->busTopologyOwners.size();
+        if (!engine->PrepareBusOwnerCapacity(next + 1))
+            return refuse(VN_BACKPRESSURE, kTopologyRefusalCapacity);
+        freeOwnerRecord = &engine->busTopologyOwners[next];
+    }
     auto* ownerDestination = ownerRecord != nullptr ? ownerRecord : freeOwnerRecord;
     const auto ownerSlot = static_cast<std::uint32_t>(ownerDestination - engine->busTopologyOwners.data());
     if (destinationReserved(ownerSlot)) return refuse(VN_IN_USE, kTopologyRefusalOwnership);
@@ -115542,11 +115957,13 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     if (neutralMaster && !harken::CanResetNeutralBusPropertiesV1(*engine, 0))
         return refuse(VN_IN_USE, kTopologyRefusalOwnership);
 
+    std::uint64_t additions = 0;
+    for (const auto& row : desiredBuses)
+        if (engine->buses.FindIndex(row.busId) == harken::kInvalidBusIndex) ++additions;
+    if (!engine->PrepareAdditionalBusDefinitions(additions))
+        return refuse(VN_BACKPRESSURE, kTopologyRefusalCapacity);
     const std::uint32_t oldCount = engine->buses.BusCount();
-    const std::uint32_t capacity = engine->config.maxBuses;
-    const std::uint32_t sendSlots = engine->config.busSendSlotsPerBus;
-    const std::size_t sendCapacity =
-        static_cast<std::size_t>(capacity) * sendSlots;
+    const std::uint32_t capacity = engine->BusCapacity();
     std::vector<VnBusId> busIds(capacity);
     std::vector<std::uint32_t> generations(capacity, 0);
     std::vector<std::uint32_t> parents(capacity, 0);
@@ -115554,14 +115971,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     std::vector<std::uint8_t> removedOld(oldCount, 0);
     std::vector<std::uint8_t> newSlot(capacity, 0);
     std::vector<std::uint32_t> migrationTargets(capacity, 0);
-    std::vector<std::uint32_t> sendTargets(
-        sendCapacity, harken::kInvalidBusIndex);
-    std::vector<std::uint64_t> sendTopologyOwners(sendCapacity, 0);
-    std::vector<VnPackHandle> sendPackOwners(sendCapacity, 0);
-    std::vector<float> sendLevelsDb(sendCapacity, 0.0f);
-    std::vector<float> sendLevelsLinear(sendCapacity, 0.0f);
-    std::vector<std::uint8_t> sendLevelApply(sendCapacity, 0);
-    std::vector<std::uint32_t> sendLevelRampMs(sendCapacity, 0);
+    harken::BusSendTable candidateSends;
     std::vector<std::uint32_t> feederCount(capacity, 0);
     std::vector<std::uint32_t> emittedFeeders(capacity, 0);
     std::vector<std::uint8_t> emitted(capacity, 0);
@@ -115670,42 +116080,17 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         }
     }
 
-    for (std::uint32_t i = 0; i < oldCount; ++i) {
-        if (!engine->buses.AliveAt(i)) {
-            continue;
-        }
-        const std::uint32_t base = i * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            const std::uint32_t target = engine->busSendAdj[flat];
-            if (target == harken::kInvalidBusIndex) {
-                continue;
-            }
-            const bool owned =
-                engine->busSendOwnerCookies[flat] == 0 &&
-                engine->busSendTopologyOwnerIds[flat] ==
-                    topology->ownerId;
-            const bool endpointRemoved =
-                i >= candidateCount || target >= candidateCount ||
-                alive[i] == 0 || alive[target] == 0 ||
-                generations[i] != engine->buses.GenerationAt(i) ||
-                generations[target] !=
-                    engine->buses.GenerationAt(target);
-            if (!owned && endpointRemoved) {
-                return refuse(VN_IN_USE, kTopologyRefusalOwnership,
-                              engine->buses.IdAt(i),
-                              engine->buses.IdAt(target));
-            }
-            if (owned) {
-                continue;
-            }
-            sendTargets[flat] = target;
-            sendTopologyOwners[flat] =
-                engine->busSendTopologyOwnerIds[flat];
-            sendPackOwners[flat] =
-                engine->busSendOwnerCookies[flat];
-            sendLevelsDb[flat] = engine->busSendLevelDb[flat];
-        }
+    for (const auto& edge : engine->busSends.Records()) {
+        const auto from = edge.source, target = edge.target;
+        const bool owned = edge.ownerCookie == 0 && edge.topologyOwnerId == topology->ownerId;
+        const bool endpointRemoved = from >= candidateCount || target >= candidateCount ||
+            alive[from] == 0 || alive[target] == 0 ||
+            generations[from] != engine->buses.GenerationAt(from) ||
+            generations[target] != engine->buses.GenerationAt(target);
+        if (!owned && endpointRemoved)
+            return refuse(VN_IN_USE, kTopologyRefusalOwnership,
+                engine->buses.IdAt(from), engine->buses.IdAt(target));
+        if (!owned) candidateSends.Add(edge);
     }
 
     const auto desiredSendByIds =
@@ -115720,6 +116105,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
                             row.toBusId < value.second);
                 });
         };
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
     for (const CanonicalSend& row : desiredSends) {
         const std::uint32_t from = findCandidateBus(row.fromBusId);
         const std::uint32_t to = findCandidateBus(row.toBusId);
@@ -115728,69 +116114,27 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
             return refuse(VN_UNKNOWN_ID, kTopologyRefusalValidation,
                           row.fromBusId, row.toBusId);
         }
-        std::uint32_t retainedFlat = harken::kInvalidBusIndex;
-        for (std::uint32_t oldFrom = 0; oldFrom < oldCount; ++oldFrom) {
-            if (!engine->buses.AliveAt(oldFrom) ||
-                engine->buses.IdAt(oldFrom) != row.fromBusId) {
-                continue;
-            }
-            const std::uint32_t base = oldFrom * sendSlots;
-            for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-                const std::uint32_t flat = base + slot;
-                const std::uint32_t oldTo = engine->busSendAdj[flat];
-                if (oldTo == harken::kInvalidBusIndex ||
-                    engine->buses.IdAt(oldTo) != row.toBusId) {
-                    continue;
-                }
-                if (engine->busSendOwnerCookies[flat] != 0 ||
-                    engine->busSendTopologyOwnerIds[flat] !=
-                        topology->ownerId) {
-                    return refuse(VN_IN_USE, kTopologyRefusalOwnership,
-                                  row.fromBusId, row.toBusId);
-                }
-                if (oldFrom == from && oldTo == to &&
-                    generations[from] ==
-                        engine->buses.GenerationAt(oldFrom) &&
-                    generations[to] ==
-                        engine->buses.GenerationAt(oldTo)) {
-                    retainedFlat = flat;
-                }
-            }
-        }
-        std::uint32_t flat = retainedFlat;
-        if (flat == harken::kInvalidBusIndex) {
-            const std::uint32_t base = from * sendSlots;
-            for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-                if (sendTargets[base + slot] ==
-                    harken::kInvalidBusIndex) {
-                    flat = base + slot;
-                    break;
-                }
-            }
-            if (flat == harken::kInvalidBusIndex) {
-                return refuse(VN_NO_SEND, kTopologyRefusalCapacity,
-                              row.fromBusId, row.toBusId);
-            }
-            sendLevelApply[flat] = 1;
-        } else {
-            const float previous = engine->busSendLevelDb[flat];
-            std::uint32_t beforeBits = 0;
-            std::uint32_t afterBits = 0;
-            std::memcpy(&beforeBits, &previous, sizeof(beforeBits));
-            std::memcpy(&afterBits, &row.levelDb, sizeof(afterBits));
-            if (beforeBits != afterBits) {
-                sendLevelApply[flat] = 1;
-                sendLevelRampMs[flat] = row.rampMs;
-            }
-        }
-        sendTargets[flat] = to;
-        sendTopologyOwners[flat] = topology->ownerId;
-        sendPackOwners[flat] = 0;
-        sendLevelsDb[flat] = row.levelDb;
-        sendLevelsLinear[flat] =
-            row.levelDb == 0.0f
-                ? 1.0f
-                : std::pow(10.0f, row.levelDb / 20.0f);
+        const auto oldFrom = engine->buses.FindIndex(row.fromBusId);
+        const auto oldTo = engine->buses.FindIndex(row.toBusId);
+        const auto* prior = engine->busSends.Find(oldFrom, oldTo);
+        if (prior != nullptr && (prior->ownerCookie != 0 || prior->topologyOwnerId != topology->ownerId))
+            return refuse(VN_IN_USE, kTopologyRefusalOwnership, row.fromBusId, row.toBusId);
+        const bool retained = prior != nullptr && oldFrom == from && oldTo == to &&
+            generations[from] == engine->buses.GenerationAt(from) &&
+            generations[to] == engine->buses.GenerationAt(to);
+        if (retained != (retainedPass != 0)) continue;
+        harken::BusSendRecord edge;
+        if (retained) edge = *prior;
+        edge.source = from;
+        edge.target = to;
+        edge.topologyOwnerId = topology->ownerId;
+        edge.generation = retained ? prior->generation : engine->NewBusSendGeneration();
+        edge.applyLevel = !retained || std::memcmp(&prior->levelDb, &row.levelDb, sizeof(float)) != 0;
+        edge.rampMs = retained && edge.applyLevel ? row.rampMs : 0;
+        edge.levelDb = row.levelDb;
+        edge.preparedGain = row.levelDb == 0 ? 1.0f : std::pow(10.0f, row.levelDb / 20.0f);
+        candidateSends.Add(edge);
+    }
     }
 
     for (std::uint32_t i = 0; i < oldCount; ++i) {
@@ -115851,13 +116195,8 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         if (removedOld[i] == 0) {
             continue;
         }
-        for (VnPackHandle cookie :
-             engine->busEffectOwnerCookies[i]) {
-            if (cookie != 0) {
-                return refuse(VN_IN_USE, kTopologyRefusalOwnership,
-                              engine->buses.IdAt(i));
-            }
-        }
+        if (engine->busEffects.HasOwner(i))
+            return refuse(VN_IN_USE, kTopologyRefusalOwnership, engine->buses.IdAt(i));
     }
     std::vector<std::uint32_t> routeRemovals;
     std::vector<harken::DynamicRouteDefinition> expectedRouteRemovals;
@@ -115927,9 +116266,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     prospective.generations = generations.data();
     prospective.parents = parents.data();
     prospective.alive = alive.data();
-    prospective.sendTargets = sendTargets.data();
-    prospective.sendLevels = sendLevelsLinear.data();
-    prospective.sendLevelApply = sendLevelApply.data();
+    prospective.sends = &candidateSends;
     prospective.feederCount = feederCount.data();
     prospective.emittedFeeders = emittedFeeders.data();
     prospective.emitted = emitted.data();
@@ -116000,7 +116337,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     }
 
     engine->topologyPlans.DrainRetire();
-    const std::uint32_t planIndex = engine->topologyPlans.Acquire();
+    const std::uint32_t planIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         ++engine->topologyRefusedCount;
         return refuse(VN_BACKPRESSURE, kTopologyRefusalBackpressure);
@@ -116024,16 +116361,21 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
                           kTopologyRefusalBackpressure);
         }
     }
-    FillPlan(
-        *engine, planIndex, nullptr, false,
-        harken::kInvalidBusIndex, 0xFFFFFFFFu, nullptr, 0,
-        routeRemovals.empty() ? nullptr : routeRemovals.data(),
-        static_cast<std::uint32_t>(routeRemovals.size()), nullptr,
-        nullptr, nullptr, 0, nullptr, 0, &prospective);
+    try {
+        FillPlan(
+            *engine, planIndex, nullptr, false,
+            harken::kInvalidBusIndex, 0xFFFFFFFFu, nullptr, 0,
+            routeRemovals.empty() ? nullptr : routeRemovals.data(),
+            static_cast<std::uint32_t>(routeRemovals.size()), nullptr,
+            nullptr, nullptr, 0, nullptr, 0, &prospective);
+    } catch (...) {
+        if (dynamicPlanIndex != harken::kInvalidDynamicRoutePlanIndex)
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->topologyPlans.Recycle(planIndex);
+        return refuse(VN_DEVICE_ERROR, kTopologyRefusalBackpressure);
+    }
     std::uint32_t* migrationPlan =
         engine->topologyPlans.MigrationTargetsData(planIndex);
-    std::uint32_t* rampPlan =
-        engine->topologyPlans.SendLevelRampMsRow(planIndex, 0);
     float* busVolumePlan =
         engine->topologyPlans.PreparedBusVolumeDbData(planIndex);
     std::uint32_t* busVolumeRampPlan =
@@ -116042,16 +116384,11 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         engine->topologyPlans.BusVolumeApplyData(planIndex);
     std::uint32_t* outputLayouts =
         engine->topologyPlans.OutputLayoutData(planIndex);
-    float* downmix =
-        engine->topologyPlans.DownmixCoeffsData(planIndex);
     for (std::uint32_t i = 0; i < candidateCount; ++i) {
         migrationPlan[i] = migrationTargets[i];
         if (newSlot[i] != 0) {
             outputLayouts[i] = engine->config.mixChannelLayout;
-            harken::DefaultDownmixMatrix(
-                engine->config.mixChannelLayout,
-                engine->config.mixChannelLayout,
-                downmix + static_cast<std::size_t>(i) * 64);
+            engine->topologyPlans.SetCustomDownmix(planIndex, i, {});
         }
         if (alive[i] == 0) {
             continue;
@@ -116079,12 +116416,8 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         busVolumeRampPlan[0] = 0;
         engine->topologyPlans.PreparedBusOutputVolumeDbData(planIndex)[0] = 0.0f;
         outputLayouts[0] = engine->config.deviceChannelLayout;
-        harken::DefaultDownmixMatrix(engine->config.mixChannelLayout,
-            engine->config.deviceChannelLayout, downmix);
+        engine->topologyPlans.SetCustomDownmix(planIndex, 0, {});
     }
-    std::copy(sendLevelRampMs.begin(), sendLevelRampMs.end(),
-              rampPlan);
-
     harken::CommandQueue::BatchReservation reservation{};
     if (!AdmitSingleCommand(*engine) ||
         !engine->commands.ReserveBatch(1, &reservation)) {
@@ -116152,6 +116485,19 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         return refuse(volumesValid ? VN_IN_USE : VN_INVALID_ARG,
             volumesValid ? kTopologyRefusalOwnership : kTopologyRefusalValidation);
     }
+    harken::CommandQueue::PreparedBatchProof proof;
+    std::size_t retirements = 0;
+    for (std::uint32_t i = 1; i < oldCount; ++i)
+        retirements += removedOld[i] != 0 && newSlot[i] == 0;
+    if (!engine->PrepareBusRetirements(retirements) ||
+        !harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex),
+            reservation, {&command, 1}, proof)) {
+        engine->commands.CancelReservedBatch(&reservation);
+        if (dynamicPlanIndex != harken::kInvalidDynamicRoutePlanIndex)
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->topologyPlans.Recycle(planIndex);
+        return refuse(VN_BACKPRESSURE, kTopologyRefusalBackpressure);
+    }
     for (std::uint32_t i = 1; i < oldCount; ++i) {
         if (removedOld[i] != 0 && newSlot[i] == 0)
             harken::CommitRetireTopologyBusV1(*engine, {i, generations[i]}, acceptedRevision);
@@ -116190,17 +116536,9 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
                 ? topology->ownerId
                 : engine->busTopologyOwnerIds[i];
     }
-    engine->busSendActive = 0;
-    for (std::size_t flat = 0; flat < sendCapacity; ++flat) {
-        engine->busSendAdj[flat] = sendTargets[flat];
-        engine->busSendTopologyOwnerIds[flat] =
-            sendTopologyOwners[flat];
-        engine->busSendOwnerCookies[flat] = sendPackOwners[flat];
-        engine->busSendLevelDb[flat] = sendLevelsDb[flat];
-        if (sendTargets[flat] != harken::kInvalidBusIndex) {
-            ++engine->busSendActive;
-        }
-    }
+    candidateSends.ClearActions();
+    engine->busSends.Swap(candidateSends);
+    engine->busSendActive = engine->busSends.Count();
     UpdateSendHighWater(*engine);
     harken::CommitMigratedLogicVoiceMirrorsV1(*engine, migrationTargets.data(), generations.data(),
         alive.data(), candidateCount);
@@ -116223,7 +116561,10 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     ++engine->topologyPlanCount;
     harken::ClearPairedInstallAckIdentity(*engine, planIndex);
     harken::ClearCurrentWorldBusAdmissionV1(*engine);
-    engine->commands.CommitPreparedBatch(&reservation, &command);
+    const auto published = engine->commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == 1);
+    (void)published;
+    engine->NoteBusSettingCommand(command);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -116262,9 +116603,7 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
     if (engine->buses.FindIndex(parentId) == harken::kInvalidBusIndex) {
         return VN_UNKNOWN_ID;
     }
-    if (engine->buses.FreeBusSlotCount() == 0) {
-        return VN_NO_BUS;
-    }
+    if (!engine->PrepareAdditionalBusDefinitions(1)) return VN_BACKPRESSURE;
     // A create is a structural change: it publishes a topology plan. Secure the
     // plan slot + command admission BEFORE mutating the tree so a resource
     // shortage refuses with zero side effects.
@@ -116272,14 +116611,39 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
-    const VnResult created = engine->buses.CreateBus(busId, parentId);
-    if (created != VN_OK) {
-        engine->topologyPlans.Recycle(planIndex); // defensive: preflight ruled these out
-        return created;
+    PreparedTopologyPublication publication(*engine, planIndex);
+    std::uint32_t newBusIndex = 1;
+    while (newBusIndex < engine->buses.BusCount() &&
+        (engine->buses.AliveAt(newBusIndex) || engine->buses.NextGenerationForSlot(newBusIndex) == 0)) ++newBusIndex;
+    const auto generation = engine->buses.NextGenerationForSlot(newBusIndex);
+    if (generation == 0) return VN_NO_BUS;
+    const auto count = std::max(engine->buses.BusCount(), newBusIndex + 1);
+    std::vector<VnBusId> ids(count);
+    std::vector<std::uint32_t> parents(count), generations(count);
+    std::vector<std::uint8_t> alive(count);
+    for (std::uint32_t i = 0; i < engine->buses.BusCount(); ++i) {
+        ids[i] = engine->buses.IdAt(i);
+        parents[i] = engine->buses.ParentOf(i);
+        generations[i] = engine->buses.GenerationAt(i);
+        alive[i] = engine->buses.AliveAt(i);
     }
-    const std::uint32_t newBusIndex = engine->buses.FindIndex(busId);
-    ResetBusLogicSlot(*engine, newBusIndex, 0,
-                      engine->buses.GenerationAt(newBusIndex));
+    ids[newBusIndex] = busId;
+    parents[newBusIndex] = engine->buses.FindIndex(parentId);
+    generations[newBusIndex] = generation;
+    alive[newBusIndex] = 1;
+    ProspectiveTopologyView prospective{};
+    prospective.busCount = count;
+    prospective.busIds = ids.data();
+    prospective.parents = parents.data();
+    prospective.generations = generations.data();
+    prospective.alive = alive.data();
+    prospective.sends = &engine->busSends;
+    harken::FillLiveOrPreparedPlan(*engine, engine->topologyPlans, planIndex, &prospective);
+    engine->topologyPlans.OutputLayoutData(planIndex)[newBusIndex] = engine->config.mixChannelLayout;
+    engine->topologyPlans.SetCustomDownmix(planIndex, newBusIndex, {});
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
+    engine->buses.CommitLogicSlot(newBusIndex, busId, parents[newBusIndex], generation);
+    ResetBusLogicSlot(*engine, newBusIndex, 0, generation);
 
     {
         harken::MonitorBusFacts facts{};
@@ -116289,10 +116653,7 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
         harken::ObserveMonitorBus(newBusIndex + 1u, engine->buses.GenerationAt(newBusIndex), busId,
                           facts);
     }
-    // The new bus has no send edges; the plan's feeds-first order for the pure
-    // tree is descending index, so the mix is unchanged from the pre-plan fold.
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -116374,25 +116735,28 @@ VnResult Vn_ReparentBus(VnBusId busId, VnBusId newParentId) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
-    // Commit the logic-side parent, then publish: the plan carries the full
-    // authoritative parent set and the swap installs it at the block
-    // boundary, so the audio thread never sees a half-applied tree.
-    engine->buses.SetLogicParent(busIndex, parentIndex);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
-    for (const std::uint32_t i : soloFlips) {
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    if (!TopoSortBuses(*engine, harken::kInvalidBusIndex, harken::kInvalidBusIndex,
+            engine->topologyPlans.OrderData(planIndex), busIndex, parentIndex)) return VN_SEND_CYCLE;
+    engine->topologyPlans.ParentsData(planIndex)[busIndex] = parentIndex;
+    std::vector<harken::CommandRecord> volumes;
+    volumes.reserve(soloFlips.size());
+    for (const auto i : soloFlips) {
         harken::CommandRecord command{};
         command.opcode = harken::kOpcodeSetBusVolume;
         command.payload.setBusVolume.busIndex = i;
-        command.payload.setBusVolume.volumeDb =
-            BusEffectivelyAudible(*engine, i)
-                ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume)
-                : kBusMuteFloorDb;
-        command.payload.setBusVolume.rampMs = 0;
-        command.payload.setBusVolume.busGeneration =
-            engine->buses.GenerationAt(i);
-        (void)engine->commands.TryPush(command); // batch reserved above
+        const bool audible = engine->busMuted[i] == 0 &&
+            BusOnSoloPathWith(*engine, i, harken::kInvalidBusIndex, 0, busIndex, parentIndex);
+        command.payload.setBusVolume.volumeDb = audible
+            ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume) : kBusMuteFloorDb;
+        command.payload.setBusVolume.busGeneration = engine->buses.GenerationAt(i);
+        volumes.push_back(command);
     }
+    if (!publication.Prepare(volumes)) return VN_BACKPRESSURE;
+    engine->buses.SetLogicParent(busIndex, parentIndex);
+    publication.Publish();
+    for (const auto& command : volumes) engine->NoteBusSettingCommand(command);
     // Tree edges are control-graph edges for the meter loop scan: rescan at
     // the next Vn_Update, exactly like a send connect/disconnect.
     return VN_OK;
@@ -116570,21 +116934,22 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     const auto sourceRevision = engine->acceptedBusTopologyRevision;
     if (sourceRevision == UINT64_MAX) return VN_DEVICE_ERROR;
     const auto acceptedRevision = sourceRevision + 1;
-    const auto slots = engine->config.busSendSlotsPerBus;
-    const auto sendCount = static_cast<std::size_t>(count) * slots;
     std::vector<VnBusId> busIds(count);
     std::vector<std::uint32_t> generations(count), parents(count), migrations(count);
     std::vector<std::uint8_t> alive(count), wasAlive(count);
-    std::vector<std::uint32_t> sendTargets(sendCount, harken::kInvalidBusIndex);
-    std::vector<float> sendLevels(sendCount, 0.0f);
-    std::vector<std::uint8_t> sendApply(sendCount, 0);
     std::vector<std::uint32_t> feederCount(count), emittedFeeders(count);
     std::vector<std::uint8_t> emitted(count);
     std::vector<harken::BusSlotRef> removedRefs;
     removedRefs.reserve(count);
     const auto sourceCookies = engine->busOwnerCookies;
     const auto sourceOwners = engine->busTopologyOwnerIds;
-    const auto sourceSends = engine->busSendAdj;
+    const auto sourceSends = engine->busSends;
+    auto candidateSends = sourceSends;
+    candidateSends.EraseIf([&](const auto& edge) {
+        return dead[edge.source] != 0 || (edge.target < count && dead[edge.target] != 0);
+    });
+    for (const auto& edge : candidateSends.Records())
+        if (!harken::TryVolumeGainFromDb(edge.levelDb)) return VN_INVALID_ARG;
     const auto sourceMuted = engine->busMuted;
     const auto sourceSoloed = engine->busSoloed;
     const auto sourceSoloActive = engine->busSoloActiveCount;
@@ -116596,16 +116961,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         alive[i] = static_cast<std::uint8_t>(wasAlive[i] != 0 && dead[i] == 0);
         migrations[i] = dead[i] != 0 ? migrateTarget : i;
         if (dead[i] != 0) removedRefs.push_back({i, generations[i]});
-        for (std::uint32_t slot = 0; slot < slots; ++slot) {
-            const auto flat = static_cast<std::size_t>(i) * slots + slot;
-            const auto to = sourceSends[flat];
-            if (dead[i] != 0 || to == harken::kInvalidBusIndex || (to < count && dead[to] != 0)) continue;
-            const float level = engine->busSendLevelDb[flat];
-            const float linear = level == 0.0f ? 1.0f : std::pow(10.0f, level / 20.0f);
-            if (!std::isfinite(linear)) return VN_INVALID_ARG;
-            sendTargets[flat] = to;
-            sendLevels[flat] = linear;
-        }
+
     }
     std::vector<harken::BindingTable::PreparedAttachmentToken> preparedDetaches(detaches.size());
     for (std::size_t i = 0; i < detaches.size(); ++i) {
@@ -116629,9 +116985,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     prospective.generations = generations.data();
     prospective.parents = parents.data();
     prospective.alive = alive.data();
-    prospective.sendTargets = sendTargets.data();
-    prospective.sendLevels = sendLevels.data();
-    prospective.sendLevelApply = sendApply.data();
+    prospective.sends = &candidateSends;
     prospective.feederCount = feederCount.data();
     prospective.emittedFeeders = emittedFeeders.data();
     prospective.emitted = emitted.data();
@@ -116671,7 +117025,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         return VN_BACKPRESSURE;
     }
     engine->topologyPlans.DrainRetire();
-    const auto planIndex = engine->topologyPlans.Acquire();
+    const auto planIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
     harken::ClearPairedInstallAckIdentity(*engine, planIndex);
     const bool clearDynamicRoutes = !routeRemovals.empty();
@@ -116718,7 +117072,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     }
     bool valid = engine->acceptedBusTopologyRevision == sourceRevision && engine->buses.BusCount() == count &&
         engine->busOwnerCookies == sourceCookies && engine->busTopologyOwnerIds == sourceOwners &&
-        engine->busSendAdj == sourceSends && engine->busMuted == sourceMuted &&
+        engine->busSends == sourceSends && engine->busMuted == sourceMuted &&
         engine->busSoloed == sourceSoloed && engine->busSoloActiveCount == sourceSoloActive &&
         !AnyBusVolumeClaimed(*engine, soloFlips) &&
         engine->meterProbes.CanCommitBusRemovalV1(*engine, meterRemoval) &&
@@ -116741,30 +117095,18 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         abandonPlans();
         return VN_IN_USE;
     }
+    harken::CommandQueue::PreparedBatchProof proof;
+    if (!engine->PrepareBusRetirements(removedRefs.size()) ||
+        !harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex), reservation, commands, proof)) {
+        engine->commands.CancelReservedBatch(&reservation);
+        abandonPlans();
+        return VN_BACKPRESSURE;
+    }
     for (const auto ref : removedRefs) harken::CommitRetireTopologyBusV1(*engine, ref, acceptedRevision);
     harken::CommitUnpublishedTimelineRoutingV1(*engine, unpublishedRouting);
     for (auto& detach : preparedDetaches) engine->bindings.CommitPreparedAttachment(&detach, nullptr);
-    // Send edges: every dead out-row and every surviving slot targeting a
-    // dead bus; the plan's membership then excludes them and the audio-side
-    // reconcile releases the orphaned levels at the swap.
-    for (std::uint32_t from = 0; from < count; ++from) {
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t s = 0; s < slots; ++s) {
-            const std::uint32_t to = engine->busSendAdj[base + s];
-            if (to == harken::kInvalidBusIndex) {
-                continue;
-            }
-            if (dead[from] != 0 || (to < count && dead[to] != 0)) {
-                engine->busSendAdj[base + s] = harken::kInvalidBusIndex;
-                engine->busSendOwnerCookies[base + s] = 0;
-                engine->busSendTopologyOwnerIds[base + s] = 0;
-                engine->busSendLevelDb[base + s] = 0.0f;
-                if (engine->busSendActive > 0) {
-                    --engine->busSendActive;
-                }
-            }
-        }
-    }
+    engine->busSends.Swap(candidateSends);
+    engine->busSendActive = engine->busSends.Count();
     // Voice-send mirrors (live staging, pending starts, parked replay state,
     // play facts, and published Timeline identities) drop dead targets / migrate
     // dead dry buses so a later park return or deferred start never resurrects a
@@ -116777,7 +117119,10 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     engine->busSoloActiveCount = newSoloActive;
     engine->acceptedBusTopologyRevision = acceptedRevision;
     ++engine->topologyPlanCount;
-    engine->commands.CommitPreparedBatch(&reservation, commands.data());
+    const auto published = engine->commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == commands.size());
+    (void)published;
+    for (const auto& command : commands) engine->NoteBusSettingCommand(command);
     // The control graph shrank: frozen meter loops through the cascade may
     // have opened, so the next Vn_Update rescans.
     return VN_OK;
@@ -116823,43 +117168,27 @@ VnResult Vn_ConnectBusSend(VnBusId fromBus, VnBusId toBus, float levelDb) {
     if (from == to) {
         return VN_INVALID_ARG; // a bus cannot send to itself
     }
-    const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    // A re-connect of an existing edge is refused rather than silently re-set,
-    // so the level path stays the one way to change a live edge (and the plan
-    // stays static across level changes).
-    std::uint32_t freeSlot = slots;
-    for (std::uint32_t s = 0; s < slots; ++s) {
-        if (engine->busSendAdj[base + s] == to) {
-            return VN_IN_USE;
-        }
-        if (engine->busSendAdj[base + s] == harken::kInvalidBusIndex &&
-            freeSlot == slots) {
-            freeSlot = s;
-        }
-    }
-    if (freeSlot == slots) {
-        ++engine->noSendCount;
-        return VN_NO_SEND; // this bus's send-slot table is full
-    }
-    // Cycle check over the combined tree+send graph with the prospective edge,
-    // before committing it (zero side effects on refusal).
-    if (!TopoSortBuses(*engine, from, to, nullptr)) {
-        return VN_SEND_CYCLE;
-    }
-    const std::uint32_t planIndex = ReserveTopologyChange(*engine);
-    if (planIndex == harken::kInvalidTopologyPlanIndex) {
-        return VN_BACKPRESSURE;
-    }
-    // Commit the edge, then publish: the plan carries the new membership + order
-    // and the swap command carries the edge's initial level, applied atomically.
-    engine->busSendAdj[base + freeSlot] = to;
-    engine->busSendOwnerCookies[base + freeSlot] = 0;
-    engine->busSendTopologyOwnerIds[base + freeSlot] = 0;
-    engine->busSendLevelDb[base + freeSlot] = levelDb;
-    ++engine->busSendActive;
+    if (engine->busSends.Find(from, to) != nullptr) return VN_IN_USE;
+    if (!TopoSortBuses(*engine, from, to, nullptr)) return VN_SEND_CYCLE;
+    auto candidate = engine->busSends;
+    harken::BusSendRecord edge;
+    edge.source = from;
+    edge.target = to;
+    edge.levelDb = levelDb;
+    edge.generation = engine->NewBusSendGeneration();
+    edge.preparedGain = std::pow(10.0f, levelDb / 20.0f);
+    edge.applyLevel = true;
+    candidate.Add(edge);
+    const auto planIndex = ReserveTopologyChange(*engine);
+    if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
+    if (!PrepareBusSendTopology(*engine, planIndex, candidate)) return VN_BACKPRESSURE;
+    PreparedTopologyPublication publication(*engine, planIndex);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
+    candidate.ClearActions();
+    engine->busSends.Swap(candidate);
+    engine->busSendActive = engine->busSends.Count();
     UpdateSendHighWater(*engine);
-    PublishPlan(*engine, planIndex, from, to, levelDb);
+    publication.Publish();
     // A send connect is the one LATER topology change that can close a
     // meter control loop (section 11.5): it is deliberately NOT refused
     // here — the next Vn_Update detects it and freezes the offending
@@ -116890,40 +117219,19 @@ VnResult Vn_DisconnectBusSend(VnBusId fromBus, VnBusId toBus) {
     if (from == harken::kInvalidBusIndex || to == harken::kInvalidBusIndex) {
         return VN_UNKNOWN_ID;
     }
-    const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    std::uint32_t edgeSlot = slots;
-    for (std::uint32_t s = 0; s < slots; ++s) {
-        if (engine->busSendAdj[base + s] == to) {
-            edgeSlot = s;
-            break;
-        }
-    }
-    if (edgeSlot == slots) {
-        // No such edge: nothing to disconnect and nothing to republish (the
-        // plan-publish counter stays static). Idempotent success.
-        return VN_OK;
-    }
-    if (engine->busSendOwnerCookies[base + edgeSlot] != 0 ||
-        engine->busSendTopologyOwnerIds[base + edgeSlot] != 0) {
-        return VN_IN_USE;
-    }
-    const std::uint32_t planIndex = ReserveTopologyChange(*engine);
-    if (planIndex == harken::kInvalidTopologyPlanIndex) {
-        return VN_BACKPRESSURE;
-    }
-    // Remove the edge, then publish: the swap carries no edge identity (a
-    // disconnect is a plan-swap only), and the audio side's reconcile releases
-    // the now-orphaned send level.
-    engine->busSendAdj[base + edgeSlot] = harken::kInvalidBusIndex;
-    engine->busSendOwnerCookies[base + edgeSlot] = 0;
-    engine->busSendTopologyOwnerIds[base + edgeSlot] = 0;
-    engine->busSendLevelDb[base + edgeSlot] = 0.0f;
-    if (engine->busSendActive > 0) {
-        --engine->busSendActive;
-    }
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    const auto* edge = engine->busSends.Find(from, to);
+    if (edge == nullptr) return VN_OK;
+    if (edge->ownerCookie != 0 || edge->topologyOwnerId != 0) return VN_IN_USE;
+    auto candidate = engine->busSends;
+    candidate.EraseIf([&](const auto& row) { return row.source == from && row.target == to; });
+    const auto planIndex = ReserveTopologyChange(*engine);
+    if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
+    if (!PrepareBusSendTopology(*engine, planIndex, candidate)) return VN_BACKPRESSURE;
+    PreparedTopologyPublication publication(*engine, planIndex);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
+    engine->busSends.Swap(candidate);
+    engine->busSendActive = engine->busSends.Count();
+    publication.Publish();
     // The control graph shrank: a loop frozen through this edge may have
     // opened, so the next Vn_Update rescans the section-11.5 marks.
     return VN_OK;
@@ -116960,22 +117268,9 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
     }
     // The edge must be an active send of `from`; a level on a non-edge is
     // meaningless.
-    const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    std::uint32_t edgeSlot = slots;
-    for (std::uint32_t s = 0; s < slots; ++s) {
-        if (engine->busSendAdj[base + s] == to) {
-            edgeSlot = s;
-            break;
-        }
-    }
-    if (edgeSlot == slots) {
-        return VN_UNKNOWN_ID;
-    }
-    if (engine->busSendOwnerCookies[base + edgeSlot] != 0 ||
-        engine->busSendTopologyOwnerIds[base + edgeSlot] != 0) {
-        return VN_IN_USE;
-    }
+    auto* edge = engine->busSends.Find(from, to);
+    if (edge == nullptr) return VN_UNKNOWN_ID;
+    if (edge->ownerCookie != 0 || edge->topologyOwnerId != 0) return VN_IN_USE;
     // A level change is NOT a structural change: it republishes no plan (the
     // plan-publish counter stays static) and travels as its own audio-thread
     // command.
@@ -116987,14 +117282,15 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
     cmd.opcode = harken::kOpcodeSetBusSendLevel;
     cmd.payload.setBusSendLevel.fromBus = from;
     cmd.payload.setBusSendLevel.toBus = to;
+    cmd.payload.setBusSendLevel.sendGeneration = edge->generation;
     cmd.payload.setBusSendLevel.levelDb = levelDb;
     cmd.payload.setBusSendLevel.rampMs = rampMs;
     cmd.payload.setBusSendLevel.fromGeneration =
         engine->buses.GenerationAt(from);
     cmd.payload.setBusSendLevel.toGeneration =
         engine->buses.GenerationAt(to);
-    (void)engine->commands.TryPush(cmd);
-    engine->busSendLevelDb[base + edgeSlot] = levelDb;
+    if (!engine->PublishBusSettingCommand(cmd)) return VN_BACKPRESSURE;
+    edge->levelDb = levelDb;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117026,8 +117322,7 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
         .U32(sendSlot)
         .ObjectId(toBus)
         .F32(levelDb);
-    if (sendSlot >= engine->config.voiceSendSlots ||
-        !harken::TryVolumeGainFromDb(levelDb)) {
+    if (!harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const std::uint32_t to = engine->buses.FindIndex(toBus);
@@ -117038,20 +117333,14 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
         harken::PendingStartRecord& rec =
             engine->pendingStarts[resolved.ledgerSlot];
-        rec.voiceSends[sendSlot].active = true;
-        rec.voiceSends[sendSlot].targetBusIndex = to;
-        rec.voiceSends[sendSlot].targetBusGeneration =
-            engine->buses.GenerationAt(to);
-        rec.voiceSends[sendSlot].levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet({true, to, levelDb,
+            engine->buses.GenerationAt(to), sendSlot, NextVoiceSendIncarnation(*engine)});
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
         harken::ParkRecord& rec = engine->parkRecords[resolved.ledgerSlot];
-        rec.voiceSends[sendSlot].active = true;
-        rec.voiceSends[sendSlot].targetBusIndex = to;
-        rec.voiceSends[sendSlot].targetBusGeneration =
-            engine->buses.GenerationAt(to);
-        rec.voiceSends[sendSlot].levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet({true, to, levelDb,
+            engine->buses.GenerationAt(to), sendSlot, NextVoiceSendIncarnation(*engine)});
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -117066,8 +117355,7 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    ApplyVoiceSendLive(*engine, render, sendSlot, to, levelDb);
-    return VN_OK;
+    return ApplyVoiceSendLive(*engine, render, sendSlot, to, levelDb);
 
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
@@ -117088,18 +117376,15 @@ VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot) {
     TraceStateful(engine, harken::kTraceCallClearVoiceSend)
         .U64(handle)
         .U32(sendSlot);
-    if (sendSlot >= engine->config.voiceSendSlots) {
-        return VN_INVALID_ARG;
-    }
     const harken::VoiceLedger::Resolved resolved = engine->ledger.Classify(handle);
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
-        engine->pendingStarts[resolved.ledgerSlot].voiceSends[sendSlot] =
-            harken::VoiceSendConfig{};
+        auto& sends = engine->pendingStarts[resolved.ledgerSlot].voiceSends;
+        sends = sends.WithoutSlot(sendSlot);
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
-        engine->parkRecords[resolved.ledgerSlot].voiceSends[sendSlot] =
-            harken::VoiceSendConfig{};
+        auto& sends = engine->parkRecords[resolved.ledgerSlot].voiceSends;
+        sends = sends.WithoutSlot(sendSlot);
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -117114,19 +117399,19 @@ VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    const std::uint32_t slot = static_cast<std::uint32_t>(render);
-    if (slot < engine->voiceSendConfig.size()) {
-        harken::VoiceSendConfig& c = engine->voiceSendConfig[slot][sendSlot];
-        if (c.active && engine->voiceSendActive > 0) {
-            --engine->voiceSendActive;
-        }
-        c = harken::VoiceSendConfig{};
-    }
+    const auto slot = static_cast<std::uint32_t>(render);
+    const auto& current = engine->voiceSendConfig[slot];
+    const auto* removed = current.Find(sendSlot);
+    if (removed == nullptr) return VN_OK;
+    const auto incarnation = removed->incarnation;
+    auto candidate = current.WithoutSlot(sendSlot);
     harken::CommandRecord cmd{};
     cmd.opcode = harken::kOpcodeClearVoiceSend;
     cmd.payload.clearVoiceSend.handle = render;
     cmd.payload.clearVoiceSend.sendSlot = sendSlot;
-    (void)engine->commands.TryPush(cmd);
+    cmd.payload.clearVoiceSend.incarnation = incarnation;
+    if (!engine->commands.TryPush(cmd)) return VN_BACKPRESSURE;
+    CommitVoiceSendMirror(*engine, render, candidate);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117151,26 +117436,31 @@ VnResult Vn_SetVoiceSendLevel(VnVoiceHandle handle, uint32_t sendSlot,
         .U32(sendSlot)
         .F32(levelDb)
         .U32(rampMs);
-    if (sendSlot >= engine->config.voiceSendSlots ||
-        !harken::TryVolumeGainFromDb(levelDb)) {
+    if (!harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const harken::VoiceLedger::Resolved resolved = engine->ledger.Classify(handle);
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
         harken::PendingStartRecord& rec =
             engine->pendingStarts[resolved.ledgerSlot];
-        if (!rec.voiceSends[sendSlot].active) {
+        const auto* existing = rec.voiceSends.Find(sendSlot);
+        if (existing == nullptr) {
             return VN_INVALID_ARG; // no staged send to level
         }
-        rec.voiceSends[sendSlot].levelDb = levelDb; // staged snap; applied at start
+        auto replacement = *existing;
+        replacement.levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet(replacement);
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
         harken::ParkRecord& rec = engine->parkRecords[resolved.ledgerSlot];
-        if (!rec.voiceSends[sendSlot].active) {
+        const auto* existing = rec.voiceSends.Find(sendSlot);
+        if (existing == nullptr) {
             return VN_INVALID_ARG; // no captured send to level
         }
-        rec.voiceSends[sendSlot].levelDb = levelDb; // re-applied as a snap on return
+        auto replacement = *existing;
+        replacement.levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet(replacement);
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -117182,22 +117472,27 @@ VnResult Vn_SetVoiceSendLevel(VnVoiceHandle handle, uint32_t sendSlot,
         return live;
     }
     const std::uint32_t slot = static_cast<std::uint32_t>(render);
-    if (slot >= engine->voiceSendConfig.size() ||
-        !engine->voiceSendConfig[slot][sendSlot].active) {
+    const auto* existing = slot < engine->voiceSendConfig.size()
+        ? engine->voiceSendConfig[slot].Find(sendSlot) : nullptr;
+    if (existing == nullptr) {
         return VN_INVALID_ARG; // no active send in this slot
     }
     if (!AdmitSingleCommand(*engine)) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    engine->voiceSendConfig[slot][sendSlot].levelDb = levelDb;
+    auto replacement = *existing;
+    replacement.levelDb = levelDb;
+    auto candidate = engine->voiceSendConfig[slot].WithSet(replacement);
     harken::CommandRecord cmd{};
     cmd.opcode = harken::kOpcodeSetVoiceSendLevel;
     cmd.payload.setVoiceSendLevel.handle = render;
     cmd.payload.setVoiceSendLevel.sendSlot = sendSlot;
     cmd.payload.setVoiceSendLevel.levelDb = levelDb;
     cmd.payload.setVoiceSendLevel.rampMs = rampMs;
-    (void)engine->commands.TryPush(cmd);
+    cmd.payload.setVoiceSendLevel.incarnation = replacement.incarnation;
+    if (!engine->commands.TryPush(cmd)) return VN_BACKPRESSURE;
+    engine->voiceSendConfig[slot] = std::move(candidate);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117253,7 +117548,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     const std::uint32_t busGeneration =
@@ -117298,10 +117593,11 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     std::uint32_t topologyPlanIndex = harken::kInvalidTopologyPlanIndex;
     std::uint32_t dynamicPlanIndex =
         harken::kInvalidDynamicRoutePlanIndex;
+    std::optional<PreparedTopologyPublication> publication;
     if (clearDynamicRoutes) {
         engine->topologyPlans.DrainRetire();
         engine->dynamicRoutes.DrainAudioMessages();
-        topologyPlanIndex = engine->topologyPlans.Acquire();
+        topologyPlanIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
         dynamicPlanIndex = engine->dynamicRoutes.AcquirePlan();
         if (topologyPlanIndex == harken::kInvalidTopologyPlanIndex ||
@@ -117320,17 +117616,18 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
             engine->topologyPlans.Recycle(topologyPlanIndex);
             return VN_BACKPRESSURE;
         }
+        publication.emplace(*engine, topologyPlanIndex, dynamicPlanIndex);
         FillPlan(*engine, topologyPlanIndex, nullptr, false, busIndex, slot);
     }
     const harken::EffectInstanceRef ref = engine->effectBank.Acquire(type,
         {desc->effectId, engine->CurrentProjectId()});
-    if (ref.type == harken::kEffectTypeNone) {
-        if (topologyPlanIndex != harken::kInvalidTopologyPlanIndex) {
-            engine->topologyPlans.Recycle(topologyPlanIndex);
-            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
-        }
-        return VN_NO_EFFECT; // this type's instance pool is exhausted
-    }
+    if (ref.type == harken::kEffectTypeNone) return VN_NO_EFFECT;
+    struct EffectRollback {
+        harken::Engine& engine;
+        harken::EffectInstanceRef ref;
+        bool transferred = false;
+        ~EffectRollback() { if (!transferred) engine.effectBank.Recycle(ref); }
+    } effectRollback{*engine, ref};
     // Construct on the logic side (the audio thread never does): deterministic
     // reset, then configure from the descriptor through the effect's logic-side
     // parameter path.
@@ -117342,18 +117639,6 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     harken::ApplyEffectDesc(type, desc, state);
     float seedParams[harken::kMaxEffectParamCount] = {};
     (void)harken::EffectParamsFromDesc(type, desc, seedParams);
-    const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
-        harken::EffectParamTargetStore::Scope::Bus,
-        static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
-        seedParams, seedCount);
-    if (!seeded) {
-        engine->effectBank.Recycle(ref);
-        if (topologyPlanIndex != harken::kInvalidTopologyPlanIndex) {
-            engine->topologyPlans.Recycle(topologyPlanIndex);
-            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
-        }
-        return VN_DEVICE_ERROR;
-    }
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusEffect;
     command.payload.setBusEffect.busIndex = busIndex;
@@ -117365,22 +117650,32 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     command.payload.setBusEffect.dynamicRoutePlanIndex = dynamicPlanIndex;
     command.payload.setBusEffect.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command); // space verified above
-    if (clearDynamicRoutes) {
-        engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
-        ++engine->topologyPlanCount;
-    }
+    if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
+    harken::PreparedBusCommandBatch coldPublication(*engine);
+    if (!publication && !coldPublication.Prepare({&command, 1})) return VN_BACKPRESSURE;
+    const harken::BusEffectSettings::Write settingsWrite{busIndex, slot,
+        {type, {desc->effectId, engine->CurrentProjectId()}, 0}};
+    if (!engine->busEffects.Prepare({&settingsWrite, 1})) return VN_DEVICE_ERROR;
+    const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
+        harken::EffectParamTargetStore::Scope::Bus,
+        static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
+        seedParams, seedCount);
+    if (!seeded) return VN_DEVICE_ERROR;
+    if (publication) publication->Publish();
+    else coldPublication.Publish();
+    effectRollback.transferred = true;
+    if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     // Mirror the installed type for parameter-range validation.
-    if (busIndex < engine->busEffectSlotTypes.size()) {
-        engine->busEffectSlotTypes[busIndex][slot] = type;
-        engine->busEffectInstanceRefs[busIndex][slot] = ref;
+    if (busIndex < engine->busOwnerCookies.size()) {
+        engine->busEffects.Set(busIndex, slot, {type, {desc->effectId, engine->CurrentProjectId()}, 0});
+        engine->SetBusEffectRef(busIndex, slot, ref);
         engine->effectBank.PublishInstalled(ref);
     }
     {
         harken::MonitorEffectFacts facts{};
         facts.bypass01 =
             (busIndex < engine->busEffectSlotBypass.size())
-                ? engine->busEffectSlotBypass[busIndex][slot]
+                ? engine->BusEffectBypass(busIndex, slot)
                 : 0u;
         facts.latencyFrames = 0;
         void* state = engine->effectBank.StateFor(ref.type, ref.poolIndex);
@@ -117420,7 +117715,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     const std::uint32_t busGeneration =
@@ -117449,10 +117744,11 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     std::uint32_t topologyPlanIndex = harken::kInvalidTopologyPlanIndex;
     std::uint32_t dynamicPlanIndex =
         harken::kInvalidDynamicRoutePlanIndex;
+    std::optional<PreparedTopologyPublication> publication;
     if (clearDynamicRoutes) {
         engine->topologyPlans.DrainRetire();
         engine->dynamicRoutes.DrainAudioMessages();
-        topologyPlanIndex = engine->topologyPlans.Acquire();
+        topologyPlanIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
         dynamicPlanIndex = engine->dynamicRoutes.AcquirePlan();
         if (topologyPlanIndex == harken::kInvalidTopologyPlanIndex ||
@@ -117471,31 +117767,31 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
             engine->topologyPlans.Recycle(topologyPlanIndex);
             return VN_BACKPRESSURE;
         }
+        publication.emplace(*engine, topologyPlanIndex, dynamicPlanIndex);
         FillPlan(*engine, topologyPlanIndex, nullptr, false, busIndex, slot);
     }
     command.payload.clearBusEffect.topologyPlanIndex =
         topologyPlanIndex;
     command.payload.clearBusEffect.dynamicRoutePlanIndex =
         dynamicPlanIndex;
-    (void)engine->commands.TryPush(command); // space verified above
-    if (clearDynamicRoutes) {
-        engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
-        ++engine->topologyPlanCount;
-    }
+    if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
+    if (publication) publication->Publish();
+    else if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     harken::EffectInstanceRef released{};
-    if (busIndex < engine->busEffectInstanceRefs.size()) {
-        released = engine->busEffectInstanceRefs[busIndex][slot];
+    const auto releasedIdentity = engine->busEffects.Get(busIndex, slot).identity;
+    if (busIndex < engine->busOwnerCookies.size()) {
+        released = engine->BusEffectRefs(busIndex)[slot];
     }
-    if (busIndex < engine->busEffectSlotTypes.size()) {
-        engine->busEffectSlotTypes[busIndex][slot] = harken::kEffectTypeNone;
-        engine->busEffectInstanceRefs[busIndex][slot] =
-            harken::EffectInstanceRef{};
+    if (busIndex < engine->busOwnerCookies.size()) {
+        engine->busEffects.Set(busIndex, slot, {});
+        engine->SetBusEffectRef(busIndex, slot, harken::EffectInstanceRef{});
     }
     if (released.generation != 0 && released.type != harken::kEffectTypeNone) {
         const std::uint64_t handle =
             PackedMonitorEffectHandle(busIndex, slot);
         harken::ObserveMonitorEffectRelease(handle, released.generation,
-                                    engine->effectBank.ObjectIdentity(released).effectId,
+                                    releasedIdentity.effectId,
                                     VN_ACTION_TERMINAL_NONE);
     }
     engine->effectParamTargets.ClearSlot(
@@ -117551,15 +117847,15 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
         return SetPreviewBusEffectControl(*engine, busIndex, slot, paramIndex, value, false);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     // The installed type at this slot fixes the parameter's valid range, read
     // from the logic-side mirror (an empty slot has no parameterizable effect).
-    if (busIndex >= engine->busEffectSlotTypes.size()) {
+    if (busIndex >= engine->busOwnerCookies.size()) {
         return VN_INVALID_ARG;
     }
-    const std::uint32_t type = engine->busEffectSlotTypes[busIndex][slot];
+    const std::uint32_t type = engine->busEffects.Get(busIndex, slot).type;
     if (type == harken::kEffectTypeNone) {
         return VN_INVALID_ARG; // no effect installed to parameterize
     }
@@ -117597,11 +117893,11 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    // Record the direct value as this bus parameter's base in the binding store.
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    // Commit the direct base only after cold preparation and publication.
     engine->effectParamTargets.NoteDirect(
         harken::EffectParamTargetStore::Scope::Bus,
         static_cast<std::uint64_t>(busIndex), slot, paramIndex, value, value);
-    (void)engine->commands.TryPush(command); // space verified above
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117637,7 +117933,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
         return SetPreviewBusEffectControl(*engine, busIndex, slot, bypass01, 0, true);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     // Per-slot bypass is independent of an installed effect: a slot bypassed
@@ -117654,14 +117950,13 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     if (busIndex < engine->busEffectSlotBypass.size()) {
-        engine->busEffectSlotBypass[busIndex][slot] =
-            static_cast<std::uint8_t>(bypass01);
+        engine->SetBusEffectBypass(busIndex, slot, static_cast<std::uint8_t>(bypass01));
     }
-    if (busIndex < engine->busEffectInstanceRefs.size()) {
+    if (busIndex < engine->busOwnerCookies.size()) {
         const harken::EffectInstanceRef& ref =
-            engine->busEffectInstanceRefs[busIndex][slot];
+            engine->BusEffectRefs(busIndex)[slot];
         if (ref.generation != 0 && ref.type != harken::kEffectTypeNone) {
             harken::MonitorEffectFacts facts{};
             facts.bypass01 = bypass01;
@@ -117675,7 +117970,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
             const std::uint64_t handle =
                 PackedMonitorEffectHandle(busIndex, slot);
             harken::ObserveMonitorEffect(handle, ref.generation,
-                                 engine->effectBank.ObjectIdentity(ref).effectId,
+                                 engine->busEffects.Get(busIndex, slot).identity.effectId,
                                  VN_ACTION_TERMINAL_NONE, facts);
         }
     }
@@ -117709,11 +118004,11 @@ VnResult Vn_ResetBusEffect(VnBusId busId, uint32_t effectSlot,
     std::uint32_t busIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (engine->busEffectOwnerCookies[busIndex][effectSlot] != 0) {
+    if (engine->busEffects.Get(busIndex, effectSlot).owner != 0) {
         return VN_IN_USE;
     }
-    if (busIndex >= engine->busEffectSlotTypes.size() ||
-        engine->busEffectSlotTypes[busIndex][effectSlot] !=
+    if (busIndex >= engine->busOwnerCookies.size() ||
+        engine->busEffects.Get(busIndex, effectSlot).type !=
             expectedEffectType) {
         return VN_INVALID_ARG;
     }
@@ -117730,7 +118025,7 @@ VnResult Vn_ResetBusEffect(VnBusId busId, uint32_t effectSlot,
         expectedEffectType;
     command.payload.setBusEffectBypass.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117827,8 +118122,8 @@ VnResult Vn_SetBusEffectDynamicRoute(
     }
 
     // Capability and host guard follows identity validation.
-    if (targetBusIndex >= engine->busEffectSlotTypes.size() ||
-        engine->busEffectSlotTypes[targetBusIndex][effectSlot] !=
+    if (targetBusIndex >= engine->busOwnerCookies.size() ||
+        engine->busEffects.Get(targetBusIndex, effectSlot).type !=
             VN_EFFECT_COMPRESSOR) {
         return VN_INVALID_ARG;
     }
@@ -117922,7 +118217,7 @@ VnResult Vn_SetBusEffectDynamicRoute(
         return VN_BACKPRESSURE;
     }
     const std::uint32_t topologyPlanIndex =
-        engine->topologyPlans.Acquire();
+        engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
     const std::uint32_t dynamicPlanIndex =
         engine->dynamicRoutes.AcquirePlan();
@@ -117953,21 +118248,23 @@ VnResult Vn_SetBusEffectDynamicRoute(
         }
         return VN_BACKPRESSURE;
     }
-    FillPlan(*engine, topologyPlanIndex, &candidate, false);
-
-    harken::CommandRecord command{};
-    command.opcode = harken::kOpcodeSetBusTopologyPlan;
-    command.payload.setBusTopologyPlan.planIndex = topologyPlanIndex;
-    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        dynamicPlanIndex;
-    command.payload.setBusTopologyPlan.connectFrom =
-        harken::kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.acceptedGraphRevision =
-        ++engine->acceptedBusTopologyRevision;
-    command.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine->commands.TryPush(command);
+    PreparedTopologyPublication publication(*engine, topologyPlanIndex);
+    try {
+        FillPlan(*engine, topologyPlanIndex, &candidate, false);
+        if (!publication.Prepare({}, dynamicPlanIndex)) {
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->dynamicRoutes.ReleaseRouteTap(candidate);
+        if (newRouteSlot) engine->dynamicRoutes.ReleaseUncommittedRouteSlot(candidate.tableIndex);
+            return VN_BACKPRESSURE;
+        }
+    } catch (...) {
+        engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->dynamicRoutes.ReleaseRouteTap(candidate);
+        if (newRouteSlot) engine->dynamicRoutes.ReleaseUncommittedRouteSlot(candidate.tableIndex);
+        throw;
+    }
     engine->dynamicRoutes.CommitSet(candidate);
-    ++engine->topologyPlanCount;
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118001,8 +118298,8 @@ VnResult Vn_ClearBusEffectDynamicRoute(
     std::uint32_t targetBusIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, targetBusId, targetBusIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (targetBusIndex >= engine->busEffectSlotTypes.size() ||
-        engine->busEffectSlotTypes[targetBusIndex][effectSlot] !=
+    if (targetBusIndex >= engine->busOwnerCookies.size() ||
+        engine->busEffects.Get(targetBusIndex, effectSlot).type !=
             expectedEffectType) {
         return VN_INVALID_ARG;
     }
@@ -118023,7 +118320,7 @@ VnResult Vn_ClearBusEffectDynamicRoute(
         return VN_BACKPRESSURE;
     }
     const std::uint32_t topologyPlanIndex =
-        engine->topologyPlans.Acquire();
+        engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
     const std::uint32_t dynamicPlanIndex =
         engine->dynamicRoutes.AcquirePlan();
@@ -118041,22 +118338,20 @@ VnResult Vn_ClearBusEffectDynamicRoute(
         engine->topologyPlans.Recycle(topologyPlanIndex);
         return VN_BACKPRESSURE;
     }
-    FillPlan(*engine, topologyPlanIndex, &removal, true);
-    harken::CommandRecord command{};
-    command.opcode = harken::kOpcodeSetBusTopologyPlan;
-    command.payload.setBusTopologyPlan.planIndex = topologyPlanIndex;
-    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        dynamicPlanIndex;
-    command.payload.setBusTopologyPlan.connectFrom =
-        harken::kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.acceptedGraphRevision =
-        ++engine->acceptedBusTopologyRevision;
-    command.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine->commands.TryPush(command);
-    engine->dynamicRoutes.CommitClear(
-        removal.tableIndex,
+    PreparedTopologyPublication publication(*engine, topologyPlanIndex);
+    try {
+        FillPlan(*engine, topologyPlanIndex, &removal, true);
+        if (!publication.Prepare({}, dynamicPlanIndex)) {
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+            return VN_BACKPRESSURE;
+        }
+    } catch (...) {
+        engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        throw;
+    }
+    engine->dynamicRoutes.CommitClear(removal.tableIndex,
         engine->dynamicRoutes.PlanRevision(dynamicPlanIndex));
-    ++engine->topologyPlanCount;
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118199,7 +118494,7 @@ VnResult Vn_SetBusFaderPoint(VnBusId busId, uint32_t faderAfterSlot) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     engine->busFaderAfterSlots[busIndex] = faderAfterSlot;
     return VN_OK;
 
@@ -118235,11 +118530,7 @@ VnResult Vn_SetBusOutputVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    engine->busTargets.SetSlot(
-        index, harken::kBusTargetBusOutputVolume,
-        harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
-    const float resolved = engine->busTargets.Reduce(
-        index, harken::kBusTargetBusOutputVolume);
+    const float resolved = prospective;
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusVolume;
     command.payload.setBusVolume.busIndex = index;
@@ -118247,7 +118538,11 @@ VnResult Vn_SetBusOutputVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.volumeDb = resolved;
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.outputOnly = 1;
-    (void)engine->commands.TryPush(command);
+    if (!engine->busTargets.PrepareSettings(index, harken::kBusTargetBusOutputVolume))
+        return VN_BACKPRESSURE;
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    engine->busTargets.SetSlot(index, harken::kBusTargetBusOutputVolume,
+        harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
     engine->busTargets.NoteApiDirect(
         index, harken::kBusTargetBusOutputVolume, volumeDb, rampMs, resolved);
     return VN_OK;
@@ -118308,11 +118603,7 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     // always, and is additionally stamped for the tick's section-9.2
     // aggregation should binding contributions on this target also
     // change before the flush.
-    engine->busTargets.SetSlot(busIndex, harken::kBusTargetBusVolume,
-                               harken::BusTargetStore::kSlotApiDirectIndex,
-                               volumeDb);
-    const float resolved =
-        engine->busTargets.Reduce(busIndex, harken::kBusTargetBusVolume);
+    const float resolved = prospective;
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusVolume;
     command.payload.setBusVolume.volumeDb =
@@ -118321,7 +118612,11 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command); // space verified above
+    if (!engine->busTargets.PrepareSettings(busIndex, harken::kBusTargetBusVolume))
+        return VN_BACKPRESSURE;
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    engine->busTargets.SetSlot(busIndex, harken::kBusTargetBusVolume,
+        harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
     engine->busTargets.NoteApiDirect(busIndex, harken::kBusTargetBusVolume,
                                      volumeDb, rampMs, resolved);
     return VN_OK;
@@ -118415,7 +118710,7 @@ VnResult Vn_SetBusFilter(VnBusId busId, uint32_t filterKind, float cutoffHz,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118466,7 +118761,7 @@ VnResult Vn_SetBusOutputFilter(VnBusId busId, uint32_t filterKind,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     return VN_OK;
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
@@ -118517,19 +118812,7 @@ VnResult Vn_SetBusMute(VnBusId busId, uint32_t mute01, uint32_t fadeMs) {
             return VN_BACKPRESSURE;
         }
     }
-    engine->busMuted[busIndex] = static_cast<std::uint8_t>(mute01);
-
-    {
-        harken::MonitorBusFacts facts{};
-        facts.mute01 = mute01;
-        facts.solo01 = engine->busSoloed[busIndex];
-        facts.routeBusId = engine->buses.IdAt(engine->buses.ParentOf(busIndex));
-        harken::ObserveMonitorBus(busIndex + 1u, engine->buses.GenerationAt(busIndex), busId,
-                          facts);
-    }
-    if (audibleBefore == audibleAfter) {
-        return VN_OK;
-    }
+    if (audibleBefore != audibleAfter) {
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusVolume;
     command.payload.setBusVolume.busIndex = busIndex;
@@ -118540,7 +118823,18 @@ VnResult Vn_SetBusMute(VnBusId busId, uint32_t mute01, uint32_t fadeMs) {
     command.payload.setBusVolume.rampMs = fadeMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    }
+    engine->busMuted[busIndex] = static_cast<std::uint8_t>(mute01);
+
+    {
+        harken::MonitorBusFacts facts{};
+        facts.mute01 = mute01;
+        facts.solo01 = engine->busSoloed[busIndex];
+        facts.routeBusId = engine->buses.IdAt(engine->buses.ParentOf(busIndex));
+        harken::ObserveMonitorBus(busIndex + 1u, engine->buses.GenerationAt(busIndex), busId,
+                          facts);
+    }
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118601,6 +118895,23 @@ VnResult Vn_SetBusSolo(VnBusId busId, uint32_t solo01, uint32_t fadeMs) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
+    std::vector<harken::CommandRecord> commands;
+    commands.reserve(flipped.size());
+    for (const std::uint32_t i : flipped) {
+        auto& command = commands.emplace_back();
+        command.opcode = harken::kOpcodeSetBusVolume;
+        command.payload.setBusVolume.busIndex = i;
+        command.payload.setBusVolume.volumeDb =
+            BusEffectivelyAudibleWith(*engine, i, busIndex, newValue, newActive)
+                ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume)
+                : kBusMuteFloorDb;
+        command.payload.setBusVolume.rampMs = fadeMs;
+        command.payload.setBusVolume.busGeneration =
+            engine->buses.GenerationAt(i);
+    }
+    harken::PreparedBusCommandBatch publication(*engine);
+    if (!publication.Prepare(commands)) return VN_BACKPRESSURE;
+    publication.Publish();
     engine->busSoloed[busIndex] = newValue;
     engine->busSoloActiveCount = newActive;
 
@@ -118611,19 +118922,6 @@ VnResult Vn_SetBusSolo(VnBusId busId, uint32_t solo01, uint32_t fadeMs) {
         facts.routeBusId = engine->buses.IdAt(engine->buses.ParentOf(busIndex));
         harken::ObserveMonitorBus(busIndex + 1u, engine->buses.GenerationAt(busIndex), busId,
                           facts);
-    }
-    for (const std::uint32_t i : flipped) {
-        harken::CommandRecord command{};
-        command.opcode = harken::kOpcodeSetBusVolume;
-        command.payload.setBusVolume.busIndex = i;
-        command.payload.setBusVolume.volumeDb =
-            BusEffectivelyAudible(*engine, i)
-                ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume)
-                : kBusMuteFloorDb;
-        command.payload.setBusVolume.rampMs = fadeMs;
-        command.payload.setBusVolume.busGeneration =
-            engine->buses.GenerationAt(i);
-        (void)engine->commands.TryPush(command); // batch admitted above
     }
     return VN_OK;
 
@@ -119641,6 +119939,34 @@ VnResult Vn_QueryVariableCatalog(VnVariableCatalogInfoV1* out) {
     } catch (...) {
         return VN_DEVICE_ERROR;
     }}
+
+VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
+                           uint32_t capacity, uint32_t* outCount,
+                           uint32_t* outNextBusIndex) {
+    auto* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (outCount == nullptr || outNextBusIndex == nullptr || (capacity != 0 && states == nullptr))
+        return VN_INVALID_ARG;
+    *outCount = 0;
+    *outNextBusIndex = UINT32_MAX;
+    harken::SnapshotPayload receipt{};
+    const bool captured = engine->mixer.Snapshots().Capture(receipt);
+    const auto* activity = captured ? engine->buses.ObservedActivity(receipt.busActivityPublication) : nullptr;
+    const auto end = engine->buses.BusCount();
+    auto index = std::min(firstBusIndex, end);
+    for (; index < end; ++index) {
+        if (!engine->buses.AliveAt(index)) continue;
+        if (*outCount == capacity) { *outNextBusIndex = index; break; }
+        auto& state = states[(*outCount)++];
+        state = {};
+        state.busId = engine->buses.IdAt(index);
+        state.busIndex = index;
+        state.busGeneration = engine->buses.GenerationAt(index);
+        if (captured) engine->buses.CaptureObservedBusState(
+            {index, state.busGeneration}, receipt, activity, state);
+    }
+    return VN_OK;
+}
 
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     try {
@@ -120911,6 +121237,7 @@ VnResult harken::detail::PostActionWithValidation(
         ImmediateActionPlan plan{};
         plan.playbackRequest = request;
         plan.engine = engine;
+        plan.prepareActivityAfterSources = true;
         plan.emitter = desc->emitter == 0 ? engine->emitters.DefaultState()
                                           : desc->emitter;
         plan.emitterOrigin = engine->monitorEmitters.CaptureOrigin(plan.emitter);
@@ -121129,7 +121456,7 @@ VnResult harken::detail::PostActionWithValidation(
                 }
                 if (!SealImmediateActionVariableSources(plan)) {
                     bundle.Abandon();
-                    return VN_STALE_HANDLE;
+                    return plan.result;
                 }
                 bool committedOriginalBundle = false;
                 if (plan.nativeResetScope.Valid() || plan.continuationResetPrepared) {
@@ -123131,16 +123458,17 @@ VnResult Vn_SetBusOutputLayout(VnBusId busId, uint32_t layout) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    engine->topologyPlans.OutputLayoutData(planIndex)[busIndex] = layout;
+    engine->topologyPlans.SetCustomDownmix(planIndex, busIndex, {});
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Adopt the new output layout and (re)seed its default matrix for the
     // resolved mix -> layout fold; a later Vn_SetBusDownmixMatrix overrides it,
     // and Vn_ResetBusDownmixMatrix returns to this default.
     engine->busOutputLayout[busIndex] = layout;
-    harken::DefaultDownmixMatrix(
-        engine->config.mixChannelLayout, layout,
-        engine->busDownmixCoeffs.data() +
-            static_cast<std::size_t>(busIndex) * 64);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    engine->busCustomDownmix.erase(busIndex);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123208,14 +123536,17 @@ VnResult Vn_SetBusDownmixMatrix(VnBusId busId, const VnDownmixMatrixDesc* desc) 
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    auto custom = std::make_shared<harken::BusDownmixMatrix>();
+    std::copy_n(desc->coeffs, 64, custom->data());
+    engine->topologyPlans.SetCustomDownmix(planIndex, busIndex, custom);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Store the full 8x8 table as given (no normalization); the fold reads only
     // the sub-block the bus's (mix -> output) layouts define, which the match
     // above pinned to the desc's own layouts.
-    std::memcpy(engine->busDownmixCoeffs.data() +
-                    static_cast<std::size_t>(busIndex) * 64,
-                desc->coeffs, 64 * sizeof(float));
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    engine->busCustomDownmix.insert_or_assign(busIndex, std::move(custom));
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123242,15 +123573,15 @@ VnResult Vn_ResetBusDownmixMatrix(VnBusId busId) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    engine->topologyPlans.SetCustomDownmix(planIndex, busIndex, {});
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Recompute the Appendix A default for the bus's current fold (src = mix,
     // dst = the bus's output layout; for the master that output layout is the
     // device layout).
-    harken::DefaultDownmixMatrix(
-        engine->config.mixChannelLayout, engine->busOutputLayout[busIndex],
-        engine->busDownmixCoeffs.data() +
-            static_cast<std::size_t>(busIndex) * 64);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    engine->busCustomDownmix.erase(busIndex);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123849,13 +124180,8 @@ struct CombinedBusGraph {
     template <typename Fn>
     void ForEachSendTarget(std::uint32_t from, Fn&& fn) const {
         if (from < existing) {
-            const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-            const std::uint32_t base = from * slots;
-            for (std::uint32_t s = 0; s < slots; ++s) {
-                const std::uint32_t to = engine->busSendAdj[base + s];
-                if (to == harken::kInvalidBusIndex) {
-                    continue;
-                }
+            for (const auto& edge : engine->busSends.From(from)) {
+                const auto to = edge.target;
                 if (removeSends != nullptr) {
                     bool removed = false;
                     for (const harken::PackBusSendEntry& gone : *removeSends) {
@@ -124028,10 +124354,7 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
     // Buses: capacity, parent-first creation order (a parent cycle among
     // pack buses can never order), send-slot budgets, and the combined
     // tree+send cycle check.
-    if (engine.buses.BusCount() + image.buses.size() >
-        engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (!engine.PrepareAdditionalBusDefinitions(image.buses.size())) return VN_BACKPRESSURE;
     staging.busApplyOrder.clear();
     staging.busApplyOrder.reserve(image.buses.size());
     {
@@ -124074,27 +124397,6 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
         graph.existing = engine.buses.BusCount();
         graph.total = graph.existing +
                       static_cast<std::uint32_t>(image.buses.size());
-        const std::uint32_t slots = engine.config.busSendSlotsPerBus;
-        for (std::uint32_t node = 0; node < graph.total; ++node) {
-            std::uint32_t used = 0;
-            if (node < graph.existing) {
-                for (std::uint32_t s = 0; s < slots; ++s) {
-                    if (engine.busSendAdj[node * slots + s] !=
-                        harken::kInvalidBusIndex) {
-                        ++used;
-                    }
-                }
-            }
-            for (const harken::PackBusSendEntry& send : image.busSends) {
-                if (graph.IndexOf(send.fromBusId) == node) {
-                    ++used;
-                }
-            }
-            if (used > slots) {
-                ++engine.noSendCount;
-                return VN_NO_SEND;
-            }
-        }
         if (!CombinedBusGraphAcyclic(graph)) {
             return VN_SEND_CYCLE;
         }
@@ -124389,7 +124691,6 @@ VnResult UnloadReversibleResident(Engine& engine,
     }
 
     const std::uint32_t busCount = engine.buses.BusCount();
-    const std::uint32_t sendSlots = engine.config.busSendSlotsPerBus;
     std::vector<std::uint8_t> dead;
     std::vector<std::uint8_t> removedSendSlots;
     std::vector<std::uint32_t> childFirst;
@@ -124399,8 +124700,7 @@ VnResult UnloadReversibleResident(Engine& engine,
     std::vector<CommandRecord> commands;
     try {
         dead.assign(busCount, 0);
-        removedSendSlots.assign(
-            static_cast<std::size_t>(busCount) * sendSlots, 0);
+        removedSendSlots.assign(engine.busSends.Count(), 0);
         childFirst.reserve(record.buses.size());
         routeRemovals.reserve(record.dynamicRoutes.size());
         soloFlips.reserve(busCount);
@@ -124429,8 +124729,8 @@ VnResult UnloadReversibleResident(Engine& engine,
         childFirst.push_back(index);
     }
 
-    // Every authored Send must still occupy one exact fixed slot carrying the
-    // Pack cookie. The slot mask is the read-only removal overlay.
+    // Every authored Send must still carry this Pack cookie. The removal mask
+    // addresses the current immutable candidate, never a configured matrix.
     for (const PackBusSendEntry& authored : record.busSends) {
         const std::uint32_t from =
             engine.buses.FindIndex(authored.fromBusId);
@@ -124439,20 +124739,9 @@ VnResult UnloadReversibleResident(Engine& engine,
         if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
             return VN_IN_USE;
         }
-        bool found = false;
-        const std::uint32_t base = from * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            if (engine.busSendAdj[flat] == to &&
-                engine.busSendOwnerCookies[flat] == handle) {
-                removedSendSlots[flat] = 1;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            return VN_IN_USE;
-        }
+        const auto* edge = engine.busSends.Find(from, to);
+        if (edge == nullptr || edge->ownerCookie != handle) return VN_IN_USE;
+        removedSendSlots[engine.busSends.IndexOf(*edge)] = 1;
     }
 
     // No foreign child or Send may be removed as collateral damage.
@@ -124465,21 +124754,15 @@ VnResult UnloadReversibleResident(Engine& engine,
             return VN_IN_USE;
         }
     }
-    for (std::uint32_t from = 0; from < busCount; ++from) {
-        const std::uint32_t base = from * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            const std::uint32_t to = engine.busSendAdj[flat];
-            if (to == kInvalidBusIndex) {
-                continue;
-            }
-            const bool touchesDead =
-                dead[from] != 0 || (to < busCount && dead[to] != 0);
-            if (touchesDead && removedSendSlots[flat] == 0) {
-                return VN_IN_USE;
-            }
-        }
+    for (const auto& edge : engine.busSends.Records()) {
+        const bool touchesDead = dead[edge.source] != 0 ||
+            (edge.target < busCount && dead[edge.target] != 0);
+        if (touchesDead && removedSendSlots[engine.busSends.IndexOf(edge)] == 0) return VN_IN_USE;
     }
+    auto candidateSends = engine.busSends;
+    candidateSends.EraseIf([&](const auto& edge) {
+        return removedSendSlots[candidateSends.IndexOf(edge)] != 0;
+    });
 
     // Every Pack Effect must retain its exact Bus/slot/type cookie. Conversely
     // a Bus tombstone may not retire an Effect absent from this removal set.
@@ -124487,8 +124770,8 @@ VnResult UnloadReversibleResident(Engine& engine,
         const std::uint32_t bus = engine.buses.FindIndex(effect.busId);
         if (bus == kInvalidBusIndex ||
             effect.slot >= engine.config.fxSlotsPerBus ||
-            engine.busEffectOwnerCookies[bus][effect.slot] != handle ||
-            engine.busEffectSlotTypes[bus][effect.slot] !=
+            engine.busEffects.Get(bus, effect.slot).owner != handle ||
+            engine.busEffects.Get(bus, effect.slot).type !=
                 effect.effectType) {
             return VN_IN_USE;
         }
@@ -124509,14 +124792,14 @@ VnResult UnloadReversibleResident(Engine& engine,
         for (std::uint32_t slot = 0;
              slot < engine.config.fxSlotsPerBus; ++slot) {
             const std::uint32_t type =
-                engine.busEffectSlotTypes[bus][slot];
+                engine.busEffects.Get(bus, slot).type;
             if (type == kEffectTypeNone) {
                 continue;
             }
             const PackBusEffectEntry* authored =
                 FindOwnedPackEffect(record, busId, slot);
             if (authored == nullptr || authored->effectType != type ||
-                engine.busEffectOwnerCookies[bus][slot] != handle) {
+                engine.busEffects.Get(bus, slot).owner != handle) {
                 return VN_IN_USE;
             }
         }
@@ -124786,7 +125069,7 @@ VnResult UnloadReversibleResident(Engine& engine,
     }
 
     engine.topologyPlans.DrainRetire();
-    const std::uint32_t topologyPlan = engine.topologyPlans.Acquire();
+    const std::uint32_t topologyPlan = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     harken::ClearPairedInstallAckIdentity(engine, topologyPlan);
     if (topologyPlan == kInvalidTopologyPlanIndex) {
         ++engine.topologyRefusedCount;
@@ -124835,13 +125118,19 @@ VnResult UnloadReversibleResident(Engine& engine,
         static_cast<std::uint32_t>(commands.size() + 1);
     commands.insert(commands.begin(), swap); // capacity was reserved above
 
-    if (!engine.commands.TryPushBatch(
-            commands.data(),
-            static_cast<std::uint32_t>(commands.size()))) {
+    CommandQueue::BatchReservation reservation{};
+    CommandQueue::PreparedBatchProof proof;
+    if (!engine.commands.ReserveBatch(static_cast<std::uint32_t>(commands.size()), &reservation) ||
+        !PrepareTopologyActivity(engine, engine.topologyPlans.View(topologyPlan), reservation, commands, proof)) {
+        engine.commands.CancelReservedBatch(&reservation);
         engine.dynamicRoutes.AbandonPlan(dynamicPlan);
         engine.topologyPlans.Recycle(topologyPlan);
         return VN_BACKPRESSURE;
     }
+    const auto published = engine.commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == commands.size());
+    (void)published;
+    for (const auto& command : commands) engine.NoteBusSettingCommand(command);
     ++engine.acceptedBusTopologyRevision;
     const std::uint64_t dynamicPlanRevision =
         engine.dynamicRoutes.PlanRevision(dynamicPlan);
@@ -124854,26 +125143,15 @@ VnResult UnloadReversibleResident(Engine& engine,
     }
     for (const PackBusEffectEntry& effect : record.busEffects) {
         const std::uint32_t bus = engine.buses.FindIndex(effect.busId);
-        engine.busEffectSlotTypes[bus][effect.slot] = kEffectTypeNone;
-        engine.busEffectInstanceRefs[bus][effect.slot] =
-            EffectInstanceRef{};
-        engine.busEffectOwnerCookies[bus][effect.slot] = 0;
+        engine.busEffects.Set(bus, effect.slot, {});
+        engine.SetBusEffectRef(bus, effect.slot, EffectInstanceRef{});
         engine.effectParamTargets.ClearSlot(
             EffectParamTargetStore::Scope::Bus,
             static_cast<std::uint64_t>(bus),
             engine.buses.GenerationAt(bus), effect.slot);
     }
-    for (std::uint32_t flat = 0;
-         flat < removedSendSlots.size(); ++flat) {
-        if (removedSendSlots[flat] == 0) {
-            continue;
-        }
-        engine.busSendAdj[flat] = kInvalidBusIndex;
-        engine.busSendOwnerCookies[flat] = 0;
-        if (engine.busSendActive > 0) {
-            --engine.busSendActive;
-        }
-    }
+    engine.busSends.Swap(candidateSends);
+    engine.busSendActive = engine.busSends.Count();
     for (std::uint32_t bus : childFirst) {
         ResetBusLogicSlot(engine, bus, engine.buses.GenerationAt(bus), 0);
         engine.buses.MarkLogicDead(bus);
@@ -125223,8 +125501,6 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             return VN_IN_USE;
         }
     }
-    const std::uint32_t sendSlots =
-        engine.config.busSendSlotsPerBus;
     for (const PackBusSendEntry& oldSend : record.busSends) {
         const std::uint32_t from =
             engine.buses.FindIndex(oldSend.fromBusId);
@@ -125233,19 +125509,8 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
             return VN_IN_USE;
         }
-        const std::uint32_t base = from * sendSlots;
-        std::uint32_t exactSlot = sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            if (engine.busSendAdj[base + slot] == to) {
-                exactSlot = slot;
-                break;
-            }
-        }
-        if (exactSlot == sendSlots ||
-            engine.busSendOwnerCookies[base + exactSlot] !=
-                revision.handle) {
-            return VN_IN_USE;
-        }
+        const auto* edge = engine.busSends.Find(from, to);
+        if (edge == nullptr || edge->ownerCookie != revision.handle) return VN_IN_USE;
     }
 
     r = ScreenPackRevisionRemovals(engine, record, revision);
@@ -125263,17 +125528,12 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             return VN_IN_USE;
         }
     }
-    const std::uint64_t finalActiveBusCount =
-        static_cast<std::uint64_t>(engine.buses.ActiveBusCount()) -
-        revision.removeBuses.size() + revision.addBuses.size();
-    if (finalActiveBusCount > engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (!engine.PrepareAdditionalBusDefinitions(revision.addBuses.size())) return VN_BACKPRESSURE;
     for (const PackBusEffectEntry& oldEffect : record.busEffects) {
         const std::uint32_t busIndex =
             engine.buses.FindIndex(oldEffect.busId);
         if (busIndex == kInvalidBusIndex ||
-            engine.busEffectOwnerCookies[busIndex][oldEffect.slot] !=
+            engine.busEffects.Get(busIndex, oldEffect.slot).owner !=
                 revision.handle) {
             return VN_BAD_PACK;
         }
@@ -125312,12 +125572,11 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             if (engine.busFaderAfterSlots[busIndex] !=
                     effect.faderPointGuard ||
                 (oldIdentity
-                     ? engine.busEffectOwnerCookies[busIndex][effect.slot] !=
+                     ? engine.busEffects.Get(busIndex, effect.slot).owner !=
                            revision.handle
-                     : engine.busEffectSlotTypes[busIndex][effect.slot] !=
+                     : engine.busEffects.Get(busIndex, effect.slot).type !=
                                kEffectTypeNone ||
-                           engine.busEffectOwnerCookies[busIndex]
-                                                       [effect.slot] != 0)) {
+                           engine.busEffects.Get(busIndex, effect.slot).owner != 0)) {
                 return VN_BAD_PACK;
             }
         } else if (effect.faderPointGuard !=
@@ -125412,32 +125671,6 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         graph.addSends = &revision.addSends;
         graph.removeSends = &revision.removeSends;
         graph.replaceDynamicRouteOwner = revision.handle;
-        const std::uint32_t slots = engine.config.busSendSlotsPerBus;
-        for (std::uint32_t node = 0; node < graph.total; ++node) {
-            std::uint32_t used = 0;
-            if (node < graph.existing) {
-                for (std::uint32_t s = 0; s < slots; ++s) {
-                    if (engine.busSendAdj[node * slots + s] !=
-                        kInvalidBusIndex) {
-                        ++used;
-                    }
-                }
-                for (const PackBusSendEntry& gone : revision.removeSends) {
-                    if (graph.IndexOf(gone.fromBusId) == node) {
-                        --used;
-                    }
-                }
-            }
-            for (const PackBusSendEntry& send : revision.addSends) {
-                if (graph.IndexOf(send.fromBusId) == node) {
-                    ++used;
-                }
-            }
-            if (used > slots) {
-                ++engine.noSendCount;
-                return VN_NO_SEND;
-            }
-        }
         if (!CombinedBusGraphAcyclic(graph)) {
             return VN_BAD_PACK;
         }
@@ -125449,11 +125682,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
                 continue; // an endpoint is an added bus: no live edge
             }
-            for (std::uint32_t s = 0; s < slots; ++s) {
-                if (engine.busSendAdj[from * slots + s] == to) {
-                    return VN_IN_USE;
-                }
-            }
+            if (engine.busSends.Find(from, to) != nullptr) return VN_IN_USE;
         }
     }
     // Binding definitions and attachments, with net-arithmetic capacity.
@@ -126083,38 +126312,23 @@ std::uint32_t RevisionCommandCount(
 }
 
 bool PrepareRevisionProspectiveTopology(
-    Engine& engine, PackPendingRevision& revision) noexcept {
+    Engine& engine, PackPendingRevision& revision) try {
     if (!revision.needsPlan) {
         revision.prospectiveBusCount = engine.buses.BusCount();
         return true;
     }
     const std::uint32_t oldCount = engine.buses.BusCount();
-    const std::uint32_t capacity = engine.config.maxBuses;
-    const std::uint32_t slots = engine.config.busSendSlotsPerBus;
-    if (revision.prospectiveBusIds.size() < capacity ||
-        revision.prospectiveBusGenerations.size() < capacity ||
-        revision.prospectiveParents.size() < capacity ||
-        revision.prospectiveAlive.size() < capacity ||
-        revision.topologyFeederCount.size() < capacity ||
-        revision.topologyEmittedFeeders.size() < capacity ||
-        revision.topologyEmitted.size() < capacity ||
-        revision.prospectiveSendTargets.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendOwners.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendTopologyOwners.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendLevels.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendLevelsDb.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendLevelApply.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveBusVolumeDb.size() < capacity ||
-        revision.prospectiveBusOutputVolumeDb.size() < capacity ||
-        revision.prospectiveBusVolumeApply.size() < capacity) {
-        return false;
-    }
+    const std::uint32_t capacity = engine.BusCapacity();
+    revision.prospectiveBusIds.resize(capacity);
+    revision.prospectiveBusGenerations.resize(capacity);
+    revision.prospectiveParents.resize(capacity);
+    revision.prospectiveAlive.resize(capacity);
+    revision.topologyFeederCount.resize(capacity);
+    revision.topologyEmittedFeeders.resize(capacity);
+    revision.topologyEmitted.resize(capacity);
+    revision.prospectiveBusVolumeDb.resize(capacity);
+    revision.prospectiveBusOutputVolumeDb.resize(capacity);
+    revision.prospectiveBusVolumeApply.resize(capacity);
     std::fill(revision.prospectiveBusIds.begin(),
               revision.prospectiveBusIds.end(), VnBusId{});
     std::fill(revision.prospectiveBusGenerations.begin(),
@@ -126123,18 +126337,8 @@ bool PrepareRevisionProspectiveTopology(
               revision.prospectiveParents.end(), 0);
     std::fill(revision.prospectiveAlive.begin(),
               revision.prospectiveAlive.end(), 0);
-    std::fill(revision.prospectiveSendTargets.begin(),
-              revision.prospectiveSendTargets.end(), kInvalidBusIndex);
-    std::fill(revision.prospectiveSendOwners.begin(),
-              revision.prospectiveSendOwners.end(), 0);
-    std::fill(revision.prospectiveSendTopologyOwners.begin(),
-              revision.prospectiveSendTopologyOwners.end(), 0);
-    std::fill(revision.prospectiveSendLevels.begin(),
-              revision.prospectiveSendLevels.end(), 0.0f);
-    std::fill(revision.prospectiveSendLevelsDb.begin(),
-              revision.prospectiveSendLevelsDb.end(), 0.0f);
-    std::fill(revision.prospectiveSendLevelApply.begin(),
-              revision.prospectiveSendLevelApply.end(), 0);
+    BusSendTable candidateSends;
+    candidateSends.Reserve(engine.busSends.Count() + revision.image.busSends.size());
     std::fill(revision.prospectiveBusVolumeDb.begin(),
               revision.prospectiveBusVolumeDb.end(), 0.0f);
     std::fill(revision.prospectiveBusOutputVolumeDb.begin(),
@@ -126207,87 +126411,38 @@ bool PrepareRevisionProspectiveTopology(
         }
         revision.prospectiveParents[index] = parent;
     }
-    for (std::uint32_t from = 0; from < oldCount; ++from) {
-        if (!engine.buses.AliveAt(from)) {
-            continue;
-        }
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t slot = 0; slot < slots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            const std::uint32_t to = engine.busSendAdj[flat];
-            if (to == kInvalidBusIndex ||
-                engine.busSendOwnerCookies[flat] == revision.handle) {
-                continue;
-            }
-            if (from >= count || to >= count ||
-                revision.prospectiveAlive[from] == 0 ||
-                revision.prospectiveAlive[to] == 0 ||
-                revision.prospectiveBusGenerations[from] !=
-                    engine.buses.GenerationAt(from) ||
-                revision.prospectiveBusGenerations[to] !=
-                    engine.buses.GenerationAt(to)) {
-                return false;
-            }
-            revision.prospectiveSendTargets[flat] = to;
-            revision.prospectiveSendOwners[flat] =
-                engine.busSendOwnerCookies[flat];
-            revision.prospectiveSendTopologyOwners[flat] =
-                engine.busSendTopologyOwnerIds[flat];
-            revision.prospectiveSendLevelsDb[flat] =
-                engine.busSendLevelDb[flat];
-        }
+    for (const auto& edge : engine.busSends.Records()) {
+        if (edge.ownerCookie == revision.handle) continue;
+        const auto from = edge.source, to = edge.target;
+        if (from >= count || to >= count ||
+            revision.prospectiveAlive[from] == 0 || revision.prospectiveAlive[to] == 0 ||
+            revision.prospectiveBusGenerations[from] != engine.buses.GenerationAt(from) ||
+            revision.prospectiveBusGenerations[to] != engine.buses.GenerationAt(to)) return false;
+        candidateSends.Add(edge);
     }
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
     for (const PackBusSendEntry& send : revision.image.busSends) {
-        const std::uint32_t from = findBus(send.fromBusId);
-        const std::uint32_t to = findBus(send.toBusId);
-        if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
+        const auto from = findBus(send.fromBusId), to = findBus(send.toBusId);
+        if (from == kInvalidBusIndex || to == kInvalidBusIndex)
             return false;
-        }
-        std::uint32_t chosen = kInvalidBusIndex;
-        if (from < oldCount &&
-            revision.prospectiveBusGenerations[from] ==
-                engine.buses.GenerationAt(from)) {
-            const std::uint32_t oldBase = from * slots;
-            for (std::uint32_t slot = 0; slot < slots; ++slot) {
-                const std::uint32_t flat = oldBase + slot;
-                if (engine.busSendAdj[flat] == to &&
-                    engine.busSendOwnerCookies[flat] ==
-                        revision.handle) {
-                    chosen = flat;
-                    break;
-                }
-            }
-        }
-        const std::uint32_t base = from * slots;
-        if (chosen == kInvalidBusIndex) {
-            for (std::uint32_t slot = 0; slot < slots; ++slot) {
-                if (revision.prospectiveSendTargets[base + slot] ==
-                    kInvalidBusIndex) {
-                    chosen = base + slot;
-                    break;
-                }
-            }
-        }
-        if (chosen == kInvalidBusIndex) {
-            return false;
-        }
-        revision.prospectiveSendTargets[chosen] = to;
-        revision.prospectiveSendOwners[chosen] = revision.handle;
-        revision.prospectiveSendTopologyOwners[chosen] = 0;
-        revision.prospectiveSendLevels[chosen] =
-            send.levelDb == 0.0f
-                ? 1.0f
-                : std::pow(10.0f, send.levelDb / 20.0f);
-        revision.prospectiveSendLevelsDb[chosen] = send.levelDb;
-        const bool retained =
-            chosen < static_cast<std::size_t>(oldCount) * slots &&
-            engine.busSendAdj[chosen] == to &&
-            engine.busSendOwnerCookies[chosen] == revision.handle;
-        revision.prospectiveSendLevelApply[chosen] =
-            !retained ||
-                    engine.busSendLevelDb[chosen] != send.levelDb
-                ? 1
-                : 0;
+        const auto* prior = engine.busSends.Find(from, to);
+        const bool retained = prior && prior->ownerCookie == revision.handle &&
+            revision.prospectiveBusGenerations[from] == engine.buses.GenerationAt(from) &&
+            revision.prospectiveBusGenerations[to] == engine.buses.GenerationAt(to);
+        if (retained != (retainedPass != 0)) continue;
+        if (candidateSends.Find(from, to)) return false;
+        BusSendRecord edge;
+        edge.source = from;
+        edge.target = to;
+        edge.slot = retained ? prior->slot : UINT32_MAX;
+        edge.ownerCookie = revision.handle;
+        edge.generation = retained ? prior->generation : engine.NewBusSendGeneration();
+        if (edge.generation == 0) return false;
+        edge.levelDb = send.levelDb;
+        edge.preparedGain = send.levelDb == 0.0f ? 1.0f : std::pow(10.0f, send.levelDb / 20.0f);
+        edge.applyLevel = !retained || prior->levelDb != send.levelDb;
+        candidateSends.Add(edge);
+    }
     }
     for (const PackBusEntry& bus : revision.image.buses) {
         const std::uint32_t index = findBus(bus.busId);
@@ -126343,8 +126498,11 @@ bool PrepareRevisionProspectiveTopology(
         revision.prospectiveBusOutputVolumeDb[index] = bus.outputBusVolume;
         revision.prospectiveBusVolumeApply[index] = apply;
     }
+    revision.prospectiveSends.Swap(candidateSends);
     revision.prospectiveBusCount = count;
     return true;
+} catch (...) {
+    return false;
 }
 
 void StampRevisionMigrationTargets(
@@ -126784,12 +126942,16 @@ VnResult PrepareRevisionBindings(
         }
         std::uint32_t definitionSlot =
             engine.bindings.DefinitionSlotOf(entry.bindingId);
+        const auto* existingDefinition = engine.bindings.Find(entry.bindingId);
+        std::uint32_t activityTarget = existingDefinition != nullptr
+            ? existingDefinition->targetId : UINT32_MAX;
         bool definitionWillBeAdded = false;
         for (std::size_t added = 0;
              added < revision.addBindingDefs.size(); ++added) {
             const auto& def = revision.image.bindingDefinitions[
                 revision.addBindingDefs[added]];
             if (def.id == entry.bindingId) {
+                activityTarget = def.desc.targetId;
                 definitionSlot =
                     revision.preparedBindingDefinitionAdds[added]
                         .SlotIndex();
@@ -126803,6 +126965,11 @@ VnResult PrepareRevisionBindings(
                 VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
             busIndex = ProspectiveRevisionBusIndex(
                 engine, revision, entry.objectId);
+        }
+        if (entry.scopeKind == kTargetScopeBus &&
+            !engine.busTargets.PrepareActivity(busIndex, activityTarget)) {
+            CancelRevisionBindings(engine, revision);
+            return VN_BACKPRESSURE;
         }
         bool duplicateWillBeDetached = false;
         for (const BindingTable::PreparedAttachmentToken& removed :
@@ -127105,13 +127272,14 @@ VnResult ApplyPreparedPackTransaction(
         Engine* engine = nullptr;
         CommandQueue::BatchReservation* reservation = nullptr;
         bool active = false;
+        CommandQueue::PreparedBatchProof proof;
 
         ~QueueReservationGuard() {
-            if (active) {
-                engine->commands.CancelReservedBatch(reservation);
-            }
+            Cancel();
         }
         void Cancel() noexcept {
+            proof.Release();
+            engine->buses.DrainActivities();
             if (active) {
                 engine->commands.CancelReservedBatch(reservation);
                 active = false;
@@ -127119,8 +127287,10 @@ VnResult ApplyPreparedPackTransaction(
         }
         void Commit(const CommandRecord* commands) noexcept {
             assert(active);
-            engine->commands.CommitPreparedBatch(
-                reservation, commands);
+            (void)commands;
+            const auto published = engine->commands.ConsumePreparedBatch(std::move(proof));
+            assert(published.Count() != 0);
+            (void)published;
             active = false;
         }
     } queueGuard{&engine, &queueReservation, false};
@@ -127165,6 +127335,61 @@ VnResult ApplyPreparedPackTransaction(
         CancelRevisionAttenuationDiscrete(engine, revision);
         return r;
     }
+    if (PreviewBusEffectAttachmentConflict(engine, image.bindingAttachments)) {
+        if (commandCount != 0) queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_IN_USE;
+    }
+
+    // The media generation swap is the final fallible operation. It guarantees
+    // zero mutation on refusal, so the unpublished queue ticket can be
+    // cancelled and the complete activation attempt retried.
+    std::vector<VoiceSendMirrorMigrationV1> sendMirrorMigration;
+    if (revision.needsPlan) {
+        try {
+            sendMirrorMigration = PrepareVoiceSendMirrorMigrationV1(engine,
+                revision.prospectiveBusGenerations.data(), revision.prospectiveAlive.data(),
+                revision.prospectiveBusCount);
+        } catch (...) {
+            if (commandCount != 0) queueGuard.Cancel();
+            CancelRevisionAttenuationDiscrete(engine, revision);
+            CancelRevisionBindings(engine, revision);
+            return VN_DEVICE_ERROR;
+        }
+    }
+    bool settingsReady = true;
+    for (std::uint32_t bus = 0; revision.needsPlan && bus < revision.prospectiveBusCount; ++bus) {
+        if ((revision.prospectiveBusVolumeApply[bus] & kApplyBusVolume) != 0)
+            settingsReady &= engine.busTargets.PrepareSettings(bus, kBusTargetBusVolume);
+        if ((revision.prospectiveBusVolumeApply[bus] & kApplyBusOutputVolume) != 0)
+            settingsReady &= engine.busTargets.PrepareSettings(bus, kBusTargetBusOutputVolume);
+    }
+    try {
+        std::vector<BusEffectSettings::Write> effectWrites;
+        effectWrites.reserve(revision.busEffectRefs.size());
+        for (const auto& reservation : revision.busEffectRefs) {
+            const auto& effect = image.busEffects[reservation.imageIndex];
+            effectWrites.push_back({ProspectiveRevisionBusIndex(engine, revision, effect.busId), effect.slot,
+                {effect.effectType, engine.effectBank.ObjectIdentity(reservation.ref), revision.handle}});
+        }
+        settingsReady &= engine.busEffects.Prepare(effectWrites);
+    } catch (...) { settingsReady = false; }
+    if (!settingsReady) {
+        if (commandCount != 0) queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_DEVICE_ERROR;
+    }
+    if (commandCount != 0 && !(revision.needsPlan
+            ? PrepareTopologyActivity(engine, engine.topologyPlans.View(revision.planIndex),
+                queueReservation, packCommands, queueGuard.proof)
+            : engine.commands.ProvePreparedBatch(&queueReservation, packCommands.data(), commandCount, &queueGuard.proof))) {
+        queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_BACKPRESSURE;
+    }
     if (initialLoadToken != nullptr &&
         PackFaultHit(PackStagingFault::InitialMediaPreparation)) {
         if (commandCount != 0) {
@@ -127184,16 +127409,6 @@ VnResult ApplyPreparedPackTransaction(
         return VN_BACKPRESSURE;
     }
 
-    if (PreviewBusEffectAttachmentConflict(engine, image.bindingAttachments)) {
-        if (commandCount != 0) queueGuard.Cancel();
-        CancelRevisionAttenuationDiscrete(engine, revision);
-        CancelRevisionBindings(engine, revision);
-        return VN_IN_USE;
-    }
-
-    // The media generation swap is the final fallible operation. It guarantees
-    // zero mutation on refusal, so the unpublished queue ticket can be
-    // cancelled and the complete activation attempt retried.
     VnPackHandle loadedHandle = 0;
     if (preserveMedia) {
         loadedHandle = revision.handle;
@@ -127223,6 +127438,7 @@ VnResult ApplyPreparedPackTransaction(
     }
     // Commit tail: every resource and capacity decision is already frozen.
     // These operations touch only preallocated state and cannot refuse.
+    CommitVoiceSendMirrorMigrationV1(engine, sendMirrorMigration);
     if (revision.needsPlan) {
         const std::uint32_t oldBusCount = engine.buses.BusCount();
         for (std::uint32_t index = 1; index < oldBusCount; ++index) {
@@ -127325,27 +127541,9 @@ VnResult ApplyPreparedPackTransaction(
             revision.prospectiveAlive.data(), revision.prospectiveBusCount);
     }
     if (revision.needsPlan) {
-        const std::uint32_t slots =
-            engine.config.busSendSlotsPerBus;
-        const std::size_t flatCount =
-            static_cast<std::size_t>(
-                revision.prospectiveBusCount) *
-            slots;
-        std::copy_n(revision.prospectiveSendTargets.data(), flatCount,
-                    engine.busSendAdj.data());
-        std::copy_n(revision.prospectiveSendOwners.data(), flatCount,
-                    engine.busSendOwnerCookies.data());
-        std::copy_n(
-            revision.prospectiveSendTopologyOwners.data(), flatCount,
-            engine.busSendTopologyOwnerIds.data());
-        std::copy_n(revision.prospectiveSendLevelsDb.data(), flatCount,
-                    engine.busSendLevelDb.data());
-        engine.busSendActive = 0;
-        for (std::size_t flat = 0; flat < flatCount; ++flat) {
-            if (engine.busSendAdj[flat] != kInvalidBusIndex) {
-                ++engine.busSendActive;
-            }
-        }
+        revision.prospectiveSends.ClearActions();
+        engine.busSends.Swap(revision.prospectiveSends);
+        engine.busSendActive = engine.busSends.Count();
         UpdateSendHighWater(engine);
     }
     for (Spatializer::PreparedProfileToken& token :
@@ -127364,11 +127562,8 @@ VnResult ApplyPreparedPackTransaction(
         if (busIndex == kInvalidBusIndex) {
             continue;
         }
-        engine.busEffectSlotTypes[busIndex][effect.slot] =
-            kEffectTypeNone;
-        engine.busEffectInstanceRefs[busIndex][effect.slot] =
-            EffectInstanceRef{};
-        engine.busEffectOwnerCookies[busIndex][effect.slot] = 0;
+        engine.busEffects.Set(busIndex, effect.slot, {});
+        engine.SetBusEffectRef(busIndex, effect.slot, EffectInstanceRef{});
         engine.effectParamTargets.ClearSlot(
             EffectParamTargetStore::Scope::Bus,
             static_cast<std::uint64_t>(busIndex),
@@ -127383,13 +127578,10 @@ VnResult ApplyPreparedPackTransaction(
             image.busEffects[reservation.imageIndex];
         const std::uint32_t busIndex =
             engine.buses.FindIndex(effect.busId);
-        engine.busEffectSlotTypes[busIndex][effect.slot] =
-            effect.effectType;
-        engine.busEffectInstanceRefs[busIndex][effect.slot] =
-            reservation.ref;
+        engine.busEffects.Set(busIndex, effect.slot, {effect.effectType,
+            engine.effectBank.ObjectIdentity(reservation.ref), revision.handle});
+        engine.SetBusEffectRef(busIndex, effect.slot, reservation.ref);
         engine.effectBank.PublishInstalled(reservation.ref);
-        engine.busEffectOwnerCookies[busIndex][effect.slot] =
-            revision.handle;
         engine.effectParamTargets.CommitPreparedInstalledEffectSeed(
             &revision.effectParamSeedTokens[reservationIndex]);
     }
@@ -127540,6 +127732,7 @@ VnResult ApplyPreparedPackTransaction(
     }
     if (commandCount != 0) {
         queueGuard.Commit(packCommands.data());
+        for (const auto& command : packCommands) engine.NoteBusSettingCommand(command);
     }
     return VN_OK;
 }
@@ -127634,12 +127827,7 @@ VnResult PrepareAndApplyInitialPackLogic(
             return VN_INVALID_CONFIG;
         }
     }
-    const std::uint64_t prospectiveBusCount =
-        static_cast<std::uint64_t>(engine.buses.BusCount()) +
-        revision.addBuses.size();
-    if (prospectiveBusCount > engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (!engine.PrepareAdditionalBusDefinitions(revision.addBuses.size())) return VN_BACKPRESSURE;
     std::uint64_t commandCount =
         revision.addBusEffects.size() +
         (revision.needsPlan ? 1u : 0u);
@@ -127657,16 +127845,7 @@ VnResult PrepareAndApplyInitialPackLogic(
             engine, static_cast<std::uint32_t>(commandCount))) {
         return VN_INVALID_CONFIG;
     }
-    const std::size_t busCapacity = engine.config.maxBuses;
-    const std::size_t sendSlots =
-        engine.config.busSendSlotsPerBus;
-    if (sendSlots != 0 &&
-        busCapacity >
-            (std::numeric_limits<std::size_t>::max)() /
-                sendSlots) {
-        return VN_INVALID_CONFIG;
-    }
-    const std::size_t sendCapacity = busCapacity * sendSlots;
+    const std::size_t busCapacity = engine.BusCapacity();
 
     // Every allocation is complete before the Pack token or any runtime
     // reservation is acquired.
@@ -127697,12 +127876,6 @@ VnResult PrepareAndApplyInitialPackLogic(
         revision.prospectiveBusGenerations.resize(busCapacity);
         revision.prospectiveParents.resize(busCapacity);
         revision.prospectiveAlive.resize(busCapacity);
-        revision.prospectiveSendTargets.resize(sendCapacity);
-        revision.prospectiveSendOwners.resize(sendCapacity);
-        revision.prospectiveSendTopologyOwners.resize(sendCapacity);
-        revision.prospectiveSendLevels.resize(sendCapacity);
-        revision.prospectiveSendLevelsDb.resize(sendCapacity);
-        revision.prospectiveSendLevelApply.resize(sendCapacity);
         revision.prospectiveBusVolumeDb.resize(busCapacity);
         revision.prospectiveBusOutputVolumeDb.resize(busCapacity);
         revision.prospectiveBusVolumeApply.resize(busCapacity);
@@ -127851,12 +128024,7 @@ VnResult PrepareAndApplyInitialPackLogic(
         prospective.parents =
             revision.prospectiveParents.data();
         prospective.alive = revision.prospectiveAlive.data();
-        prospective.sendTargets =
-            revision.prospectiveSendTargets.data();
-        prospective.sendLevels =
-            revision.prospectiveSendLevels.data();
-        prospective.sendLevelApply =
-            revision.prospectiveSendLevelApply.data();
+        prospective.sends = &revision.prospectiveSends;
         prospective.feederCount =
             revision.topologyFeederCount.data();
         prospective.emittedFeeders =
@@ -127877,7 +128045,7 @@ VnResult PrepareAndApplyInitialPackLogic(
             return VN_BAD_PACK;
         }
         engine.topologyPlans.DrainRetire();
-        revision.planIndex = engine.topologyPlans.Acquire();
+        revision.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(engine, revision.planIndex);
         if (revision.planIndex == kInvalidTopologyPlanIndex) {
             ++engine.topologyRefusedCount;
@@ -128085,19 +128253,11 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
         RevisionCommandCount(engine, *record, revision));
     revision.preparedBusSlots.resize(revision.addBuses.size());
     if (revision.needsPlan) {
-        const std::size_t busCapacity = engine.config.maxBuses;
-        const std::size_t sendCapacity =
-            busCapacity * engine.config.busSendSlotsPerBus;
+        const std::size_t busCapacity = engine.BusCapacity();
         revision.prospectiveBusIds.resize(busCapacity);
         revision.prospectiveBusGenerations.resize(busCapacity);
         revision.prospectiveParents.resize(busCapacity);
         revision.prospectiveAlive.resize(busCapacity);
-        revision.prospectiveSendTargets.resize(sendCapacity);
-        revision.prospectiveSendOwners.resize(sendCapacity);
-        revision.prospectiveSendTopologyOwners.resize(sendCapacity);
-        revision.prospectiveSendLevels.resize(sendCapacity);
-        revision.prospectiveSendLevelsDb.resize(sendCapacity);
-        revision.prospectiveSendLevelApply.resize(sendCapacity);
         revision.prospectiveBusVolumeDb.resize(busCapacity);
         revision.prospectiveBusOutputVolumeDb.resize(busCapacity);
         revision.prospectiveBusVolumeApply.resize(busCapacity);
@@ -128118,7 +128278,7 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
     // activation's own re-check (the queue drains between ticks).
     if (revision.needsPlan) {
         engine.topologyPlans.DrainRetire();
-        revision.planIndex = engine.topologyPlans.Acquire();
+        revision.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(engine, revision.planIndex);
         if (revision.planIndex == kInvalidTopologyPlanIndex) {
             ++engine.topologyRefusedCount;
@@ -128342,12 +128502,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
                             revision.prospectiveParents.data();
                         prospective.alive =
                             revision.prospectiveAlive.data();
-                        prospective.sendTargets =
-                            revision.prospectiveSendTargets.data();
-                        prospective.sendLevels =
-                            revision.prospectiveSendLevels.data();
-                        prospective.sendLevelApply =
-                            revision.prospectiveSendLevelApply.data();
+                        prospective.sends = &revision.prospectiveSends;
                         prospective.feederCount =
                             revision.topologyFeederCount.data();
                         prospective.emittedFeeders =
@@ -128427,7 +128582,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
             !revision.activationAttemptPrepared) {
             if (revision.planIndex == kInvalidTopologyPlanIndex) {
                 engine.topologyPlans.DrainRetire();
-                revision.planIndex = engine.topologyPlans.Acquire();
+                revision.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(engine, revision.planIndex);
                 if (revision.planIndex == kInvalidTopologyPlanIndex) {
                     ++i;
@@ -128495,33 +128650,34 @@ void ActivatePendingPackRevisions(Engine& engine) {
                 revision.prospectiveBusGenerations.data();
             prospective.parents = revision.prospectiveParents.data();
             prospective.alive = revision.prospectiveAlive.data();
-            prospective.sendTargets =
-                revision.prospectiveSendTargets.data();
-            prospective.sendLevels =
-                revision.prospectiveSendLevels.data();
-            prospective.sendLevelApply =
-                revision.prospectiveSendLevelApply.data();
+            prospective.sends = &revision.prospectiveSends;
             prospective.feederCount =
                 revision.topologyFeederCount.data();
             prospective.emittedFeeders =
                 revision.topologyEmittedFeeders.data();
             prospective.emitted = revision.topologyEmitted.data();
-            FillPlan(
-                engine, revision.planIndex, nullptr, false,
-                kInvalidBusIndex, 0xFFFFFFFFu,
-                revision.dynamicRouteCandidates.empty()
-                    ? nullptr
-                    : revision.dynamicRouteCandidates.data(),
-                static_cast<std::uint32_t>(
-                    revision.dynamicRouteCandidates.size()),
-                revision.dynamicRouteRemovals.empty()
-                    ? nullptr
-                    : revision.dynamicRouteRemovals.data(),
-                static_cast<std::uint32_t>(
-                    revision.dynamicRouteRemovals.size()),
-                &revision.addSends, &revision.relevelSends,
-                nullptr, 0, nullptr, 0, &prospective);
-            StampRevisionMigrationTargets(engine, revision);
+            try {
+                FillPlan(
+                    engine, revision.planIndex, nullptr, false,
+                    kInvalidBusIndex, 0xFFFFFFFFu,
+                    revision.dynamicRouteCandidates.empty()
+                        ? nullptr
+                        : revision.dynamicRouteCandidates.data(),
+                    static_cast<std::uint32_t>(
+                        revision.dynamicRouteCandidates.size()),
+                    revision.dynamicRouteRemovals.empty()
+                        ? nullptr
+                        : revision.dynamicRouteRemovals.data(),
+                    static_cast<std::uint32_t>(
+                        revision.dynamicRouteRemovals.size()),
+                    &revision.addSends, &revision.relevelSends,
+                    nullptr, 0, nullptr, 0, &prospective);
+                StampRevisionMigrationTargets(engine, revision);
+            } catch (...) {
+                ReleaseRevisionActivationAttempt(engine, revision);
+                ++i;
+                continue;
+            }
             revision.activationAttemptPrepared = true;
             revision.activationAttemptTopologyPlanCount =
                 engine.topologyPlanCount;
@@ -130051,17 +130207,25 @@ VnResult PrepareCanonicalBindingDiff(
         }
         std::uint32_t definitionSlot =
             engine.bindings.DefinitionSlotOf(attachment.bindingId);
+        const auto* existingDefinition = engine.bindings.Find(attachment.bindingId);
+        std::uint32_t activityTarget = existingDefinition != nullptr
+            ? existingDefinition->targetId : UINT32_MAX;
         bool definitionWillBeAdded = false;
         for (std::size_t added = 0; added < addDefinitionIndices.size(); ++added) {
             const auto& def =
                 nextImage->bindingDefinitions[addDefinitionIndices[added]];
             if (def.id == attachment.bindingId) {
+                activityTarget = def.desc.targetId;
                 definitionSlot = plan.definitionAdds[added].SlotIndex();
                 definitionWillBeAdded = true;
                 break;
             }
         }
         const bool duplicateWillBeDetached = detachingOwned;
+        if (attachment.scopeKind == kTargetScopeBus &&
+            !engine.busTargets.PrepareActivity(busIndex, activityTarget)) {
+            return VN_BACKPRESSURE;
+        }
         BindingTable::PreparedAttachmentToken token;
         const VnResult result = engine.bindings.PrepareAttach(
             attachment.bindingId, attachment.scopeKind, attachment.objectId,
@@ -130308,6 +130472,7 @@ struct PreparedCanonicalPackSetV1 {
     bool volumeOnly = false;
     std::uint32_t planIndex = kInvalidTopologyPlanIndex;
     CommandQueue::BatchReservation reservation{};
+    CommandQueue::PreparedBatchProof proof;
     EnginePreparedRoutingMigrationV1 unpublishedRouting{};
     std::uint32_t ownerSlot = UINT32_MAX;
     BusTopologyOwnerRecord expectedOwner{};
@@ -130327,6 +130492,7 @@ struct PreparedCanonicalPackSetV1 {
         CancelCanonicalBindingPlan(*engine, bindings);
         engine->packs.CancelPreparedSet(&storage);
         engine->spatial.CancelPreparedSet(&attenuation);
+        proof.Release();
         engine->commands.CancelReservedBatch(&reservation);
         if (planIndex != kInvalidTopologyPlanIndex) {
             engine->topologyPlans.Recycle(planIndex);
@@ -130741,7 +130907,7 @@ bool SnapshotHasMaster(const PackCanonicalImage& image) noexcept {
 
 VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
                             VnPackHandle initHandle, PreparedCanonicalPackSetV1& out) {
-    if (initHandle == 0 || engine.config.maxBuses == 0 ||
+    if (initHandle == 0 || engine.BusCapacity() == 0 ||
         (image != nullptr && (!image->hasBusDefinitionSnapshot || !SnapshotHasMaster(*image)))) {
         return VN_BAD_PACK;
     }
@@ -130796,9 +130962,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     if (!graph.contains(VN_BUS_MASTER)) {
         return VN_BAD_PACK;
     }
-    if (graph.size() > engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (graph.size() >= UINT32_MAX) return VN_BACKPRESSURE;
     for (const auto& [id, row] : graph) {
         if (id != VN_BUS_MASTER && !graph.contains(row.first)) {
             return row.second ? VN_BAD_PACK : VN_IN_USE;
@@ -130810,83 +130974,40 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         indexes.emplace(id, static_cast<std::uint32_t>(ids.size()));
         ids.push_back(id);
     }
-    const auto sendSlots = engine.config.busSendSlotsPerBus;
     std::vector<std::uint32_t> parents(ids.size(), 0), generations(ids.size(), 1);
     std::vector<std::uint8_t> alive(ids.size(), 1);
-    std::vector<std::uint32_t> targets(ids.size() * sendSlots, kEmptySendTarget);
-    std::vector<float> levels(targets.size(), 0.0f);
-    std::vector<std::uint8_t> levelApply(targets.size(), 0);
-    std::vector<std::uint8_t> foreignTarget(targets.size(), 0);
-    struct PlannedSend {
-        VnBusId source{};
-        VnBusId target{};
-        float levelDb = 0.0f;
-        std::uint32_t oldSlot = UINT32_MAX;
-        std::uint64_t topologyOwner = 0;
-        VnPackHandle packOwner = 0;
-        bool foreign = false;
-    };
-    std::vector<PlannedSend> plannedSends;
+    BusSendTable sends;
     const auto oldHandle = out.basePublication != nullptr
         ? out.basePublication->initHandle : 0;
     for (const auto& [id, row] : graph) {
         const auto index = indexes.at(id);
         parents[index] = id == VN_BUS_MASTER ? index : indexes.at(row.first);
     }
-    for (std::uint32_t source = 0; source < engine.buses.BusCount(); ++source) {
-        if (!engine.buses.AliveAt(source)) continue;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const auto flat = static_cast<std::size_t>(source) * sendSlots + slot;
-            const auto target = engine.busSendAdj[flat];
-            if (target == kEmptySendTarget || target == kInvalidBusIndex ||
-                (oldHandle != 0 && engine.busSendOwnerCookies[flat] == oldHandle))
-                continue;
-            if (target >= engine.buses.BusCount() || !engine.buses.AliveAt(target) ||
-                !graph.contains(engine.buses.IdAt(source)) ||
-                !graph.contains(engine.buses.IdAt(target)) ||
-                !TryVolumeGainFromDb(engine.busSendLevelDb[flat]))
-                return VN_IN_USE;
-            plannedSends.push_back({engine.buses.IdAt(source), engine.buses.IdAt(target),
-                engine.busSendLevelDb[flat], slot, engine.busSendTopologyOwnerIds[flat],
-                engine.busSendOwnerCookies[flat], true});
-        }
+    for (auto edge : engine.busSends.Records()) {
+        if (oldHandle != 0 && edge.ownerCookie == oldHandle) continue;
+        if (!engine.buses.AliveAt(edge.source) || !engine.buses.AliveAt(edge.target) ||
+            !graph.contains(engine.buses.IdAt(edge.source)) ||
+            !graph.contains(engine.buses.IdAt(edge.target))) return VN_IN_USE;
+        edge.source = indexes.at(engine.buses.IdAt(edge.source));
+        edge.target = indexes.at(engine.buses.IdAt(edge.target));
+        edge.applyLevel = false;
+        sends.Add(edge);
     }
     if (image != nullptr) {
-        for (const auto& send : snapshotSends)
-            plannedSends.push_back({send.source, send.target, send.levelDb});
-    }
-    {
-        std::vector<std::uint32_t> used(ids.size(), 0);
-        for (const auto& send : plannedSends) {
-            const VnBusId source = send.source;
-            const VnBusId target = send.target;
-            const auto sourceIt = indexes.find(source);
-            const auto targetIt = indexes.find(target);
-            if (sourceIt == indexes.end() || targetIt == indexes.end() ||
-                source == target) {
-                return send.foreign ? VN_IN_USE : VN_BAD_PACK;
-            }
-            const auto from = sourceIt->second;
-            const auto to = targetIt->second;
-            for (std::uint32_t slot = 0; slot < used[from]; ++slot) {
-                if (targets[static_cast<std::size_t>(from) * sendSlots + slot] ==
-                    to) {
-                    return foreignTarget[static_cast<std::size_t>(from) * sendSlots + slot]
-                        ? VN_IN_USE : VN_BAD_PACK;
-                }
-            }
-            if (used[from] >= sendSlots) {
-                return VN_NO_BUS;
-            }
-            if (!TryVolumeGainFromDb(send.levelDb))
-                return send.foreign ? VN_IN_USE : VN_BAD_PACK;
-            const auto flat =
-                static_cast<std::size_t>(from) * sendSlots + used[from];
-            targets[flat] = to;
-            levels[flat] = send.levelDb;
-            levelApply[flat] = 1;
-            foreignTarget[flat] = static_cast<std::uint8_t>(send.foreign);
-            ++used[from];
+        for (const auto& send : snapshotSends) {
+            if (!indexes.contains(send.source) || !indexes.contains(send.target) ||
+                send.source == send.target || !TryVolumeGainFromDb(send.levelDb)) return VN_BAD_PACK;
+            const auto from = indexes.at(send.source), to = indexes.at(send.target);
+            if (const auto* existing = sends.Find(from, to))
+                return existing->generation != 0 ? VN_IN_USE : VN_BAD_PACK;
+            BusSendRecord edge;
+            edge.source = from;
+            edge.target = to;
+            edge.levelDb = send.levelDb;
+            edge.ownerCookie = initHandle;
+            edge.preparedGain = std::pow(10.0f, send.levelDb / 20.0f);
+            edge.applyLevel = true;
+            sends.Add(edge);
         }
     }
     ProspectiveTopologyView view{};
@@ -130895,75 +131016,47 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     view.parents = parents.data();
     view.generations = generations.data();
     view.alive = alive.data();
-    view.sendTargets = targets.data();
-    view.sendLevels = levels.data();
-    view.sendLevelApply = levelApply.data();
+    view.sends = &sends;
     std::vector<std::uint32_t> feederScratch(ids.size(), 0);
     std::vector<std::uint32_t> emittedFeederScratch(ids.size(), 0);
     std::vector<std::uint8_t> emittedScratch(ids.size(), 0);
     view.feederCount = feederScratch.data();
     view.emittedFeeders = emittedFeederScratch.data();
     view.emitted = emittedScratch.data();
-    if (!ProspectiveTopologyIsAcyclic(engine, &view)) {
-        return VN_BAD_PACK;
-    }
-    if (!BuildSlotPlanFromProspective(engine, &view, 0, out.slotPlan)) {
-        return VN_NO_BUS;
-    }
-    out.slotPlan.sendLevelRampMs.assign(out.slotPlan.sendTargets.size(), 0);
-    std::fill(out.slotPlan.sendTargets.begin(), out.slotPlan.sendTargets.end(), kEmptySendTarget);
-    std::fill(out.slotPlan.sendLevels.begin(), out.slotPlan.sendLevels.end(), 0.0f);
-    std::fill(out.slotPlan.sendLevelApply.begin(), out.slotPlan.sendLevelApply.end(), 0);
-    std::vector<std::uint8_t> occupied(out.slotPlan.sendTargets.size(), 0);
-    for (const auto& send : plannedSends) {
-        if (!send.foreign) continue;
-        const auto source = FindAssignedSlot(out.slotPlan, send.source);
-        const auto target = FindAssignedSlot(out.slotPlan, send.target);
-        const auto oldSource = engine.buses.FindIndex(send.source);
-        if (source == UINT32_MAX || target == UINT32_MAX || source != oldSource)
-            return VN_IN_USE;
-        const auto flat = static_cast<std::size_t>(source) * sendSlots + send.oldSlot;
-        if (flat >= occupied.size() || occupied[flat]) return VN_IN_USE;
-        occupied[flat] = 1;
-        out.slotPlan.sendTargets[flat] = target;
-        out.slotPlan.sendLevels[flat] = send.levelDb;
-    }
-    for (const auto& send : plannedSends) {
-        if (send.foreign) continue;
-        const auto source = FindAssignedSlot(out.slotPlan, send.source);
-        const auto target = FindAssignedSlot(out.slotPlan, send.target);
-        const auto oldSource = engine.buses.FindIndex(send.source);
-        if (source == UINT32_MAX || target == UINT32_MAX) return VN_BAD_PACK;
-        std::uint32_t chosen = UINT32_MAX;
-        if (oldHandle != 0 && oldSource != kInvalidBusIndex) {
-            for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-                const auto oldFlat = static_cast<std::size_t>(oldSource) * sendSlots + slot;
-                const auto oldTarget = engine.busSendAdj[oldFlat];
-                const auto flat = static_cast<std::size_t>(source) * sendSlots + slot;
-                if (oldTarget < engine.buses.BusCount() && engine.buses.AliveAt(oldTarget) &&
-                    engine.buses.IdAt(oldTarget) == send.target &&
-                    engine.busSendOwnerCookies[oldFlat] == oldHandle && !occupied[flat]) {
-                    chosen = slot;
-                    break;
-                }
-            }
+    if (!ProspectiveTopologyIsAcyclic(engine, &view)) return VN_BAD_PACK;
+    if (!BuildSlotPlanFromProspective(engine, &view, 0, out.slotPlan)) return VN_NO_BUS;
+    BusSendTable remappedSends;
+    remappedSends.Reserve(sends.Count());
+    // Reserve continuing ordinals before filling holes with newly authored edges.
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
+        for (auto edge : sends.Records()) {
+            const auto sourceId = ids[edge.source], targetId = ids[edge.target];
+            const auto source = FindAssignedSlot(out.slotPlan, sourceId);
+            const auto target = FindAssignedSlot(out.slotPlan, targetId);
+            const auto oldSource = engine.buses.FindIndex(sourceId);
+            const auto oldTarget = engine.buses.FindIndex(targetId);
+            const auto* prior = engine.busSends.Find(oldSource, oldTarget);
+            const bool foreign = edge.generation != 0;
+            const bool retained = prior && source == oldSource && target == oldTarget &&
+                out.slotPlan.generations[source] == engine.buses.GenerationAt(source) &&
+                out.slotPlan.generations[target] == engine.buses.GenerationAt(target) &&
+                (foreign ? prior->generation == edge.generation :
+                    oldHandle != 0 && prior->ownerCookie == oldHandle && oldHandle == initHandle);
+            if (foreign && !retained) return VN_IN_USE;
+            if (retained != (retainedPass != 0)) continue;
+            edge.source = source;
+            edge.target = target;
+            edge.slot = retained ? prior->slot : UINT32_MAX;
+            edge.generation = retained ? prior->generation : engine.NewBusSendGeneration();
+            if (edge.generation == 0) return VN_RUNTIME_RECREATE_REQUIRED;
+            edge.applyLevel = !foreign && (!retained || prior->levelDb != edge.levelDb);
+            edge.rampMs = retained && edge.applyLevel && image != nullptr &&
+                image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4 ? 20u : 0u;
+            remappedSends.Add(edge);
         }
-        const bool retained = chosen != UINT32_MAX;
-        for (std::uint32_t slot = 0; chosen == UINT32_MAX && slot < sendSlots; ++slot) {
-            if (!occupied[static_cast<std::size_t>(source) * sendSlots + slot]) chosen = slot;
-        }
-        if (chosen == UINT32_MAX) return VN_NO_BUS;
-        const auto flat = static_cast<std::size_t>(source) * sendSlots + chosen;
-        occupied[flat] = 1;
-        out.slotPlan.sendTargets[flat] = target;
-        out.slotPlan.sendLevels[flat] = send.levelDb;
-        const bool changed = !retained || engine.busSendLevelDb[
-            static_cast<std::size_t>(oldSource) * sendSlots + chosen] != send.levelDb;
-        out.slotPlan.sendLevelApply[flat] = static_cast<std::uint8_t>(changed);
-        out.slotPlan.sendLevelRampMs[flat] = retained && changed && image != nullptr &&
-            image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4 ? 20u : 0u;
     }
-    const auto capacity = engine.config.maxBuses;
+    out.slotPlan.sends.Swap(remappedSends);
+    const auto capacity = engine.BusCapacity();
     const auto oldCount = engine.buses.BusCount();
     out.slotPlan.preservesForeign = true;
     out.slotPlan.ownerId = 0;
@@ -130972,25 +131065,9 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     out.slotPlan.busCount = std::max(out.slotPlan.busCount, oldCount);
     out.slotPlan.busOwnerIds = engine.busTopologyOwnerIds;
     out.slotPlan.busCookies = engine.busOwnerCookies;
-    out.slotPlan.sendOwnerIds.assign(out.slotPlan.sendTargets.size(), 0);
-    out.slotPlan.sendCookies.assign(out.slotPlan.sendTargets.size(), 0);
-    out.slotPlan.sendLevelDb.assign(out.slotPlan.sendTargets.size(), 0.0f);
-    for (const auto& send : plannedSends) {
-        const auto source = FindAssignedSlot(out.slotPlan, send.source);
-        const auto target = FindAssignedSlot(out.slotPlan, send.target);
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const auto flat = static_cast<std::size_t>(source) * sendSlots + slot;
-            if (out.slotPlan.sendTargets[flat] != target) continue;
-            out.slotPlan.sendOwnerIds[flat] = send.topologyOwner;
-            out.slotPlan.sendCookies[flat] = send.foreign ? send.packOwner : initHandle;
-            out.slotPlan.sendLevelDb[flat] = send.levelDb;
-            break;
-        }
-    }
     out.slotPlan.neutralSlots.assign(capacity, 0);
     if (volumeOnly || (image == nullptr && oldHandle != 0 &&
-        std::any_of(engine.busEffectOwnerCookies[0].begin(), engine.busEffectOwnerCookies[0].end(),
-            [&](const auto owner) { return owner == oldHandle; }))) out.slotPlan.neutralSlots[0] = 1;
+        engine.busEffects.HasOwner(0, oldHandle))) out.slotPlan.neutralSlots[0] = 1;
     out.slotPlan.migrationTargets.assign(capacity, 0);
     for (std::uint32_t slot = 0; slot < capacity; ++slot) {
         out.slotPlan.migrationTargets[slot] = slot;
@@ -131037,25 +131114,13 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     engine.topologyPlans.DrainRetire();
     // Register the owner before acquiring a plan so every refusal can unwind it.
     out.engine = &engine;
-    out.planIndex = engine.topologyPlans.Acquire();
+    out.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     if (out.planIndex == kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
     ProspectiveTopologyView remapped{};
     ApplySlotPlanToProspective(out.slotPlan, remapped);
-    std::vector<float> linear = out.slotPlan.sendLevels;
-    for (auto& value : linear) { value = std::pow(10.0f, value / 20.0f); }
-    remapped.sendLevels = linear.data();
     FillLiveOrPreparedPlan(engine, engine.topologyPlans, out.planIndex, &remapped);
-    if (image != nullptr &&
-        image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4) {
-        for (std::uint32_t slot = 0; slot < out.slotPlan.busCount; ++slot) {
-            auto* ramps = engine.topologyPlans.SendLevelRampMsRow(out.planIndex, slot);
-            for (std::uint32_t send = 0; send < sendSlots; ++send)
-                ramps[send] = out.slotPlan.sendLevelRampMs[
-                    static_cast<std::size_t>(slot) * sendSlots + send];
-        }
-    }
     out.volumeOnly = volumeOnly;
     // Publication v5 owns its snapshot rows. Older publications retain their
     // sidecar effects through the same atomic installer.
@@ -131137,16 +131202,14 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
             const auto outputLayout = slot == 0
                 ? engine.config.deviceChannelLayout : engine.config.mixChannelLayout;
             engine.topologyPlans.OutputLayoutData(out.planIndex)[slot] = outputLayout;
-            DefaultDownmixMatrix(engine.config.mixChannelLayout, outputLayout,
-                engine.topologyPlans.DownmixCoeffsData(out.planIndex) +
-                    static_cast<std::size_t>(slot) * 64);
+            engine.topologyPlans.SetCustomDownmix(out.planIndex, slot, {});
         }
         if (!ValidateTopologyPlanVolumesV1(engine.topologyPlans.View(out.planIndex)))
             return VN_BAD_PACK;
     }
     engine.topologyPlans.MigrationTargetsData(out.planIndex)[0] = 0;
     for (std::uint32_t slot = 0; slot < out.slotPlan.busCount &&
-         slot < engine.config.maxBuses; ++slot) {
+         slot < engine.BusCapacity(); ++slot) {
         engine.topologyPlans.MigrationTargetsData(out.planIndex)[slot] =
             out.slotPlan.migrationTargets.empty() ? slot : out.slotPlan.migrationTargets[slot];
     }
@@ -131327,6 +131390,38 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
     return true;
 }
 
+bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
+    try {
+        std::vector<BusEffectSettings::Write> effectWrites;
+        if (prepared.busEffects && !prepared.busEffects->AppendSettingsWrites(effectWrites)) return false;
+        if (!engine.busEffects.Prepare(effectWrites)) return false;
+    } catch (...) { return false; }
+    bool targetsReady = true;
+    for (const auto& assignment : prepared.slotPlan.assignments) {
+        targetsReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusVolume);
+        targetsReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusOutputVolume);
+    }
+    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
+        targetsReady &= engine.busTargets.PrepareActivity(attachment.busIndex, definition.targetId);
+    });
+    if (!targetsReady) return false;
+    if (prepared.planIndex == kInvalidTopologyPlanIndex) return true;
+    if (!engine.PrepareBusRetirements(prepared.slotPlan.removed.size())) return false;
+    if (prepared.commands.empty() || engine.acceptedBusTopologyRevision == UINT64_MAX) return false;
+    const auto acceptedRevision = engine.acceptedBusTopologyRevision + 1;
+    auto& command = prepared.commands.front();
+    command.opcode = kOpcodeSetBusTopologyPlan;
+    command.payload.setBusTopologyPlan.planIndex = prepared.planIndex;
+    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = kInvalidDynamicRoutePlanIndex;
+    command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
+    command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
+    command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision;
+    command.payload.setBusTopologyPlan.batchCommandCount =
+        static_cast<std::uint32_t>(prepared.commands.size());
+    return PrepareTopologyActivity(engine, engine.topologyPlans.View(prepared.planIndex),
+    prepared.reservation, prepared.commands, prepared.proof);
+}
+
 void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
     assert(engine.canonicalPackSetBusy);
     assert(engine.packComposition.Published() == prepared.basePublication);
@@ -131397,16 +131492,10 @@ void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared
             }
         }
         if (prepared.busEffects) prepared.busEffects->Commit();
-        auto& command = prepared.commands.front();
-        command.opcode = kOpcodeSetBusTopologyPlan;
-        command.payload.setBusTopologyPlan.planIndex = prepared.planIndex;
-        command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = kInvalidDynamicRoutePlanIndex;
-        command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
-        command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
-        command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision;
-        command.payload.setBusTopologyPlan.batchCommandCount =
-            static_cast<std::uint32_t>(prepared.commands.size());
-        engine.commands.CommitPreparedBatch(&prepared.reservation, prepared.commands.data());
+        const auto published = engine.commands.ConsumePreparedBatch(std::move(prepared.proof));
+        assert(published.Count() == prepared.commands.size());
+        (void)published;
+        for (const auto& command : prepared.commands) engine.NoteBusSettingCommand(command);
         ++engine.acceptedBusTopologyRevision;
         prepared.planIndex = kInvalidTopologyPlanIndex;
     } else {
@@ -131975,6 +132064,7 @@ VnResult ActivateCanonicalPackSetImpl(
                         prepared.baseGeneration) {
                     return VN_BACKPRESSURE;
                 }
+                if (!FreezeCanonicalPackTopology(engine, prepared)) return VN_BACKPRESSURE;
                 success = prepared.publication.composition.Published();
                 commit = true;
                 return VN_OK;
@@ -132247,7 +132337,8 @@ VnResult UnloadCanonicalPackSetV1(Engine& engine,
             if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                 return VN_PACK_RESIDENT_CAPACITY;
             }
-            if (!CanCommitCanonicalVolumesV2(engine, prepared)) return VN_BACKPRESSURE;
+            if (!CanCommitCanonicalVolumesV2(engine, prepared) ||
+                !FreezeCanonicalPackTopology(engine, prepared)) return VN_BACKPRESSURE;
             commit = true;
             return VN_OK;
         }();

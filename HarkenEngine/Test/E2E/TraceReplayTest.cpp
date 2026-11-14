@@ -2695,6 +2695,20 @@ bool RecordPairedCurrentWorldTrace(const std::string& tracePath,
     view.ownerId = 77;
     view.ownerRevision = 1;
     view.compiledWorld = world;
+    const std::array<VnBusId, 3> busIds{VN_BUS_MASTER, harkentest::ObjectId(900), harkentest::ObjectId(901)};
+    const std::array<std::uint32_t, 3> parents{0, 0, 0}, generations{1, 1, 1};
+    const std::array<std::uint8_t, 3> alive{1, 1, 1};
+    harken::BusSendTable sends;
+    harken::BusSendRecord send;
+    send.source = 1; send.target = 2; send.levelDb = -6;
+    send.preparedGain = std::pow(10.0f, -6.0f / 20.0f); send.applyLevel = true;
+    sends.Add(send);
+    harken::ProspectiveTopologyView topology;
+    topology.busCount = 3; topology.busIds = busIds.data();
+    topology.parents = parents.data(); topology.generations = generations.data(); topology.alive = alive.data();
+    topology.sends = &sends;
+    view.prospective = &topology;
+
     harken::PreparedProjectGenerationV1 prepared;
     if (harken::PrepareProjectGenerationV1(*engine, view, prepared).status !=
         harken::ProjectGenerationPrepareStatusV1::Ok) {
@@ -3776,12 +3790,45 @@ TEST(TraceReplayE2E, VersionOneTraceIsExplicitlyRejected) {
     EXPECT_FALSE(std::filesystem::exists(outPath));
 }
 
+TEST(TraceReplayE2E, VersionSevenDenseTopologyIsConvertedAndReplayed) {
+    const auto tracePath = TempPath("v7_dense_topology_source.vtrc");
+    std::string why;
+    ASSERT_TRUE(RecordPairedCurrentWorldTrace(tracePath, &why)) << why;
+    auto bytes = ReadFileBytes(tracePath);
+    RecordLocation plan{};
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordPreparedTopologyPlan, 0, &plan));
+    const auto read = [&](std::size_t at) { std::uint32_t value; std::memcpy(&value, bytes.data() + at, 4); return value; };
+    const auto buses = read(plan.payloadAt + 4), count = read(plan.payloadAt + 8);
+    ASSERT_EQ(1u, count);
+    constexpr std::uint32_t slots = 4;
+    std::vector<std::uint8_t> dense(16 + buses * 32 + buses * slots * 12, 0);
+    const auto put = [&](std::size_t at, std::uint32_t value) { std::memcpy(dense.data() + at, &value, 4); };
+    put(0, 1); put(4, buses); put(8, slots);
+    std::copy_n(bytes.data() + plan.payloadAt + 16, buses * 32, dense.data() + 16);
+    for (std::uint32_t i = 0; i < buses * slots; ++i) put(16 + buses * 32 + i * 12, UINT32_MAX);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto at = plan.payloadAt + 16 + buses * 32 + i * 24;
+        const auto source = read(at), slot = read(at + 8);
+        ASSERT_LT(source, buses); ASSERT_LT(slot, slots);
+        const auto destination = 16 + buses * 32 + (source * slots + slot) * 12;
+        put(destination, read(at + 4)); put(destination + 4, read(at + 12)); put(destination + 8, read(at + 16));
+    }
+    bytes.erase(bytes.begin() + plan.payloadAt, bytes.begin() + plan.payloadAt + plan.payloadBytes);
+    bytes.insert(bytes.begin() + plan.payloadAt, dense.begin(), dense.end());
+    const auto size = static_cast<std::uint32_t>(dense.size());
+    const auto version = harken::kTraceFormatVersionV7;
+    std::memcpy(bytes.data() + plan.recordAt, &size, 4);
+    std::memcpy(bytes.data() + 4, &version, 4);
+    const auto replay = RunMutatedTrace(bytes, "v7_dense_topology.vtrc");
+    EXPECT_EQ(0, replay.exitCode) << replay.output;
+}
+
 TEST(TraceReplayE2E, RetiredTraceVersionsAreRejectedBeforeRecords) {
     const auto tracePath = TempPath("retired_versions_source.vtrc");
     ASSERT_TRUE(RecordFormatFixture(tracePath));
     const auto source = ReadFileBytes(tracePath);
     ASSERT_GE(source.size(), 8u);
-    for (std::uint32_t version = 1; version < harken::kTraceFormatVersion; ++version) {
+    for (std::uint32_t version = 1; version < harken::kTraceFormatVersionV7; ++version) {
         auto bytes = source;
         std::memcpy(bytes.data() + 4, &version, sizeof(version));
         const auto run = RunMutatedTrace(

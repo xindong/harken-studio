@@ -161,7 +161,7 @@ before the next session. See the package README for the full Player-export and
 Android packaging contract. `HarkenProjectSettings.Load()` returns the project
 asset when present; its relevant read-only properties are `PackDirectory`,
 `PlayerExports`, `PlatformId`, `PlatformName`, `Language`, `InitPack`,
-`SuppressUnityAudio`, `MaxVoices`, `MaxPacks`, `MaxActions`,
+`SuppressUnityAudio`, `MaxVoices`, `MaxPacks`,
 `MaxActionFirings`, `MaxEmitters`, and `EmitterVariableSlots`.
 `HarkenProjectSettings` also exposes the default capacity constants. Its
 `Set*` methods and `ActiveForStartup` are internal, not game-code setters.

@@ -15,6 +15,7 @@ struct SignalPropertyInput {
 struct SignalBusInput {
     VnBusId id{};
     std::uint32_t generation = 0;
+    std::uint32_t stableIndex = UINT32_MAX;
 };
 struct SignalRetainedDefinitionInput {
     SignalEndpointKindV1 kind = SignalEndpointKindV1::Sound;
@@ -47,7 +48,7 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
         endpoints.erase(std::unique(endpoints.begin(), endpoints.end()), endpoints.end());
         std::vector<SignalRenderNodeInput> nodes(buses.size());
         for (std::uint32_t i = 0; i < buses.size(); ++i) {
-            nodes[i].busIndex = i;
+            nodes[i].busIndex = buses[i].stableIndex == UINT32_MAX ? i : buses[i].stableIndex;
             nodes[i].busId = buses[i].id;
             nodes[i].busGeneration = buses[i].generation;
             nodes[i].stableId = buses[i].id;

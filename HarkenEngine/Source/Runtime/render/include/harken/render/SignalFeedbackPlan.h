@@ -209,6 +209,7 @@ public:
             m_sensitivity, m_maximum, m_edges}.UpdateBounds(bounds);
     }
     std::span<const SignalFeedbackNode> Nodes() const noexcept { return m_nodes; }
+    std::span<const SignalFeedbackEdge> Edges() const noexcept { return m_edges; }
     std::span<const std::uint32_t> NormalOrder() const noexcept { return m_normalOrder; }
 private:
     class Scratch {

@@ -29,7 +29,7 @@ class OriginalSourceSubmissionRegistry {
     friend class VoicePool;
     friend struct Engine;
 public:
-    static constexpr std::uint32_t kMaxCommands = 3u + kTimelineMaxVoiceSends +
+    static constexpr std::uint32_t kMaxCommands = 3u +
         kTimelineMaxVoiceEffects + 2u + kMaxVoiceBindingInstanceSlots;
     enum class Phase : std::uint8_t {
         Free, Preparing, QueuePrepared, Published, ConsumerOwned, CleanupPending,

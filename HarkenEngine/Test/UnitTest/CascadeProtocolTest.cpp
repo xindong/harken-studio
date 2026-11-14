@@ -93,6 +93,63 @@ struct CascadeHarness {
     std::vector<float> masterR;
 };
 
+TEST(CascadeProtocol, CompactBusPlanesPreserveDirectSendAndFormalImageRouting) {
+    const auto source = harkentest::MakeDC(kBlock * 8, .25f);
+    const std::array<harken::BusRenderSlot, 4> mapping{{
+        {1, 1, 0}, {2, 7, 0}, {0, 8, 0}, {UINT32_MAX, 9, 2}}};
+    for (unsigned mode = 0; mode != 3; ++mode) {
+        SCOPED_TRACE(mode);
+        CascadeHarness harness(source, 1, mode == 0 ? ResampleQuality::Linear : ResampleQuality::Hermite);
+        harness.ctx.engineSampleRate = 48000;
+        harness.ctx.busIndex = 1;
+        harness.ctx.busGeneration = 7;
+        harness.ctx.fxSlotCount = 0;
+        if (mode == 0) {
+            // Settle the first spatial matrix through the ordinary path before
+            // exercising the borrowed linear-PCM specialization.
+            harness.ctx.busIndex = 0;
+            ASSERT_EQ(kBlock, harness.RenderBlock().framesProduced);
+            harness.ctx.busIndex = 1;
+            harness.arena.Reset();
+        }
+        harken::VoiceSendSlot send;
+        send.active = true;
+        send.targetBusIndex = 2;
+        send.targetBusGeneration = 8;
+        send.gain.SnapTo(.5f);
+        if (mode != 0) {
+            harness.ctx.voiceSends = {&send, 1};
+            harness.ctx.voiceSendActiveCount = 1;
+        }
+        std::array<std::array<float, kBlock>, 3> pcm{};
+        float* planes[]{pcm[0].data(), pcm[1].data(), pcm[2].data()};
+        std::uint64_t fallbacks = 0;
+        harken::BusRenderView view(planes, mapping, &fallbacks);
+        if (mode == 2) {
+            ASSERT_TRUE(harken::PrepareVoiceCascade(harness.ctx, harness.arena, kBlock, 1));
+            harken::RunVoiceCascade(harness.ctx, kBlock);
+            ASSERT_TRUE(harken::PrepareVoiceSignalImage(harness.ctx, kBlock, 1, VN_CHANNEL_LAYOUT_MONO));
+            harken::FoldVoiceIntoBuses(harness.ctx, view, kBlock, 1, VN_CHANNEL_LAYOUT_MONO);
+        } else {
+            const auto result = RenderVoiceBlock(harness.ctx, harness.arena, view, kBlock, 1,
+                                                 VN_CHANNEL_LAYOUT_MONO);
+            ASSERT_EQ(kBlock, result.framesProduced);
+#if !HARKEN_STAGE_TAPS_ACTIVE
+            if (mode == 0) EXPECT_NE(0u, harness.ctx.cascade.borrowed.frames);
+#endif
+        }
+        for (unsigned frame = 0; frame != kBlock; ++frame) {
+            EXPECT_FLOAT_EQ(.25f, pcm[2][frame]);
+            EXPECT_FLOAT_EQ(mode == 0 ? 0 : .125f, pcm[0][frame]);
+            EXPECT_FLOAT_EQ(0, pcm[1][frame]);
+        }
+        EXPECT_EQ(0u, fallbacks);
+        EXPECT_EQ(planes, view.ForBus(3, 1, 9));
+        EXPECT_EQ(planes + 1, view.ForBus(1, 1, 6));
+        EXPECT_EQ(2u, fallbacks);
+    }
+}
+
 TEST(CascadeProtocol, PlainLinearPcmPreservesSamplesAndStateThroughReconfiguration) {
     const auto source = harkentest::MakeSine(8192, 997.0, 48000.0, 0.73f);
     const auto right = harkentest::MakeSine(8192, 313.0, 48000.0, 0.41f);

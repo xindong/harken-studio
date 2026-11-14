@@ -2143,6 +2143,7 @@ TEST(Park, ReturnStealsWhenPoolFull) {
     ASSERT_EQ(VN_OK, Vn_Update()); // parks (frees its slot)
     engine->nullBackend.Pump(1);
     ASSERT_EQ(1u, Snap().parkedVoiceCount);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(parked, UINT32_MAX, VN_BUS_MASTER, -20));
 
     // Fill the pool with two lower-priority voices.
     VnPlayDesc lo = MakePlayDesc(harkentest::ObjectId(1));
@@ -2156,6 +2157,19 @@ TEST(Park, ReturnStealsWhenPoolFull) {
     // Bring the parked voice next to the listener: it must return, and with no
     // free slot it steals the oldest lower-priority voice.
     ASSERT_EQ(VN_OK, Vn_SetVoicePosition(parked, Vec3(1.0f, 0.0f, 0.0f)));
+    const auto headBeforeReturn = engine->commands.PublishedHead();
+    for (std::size_t failure = 1; failure <= 6; ++failure) {
+        harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
+        const auto update = Vn_Update();
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_OK, update);
+        EXPECT_EQ(0u, Snap().voiceStolenCount);
+        EXPECT_EQ(headBeforeReturn, engine->commands.PublishedHead());
+        EXPECT_NE(0u, engine->ledger.ToRender(l1));
+        EXPECT_NE(0u, engine->ledger.ToRender(l2));
+        VnVoiceHandle refusedVictim = 0;
+        EXPECT_FALSE(engine->voiceManager.ClaimFor(parked, &refusedVictim));
+    }
     ASSERT_EQ(VN_OK, Vn_Update()); // issues the steal (victim declick)
     EXPECT_EQ(1u, Snap().voiceStolenCount);
     const std::uint32_t parkedSlot =

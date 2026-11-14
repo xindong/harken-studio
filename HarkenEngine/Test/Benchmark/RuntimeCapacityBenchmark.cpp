@@ -2414,7 +2414,7 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
         for (auto handle : handles)
             for (unsigned slot = 0; slot < 8; ++slot)
                 refs.push_back(engine.voiceEffectInstanceRefs[static_cast<std::uint32_t>(handle)][slot]);
-        for (unsigned slot = 0; slot < 8; ++slot) refs.push_back(engine.busEffectInstanceRefs[0][slot]);
+        for (unsigned slot = 0; slot < 8; ++slot) refs.push_back(engine.BusEffectRefs(0)[slot]);
     };
     const auto fail = [&](const char* stage) { require(false, stage); return 1; };
     for (std::uint32_t cycle = 0; cycle <= cycles; ++cycle) {

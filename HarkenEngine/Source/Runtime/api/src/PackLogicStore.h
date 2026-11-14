@@ -12,6 +12,7 @@
 #define HARKEN_API_PACK_LOGIC_STORE_H
 
 #include <harken/Harken.h>
+#include "BusSendTable.h"
 
 #include "harken/core/CommandQueue.h"
 #include "harken/media/PackFormatV2.h"
@@ -182,12 +183,7 @@ struct PackPendingRevision {
     std::vector<std::uint32_t> prospectiveBusGenerations;
     std::vector<std::uint32_t> prospectiveParents;
     std::vector<std::uint8_t> prospectiveAlive;
-    std::vector<std::uint32_t> prospectiveSendTargets;
-    std::vector<VnPackHandle> prospectiveSendOwners;
-    std::vector<std::uint64_t> prospectiveSendTopologyOwners;
-    std::vector<float> prospectiveSendLevels;
-    std::vector<float> prospectiveSendLevelsDb;
-    std::vector<std::uint8_t> prospectiveSendLevelApply;
+    BusSendTable prospectiveSends;
     std::vector<float> prospectiveBusVolumeDb;
     std::vector<float> prospectiveBusOutputVolumeDb;
     std::vector<std::uint8_t> prospectiveBusVolumeApply;

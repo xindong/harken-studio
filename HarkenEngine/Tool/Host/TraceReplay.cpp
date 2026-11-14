@@ -3498,7 +3498,7 @@ int RunTraceReplay(int argc, char** argv) {
         return 1;
     }
     const std::uint32_t version = r.U32();
-    if (version != harken::kTraceFormatVersion) {
+    if (version != harken::kTraceFormatVersion && version != harken::kTraceFormatVersionV7) {
         std::fprintf(stderr,
                      "error: trace format version %u is not the supported "
                      "version %u\n",
@@ -3666,6 +3666,7 @@ int RunTraceReplay(int argc, char** argv) {
         std::vector<std::uint32_t> feederCount;
         std::vector<std::uint32_t> emittedFeeders;
         std::vector<std::uint8_t> emitted;
+        harken::BusSendTable sends;
         harken::ProspectiveTopologyView view{};
         bool valid = false;
         std::uint64_t ordinal = 0;
@@ -4384,14 +4385,14 @@ int RunTraceReplay(int argc, char** argv) {
             const std::uint32_t n = rec.U32();
             const std::uint32_t slots = rec.U32();
             const std::uint32_t reserved = rec.U32();
-            if (vintage != harken::kTracePreparedTopologyPlanVintage ||
-                reserved != 0 || n == 0 || slots == 0) {
+            const bool sparse = vintage == harken::kTracePreparedTopologyPlanVintage;
+            if ((!sparse && vintage != 1) || reserved != 0 || n == 0 || (!sparse && slots == 0) ||
+                (version == harken::kTraceFormatVersionV7 && sparse)) {
                 exitCode = 1;
                 break;
             }
-            const std::uint64_t sendCount =
-                static_cast<std::uint64_t>(n) * slots;
-            if (sendCount > (1u << 20)) {
+            const std::uint64_t sendCount = sparse ? slots : static_cast<std::uint64_t>(n) * slots;
+            if (static_cast<std::uint64_t>(n) * 32 + sendCount * (sparse ? 24 : 12) != rec.Remaining()) {
                 exitCode = 1;
                 break;
             }
@@ -4400,9 +4401,7 @@ int RunTraceReplay(int argc, char** argv) {
             decoded.generations.resize(n);
             decoded.parents.resize(n);
             decoded.alive.resize(n);
-            decoded.sendTargets.resize(static_cast<std::size_t>(sendCount));
-            decoded.sendLevels.resize(static_cast<std::size_t>(sendCount));
-            decoded.sendLevelApply.resize(static_cast<std::size_t>(sendCount));
+            decoded.sends.Reserve(static_cast<std::size_t>(sendCount));
             decoded.feederCount.assign(n, 0);
             decoded.emittedFeeders.assign(n, 0);
             decoded.emitted.assign(n, 0);
@@ -4416,12 +4415,26 @@ int RunTraceReplay(int argc, char** argv) {
                     rec.failed = true;
             }
             for (std::uint64_t i = 0; i < sendCount; ++i) {
-                decoded.sendTargets[static_cast<std::size_t>(i)] = rec.U32();
-                const std::uint32_t bits = rec.U32();
-                std::memcpy(&decoded.sendLevels[static_cast<std::size_t>(i)],
-                            &bits, sizeof(bits));
-                decoded.sendLevelApply[static_cast<std::size_t>(i)] =
-                    static_cast<std::uint8_t>(rec.U32());
+                harken::BusSendRecord edge;
+                edge.source = sparse ? rec.U32() : static_cast<std::uint32_t>(i / slots);
+                edge.target = rec.U32();
+                edge.slot = sparse ? rec.U32() : static_cast<std::uint32_t>(i % slots);
+                const auto bits = rec.U32();
+                std::memcpy(&edge.preparedGain, &bits, sizeof(bits));
+                const auto apply = rec.U32();
+                edge.applyLevel = apply != 0;
+                edge.rampMs = sparse ? rec.U32() : 0;
+                if (edge.target == harken::kEmptySendTarget && !sparse) continue;
+                if (edge.source >= n || edge.target >= n || edge.source == edge.target ||
+                    edge.slot == UINT32_MAX || apply > 1 || !std::isfinite(edge.preparedGain) ||
+                    edge.preparedGain < 0 || decoded.sends.Find(edge.source, edge.target) ||
+                    std::any_of(decoded.sends.From(edge.source).begin(), decoded.sends.From(edge.source).end(),
+                        [&](const auto& prior) { return prior.slot == edge.slot; })) {
+                    rec.failed = true;
+                    break;
+                }
+                edge.levelDb = edge.preparedGain == 0 ? -160.0f : 20.0f * std::log10(edge.preparedGain);
+                decoded.sends.Add(edge);
             }
             if (rec.failed || rec.Remaining() != 0) {
                 exitCode = 1;
@@ -4432,9 +4445,7 @@ int RunTraceReplay(int argc, char** argv) {
             decoded.view.generations = decoded.generations.data();
             decoded.view.parents = decoded.parents.data();
             decoded.view.alive = decoded.alive.data();
-            decoded.view.sendTargets = decoded.sendTargets.data();
-            decoded.view.sendLevels = decoded.sendLevels.data();
-            decoded.view.sendLevelApply = decoded.sendLevelApply.data();
+            decoded.view.sends = &decoded.sends;
             decoded.view.feederCount = decoded.feederCount.data();
             decoded.view.emittedFeeders = decoded.emittedFeeders.data();
             decoded.view.emitted = decoded.emitted.data();
@@ -4449,12 +4460,7 @@ int RunTraceReplay(int argc, char** argv) {
                 recordedPreparedTopology.parents.data();
             recordedPreparedTopology.view.alive =
                 recordedPreparedTopology.alive.data();
-            recordedPreparedTopology.view.sendTargets =
-                recordedPreparedTopology.sendTargets.data();
-            recordedPreparedTopology.view.sendLevels =
-                recordedPreparedTopology.sendLevels.data();
-            recordedPreparedTopology.view.sendLevelApply =
-                recordedPreparedTopology.sendLevelApply.data();
+            recordedPreparedTopology.view.sends = &recordedPreparedTopology.sends;
             recordedPreparedTopology.view.feederCount =
                 recordedPreparedTopology.feederCount.data();
             recordedPreparedTopology.view.emittedFeeders =

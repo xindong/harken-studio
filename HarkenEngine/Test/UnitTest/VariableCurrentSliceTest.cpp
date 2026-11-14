@@ -7,6 +7,7 @@
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "SignalPublication.h"
 
 #include <gtest/gtest.h>
 
@@ -2425,6 +2426,7 @@ TEST(VariableCurrentSlice,
     harkentest::VariableOutcomeCapture capturedOutcomes(*engine);
     InstallVariable(engine);
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSecondBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kSecondBus, config.fxSlotsPerBus));
     RegisterBusVolumeBinding(harkentest::ObjectId(1), VN_BUS_MASTER, 0.0f, 0.0f,
                              1.0f, -6.0f);
     RegisterBusVolumeBinding(harkentest::ObjectId(2), kSecondBus, 0.0f, 0.0f,
@@ -3244,6 +3246,53 @@ TEST(VariableCurrentSlice, GlobalSliceDeadVoiceStillAppliesLiveBusMember) {
     harken::BusTree::Bus* busState = engine->buses.BusState(0);
     ASSERT_NE(nullptr, busState);
     EXPECT_FLOAT_EQ(DbToLinear(-9.0f), busState->gain.target);
+}
+
+TEST(VariableCurrentSlice, ColdBusWaitsAsAWholeSliceThenWakesOrDisappears) {
+    for (const bool deleted : {false, true}) {
+        SCOPED_TRACE(deleted);
+        EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto id = harkentest::ObjectId(911);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+        engine->nullBackend.Pump(400);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto host = engine->buses.FindRef(id);
+        ASSERT_TRUE(host.Valid());
+        ASSERT_FALSE(engine->buses.AcceptedWorkRef(host).Valid());
+        EXPECT_EQ(engine->buses.DormantWorkFor(host), nullptr);
+        auto child = BusVolumeSliceTarget(engine, -12);
+        child.locator.object = host.index;
+        child.locator.objectGeneration = host.generation;
+        child.command.payload.setBusVolume.busIndex = host.index;
+        child.command.payload.setBusVolume.busGeneration = host.generation;
+        const std::array targets{BusVolumeSliceTarget(engine, -9), child};
+        const auto frame = engine->timelinePool.PublishCutoffFrame();
+        harken::VariableSliceRef ref;
+        ASSERT_TRUE(FileCurrentSlice(engine, frame, 1, targets.data(), 2, &ref));
+        engine->timelinePool.Publish(frame + kBlockFrames);
+        engine->nullBackend.Pump(2);
+        EXPECT_EQ(engine->variableSlices.State(ref), harken::VariableSliceState::PageCommitted);
+        EXPECT_FLOAT_EQ(engine->buses.BusState(0)->gain.target, 1);
+        if (deleted) {
+            ASSERT_EQ(VN_OK, Vn_DestroyBus(id));
+        } else {
+            harken::PreparedBusCommandBatch wake(*engine);
+            ASSERT_TRUE(wake.PrepareWake());
+            wake.Publish();
+        }
+        engine->nullBackend.Pump(2);
+        EXPECT_EQ(engine->variableSlices.State(ref), harken::VariableSliceState::SliceApplied);
+        EXPECT_FLOAT_EQ(engine->buses.BusState(0)->gain.target, DbToLinear(-9));
+        if (!deleted) {
+            ASSERT_NE(engine->buses.BusState(host.index), nullptr);
+            EXPECT_FLOAT_EQ(engine->buses.BusState(host.index)->gain.target, DbToLinear(-12));
+        }
+        EXPECT_EQ(engine->buses.ActivityFallbackCount(), 0u);
+    }
 }
 
 TEST(VariableCurrentSlice, EffectAndBusWaitForTheSameSlicePage) {
@@ -6303,6 +6352,7 @@ TEST(VariableCurrentSlice, FiniteOverflowBusWriteRowIsTargetRejected) {
     harken::Engine* engine = session.Engine();
     InstallVariable(engine);
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(9), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(harkentest::ObjectId(9), config.fxSlotsPerBus));
     RegisterBusVolumeBinding(harkentest::ObjectId(1), harkentest::ObjectId(9), 0.0f, 0.0f, 1.0f, 772.0f);
     ASSERT_EQ(VN_OK, Vn_Update());
     engine->nullBackend.Pump(2);

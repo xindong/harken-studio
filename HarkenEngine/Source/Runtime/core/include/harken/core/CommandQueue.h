@@ -84,7 +84,9 @@ inline constexpr std::uint16_t kOpcodeSeekVoice = 26;
 // bit per opcode), so a composed scene can prove it stayed within the vocabulary
 // — the acceptance command-vocabulary check.
 inline constexpr std::uint16_t kOpcodeApplyPreviewEffectChain = 27;
-inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeApplyPreviewEffectChain;
+// The activity attachment owns the full projection; this carrier has no payload.
+inline constexpr std::uint16_t kOpcodeSetBusActivity = 28;
+inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeSetBusActivity;
 
 // SetVoiceFilter selects which tone-stage section it retunes. One opcode
 // covers both sections so the audio-thread vocabulary stays minimal.
@@ -130,10 +132,11 @@ static_assert(std::is_trivial_v<PlayLedBatchHeader> &&
 inline constexpr std::uint8_t kCommandFlagPreparedCompressor = 1u << 0;
 inline constexpr std::uint8_t kCommandFlagVariableWeightSegment = 1u << 1;
 inline constexpr std::uint8_t kCommandFlagPreviewBusEffect = 1u << 2;
+inline constexpr std::uint8_t kCommandFlagVoiceSendSet = 1u << 3;
 inline constexpr std::uint8_t kCommandKnownFlagsMask =
-    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment | kCommandFlagPreviewBusEffect;
-static_assert(kCommandKnownFlagsMask == 0x07u,
-              "command flag bits 0 through 2 are assigned internal flags");
+    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment | kCommandFlagPreviewBusEffect | kCommandFlagVoiceSendSet;
+static_assert(kCommandKnownFlagsMask == 0x0fu,
+              "command flag bits 0 through 3 are assigned internal flags");
 
 struct PreparedBiquadCoeffs {
     float b0;
@@ -361,6 +364,7 @@ struct CommandRecord {
             std::uint32_t rampMs;
             std::uint32_t fromGeneration;
             std::uint32_t toGeneration;
+            std::uint64_t sendGeneration;
         } setBusSendLevel;
         struct SetVoiceSend {
             VnVoiceHandle handle;
@@ -368,16 +372,19 @@ struct CommandRecord {
             std::uint32_t targetBusIndex; // dense index; kInvalidBusIndex clears
             std::uint32_t targetBusGeneration;
             float levelDb;
+            std::uint64_t setAddress;
         } setVoiceSend;
         struct ClearVoiceSend {
             VnVoiceHandle handle;
             std::uint32_t sendSlot;
+            std::uint64_t incarnation;
         } clearVoiceSend;
         struct SetVoiceSendLevel {
             VnVoiceHandle handle;
             std::uint32_t sendSlot;
             float levelDb;
             std::uint32_t rampMs;
+            std::uint64_t incarnation;
         } setVoiceSendLevel;
         struct SetBusEffect {
             // Mirror of SetVoiceEffect for a bus chain: the instance was
@@ -739,6 +746,21 @@ public:
         bool initialSource_ = false;
     };
 
+    // The prepared activity owner stays address-stable until one disposition.
+    // Queued/adopt are no-allocation ownership transfers; destruction belongs
+    // to logic-side cancellation, quiescent discard or later retirement.
+    struct BusActivityAttachment {
+        void* context = nullptr;
+        void (*queued)(void*) noexcept = nullptr;
+        void (*cancel)(void*) noexcept = nullptr;
+        bool (*adopt)(void*) noexcept = nullptr;
+        void (*discard)(void*) noexcept = nullptr;
+    };
+    struct PublicationFrontiers {
+        std::uint64_t raw = 0;
+        std::uint64_t initial = 0;
+    };
+
     struct InitialSourceIdentity {
         std::uint64_t generation = 0;
         std::uint32_t slot = UINT32_MAX;
@@ -753,8 +775,9 @@ public:
         std::uint64_t rawBefore = 0;
         std::uint64_t ordinal = 0;
         std::uint64_t origin = 0;
+        BusActivityAttachment* activity = nullptr;
     };
-    static_assert(sizeof(InitialSourceEntry) == 64);
+    static_assert(sizeof(InitialSourceEntry) == 72);
     struct BlockInputCut {
         std::uint64_t acceptedTail = 0;
         std::uint64_t rawHead = 0;
@@ -771,6 +794,7 @@ public:
         m_slots.resize(cap);
         m_publicationScratch.resize(cap);
         m_originalRanges.resize(cap, nullptr);
+        m_busActivities.resize(cap, nullptr);
         m_preparedOriginalRanges.resize(cap, nullptr);
         if (!m_initialSources.Reserve(cap)) throw std::bad_alloc();
         m_mask = cap - 1;
@@ -912,6 +936,7 @@ public:
             }
             m_slots[(head + i) & m_mask] = record;
             m_originalRanges[(head + i) & m_mask] = nullptr;
+            m_busActivities[(head + i) & m_mask] = nullptr;
         }
         m_head.store(head + count, std::memory_order_release);
         ClearReservation(reservation);
@@ -941,6 +966,7 @@ public:
                 m_slots[(head + i) & m_mask] = record;
                 m_publicationScratch[i] = record;
                 m_originalRanges[(head + i) & m_mask] = nullptr;
+                m_busActivities[(head + i) & m_mask] = nullptr;
             }
         }
         m_liveFrozenOrigin = ++m_nextFrozenOrigin;
@@ -1064,6 +1090,28 @@ public:
         return true;
     }
 
+    bool BindPreparedBusActivity(const PreparedBatchProof& proof,
+        BusActivityAttachment& activity) noexcept {
+        if (!FrozenProofMatches(proof) || m_frozenBusActivity != nullptr ||
+            activity.context == nullptr || activity.queued == nullptr ||
+            activity.cancel == nullptr || activity.adopt == nullptr || activity.discard == nullptr)
+            return false;
+        m_frozenBusActivity = &activity;
+        return true;
+    }
+
+    // Exact ends of the reserved publication, including the other lane's
+    // already-published prefix. Current slices use both as apply barriers.
+    bool PreparedPublicationFrontiers(const PreparedBatchProof& proof,
+        PublicationFrontiers& out) const noexcept {
+        if (!FrozenProofMatches(proof)) return false;
+        out.raw = m_frozenInitialSource ? m_head.load(std::memory_order_relaxed)
+            : m_frozenHead + m_frozenCount;
+        out.initial = m_frozenInitialSource ? m_frozenHead + 1u
+            : m_initialHead.load(std::memory_order_relaxed);
+        return true;
+    }
+
     PublishedBatchView ConsumePreparedBatch(PreparedBatchProof&& proof) noexcept {
         assert(FrozenProofMatches(proof));
         if (!FrozenProofMatches(proof)) return {};
@@ -1079,6 +1127,14 @@ public:
             m_preparedOriginalRanges[0]->Kind() != OriginalRangeKind::InitialSource)) {
             assert(false && "initial installation requires its original joint factory");
             return {};
+        }
+        // No remaining precondition may refuse this publication. Commit the
+        // activity predecessor only here, before either transport is visible.
+        if (auto* activity = std::exchange(m_frozenBusActivity, nullptr)) {
+            if (m_frozenInitialSource)
+                m_initialSources[static_cast<std::uint32_t>(head & m_mask)].activity = activity;
+            else m_busActivities[head & m_mask] = activity;
+            activity->queued(activity->context);
         }
         for (std::uint32_t i = 0; i < count; ++i) {
             const auto opcode = m_frozenInitialSource ? m_initialPreparation[i].opcode :
@@ -1152,6 +1208,20 @@ public:
             entry.range->Kind() == OriginalRangeKind::InitialSource &&
             entry.range->State() == OriginalRangeState::Published ? &entry : nullptr;
     }
+    // Called only at the selected front, before source/control semantics.
+    // Pop also calls this so invalid-batch discard cannot bypass attachments.
+    bool AdoptRawBusActivity() noexcept {
+        const auto tail = m_tail.load(std::memory_order_relaxed);
+        if (tail == m_head.load(std::memory_order_acquire)) return true;
+        return AdoptBusActivity(m_busActivities[tail & m_mask]);
+    }
+    bool AdoptInitialBusActivity(const InitialSourceEntry& front) noexcept {
+        const auto* entry = InitialSourceAtFront(m_initialHead.load(std::memory_order_acquire));
+        if (entry != &front || front.rawBefore != ConsumedCount()) return false;
+        return AdoptBusActivity(m_initialSources[static_cast<std::uint32_t>(
+            m_initialTail.load(std::memory_order_relaxed) & m_mask)].activity);
+    }
+
     std::uint64_t InitialSourcesConsumed() const noexcept {
         return m_initialTail.load(std::memory_order_relaxed);
     }
@@ -1210,8 +1280,14 @@ public:
                     if (!wrote) return;
                 }
             }
+            const auto tail = m_tail.load(std::memory_order_relaxed);
+            if (tail != m_head.load(std::memory_order_acquire))
+                DiscardBusActivity(m_busActivities[tail & m_mask]);
             if (!TryPop(discarded)) {
-                m_initialTail.store(m_initialHead.load(std::memory_order_acquire), std::memory_order_release);
+                const auto initialHead = m_initialHead.load(std::memory_order_acquire);
+                for (auto i = m_initialTail.load(std::memory_order_relaxed); i < initialHead; ++i)
+                    DiscardBusActivity(m_initialSources[static_cast<std::uint32_t>(i & m_mask)].activity);
+                m_initialTail.store(initialHead, std::memory_order_release);
                 return;
             }
             if (range != nullptr && range->kind_ == OriginalRangeKind::ControlHeader) {
@@ -1291,6 +1367,7 @@ public:
         }
         m_slots[head & m_mask] = record;
         m_originalRanges[head & m_mask] = nullptr;
+        m_busActivities[head & m_mask] = nullptr;
         m_head.store(head + 1, std::memory_order_release);
         return true;
     }
@@ -1329,6 +1406,7 @@ public:
             }
             m_slots[(head + i) & m_mask] = record;
             m_originalRanges[(head + i) & m_mask] = nullptr;
+            m_busActivities[(head + i) & m_mask] = nullptr;
         }
         m_head.store(head + count, std::memory_order_release);
         return true;
@@ -1351,6 +1429,7 @@ public:
         if (tail == head) {
             return false;
         }
+        if (!AdoptRawBusActivity()) return false;
         out = m_slots[tail & m_mask];
         m_originalRanges[tail & m_mask] = nullptr;
         m_tail.store(tail + 1, std::memory_order_release);
@@ -1451,7 +1530,7 @@ private:
     }
     bool PopInitialSource(OriginalBatchRange& range) noexcept {
         const auto* entry = InitialSourceAtFront(m_initialHead.load(std::memory_order_acquire));
-        if (entry == nullptr || entry->range != &range) return false;
+        if (entry == nullptr || entry->range != &range || !AdoptInitialBusActivity(*entry)) return false;
         const auto next = range.head_ + 1u;
         m_initialTail.store(next, std::memory_order_release);
         return true;
@@ -1813,9 +1892,12 @@ private:
         assert(m_frozenDispositionReceipt == nullptr ||
             DispositionReceiptMatches(*m_frozenDispositionReceipt, proof));
         const auto head = m_frozenHead;
-        if (!m_frozenInitialSource)
-            for (std::uint32_t i = 0; i < m_frozenCount; ++i)
+        if (!m_frozenInitialSource) {
+            for (std::uint32_t i = 0; i < m_frozenCount; ++i) {
                 m_originalRanges[(head + i) & m_mask] = nullptr;
+                m_busActivities[(head + i) & m_mask] = nullptr;
+            }
+        }
         for (std::uint32_t i = 0; i < m_preparedOriginalRangeCount; ++i) {
             CloseControlOriginWhenFinished(*m_preparedOriginalRanges[i]);
             m_preparedOriginalRanges[i]->state_.store(
@@ -1834,8 +1916,10 @@ private:
         m_frozenCount = 0;
         m_frozenInitialSource = false;
         ClearReservation(proof.reservation_);
+        auto* activity = std::exchange(m_frozenBusActivity, nullptr);
         auto* context = std::exchange(m_frozenCancellationContext, nullptr);
         auto handler = std::exchange(m_frozenCancellationHandler, nullptr);
+        if (activity != nullptr) activity->cancel(activity->context);
         if (handler != nullptr) handler(context);
     }
 
@@ -1859,6 +1943,18 @@ private:
         m_reservationLive = false;
     }
 
+    static bool AdoptBusActivity(BusActivityAttachment*& slot) noexcept {
+        auto* activity = std::exchange(slot, nullptr);
+        if (activity == nullptr) return true;
+        if (activity->adopt(activity->context)) return true;
+        // Failure transfers no ownership and must not change activity state.
+        slot = activity;
+        return false;
+    }
+    static void DiscardBusActivity(BusActivityAttachment*& slot) noexcept {
+        if (auto* activity = std::exchange(slot, nullptr)) activity->discard(activity->context);
+    }
+
     std::vector<CommandRecord> m_slots;
     SparseRowStorage<InitialSourceEntry> m_initialSources;
     std::array<CommandRecord, 3> m_initialPreparation{};
@@ -1870,6 +1966,8 @@ private:
     const TimelineArmTable* const m_controlReceiver;
     std::vector<CommandRecord> m_publicationScratch;
     std::vector<OriginalBatchRange*> m_originalRanges;
+    std::vector<BusActivityAttachment*> m_busActivities;
+    BusActivityAttachment* m_frozenBusActivity = nullptr;
     std::vector<OriginalBatchRange*> m_preparedOriginalRanges;
     std::uint32_t m_preparedOriginalRangeCount = 0;
     std::uint64_t m_nextFrozenOrigin = 0;

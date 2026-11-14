@@ -515,7 +515,7 @@ TEST(PlayablePropertyCut, RefusesUnknownTrackAndCapacityWithoutPublishing) {
     EXPECT_EQ(0u, narrow.View().world);
 }
 
-TEST(PlayablePropertyCut, SendCapacityRefusalPreservesThePublishedCut) {
+TEST(PlayablePropertyCut, SendStorageGrowsBeyondLegacyHint) {
     WorldFixture fixture;
     fixture.properties[5].payload.sendCount = 1;
     harken::ResolvedPlayablePropertyCutConfigV1 config{};
@@ -526,9 +526,9 @@ TEST(PlayablePropertyCut, SendCapacityRefusalPreservesThePublishedCut) {
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
               storage.Resolve(fixture.world, fixture.root, selections, 2));
     fixture.properties[5].payload.sendCount = 2;
-    EXPECT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Capacity,
+    EXPECT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
               storage.Resolve(fixture.world, fixture.root, selections, 2));
-    ASSERT_EQ(1u, storage.View().sendCount);
+    ASSERT_EQ(2u, storage.View().sendCount);
     EXPECT_EQ(harkentest::ObjectId(10u), storage.View().sends[0].targetBusId);
     EXPECT_EQ(harkentest::ObjectId(30u), storage.View().leaf.stableId);
 }

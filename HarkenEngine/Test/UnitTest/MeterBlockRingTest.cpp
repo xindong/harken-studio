@@ -39,6 +39,57 @@ float ProtocolBlockCoeff(std::uint32_t ms) {
     return static_cast<float>(std::exp(-256.0 / tauFrames));
 }
 
+TEST(MeterBlockRing, SparseCaptureIncludesProbeInstalledBeforeBlockPublication) {
+    harken::MeterBlockRing ring(2, 100000, false);
+    harken::MeterSystem meters(0, 256, 48000);
+    EXPECT_EQ(0u, ring.LaneCount());
+    const auto emptyBytes = ring.StorageBytes();
+    std::array<harken::MeterBlockRing::Lease, 1> lanes{ring.PrepareLane(99999)};
+    EXPECT_EQ(1u, ring.LaneCount());
+    EXPECT_LT(ring.StorageBytes() - emptyBytes, 1024u);
+    ring.PushCaptured(1, lanes, [&](auto bus, auto& generation, auto& peaks) {
+        EXPECT_EQ(99999u, bus);
+        generation = 7;
+        peaks[0] = 0.75f;
+        EXPECT_EQ(VN_OK, meters.Install(harkentest::ObjectId(900), harkentest::ObjectId(901),
+            bus, 7, 0, 0, 0, ring.WriteCursor()));
+    });
+    EXPECT_EQ(1u, meters.Drain(ring));
+    EXPECT_FLOAT_EQ(0.75f, meters.Find(harkentest::ObjectId(900))->envelope);
+    lanes[0].reset();
+    ring.ReclaimConsumed();
+    EXPECT_EQ(0u, ring.LaneCount());
+    ring.PushCaptured(2, {}, [](auto, auto&, auto&) {});
+    EXPECT_EQ(1u, meters.Drain(ring));
+    EXPECT_FLOAT_EQ(0, meters.Find(harkentest::ObjectId(900))->envelope);
+}
+
+TEST(MeterBlockRing, SparseRetirementPreservesUnreadOrdinaryAndOverflowPeaks) {
+    harken::MeterBlockRing ring(1, 50000, false);
+    harken::MeterSystem meters(0, 256, 48000);
+    ASSERT_EQ(VN_OK, meters.Install(harkentest::ObjectId(910), harkentest::ObjectId(911),
+        49999, 8, 0, 0, 0, 0));
+    std::array<harken::MeterBlockRing::Lease, 1> lanes{ring.PrepareLane(49999)};
+    ring.PushCaptured(1, lanes, [](auto, auto& generation, auto& peaks) {
+        generation = 8; peaks[0] = 0.25f;
+    });
+    ring.PushCaptured(2, lanes, [](auto, auto& generation, auto& peaks) {
+        generation = 8; peaks[0] = 0.8f;
+    });
+    lanes[0].reset();
+    ring.ReclaimConsumed();
+    EXPECT_EQ(1u, ring.LaneCount());
+    EXPECT_EQ(2u, meters.Drain(ring));
+    EXPECT_FLOAT_EQ(0.8f, meters.Find(harkentest::ObjectId(910))->envelope);
+    EXPECT_EQ(0u, ring.LaneCount());
+    lanes[0] = ring.PrepareLane(49999);
+    ring.PushCaptured(3, lanes, [](auto, auto& generation, auto& peaks) {
+        generation = 9; peaks[0] = 1.0f;
+    });
+    EXPECT_EQ(1u, meters.Drain(ring));
+    EXPECT_FLOAT_EQ(0.8f, meters.Find(harkentest::ObjectId(910))->envelope);
+}
+
 TEST(MeterBlockRing, PushAndDrainPreserveOrderAndPayload) {
     MeterBlockRing ring(4, 2);
     const float a[2] = {0.1f, 0.2f};

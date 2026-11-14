@@ -1,6 +1,7 @@
 #include "harken/param/MeterProbe.h"
 
 #include "Engine.h"
+#include "SignalPublication.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/param/ParamTargetTable.h"
 #include "harken/dsp/GainRamp.h"
@@ -536,15 +537,17 @@ bool MeterProbeSystem::CaptureAndScheduleWithdrawalChunk(
     input.kind = CurrentSliceKind::MeterProbeWithdrawal;
     input.slice = {probe.withdrawalSlice.slot,
                    probe.withdrawalSlice.generation};
-    const ReserveResult reserved = engine.timelinePool.ReserveCurrentSlice(
-        input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame,
-        nextOpenFrame);
-    if (reserved.status != ReserveStatus::Committed) {
+    HeldCurrentSliceToken held;
+    const ReserveResult reserved = engine.timelinePool.ReserveHeldCurrentSlice(
+        input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, nextOpenFrame, &held);
+    if (reserved.status != ReserveStatus::Committed) return false;
+    PreparedBusCommandBatch wake(engine);
+    if (!engine.timelinePool.CanReleaseHeldCurrentSlice(held) ||
+        !engine.variableSlices.CanPublishPrepared(probe.withdrawalSlice) || !wake.PrepareWake())
         return false;
-    }
-    if (!engine.variableSlices.Publish(probe.withdrawalSlice)) {
-        std::terminate();
-    }
+    if (!engine.variableSlices.Publish(probe.withdrawalSlice)) std::terminate();
+    wake.Publish();
+    if (!engine.timelinePool.ReleaseHeldCurrentSlice(&held)) std::terminate();
     probe.withdrawalPageCommitted = true;
     ReleaseWithdrawalChunkRows(engine, probe);
     engine.variables.PublishPreparedPlaybackPages(
@@ -685,6 +688,7 @@ void MeterProbeSystem::CommitSliceTargets(
                     ? target->command.payload.setVoicePan.pan2d : 0.0f);
             break;
         case VariableTargetScope::Bus:
+            engine.NoteBusSettingCommand(target->command);
             engine.busTargets.MarkSliceCommitted(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration,
@@ -855,7 +859,8 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
     if ((targetScope == VN_TARGET_SCOPE_VOICE &&
          !engine.params.PrepareRetiringTargetStorage()) ||
         (targetScope == VN_TARGET_SCOPE_BUS &&
-         !engine.busTargets.PrepareRetiringTargetStorage())) {
+         (!engine.busTargets.PrepareActivity(busIndex, binding->targetId) ||
+          !engine.busTargets.PrepareRetiringTargetStorage()))) {
         engine.meterDetectors.NoteRefusal();
         return VN_BACKPRESSURE;
     }

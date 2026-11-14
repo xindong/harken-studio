@@ -146,10 +146,10 @@ TEST(LogRing, DrainWithoutSinkStillConsumesAndCounts) {
     // arena too small for one accumulator plane emits exactly one
     // overflow record per block, so the expected drop count is exact.
     VnConfig config = MakeNullConfig(2, 256, 48000);
-    config.arenaBytes = 64;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    engine->mixer.ArenaForTests().SetCapacityForTests(64);
 
     constexpr std::uint32_t kExtra = 44;
     const std::uint32_t blocks = harken::LogRing::kCapacity + kExtra;

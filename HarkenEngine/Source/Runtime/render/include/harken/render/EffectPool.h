@@ -143,7 +143,8 @@ public:
     // Takes a free instance of `type` and returns its reference, or a
     // kEffectTypeNone reference when that type's pool is exhausted. The
     // instance is NOT reset here; the caller resets and configures it before
-    // handing it to the audio thread.
+    // handing it to the audio thread. Delay rows are already reset on initial
+    // construction and logic-owned disposal, so a cold Bus may skip that reset.
     EffectInstanceRef Acquire(std::uint32_t type, EffectObjectIdentity identity = {});
     EffectInstanceRef AcquirePrepared(std::uint32_t type, EffectObjectIdentity identity = {});
     bool ProvePreparedCommit(const EffectInstanceRef& original,

@@ -793,7 +793,7 @@ TEST(PackReplaceStaging,
     EXPECT_EQ(nullptr, engine->logicPacks.PendingFor(pack));
     EXPECT_EQ(commandsBeforeRemove, engine->commands.PublishedHead());
     EXPECT_EQ(VN_EFFECT_COMPRESSOR,
-              engine->busEffectSlotTypes[master][0]);
+              engine->busEffects.Get(master, 0).type);
 
     engine->effectParamTargets.ReleaseClaim(
         harken::EffectParamTargetStore::Scope::Bus, master, generation, 0,
@@ -810,7 +810,7 @@ TEST(PackReplaceStaging,
     EXPECT_NE(nullptr, engine->logicPacks.PendingFor(pack));
     EXPECT_EQ(commandsBeforeActivation, engine->commands.PublishedHead());
     EXPECT_EQ(VN_EFFECT_COMPRESSOR,
-              engine->busEffectSlotTypes[master][0]);
+              engine->busEffects.Get(master, 0).type);
     EXPECT_EQ(harken::kCompressorParamCount,
               engine->effectParamTargets.LiveRecordCount());
 
@@ -820,7 +820,7 @@ TEST(PackReplaceStaging,
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(nullptr, engine->logicPacks.PendingFor(pack));
     EXPECT_EQ(harken::kEffectTypeNone,
-              engine->busEffectSlotTypes[master][0]);
+              engine->busEffects.Get(master, 0).type);
     EXPECT_EQ(0u, engine->effectParamTargets.LiveRecordCount());
 }
 
@@ -860,9 +860,9 @@ TEST(PackReplaceStaging,
     EXPECT_EQ(VN_BACKPRESSURE, Vn_UnloadPack(pack));
     EXPECT_EQ(commandHead, engine->commands.PublishedHead());
     EXPECT_EQ(loaded, engine->packs.LoadedCount());
-    EXPECT_EQ(pack, engine->busEffectOwnerCookies[master][0]);
+    EXPECT_EQ(pack, engine->busEffects.Get(master, 0).owner);
     EXPECT_EQ(VN_EFFECT_COMPRESSOR,
-              engine->busEffectSlotTypes[master][0]);
+              engine->busEffects.Get(master, 0).type);
     EXPECT_EQ(harken::kCompressorParamCount,
               engine->effectParamTargets.LiveRecordCount());
 
@@ -871,9 +871,9 @@ TEST(PackReplaceStaging,
         harken::kCompressorParamMakeupDb, owner);
     ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
     EXPECT_EQ(loaded - 1u, engine->packs.LoadedCount());
-    EXPECT_EQ(0u, engine->busEffectOwnerCookies[master][0]);
+    EXPECT_EQ(0u, engine->busEffects.Get(master, 0).owner);
     EXPECT_EQ(harken::kEffectTypeNone,
-              engine->busEffectSlotTypes[master][0]);
+              engine->busEffects.Get(master, 0).type);
     EXPECT_EQ(0u, engine->effectParamTargets.LiveRecordCount());
 }
 

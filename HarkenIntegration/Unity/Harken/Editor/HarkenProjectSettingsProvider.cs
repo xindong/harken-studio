@@ -110,7 +110,6 @@ namespace Harken.Unity.Editor
             project.Update();
             DrawCapacity(project, "maxVoices", "Max Voices");
             DrawCapacity(project, "maxPacks", "Max Packs");
-            DrawCapacity(project, "maxActions", "Max Actions");
             DrawCapacity(project, "maxActionFirings", "Max Simultaneous Playbacks");
             DrawCapacity(project, "maxEmitters", "Max Emitters");
             DrawCapacity(project, "emitterVariableSlots", "Emitter Variable Slots");

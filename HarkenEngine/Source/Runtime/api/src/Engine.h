@@ -5,6 +5,8 @@
 #ifndef HARKEN_API_ENGINE_H
 #define HARKEN_API_ENGINE_H
 
+#include "BusEffectSettings.h"
+#include "BusFilterSettings.h"
 #include <harken/ObjectId.h>
 #include "DeviceBackend.h"
 #include "EngineFrontierOwnerLedger.h"
@@ -331,12 +333,7 @@ PlayableExecutionCanonicalResult ResolvePlayableExecutionEntry(
 // targets from every live, pending, and parked mirror before replay. Levels
 // replay as a snap (a returned voice starts fresh at its virtual offset).
 // Logic thread only.
-struct VoiceSendConfig {
-    bool active = false;
-    std::uint32_t targetBusIndex = 0;
-    float levelDb = 0.0f;
-    std::uint32_t targetBusGeneration = 0;
-};
+
 
 // Staging for a voice whose start was deferred — by a steal (the pool was
 // full when the raw voice start was requested, so a victim was told to stop and this voice
@@ -451,10 +448,11 @@ struct PendingStartRecord {
     std::array<bool, kMaxFxSlotsPerVoice> effectBypass{};
     bool hasTonePreset = false;
     VoiceTonePreset tonePreset{};
-    // Per-voice sends staged while pending, applied at the deferred start (each
-    // active slot re-issues a set-voice-send at start). A voice receives
+    // Per-voice Sends staged while pending; one prepared set is adopted at
+    // the deferred start without per-Send commands. A voice receives
     // nothing, so sends never create a cycle and need no re-validation here.
-    std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    VoiceSendConfigs voiceSends{};
+    PreparedVoiceSends preparedSends{};
 
     // The resolved attachment set PINNED at play acceptance:
     // identities, never curve copies, so a Replace between acceptance and onset is live and the
@@ -526,12 +524,13 @@ struct EnginePlaybackPathStorage {
     PlaybackPathRow firstPathRow{};
     std::unique_ptr<PlaybackPathRow[]> additionalPathRows;
     std::uint32_t sendCount = 0;
-    TimelineVoiceSendInstall sends[kTimelineMaxVoiceSends]{};
+    std::vector<TimelineVoiceSendInstall> sends;
 
-    bool PreparePath(std::size_t count) noexcept {
+    bool PreparePath(std::size_t count, std::size_t sendRows = 0) noexcept {
         if (memguard::IsAudioTagged() || count > kPlaybackPathRowCapacity) return false;
-        if (count <= 1 || additionalPathRows != nullptr) return true;
         try {
+            sends.resize(sendRows);
+            if (count <= 1 || additionalPathRows != nullptr) return true;
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlaybackPathStorage);
             additionalPathRows = std::make_unique<PlaybackPathRow[]>(kPlaybackPathRowCapacity - 1u);
         } catch (...) {
@@ -559,7 +558,7 @@ struct EnginePlaybackPathStorage {
         if (pathRowCount > 1)
             std::copy_n(additionalPathRows.get(), pathRowCount - 1u, observation.path.rows + 1);
         observation.sendCount = sendCount;
-        std::copy_n(sends, sendCount, observation.sends);
+        observation.sends = std::span<const TimelineVoiceSendInstall>(sends).first(sendCount);
         return observation;
     }
 };
@@ -668,7 +667,8 @@ struct ParkRecord {
     // Per-voice sends captured at park and re-applied on return (each active
     // slot re-issues a set-voice-send). Bus destruction clears captured slots
     // that target its tombstoned cascade before a return can replay them.
-    std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    VoiceSendConfigs voiceSends{};
+    PreparedVoiceSends preparedSends{};
     bool heldPcmRef = false;            // a PCM use-count ref held while parked
     bool heldStreamRef = false;
     std::uint64_t streamParkRequestSequence = 0;
@@ -3177,7 +3177,7 @@ struct EngineTimelineVoiceInstallIdentity {
     TimelineArmToken startArm{};
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
-    std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    VoiceSendConfigs voiceSends{};
     std::uint64_t sourceFrameCount = 0;
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;
@@ -3920,7 +3920,7 @@ private:
 struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
-        3u + kTimelineMaxVoiceSends + 2u * kTimelineMaxVoiceEffects + 2u +
+        3u + 2u * kTimelineMaxVoiceEffects + 2u +
         kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
@@ -3993,6 +3993,7 @@ struct EnginePreparedRoutingMigrationV1 {
     std::uint64_t domainEpoch = 0;
     std::uint64_t graphRevision = 0;
     std::vector<Row> rows;
+    std::vector<VoiceSendMirrorMigrationV1> sendMirrors;
 };
 
 struct EngineImmediateRetryCleanup {
@@ -7120,7 +7121,7 @@ public:
                      static_cast<std::uint64_t>(resolved.maxPlayableInstances) +
                          resolved.voiceCapacity.Logical() +
                          resolved.maxDeferredIntents,
-                     voices.Capacity(), resolved.maxBuses),
+                     voices.Capacity(), resolved.maxVariableSliceTargetsTotal),
           actionFiringPlanScratch(1),
           actionFiringOwnerReleaseScratch(resolved.maxActionFirings),
           originalActionFiringPackHolders(resolved.maxActionFirings),
@@ -7173,25 +7174,15 @@ public:
                      resolved.maxVariableSliceTargetsTotal),
           effectParamTargets(
               resolved.mixRate.SampleRate(),
-              // Every installed, stale-until-Update, Pending-claim prepared,
-              // or Parked-return prepared voice record set is owned by one
-              // Logical ledger identity. A physical Render slot can advance
-              // generations before Update clears an old identity's records,
-              // so Logical capacity, not Render capacity, is the hard bound.
-              // Bus records retain one installed generation; claimed records
-              // can retire into the fixed lifecycle headroom below. Validated
-              // capacity/slot ceilings keep this product within uint32_t.
-              (resolved.voiceCapacity.Logical() *
-                   resolved.fxSlotsPerVoice +
-               static_cast<std::uint32_t>(resolved.maxBuses) *
-                   resolved.fxSlotsPerBus) *
-                  harken::kMaxEffectParamCount,
+              // Stable records are constructed only for actual parameters.
+              // Admission is bounded by record identity representation, not Bus count.
+              UINT32_MAX - resolved.maxVariableSliceTargetsTotal,
               resolved.maxVariableSliceTargetsTotal),
           meterDetectors(resolved.maxBuses, resolved.blockFrames,
                          resolved.mixRate.SampleRate()),
           meterProbes(resolved.maxBindingAttachments,
                       resolved.maxPropertiesPerCurrentSlice),
-          meterRing(resolved.meterRingBlocks, resolved.maxBuses),
+          meterRing(resolved.meterRingBlocks, resolved.maxBuses, false),
           spatial(resolved, 0),
           emitters(resolved, handleFloors.emitter),
           monitorEmitters(emitters, resolved.maxEmitters, monitorRequests.EngineInstance()),
@@ -7426,6 +7417,21 @@ public:
         }
         if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
         effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
+        buses.AttachEffectRevisionReader(this, ReadBusEffectRevision);
+        buses.AttachDormantEffects({this,
+            [](void* context, std::span<const BusDormantCapture* const> captures, std::uint64_t publication) noexcept {
+                auto& engine = *static_cast<Engine*>(context);
+                return engine.busEffects.CommitDormant(captures, publication, context, ReadBusEffectRevision);
+            },
+            [](const void* context, BusTree::Bus& bus) noexcept {
+                return static_cast<const Engine*>(context)->busEffects.RestoreDormant(bus, context, ReadBusEffectRevision);
+            },
+            [](const void* context, BusSlotRef bus) noexcept {
+                return static_cast<const Engine*>(context)->busEffects.DormantReceipt(bus, context, ReadBusEffectRevision);
+            },
+            [](void* context, BusSlotRef bus) noexcept {
+                static_cast<Engine*>(context)->busEffects.ConsumeDormant(bus.index);
+            }});
         variables.AttachTargetRetirementStorage(this, [](void* context) noexcept {
             auto& engine = *static_cast<Engine*>(context);
             return engine.params.PrepareRetiringTargetStorage() && engine.busTargets.PrepareRetiringTargetStorage();
@@ -7554,7 +7560,6 @@ public:
         selectionConfig.maxPendingEmitterPerRow =
             resolved.maxPendingSelectionDeltasEmitterPerRow;
         ResolvedPlayablePropertyCutConfigV1 cutConfig{};
-        cutConfig.maxSends = std::max(1u, resolved.voiceSendSlots);
         cutConfig.maxEffectNodes = std::max(1u, resolved.fxSlotsPerVoice);
         cutConfig.maxEffectParams =
             cutConfig.maxEffectNodes * kMaxEffectParamCount;
@@ -7666,74 +7671,26 @@ public:
         spatial.AttachRetainedProfileStorage(this, [](void* context, std::size_t live, std::size_t retained) noexcept {
             return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage(live, retained);
         });
-        // Logic-side source of truth for bus->bus send-edge membership, one row
-        // of busSendSlotsPerBus target dense indices per bus (kInvalidBusIndex =
-        // empty). The topology planner reads it (with the tree parents) to
-        // cycle-check and sort; a publish copies it into the plan.
-        busSendAdj.assign(static_cast<std::size_t>(resolved.maxBuses) *
-                              resolved.busSendSlotsPerBus,
-                          kInvalidBusIndex);
         busOwnerCookies.assign(resolved.maxBuses, 0);
         busTopologyOwnerIds.assign(resolved.maxBuses, 0);
-        busSendOwnerCookies.assign(
-            static_cast<std::size_t>(resolved.maxBuses) *
-                resolved.busSendSlotsPerBus,
-            0);
-        busSendTopologyOwnerIds.assign(
-            static_cast<std::size_t>(resolved.maxBuses) *
-                resolved.busSendSlotsPerBus,
-            0);
-        busSendLevelDb.assign(
-            static_cast<std::size_t>(resolved.maxBuses) *
-                resolved.busSendSlotsPerBus,
-            0.0f);
         busTopologyOwners.assign(resolved.maxBusTopologyOwners,
                                  BusTopologyOwnerRecord{});
         previewMasterHolders.assign(resolved.maxBusTopologyOwners, PreviewMasterHolderV1{});
-        busRetirements.assign(resolved.maxBuses, TopologyRetirementV1{});
         currentWorldBusAdmission.assign(resolved.maxBusTopologyOwners,
                                         CurrentWorldBusAdmissionRowV1{});
         // Logic-side mirror of the effect type installed in each bus slot, used
         // to validate Vn_SetBusEffectParam against the correct type (the voice
-        // effectSlotTypes analogue). One row per possible bus, all empty.
-        // Dense indices are append-only and tombstones are never reused, so no
-        // per-create reset is needed — a fresh bus's row is already all-none.
-        std::array<std::uint32_t, kMaxFxSlotsPerBus> emptyBusSlots;
-        emptyBusSlots.fill(kEffectTypeNone);
-        busEffectSlotTypes.assign(resolved.maxBuses, emptyBusSlots);
-        std::array<EffectInstanceRef, kMaxFxSlotsPerBus> emptyBusRefs;
-        emptyBusRefs.fill(EffectInstanceRef{});
-        busEffectInstanceRefs.assign(resolved.maxBuses, emptyBusRefs);
-        std::array<VnPackHandle, kMaxFxSlotsPerBus> emptyBusOwners{};
-        busEffectOwnerCookies.assign(resolved.maxBuses, emptyBusOwners);
-        std::array<std::uint8_t, kMaxFxSlotsPerBus> emptyBusBypass{};
-        emptyBusBypass.fill(0);
-        busEffectSlotBypass.assign(resolved.maxBuses, emptyBusBypass);
+        // effectSlotTypes analogue). Only installed slots own effect settings.
+        busVolumePublished.assign(resolved.maxBuses, 0);
+        busEffectSlotBypass.assign(resolved.maxBuses, 0);
         busFaderAfterSlots.assign(resolved.maxBuses, resolved.fxSlotsPerBus);
         // Per-bus mute/solo audibility state: every bus starts unmuted and
         // unsoloed (fully audible).
         busMuted.assign(resolved.maxBuses, 0);
         busSoloed.assign(resolved.maxBuses, 0);
         busSoloActiveCount = 0;
-        // Logic-side authoritative per-bus output fold config (multichannel
-        // amendment). Every bus starts unfolded (output layout == the mix
-        // layout); the master (index 0) presents at the device layout and
-        // carries the mix->device default matrix. A non-master bus's matrix is
-        // seeded to the identity — unused until Vn_SetBusOutputLayout narrows it
-        // (which reseeds a default from the new pair). FillPlan copies this into
-        // every published plan.
         busOutputLayout.assign(resolved.maxBuses, resolved.mixChannelLayout);
         busOutputLayout[0] = resolved.deviceChannelLayout;
-        busDownmixCoeffs.assign(
-            static_cast<std::size_t>(resolved.maxBuses) * 64, 0.0f);
-        DefaultDownmixMatrix(resolved.mixChannelLayout,
-                             resolved.deviceChannelLayout,
-                             busDownmixCoeffs.data());
-        for (std::uint32_t i = 1; i < resolved.maxBuses; ++i) {
-            DefaultDownmixMatrix(
-                resolved.mixChannelLayout, resolved.mixChannelLayout,
-                busDownmixCoeffs.data() + static_cast<std::size_t>(i) * 64);
-        }
         // QPC rate cached here, on the logic thread, for the Vn_Update
         // self-measurement conversions.
         cpuTicksPerSecond = CpuClockTicksPerSecond();
@@ -13782,6 +13739,58 @@ public:
     }
 
     const EngineConfig config;
+    // Logic-only storage readiness, independent of the legacy ABI hints.
+    std::uint32_t BusCapacity() const noexcept { return busDefinitionCapacity; }
+    bool PrepareBusDefinitionCapacity(std::uint64_t required) noexcept {
+        if (required <= BusCapacity()) return true;
+        if (required >= UINT32_MAX) return false;
+        const auto count = static_cast<std::uint32_t>(required);
+        try {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::BusDefinitionStorage);
+            const auto grow = [count](auto& rows, auto value) {
+                rows.reserve(count); rows.resize(count, value);
+            };
+            grow(influenceVisited, 0); grow(influenceStack, 0);
+            grow(busOwnerCookies, 0); grow(busTopologyOwnerIds, 0);
+            grow(busVolumePublished, 0); grow(busEffectSlotBypass, 0);
+            grow(busFaderAfterSlots, config.fxSlotsPerBus);
+            grow(busMuted, 0); grow(busSoloed, 0); grow(busOutputLayout, config.mixChannelLayout);
+            if (!busTargets.PrepareBusCapacity(count) ||
+                !topologyPlans.PrepareBusCapacity(count) || !preparedTopologyPlans.PrepareBusCapacity(count) ||
+                !buses.PrepareDefinitionCapacity(count)) return false;
+            busDefinitionCapacity = count;
+            return true;
+        } catch (...) { return false; }
+    }
+    bool PrepareBusOwnerCapacity(std::uint64_t required) noexcept {
+        if (required >= UINT32_MAX) return false;
+        const auto count = static_cast<std::size_t>(required);
+        try {
+            // Publish matching lengths only after every allocation succeeds.
+            const auto reserve = [count](auto& rows) {
+                using Row = typename std::decay_t<decltype(rows)>::value_type;
+                static_assert(std::is_nothrow_default_constructible_v<Row>);
+                detail::CheckedGrow(rows, count, detail::LogicAllocSite::BusOwnerStorage);
+                rows.reserve(count);
+            };
+            reserve(busTopologyOwners); reserve(previewMasterHolders);
+            reserve(currentWorldBusAdmission); reserve(preparedOwnerClaims);
+            reserve(preparedPreviewOwnerSlots);
+            const auto grow = [count](auto& rows) { if (rows.size() < count) rows.resize(count); };
+            grow(busTopologyOwners); grow(previewMasterHolders); grow(currentWorldBusAdmission);
+            grow(preparedOwnerClaims);
+            if (preparedPreviewOwnerSlots.size() < count) preparedPreviewOwnerSlots.resize(count, UINT32_MAX);
+            return true;
+        } catch (...) { return false; }
+    }
+    // Prepared and retiring slots retain their old identities while backing grows.
+    bool PrepareAdditionalBusDefinitions(std::uint64_t additions) noexcept {
+        const auto reusable = buses.FreeBusSlotCount();
+        return additions <= reusable || PrepareBusDefinitionCapacity(
+            static_cast<std::uint64_t>(BusCapacity()) + additions - reusable);
+    }
+    std::uint32_t busDefinitionCapacity = config.maxBuses;
+
     MonitorRequestSource monitorRequests{AllocateMonitorEngineInstance()};
     struct MonitorPlaybackEvent {
         std::uint64_t instance = 0;
@@ -15635,7 +15644,7 @@ public:
     // index][send slot]. Reset for a slot at each start, written at
     // Vn_SetVoiceSend / Vn_ClearVoiceSend / Vn_SetVoiceSendLevel, captured at
     // park, and staged for a pending start. Logic thread only.
-    StableRowStorage<std::array<VoiceSendConfig, kMaxVoiceSendSlots>>
+    StableRowStorage<VoiceSendConfigs>
         voiceSendConfig;
     VoicePool::SlotStorageRegistration logicVoiceStorageRegistration;
 
@@ -15663,26 +15672,35 @@ public:
         return true;
     }
 
-    // Bus->bus send-edge membership, the logic source of truth the topology
-    // planner sorts. Row-major by from-bus: busSendAdj[from*busSendSlotsPerBus
-    // + s] is a target dense index or kInvalidBusIndex. Sized once at init.
-    // Logic thread only.
-    std::vector<std::uint32_t> busSendAdj;
-    // Provenance imprints for the live Bus slot and each exact Bus Send slot.
-    // A zero cookie denotes a caller-created object. Sized once at init and
-    // indexed in lockstep with BusTree dense indices / busSendAdj.
+    // Logic-owned Send records. Topology publication copies membership;
+    // audio state never reads or mutates this storage.
+    BusSendTable busSends;
+    std::uint64_t nextBusSendGeneration = 1;
+    std::uint64_t NewBusSendGeneration() {
+        if (nextBusSendGeneration == UINT64_MAX)
+            throw std::length_error("Bus Send generation exhausted");
+        return nextBusSendGeneration++;
+    }
     std::vector<VnPackHandle> busOwnerCookies;
     struct TopologyRetirementV1 {
+        std::uint32_t index = UINT32_MAX;
         std::uint32_t generation = 0;
         std::uint64_t revision = 0;
         std::uint64_t ownerId = 0;
         VnPackHandle cookie = 0;
     };
     std::vector<TopologyRetirementV1> busRetirements;
-    std::vector<VnPackHandle> busSendOwnerCookies;
+    bool PrepareBusRetirements(std::size_t additions) noexcept {
+        if (additions > busRetirements.max_size() - busRetirements.size()) return false;
+        try { busRetirements.reserve(busRetirements.size() + additions); return true; }
+        catch (...) { return false; }
+    }
+    const TopologyRetirementV1* BusRetirement(std::uint32_t bus) const noexcept {
+        const auto it = std::find_if(busRetirements.begin(), busRetirements.end(),
+            [bus](const auto& row) { return row.index == bus; });
+        return it == busRetirements.end() ? nullptr : &*it;
+    }
     std::vector<std::uint64_t> busTopologyOwnerIds;
-    std::vector<std::uint64_t> busSendTopologyOwnerIds;
-    std::vector<float> busSendLevelDb;
     std::vector<BusTopologyOwnerRecord> busTopologyOwners;
     std::vector<PreviewMasterHolderV1> previewMasterHolders;
 
@@ -15715,32 +15733,60 @@ public:
     };
     CanonicalPackSetTombstoneV1 packSetTombstone{};
 
-    // Logic-side authoritative per-bus output fold config (the multichannel
-    // amendment): busOutputLayout[i] is bus i's presented output layout (the
-    // master's is the device layout; a value equal to the mix layout means no
-    // fold), and busDownmixCoeffs[i*64..] its dst x src matrix (coeffs[r*8+c] =
-    // gain src c -> dst r). Sized to maxBuses at init. FillPlan copies these
-    // into every published plan, delivering Vn_SetBusOutputLayout /
-    // Vn_SetBusDownmixMatrix / Vn_ResetBusDownmixMatrix to the audio thread
-    // through the existing plan-swap command (zero new opcode). Logic thread
-    // only.
+    // Immutable custom tables are shared with published plans. Defaults own
+    // no matrix; only working rows keep a resolved runtime coefficient cache.
     std::vector<std::uint32_t> busOutputLayout;
-    std::vector<float> busDownmixCoeffs;
+    std::map<std::uint32_t, BusCustomDownmix> busCustomDownmix;
+    const BusCustomDownmix& CustomDownmix(std::uint32_t bus) const noexcept {
+        const auto it = busCustomDownmix.find(bus);
+        static const BusCustomDownmix empty;
+        return it != busCustomDownmix.end() ? it->second : empty;
+    }
+    void CopyBusDownmix(std::uint32_t bus, float* destination) const noexcept {
+        if (const auto& custom = CustomDownmix(bus))
+            std::copy_n(custom->data(), 64, destination);
+        else
+            DefaultDownmixMatrix(config.mixChannelLayout, busOutputLayout[bus], destination);
+    }
 
-    // Logic-side mirror of the effect type installed in each bus slot, indexed
-    // [dense bus index][chain slot]. Written at Vn_SetBusEffect, cleared at
-    // Vn_ClearBusEffect, and read at Vn_SetBusEffectParam so the value range is
-    // validated against the installed type — the voice effectSlotTypes analogue.
-    // Buses have no park/return, so the EffectParamTargetStore is their full
-    // parameter-value mirror. Per-slot bypass also lives here so Monitor can
-    // copy the last committed target when an empty slot later installs an
-    // Effect. Logic thread only.
-    std::vector<std::array<std::uint32_t, kMaxFxSlotsPerBus>> busEffectSlotTypes;
-    std::vector<std::array<EffectInstanceRef, kMaxFxSlotsPerBus>>
-        busEffectInstanceRefs;
-    std::vector<std::array<VnPackHandle, kMaxFxSlotsPerBus>>
-        busEffectOwnerCookies;
-    std::vector<std::array<std::uint8_t, kMaxFxSlotsPerBus>> busEffectSlotBypass;
+    // Logic-owned settings survive sleep. Effect parameters remain in the
+    // target store; bypass bits also survive an empty slot for later installs.
+    BusFilterSettings busFilterSettings;
+    static std::uint32_t ReadBusEffectRevision(const void* context, BusSlotRef bus,
+        std::uint32_t slot, std::uint32_t type) noexcept {
+        return static_cast<const Engine*>(context)->effectParamTargets.InstalledSlotRevision(
+            EffectParamTargetStore::Scope::Bus, bus.index, bus.generation, slot, type);
+    }
+    BusEffectSettings busEffects;
+    std::vector<std::uint8_t> busVolumePublished;
+
+    // Prepares an unpublished cold row. The caller must cancel or transfer
+    // every prepared effect reference; no installed audio state is inspected.
+    VnResult PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) noexcept;
+    void CancelBusWorkState(BusTree::Bus& row) noexcept;
+
+    void NoteBusSettingCommand(const CommandRecord& command) noexcept;
+    bool PublishBusSettingCommand(const CommandRecord& command) noexcept;
+
+    const BusTree::LogicEffectReferences& BusEffectRefs(std::uint32_t bus) const noexcept {
+        return buses.LogicEffects(buses.RefAt(bus));
+    }
+    void SetBusEffectRefs(std::uint32_t bus, const BusTree::LogicEffectReferences& refs) noexcept {
+        buses.SetLogicEffects(buses.RefAt(bus), refs);
+    }
+    void SetBusEffectRef(std::uint32_t bus, std::uint32_t slot, EffectInstanceRef ref) noexcept {
+        auto refs = BusEffectRefs(bus);
+        refs[slot] = ref;
+        SetBusEffectRefs(bus, refs);
+    }
+    std::vector<std::uint8_t> busEffectSlotBypass;
+    bool BusEffectBypass(std::uint32_t bus, std::uint32_t slot) const noexcept {
+        return (busEffectSlotBypass[bus] & (1u << slot)) != 0;
+    }
+    void SetBusEffectBypass(std::uint32_t bus, std::uint32_t slot, bool value) noexcept {
+        const auto mask = static_cast<std::uint8_t>(1u << slot);
+        busEffectSlotBypass[bus] = value ? busEffectSlotBypass[bus] | mask : busEffectSlotBypass[bus] & ~mask;
+    }
     std::vector<std::uint32_t> busFaderAfterSlots;
 
     // Per-bus mute/solo state, indexed by dense bus index. Both are logic-side
@@ -15764,6 +15810,7 @@ public:
     std::uint64_t topologyRefusedCount = 0;
     std::uint64_t noSendCount = 0;
     std::uint64_t busSendActive = 0;   // active bus->bus edges
+    std::uint64_t nextVoiceSendIncarnation = 1;
     std::uint64_t voiceSendActive = 0; // active voice->bus send slots
     std::uint64_t sendSlotHighWater = 0;
     std::uint64_t acceptedBusTopologyRevision = 0;

@@ -24,9 +24,9 @@ constexpr bool enabled = HARKEN_DEVELOPMENT_PREVIEW != 0;
 struct PreparedProject {
     harken::CurrentWorldBodyImage world;
     std::vector<VnBusId> ids;
-    std::vector<std::uint32_t> generations, parents, targets, feeders, emittedFeeders;
-    std::vector<std::uint8_t> alive, levelApply, emitted;
-    std::vector<float> levels, sendLevelDb;
+    std::vector<std::uint32_t> generations, parents, feeders, emittedFeeders;
+    std::vector<std::uint8_t> alive, emitted;
+    harken::BusSendTable sends;
     std::vector<float> authoredVolume, authoredOutputVolume;
     std::vector<harken::PackBusDefinitionEffect> effects;
     std::vector<harken::PackBusDefinitionEffectParameter> effectParameters;
@@ -69,20 +69,15 @@ VnPreviewCommitStatus CommitStatus(harken::ProjectGenerationCommitStatusV1 statu
 
 bool BuildTopology(const VnPreviewProjectDescV1& desc, const float* sendLevelsDb,
                    const harken::Engine& engine, PreparedProject& project) {
-    const auto maxBuses = harken::LiveMaxBusesV1(engine);
-    const auto sendSlots = harken::LiveBusSendSlotsPerBusV1(engine);
-    if (maxBuses == 0 || sendSlots == 0 || desc.busCount == 0
+    const auto maxBuses = desc.busCount;
+    if (maxBuses == 0 || desc.busCount == 0
         || desc.busCount > maxBuses || !desc.buses
-        || desc.sendCount > static_cast<std::uint64_t>(desc.busCount) * sendSlots
         || (desc.sendCount != 0 && !desc.sends)) return false;
     project.ids.resize(maxBuses);
     project.generations.assign(maxBuses, 1);
     project.parents.assign(maxBuses, UINT32_MAX);
     project.alive.assign(maxBuses, 0);
-    project.targets.assign(static_cast<std::size_t>(maxBuses) * sendSlots, UINT32_MAX);
-    project.levels.assign(project.targets.size(), 0);
-    project.sendLevelDb.assign(project.targets.size(), 0);
-    project.levelApply.assign(project.targets.size(), 0);
+    project.sends.Reserve(desc.sendCount);
     project.feeders.assign(maxBuses, 0);
     project.emittedFeeders.assign(maxBuses, 0);
     project.emitted.assign(maxBuses, 0);
@@ -104,30 +99,30 @@ bool BuildTopology(const VnPreviewProjectDescV1& desc, const float* sendLevelsDb
         if (parent == UINT32_MAX || (parent == i && project.ids[i] != VN_BUS_MASTER)) return false;
         project.parents[i] = parent;
     }
-    std::vector<std::uint32_t> used(desc.busCount);
     for (std::uint32_t i = 0; i < desc.sendCount; ++i) {
         const auto from = index(desc.sends[i].source), to = index(desc.sends[i].target);
-        if (from == UINT32_MAX || to == UINT32_MAX || from == to || used[from] == sendSlots)
+        if (from == UINT32_MAX || to == UINT32_MAX || from == to)
             return false;
-        const auto first = project.targets.begin() + static_cast<std::size_t>(from) * sendSlots;
-        if (std::find(first, first + used[from], to) != first + used[from]) return false;
-        const auto flat = static_cast<std::size_t>(from) * sendSlots + used[from]++;
-        first[used[from] - 1] = to;
+        if (project.sends.Find(from, to)) return false;
+        harken::BusSendRecord edge;
+        edge.source = from;
+        edge.target = to;
         if (sendLevelsDb != nullptr) {
             const float db = sendLevelsDb[i];
             if (!std::isfinite(db) || db < -96.0f || db > 24.0f) return false;
             const float gain = std::pow(10.0f, db / 20.0f);
             if (!std::isfinite(gain)) return false;
-            project.sendLevelDb[flat] = db == 0.0f ? 0.0f : db;
-            project.levels[flat] = gain;
-            project.levelApply[flat] = 1;
+            edge.levelDb = db == 0.0f ? 0.0f : db;
+            edge.preparedGain = gain;
+            edge.applyLevel = true;
         }
+        project.sends.Add(edge);
     }
     project.topology = {desc.busCount, project.ids.data(), project.generations.data(),
-        project.parents.data(), project.alive.data(), project.targets.data(),
-        project.levels.data(), project.levelApply.data(), project.feeders.data(),
+        project.parents.data(), project.alive.data(), nullptr,
+        nullptr, nullptr, project.feeders.data(),
         project.emittedFeeders.data(), project.emitted.data()};
-    project.topology.sendLevelsDb = sendLevelsDb != nullptr ? project.sendLevelDb.data() : nullptr;
+    project.topology.sends = &project.sends;
     return true;
 }
 
@@ -137,11 +132,8 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
                                 bool authoredSends = false,
                                 const VnPreviewProjectDescV4* effects = nullptr) {
     const auto& base = desc.base;
-    if (base.busCount == 0 || base.busCount > engine.config.maxBuses ||
-        base.busCount > 4096 || base.buses == nullptr || desc.busVolumes == nullptr ||
+    if (base.busCount == 0 || base.busCount == UINT32_MAX || base.buses == nullptr || desc.busVolumes == nullptr ||
         desc.busVolumeCount != base.busCount ||
-        base.sendCount > static_cast<std::uint64_t>(base.busCount) *
-            engine.config.busSendSlotsPerBus ||
         (base.sendCount != 0 && base.sends == nullptr) ||
         desc.profileVintage != 1 || desc.renderSampleRateHz == 0 ||
         desc.renderSampleRateHz > 384000 || desc.mixLayout == 0 ||

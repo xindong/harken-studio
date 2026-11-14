@@ -1082,3 +1082,176 @@ TEST(CommandBudget, OriginalQueueDispositionReceiptScopeExitCancelsOnlyItsTrueFr
     EXPECT_FALSE(next.CancelledUnpublishedFrom(queue));
     ASSERT_TRUE(queue.TryPop(record));
 }
+
+TEST(CommandBudget, ActivityAttachmentTracksProofDispositionAndRingReuse) {
+    using Queue = harken::CommandQueue;
+    Queue queue(2);
+    struct Probe {
+        unsigned queued = 0, cancelled = 0, adopted = 0, discarded = 0;
+        bool ready = false;
+    } probe;
+    Queue::BusActivityAttachment attachment{&probe,
+        +[](void* p) noexcept { ++static_cast<Probe*>(p)->queued; },
+        +[](void* p) noexcept { ++static_cast<Probe*>(p)->cancelled; },
+        +[](void* p) noexcept {
+            auto& state = *static_cast<Probe*>(p);
+            if (!state.ready) return false;
+            ++state.adopted;
+            return true;
+        },
+        +[](void* p) noexcept { ++static_cast<Probe*>(p)->discarded; }};
+    harken::CommandRecord record{};
+    record.opcode = harken::kOpcodeSetVoicePan;
+    Queue::BatchReservation reservation{};
+    Queue::PreparedBatchProof proof;
+    Queue::PublicationFrontiers frontier;
+    ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof));
+    ASSERT_TRUE(queue.BindPreparedBusActivity(proof, attachment));
+    EXPECT_FALSE(queue.BindPreparedBusActivity(proof, attachment));
+    unsigned sourceCancellations = 0;
+    ASSERT_TRUE(queue.SetPreparedBatchCancellationHandler(proof, &sourceCancellations,
+        +[](void* p) noexcept { ++*static_cast<unsigned*>(p); }));
+    proof.Release();
+    EXPECT_EQ(1u, sourceCancellations);
+    EXPECT_EQ(1u, probe.cancelled);
+    EXPECT_EQ(0u, probe.queued);
+    for (unsigned cycle = 0; cycle != 4; ++cycle) {
+        ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof));
+        ASSERT_TRUE(queue.PreparedPublicationFrontiers(proof, frontier));
+        EXPECT_EQ(queue.PublishedHead() + 1u, frontier.raw);
+        EXPECT_EQ(0u, frontier.initial);
+        ASSERT_TRUE(queue.BindPreparedBusActivity(proof, attachment));
+        ASSERT_EQ(1u, queue.ConsumePreparedBatch(std::move(proof)).Count());
+        EXPECT_EQ(cycle + 1u, probe.queued);
+        probe.ready = false;
+        harken::CommandRecord popped{};
+        const auto before = queue.ConsumedCount();
+        EXPECT_FALSE(queue.TryPop(popped));
+        EXPECT_EQ(before, queue.ConsumedCount());
+        probe.ready = true;
+        ASSERT_TRUE(queue.AdoptRawBusActivity());
+        ASSERT_TRUE(queue.AdoptRawBusActivity());
+        ASSERT_TRUE(queue.TryPop(popped));
+        EXPECT_EQ(cycle + 1u, probe.adopted);
+        // Exercise non-proof writers on the very same physical ring slots.
+        ASSERT_TRUE(queue.TryPush(record));
+        ASSERT_TRUE(queue.TryPop(popped));
+        ASSERT_TRUE(queue.TryPushBatch(&record, 1));
+        ASSERT_TRUE(queue.TryPop(popped));
+        ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+        queue.CommitPreparedBatch(&reservation, &record);
+        ASSERT_TRUE(queue.TryPop(popped));
+        EXPECT_EQ(cycle + 1u, probe.adopted);
+    }
+    ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof));
+    ASSERT_TRUE(queue.BindPreparedBusActivity(proof, attachment));
+    ASSERT_EQ(1u, queue.ConsumePreparedBatch(std::move(proof)).Count());
+    queue.DiscardPublishedAfterQuiescence();
+    EXPECT_EQ(1u, probe.discarded);
+    EXPECT_EQ(4u, probe.adopted);
+    EXPECT_EQ(queue.PublishedHead(), queue.ConsumedCount());
+}
+
+TEST(CommandBudget, InvalidBatchCrossingPublicationStillAdoptsItsActivity) {
+    unsigned adopted = 0;
+    harken::CommandQueue::BusActivityAttachment attachment{&adopted,
+        +[](void*) noexcept {}, +[](void*) noexcept {},
+        +[](void* p) noexcept { ++*static_cast<unsigned*>(p); return true; },
+        +[](void*) noexcept {}};
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    harken::CommandRecord malformed{};
+    malformed.opcode = harken::kOpcodePlay;
+    malformed.payload.play.batch.batchVersion = harken::kPlayLedBatchVersion;
+    malformed.payload.play.batch.batchKind = harken::PlayLedBatchKind::DeferredStart;
+    malformed.payload.play.batch.batchCommandCount = 2;
+    ASSERT_TRUE(engine.commands.TryPush(malformed));
+    harken::CommandRecord setter{};
+    setter.opcode = harken::kOpcodeSetBusVolume;
+    setter.payload.setBusVolume.busIndex = 0;
+    setter.payload.setBusVolume.volumeDb = -12;
+    harken::CommandQueue::BatchReservation reservation;
+    harken::CommandQueue::PreparedBatchProof proof;
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &setter, 1, &proof));
+    ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, attachment));
+    ASSERT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
+    engine.mixer.SuppressCommandProtocolAssertForTest(true);
+    engine.mixer.DrainCommandsForTest();
+    engine.mixer.SuppressCommandProtocolAssertForTest(false);
+    EXPECT_EQ(2u, engine.commands.ConsumedCount());
+    EXPECT_EQ(1u, adopted);
+    EXPECT_EQ(1u, engine.mixer.CommandProtocolViolationCount());
+    EXPECT_FLOAT_EQ(1, engine.buses.BusState(0)->gain.target);
+}
+
+TEST(CommandBudget, RawStartProofRefusalReleasesPreparedVoiceBeforePublication) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> pcm;
+    const auto existing = PlayDcVoice(harkentest::ObjectId(1), .25f, VN_BUS_MASTER, pcm);
+    ASSERT_NE(0u, existing);
+    const auto before = PumpBlock(&engine);
+    const auto commandHead = engine.commands.PublishedHead();
+    const auto voices = engine.voices.ActiveCount();
+    const auto references = engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load();
+    harken::detail::CommandQueueSubmissionTestAccess::ExhaustFrozenOrigins(engine.commands);
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    VnVoiceHandle refused = 0;
+    EXPECT_EQ(VN_DEVICE_ERROR, harkentest::PlayRaw(&play, &refused));
+    EXPECT_EQ(0u, refused);
+    EXPECT_EQ(commandHead, engine.commands.PublishedHead());
+    EXPECT_EQ(voices, engine.voices.ActiveCount());
+    EXPECT_EQ(references, engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load());
+    const auto after = PumpBlock(&engine);
+    EXPECT_EQ(before.left, after.left);
+    EXPECT_EQ(before.right, after.right);
+    // A failed proof must also return its queue reservation to ordinary setters.
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(existing, -6, 0));
+    EXPECT_EQ(commandHead + 1, engine.commands.PublishedHead());
+}
+
+
+TEST(CommandBudget, TopologyProofRefusalKeepsDefinitionsAudioAndPreparedRows) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto a = harkentest::ObjectId(10), b = harkentest::ObjectId(11), added = harkentest::ObjectId(12);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(a, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(b, VN_BUS_MASTER));
+    std::vector<float> pcm;
+    ASSERT_NE(0u, PlayDcVoice(harkentest::ObjectId(1), .25f, a, pcm));
+    const auto before = PumpBlock(&engine);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto head = engine.commands.PublishedHead();
+    const auto revision = engine.acceptedBusTopologyRevision;
+    const auto rows = engine.buses.WorkRowsInUse();
+    const auto count = engine.buses.BusCount();
+    const auto free = engine.commands.FreeSlots();
+    const auto index = engine.buses.FindIndex(b);
+    const auto parent = engine.buses.ParentOf(index);
+    const auto layout = engine.busOutputLayout[index];
+    harken::detail::CommandQueueSubmissionTestAccess::ExhaustFrozenOrigins(engine.commands);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_CreateBus(added, VN_BUS_MASTER));
+    EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(added));
+    EXPECT_EQ(count, engine.buses.BusCount());
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_ReparentBus(b, a));
+    EXPECT_EQ(parent, engine.buses.ParentOf(index));
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_ConnectBusSend(a, b, 0));
+    EXPECT_EQ(0u, engine.busSends.Count());
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_SetBusOutputLayout(b, VN_CHANNEL_LAYOUT_MONO));
+    EXPECT_EQ(layout, engine.busOutputLayout[index]);
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+    EXPECT_EQ(revision, engine.acceptedBusTopologyRevision);
+    EXPECT_EQ(rows, engine.buses.WorkRowsInUse());
+    EXPECT_EQ(free, engine.commands.FreeSlots());
+    const auto after = PumpBlock(&engine);
+    EXPECT_EQ(before.left, after.left);
+    EXPECT_EQ(before.right, after.right);
+    EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
+}

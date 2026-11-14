@@ -14,7 +14,7 @@ EffectParamTargetStore::EffectParamTargetStore(std::uint32_t sampleRate,
                                                std::uint32_t retiringCapacity)
     : m_sampleRate(sampleRate), m_activeCapacity(capacity),
       m_totalCapacity(capacity + retiringCapacity) {
-    if (retiringCapacity > UINT32_MAX - capacity || !m_records.Reserve(m_totalCapacity))
+    if (retiringCapacity > UINT32_MAX - capacity)
         throw std::bad_alloc{};
 }
 
@@ -977,6 +977,13 @@ std::uint32_t EffectParamTargetStore::TargetRevision(
     const Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                      paramIndex, true);
     return record == nullptr ? 0 : record->revision;
+}
+
+std::uint32_t EffectParamTargetStore::InstalledSlotRevision(
+    Scope scope, std::uint64_t objectId, std::uint32_t generation,
+    std::uint32_t slot, std::uint32_t type) const noexcept {
+    const auto* record = FindExact(scope, objectId, generation, slot, 0, false);
+    return record != nullptr && record->effectType == type ? record->revision : 0;
 }
 
 bool EffectParamTargetStore::ExactTargetRevision(

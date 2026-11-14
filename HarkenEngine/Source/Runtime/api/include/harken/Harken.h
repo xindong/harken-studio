@@ -202,13 +202,13 @@ typedef struct VnConfig {
     uint32_t maxVoices;      /* legacy field name: Render Voice capacity;
                               * 0 = 256 */
     uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
-    uint32_t arenaBytes;     /* per-block bump arena size; 0 = 2097152 */
+    uint32_t arenaBytes;     /* per-block arena reserve; 0 = automatic, committed on demand */
     uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
     uint32_t reserved0;      /* keeps 8-byte alignment for future fields */
     VnNotificationCallback onNotification; /* notification callback, or NULL
                                              * for none */
     void* notificationUserData; /* passed through to onNotification verbatim */
-    uint32_t maxBuses;          /* bus tree capacity incl. master; 0 = 32 */
+    uint32_t maxBuses;          /* legacy field, ignored; Bus storage grows on demand */
     uint32_t commandQueueDepth; /* logic->audio queue; 0 = 256; rounded up
                                  * to a power of two */
     uint32_t notificationQueueDepth; /* audio->logic queue; 0 = 256;
@@ -240,7 +240,7 @@ typedef struct VnConfig {
      * parking) capacities size features that later engine versions wire. A
      * config that leaves any of them zero behaves exactly as one built against
      * an older header vintage. */
-    uint32_t maxActions;            /* Action registry capacity; 0 = 256 */
+    uint32_t maxActions;            /* Reserved legacy field; Action definition counts are not limited by config. */
     uint32_t maxContainers;         /* container-asset registry capacity; 0 = 64 */
     uint32_t maxContainerChildren;  /* global container-child pool; 0 = 1024 */
     uint32_t containerCursorCapacity; /* retained legacy value (0 = 256), validated
@@ -284,8 +284,8 @@ typedef struct VnConfig {
                                      * flag, not the threshold, gates parking) */
     uint32_t randomSeed;            /* engine PRNG seed; 0 = documented default
                                      * constant */
-    uint32_t voiceSendSlots;        /* per-voice send slots; 0 = 2 */
-    uint32_t busSendSlotsPerBus;    /* per-bus send-edge slots; 0 = 4 */
+    uint32_t voiceSendSlots;        /* legacy hint; Voice Sends have no count limit */
+    uint32_t busSendSlotsPerBus;    /* legacy hint; does not limit Bus Send count */
     uint32_t fxSlotsPerBus;         /* per-bus insert-effect slots; 0 = 8 */
     uint32_t topologyPlanPoolCapacity; /* published bus-topology plan pool;
                                         * 0 = 4 */
@@ -381,8 +381,7 @@ typedef struct VnConfig {
      * this vintage reads the documented defaults. The command ceiling occupies
      * the alignment slot this vintage already carried, so naming it changes no
      * offset and no struct size. */
-    uint32_t maxBusTopologyOwners;         /* retained owner revision records;
-                                            * 0 = 64 */
+    uint32_t maxBusTopologyOwners;         /* legacy field, ignored; owner records grow on demand */
     uint32_t maxControlCommandsPerQuantum; /* most control commands one render
                                             * block applies; 0 = 256. Commands
                                             * past the ceiling apply on a later
@@ -1494,6 +1493,38 @@ typedef struct VnSnapshot {
  * VN_NOT_INITIALIZED. */
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot);
 
+typedef uint32_t VnBusStateFlags;
+enum {
+    VN_BUS_STATE_VALID = 1,
+    VN_BUS_STATE_WORKING = 2,
+    VN_BUS_STATE_RENDERED = 4
+};
+
+typedef struct VnBusState {
+    VnBusId busId;
+    uint64_t blockSequence;
+    uint32_t busIndex;
+    uint32_t busGeneration;
+    VnBusStateFlags flags;
+    float peakPreFader;
+    float peakPostFader;
+    float peakPostEffects;
+} VnBusState;
+
+/* Logic-thread, passive enumeration of live Bus definitions into caller storage.
+ * Start at firstBusIndex = 0 and continue at outNextBusIndex until UINT32_MAX.
+ * Entries carry their own completed audio blockSequence (one-based); they need
+ * not come from the same block. VALID absent means no matching audio publication
+ * is available yet, never proof of silence. VALID without WORKING is dormant
+ * with zero peaks. WORKING without RENDERED describes a degraded silent block.
+ * Queries neither wake Buses nor advance Update. Caller serializes with other
+ * logic APIs; enumeration may change between calls when definitions change.
+ * states may be NULL only when capacity is zero. outCount and outNextBusIndex
+ * are required. This API has no fixed Bus count or array-length limit. */
+VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
+                           uint32_t capacity, uint32_t* outCount,
+                           uint32_t* outNextBusIndex);
+
 typedef VnObjectId VnAttenuationId;
 
 /* Values for VnAttenuationDesc.rolloff: how the built-in distance rolloff
@@ -1825,7 +1856,7 @@ typedef struct VnInitPackInspectReport {
     uint64_t catalogEntries;
     uint64_t catalogBytes;
     uint32_t recommendedMaxCatalogEntries;
-    uint32_t recommendedMaxActions;
+    uint32_t recommendedMaxActions; /* Reserved legacy field; no Action-count recommendation is required. */
     uint64_t recommendedCatalogBytes;
     uint64_t recommendedResidentDefinitionBytes;
     uint64_t requiredCapabilityMask;
@@ -2992,8 +3023,8 @@ VnResult Vn_StopAll(uint32_t fadeMs);
  * The edge is additive: `toBus` receives a copy of `fromBus`'s finalized output
  * scaled by the level, on top of `toBus`'s own inputs. Refusals: an unknown bus
  * is VN_UNKNOWN_ID; fromBus == toBus (or a non-finite level) is VN_INVALID_ARG;
- * an already-connected edge is VN_IN_USE; a full per-bus send-slot table
- * (busSendSlotsPerBus) is VN_NO_SEND; an edge that would close a routing cycle
+ * an already-connected edge is VN_IN_USE; Send storage grows with actual edges.
+ * An edge that would close a routing cycle
  * through the combined tree+send graph is VN_SEND_CYCLE; and a full topology
  * plan pool or command queue is VN_BACKPRESSURE (retry after Vn_Update drains
  * plan retires, or after an audio block drains, respectively). Every refusal
@@ -3022,9 +3053,9 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
 /* Voice sends: a voice contributes a copy of its post-pan/post-width stereo
  * block (the identical block that feeds its dry bus) to a target bus, scaled by
  * the send level — so the spatial image travels with the send. sendSlot indexes
- * the voice's send slots (0-based, below the configured voiceSendSlots); setting
- * a slot that already holds a send replaces it. Refusals: sendSlot at or beyond
- * voiceSendSlots, or a non-finite level, is VN_INVALID_ARG; an unknown target
+ * the voice's sparse uint32 send labels (including UINT32_MAX); setting
+ * a slot that already holds a send replaces it. A non-finite or unrepresentable
+ * level is VN_INVALID_ARG; an unknown target
  * bus is VN_UNKNOWN_ID; a stale handle is a benign no-op returning
  * VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no state change.
  * A voice awaiting a render slot stages the send and a parked voice keeps it,
@@ -3032,14 +3063,14 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
 VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
                          float levelDb);
 
-/* Clears a voice's send slot. Clearing an empty slot is accepted. sendSlot at
- * or beyond voiceSendSlots is VN_INVALID_ARG; a stale handle is a benign no-op
+/* Clears a voice's send label. Clearing an empty label is accepted.
+ * A stale handle is a benign no-op
  * returning VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no
  * state change. Logic thread only. */
 VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot);
 
 /* Sets a voice send slot's level. Same ramp discipline as Vn_SetBusSendLevel.
- * Refusals: sendSlot at or beyond voiceSendSlots, a non-finite level, or a slot
+ * Refusals: a non-finite or unrepresentable level, or a label
  * that holds no active send is VN_INVALID_ARG; a stale handle is a benign no-op
  * returning VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no
  * state change. Logic thread only. */

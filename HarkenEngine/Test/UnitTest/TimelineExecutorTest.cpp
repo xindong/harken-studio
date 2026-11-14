@@ -3229,7 +3229,7 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
         for (std::uint32_t row = 0; row < pathCount; ++row)
             occurrence.voice.playbackPath.rows[row] = {harkentest::ObjectId(pathId.low + row), 7 + row};
         occurrence.voice.sendCount = pathCount == harken::kPlaybackPathRowCapacity ? 1u : 0u;
-        occurrence.voice.sends[0] = {VN_BUS_MASTER, -9.0f};
+        if (occurrence.voice.sendCount != 0) occurrence.voice.SetSends({{VN_BUS_MASTER, -9.0f}});
         occurrence.voice.effectCount = 1;
         auto& effect = occurrence.voice.effects[0];
         effect.type = VN_EFFECT_GAIN;
@@ -4282,7 +4282,6 @@ TEST(TimelineExecutor, StopDeclickAt44100UsesCeilingFrames) {
 
 TEST(TimelineExecutor, TimelineVoiceScratchShortfallPreservesPageAndSpanState) {
     VnConfig config = TimelineConfig(1, 256, 48000);
-    config.arenaBytes = 2560;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -4318,6 +4317,7 @@ TEST(TimelineExecutor, TimelineVoiceScratchShortfallPreservesPageAndSpanState) {
     ASSERT_EQ(harken::InstallTimelineProgram(install).status,
               harken::TimelineRuntimeInstallStatus::Installed);
     ASSERT_EQ(Vn_Update(), VN_OK);
+    engine->mixer.ArenaForTests().SetCapacityForTests(2560);
     engine->nullBackend.Pump(1);
     ASSERT_EQ(Vn_Update(), VN_OK);
     const std::uint64_t frontier =
@@ -4610,12 +4610,12 @@ TEST(TimelineExecutor, MultipleTimelinePrepareCommitsOnlyAfterFullArenaAdmission
 
 TEST(TimelineExecutor, ArenaShortfallPreservesFrontierAndPublishesCounters) {
     VnConfig config = TimelineConfig(1, 256, 48000);
-    config.arenaBytes = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
     ASSERT_NE(engine, nullptr);
     const std::uint64_t frontier = engine->timelinePool.ConsumerFrontier().load();
+    engine->mixer.ArenaForTests().SetCapacityForTests(1);
     engine->nullBackend.Pump(1);
     EXPECT_EQ(engine->timelinePool.ConsumerFrontier().load(), frontier);
     harken::SnapshotPayload snapshot{};

@@ -451,7 +451,7 @@ namespace Harken.Test
                 ref config, inspection, 3);
             bool ok = result == VnResult.VN_OK &&
                 config.maxCatalogEntries == 50000 &&
-                config.maxActions == 1024 &&
+                config.maxActions == 0 &&
                 config.maxCatalogBytes == 15200088 &&
                 config.maxResidentDefinitionBytes == (8UL << 20);
 
@@ -477,7 +477,7 @@ namespace Harken.Test
             actionsLow.maxActions = 1023;
             ok &= PackBootstrap.ApplyRecommendations(
                 ref actionsLow, inspection, 3) ==
-                VnResult.VN_PACK_RESIDENT_CAPACITY;
+                VnResult.VN_OK;
 
             VnConfig packCountDefault = HarkenEngine.DefaultConfig();
             ok &= PackBootstrap.ApplyRecommendations(
@@ -547,7 +547,11 @@ namespace Harken.Test
                 result = Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710100UL),
                     Emitter.None, out ActionFiring firing);
                 ok &= result == VnResult.VN_OK && firing.IsValid;
-                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710140UL),
+                // The shared native fixture now contains 1025 Actions, even
+                // with the legacy maxActions hint set to 64 above.
+                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710500UL),
+                    Emitter.None, out ActionFiring lastFiring) == VnResult.VN_OK && lastFiring.IsValid;
+                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710501UL),
                     Emitter.None, out _) == VnResult.VN_UNKNOWN_ID;
                 ok &= Packs.UnloadCanonicalPackSet(new Pack(report.initHandle),
                     report.resultSetRevision, report.resultSetRevision + 1) == VnResult.VN_OK;

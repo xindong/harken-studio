@@ -803,12 +803,14 @@ TEST(ProgramRegistrationInstall, SendsInstallIntoAscendingSlots) {
         session.Engine()->buses.FindIndex(kSecondBus);
     ASSERT_NE(firstBusIndex, harken::kInvalidBusIndex);
     ASSERT_NE(secondBusIndex, harken::kInvalidBusIndex);
-    ASSERT_TRUE(slots[0].active);
-    EXPECT_EQ(slots[0].targetBusIndex, firstBusIndex);
-    EXPECT_EQ(slots[0].levelDb, -6.0f);
-    ASSERT_TRUE(slots[1].active);
-    EXPECT_EQ(slots[1].targetBusIndex, secondBusIndex);
-    EXPECT_EQ(slots[1].levelDb, -12.0f);
+    ASSERT_NE(nullptr, slots.Find(0));
+    ASSERT_TRUE(slots.Find(0)->active);
+    EXPECT_EQ(slots.Find(0)->targetBusIndex, firstBusIndex);
+    EXPECT_EQ(slots.Find(0)->levelDb, -6.0f);
+    ASSERT_NE(nullptr, slots.Find(1));
+    ASSERT_TRUE(slots.Find(1)->active);
+    EXPECT_EQ(slots.Find(1)->targetBusIndex, secondBusIndex);
+    EXPECT_EQ(slots.Find(1)->levelDb, -12.0f);
 }
 
 TEST(ProgramRegistrationInstall, SendAddsSignalOnTargetBus) {

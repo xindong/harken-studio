@@ -39,11 +39,14 @@ void SignalRenderPlan::PrepareFinalOutputs(std::span<const SignalMemberImage> me
 }
 
 void SignalRenderPlan::SelectPreparedBusRouting(BusTree& buses) noexcept {
-    if (preparedSoundRouting_ || !independentBuses_ || buses.AudioBusCount() > routingBusCount_) return;
-    for (std::uint32_t i = 0; i < routingBusCount_; ++i)
-        busReachability_[i] = (nodes_[i].source != UINT32_MAX ? 1u : 0u) |
-                              (nodes_[i].target != UINT32_MAX ? 2u : 0u);
-    preparedSoundRouting_ = buses.SignalReceiversCannotReachSources(busReachability_);
+    if (preparedSoundRouting_ || !independentBuses_) return;
+    const SignalBusMapping mapping(busNodes_);
+    for (std::uint32_t i = 0; i < mapping.Count(); ++i) {
+        const auto& node = nodes_[mapping.Node(i)];
+        busReachability_[i] = (node.source != UINT32_MAX ? 1u : 0u) |
+                              (node.target != UINT32_MAX ? 2u : 0u);
+    }
+    preparedSoundRouting_ = buses.SignalReceiversCannotReachSources(busReachability_, mapping);
 }
 
 std::uint64_t SignalRenderPlan::RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
@@ -59,13 +62,14 @@ std::uint64_t SignalRenderPlan::RoutingScratchBytes(std::uint32_t nodes, std::ui
 }
 
 bool SignalRenderPlan::ReserveRouting(BusTree& buses, BlockArena& arena,
-                                     std::uint32_t members, std::size_t pathRows) noexcept {
-    if (buses.AudioBusCount() > routingBusCount_) return false;
-    const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes();
+                                     std::uint32_t members, std::size_t pathRows, std::uint64_t sends) noexcept {
+    if (buses.AudioBusCount() > routingBusSlotBound_) return false;
+    const SignalBusMapping mapping(busNodes_);
+    const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes(mapping);
     if (graphCount > UINT32_MAX) return false;
-    const auto edges = static_cast<std::uint64_t>(buses.SignalRoutingEdgeCapacity()) +
-        relations_.size() + pathRows + static_cast<std::uint64_t>(members) * (kMaxVoiceSendSlots + 1ull);
-    const auto bytes = RoutingScratchBytes(static_cast<std::uint32_t>(graphCount), buses.AudioBusCount(), edges, current_.frames);
+    const auto edges = static_cast<std::uint64_t>(buses.SignalRoutingEdgeCapacity(mapping)) +
+        relations_.size() + pathRows + static_cast<std::uint64_t>(members) + sends;
+    const auto bytes = RoutingScratchBytes(static_cast<std::uint32_t>(graphCount), mapping.Count(), edges, current_.frames);
     if (bytes > arena.CapacityBytes()) return false;
     auto* data = arena.ReserveFloats((static_cast<std::size_t>(bytes) + sizeof(float) - 1) / sizeof(float));
     if (data == nullptr) return false;
@@ -76,11 +80,12 @@ bool SignalRenderPlan::ReserveRouting(BusTree& buses, BlockArena& arena,
 bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
                                     BusTree& buses) noexcept {
     if (!open_ || contentProcessed_) return false;
-    const auto busCount = buses.AudioBusCount();
-    if (busCount > routingBusCount_) return false;
-    const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes();
+    if (buses.AudioBusCount() > routingBusSlotBound_) return false;
+    const SignalBusMapping mapping(busNodes_);
+    const auto busCount = mapping.Count();
+    const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes(mapping);
     if (graphCount > UINT32_MAX) return false;
-    std::size_t capacity = buses.SignalRoutingEdgeCapacity() + relations_.size();
+    std::size_t capacity = buses.SignalRoutingEdgeCapacity(mapping) + relations_.size();
     for (const auto& member : members) {
         if (member.voice == nullptr || member.nodes.empty()) return false;
         const auto extra = member.nodes.size() + member.voice->voiceSendActiveCount + 1;
@@ -94,7 +99,7 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
     auto schedules = Reserve<SignalBiquadSegment>(storage,
         static_cast<std::size_t>(busCount) * 4 * (current_.frames / 16u + 2u));
     if (info.size() != busCount || edges.size() != capacity) return false;
-    auto used = buses.SignalRoutingSnapshot(info, edges, current_.frames, schedules, NodeCount());
+    auto used = buses.SignalRoutingSnapshot(info, edges, current_.frames, schedules, NodeCount(), mapping);
     if (used == UINT32_MAX) return false;
     const auto append = [&](std::uint32_t from, std::uint32_t to, double bound, bool delayed) {
         if (from >= graphCount || to >= graphCount || used == edges.size() ||
@@ -109,37 +114,47 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
             if (!append(member.nodes[i], member.nodes[i - 1], 1, false)) return false;
         const auto source = member.nodes.front();
         const auto& voice = *member.voice;
-        const auto route = [&](std::uint32_t destination) {
-            if (destination >= busCount || info[destination].id == VnBusId{}) return false;
-            double bound = destination == voice.busIndex &&
-                SignalOutputGainBound(voice.outputGain, member.frames) > 0 ? 1 : 0;
-            for (const auto& send : voice.voiceSends)
-                if (send.active && send.targetBusIndex == destination &&
-                    send.targetBusGeneration == info[destination].generation)
-                    bound += SendBound(send);
-            return append(source, info[destination].inputNode, SignalBoundProduct(bound,
-                info[destination].inputNode == destination ? info[destination].inputBound : 1), false);
+        const auto memberBegin = used;
+        const auto route = [&](std::uint32_t destination, double bound) {
+            const auto ordinal = mapping.Ordinal(destination);
+            if (ordinal == UINT32_MAX || info[ordinal].id == VnBusId{}) return false;
+            return append(source, info[ordinal].inputNode, SignalBoundProduct(bound,
+                info[ordinal].inputNode == mapping.Node(ordinal) ? info[ordinal].inputBound : 1), false);
         };
-        if (!route(voice.busIndex)) return false;
-        for (std::size_t i = 0; i < std::size(voice.voiceSends); ++i) {
-            const auto& send = voice.voiceSends[i];
-            if (!send.active || send.targetBusIndex == voice.busIndex) continue;
-            bool earlier = false;
-            for (std::size_t j = 0; j < i; ++j)
-                earlier |= voice.voiceSends[j].active && voice.voiceSends[j].targetBusIndex == send.targetBusIndex;
-            if (!earlier && !route(send.targetBusIndex)) return false;
+        if (!route(voice.busIndex, SignalOutputGainBound(voice.outputGain, member.frames) > 0 ? 1 : 0)) return false;
+        for (const auto& send : voice.voiceSends) {
+            const auto ordinal = mapping.Ordinal(send.targetBusIndex);
+            if (!send.active || ordinal == UINT32_MAX ||
+                send.targetBusGeneration != info[ordinal].generation) continue;
+            if (!route(send.targetBusIndex, SendBound(send))) return false;
         }
+        // Sum duplicate routes within this Voice before the existing maximum
+        // across members sharing a sound node. No degree-squared rescans.
+        auto memberEdges = edges.subspan(memberBegin, used - memberBegin);
+        std::sort(memberEdges.begin(), memberEdges.end(), [](const auto& a, const auto& b) {
+            return a.target < b.target;
+        });
+        auto merged = memberBegin;
+        for (const auto& edge : memberEdges) {
+            if (merged != memberBegin && edges[merged - 1].target == edge.target)
+                edges[merged - 1].bound += edge.bound;
+            else edges[merged++] = edge;
+        }
+        used = merged;
     }
     for (std::size_t i = 0; i < relations_.size(); ++i) {
         const auto& relation = relations_[i];
         double bound = levelBounds_[i];
         for (auto node : {relation.source, relation.target}) {
             if (nodes_[node].kind != SignalEndpointKindV1::Bus) continue;
-            if (node >= busCount || NodeForBus(node, info[node].id, info[node].generation) != node)
-                bound = 0;
+            const auto ordinal = busOrdinalByNode_[node];
+            if (ordinal == UINT32_MAX || NodeForBus(mapping.Bus(ordinal),
+                info[ordinal].id, info[ordinal].generation) != node) bound = 0;
         }
-        if (nodes_[relation.source].kind == SignalEndpointKindV1::Bus && relation.source < busCount)
-            bound = SignalBoundProduct(bound, info[relation.source].outputFilterBound);
+        if (nodes_[relation.source].kind == SignalEndpointKindV1::Bus) {
+            const auto ordinal = busOrdinalByNode_[relation.source];
+            if (ordinal != UINT32_MAX) bound = SignalBoundProduct(bound, info[ordinal].outputFilterBound);
+        }
         if (!append(relation.source, relation.target, bound, true)) return false;
     }
     auto active = edges.first(used);

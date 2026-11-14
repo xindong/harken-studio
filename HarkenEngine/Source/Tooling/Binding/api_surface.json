@@ -616,7 +616,8 @@
         "native:Vn_TraceStart",
         "native:Vn_TraceStop",
         "native:Vn_UnregisterBinding",
-        "native:Vn_UnregisterPCM"
+        "native:Vn_UnregisterPCM",
+        "native:Vn_CaptureBusStates"
       ]
     },
     "native-tombstones": {
@@ -1994,7 +1995,9 @@
       "VnStreamSourceInfoV1": "required-types",
       "VnReadIsCancelledFn": "required-types",
       "VnByteSourceReadAtFn": "required-types",
-      "VnByteSourceReleaseFn": "required-types"
+      "VnByteSourceReleaseFn": "required-types",
+      "VnBusState": "tool-types",
+      "VnBusStateFlags": "tool-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",

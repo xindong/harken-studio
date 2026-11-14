@@ -308,4 +308,39 @@ TEST(BlockArena, TwoEndedGrantsExactlyWhatOneCursorWouldForTheEngineShape) {
     }
 }
 
+
+TEST(BlockArena, TwoEndedPreparationRetriesPartialSuffixWithoutTouchingLiveBytes) {
+    const auto page = harken::detail::StablePageReservation::SystemPageBytes();
+    harken::detail::StablePageReservation storage;
+    ASSERT_TRUE(storage.Reserve(page * 64, alignof(float)));
+    EXPECT_EQ(0u, storage.DirectoryBytes());
+    const auto end = storage.ReservedBytes();
+    auto* bytes = static_cast<unsigned char*>(storage.Address());
+    ASSERT_TRUE(storage.CommitThrough(page));
+    ASSERT_TRUE(storage.CommitSuffixFrom(end - page));
+    bytes[0] = 17;
+    bytes[end - page] = 23;
+    storage.SetCommitPageLimitForTests(1);
+    EXPECT_FALSE(storage.CommitSuffixFrom(end - 3 * page));
+    EXPECT_EQ(3 * page, storage.CommittedBytes());
+    bytes[end - 2 * page] = 31;
+    storage.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(storage.CommitSuffixFrom(end - 3 * page));
+    EXPECT_EQ(4 * page, storage.CommittedBytes());
+    EXPECT_EQ(17, bytes[0]);
+    EXPECT_EQ(23, bytes[end - page]);
+    EXPECT_EQ(31, bytes[end - 2 * page]);
+    ASSERT_TRUE(storage.CommitThrough(end));
+    EXPECT_EQ(end, storage.CommittedBytes());
+    ASSERT_TRUE(storage.CommitSuffixFrom(0));
+    EXPECT_EQ(end, storage.CommittedBytes());
+    EXPECT_EQ(23, bytes[end - page]);
+    EXPECT_EQ(31, bytes[end - 2 * page]);
+    harken::detail::StablePageReservation moved;
+    moved.Swap(storage);
+    EXPECT_EQ(0u, storage.CommittedBytes());
+    ASSERT_TRUE(moved.CommitThrough(end));
+    EXPECT_EQ(end, moved.CommittedBytes());
+}
+
 } // namespace

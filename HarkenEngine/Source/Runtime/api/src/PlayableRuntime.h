@@ -24,7 +24,7 @@ struct PlaybackPathObservation {
     VnObjectId outputBusId{};
     PlaybackPath path{};
     std::uint32_t sendCount = 0;
-    TimelineVoiceSendInstall sends[kTimelineMaxVoiceSends]{};
+    std::span<const TimelineVoiceSendInstall> sends{};
 };
 
 bool ObserveCurrentPlaybackPaths(

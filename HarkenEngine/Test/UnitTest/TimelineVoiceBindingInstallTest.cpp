@@ -710,11 +710,13 @@ TEST(TimelineVoiceInstall, BorrowedInputValidatesEveryActiveRangeBeforeNativeAcq
     const std::array<harken::TimelineVoiceBindingInstall,
         harken::kMaxVoiceBindingInstanceSlots + 1> bindings{};
     const std::array<harken::PlaybackPathRow, harken::kPlaybackPathRowCapacity + 1> paths{};
-    const std::array<harken::TimelineVoiceSendInstall, harken::kTimelineMaxVoiceSends + 1> sends{};
+    std::array<harken::TimelineVoiceSendInstall, harken::kTimelineMaxVoiceSends + 1> sends{};
+    sends.fill({VN_BUS_MASTER, 0});
     const std::array<harken::TimelineVoiceEffectInstall, harken::kTimelineMaxVoiceEffects + 1> effects{};
     expectRefused({&facts, bindings}, VN_INVALID_CONFIG);
     expectRefused({&facts, {}, paths}, VN_INVALID_CONFIG);
-    expectRefused({&facts, {}, {}, sends}, VN_INVALID_CONFIG);
+    EXPECT_EQ(VN_OK, harken::test::PreflightTimelineVoiceStart(engine,
+        harken::TimelineVoiceInstallInput{&facts, {}, {}, sends}));
     expectRefused({&facts, {}, {}, {}, effects}, VN_INVALID_CONFIG);
     EXPECT_EQ(VN_OK, harken::test::PreflightTimelineVoiceStart(engine,
         harken::TimelineVoiceInstallInput{&facts}));
@@ -836,6 +838,57 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_EQ(1u, BindingInstanceCount(&engine, render));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
+}
+
+TEST(TimelineVoiceInstall, ThreeHundredSendsStartInOneDefaultQueueBatch) {
+    auto config = TimelineInstallConfig(4, kBlock, kRate);
+    config.voiceSendSlots = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto detector = harkentest::ObjectId(999);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(detector, VN_BUS_MASTER));
+    harken::SignalReceiverV1 receiver;
+    receiver.target.stableId = detector;
+    harken::SignalRelationV1 relation;
+    relation.stableId = harkentest::ObjectId(998);
+    relation.source.stableId = VN_BUS_MASTER;
+    relation.target = receiver.target;
+    harken::ContainerWorldInstallViewV1 world;
+    world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+    world.signalRelations = &relation; world.signalRelationCount = 1;
+    world.signalReceivers = &receiver; world.signalReceiverCount = 1;
+    world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, world).status);
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+    ASSERT_NE(0u, parent);
+    harken::TimelineVoiceInstallFacts facts{};
+    facts.soundId = kSound;
+    facts.outputBusId = VN_BUS_MASTER;
+    facts.capturedMedia = engine.registry.Lookup(kSound);
+    std::vector<harken::TimelineVoiceSendInstall> sends(300, {VN_BUS_MASTER, -60});
+    const harken::TimelineVoiceInstallInput input{&facts, {}, {}, sends};
+    ASSERT_EQ(VN_OK, harken::test::PreflightTimelineVoiceStart(engine, input));
+    const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+        engine.timelinePool.PublishCutoffFrame());
+    ASSERT_EQ(VN_OK, result.status);
+    auto* voice = engine.voices.Resolve(result.renderHandle);
+    ASSERT_NE(nullptr, voice);
+    EXPECT_EQ(300u, voice->voiceSendActiveCount);
+    ASSERT_EQ(300u, voice->voiceSends.size());
+    const auto observation = engine.playbackPaths[static_cast<std::uint32_t>(result.renderHandle)].Capture();
+    ASSERT_EQ(300u, observation.sends.size());
+    EXPECT_EQ(VN_BUS_MASTER, observation.sends.back().targetBusId);
+    InstalledVoiceStart start;
+    ASSERT_NO_FATAL_FAILURE(start.Publish(engine, result.renderHandle, kRate));
+    harkentest::Capture output;
+    harkentest::PumpAndCapture(&engine, 4, output);
+    ASSERT_FALSE(output.left.empty());
+    EXPECT_NEAR(0.65f, output.left.back(), 1e-5f);
+    EXPECT_FALSE(engine.callbackFatalSticky);
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
 TEST(TimelineVoiceInstall, DefaultEffectBackingGrowsAcrossVoicesAndBusAndRetires) {
@@ -1129,7 +1182,8 @@ TEST(TimelineVoiceInstall, BorrowedInputFailureUnwindsNativePrefixAndAllowsFresh
     const auto voiceFree = engine.voices.AvailableSlotCount();
     const auto armFree = engine.timelineArms.FreeCount();
     const auto published = engine.commands.PublishedHead();
-    const harken::TimelineVoiceInstallInput input{&facts, {}, {}, {}, effects};
+    const std::array<harken::TimelineVoiceSendInstall, 3> sends{{{VN_BUS_MASTER, -20}, {VN_BUS_MASTER, -30}, {VN_BUS_MASTER, -40}}};
+    const harken::TimelineVoiceInstallInput input{&facts, {}, {}, sends, effects};
     const auto refused = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent);
     EXPECT_EQ(VN_INVALID_ARG, refused.status);
     EXPECT_EQ(0u, refused.renderHandle);
@@ -1138,6 +1192,10 @@ TEST(TimelineVoiceInstall, BorrowedInputFailureUnwindsNativePrefixAndAllowsFresh
     EXPECT_EQ(armFree, engine.timelineArms.FreeCount());
     EXPECT_EQ(published, engine.commands.PublishedHead());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(0u, engine.voiceSendActive);
+    for (const auto& row : engine.voiceSendConfig) EXPECT_TRUE(row.empty());
+    engine.voices.DrainVoiceSendSets();
+    EXPECT_EQ(0u, engine.voices.RetainedVoiceSendCount());
     const std::array<harken::PlaybackPathRow, 2> paths{{
         {harkentest::ObjectId(1234), 7}, {harkentest::ObjectId(1235), 8}}};
     const harken::TimelineVoiceInstallInput retry{&facts, {}, paths, {}, std::span{effects}.first(1)};
@@ -2646,6 +2704,7 @@ TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualRepla
     ASSERT_EQ(harken::PlayableStartStatus::Accepted,
         harken::test::BuildTimelineVoiceInstallFromCut(engine, cut, &replacement.install));
     ASSERT_EQ(1u, replacement.install.bindingCount);
+    replacement.install.SetSends({{VN_BUS_MASTER, -12.0f}, {VN_BUS_MASTER, -18.0f}});
     VnBindingAttachDesc detach{};
     detach.structSize = sizeof(detach);
     detach.scopeKind = VN_TARGET_SCOPE_VOICE;
@@ -2675,6 +2734,12 @@ TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualRepla
     ASSERT_EQ(replacement.old, replacement.fresh);
     EXPECT_FALSE(engine.voices.ReleaseObserved(replacement.identity.releaseObserver));
     EXPECT_EQ(1u, BindingInstanceCount(&engine, replacement.fresh));
+    const auto replacementSlot = static_cast<std::uint32_t>(replacement.fresh);
+    ASSERT_EQ(2u, engine.voiceSendConfig[replacementSlot].size());
+    EXPECT_EQ(2u, engine.voiceSendActive);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(2u, engine.voiceSendConfig[replacementSlot].size());
+    EXPECT_EQ(2u, engine.voiceSendActive);
     float contribution = 0;
     EXPECT_TRUE(BindingContribution(&engine, replacement.fresh, &contribution));
     harken::EngineTimelineVoiceInstallIdentity retained{};

@@ -6,6 +6,7 @@
 #include "Engine.h"
 #include "PackLogicStore.h"
 #include "ProjectGenerationTransaction.h"
+#include "harken/render/BusActivityPlan.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"
 #include "MonitorIdentityCodec.h"
@@ -57,6 +58,16 @@ VnConfig CanonicalActivationConfig(std::uint32_t maxVoices = 0,
     // Pack activation coverage does not require the default nested Action scratch.
     config.maxTriggerDepth = 2;
     return config;
+}
+
+namespace {
+harken::BusSendRecord LogicalSendAt(const harken::Engine& engine,
+    std::uint32_t source, std::uint32_t slot) {
+    for (const auto& edge : engine.busSends.From(source))
+        if (edge.slot == slot) return edge;
+    return {};
+}
+
 }
 
 TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
@@ -190,7 +201,7 @@ TEST(CanonicalPackSetActivate, InitBusLimitersRenderReplaceRollbackAndUnload) {
     ASSERT_NE(nullptr, master);
     for (unsigned slot = 0; slot < 8; ++slot) {
         EXPECT_EQ(VN_EFFECT_LIMITER, master->fxSlotEffectRef[slot].type);
-        EXPECT_EQ(first.initHandle, engine.busEffectOwnerCookies[0][slot]);
+        EXPECT_EQ(first.initHandle, engine.busEffects.Get(0, slot).owner);
     }
     const auto sound = harkentest::ObjectId(0xEA20);
     const auto samples = harkentest::MakeDC(48000, 0.5f);
@@ -213,14 +224,14 @@ TEST(CanonicalPackSetActivate, InitBusLimitersRenderReplaceRollbackAndUnload) {
     VnCanonicalPackSetMemberResultV1 row{};
     row.structSize = sizeof(row);
     VnCanonicalPackSetActivationReportV1 report{};
-    const auto oldRef = engine.busEffectInstanceRefs[0][7];
+    const auto oldRef = engine.BusEffectRefs(0)[7];
     harken::SetPackStagingFaultForTests(harken::PackStagingFault::AfterAllPreparedBeforeCommit);
     const auto refused = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
         first.initHandle, 1);
     harken::SetPackStagingFaultForTests(harken::PackStagingFault::None);
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, refused);
     EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
-    EXPECT_EQ(oldRef.generation, engine.busEffectInstanceRefs[0][7].generation);
+    EXPECT_EQ(oldRef.generation, engine.BusEffectRefs(0)[7].generation);
     engine.nullBackend.Pump(1);
     EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
@@ -1810,9 +1821,9 @@ TEST(CanonicalPackSetActivate, SnapshotSendInstallsProspectiveEdge) {
             plan.preparedSendLevels == nullptr || plan.sendLevelApply == nullptr) {
             continue;
         }
-        for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot) {
-            const auto flat =
-                static_cast<std::size_t>(source) * plan.slotsPerBus + slot;
+        const auto range = plan.Sends(source);
+        for (std::uint32_t slot = 0; slot < range.count; ++slot) {
+            const auto flat = range.first + slot;
             if (plan.sendTargets[flat] != target || plan.sendLevelApply[flat] == 0) {
                 continue;
             }
@@ -1839,7 +1850,7 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
     const auto sendSlots = engine->config.busSendSlotsPerBus;
     std::uint32_t foreignSlot = sendSlots;
     for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-        if (engine->busSendAdj[static_cast<std::size_t>(sourceSlot) * sendSlots + slot] ==
+        if (LogicalSendAt(*engine, sourceSlot, slot).target ==
             targetSlot) foreignSlot = slot;
     }
     ASSERT_LT(foreignSlot, sendSlots);
@@ -1849,9 +1860,9 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
         harkentest::BuildMasterSendInitBytes(-6.0f),
         harkentest::packfoundation::kInitPackStableId);
     ASSERT_EQ(VN_OK, first.result);
-    EXPECT_EQ(targetSlot, engine->busSendAdj[foreignFlat]);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSendLevelDb[foreignFlat]);
-    EXPECT_EQ(0u, engine->busSendOwnerCookies[foreignFlat]);
+    EXPECT_EQ(targetSlot, LogicalSendAt(*engine, sourceSlot, foreignSlot).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, sourceSlot, foreignSlot).levelDb);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, sourceSlot, foreignSlot).ownerCookie);
     const auto packSource = engine->buses.FindIndex(VN_OBJECT_ID(0, 2));
     ASSERT_NE(harken::kInvalidBusIndex, packSource);
     const auto packTarget = engine->buses.FindIndex(VN_OBJECT_ID(0, 3));
@@ -1859,9 +1870,9 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
     bool foundPackSend = false;
     for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
         const auto flat = static_cast<std::size_t>(packSource) * sendSlots + slot;
-        if (engine->busSendAdj[flat] != packTarget) continue;
-        EXPECT_EQ(first.initHandle, engine->busSendOwnerCookies[flat]);
-        EXPECT_FLOAT_EQ(-6.0f, engine->busSendLevelDb[flat]);
+        if (LogicalSendAt(*engine, packSource, slot).target != packTarget) continue;
+        EXPECT_EQ(first.initHandle, LogicalSendAt(*engine, packSource, slot).ownerCookie);
+        EXPECT_FLOAT_EQ(-6.0f, LogicalSendAt(*engine, packSource, slot).levelDb);
         EXPECT_EQ(VN_IN_USE, Vn_SetBusSendLevel(VN_OBJECT_ID(0, 2),
             VN_OBJECT_ID(0, 3), -12.0f, 0));
         EXPECT_EQ(VN_IN_USE, Vn_DisconnectBusSend(VN_OBJECT_ID(0, 2),
@@ -1877,8 +1888,8 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_UnloadCanonicalPackSetV1(&unload));
-    EXPECT_EQ(targetSlot, engine->busSendAdj[foreignFlat]);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSendLevelDb[foreignFlat]);
+    EXPECT_EQ(targetSlot, LogicalSendAt(*engine, sourceSlot, foreignSlot).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, sourceSlot, foreignSlot).levelDb);
 }
 
 TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry) {
@@ -1903,7 +1914,7 @@ TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry)
     const auto sendSlots = engine->config.busSendSlotsPerBus;
     std::uint32_t edgeSlot = sendSlots;
     for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-        if (engine->busSendAdj[static_cast<std::size_t>(foreignSlot) * sendSlots + slot] ==
+        if (LogicalSendAt(*engine, foreignSlot, slot).target ==
             packSlot) edgeSlot = slot;
     }
     ASSERT_LT(edgeSlot, sendSlots);
@@ -1934,20 +1945,20 @@ TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry)
     EXPECT_EQ(VN_BAD_PACK, activate(&refused));
     EXPECT_EQ(beforePublication, engine->packComposition.PublishedHandle());
     EXPECT_EQ(beforeRevision, engine->acceptedBusTopologyRevision);
-    EXPECT_EQ(packSlot, engine->busSendAdj[foreignFlat]);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSendLevelDb[foreignFlat]);
-    EXPECT_EQ(0u, engine->busSendOwnerCookies[foreignFlat]);
+    EXPECT_EQ(packSlot, LogicalSendAt(*engine, foreignSlot, edgeSlot).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, foreignSlot, edgeSlot).levelDb);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, foreignSlot, edgeSlot).ownerCookie);
     ASSERT_EQ(VN_OK, Vn_DisconnectBusSend(foreignBus, packBus));
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     VnCanonicalPackSetActivationReportV1 accepted{};
     ASSERT_EQ(VN_OK, activate(&accepted));
     EXPECT_EQ(first.report.resultSetRevision + 1, accepted.resultSetRevision);
-    EXPECT_EQ(harken::kInvalidBusIndex, engine->busSendAdj[foreignFlat]);
-    EXPECT_EQ(0u, engine->busSendOwnerCookies[foreignFlat]);
+    EXPECT_EQ(harken::kInvalidBusIndex, LogicalSendAt(*engine, foreignSlot, edgeSlot).target);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, foreignSlot, edgeSlot).ownerCookie);
 }
 
-TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutation) {
+TEST(CanonicalPackSetActivate, ForeignSendAndPackSendGrowBeyondLegacyCapacity) {
     auto config = CanonicalActivationConfig();
     config.busSendSlotsPerBus = 1;
     harkentest::EngineSession session(config);
@@ -1980,23 +1991,17 @@ TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutat
     VnCanonicalPackSetMemberResultV1 row{};
     row.structSize = sizeof(row);
     VnCanonicalPackSetActivationReportV1 report{};
-    EXPECT_EQ(VN_NO_BUS, harkentest::ActivateCanonicalMembersV1(
-        &member, 1, &row, report, first.initHandle,
-        first.report.resultSetRevision));
-    EXPECT_EQ(beforePublication, engine->packComposition.PublishedHandle());
-    EXPECT_EQ(beforeRevision, engine->acceptedBusTopologyRevision);
-    EXPECT_EQ(foreignSlot, engine->busSendAdj[foreignFlat]);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSendLevelDb[foreignFlat]);
-    EXPECT_EQ(0u, engine->busSendOwnerCookies[foreignFlat]);
-    ASSERT_EQ(VN_OK, Vn_DisconnectBusSend(packBus, foreignBus));
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
         &member, 1, &row, report, first.initHandle,
         first.report.resultSetRevision));
-    EXPECT_EQ(engine->buses.FindIndex(VN_OBJECT_ID(0, 3)),
-              engine->busSendAdj[foreignFlat]);
-    EXPECT_EQ(report.initHandle, engine->busSendOwnerCookies[foreignFlat]);
+    EXPECT_EQ(foreignSlot, LogicalSendAt(*engine, packSlot, 0).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, packSlot, 0).levelDb);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, packSlot, 0).ownerCookie);
+    const auto* authored = engine->busSends.Find(packSlot, engine->buses.FindIndex(VN_OBJECT_ID(0, 3)));
+    ASSERT_NE(nullptr, authored);
+    EXPECT_EQ(report.initHandle, authored->ownerCookie);
+    EXPECT_FLOAT_EQ(-6.0f, authored->levelDb);
+    EXPECT_EQ(2u, engine->busSends.From(packSlot).size());
 }
 
 TEST(CanonicalPackSetActivate, DuplicateSnapshotSendIsBadPack) {
@@ -4359,7 +4364,7 @@ TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacem
     ASSERT_EQ(VN_OK, initial.result);
     const auto bus = engine.buses.FindIndex(busId);
     ASSERT_NE(harken::kInvalidBusIndex, bus);
-    const auto first = engine.busEffectInstanceRefs[bus][0];
+    const auto first = engine.BusEffectRefs(bus)[0];
     ASSERT_EQ(VN_EFFECT_GAIN, first.type);
     const auto samples = harkentest::MakeDC(48000, 0.8f);
     const auto pcm = harkentest::MonoDesc(samples, 48000);
@@ -4387,8 +4392,8 @@ TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacem
             published->initHandle, published->ledger.setRevision);
     };
     ASSERT_EQ(VN_OK, replace(Build(VN_EFFECT_GAIN, {-12.0f})));
-    EXPECT_EQ(first.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
-    EXPECT_EQ(first.generation, engine.busEffectInstanceRefs[bus][0].generation);
+    EXPECT_EQ(first.poolIndex, engine.BusEffectRefs(bus)[0].poolIndex);
+    EXPECT_EQ(first.generation, engine.BusEffectRefs(bus)[0].generation);
     const float attenuated = SettledLevel(engine);
     EXPECT_NEAR(dry * std::pow(10.0f, -12.0f / 20.0f), attenuated, 2e-3f);
     const auto beforeFailure = engine.packComposition.PublishedHandle();
@@ -4421,8 +4426,72 @@ TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacem
     EXPECT_NEAR(limited, SettledLevel(engine), 2e-3f);
     ASSERT_EQ(VN_OK, UnloadSet(beforeUnload->initHandle, beforeUnload->ledger.setRevision));
     EXPECT_NEAR(dry, SettledLevel(engine), 2e-3f);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(busId));
+}
+
+TEST(CanonicalPackSetActivate, SleepingBusEffectDiffUsesLogicalIdentityAndFinalBatchReferences) {
+    using namespace buseffectfixture;
+    using namespace harken;
+    for (unsigned change = 0; change != 3; ++change) {
+        SCOPED_TRACE(change);
+        auto config = CanonicalActivationConfig(2, 256, 48000);
+        config.gainEffectPoolCapacity = config.limiterEffectPoolCapacity = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-cold-bus-effect";
+        const auto initial = harkentest::ActivateInitBytesV1(directory,
+            Build(VN_EFFECT_GAIN, {-6.0f}), harkentest::packfoundation::kInitPackStableId);
+        ASSERT_EQ(VN_OK, initial.result);
+        engine.nullBackend.Pump(110);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto bus = engine.buses.FindRef(busId);
+        ASSERT_NE(engine.buses.PendingSleep(), nullptr);
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
+        ASSERT_EQ(engine.BusEffectRefs(bus.index)[0].type, kEffectTypeNone);
+        ASSERT_EQ(engine.busEffects.Get(bus.index, 0).type, VN_EFFECT_GAIN);
+        ASSERT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 0u);
+        const auto bytes = change == 0 ? Build(VN_EFFECT_GAIN, {-12.0f}) :
+            change == 1 ? Build(VN_EFFECT_LIMITER, {-18.0f, 50.0f}) : Build(kEffectTypeNone, {});
+        ASSERT_TRUE(harkentest::WriteBytes(initial.initPath, bytes));
+        const auto* published = engine.packComposition.Published();
+        VnCanonicalPackSetMemberV1 member{};
+        member.structSize = sizeof(member);
+        member.packStableId = harkentest::packfoundation::kInitPackStableId;
+        member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+        member.expectedHandle = published->initHandle;
+        member.utf8Path = initial.initPath.c_str();
+        VnCanonicalPackSetMemberResultV1 result{};
+        result.structSize = sizeof(result);
+        VnCanonicalPackSetActivationReportV1 report{};
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &result, report,
+            published->initHandle, published->ledger.setRevision));
+        const auto expectedType = change == 0 ? VN_EFFECT_GAIN : change == 1 ? VN_EFFECT_LIMITER : kEffectTypeNone;
+        EXPECT_EQ(engine.busEffects.Get(bus.index, 0).type, expectedType);
+        EXPECT_EQ(engine.BusEffectRefs(bus.index)[0].type, expectedType);
+        engine.nullBackend.Pump(20);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto* work = engine.buses.BusState(bus.index);
+        ASSERT_NE(work, nullptr);
+        EXPECT_EQ(work->fxSlotEffectRef[0].type, expectedType);
+        EXPECT_EQ(work->fxSlotEffectRef[0].poolIndex, engine.BusEffectRefs(bus.index)[0].poolIndex);
+        EXPECT_EQ(work->fxSlotEffectRef[0].generation, engine.BusEffectRefs(bus.index)[0].generation);
+        if (change == 0) {
+            const auto* gain = static_cast<const GainState*>(work->fxSlots[0].state);
+            EXPECT_TRUE(gain->hasRendered);
+            EXPECT_NEAR(gain->gainLinear, std::pow(10.f, -12.f / 20), 1e-6f);
+        }
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), change == 0 ? 1u : 0u);
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), change == 1 ? 1u : 0u);
+        EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+    }
 }
 
 TEST(CanonicalPackSetActivate, RetainedBusEffectAppliesCompleteParameterRevisionToAudio) {
@@ -4439,7 +4508,7 @@ TEST(CanonicalPackSetActivate, RetainedBusEffectAppliesCompleteParameterRevision
     ASSERT_EQ(VN_OK, initial.result);
     const auto bus = engine.buses.FindIndex(busId);
     ASSERT_NE(harken::kInvalidBusIndex, bus);
-    const auto retained = engine.busEffectInstanceRefs[bus][0];
+    const auto retained = engine.BusEffectRefs(bus)[0];
     const auto samples = harkentest::MakeDC(48000, 0.8f);
     const auto pcm = harkentest::MonoDesc(samples, 48000);
     constexpr auto sound = VN_OBJECT_ID(0, 9403);
@@ -4464,8 +4533,8 @@ TEST(CanonicalPackSetActivate, RetainedBusEffectAppliesCompleteParameterRevision
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
         published->initHandle, published->ledger.setRevision));
-    EXPECT_EQ(retained.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
-    EXPECT_EQ(retained.generation, engine.busEffectInstanceRefs[bus][0].generation);
+    EXPECT_EQ(retained.poolIndex, engine.BusEffectRefs(bus)[0].poolIndex);
+    EXPECT_EQ(retained.generation, engine.BusEffectRefs(bus)[0].generation);
     EXPECT_FLOAT_EQ(-24.0f, engine.effectParamTargets.Reduce(
         harken::EffectParamTargetStore::Scope::Bus, bus, 0, 0));
     EXPECT_FLOAT_EQ(4.0f, engine.effectParamTargets.Reduce(
@@ -4491,7 +4560,7 @@ TEST(CanonicalPackSetActivate, BusEffectTransactionsRefuseForeignEffectsWithoutT
         reinterpret_cast<const VnEffectDesc*>(&gain)));
     engine.nullBackend.Pump(1);
     const auto bus = engine.buses.FindIndex(busId);
-    const auto foreign = engine.busEffectInstanceRefs[bus][0];
+    const auto foreign = engine.BusEffectRefs(bus)[0];
     const auto before = engine.packComposition.PublishedHandle();
     ASSERT_TRUE(harkentest::WriteBytes(initial.initPath, Build(VN_EFFECT_GAIN, {-12.0f})));
     VnCanonicalPackSetMemberV1 member{};
@@ -4507,9 +4576,9 @@ TEST(CanonicalPackSetActivate, BusEffectTransactionsRefuseForeignEffectsWithoutT
         initial.initHandle, initial.report.resultSetRevision));
     EXPECT_EQ(VN_IN_USE, UnloadSet(initial.initHandle, initial.report.resultSetRevision));
     EXPECT_EQ(before.get(), engine.packComposition.Published());
-    EXPECT_EQ(foreign.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
-    EXPECT_EQ(foreign.generation, engine.busEffectInstanceRefs[bus][0].generation);
-    EXPECT_EQ(0u, engine.busEffectOwnerCookies[bus][0]);
+    EXPECT_EQ(foreign.poolIndex, engine.BusEffectRefs(bus)[0].poolIndex);
+    EXPECT_EQ(foreign.generation, engine.BusEffectRefs(bus)[0].generation);
+    EXPECT_EQ(0u, engine.busEffects.Get(bus, 0).owner);
     ASSERT_EQ(VN_OK, Vn_ClearBusEffect(busId, 0));
     engine.nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());

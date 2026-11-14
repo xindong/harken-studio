@@ -37,11 +37,8 @@ inline constexpr std::uint32_t kOutputChannels = 2;
 // runtime's arrays and config validation read it everywhere.
 inline constexpr std::uint32_t kMaxFxSlotsPerVoice = kMaxVoiceFxSlots;
 
-// Compile-time upper bound on a voice's send slots (kMaxVoiceSendSlots) lives
-// in the engine-free ABI layout contract included above, so the offline program
-// compiler resolves the same ceiling this runtime sizes its per-voice send
-// array to. It stays in namespace harken, so every consumer here reads it
-// unchanged.
+// kMaxVoiceSendSlots in the ABI contract is a legacy observation width.
+// Runtime Voice Sends use actual-size storage, independent of the config hint.
 
 // Compile-time upper bound on a voice's binding instance slots (the
 // per-voice ceiling of the public binding system's instance layer). This is
@@ -137,9 +134,9 @@ struct EngineConfig {
     std::uint32_t blockFrames = 256;
     VoiceCapacityModel voiceCapacity;
     std::uint32_t fxSlotsPerVoice = 8;
-    std::uint32_t arenaBytes = 2u << 20;
+    std::uint32_t arenaBytes = UINT32_MAX;
     bool nullDevice = true;
-    std::uint32_t maxBuses = 32;
+    std::uint32_t maxBuses = 1; // Initial Master directory; not an admission limit.
     std::uint32_t commandQueueDepth = 256;
     // Most control commands one MixQuantum will apply. The drain used to run
     // until the queue was empty, which tied its cost to the queue depth and to
@@ -175,7 +172,7 @@ struct EngineConfig {
     std::uint32_t dynamicRoutePlanPoolCapacity = 4;
     std::uint32_t dynamicBusTapCapacity = 16;
     std::uint32_t dynamicVoiceTapCapacity = 16;
-    std::uint32_t maxBusTopologyOwners = 64;
+    std::uint32_t maxBusTopologyOwners = 1; // Initial storage; grows on logic.
     std::uint64_t maxTopologyPlanBytes = 256ull * 1024ull * 1024ull;
     std::uint64_t topologyPlanPoolBytes = 0;
     std::uint64_t preparedTopologyPlanPoolBytes = 0;
@@ -190,7 +187,7 @@ struct EngineConfig {
     // consumed by the engine; the Action/send/topology fields are validated and
     // stored for the features that own them, and their defaults keep behavior
     // identical when left unset.
-    std::uint32_t maxActions = 256;
+    std::uint32_t maxActions = 0; // Legacy config value; no definition-count quota.
     std::uint32_t maxActionFirings = 256;
     std::uint32_t maxContainers = 64;
     std::uint32_t maxContainerChildren = 1024;

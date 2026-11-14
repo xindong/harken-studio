@@ -3,6 +3,7 @@
 
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/PlaybackPath.h"
+#include "harken/core/PinnedSnapshot3.h"
 #include "harken/render/SignalBlockExchange.h"
 #include "harken/render/SignalFeedbackPlan.h"
 
@@ -72,6 +73,8 @@ public:
                 node.busId = input.busId;
                 node.busGeneration = input.busGeneration;
                 node.stableId = input.stableId;
+                node.attackMs = input.attackMs;
+                node.releaseMs = input.releaseMs;
                 if (input.kind == SignalEndpointKindV1::Bus && input.busIndex != UINT32_MAX)
                     next->busNodes_.push_back({input.busIndex, static_cast<std::uint32_t>(i)});
                 if (input.kind != SignalEndpointKindV1::Bus &&
@@ -88,6 +91,9 @@ public:
             std::sort(next->busNodes_.begin(), next->busNodes_.end());
             for (std::size_t i = 1; i < next->busNodes_.size(); ++i)
                 if (next->busNodes_[i - 1].first == next->busNodes_[i].first) return {};
+            next->busOrdinalByNode_.resize(nodes.size(), UINT32_MAX);
+            for (std::uint32_t i = 0; i < next->busNodes_.size(); ++i)
+                next->busOrdinalByNode_[next->busNodes_[i].second] = i;
             next->membership_.assign(membership.begin(), membership.end());
             std::sort(next->membership_.begin(), next->membership_.end(),
                 [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
@@ -142,6 +148,7 @@ public:
             next->gain_.resize(format.capacityFrames);
             next->pre_.resize(format.capacityFrames);
             next->post_.resize(format.capacityFrames);
+            next->PrepareActivityObservation();
             return next;
         } catch (...) { return {}; }
     }
@@ -181,43 +188,131 @@ public:
             ? it->second : UINT32_MAX;
     }
     std::size_t RelationCount() const noexcept { return relations_.size(); }
+    // Immutable definition access for logic-side activity compilation. Never
+    // read running receiver parameters or PCM while preparing a projection.
+    SignalRenderNodeInput NodeDefinition(std::uint32_t node) const noexcept;
+    bool ContainsNodeDefinition(const SignalRenderPlan& definition,
+        std::uint32_t node) const noexcept;
+    std::span<const SignalConnectionInput> Relations() const noexcept { return relations_; }
+    std::span<const SignalFeedbackEdge> DefinitionPaths() const noexcept { return feedback_.Edges(); }
+    std::span<const SignalMemberProof> Membership() const noexcept { return membership_; }
+    std::uint64_t ContentIdentity() const noexcept { return contentIdentity_; }
+    bool SameContinuityDomain(const SignalRenderPlan& other) const noexcept {
+        return contentIdentity_ != 0 && contentIdentity_ == other.contentIdentity_ && SameFormat(other);
+    }
+    std::unique_ptr<SignalRenderPlan> PrepareProjection(
+        std::span<const std::uint32_t> selected, std::uint32_t topologySlots,
+        std::span<const SignalRenderNodeInput> busBindings = {}) const noexcept;
     // Logic compares immutable prepared definitions only. The content identity
     // excludes signal parameters but includes the authoritative content world.
+    // At most one unresolved sleep is allowed. Its following unconditional
+    // wake may name both the accepted-sleep and rejected-sleep predecessors.
     bool ConfigurePublication(std::uint64_t identity, std::uint64_t contentIdentity,
                               const SignalRenderPlan* predecessor,
-                              std::uint64_t rampFrames) noexcept {
+                              std::uint64_t rampFrames,
+                              const SignalRenderPlan* alternate = nullptr) noexcept {
         if (publicationIdentity_ != 0 || identity == 0 || contentIdentity == 0 || open_ || committed_)
             return false;
         try {
-            std::vector<std::uint32_t> receivers;
-            const bool continuous = predecessor != nullptr && predecessor->publicationIdentity_ != 0 &&
-                contentIdentity == predecessor->contentIdentity_ && SameFormat(*predecessor);
-            if (continuous) {
-                receivers.assign(nodes_.size(), UINT32_MAX);
+            std::array<Continuity, 2> candidates;
+            const auto prepare = [&](const SignalRenderPlan* prior, Continuity& mapping) {
+                if (prior == nullptr || prior->publicationIdentity_ == 0 ||
+                    contentIdentity != prior->contentIdentity_ || !SameFormat(*prior)) return;
+                mapping.identity = prior->publicationIdentity_;
+                mapping.exchangeContinuous = SameStructure(*prior);
+                std::vector<std::uint32_t> nodePredecessors(nodes_.size(), UINT32_MAX);
+                mapping.receivers.assign(nodes_.size(), UINT32_MAX);
+                mapping.nodes.assign(nodes_.size(), UINT32_MAX);
+                mapping.sources.assign(exchange_.m_sources, UINT32_MAX);
+                mapping.connections.assign(relations_.size(), UINT32_MAX);
                 for (std::size_t i = 0; i < nodes_.size(); ++i) {
                     const auto& next = nodes_[i];
-                    if (next.target == UINT32_MAX || next.stableId == VnObjectId{}) continue;
-                    for (std::uint32_t j = 0; j < predecessor->nodes_.size(); ++j) {
-                        const auto& old = predecessor->nodes_[j];
-                        if (old.target != UINT32_MAX && old.kind == next.kind && old.stableId == next.stableId &&
-                            old.busId == next.busId && old.busGeneration == next.busGeneration) {
-                            receivers[i] = j;
+                    if (next.stableId == VnObjectId{}) continue;
+                    for (std::uint32_t j = 0; j < prior->nodes_.size(); ++j) {
+                        if (!SameNodeDefinition(i, *prior, j)) continue;
+                        const auto& old = prior->nodes_[j];
+                        nodePredecessors[i] = mapping.nodes[i] = j;
+                        if (next.target != UINT32_MAX && old.target != UINT32_MAX) mapping.receivers[i] = j;
+                        if (next.source != UINT32_MAX) mapping.sources[next.source] = old.source;
+                        break;
+                    }
+                }
+                for (std::size_t i = 0; i < relations_.size(); ++i) {
+                    const auto& next = relations_[i];
+                    if (next.stableId == VnObjectId{}) continue;
+                    for (std::uint32_t j = 0; j < prior->relations_.size(); ++j) {
+                        const auto& old = prior->relations_[j];
+                        if (next.stableId == old.stableId &&
+                            nodePredecessors[next.source] == old.source &&
+                            nodePredecessors[next.target] == old.target) {
+                            mapping.connections[i] = j;
                             break;
                         }
                     }
                 }
+            };
+            prepare(predecessor, candidates[0]);
+            if (alternate != nullptr) {
+                prepare(alternate, candidates[1]);
+                if (candidates[0].identity == 0 || candidates[1].identity == 0 ||
+                    candidates[0].identity == candidates[1].identity ||
+                    predecessor->worldIdentity_ != alternate->worldIdentity_) return false;
             }
-            receiverPredecessors_ = std::move(receivers);
-            publicationIdentity_ = worldIdentity_ = identity;
+            continuity_ = std::move(candidates);
+            publicationIdentity_ = identity;
+            worldIdentity_ = continuity_[0].identity != 0 ? predecessor->worldIdentity_ : identity;
             contentIdentity_ = contentIdentity;
             updateRampFrames_ = rampFrames;
-            if (continuous) {
-                predecessorIdentity_ = predecessor->publicationIdentity_;
-                worldIdentity_ = predecessor->worldIdentity_;
-                exchangeContinuous_ = SameStructure(*predecessor);
-            }
         } catch (...) { return false; }
         return true;
+    }
+    std::uint64_t PublicationIdentity() const noexcept { return publicationIdentity_; }
+
+    struct NodeActivityObservation {
+        std::uint64_t quietFrames = 0;
+        bool ready = false;
+    };
+    struct ActivityObservation {
+        std::uint64_t publication = 0, history = 0, mutation = 0, blockSequence = 0;
+        std::vector<NodeActivityObservation> nodes;
+    };
+    bool CaptureActivityObservation(ActivityObservation& out) const noexcept;
+
+    struct DormantState;
+    // Logic prepares immutable identity maps and storage. Audio fills them
+    // once, before detaching the completed predecessor. Each wake owns its
+    // payload independently of the sleep publication's acknowledgement.
+    std::shared_ptr<DormantState> PrepareDormantState(const SignalRenderPlan& previous) const noexcept;
+    bool CaptureDormantState(SignalRenderPlan& previous, DormantState& state) const noexcept;
+    bool PrepareSleepObservation(const SignalRenderPlan& previous, DormantState& state,
+        std::uint64_t& blockSequence, bool& removesNodes) const noexcept;
+    bool ValidateSleepObservation(const SignalRenderPlan& previous, const DormantState& state) const noexcept;
+    bool PrepareDormantContinuity(const SignalRenderPlan& previous,
+        std::shared_ptr<const DormantState> state) noexcept;
+    // Logic, after capture ACK: retain only endpoints absent from this accepted
+    // projection. A successful empty result releases the obsolete cold record.
+    bool PruneDormantState(std::shared_ptr<const DormantState> state,
+        std::shared_ptr<const DormantState>& remaining) const noexcept;
+
+    // A legally sleeping receiver can carry a non-default floating-point
+    // fixed point. Seed only an unpublished candidate; mapped live receivers
+    // overwrite this seed from the actual predecessor during adoption.
+    bool PrepareDormantReceiver(std::uint32_t node, const DuckingDormantState& saved) noexcept {
+        if (open_ || committed_ || adopted_ || node >= nodes_.size() ||
+            nodes_[node].target == UINT32_MAX || saved.channels != format_.channels)
+            return false;
+        return nodes_[node].receiver.RestoreDormantState(saved);
+    }
+    // Audio owner at a completed block, before its borrowed routing scratch is
+    // reused. Main, detector and feedback references must all be proven silent.
+    bool CaptureDormantReceiver(std::uint32_t node, bool boundMain,
+                                DuckingDormantState& saved) const noexcept {
+        if (open_ || !committed_ || node >= nodes_.size() || nodes_[node].target == UINT32_MAX)
+            return false;
+        const auto& feedback = Feedback(node);
+        return nodes_[node].receiver.CaptureDormantState(format_.channels,
+            exchange_.HasTargetInput(nodes_[node].target), feedback.feedbackInput,
+            feedback.slope, boundMain, saved);
     }
     std::uint64_t WorldIdentity() const noexcept { return worldIdentity_; }
     bool SameMembership(const SignalRenderPlan& other) const noexcept {
@@ -232,25 +327,8 @@ public:
 
     // Run before retiring the old topology slot. Swapping transfers storage to
     // the retired owner, so neither allocation nor destruction occurs on audio.
-    bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept {
-        if (&previous == this || adopted_ || open_ || previous.open_ ||
-            predecessorIdentity_ == 0 || predecessorIdentity_ != previous.publicationIdentity_)
-            return false;
-        if (exchangeContinuous_) exchange_.Swap(previous.exchange_);
-        for (std::size_t i = 0; i < receiverPredecessors_.size(); ++i)
-            if (receiverPredecessors_[i] != UINT32_MAX)
-                nodes_[i].receiver.AdoptStateFrom(previous.nodes_[receiverPredecessors_[i]].receiver);
-        for (std::uint32_t i = 0; exchangeContinuous_ && i < relations_.size(); ++i)
-            if (relations_[i].level != previous.relations_[i].level) {
-                const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
-                assert(changed);
-                (void)changed;
-            }
-        previous_ = previous.previous_;
-        committed_ = previous.committed_;
-        adopted_ = true;
-        return true;
-    }
+    bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept;
+    std::uint32_t BusNodeCount() const noexcept { return static_cast<std::uint32_t>(busNodes_.size()); }
     std::uint32_t NodeCount() const noexcept { return static_cast<std::uint32_t>(nodes_.size()); }
     // A candidate graph is borrowed only for this quantum. Its slab must not
     // alias a live prior graph; failed compilation is never a usable fallback.
@@ -261,16 +339,16 @@ public:
         blockRouting_ = routing;
         return true;
     }
-    void EnableActualRouting() noexcept {
+    // The definition bound belongs to the topology used to prepare this
+    // projection; it is independent of how many Bus nodes remain active.
+    void EnableActualRouting(std::uint32_t preparedBusSlots = 0) noexcept {
         actualRouting_ = true;
-        routingBusCount_ = 0;
-        while (routingBusCount_ < nodes_.size() &&
-               nodes_[routingBusCount_].kind == SignalEndpointKindV1::Bus &&
-               routingBusCount_ < busNodes_.size() &&
-               busNodes_[routingBusCount_] == std::pair(routingBusCount_, routingBusCount_))
-            ++routingBusCount_;
+        routingBusSlotBound_ = preparedBusSlots;
+        if (routingBusSlotBound_ == 0 && !busNodes_.empty())
+            routingBusSlotBound_ = busNodes_.back().first + 1u;
     }
     bool UsesActualRouting() const noexcept { return actualRouting_; }
+    std::uint32_t RoutingBusSlotBound() const noexcept { return routingBusSlotBound_; }
     // Current dynamic-route consumers target Buses, never Sound DSP. With
     // a prepared content DAG and at most one stage per member, every Bus
     // path is downstream and cannot change the prepared feedforward proof.
@@ -282,7 +360,7 @@ public:
     static std::uint64_t RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
                                              std::uint64_t edges, std::uint32_t frames) noexcept;
     bool ReserveRouting(BusTree& buses, BlockArena& arena, std::uint32_t members,
-                        std::size_t pathRows) noexcept;
+                        std::size_t pathRows, std::uint64_t sends) noexcept;
     bool BuildRouting(std::span<const SignalMemberImage> members, BusTree& buses) noexcept;
     void PrepareFinalOutputs(std::span<const SignalMemberImage> members) noexcept;
     const double* FinalOutputGain(const SignalMemberImage& member) const noexcept {
@@ -297,10 +375,15 @@ public:
     }
     bool HasContent() const noexcept { return !membership_.empty(); }
     bool SetConnectionLevel(std::uint32_t connection, float level, std::uint64_t frames) noexcept {
-        return !open_ && exchange_.SetLevel(connection, level, frames);
+        if (open_ || !exchange_.SetLevel(connection, level, frames)) return false;
+        NoteActivityMutation(relations_[connection].source);
+        NoteActivityMutation(relations_[connection].target);
+        return true;
     }
     bool UpdateBounds(std::span<const double> bounds) noexcept {
-        return !open_ && feedback_.UpdateBounds(bounds);
+        if (open_ || !feedback_.UpdateBounds(bounds)) return false;
+        for (std::uint32_t i = 0; i < nodes_.size(); ++i) NoteActivityMutation(i);
+        return true;
     }
 
     bool BeginBlock(const SignalBlockIdentity& identity) noexcept {
@@ -313,8 +396,11 @@ public:
             previous_.epoch != UINT64_MAX && identity.epoch == previous_.epoch + 1 &&
             identity.frames == previous_.frames &&
             identity.frameBegin == previous_.frameBegin + previous_.frames;
-        if (!continuous) for (auto& node : nodes_) node.receiver.Reset();
-        for (auto& node : nodes_) { node.processed = false; node.deferOutput = false; }
+        if (!continuous) {
+            if (historyRevision_ != UINT64_MAX) ++historyRevision_;
+            for (auto& node : nodes_) { node.receiver.Reset(); node.activity = {}; }
+        }
+        for (auto& node : nodes_) { node.processed = false; node.deferOutput = false; node.physicalMember = false; }
         contentProcessed_ = false;
         preparedSoundRouting_ = false;
         blockRouting_ = {};
@@ -355,9 +441,11 @@ public:
                     finite &= std::isfinite(samples[n]);
                 if (!finite) return false;
             }
-            for (auto node : member.nodes)
+            for (auto node : member.nodes) {
                 if (node >= nodes_.size() || nodes_[node].kind == SignalEndpointKindV1::Bus)
                     return false;
+                nodes_[node].physicalMember = true;
+            }
         }
         for (const auto index : blockRouting_.nodes.empty() ? feedback_.NormalOrder() : blockRouting_.order) {
             if (index >= nodes_.size()) continue;
@@ -497,12 +585,14 @@ public:
         previous_ = current_;
         committed_ = true;
         open_ = false;
+        PublishActivityObservation();
         return true;
     }
     void Invalidate() noexcept {
         exchange_.Invalidate();
         open_ = committed_ = false;
-        for (auto& node : nodes_) node.receiver.Reset();
+        if (historyRevision_ != UINT64_MAX) ++historyRevision_;
+        for (auto& node : nodes_) { node.receiver.Reset(); node.activity = {}; }
     }
 
 private:
@@ -510,14 +600,35 @@ private:
         return format_.channels == other.format_.channels && format_.capacityFrames == other.format_.capacityFrames &&
             format_.sampleRate == other.format_.sampleRate && format_.layout == other.format_.layout;
     }
+    bool SameNodeDefinition(std::size_t index, const SignalRenderPlan& other,
+                            std::size_t prior) const noexcept {
+        const auto& a = nodes_[index]; const auto& b = other.nodes_[prior];
+        if (a.kind != b.kind || a.stableId != b.stableId || a.busId != b.busId ||
+            a.busGeneration != b.busGeneration) return false;
+        // Content nodes must retain their carrier proofs, not merely their ID.
+        const auto includes = [](const auto& from, std::size_t node,
+                                 const auto& to, std::size_t otherNode) {
+            for (const auto& proof : from.membership_) {
+                if (proof.node != node) continue;
+                const bool found = std::any_of(to.membership_.begin(), to.membership_.end(),
+                    [&](const auto& candidate) {
+                        return candidate.node == otherNode && candidate.stableId == proof.stableId &&
+                            candidate.propertyFingerprint == proof.propertyFingerprint &&
+                            SameDefinitionSource(candidate.source, proof.source);
+                    });
+                if (!found) return false;
+            }
+            return true;
+        };
+        return includes(*this, index, other, prior) && includes(other, prior, *this, index);
+    }
     bool SameStructure(const SignalRenderPlan& other) const noexcept {
         if (!SameFormat(other) ||
             actualRouting_ != other.actualRouting_ || busNodes_ != other.busNodes_ ||
             nodes_.size() != other.nodes_.size() || relations_.size() != other.relations_.size()) return false;
         for (std::size_t i = 0; i < nodes_.size(); ++i) {
             const auto& a = nodes_[i]; const auto& b = other.nodes_[i];
-            if (a.kind != b.kind || a.stableId != b.stableId || a.busId != b.busId ||
-                a.busGeneration != b.busGeneration || a.source != b.source || a.target != b.target) return false;
+            if (!SameNodeDefinition(i, other, i) || a.source != b.source || a.target != b.target) return false;
         }
         for (std::size_t i = 0; i < relations_.size(); ++i) {
             const auto& a = relations_[i]; const auto& b = other.relations_[i];
@@ -536,10 +647,15 @@ private:
         VnObjectId stableId{};
         VnBusId busId{};
         std::uint32_t busGeneration = 0;
+        float attackMs = kDuckingDefaultAttackMs, releaseMs = kDuckingDefaultReleaseMs;
         std::uint32_t source = UINT32_MAX, target = UINT32_MAX;
         DuckingReceiver receiver;
         bool processed = false;
         bool deferOutput = false;
+        bool physicalMember = false;
+        NodeActivityObservation activity;
+        bool dormantInputsQuiet = false, dormantBoundMain = false, dormantFeedback = false;
+        double dormantSlope = 0;
         std::size_t outputGainOffset = SIZE_MAX;
     };
     static bool Contains(std::span<const std::uint32_t> nodes, std::uint32_t node) noexcept {
@@ -695,6 +811,21 @@ private:
             feedback.feedbackInput ? pre_.data() : nullptr,
             feedback.feedbackInput ? (sharedReferences ? pre_.data() : post_.data()) : nullptr, feedback.slope,
             outputGains == nullptr ? gain_.data() : outputGains, suppliedMain != nullptr);
+        // Record the actual main/detector/reference branch before shared
+        // scratch is reused by another receiver. A muted output is not proof.
+        node.dormantInputsQuiet = processed;
+        for (std::uint32_t ch = 0; ch < format_.channels && node.dormantInputsQuiet; ++ch) {
+            node.dormantInputsQuiet = SignalPlaneIsSilent(main[ch], current_.frames) &&
+                (!exchange_.HasTargetInput(node.target) || SignalPlaneIsSilent(side[ch], current_.frames));
+        }
+        if (feedback.feedbackInput && node.dormantInputsQuiet) {
+            const auto* post = sharedReferences ? pre_.data() : post_.data();
+            for (std::uint32_t n = 0; n < current_.frames; ++n)
+                if (pre_[n] != 0 || post[n] != 0) { node.dormantInputsQuiet = false; break; }
+        }
+        node.dormantBoundMain = suppliedMain != nullptr;
+        node.dormantFeedback = feedback.feedbackInput;
+        node.dormantSlope = feedback.slope;
         assert(processed);
         (void)processed;
     }
@@ -707,7 +838,8 @@ private:
     bool independentSounds_ = false, preparedSoundRouting_ = false;
     bool independentBuses_ = false;
     std::vector<std::uint8_t> busReachability_;
-    std::uint32_t routingBusCount_ = 0;
+    std::vector<std::uint32_t> busOrdinalByNode_;
+    std::uint32_t routingBusSlotBound_ = 0;
     SignalFeedbackPlan feedback_;
     SignalFeedbackView blockRouting_{};
     std::span<std::byte> routingStorage_{};
@@ -721,10 +853,35 @@ private:
     std::uint32_t accumulationChannels_ = UINT32_MAX;
     bool open_ = false, committed_ = false, contentProcessed_ = false;
     std::uint64_t publicationIdentity_ = 0, contentIdentity_ = 0, worldIdentity_ = 1;
-    std::uint64_t predecessorIdentity_ = 0, updateRampFrames_ = 0;
+    struct Continuity {
+        std::uint64_t identity = 0;
+        bool exchangeContinuous = false;
+        std::vector<std::uint32_t> nodes, receivers, sources, connections;
+    };
+    std::array<Continuity, 2> continuity_;
+    std::uint64_t updateRampFrames_ = 0;
+    std::uint64_t historyRevision_ = 1;
+    struct DormantRestore {
+        std::shared_ptr<const DormantState> state;
+        std::uint64_t predecessor = 0;
+        std::vector<std::uint32_t> receivers, connections;
+    };
+    std::vector<DormantRestore> dormantRestores_;
+    struct ActivitySnapshot {
+        std::uint64_t publication = 0, history = 0, mutation = 0, blockSequence = 0;
+        NodeActivityObservation* nodes = nullptr;
+    };
+    std::array<std::vector<NodeActivityObservation>, 3> activityBuffers_;
+    PinnedSnapshot3<ActivitySnapshot> activitySnapshot_;
+    std::uint64_t activityMutation_ = 1;
+    void PrepareActivityObservation();
+    void PublishActivityObservation() noexcept;
+    bool NodeRecoveryReady(std::uint32_t node) const noexcept;
+    void NoteActivityMutation(std::uint32_t node) noexcept {
+        if (activityMutation_ != UINT64_MAX) ++activityMutation_;
+        nodes_[node].activity = {};
+    }
     bool adopted_ = false;
-    bool exchangeContinuous_ = false;
-    std::vector<std::uint32_t> receiverPredecessors_;
 };
 
 } // namespace harken

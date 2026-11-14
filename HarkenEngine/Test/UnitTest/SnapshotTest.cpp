@@ -412,7 +412,6 @@ TEST(Snapshot, ArenaOverflowSurfacesInCounterAndLogSink) {
     // every block; the degradation must surface both as the snapshot
     // counter and as a drained warn record through the config sink.
     VnConfig config = MakeNullConfig(2, 256, 48000);
-    config.arenaBytes = 64;
     LogCapture received;
     config.logCallback = &RecordLog;
     config.logUserData = &received;
@@ -420,6 +419,7 @@ TEST(Snapshot, ArenaOverflowSurfacesInCounterAndLogSink) {
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    engine->mixer.ArenaForTests().SetCapacityForTests(64);
     engine->nullBackend.Pump(3);
 
     VnSnapshot snapshot = MakeSnapshotArg();
@@ -439,7 +439,6 @@ TEST(Snapshot, DegradedBlockPublishesHonestSilence) {
     // must read silent for that block, while the structural facts (the
     // voice is rendering-live, overflow counted) still report.
     VnConfig config = MakeNullConfig(2, 256, 48000);
-    config.arenaBytes = 64;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -452,6 +451,7 @@ TEST(Snapshot, DegradedBlockPublishesHonestSilence) {
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(1));
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    engine->mixer.ArenaForTests().SetCapacityForTests(64);
     engine->nullBackend.Pump(3);
 
     VnSnapshot snapshot{};
@@ -509,11 +509,11 @@ TEST(Snapshot, ConfigVintagesAcceptedWithAppendedFieldsDefaulted) {
         // not read them — records drain with no callback.
         LogCapture received;
         VnConfig config = MakeNullConfig(2, 256, 48000);
-        config.arenaBytes = 64; // every block emits an overflow record
         config.logCallback = &RecordLog;
         config.logUserData = &received;
         config.structSize = vintage2;
         ASSERT_EQ(VN_OK, Vn_Init(&config));
+        harken::detail::ActiveEngine()->mixer.ArenaForTests().SetCapacityForTests(64);
         harken::detail::ActiveEngine()->nullBackend.Pump(2);
         ASSERT_EQ(VN_OK, Vn_Update());
         EXPECT_EQ(0u, received.calls);
@@ -523,10 +523,10 @@ TEST(Snapshot, ConfigVintagesAcceptedWithAppendedFieldsDefaulted) {
         // Current vintage: the same setup honors the sink.
         LogCapture received;
         VnConfig config = MakeNullConfig(2, 256, 48000);
-        config.arenaBytes = 64;
         config.logCallback = &RecordLog;
         config.logUserData = &received;
         ASSERT_EQ(VN_OK, Vn_Init(&config));
+        harken::detail::ActiveEngine()->mixer.ArenaForTests().SetCapacityForTests(64);
         harken::detail::ActiveEngine()->nullBackend.Pump(2);
         ASSERT_EQ(VN_OK, Vn_Update());
         EXPECT_GT(received.calls, 0u);

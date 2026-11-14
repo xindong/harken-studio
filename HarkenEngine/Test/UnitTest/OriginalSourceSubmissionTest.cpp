@@ -86,7 +86,8 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     bool withEffect, bool crossTargetEffect,
     Registry::OriginalSourceLifetimePin* original = nullptr,
     bool finalSource = false, bool initialSource = false,
-    harken::VoicePool::OriginalSourceBodyLifetimePin* originalBody = nullptr) {
+    harken::VoicePool::OriginalSourceBodyLifetimePin* originalBody = nullptr,
+    harken::CommandQueue::BusActivityAttachment* activity = nullptr) {
     ASSERT_FALSE(initialSource && withEffect);
     const auto pcm = engine.registry.Lookup(kSound);
     ASSERT_TRUE(pcm.Valid());
@@ -186,6 +187,7 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     harken::CommandQueue::PreparedBatchProof batch;
     ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, commands.data(), body.commandCount, &batch));
     ASSERT_TRUE(engine.originalSourceSubmissions.BindPreparedChild(batch, 0, body.commandCount));
+    if (activity != nullptr) ASSERT_TRUE(engine.commands.BindPreparedBusActivity(batch, *activity));
     if (withEffect) std::move(effectProofs[0]).Consume();
     harken::VoicePool::ConsumePreparedCommit(std::move(voiceProof));
     harken::TimelineArmTable::ConsumePreparedCommit(std::move(armProof));
@@ -9491,4 +9493,83 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitQuarantinesActualLastGenerati
     EXPECT_EQ(free - 1u, engine.timelineArms.FreeCount());
     EXPECT_EQ(harken::ArmState::Quarantined, finalRow->state.load());
     EXPECT_EQ(0u, engine.mixer.BlocksRendered()); EXPECT_EQ(0u, engine.commands.PublishedHead());
+}
+
+TEST(OriginalSourceSubmission, ActivityAdoptionRespectsTransportBarrierAndCancellation) {
+    using Queue = harken::CommandQueue;
+    for (bool initial : {false, true}) for (unsigned disposition : {0u, 1u, 2u}) {
+        SCOPED_TRACE(initial);
+        SCOPED_TRACE(disposition);
+        struct Probe {
+            unsigned queued = 0, adopted = 0, discarded = 0;
+            bool ready = false;
+        } prefix, source;
+        const auto attachment = [](Probe& probe) {
+            return Queue::BusActivityAttachment{&probe,
+                +[](void* p) noexcept { ++static_cast<Probe*>(p)->queued; },
+                +[](void*) noexcept {},
+                +[](void* p) noexcept {
+                    auto& probe = *static_cast<Probe*>(p);
+                    if (!probe.ready) return false;
+                    ++probe.adopted;
+                    return true;
+                },
+                +[](void* p) noexcept { ++static_cast<Probe*>(p)->discarded; }};
+        };
+        auto prefixAttachment = attachment(prefix), sourceAttachment = attachment(source);
+        // Attachments must outlive even a shutdown caused by a fatal assertion.
+        harkentest::EngineSession session(SourceBodyConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const std::vector<float> samples(kRate, .25f);
+        const auto pcm = harkentest::MonoDesc(samples, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        harken::CommandRecord record{};
+        record.opcode = harken::kOpcodeSetVoicePan;
+        Queue::BatchReservation reservation{};
+        Queue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &record, 1, &proof));
+        ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, prefixAttachment));
+        ASSERT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
+        SourceBody body;
+        ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, false, false,
+            nullptr, false, initial, nullptr, &sourceAttachment));
+        EXPECT_EQ(1u, prefix.queued); EXPECT_EQ(1u, source.queued);
+        if (disposition == 1) ASSERT_TRUE(engine.timelineArms.RequestCancel(body.arm));
+        source.ready = true;
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(0u, prefix.adopted); EXPECT_EQ(0u, source.adopted);
+        EXPECT_EQ(0u, engine.commands.ConsumedCount());
+        EXPECT_EQ(0u, engine.commands.InitialSourcesConsumed());
+        if (disposition == 1) {
+            // The Voice cancellation walker can physically finish before its
+            // blocked source command drains. The original range still pins it.
+            EXPECT_TRUE(engine.voices.ReleaseObserved(body.release));
+            EXPECT_FALSE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
+        }
+        if (disposition == 2) {
+            engine.commands.DiscardPublishedAfterQuiescence();
+            EXPECT_EQ(1u, prefix.discarded); EXPECT_EQ(1u, source.discarded);
+            EXPECT_EQ(0u, source.adopted);
+        } else {
+            prefix.ready = true;
+            engine.nullBackend.Pump(1);
+            EXPECT_EQ(1u, prefix.adopted); EXPECT_EQ(1u, source.adopted);
+            EXPECT_EQ(Registry::Phase::Disposed, engine.originalSourceSubmissions.Find(body.arm)->State());
+            if (disposition == 1) {
+                harken::TimelineArmObservation terminal{};
+                ASSERT_TRUE(engine.timelineArms.Observe(body.arm, &terminal));
+                EXPECT_EQ(harken::ArmState::Tombstoned, terminal.state);
+                EXPECT_EQ(0u, terminal.tombstoneAudioSequence);
+                EXPECT_TRUE(engine.voices.ReleaseObserved(body.release));
+                ASSERT_TRUE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
+                EXPECT_EQ(body.armFreeBefore, engine.timelineArms.FreeCount());
+            } else {
+                ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, false));
+            }
+            engine.nullBackend.Pump(1);
+            EXPECT_EQ(1u, source.adopted);
+        }
+    }
 }

@@ -12,6 +12,7 @@
 #define HARKEN_RENDER_VOICE_H
 
 #include "harken/core/BlockArena.h"
+#include "harken/render/BusRenderView.h"
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/CompletionProgress.h"
 #include "harken/core/SourceTerminalRecord.h"
@@ -41,6 +42,7 @@
 
 namespace harken {
 struct EffectChainUpdate;
+struct VoiceSendSet;
 
 // Lifecycle fact of the stage result protocol. Orthogonal to data
 // availability: framesProduced says how much data this block carries,
@@ -386,11 +388,12 @@ struct VoiceRenderContext {
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
 
-    // Voice->bus send slots: a fixed-capacity array processed after the dry
+    // Voice->bus send slots: an actual-size prepared span processed after the dry
     // fold. voiceSendActiveCount is the number of currently active slots; when
     // it is 0 the fold is bit-identical to the pre-send path (no tap captured,
     // no extra arena use), which preserves the no-send invariant.
-    VoiceSendSlot voiceSends[kMaxVoiceSendSlots];
+    VoiceSendSet* voiceSendSet = nullptr;
+    std::span<VoiceSendSlot> voiceSends{};
 
     ResamplerView resampler;
 
@@ -726,7 +729,7 @@ inline void QueueVoiceTailSuffixRearm(VoiceRenderContext& ctx,
 // arena exhaustion the voice contributes nothing this block and the caller's
 // degradation counter increments.
 StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
-                             float* const* busPlanes, std::uint32_t blockFrames,
+                             const BusRenderView& busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels = kOutputChannels,
                              std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_STEREO,
                              std::uint64_t sourceFrameBegin = 0,
@@ -785,10 +788,10 @@ struct SignalMemberImage;
 // The caller admits four consecutive images with common range and destination.
 // This only folds PCM; each original job retains its gain and lifecycle clock.
 void FoldFourSignalImages(std::span<const SignalMemberImage, 4> members,
-                          const double* const* gains, float* const* busPlanes,
+                          const double* const* gains, const BusRenderView& busPlanes,
                           std::uint32_t mixChannels);
 
-void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
+void FoldVoiceIntoBuses(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout,
                         std::uint64_t sourceFrameBegin = 0,

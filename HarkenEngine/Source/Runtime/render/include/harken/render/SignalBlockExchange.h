@@ -147,9 +147,10 @@ public:
             m_targetAlias[target] = target;
             const auto representative = m_singletonRepresentative[target];
             if (!read || representative == UINT32_MAX || representative == target) continue;
-            const auto& a = m_connections[m_order[m_targetOffsets[target]]].gain;
-            const auto& b = m_connections[m_order[m_targetOffsets[representative]]].gain;
-            if (SameTrajectory(a, b)) m_targetAlias[target] = representative;
+            const auto& a = m_connections[m_order[m_targetOffsets[target]]];
+            const auto& b = m_connections[m_order[m_targetOffsets[representative]]];
+            if (a.hasPrevious == b.hasPrevious && SameTrajectory(a.gain, b.gain))
+                m_targetAlias[target] = representative;
         }
         for (std::uint32_t target = 0; target < m_targets; ++target) {
             const auto first = m_targetOffsets[target], end = m_targetOffsets[target + 1];
@@ -157,7 +158,7 @@ public:
                 m_connections[m_order[first]].gain.Advance(identity.frames);
                 continue;
             }
-            if (read && end - first == 1) {
+            if (read && end - first == 1 && m_connections[m_order[first]].hasPrevious) {
                 auto& connection = m_connections[m_order[first]];
                 const auto* source = Source(m_readBank, connection.source);
                 auto* output = m_targetPcm.data() + target * m_planeSamples;
@@ -192,7 +193,7 @@ public:
             std::fill(m_accumulator.begin(), m_accumulator.end(), 0.0);
             for (auto p = m_targetOffsets[target]; p < m_targetOffsets[target + 1]; ++p) {
                 auto& connection = m_connections[m_order[p]];
-                if (read) {
+                if (read && connection.hasPrevious) {
                     const float* source = Source(m_readBank, connection.source);
                     const auto frames = identity.frames, channels = m_format.channels;
                     const auto stride = m_format.capacityFrames;
@@ -269,6 +270,7 @@ public:
         for (std::uint32_t source = 0; source < m_sources; ++source)
             if (!m_captured[source]) std::fill_n(Source(m_writeBank, source), m_planeSamples, 0.0f);
         m_previous = m_current;
+        for (auto& connection : m_connections) connection.hasPrevious = true;
         m_readBank = m_writeBank;
         m_writeBank = 1 - m_readBank;
         m_committed = true;
@@ -284,6 +286,42 @@ public:
 
 private:
     friend class SignalRenderPlan;
+    // Prepared maps name stable sources and connections in the actual audio
+    // predecessor. Destination banks already exist; this never allocates.
+    bool AdoptMappedContinuityFrom(SignalBlockExchange& previous,
+        std::span<const std::uint32_t> sources,
+        std::span<const std::uint32_t> connections) noexcept {
+        if (!m_prepared || !previous.m_prepared || m_open || previous.m_open ||
+            m_committed || sources.size() != m_sources ||
+            connections.size() != m_connections.size() ||
+            m_format.channels != previous.m_format.channels ||
+            m_format.capacityFrames != previous.m_format.capacityFrames ||
+            m_format.sampleRate != previous.m_format.sampleRate ||
+            m_format.layout != previous.m_format.layout) return false;
+        for (auto source : sources)
+            if (source != UINT32_MAX && source >= previous.m_sources) return false;
+        for (auto connection : connections)
+            if (connection != UINT32_MAX && connection >= previous.m_connections.size()) return false;
+        for (std::uint32_t i = 0; i < m_sources; ++i) {
+            auto* destination = Source(m_readBank, i);
+            if (sources[i] != UINT32_MAX && previous.m_committed)
+                std::copy_n(previous.Source(previous.m_readBank, sources[i]), m_planeSamples, destination);
+            else
+                std::fill_n(destination, m_planeSamples, 0.0f);
+        }
+        for (std::size_t i = 0; i < connections.size(); ++i) {
+            auto& next = m_connections[i];
+            next.hasPrevious = false;
+            if (connections[i] == UINT32_MAX) continue;
+            const auto& old = previous.m_connections[connections[i]];
+            if (sources[next.source] != old.source) continue;
+            next.gain = old.gain;
+            next.hasPrevious = old.hasPrevious;
+        }
+        m_previous = previous.m_previous;
+        m_committed = previous.m_committed;
+        return true;
+    }
     // The plan has validated every finite member before summing in double.
     // Even size_t's maximum member count times FLT_MAX fits in double.
     // Write the rounded sum directly into the bank, without a temporary PCM copy.
@@ -334,7 +372,11 @@ private:
         m_singletonRepresentative.swap(other.m_singletonRepresentative);
         m_captured.swap(other.m_captured);
     }
-    struct Connection { std::uint32_t source = 0; OutputGain gain{}; };
+    struct Connection {
+        std::uint32_t source = 0;
+        OutputGain gain{};
+        bool hasPrevious = true;
+    };
     static bool SameTrajectory(const OutputGain& a, const OutputGain& b) noexcept {
         if (std::bit_cast<std::uint32_t>(a.target) != std::bit_cast<std::uint32_t>(b.target) ||
             a.remainingFrames != b.remainingFrames) return false;
@@ -352,6 +394,10 @@ private:
         return true;
     }
     float* Source(std::uint32_t bank, std::uint32_t source) noexcept {
+        return m_sourceBank.data() +
+            (static_cast<std::size_t>(bank) * m_sources + source) * m_planeSamples;
+    }
+    const float* Source(std::uint32_t bank, std::uint32_t source) const noexcept {
         return m_sourceBank.data() +
             (static_cast<std::size_t>(bank) * m_sources + source) * m_planeSamples;
     }
