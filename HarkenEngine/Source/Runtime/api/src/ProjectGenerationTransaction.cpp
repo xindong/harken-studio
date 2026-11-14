@@ -583,10 +583,10 @@ void ResetVolumeOnlyNonVolumePropertiesV2(Engine& engine,
 }
 
 bool CanRetireTopologyBusV1(const Engine& engine, BusSlotRef ref, std::uint64_t revision) noexcept {
-    return ref.Valid() && ref.index != 0 && ref.index < engine.busRetirements.size() &&
+    return ref.Valid() && ref.index != 0 && ref.index < engine.buses.BusCount() &&
         engine.buses.AliveAt(ref.index) && engine.buses.GenerationAt(ref.index) == ref.generation &&
         revision != 0 && revision > engine.buses.InstalledGraphRevision() &&
-        engine.buses.RetirementRevisionAt(ref.index) == 0 && engine.busRetirements[ref.index].revision == 0;
+        engine.buses.RetirementRevisionAt(ref.index) == 0 && engine.BusRetirement(ref.index) == nullptr;
 }
 
 void CommitRetireTopologyBusV1(Engine& engine, BusSlotRef ref, std::uint64_t revision) noexcept {
@@ -596,12 +596,14 @@ void CommitRetireTopologyBusV1(Engine& engine, BusSlotRef ref, std::uint64_t rev
     const bool held = engine.buses.HoldRetiredSlot(ref, revision);
     assert(held);
     (void)held;
-    engine.busRetirements[ref.index] = {ref.generation, revision, ownerId, cookie};
+    assert(engine.busRetirements.size() < engine.busRetirements.capacity());
+    if (engine.busRetirements.size() == engine.busRetirements.capacity()) std::terminate();
+    engine.busRetirements.push_back({ref.index, ref.generation, revision, ownerId, cookie});
 }
 
 void ClearRetiredBusPropertiesV1(Engine& engine, BusSlotRef ref) noexcept {
-    assert(ref.index < engine.busRetirements.size() &&
-        engine.busRetirements[ref.index].generation == ref.generation &&
+    assert(engine.BusRetirement(ref.index) != nullptr &&
+        engine.BusRetirement(ref.index)->generation == ref.generation &&
         engine.buses.RetirementRevisionAt(ref.index) != 0);
     engine.busTargets.RetireBusGeneration(ref.index, ref.generation);
     engine.busFilterSettings[ref.index] = {};
@@ -712,21 +714,22 @@ void CommitMigratedLogicVoiceMirrorsV1(Engine& engine, const std::uint32_t* migr
 std::uint32_t DrainTopologyRetirementsV1(Engine& engine) noexcept {
     std::uint32_t released = 0;
     const auto installed = engine.buses.InstalledGraphRevision();
-    for (std::uint32_t slot = 1; slot < engine.buses.BusCount(); ++slot) {
-        auto& row = engine.busRetirements[slot];
-        if (row.revision == 0 || installed < row.revision || engine.buses.AliveAt(slot) ||
-            row.generation != engine.buses.GenerationAt(slot) ||
-            row.revision != engine.buses.RetirementRevisionAt(slot) ||
-            row.ownerId != engine.busTopologyOwnerIds[slot] || row.cookie != engine.busOwnerCookies[slot]) continue;
+    std::size_t retained = 0;
+    for (const auto& row : engine.busRetirements) {
+        const auto slot = row.index;
         const BusSlotRef ref{slot, row.generation};
-        if (HasTopologyBusConsumersV1(engine, ref)) continue;
-        if (engine.buses.ReleaseRetiredSlot(ref, row.revision)) {
+        if (installed >= row.revision && !engine.buses.AliveAt(slot) &&
+            row.generation == engine.buses.GenerationAt(slot) &&
+            row.revision == engine.buses.RetirementRevisionAt(slot) &&
+            row.ownerId == engine.busTopologyOwnerIds[slot] && row.cookie == engine.busOwnerCookies[slot] &&
+            !HasTopologyBusConsumersV1(engine, ref) && engine.buses.ReleaseRetiredSlot(ref, row.revision)) {
             engine.busOwnerCookies[slot] = 0;
             engine.busTopologyOwnerIds[slot] = 0;
-            row = {};
             ++released;
-        }
+        } else engine.busRetirements[retained++] = row;
     }
+    engine.busRetirements.resize(retained);
+    if (retained == 0) decltype(engine.busRetirements){}.swap(engine.busRetirements);
     return released;
 }
 
@@ -2363,7 +2366,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         acceptedRevision;
     command.payload.setBusTopologyPlan.batchCommandCount = static_cast<std::uint32_t>(commands.size());
     CommandQueue::PreparedBatchProof proof;
-    bool targetStorageReady = true;
+    bool targetStorageReady = engine.PrepareBusRetirements(prepared.slotPlan_.removed.size());
     std::size_t effectWrites = prepared.effects_ ? prepared.effects_->SettingsWriteCount() : 0;
     for (const auto& chain : prepared.effectChains_) {
         if (!chain.changes || chain.releaseOwner) continue;

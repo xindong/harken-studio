@@ -1,4 +1,3 @@
-#include "BusEffectSettings.h"
 // Internal engine object behind the C API. This header is not installed; the
 // test harness and the future host include it directly to reach the null
 // backend's pump (the public API stays narrow — spec section 16 drives blocks
@@ -6,6 +5,7 @@
 #ifndef HARKEN_API_ENGINE_H
 #define HARKEN_API_ENGINE_H
 
+#include "BusEffectSettings.h"
 #include <harken/ObjectId.h>
 #include "DeviceBackend.h"
 #include "EngineFrontierOwnerLedger.h"
@@ -7670,14 +7670,11 @@ public:
         busTopologyOwners.assign(resolved.maxBusTopologyOwners,
                                  BusTopologyOwnerRecord{});
         previewMasterHolders.assign(resolved.maxBusTopologyOwners, PreviewMasterHolderV1{});
-        busRetirements.assign(resolved.maxBuses, TopologyRetirementV1{});
         currentWorldBusAdmission.assign(resolved.maxBusTopologyOwners,
                                         CurrentWorldBusAdmissionRowV1{});
         // Logic-side mirror of the effect type installed in each bus slot, used
         // to validate Vn_SetBusEffectParam against the correct type (the voice
-        // effectSlotTypes analogue). One row per possible bus, all empty.
-        // Dense indices are append-only and tombstones are never reused, so no
-        // per-create reset is needed — a fresh bus's row is already all-none.
+        // effectSlotTypes analogue). Only installed slots own effect settings.
         busFilterSettings.resize(resolved.maxBuses);
         busVolumePublished.assign(resolved.maxBuses, 0);
         busEffectSlotBypass.assign(resolved.maxBuses, 0);
@@ -15630,12 +15627,23 @@ public:
     }
     std::vector<VnPackHandle> busOwnerCookies;
     struct TopologyRetirementV1 {
+        std::uint32_t index = UINT32_MAX;
         std::uint32_t generation = 0;
         std::uint64_t revision = 0;
         std::uint64_t ownerId = 0;
         VnPackHandle cookie = 0;
     };
     std::vector<TopologyRetirementV1> busRetirements;
+    bool PrepareBusRetirements(std::size_t additions) noexcept {
+        if (additions > busRetirements.max_size() - busRetirements.size()) return false;
+        try { busRetirements.reserve(busRetirements.size() + additions); return true; }
+        catch (...) { return false; }
+    }
+    const TopologyRetirementV1* BusRetirement(std::uint32_t bus) const noexcept {
+        const auto it = std::find_if(busRetirements.begin(), busRetirements.end(),
+            [bus](const auto& row) { return row.index == bus; });
+        return it == busRetirements.end() ? nullptr : &*it;
+    }
     std::vector<std::uint64_t> busTopologyOwnerIds;
     std::vector<BusTopologyOwnerRecord> busTopologyOwners;
     std::vector<PreviewMasterHolderV1> previewMasterHolders;
@@ -15680,14 +15688,8 @@ public:
             DefaultDownmixMatrix(config.mixChannelLayout, busOutputLayout[bus], destination);
     }
 
-    // Logic-side mirror of the effect type installed in each bus slot, indexed
-    // [dense bus index][chain slot]. Written at Vn_SetBusEffect, cleared at
-    // Vn_ClearBusEffect, and read at Vn_SetBusEffectParam so the value range is
-    // validated against the installed type — the voice effectSlotTypes analogue.
-    // Buses have no park/return, so the EffectParamTargetStore is their full
-    // parameter-value mirror. Per-slot bypass also lives here so Monitor can
-    // copy the last committed target when an empty slot later installs an
-    // Effect. Logic thread only.
+    // Logic-owned settings survive sleep. Effect parameters remain in the
+    // target store; bypass bits also survive an empty slot for later installs.
     struct BusFilterSetting {
         float cutoffHz = 0;
         float q = 0;

@@ -254,8 +254,9 @@ TEST(BusTopologySnapshot, PureRemovalWaitsForAudioAcknowledgementBeforeSlotReuse
     const auto revision = engine->acceptedBusTopologyRevision;
     EXPECT_FALSE(engine->buses.AliveAt(index));
     EXPECT_EQ(revision, engine->buses.RetirementRevisionAt(index));
-    EXPECT_EQ(generation, engine->busRetirements[index].generation);
-    EXPECT_EQ(kOwner, engine->busRetirements[index].ownerId);
+    ASSERT_NE(nullptr, engine->BusRetirement(index));
+    EXPECT_EQ(generation, engine->BusRetirement(index)->generation);
+    EXPECT_EQ(kOwner, engine->BusRetirement(index)->ownerId);
     EXPECT_EQ(kOwner, engine->busTopologyOwnerIds[index]);
     EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -264,7 +265,7 @@ TEST(BusTopologySnapshot, PureRemovalWaitsForAudioAcknowledgementBeforeSlotReuse
     Pump(engine);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine->buses.RetirementRevisionAt(index));
-    EXPECT_EQ(0u, engine->busRetirements[index].revision);
+    EXPECT_EQ(nullptr, engine->BusRetirement(index));
     EXPECT_EQ(0u, engine->busTopologyOwnerIds[index]);
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
     EXPECT_EQ(index, engine->buses.FindIndex(harkentest::ObjectId(20)));

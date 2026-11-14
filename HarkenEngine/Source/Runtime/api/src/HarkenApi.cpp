@@ -116473,7 +116473,11 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
             volumesValid ? kTopologyRefusalOwnership : kTopologyRefusalValidation);
     }
     harken::CommandQueue::PreparedBatchProof proof;
-    if (!harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex),
+    std::size_t retirements = 0;
+    for (std::uint32_t i = 1; i < oldCount; ++i)
+        retirements += removedOld[i] != 0 && newSlot[i] == 0;
+    if (!engine->PrepareBusRetirements(retirements) ||
+        !harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex),
             reservation, {&command, 1}, proof)) {
         engine->commands.CancelReservedBatch(&reservation);
         if (dynamicPlanIndex != harken::kInvalidDynamicRoutePlanIndex)
@@ -117081,7 +117085,8 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         return VN_IN_USE;
     }
     harken::CommandQueue::PreparedBatchProof proof;
-    if (!harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex), reservation, commands, proof)) {
+    if (!engine->PrepareBusRetirements(removedRefs.size()) ||
+        !harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex), reservation, commands, proof)) {
         engine->commands.CancelReservedBatch(&reservation);
         abandonPlans();
         return VN_BACKPRESSURE;
@@ -131343,6 +131348,7 @@ bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& pre
     });
     if (!targetsReady) return false;
     if (prepared.planIndex == kInvalidTopologyPlanIndex) return true;
+    if (!engine.PrepareBusRetirements(prepared.slotPlan.removed.size())) return false;
     if (prepared.commands.empty() || engine.acceptedBusTopologyRevision == UINT64_MAX) return false;
     const auto acceptedRevision = engine.acceptedBusTopologyRevision + 1;
     auto& command = prepared.commands.front();

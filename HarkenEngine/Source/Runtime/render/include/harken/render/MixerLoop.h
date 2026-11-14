@@ -72,6 +72,7 @@ public:
     const BlockArena& Arena() const { return m_arena; }
     BlockArena& ArenaForTests() { return m_arena; }
     bool PrepareVoiceBacking(std::uint32_t count) noexcept;
+    bool PrepareBusBacking(std::uint32_t count) noexcept;
     // Reprepare actual claimed channel and Send demand without reserving the
     // worst-case channel width of every constructed physical slot.
     bool PreparePreparedChannelBacking(std::uint32_t count) noexcept;

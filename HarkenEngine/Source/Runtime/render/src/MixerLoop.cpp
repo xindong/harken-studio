@@ -122,8 +122,8 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_installAckRing(installAckRing),
       m_bootstrapMeterLanes{meterRing.PrepareLane(0)},
       m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
-      m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
-                      config.mixChannelCount * config.blockFrames * sizeof(float)),
+      m_arenaLowBytes(static_cast<std::uint64_t>(config.mixChannelCount) *
+                      config.blockFrames * sizeof(float)),
       m_busFxSlots(config.fxSlotsPerBus),
       m_dynamicRouteCapacity(config.dynamicRouteCapacity),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
@@ -197,8 +197,23 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     }
 }
 
+bool MixerLoop::PrepareBusBacking(std::uint32_t count) noexcept {
+    const auto low = std::max(m_arenaLowBytes,
+        static_cast<std::uint64_t>(count) * m_mixChannels * m_blockFrames * sizeof(float));
+    const auto slots = m_voices.ConstructedSlotCount();
+    const auto high = slots == 0 ? 0u : m_voices.PreparedCascadeChannelRows(m_mixChannels, slots) *
+        m_voices.BlockFrames() * sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
+    const auto signals = RetainedSignalScratchBytes(slots);
+    if (low > m_arena.CapacityBytes() || signals > m_arena.CapacityBytes() ||
+        low + signals + high > m_arena.CapacityBytes() ||
+        !m_arena.PrepareBacking(low + signals, high)) return false;
+    m_arenaLowBytes = low;
+    return true;
+}
+
 bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
+    if (!m_buses.HasAcceptedActivity() && !PrepareBusBacking(m_buses.BusCount())) return false;
     // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
     const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
     const auto signalBytes = RetainedSignalScratchBytes(std::max(count, m_voices.ConstructedSlotCount()));
@@ -243,6 +258,7 @@ std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const n
 
 bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
     if (count > m_voices.Capacity()) return false;
+    if (!m_buses.HasAcceptedActivity() && !PrepareBusBacking(m_buses.BusCount())) return false;
     // Source columns precede this callback and never shrink. Include high slots
     // when a low slot widens, with the complete future blend/send allowance.
     const auto slots = std::max(count, m_voices.ConstructedSlotCount());
