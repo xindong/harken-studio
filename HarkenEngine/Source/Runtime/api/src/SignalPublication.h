@@ -42,6 +42,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     bool adoptsTopology = true) noexcept;
 bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
     std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept;
+bool AcknowledgeBusSleep(Engine& engine) noexcept;
 
 // For an owner transaction without an existing topology publication. Its
 // reservation must not span cancellation/drain work that can enqueue commands.

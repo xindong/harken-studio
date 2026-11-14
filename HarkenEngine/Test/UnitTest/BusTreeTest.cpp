@@ -1223,7 +1223,113 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 0u);
     EXPECT_FALSE(buses.AcceptedWorkRef(bus).Valid());
     EXPECT_TRUE(saved->effects[0].hasRendered);
+    // Preparing and cancelling a production projection must not consume cold
+    // state. A subsequent real Send wake still restores the original history.
+    const auto fullTopology = buses.AcceptedTopology();
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(PrepareTopologyActivity(engine, fullTopology, reservation, {&command, 1}, proof,
+        nullptr, false));
+    proof.Release();
+    engine.commands.CancelReservedBatch(&reservation);
+    buses.DrainActivities();
+    EXPECT_FALSE(buses.AcceptedWorkRef(bus).Valid());
+    EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 0u);
+    const auto fresh = buses.PrepareWorkRow();
+    ASSERT_TRUE(fresh.Valid());
+    auto& row = *buses.PreparedWorkRow(fresh);
+    ASSERT_EQ(engine.PrepareBusWorkState(bus.index, row), VN_OK);
+    ASSERT_TRUE(buses.RestoreDormantWork(row));
+    EXPECT_TRUE(static_cast<GainState*>(row.fxSlots[0].state)->hasRendered);
+    EXPECT_EQ(static_cast<GainState*>(row.fxSlots[0].state)->gainLinear, saved->effects[0].values.gain);
+    buses.ReleaseWorkRow(fresh);
+    const auto pcm = harkentest::MakeDC(4096, .25f);
+    const auto desc = MonoDesc(pcm, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(612), &desc));
+    auto play = MakePlayDesc(harkentest::ObjectId(612));
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(voice, 12, id, 0));
+    EXPECT_TRUE(buses.AcceptedWorkRef(bus).Valid());
+    Capture captured;
+    harkentest::PumpAndCapture(&engine, 1, captured);
+    const auto* restored = buses.BusState(bus.index);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_TRUE(static_cast<const GainState*>(restored->fxSlots[0].state)->hasRendered);
+    EXPECT_EQ(engine.busEffectInstanceRefs[bus.index][0].generation, restored->fxSlotEffectRef[0].generation);
+    for (auto sample : captured.left) EXPECT_NEAR(sample, .25f * (1 + std::pow(10.f, -6.f / 20)), 1e-6f);
     EXPECT_EQ(buses.ActivityFallbackCount(), 0u);
+}
+
+TEST(BusActivity, WakeCannotCountOrdinaryBusBindingsAsMissingContentNodes) {
+    using namespace harken;
+    for (bool extraDormantBus : {false, true}) {
+        SCOPED_TRACE(extraDormantBus);
+        EngineSession session(MakeNullConfig(2, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        auto& buses = engine.buses;
+        for (unsigned i = 0; i < (extraDormantBus ? 3u : 2u); ++i)
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(650 + i), VN_BUS_MASTER));
+        const auto pcm = harkentest::MakeDC(4096, .25f);
+        const auto desc = MonoDesc(pcm, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(660), &desc));
+        auto play = MakePlayDesc(harkentest::ObjectId(660));
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        engine.nullBackend.Pump(1);
+        std::array<SignalRenderNodeInput, 3> nodes{};
+        nodes[0].busIndex = 0;
+        nodes[0].busId = nodes[0].stableId = VN_BUS_MASTER;
+        nodes[0].busGeneration = buses.GenerationAt(0);
+        for (unsigned i = 1; i != 3; ++i) {
+            nodes[i].kind = SignalEndpointKindV1::Sound;
+            nodes[i].stableId = harkentest::ObjectId(659 + i);
+        }
+        nodes[2].receiver = true;
+        const std::array relations{SignalConnectionInput{1, 2, 1, harkentest::ObjectId(662)}};
+        SignalMemberProof member;
+        member.node = 1; member.stableId = nodes[1].stableId; member.propertyFingerprint = 11;
+        auto full = SignalRenderPlan::Prepare({2, 64, 48000, VN_CHANNEL_LAYOUT_STEREO},
+            nodes, relations, {}, {&member, 1});
+        ASSERT_NE(full, nullptr);
+        full->EnableActualRouting(buses.BusCount());
+        ASSERT_TRUE(full->ConfigurePublication(701, 71, nullptr, 64));
+        engine.acceptedSignalPlan = std::move(full);
+        auto topology = buses.AcceptedTopology();
+        topology.signals = engine.acceptedSignalPlan.get();
+        const BusActivitySelection compact{{2, 1, 0}, {0}};
+        CommandRecord command{};
+        command.opcode = kOpcodeSetBusActivity;
+        CommandQueue::BatchReservation reservation;
+        CommandQueue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(PrepareTopologyActivity(engine, topology, reservation, {&command, 1}, proof, &compact));
+        ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(buses.AcceptedActivitySignals()->NodeCount(), 3u);
+        EXPECT_FALSE(buses.AcceptedActivitySignals()->ContainsNodeDefinition(*topology.signals, 1));
+        const auto fact = std::find_if(engine.voicePlayFacts.begin(), engine.voicePlayFacts.end(),
+            [](const auto& value) { return value.valid; });
+        ASSERT_NE(fact, engine.voicePlayFacts.end());
+        auto& path = engine.playbackPaths[static_cast<std::uint32_t>(fact->renderHandle)];
+        PlaybackPathRow row;
+        row.stableId = member.stableId;
+        row.rowKind = ResolvedPlayablePathRowKindV1::Definition;
+        row.propertyFingerprint = member.propertyFingerprint;
+        row.source = member.source;
+        path.voiceInstance = fact->renderHandle;
+        path.AssignPath({&row, 1});
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof));
+        ASSERT_TRUE(PrepareBusActivityWake(engine, reservation, {&command, 1}, proof));
+        ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+        EXPECT_TRUE(buses.AcceptedActivitySignals()->ContainsNodeDefinition(*topology.signals, 1));
+        EXPECT_TRUE(buses.AcceptedActivitySignals()->ContainsNodeDefinition(*topology.signals, 2));
+        EXPECT_EQ(buses.AcceptedActivitySignals()->NodeCount(), 5u);
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(buses.ActivityFallbackCount(), 0u);
+    }
 }
 
 TEST(BusActivity, ReusedLogicalSlotRequiresANewWorkIncarnation) {

@@ -47,6 +47,7 @@ class VoicePool;
 struct SignalFeedbackEdge;
 struct SignalBusRoutingInfo;
 struct BusActivityPlan;
+struct BusDormantRegistry;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -153,7 +154,7 @@ public:
     bool PrepareConditionalSleep(BusActivityPlan& plan,
         std::span<const WorkObservation> observations, VoicePool& voices) noexcept;
     BusActivityPlan* PendingSleep() const noexcept { return m_pendingSleep; }
-    void AcknowledgeSleep() noexcept;
+    bool AcknowledgeSleep() noexcept;
     const BusActivityPlan* AcceptedActivity() const noexcept { return m_lastQueuedActivity; }
     const SignalRenderPlan* AcceptedActivityAlternate() const noexcept;
     bool PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept;
@@ -577,6 +578,9 @@ public:
     // Unpublished work row, same identity, format and authoritative parameters.
     static void RestoreDormantToneSection(Bus::ToneSection& section,
         const DormantToneSection& saved) noexcept;
+    bool RestoreDormantWork(Bus& row) const noexcept;
+    bool PrepareDormantSignalContinuity(SignalRenderPlan& next,
+        const SignalRenderPlan& previous) const noexcept;
 
     // Render state of a bus by dense index, or nullptr out of range. Internal
     // (non-ABI) accessor mirroring VoicePool::Resolve; see Bus. Bounded by the
@@ -591,6 +595,7 @@ private:
     void ShutdownActivities() noexcept;
     std::span<const std::uint32_t> WorkingOrder() const noexcept;
     std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
+    std::unique_ptr<BusDormantRegistry> m_dormant;
     BusActivityPlan* m_lastQueuedActivity = nullptr;
     BusActivityPlan* m_activeActivity = nullptr;
     BusActivityPlan* m_pendingSleep = nullptr;

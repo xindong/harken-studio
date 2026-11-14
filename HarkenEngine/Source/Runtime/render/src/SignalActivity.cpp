@@ -2,6 +2,14 @@
 
 namespace harken {
 
+bool SignalRenderPlan::ContainsNodeDefinition(const SignalRenderPlan& definition,
+    std::uint32_t node) const noexcept {
+    if (node >= definition.nodes_.size()) return false;
+    for (std::size_t i = 0; i < nodes_.size(); ++i)
+        if (SameNodeDefinition(i, definition, node)) return true;
+    return false;
+}
+
 SignalRenderNodeInput SignalRenderPlan::NodeDefinition(std::uint32_t index) const noexcept {
     assert(index < nodes_.size());
     const auto& node = nodes_[index];

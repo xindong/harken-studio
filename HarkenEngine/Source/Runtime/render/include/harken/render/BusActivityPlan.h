@@ -20,6 +20,20 @@ struct BusActivityRoots {
     std::vector<BusActivityMemberRoute> members;
 };
 
+struct BusDormantWork {
+    BusSlotRef bus;
+    std::array<BusTree::DormantToneSection, 4> filters;
+    std::array<BuiltinEffectDormantState, kMaxFxSlotsPerBus> effects;
+    std::array<EffectObjectIdentity, kMaxFxSlotsPerBus> identities;
+    std::array<ToneDormantState, kMaxFxSlotsPerBus> tones;
+};
+
+// Control-owned immutable residuals, independent of retired work-row storage.
+struct BusDormantRegistry {
+    std::vector<std::shared_ptr<const BusDormantWork>> buses;
+    std::vector<std::shared_ptr<const SignalRenderPlan::DormantState>> signals;
+};
+
 // Logic-only reachability over a prospective definition. Roots come from
 // actual accepted owners or coherent audio recovery facts, never from the
 // previous working set. Unrooted feedback components therefore do not self-retain.
@@ -64,13 +78,7 @@ struct BusActivityPlan {
         sleeping.clear();
         if (sleepPrevious != nullptr) { --sleepPrevious->logicPins; sleepPrevious = nullptr; }
     }
-    struct DormantWork {
-        BusSlotRef bus;
-        std::array<BusTree::DormantToneSection, 4> filters;
-        std::array<BuiltinEffectDormantState, kMaxFxSlotsPerBus> effects;
-        std::array<EffectObjectIdentity, kMaxFxSlotsPerBus> identities;
-        std::array<ToneDormantState, kMaxFxSlotsPerBus> tones;
-    };
+    using DormantWork = BusDormantWork;
     struct SleepingWork {
         BusTree::WorkObservation expected;
         std::shared_ptr<DormantWork> saved;
@@ -79,6 +87,14 @@ struct BusActivityPlan {
     std::atomic<SleepDecision> sleepDecision{SleepDecision::None};
     std::vector<SleepingWork> sleeping;
     std::shared_ptr<SignalRenderPlan::DormantState> dormantSignals;
+    std::unique_ptr<BusDormantRegistry> remainingDormant;
+    struct PreparedEffects {
+        BusSlotRef bus;
+        std::array<EffectInstanceRef, kMaxFxSlotsPerBus> effects;
+    };
+    std::vector<PreparedEffects> preparedEffects;
+    void* logicContext = nullptr;
+    void (*logicQueued)(void*, const BusActivityPlan&) noexcept = nullptr;
     BusActivityPlan* sleepPrevious = nullptr;
     VoicePool* sleepVoices = nullptr;
     std::uint32_t logicPins = 0;

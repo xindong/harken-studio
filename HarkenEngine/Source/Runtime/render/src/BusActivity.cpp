@@ -211,6 +211,22 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
             if (!RetainWorkRow(work)) return nullptr;
             plan->beforeDetach.push_back({adoption, work});
         }
+        if (m_dormant != nullptr) {
+            auto remaining = std::make_unique<BusDormantRegistry>();
+            for (const auto& saved : m_dormant->buses) {
+                const auto bus = saved->bus;
+                if (bus.index < topology.slotCount && topology.alive[bus.index] &&
+                    topology.generations[bus.index] == bus.generation &&
+                    plan->directory[bus.index].plane == UINT32_MAX)
+                    remaining->buses.push_back(saved);
+            }
+            if (signals != nullptr) for (const auto& saved : m_dormant->signals) {
+                std::shared_ptr<const SignalRenderPlan::DormantState> rest;
+                if (!signals->PruneDormantState(saved, rest)) return nullptr;
+                if (rest) remaining->signals.push_back(std::move(rest));
+            }
+            plan->remainingDormant = std::move(remaining);
+        }
         plan->signals = std::move(signals);
         auto* result = plan.get();
         m_activities.push_back(std::move(plan));
@@ -280,15 +296,72 @@ bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
     }
 }
 
-void BusTree::AcknowledgeSleep() noexcept {
-    if (m_pendingSleep == nullptr) return;
+bool BusTree::AcknowledgeSleep() noexcept {
+    if (m_pendingSleep == nullptr) return true;
     auto& plan = *m_pendingSleep;
     const auto decision = plan.sleepDecision.load(std::memory_order_acquire);
-    if (decision == BusActivityPlan::SleepDecision::Pending) return;
+    if (decision == BusActivityPlan::SleepDecision::Pending) return false;
+    if (decision == BusActivityPlan::SleepDecision::Accepted) {
+        // Allocate before releasing S's only ownership. Failed preparation
+        // leaves the ACK and all payloads intact for a subsequent update.
+        try {
+            auto next = m_dormant != nullptr ? std::make_unique<BusDormantRegistry>(*m_dormant)
+                                           : std::make_unique<BusDormantRegistry>();
+            const auto* latest = m_lastQueuedActivity;
+            if (latest == nullptr) return false;
+            for (const auto& row : plan.sleeping) {
+                const auto bus = row.saved->bus;
+                if (bus.index >= latest->directory.size() ||
+                    latest->directory[bus.index].generation != bus.generation ||
+                    latest->directory[bus.index].plane != UINT32_MAX) continue;
+                std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });
+                next->buses.push_back(row.saved);
+            }
+            if (plan.dormantSignals && latest->signals) {
+                std::shared_ptr<const SignalRenderPlan::DormantState> rest;
+                if (!latest->signals->PruneDormantState(plan.dormantSignals, rest)) return false;
+                if (rest) next->signals.push_back(std::move(rest));
+            }
+            m_dormant.swap(next);
+        } catch (...) { return false; }
+    }
     if (m_lastQueuedActivity == &plan && decision == BusActivityPlan::SleepDecision::Rejected)
         m_lastQueuedActivity = plan.sleepPrevious;
     plan.ReleaseSleepHolds();
+    plan.dormantSignals.reset();
     m_pendingSleep = nullptr;
+    return true;
+}
+
+bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
+    if (m_dormant == nullptr) return true;
+    const BusSlotRef host{row.busIndex, row.generation};
+    for (const auto& entry : m_dormant->buses) {
+        if (entry->bus != host) continue;
+        const auto& saved = *entry;
+        const std::array sections{&row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
+        for (std::size_t i = 0; i < sections.size(); ++i)
+            RestoreDormantToneSection(*sections[i], saved.filters[i]);
+        for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
+            const auto& effect = row.fxSlotEffectRef[slot];
+            const auto identity = m_effectBank.ObjectIdentity(effect);
+            if (effect.type == kEffectTypeNone || effect.type != saved.effects[slot].type ||
+                identity.effectId != saved.identities[slot].effectId ||
+                identity.projectId != saved.identities[slot].projectId) continue;
+            if (!RestoreBuiltinEffectDormantState(row.fxSlots[slot].state,
+                    saved.effects[slot], &saved.tones[slot])) return false;
+        }
+        break;
+    }
+    return true;
+}
+
+bool BusTree::PrepareDormantSignalContinuity(SignalRenderPlan& next,
+    const SignalRenderPlan& previous) const noexcept {
+    if (m_dormant == nullptr) return true;
+    for (const auto& saved : m_dormant->signals)
+        if (!next.PrepareDormantContinuity(previous, saved)) return false;
+    return true;
 }
 
 const SignalRenderPlan* BusTree::AcceptedActivityAlternate() const noexcept {
@@ -304,6 +377,9 @@ bool BusTree::PreparePendingSleepContinuity(SignalRenderPlan& next) const noexce
 
 void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
     assert(plan.phase.load(std::memory_order_relaxed) == BusActivityPlan::Phase::Preparing);
+    // Only successful publication consumes the prepared registry projection.
+    // A cancelled proof leaves the original cold records available.
+    if (plan.remainingDormant != nullptr) m_dormant = std::move(plan.remainingDormant);
     for (const auto& binding : plan.working) {
         if (PreparedWorkRow(binding.work) != nullptr) {
             const bool published = PublishWorkRow(binding.work);
@@ -317,6 +393,7 @@ void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
     }
     if (plan.adoptsTopology) m_acceptedTopology = plan.topologyDefinition;
     m_lastQueuedActivity = &plan;
+    if (plan.logicQueued != nullptr) plan.logicQueued(plan.logicContext, plan);
     plan.phase.store(BusActivityPlan::Phase::Queued, std::memory_order_release);
 }
 
@@ -436,6 +513,7 @@ void BusTree::ShutdownActivities() noexcept {
     // Release backward pins before destroying any predecessor object.
     for (auto& plan : m_activities) plan->ReleaseSleepHolds();
     m_activities.clear();
+    m_dormant.reset();
 }
 
 std::uint32_t BusTree::WorkingPlaneCount() const noexcept {

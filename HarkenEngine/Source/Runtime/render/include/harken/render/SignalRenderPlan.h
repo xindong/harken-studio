@@ -189,6 +189,8 @@ public:
     // Immutable definition access for logic-side activity compilation. Never
     // read running receiver parameters or PCM while preparing a projection.
     SignalRenderNodeInput NodeDefinition(std::uint32_t node) const noexcept;
+    bool ContainsNodeDefinition(const SignalRenderPlan& definition,
+        std::uint32_t node) const noexcept;
     std::span<const SignalConnectionInput> Relations() const noexcept { return relations_; }
     std::span<const SignalFeedbackEdge> DefinitionPaths() const noexcept { return feedback_.Edges(); }
     std::span<const SignalMemberProof> Membership() const noexcept { return membership_; }

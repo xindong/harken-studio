@@ -211,7 +211,8 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                 privateRows.rows.push_back(work);
                 auto& row = *engine.buses.PreparedWorkRow(work);
                 if (engine.buses.RefAt(bus) == host && engine.buses.IdAt(bus) == topology.busIds[bus]) {
-                    if (engine.PrepareBusWorkState(bus, row) != VN_OK) return false;
+                    if (engine.PrepareBusWorkState(bus, row) != VN_OK ||
+                        !engine.buses.RestoreDormantWork(row)) return false;
                 } else {
                     // New incarnations have no inherited settings or physical
                     // effect ownership. The same batch installs prepared edits.
@@ -242,7 +243,8 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                     topology.signals->ContentIdentity(), previous,
                     (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 10 + 999) / 1000,
                     continuous ? engine.buses.AcceptedActivityAlternate() : nullptr) ||
-                (continuous && !engine.buses.PreparePendingSleepContinuity(*signals)) ||
+                (continuous && (!engine.buses.PrepareDormantSignalContinuity(*signals, *previous) ||
+                    !engine.buses.PreparePendingSleepContinuity(*signals))) ||
                 !engine.mixer.PrepareSignalBacking(*signals)) return false;
         }
         const bool replace = previous != nullptr &&
@@ -251,6 +253,23 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             replace ? BusTree::SignalTransition::ReplaceContent : BusTree::SignalTransition::Preserve,
             replace ? previous : nullptr, adoptsTopology);
         if (activity == nullptr) return false;
+        activity->preparedEffects.reserve(privateRows.rows.size());
+        for (const auto ref : privateRows.rows) {
+            const auto& row = *engine.buses.PreparedWorkRow(ref);
+            const BusSlotRef host{row.busIndex, row.generation};
+            if (engine.buses.RefAt(row.busIndex) == host) {
+                BusActivityPlan::PreparedEffects entry;
+                entry.bus = host;
+                std::copy_n(row.fxSlotEffectRef, kMaxFxSlotsPerBus, entry.effects.begin());
+                activity->preparedEffects.push_back(entry);
+            }
+        }
+        activity->logicContext = &engine;
+        activity->logicQueued = [](void* context, const BusActivityPlan& plan) noexcept {
+            auto& owner = *static_cast<Engine*>(context);
+            for (const auto& entry : plan.preparedEffects)
+                owner.busEffectInstanceRefs[entry.bus.index] = entry.effects;
+        };
         if ((!alreadyFrozen && !engine.commands.ProvePreparedBatch(&reservation, commands.data(),
                 static_cast<std::uint32_t>(commands.size()), &proof)) ||
             !engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(activity))) {
@@ -267,15 +286,38 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     }
 }
 
+bool AcknowledgeBusSleep(Engine& engine) noexcept {
+    const auto* sleep = engine.buses.PendingSleep();
+    const auto* previous = sleep != nullptr ? sleep->sleepPrevious : nullptr;
+    if (!engine.buses.AcknowledgeSleep()) return false;
+    if (previous != nullptr) {
+        // ACK can release the last physical instance. Later queued W already
+        // committed its own mirror and must not be cleared by an older S.
+        for (const auto& binding : previous->working)
+            if (!engine.buses.AcceptedWorkRef(binding.bus).Valid() &&
+                engine.buses.RefAt(binding.bus.index) == binding.bus)
+                engine.busEffectInstanceRefs[binding.bus.index].fill({});
+    }
+    return true;
+}
+
 bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
     std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept {
     const auto topology = engine.buses.AcceptedTopology();
     const auto* current = engine.buses.AcceptedActivity();
     // Bootstrap and the complete projection already own every possible route.
     if (!topology.valid || current == nullptr) return true;
+    bool completeSignals = topology.signals == nullptr;
+    if (topology.signals != nullptr && current->signals != nullptr) {
+        completeSignals = true;
+        for (std::uint32_t i = 0; i < topology.signals->NodeCount(); ++i)
+            if (!current->signals->ContainsNodeDefinition(*topology.signals, i)) {
+                completeSignals = false;
+                break;
+            }
+    }
     if (engine.buses.PendingSleep() == nullptr && current->working.size() == topology.orderCount &&
-        (topology.signals == nullptr || (current->signals != nullptr &&
-         current->signals->NodeCount() == topology.signals->NodeCount()))) return true;
+        completeSignals) return true;
     try {
         BusActivityRoots roots;
         if (!CaptureBusActivityOwners(engine, topology, commands, roots)) return false;
@@ -315,7 +357,10 @@ bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& rese
         if (!PrepareBusActivitySelection(topology, topology.signals, roots.buses, roots.signals,
                 detectors, roots.members, selected)) return false;
         if (engine.buses.PendingSleep() == nullptr && selected.buses == current->order &&
-            (topology.signals == nullptr || selected.signalNodes.size() == current->signals->NodeCount())) return true;
+            (topology.signals == nullptr || (current->signals != nullptr &&
+             std::all_of(selected.signalNodes.begin(), selected.signalNodes.end(), [&](auto node) {
+                return current->signals->ContainsNodeDefinition(*topology.signals, node);
+             })))) return true;
         return PrepareTopologyActivity(engine, topology, reservation, commands, proof, &selected, false);
     } catch (...) { return false; }
 }

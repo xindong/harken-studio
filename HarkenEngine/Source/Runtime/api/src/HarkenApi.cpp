@@ -80534,13 +80534,23 @@ VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
     command.flags = harken::kCommandFlagVoiceSendSet;
     command.payload.setVoiceSend.handle = render;
     command.payload.setVoiceSend.setAddress = reinterpret_cast<std::uint64_t>(set);
-    set->phase.store(harken::VoiceSendSet::Phase::Queued, std::memory_order_release);
-    if (!engine.commands.TryPush(command)) {
-        // The producer still owns a refused unpublished record.
-        set->phase.store(harken::VoiceSendSet::Phase::Preparing, std::memory_order_relaxed);
+    harken::CommandQueue::BatchReservation reservation;
+    harken::CommandQueue::PreparedBatchProof proof;
+    if (!engine.commands.ReserveBatch(1, &reservation)) {
         engine.voices.CancelVoiceSendSet(*set);
         return VN_BACKPRESSURE;
     }
+    if (!engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof) ||
+        !harken::PrepareBusActivityWake(engine, reservation, {&command, 1}, proof)) {
+        proof.Release();
+        engine.commands.CancelReservedBatch(&reservation);
+        engine.voices.CancelVoiceSendSet(*set);
+        return VN_DEVICE_ERROR;
+    }
+    set->phase.store(harken::VoiceSendSet::Phase::Queued, std::memory_order_release);
+    const auto published = engine.commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == 1);
+    (void)published;
     CommitVoiceSendMirror(engine, render, candidate);
     return VN_OK;
     } catch (...) { return VN_DEVICE_ERROR; }
@@ -112300,6 +112310,7 @@ VnResult Vn_Update(void) {
         ResetFreeVoiceSendMirror(*engine, slot);
     }
     engine->buses.DrainPreviewEffectChains();
+    (void)harken::AcknowledgeBusSleep(*engine);
     engine->buses.DrainActivities();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
