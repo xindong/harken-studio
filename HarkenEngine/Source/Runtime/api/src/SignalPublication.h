@@ -30,6 +30,11 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
 WorldInstallStatus PreparePackSignals(Engine& engine, const PackComposition::PublishedView* published,
     const TopologyPlanView* topology, PreparedSignalPublication& out) noexcept;
 void RefreshRetainedPackSignals(Engine& engine) noexcept;
+struct BusActivityRoots;
+// Logic-owned routing, including the private starts in the prospective batch.
+// Membership is matched against the complete definition, not its active projection.
+bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
+    std::span<const CommandRecord> prospective, BusActivityRoots& out) noexcept;
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
     CommandQueue::PreparedBatchProof& proof) noexcept;

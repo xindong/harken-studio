@@ -233,6 +233,12 @@ public:
     }
     std::uint32_t RouteCapacity() const { return m_routeCapacity; }
     DynamicRoutePlanView InstalledPlan() const { return View(m_currentPlanIndex); }
+    // Audio owner, after EndBlock: this is the newly committed next-block
+    // detector input, not the status published from the bank just consumed.
+    bool HasPendingVoiceInput(const DynamicRoutePlanRow& row) const noexcept {
+        return row.sourceKind == VN_DYNAMIC_SOURCE_VOICE && row.tapSlot < m_voiceTapCapacity &&
+            TapMatches(m_voiceTaps[row.tapSlot], row) && m_voiceReadValid[row.tapSlot] != 0;
+    }
     bool InstalledBusTapMatches(const DynamicRoutePlanRow& row) const {
         return row.sourceKind == VN_DYNAMIC_SOURCE_BUS && row.tapSlot < m_busTapCapacity &&
             TapMatches(m_busTaps[row.tapSlot], row);

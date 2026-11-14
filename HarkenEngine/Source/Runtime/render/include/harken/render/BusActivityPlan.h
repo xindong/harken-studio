@@ -13,6 +13,12 @@ struct BusActivitySelection {
 struct BusActivityDetectorDependency { BusSlotRef target, source; };
 struct BusActivityMemberRoute { std::uint32_t signalNode; BusSlotRef bus; };
 
+struct BusActivityRoots {
+    std::vector<BusSlotRef> buses;
+    std::vector<std::uint32_t> signals;
+    std::vector<BusActivityMemberRoute> members;
+};
+
 // Logic-only reachability over a prospective definition. Roots come from
 // actual accepted owners or coherent audio recovery facts, never from the
 // previous working set. Unrooted feedback components therefore do not self-retain.

@@ -1078,6 +1078,12 @@ TEST(VoicePool, PreparedCommitHoldFreezesBindingsAndAbortRetainsOriginalCancel) 
     auto& engine = *session.Engine();
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voice, true));
+    harken::PlaybackPathRow pathRow{};
+    pathRow.stableId = harkentest::ObjectId(99);
+    pathRow.rowKind = harken::ResolvedPlayablePathRowKindV1::Definition;
+    pathRow.contentPropertyKind = harken::playableproperties::ContentPropertyKindV1::Sound;
+    pathRow.propertyFingerprint = 123;
+    ASSERT_TRUE(engine.voices.BindPreparedSignalPath(voice, {&pathRow, 1}));
     HeldSource source{};
     ASSERT_TRUE(BindHeldSource(engine, voice, &source));
     harken::CompletionProgressRow row;
@@ -1130,8 +1136,13 @@ TEST(VoicePool, PreparedCommitHoldFreezesBindingsAndAbortRetainsOriginalCancel) 
     EXPECT_FALSE(engine.voices.ReleaseObserved(source.release));
     EXPECT_EQ(1u, engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load());
     harken::VoicePool::PreparedRoutingV1 captured{};
-    ASSERT_TRUE(engine.voices.CapturePreparedRoutingV1(voice, &captured));
+    std::span<const harken::PlaybackPathRow> privatePath;
+    ASSERT_TRUE(engine.voices.CapturePreparedRoutingV1(voice, &captured, &privatePath));
     EXPECT_EQ(input.routing, captured);
+    ASSERT_EQ(privatePath.size(), 1u);
+    EXPECT_EQ(privatePath[0].stableId, pathRow.stableId);
+    EXPECT_EQ(privatePath[0].propertyFingerprint, pathRow.propertyFingerprint);
+    EXPECT_FALSE(engine.voices.CapturePreparedRoutingV1(voice + (std::uint64_t{1} << 32), &captured, &privatePath));
     harken::VoicePool::PreparedCommitProof moved(std::move(proof));
     EXPECT_FALSE(proof.Valid());
     EXPECT_TRUE(moved.Valid());

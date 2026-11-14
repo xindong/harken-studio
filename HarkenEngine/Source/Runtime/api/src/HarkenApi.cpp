@@ -36,6 +36,7 @@
 #include "harken/core/generated/harken_playable_property_runtime.g.h"
 #include "harken/BusDefinitionFingerprintValue.h"
 #include "harken/render/DynamicRoute.h"
+#include "harken/render/BusActivityPlan.h"
 #include "harken/core/ResamplerAdvance.h"
 #include "harken/core/PackReadinessContract.h"
 #include "harken/render/BuiltinEffects.h"
@@ -80100,6 +80101,109 @@ bool ValidRoutingCandidate(const TopologyPlanView& candidate) noexcept {
         candidate.busIds != nullptr && candidate.generations != nullptr && candidate.migrationTargets != nullptr;
 }
 
+}
+
+bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
+    std::span<const CommandRecord> prospective, BusActivityRoots& out) noexcept {
+    if (!topology.valid || topology.slotCount == 0 || topology.alive == nullptr ||
+        topology.generations == nullptr || !topology.alive[0]) return false;
+    try {
+        BusActivityRoots next;
+        const auto* signals = topology.signals;
+        std::vector<std::uint32_t> matches(signals != nullptr ? signals->NodeCount() : 0);
+        const auto valid = [&](BusSlotRef ref) {
+            return ref.index < topology.slotCount && topology.alive[ref.index] &&
+                topology.generations[ref.index] == ref.generation;
+        };
+        const auto dryTarget = [&](BusSlotRef ref) {
+            if (valid(ref)) return ref;
+            const auto migrated = ref.index < topology.slotCount && topology.migrationTargets != nullptr
+                ? topology.migrationTargets[ref.index] : 0u;
+            const auto index = migrated < topology.slotCount && topology.alive[migrated] ? migrated : 0u;
+            return BusSlotRef{index, topology.generations[index]};
+        };
+        const auto member = [&](std::span<const PlaybackPathRow> path) {
+            const auto count = signals != nullptr ? signals->MatchMember(path, matches) : 0u;
+            if (count == UINT32_MAX) return UINT32_MAX;
+            next.signals.insert(next.signals.end(), matches.begin(), matches.begin() + count);
+            return count;
+        };
+        const auto route = [&](BusSlotRef ref, std::uint32_t members, bool dry) {
+            if (dry) ref = dryTarget(ref);
+            else if (!valid(ref)) return;
+            next.buses.push_back(ref);
+            // MatchMember preserves the actual inner-to-outer carrier order.
+            if (members != 0) next.members.push_back({matches[members - 1], ref});
+        };
+        const auto installed = [&](VnVoiceHandle render, BusSlotRef dry, const VoiceSendConfigs& sends) {
+            std::uint32_t count = 0;
+            const auto slot = static_cast<std::uint32_t>(render);
+            if (render != 0 && slot < engine.playbackPaths.size() &&
+                engine.playbackPaths[slot].voiceInstance == render) {
+                const auto path = engine.playbackPaths[slot].Capture();
+                count = member({path.path.rows, path.path.rowCount});
+                if (count == UINT32_MAX) return false;
+            }
+            route(dry, count, true);
+            for (const auto& send : sends) if (send.active)
+                route({send.targetBusIndex, send.targetBusGeneration}, count, false);
+            return true;
+        };
+        const auto prepared = [&](VnVoiceHandle render) {
+            VoicePool::PreparedRoutingV1 routing;
+            std::span<const PlaybackPathRow> path;
+            if (!engine.voices.CapturePreparedRoutingV1(render, &routing, &path)) return false;
+            const auto count = member(path);
+            if (count == UINT32_MAX) return false;
+            route({routing.busIndex, routing.busGeneration}, count, true);
+            for (const auto& send : routing.SendRoutes()) if (send.active)
+                route({send.busIndex, send.busGeneration}, count, false);
+            return true;
+        };
+        for (std::size_t slot = 0; slot < engine.voicePlayFacts.size(); ++slot) {
+            const auto& facts = engine.voicePlayFacts[slot];
+            if (facts.valid && facts.renderHandle != 0 && engine.voices.IsAlive(facts.renderHandle) &&
+                !installed(facts.renderHandle, {facts.busIndex, facts.busGeneration}, engine.voiceSendConfig[slot]))
+                return false;
+        }
+        for (std::size_t slot = 0; slot < engine.timelineVoiceInstallIdentities.size(); ++slot) {
+            const auto& identity = engine.timelineVoiceInstallIdentities[slot];
+            if (identity.renderHandle != 0 && engine.voices.IsAlive(identity.renderHandle) &&
+                !installed(identity.renderHandle, {identity.busIndex, identity.busGeneration}, engine.voiceSendConfig[slot]))
+                return false;
+        }
+        bool ok = true;
+        engine.ledger.ForEachPending([&](std::uint32_t slot, VnVoiceHandle handle) {
+            const auto& pending = engine.pendingStarts[slot];
+            if (pending.active && pending.publicHandle == handle)
+                ok &= installed(0, {pending.busIndex, pending.busGeneration}, pending.voiceSends);
+        });
+        engine.ledger.ForEachParked([&](std::uint32_t slot, VnVoiceHandle) {
+            const auto& park = engine.parkRecords[slot];
+            if (park.active)
+                ok &= installed(park.facts.renderHandle, {park.facts.busIndex, park.facts.busGeneration}, park.voiceSends);
+        });
+        if (!ok || !VisitPreparedRoutingOwners(engine,
+            [&](RoutingStore, std::uint32_t, std::uint32_t, std::uint64_t,
+                EnginePlayableServiceRow*, EnginePreparedTimelineVoiceStart& start) {
+                return prepared(start.renderHandle);
+            })) return false;
+        for (const auto& command : prospective) {
+            if (command.opcode == kOpcodePlay &&
+                command.payload.play.batch.batchKind != PlayLedBatchKind::TimelineControlArm &&
+                !prepared(command.payload.play.handle)) return false;
+            if (command.opcode == kOpcodeSetVoiceSend) {
+                if ((command.flags & kCommandFlagVoiceSendSet) == 0) return false;
+                const auto* set = reinterpret_cast<const VoiceSendSet*>(command.payload.setVoiceSend.setAddress);
+                if (set == nullptr || set->preparedRoutes == nullptr ||
+                    set->host != command.payload.setVoiceSend.handle) return false;
+                for (const auto& send : *set->preparedRoutes) if (send.active)
+                    route({send.busIndex, send.busGeneration}, 0, false);
+            }
+        }
+        out = std::move(next);
+        return true;
+    } catch (...) { return false; }
 }
 
 bool ValidatePreparedTimelineVoiceStartRoutingV1(Engine& engine,

@@ -4,6 +4,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "HarkenApiInternal.h"
+#include "SignalPublication.h"
 #include "harken/render/BusActivityPlan.h"
 
 #include "harken/dsp/GainRamp.h"
@@ -742,6 +743,43 @@ TEST(BusActivity, DependencyClosureKeepsDetectorsAndDropsRootlessComponents) {
     EXPECT_NE(std::find(selected.buses.begin(), selected.buses.end(), 3), selected.buses.end());
 }
 
+TEST(BusActivity, OwnerRootsKeepTimelineIdentityAndCurrentSendsWithoutRawFacts) {
+    using namespace harken;
+    EngineSession session(MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    for (unsigned id = 301; id <= 303; ++id)
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(id), VN_BUS_MASTER));
+    const auto samples = harkentest::MakeDC(4096, .25f);
+    const auto pcm = MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(304), &pcm));
+    auto play = MakePlayDesc(harkentest::ObjectId(304));
+    play.busId = harkentest::ObjectId(301);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(voice, 19, harkentest::ObjectId(303), 0));
+    engine.nullBackend.Pump(1);
+    const auto fact = std::find_if(engine.voicePlayFacts.begin(), engine.voicePlayFacts.end(),
+        [](const auto& row) { return row.valid; });
+    ASSERT_NE(fact, engine.voicePlayFacts.end());
+    const auto render = fact->renderHandle;
+    const auto slot = static_cast<std::uint32_t>(render);
+    auto& identity = engine.timelineVoiceInstallIdentities[slot];
+    identity.renderHandle = render;
+    identity.busIndex = fact->busIndex;
+    identity.busGeneration = fact->busGeneration;
+    const auto oldSend = engine.buses.FindRef(harkentest::ObjectId(302));
+    identity.voiceSends = identity.voiceSends.WithSet({true, oldSend.index, 0, oldSend.generation, 19, 1});
+    fact->valid = false;
+    BusActivityRoots roots;
+    ASSERT_TRUE(CaptureBusActivityOwners(engine, engine.buses.AcceptedTopology(), {}, roots));
+    EXPECT_NE(std::find(roots.buses.begin(), roots.buses.end(), engine.buses.FindRef(play.busId)), roots.buses.end());
+    EXPECT_NE(std::find(roots.buses.begin(), roots.buses.end(), engine.buses.FindRef(harkentest::ObjectId(303))), roots.buses.end());
+    EXPECT_EQ(std::find(roots.buses.begin(), roots.buses.end(), oldSend), roots.buses.end());
+    identity = {};
+    fact->valid = true;
+}
+
 TEST(BusActivity, WorkObservationIsFreshAndRetainsSilentPhysicalVoicesAndTransitions) {
     using namespace harken;
     auto config = MakeNullConfig(2, 64, 48000);
@@ -800,6 +838,53 @@ TEST(BusActivity, WorkObservationIsFreshAndRetainsSilentPhysicalVoicesAndTransit
     ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
     EXPECT_TRUE(observed.localRecoveryReady);
     EXPECT_GE(observed.quietFrames, 24000u);
+}
+
+TEST(BusActivity, PendingVoiceDetectorSurvivesProducerWithdrawalUntilNextBank) {
+    using namespace harken;
+    EngineSession session(MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(301), VN_BUS_MASTER));
+    engine.nullBackend.Pump(1);
+    const auto bus = engine.buses.FindRef(harkentest::ObjectId(301));
+    const auto work = engine.buses.AcceptedWorkRef(bus);
+    auto& routes = engine.dynamicRoutes;
+    DynamicRouteDefinition route{};
+    route.active = true;
+    route.targetBusIndex = bus.index;
+    route.sourceKind = VN_DYNAMIC_SOURCE_VOICE;
+    route.sourceIndex = 7;
+    route.sourceGeneration = 1;
+    route.tap = VN_DYNAMIC_TAP_VOICE_POST_GAIN_PRE_SPATIAL;
+    ASSERT_TRUE(routes.AcquireRouteTap(route));
+    const auto plan = routes.AcquirePlan();
+    ASSERT_TRUE(routes.BuildPlan(plan, &route, false));
+    routes.InstallPlan(plan);
+    routes.BeginBlock();
+    float pcm[64]{};
+    pcm[0] = 1;
+    float* channels[]{pcm};
+    routes.PublishVoiceTap((std::uint64_t{1} << 32) | 7, channels, 1, 0, 64);
+    routes.EndBlock(2);
+    // No live Voice owner remains, but next block still owns detector PCM.
+    engine.buses.BeginWorkObservations();
+    engine.buses.PublishWorkObservations(3, 192, 64, true);
+    BusTree::WorkObservation observed;
+    ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_FALSE(observed.physicalVoice);
+    EXPECT_TRUE(observed.detectorActive);
+    EXPECT_FALSE(observed.localRecoveryReady);
+    routes.BeginBlock();
+    routes.EndBlock(3);
+    engine.buses.BeginWorkObservations();
+    engine.buses.PublishWorkObservations(4, 256, 64, true);
+    ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_FALSE(observed.detectorActive);
+    EXPECT_TRUE(observed.localRecoveryReady);
+    routes.InstallPlan(0);
+    routes.DrainAudioMessages();
+    routes.ReleaseRouteTap(route);
 }
 
 TEST(BusActivity, ExactDelayRecoveryProbeBacksOffAfterFiniteTail) {

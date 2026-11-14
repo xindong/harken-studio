@@ -54,6 +54,12 @@ bool BusTree::LocalRecoveryReady(const Bus& bus) const noexcept {
 
 void BusTree::PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t frameEnd,
     std::uint32_t frames, bool rendered) noexcept {
+    const auto detectorPlan = m_dynamicRoutes.InstalledPlan();
+    for (std::uint32_t i = 0; rendered && i < detectorPlan.rowCount; ++i) {
+        const auto& route = detectorPlan.rows[i];
+        if (HasWorkRow(route.targetBusIndex) && m_dynamicRoutes.HasPendingVoiceInput(route))
+            WorkState(route.targetBusIndex).activityDetector = true;
+    }
     const auto publish = [&](std::uint32_t index) {
         auto& row = m_workRows[m_workSlots[index].slot];
         auto& fact = row.observed;

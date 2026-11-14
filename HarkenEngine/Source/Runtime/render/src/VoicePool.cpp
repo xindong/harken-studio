@@ -5641,7 +5641,8 @@ std::uint32_t VoicePool::RenderedState(VnVoiceHandle handle) const noexcept {
 }
 
 bool VoicePool::CapturePreparedRoutingV1(VnVoiceHandle handle,
-                                         PreparedRoutingV1* out) const noexcept {
+                                         PreparedRoutingV1* out,
+                                         std::span<const PlaybackPathRow>* path) const noexcept {
     const auto index = static_cast<std::uint32_t>(handle);
     const auto generation = static_cast<std::uint32_t>(handle >> 32);
     if (out == nullptr || handle == 0 || index >= m_slots.size()) return false;
@@ -5666,6 +5667,7 @@ bool VoicePool::CapturePreparedRoutingV1(VnVoiceHandle handle,
     }
     if (count != slot.render.voiceSendActiveCount) return false;
     *out = captured;
+    if (path != nullptr) *path = slot.render.signalPath;
     return true;
 }
 

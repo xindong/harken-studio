@@ -924,7 +924,9 @@ public:
     bool CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noexcept;
     bool MatchesOriginalPreparedVoice(const OriginalVoiceOwner& original,
         const PreparedCommitProof& proof) const noexcept;
-    bool CapturePreparedRoutingV1(VnVoiceHandle handle, PreparedRoutingV1* out) const noexcept;
+    // Optional path is borrowed only while the exact private preparation remains held.
+    bool CapturePreparedRoutingV1(VnVoiceHandle handle, PreparedRoutingV1* out,
+        std::span<const PlaybackPathRow>* path = nullptr) const noexcept;
     bool CanCommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
         const PreparedRoutingV1& expected, const PreparedRoutingV1& next) const noexcept;
     void CommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
