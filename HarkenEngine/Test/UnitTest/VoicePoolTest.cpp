@@ -2142,6 +2142,7 @@ TEST(VoicePool, ReusedWidthKeepsDirectAudioAtExactArenaBoundaries) {
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(3), &wideDesc));
         const auto sendBus = harkentest::ObjectId(7);
         ASSERT_EQ(VN_OK, Vn_CreateBus(sendBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(sendBus, config.fxSlotsPerBus));
         ASSERT_EQ(VN_OK, Vn_Update());
         const auto pump = [&] {
             const auto before = engine.mixer.BlocksRendered();

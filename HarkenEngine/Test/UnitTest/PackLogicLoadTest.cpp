@@ -1692,6 +1692,7 @@ TEST(PackLogicReplace, SingleStageOverflowLeavesLoadedRevisionIntact) {
         WriteFileBytes(firstPath, first.Build());
         VnPackHandle pack = 0;
         ASSERT_EQ(VN_OK, LoadPack(firstPath, &pack));
+        ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(harkentest::ObjectId(13193), engine->config.fxSlotsPerBus));
         engine->nullBackend.Pump(1);
         const std::uint32_t index = engine->buses.FindIndex(harkentest::ObjectId(13193));
         ASSERT_NE(harken::kInvalidBusIndex, index);
@@ -1963,6 +1964,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact)
     EXPECT_FLOAT_EQ(
         -6.0f, engine->busTargets.Reduce(
                    index, harken::kBusTargetBusVolume));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(harkentest::ObjectId(13172), engine->config.fxSlotsPerBus));
     engine->nullBackend.Pump(1);
     harken::BusTree::Bus* bus = engine->buses.BusState(index);
     ASSERT_NE(nullptr, bus);

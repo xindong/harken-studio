@@ -181,6 +181,21 @@ static bool SelectRetainedBusActivity(Engine& engine, const TopologyPlanView& to
             if (bus.index < topology.slotCount && topology.alive[bus.index] &&
                 topology.generations[bus.index] == bus.generation) roots.buses.push_back(bus);
         };
+        // Master always has a plane, but is only a dependency root while it
+        // can still produce output. A quiet proof must cover every command
+        // accepted before this preparation, not an earlier completed block.
+        const auto master = engine.buses.RefAt(0);
+        const auto rawHead = engine.commands.PublishedHead();
+        const auto initialHead = engine.commands.InitialSourcePublishedHead();
+        BusTree::WorkObservation fact;
+        const bool pristine = current == nullptr && rawHead == 0 && initialHead == 0;
+        const bool quietMaster = engine.buses.CaptureWorkObservation(master,
+            engine.buses.AcceptedWorkRef(master), fact) && fact.rendered && fact.localRecoveryReady &&
+            !fact.inputActive && !fact.detectorActive && !fact.physicalVoice &&
+            fact.sendTailFrames == 0 && fact.outputTailFrames == 0 &&
+            fact.graphRevision == engine.acceptedBusTopologyRevision &&
+            fact.commandFrontier == rawHead && fact.initialSourceFrontier == initialHead;
+        if (!pristine && !quietMaster) retainBus(master);
         if (current != nullptr)
             for (const auto& binding : current->working)
                 if (binding.bus.index != 0) retainBus(binding.bus);

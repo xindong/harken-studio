@@ -202,6 +202,9 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     engine.nullBackend.Pump(1);
     ASSERT_NE(nullptr, engine.buses.InstalledSignals());
     EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(0u, engine.buses.InstalledSignals()->RelationCount());
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_OBJECT_ID(0, 2), 0, 0));
+    engine.nullBackend.Pump(1);
     EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
     EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
     const auto identity = engine.acceptedSignalPlan->WorldIdentity();
@@ -297,7 +300,12 @@ TEST(PackSignalRelation, RetainedPreparedAndLiveLeasesKeepExactProofUntilLastRel
     engine.nullBackend.Pump(1);
     ASSERT_NE(nullptr, engine.buses.InstalledSignals());
     EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(0u, engine.buses.InstalledSignals()->RelationCount());
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0, 0));
+    engine.nullBackend.Pump(1);
     EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
-    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
+    EXPECT_EQ(engine.buses.InstalledSignals()->MatchMember({&row, 1}, matched), 1u);
+    row.source.ownerRevision = 1;
+    EXPECT_EQ(engine.buses.InstalledSignals()->MatchMember({&row, 1}, matched), 0u);
 }
 } // namespace

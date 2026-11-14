@@ -178,6 +178,8 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
         ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
     const auto source = fixture.receivers[0].target.stableId;
     ASSERT_EQ(Vn_SetBusOutputLayout(source, VN_CHANNEL_LAYOUT_MONO), VN_OK);
+    // Exercise publication with a working receiver; unused definitions may stay cold.
+    ASSERT_EQ(Vn_SetBusFaderPoint(fixture.receivers[0].target.stableId, engine.config.fxSlotsPerBus), VN_OK);
     engine.nullBackend.Pump(1);
     const auto before = engine.commands.FreeSlots();
     const auto installed = InstallContainerWorldV1(engine, fixture.world);
@@ -295,6 +297,8 @@ TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyComma
     SignalWorld fixture;
     for (const auto& receiver : fixture.receivers)
         ASSERT_EQ(Vn_CreateBus(receiver.target.stableId, VN_BUS_MASTER), VN_OK);
+    // Exercise publication with a working receiver; unused definitions may stay cold.
+    ASSERT_EQ(Vn_SetBusFaderPoint(fixture.receivers[0].target.stableId, engine.config.fxSlotsPerBus), VN_OK);
     engine.nullBackend.Pump(1);
     ProjectGenerationInstallViewV1 view;
     view.token = {11, 2, 3, 4};
@@ -320,6 +324,59 @@ TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyComma
     EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), engine.acceptedSignalPlan->ContentIdentity());
     EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), engine.acceptedSignalPlan->RelationCount());
     EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
+}
+
+TEST(CurrentWorldSignal, MasterTailAndUnrenderedCommandsRootNewSignalDependencies) {
+    for (unsigned mode = 0; mode != 3; ++mode) {
+        SCOPED_TRACE(mode);
+        auto config = harkentest::MakeNullConfig(2, 64, 48000);
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto& engine = *session.Engine();
+        const auto target = harkentest::ObjectId(42);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(target, VN_BUS_MASTER));
+        engine.nullBackend.Pump(2);
+        BusTree::WorkObservation fact;
+        const auto master = engine.buses.RefAt(0);
+        const auto work = engine.buses.AcceptedWorkRef(master);
+        ASSERT_TRUE(engine.buses.CaptureWorkObservation(master, work, fact));
+        ASSERT_TRUE(fact.localRecoveryReady);
+        if (mode == 1) {
+            VnFeedbackDelayDesc delay{};
+            delay.structSize = sizeof(delay);
+            delay.delayMs = 50; delay.feedback = .5f; delay.wet = 1; delay.dry = 0;
+            ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_FEEDBACK_DELAY,
+                reinterpret_cast<const VnEffectDesc*>(&delay)));
+            auto pcm = harkentest::MakeDC(64, .25f);
+            const auto desc = harkentest::MonoDesc(pcm, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(43), &desc));
+            const auto play = harkentest::MakePlayDesc(harkentest::ObjectId(43));
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            engine.nullBackend.Pump(4);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_TRUE(engine.buses.CaptureWorkObservation(master, work, fact));
+            ASSERT_FALSE(fact.physicalVoice);
+            ASSERT_GT(fact.outputTailFrames, 0u);
+        } else if (mode == 2) {
+            ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -3, 100));
+            ASSERT_TRUE(engine.buses.CaptureWorkObservation(master, work, fact));
+            ASSERT_TRUE(fact.localRecoveryReady);
+            ASSERT_LT(fact.commandFrontier, engine.commands.PublishedHead());
+        }
+        SignalWorld fixture;
+        fixture.receivers[0].target.stableId = target;
+        fixture.relations[0].source.stableId = VN_BUS_MASTER;
+        fixture.relations[0].target = fixture.receivers[0].target;
+        fixture.world.signalRelationCount = fixture.world.signalReceiverCount = 1;
+        fixture.Refresh();
+        ASSERT_EQ(InstallContainerWorldV1(engine, fixture.world).status, WorldInstallStatus::Ok);
+        engine.nullBackend.Pump(1);
+        ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+        EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), mode == 0 ? 0u : 1u);
+        EXPECT_EQ(engine.buses.WorkingPlaneCount(), mode == 0 ? 1u : 2u);
+        EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+    }
 }
 
 TEST(CurrentWorldSignal, PendingPlanBackingIsReleasedOnlyAfterRetirementDrain) {

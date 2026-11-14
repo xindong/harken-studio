@@ -1982,7 +1982,8 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     m_workObservationFrames = frames > UINT64_MAX - m_workObservationFrames
         ? UINT64_MAX : m_workObservationFrames + frames;
     m_buses.PublishWorkObservations(blockIndex + 1,
-        m_workObservationFrames, frames, planesOk && signalOk);
+        m_workObservationFrames, frames, planesOk && signalOk,
+        m_commands.ConsumedCount(), m_commands.InitialSourcesConsumed());
 
     if (m_arena.OverflowCount() != overflowsBefore) {
         // One notification per degraded block, not one per failed allocation: the

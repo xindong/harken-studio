@@ -2426,6 +2426,7 @@ TEST(VariableCurrentSlice,
     harkentest::VariableOutcomeCapture capturedOutcomes(*engine);
     InstallVariable(engine);
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSecondBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kSecondBus, config.fxSlotsPerBus));
     RegisterBusVolumeBinding(harkentest::ObjectId(1), VN_BUS_MASTER, 0.0f, 0.0f,
                              1.0f, -6.0f);
     RegisterBusVolumeBinding(harkentest::ObjectId(2), kSecondBus, 0.0f, 0.0f,
@@ -6351,6 +6352,7 @@ TEST(VariableCurrentSlice, FiniteOverflowBusWriteRowIsTargetRejected) {
     harken::Engine* engine = session.Engine();
     InstallVariable(engine);
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(9), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(harkentest::ObjectId(9), config.fxSlotsPerBus));
     RegisterBusVolumeBinding(harkentest::ObjectId(1), harkentest::ObjectId(9), 0.0f, 0.0f, 1.0f, 772.0f);
     ASSERT_EQ(VN_OK, Vn_Update());
     engine->nullBackend.Pump(2);

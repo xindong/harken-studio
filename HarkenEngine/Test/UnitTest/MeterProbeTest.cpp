@@ -998,6 +998,7 @@ TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
     ASSERT_TRUE(engine.variableSlices.Reset(4, 8, 8, 2));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kTargetBus, engine.config.fxSlotsPerBus));
     const auto targetIndex = engine.buses.FindIndex(kTargetBus);
     for (int iteration = 0; iteration < 6; ++iteration) {
         SCOPED_TRACE(iteration);

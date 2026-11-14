@@ -53,7 +53,8 @@ bool BusTree::LocalRecoveryReady(const Bus& bus) const noexcept {
 }
 
 void BusTree::PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t frameEnd,
-    std::uint32_t frames, bool rendered) noexcept {
+    std::uint32_t frames, bool rendered, std::uint64_t commandFrontier,
+    std::uint64_t initialSourceFrontier) noexcept {
     const auto detectorPlan = m_dynamicRoutes.InstalledPlan();
     for (std::uint32_t i = 0; rendered && i < detectorPlan.rowCount; ++i) {
         const auto& route = detectorPlan.rows[i];
@@ -72,6 +73,8 @@ void BusTree::PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t
         fact.frameEnd = frameEnd;
         fact.graphRevision = InstalledGraphRevision();
         fact.stateRevision = bus.activityRevision;
+        fact.commandFrontier = commandFrontier;
+        fact.initialSourceFrontier = initialSourceFrontier;
         fact.rendered = rendered;
         fact.inputActive = bus.activityInput;
         fact.detectorActive = bus.activityDetector;

@@ -145,6 +145,7 @@ public:
         WorkRef work;
         std::uint64_t blockSequence = 0, frameEnd = 0;
         std::uint64_t graphRevision = 0, stateRevision = 0;
+        std::uint64_t commandFrontier = 0, initialSourceFrontier = 0;
         std::uint64_t quietFrames = 0, recoveryProbeFrame = 0;
         std::uint32_t sendTailFrames = 0, outputTailFrames = 0;
         bool rendered = false, physicalVoice = false;
@@ -170,7 +171,8 @@ public:
     void BeginWorkObservations() noexcept;
     void NoteAudioBusUser(BusSlotRef bus) noexcept;
     void PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t frameEnd,
-        std::uint32_t frames, bool rendered) noexcept;
+        std::uint32_t frames, bool rendered, std::uint64_t commandFrontier = 0,
+        std::uint64_t initialSourceFrontier = 0) noexcept;
 
     // Creates a bus under an existing parent. Logic thread. Refusals:
     // id 0 -> VN_INVALID_ARG, id already present (including the master id)
