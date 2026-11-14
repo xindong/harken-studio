@@ -5618,6 +5618,10 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     // via the update's fold+flush), not through the property publisher's
     // transaction, so they do not consume its section-10.4 worst-case budget.
     const bool usesPublisher = scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    if (scopeKind == kTargetScopeBus && definition != nullptr &&
+        !engine.busTargets.PrepareActivity(busIndex, definition->targetId)) {
+        return VN_BACKPRESSURE;
+    }
     if (usesPublisher &&
         !engine.propertyPublisher.TryGrowWorstCase(1, &engine.logicLogRing)) {
         return VN_INVALID_CONFIG;
@@ -112683,6 +112687,7 @@ VnResult Vn_Update(void) {
      * accounting exact. */
     engine->meterProbes.EndService(*engine);
     engine->variables.EndService(*engine);
+    engine->busTargets.ReleaseUnusedActivities(engine->bindings);
     engine->variables.AcknowledgeFinishedNativeReadCuts();
     engine->CompleteVariableOperation();
     engine->variables.ReleaseUnusedReadCutBacking();
@@ -126909,12 +126914,16 @@ VnResult PrepareRevisionBindings(
         }
         std::uint32_t definitionSlot =
             engine.bindings.DefinitionSlotOf(entry.bindingId);
+        const auto* existingDefinition = engine.bindings.Find(entry.bindingId);
+        std::uint32_t activityTarget = existingDefinition != nullptr
+            ? existingDefinition->targetId : UINT32_MAX;
         bool definitionWillBeAdded = false;
         for (std::size_t added = 0;
              added < revision.addBindingDefs.size(); ++added) {
             const auto& def = revision.image.bindingDefinitions[
                 revision.addBindingDefs[added]];
             if (def.id == entry.bindingId) {
+                activityTarget = def.desc.targetId;
                 definitionSlot =
                     revision.preparedBindingDefinitionAdds[added]
                         .SlotIndex();
@@ -126928,6 +126937,11 @@ VnResult PrepareRevisionBindings(
                 VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
             busIndex = ProspectiveRevisionBusIndex(
                 engine, revision, entry.objectId);
+        }
+        if (entry.scopeKind == kTargetScopeBus &&
+            !engine.busTargets.PrepareActivity(busIndex, activityTarget)) {
+            CancelRevisionBindings(engine, revision);
+            return VN_BACKPRESSURE;
         }
         bool duplicateWillBeDetached = false;
         for (const BindingTable::PreparedAttachmentToken& removed :
@@ -130149,17 +130163,25 @@ VnResult PrepareCanonicalBindingDiff(
         }
         std::uint32_t definitionSlot =
             engine.bindings.DefinitionSlotOf(attachment.bindingId);
+        const auto* existingDefinition = engine.bindings.Find(attachment.bindingId);
+        std::uint32_t activityTarget = existingDefinition != nullptr
+            ? existingDefinition->targetId : UINT32_MAX;
         bool definitionWillBeAdded = false;
         for (std::size_t added = 0; added < addDefinitionIndices.size(); ++added) {
             const auto& def =
                 nextImage->bindingDefinitions[addDefinitionIndices[added]];
             if (def.id == attachment.bindingId) {
+                activityTarget = def.desc.targetId;
                 definitionSlot = plan.definitionAdds[added].SlotIndex();
                 definitionWillBeAdded = true;
                 break;
             }
         }
         const bool duplicateWillBeDetached = detachingOwned;
+        if (attachment.scopeKind == kTargetScopeBus &&
+            !engine.busTargets.PrepareActivity(busIndex, activityTarget)) {
+            return VN_BACKPRESSURE;
+        }
         BindingTable::PreparedAttachmentToken token;
         const VnResult result = engine.bindings.PrepareAttach(
             attachment.bindingId, attachment.scopeKind, attachment.objectId,
@@ -131328,6 +131350,11 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
 }
 
 bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
+    bool targetsReady = true;
+    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
+        targetsReady &= engine.busTargets.PrepareActivity(attachment.busIndex, definition.targetId);
+    });
+    if (!targetsReady) return false;
     if (prepared.planIndex == kInvalidTopologyPlanIndex) return true;
     if (prepared.commands.empty() || engine.acceptedBusTopologyRevision == UINT64_MAX) return false;
     const auto acceptedRevision = engine.acceptedBusTopologyRevision + 1;

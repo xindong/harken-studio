@@ -2361,7 +2361,12 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         acceptedRevision;
     command.payload.setBusTopologyPlan.batchCommandCount = static_cast<std::uint32_t>(commands.size());
     CommandQueue::PreparedBatchProof proof;
-    if (!PrepareTopologyActivity(engine, engine.topologyPlans.View(liveIndex), reservation, commands, proof,
+    bool targetStorageReady = true;
+    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
+        targetStorageReady &= engine.busTargets.PrepareActivity(attachment.busIndex, definition.targetId);
+    });
+    if (!targetStorageReady ||
+        !PrepareTopologyActivity(engine, engine.topologyPlans.View(liveIndex), reservation, commands, proof,
             nullptr, true, prepared.preparedWork_)) {
         engine.commands.CancelReservedBatch(&reservation);
         engine.topologyPlans.Recycle(liveIndex);

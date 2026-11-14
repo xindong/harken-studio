@@ -1937,6 +1937,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact)
         VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &probeGeneration));
     ASSERT_NE(0u, probeGeneration);
 
+    ASSERT_TRUE(engine->busTargets.PrepareActivity(index, harken::kBusTargetBusVolume));
     engine->busTargets.BeginMeterProbeSweep();
     engine->busTargets.AccumulateMeterProbe(
         index, generation, harken::kBusTargetBusVolume, 3.0e38f, true, 17);

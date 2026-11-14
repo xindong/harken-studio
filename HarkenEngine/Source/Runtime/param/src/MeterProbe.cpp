@@ -859,7 +859,8 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
     if ((targetScope == VN_TARGET_SCOPE_VOICE &&
          !engine.params.PrepareRetiringTargetStorage()) ||
         (targetScope == VN_TARGET_SCOPE_BUS &&
-         !engine.busTargets.PrepareRetiringTargetStorage())) {
+         (!engine.busTargets.PrepareActivity(busIndex, binding->targetId) ||
+          !engine.busTargets.PrepareRetiringTargetStorage()))) {
         engine.meterDetectors.NoteRefusal();
         return VN_BACKPRESSURE;
     }
