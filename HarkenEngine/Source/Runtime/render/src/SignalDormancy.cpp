@@ -183,6 +183,67 @@ bool SignalRenderPlan::PrepareDormantContinuity(const SignalRenderPlan& previous
     } catch (...) { return false; }
 }
 
+bool SignalRenderPlan::PruneDormantState(std::shared_ptr<const DormantState> state,
+    std::shared_ptr<const DormantState>& remaining) const noexcept {
+    if (!state || !state->captured.load(std::memory_order_acquire)) return false;
+    if (state->content != contentIdentity_ || state->world != worldIdentity_ ||
+        state->format.channels != format_.channels || state->format.sampleRate != format_.sampleRate ||
+        state->format.capacityFrames != format_.capacityFrames || state->format.layout != format_.layout) {
+        remaining.reset();
+        return true;
+    }
+    try {
+        std::vector<std::uint32_t> remap(state->nodes.size(), UINT32_MAX);
+        std::uint32_t kept = 0;
+        const auto sameProof = [](const SignalMemberProof& a, const SignalMemberProof& b) {
+            return a.stableId == b.stableId && a.propertyFingerprint == b.propertyFingerprint &&
+                SameDefinitionSource(a.source, b.source);
+        };
+        for (std::uint32_t i = 0; i < state->nodes.size(); ++i) {
+            const auto& saved = state->nodes[i];
+            const auto& old = saved.definition;
+            bool restored = false;
+            for (std::uint32_t j = 0; j < nodes_.size() && !restored; ++j) {
+                const auto& node = nodes_[j];
+                if (node.kind != old.kind || node.stableId != old.stableId ||
+                    node.busId != old.busId || node.busGeneration != old.busGeneration) continue;
+                restored = true;
+                for (const auto& proof : membership_)
+                    if (proof.node == j && std::none_of(saved.membership.begin(), saved.membership.end(),
+                        [&](const auto& other) { return sameProof(proof, other); })) restored = false;
+                for (const auto& proof : saved.membership)
+                    if (std::none_of(membership_.begin(), membership_.end(),
+                        [&](const auto& other) { return other.node == j && sameProof(proof, other); })) restored = false;
+            }
+            if (!restored) remap[i] = kept++;
+        }
+        if (kept == 0) { remaining.reset(); return true; }
+        if (kept == state->nodes.size()) { remaining = std::move(state); return true; }
+        auto next = std::make_shared<DormantState>();
+        next->format = state->format;
+        next->sourcePublication = state->sourcePublication;
+        next->sleepPublication = state->sleepPublication;
+        next->content = state->content;
+        next->world = state->world;
+        next->historyRevision = state->historyRevision;
+        next->nodes.reserve(kept);
+        for (std::uint32_t i = 0; i < remap.size(); ++i)
+            if (remap[i] != UINT32_MAX) next->nodes.push_back(state->nodes[i]);
+        for (auto connection : state->connections) {
+            const auto source = remap[connection.source], target = remap[connection.target];
+            // A wake must preserve each formal connected component as a whole.
+            if ((source == UINT32_MAX) != (target == UINT32_MAX)) return false;
+            if (source == UINT32_MAX) continue;
+            connection.source = source;
+            connection.target = target;
+            next->connections.push_back(connection);
+        }
+        next->captured.store(true, std::memory_order_release);
+        remaining = std::move(next);
+        return true;
+    } catch (...) { return false; }
+}
+
 bool SignalRenderPlan::AdoptContinuityFrom(SignalRenderPlan& previous) noexcept {
     if (&previous == this || adopted_ || open_ || committed_ || previous.open_) return false;
     const Continuity* mapping = nullptr;

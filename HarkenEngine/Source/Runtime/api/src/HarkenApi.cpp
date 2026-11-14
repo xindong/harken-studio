@@ -8087,6 +8087,10 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
         proof.Release();
         return false;
     }
+    if (!harken::PrepareBusActivityWake(engine, *reservation, commands, proof)) {
+        proof.Release();
+        return false;
+    }
     return true;
 }
 
@@ -74773,6 +74777,11 @@ public:
         if (!engine_.commands.ProvePreparedBatch(&reservation_,
                 engine_.playLedBatchScratch.data(), count_, &proof_)) {
             engine_.commands.CancelReservedBatch(&reservation_);
+            return VN_DEVICE_ERROR;
+        }
+        if (!harken::PrepareBusActivityWake(engine_, reservation_,
+                {engine_.playLedBatchScratch.data(), count_}, proof_)) {
+            proof_.Release();
             return VN_DEVICE_ERROR;
         }
         return VN_OK;

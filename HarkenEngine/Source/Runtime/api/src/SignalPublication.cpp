@@ -170,8 +170,12 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
 
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
-    CommandQueue::PreparedBatchProof& proof) noexcept {
-    if (!topology.valid || commands.empty() || commands.size() > UINT32_MAX || proof.Valid()) return false;
+    CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected,
+    bool adoptsTopology) noexcept {
+    if (!topology.valid || commands.empty() || commands.size() > UINT32_MAX) return false;
+    const bool alreadyFrozen = proof.Valid();
+    if (alreadyFrozen && !engine.commands.PreparedBatchMatches(proof, &reservation,
+            static_cast<std::uint32_t>(commands.size()))) return false;
     struct PrivateRows {
         BusTree& tree;
         std::vector<BusTree::WorkRef> rows;
@@ -179,6 +183,9 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     } privateRows{engine.buses};
     BusActivityPlan* activity = nullptr;
     try {
+        BusActivitySelection selection;
+        if (selected != nullptr) selection = *selected;
+        else {
         std::vector<BusSlotRef> roots;
         roots.reserve(topology.orderCount);
         for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
@@ -188,8 +195,8 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         }
         std::vector<std::uint32_t> signalRoots(topology.signals != nullptr ? topology.signals->NodeCount() : 0);
         for (std::uint32_t i = 0; i < signalRoots.size(); ++i) signalRoots[i] = i;
-        BusActivitySelection selection;
         if (!PrepareBusActivitySelection(topology, topology.signals, roots, signalRoots, {}, {}, selection)) return false;
+        }
         std::vector<BusTree::WorkBinding> working;
         std::vector<SignalRenderNodeInput> busBindings;
         working.reserve(topology.orderCount);
@@ -242,10 +249,10 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             (signals == nullptr || !signals->SameContinuityDomain(*previous));
         activity = engine.buses.PrepareActivity(topology, working, std::move(signals),
             replace ? BusTree::SignalTransition::ReplaceContent : BusTree::SignalTransition::Preserve,
-            replace ? previous : nullptr, true);
+            replace ? previous : nullptr, adoptsTopology);
         if (activity == nullptr) return false;
-        if (!engine.commands.ProvePreparedBatch(&reservation, commands.data(),
-                static_cast<std::uint32_t>(commands.size()), &proof) ||
+        if ((!alreadyFrozen && !engine.commands.ProvePreparedBatch(&reservation, commands.data(),
+                static_cast<std::uint32_t>(commands.size()), &proof)) ||
             !engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(activity))) {
             proof.Release();
             engine.buses.CancelActivity(activity);
@@ -258,6 +265,59 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         engine.buses.DrainActivities();
         return false;
     }
+}
+
+bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
+    std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept {
+    const auto topology = engine.buses.AcceptedTopology();
+    const auto* current = engine.buses.AcceptedActivity();
+    // Bootstrap and the complete projection already own every possible route.
+    if (!topology.valid || current == nullptr) return true;
+    if (engine.buses.PendingSleep() == nullptr && current->working.size() == topology.orderCount &&
+        (topology.signals == nullptr || (current->signals != nullptr &&
+         current->signals->NodeCount() == topology.signals->NodeCount()))) return true;
+    try {
+        BusActivityRoots roots;
+        if (!CaptureBusActivityOwners(engine, topology, commands, roots)) return false;
+        for (const auto& binding : current->working) roots.buses.push_back(binding.bus);
+        // An unconditional wake must be safe even if S is rejected. Keep all
+        // A rows in that case, not merely the subset S proposed to retain.
+        if (current == engine.buses.PendingSleep() && current->sleepPrevious != nullptr)
+            for (const auto& binding : current->sleepPrevious->working) roots.buses.push_back(binding.bus);
+        const auto retainSignals = [&](const SignalRenderPlan* prior) {
+            if (prior == nullptr || topology.signals == nullptr) return;
+            for (std::uint32_t i = 0; i < topology.signals->NodeCount(); ++i) {
+                const auto node = topology.signals->NodeDefinition(i);
+                for (std::uint32_t j = 0; j < prior->NodeCount(); ++j) {
+                    const auto other = prior->NodeDefinition(j);
+                    if (node.kind == other.kind && node.stableId == other.stableId &&
+                        node.busId == other.busId && node.busGeneration == other.busGeneration) {
+                        roots.signals.push_back(i);
+                        break;
+                    }
+                }
+            }
+        };
+        retainSignals(current->signals.get());
+        retainSignals(engine.buses.AcceptedActivityAlternate());
+        std::vector<BusActivityDetectorDependency> detectors;
+        engine.dynamicRoutes.ForEachDefinition([&](const DynamicRouteDefinition& route) {
+            if (route.targetBusIndex >= topology.slotCount || !topology.alive[route.targetBusIndex]) return;
+            const BusSlotRef target{route.targetBusIndex, topology.generations[route.targetBusIndex]};
+            if (route.sourceKind == VN_DYNAMIC_SOURCE_BUS && route.sourceIndex < topology.slotCount &&
+                topology.alive[route.sourceIndex] && topology.generations[route.sourceIndex] == route.sourceGeneration)
+                detectors.push_back({target, {route.sourceIndex, route.sourceGeneration}});
+            else if (route.sourceKind == VN_DYNAMIC_SOURCE_VOICE &&
+                engine.voices.IsAlive((static_cast<std::uint64_t>(route.sourceGeneration) << 32) | route.sourceIndex))
+                roots.buses.push_back(target);
+        });
+        BusActivitySelection selected;
+        if (!PrepareBusActivitySelection(topology, topology.signals, roots.buses, roots.signals,
+                detectors, roots.members, selected)) return false;
+        if (engine.buses.PendingSleep() == nullptr && selected.buses == current->order &&
+            (topology.signals == nullptr || selected.signalNodes.size() == current->signals->NodeCount())) return true;
+        return PrepareTopologyActivity(engine, topology, reservation, commands, proof, &selected, false);
+    } catch (...) { return false; }
 }
 
 PrivateSignalTopology::~PrivateSignalTopology() {

@@ -660,3 +660,41 @@ TEST(SignalRenderPlan, ColdCaptureRefusesRealInputSourceHistoryAndConnectionRamp
     ASSERT_TRUE(sleep->CaptureDormantState(*active, *cold));
     EXPECT_FALSE(sleep->CaptureDormantState(*active, *cold));
 }
+
+TEST(SignalRenderPlan, ColdRegistryPrunesOnlyRestoredComponents) {
+    std::array<SignalRenderNodeInput, 4> nodes{};
+    for (unsigned i = 0; i < nodes.size(); ++i) {
+        nodes[i].kind = SignalEndpointKindV1::Sound;
+        nodes[i].stableId = {0, i + 1u};
+        nodes[i].receiver = (i & 1) != 0;
+    }
+    const std::array relations{SignalConnectionInput{0, 1, .1f, {0, 10}},
+        SignalConnectionInput{2, 3, .2f, {0, 11}}};
+    auto active = SignalRenderPlan::Prepare(kFormat, nodes, relations, {});
+    ASSERT_TRUE(active->ConfigurePublication(1, 100, nullptr, 256));
+    auto sleep = SignalRenderPlan::Prepare(kFormat, {}, {}, {});
+    ASSERT_TRUE(sleep->ConfigurePublication(2, 100, active.get(), 256));
+    auto cold = sleep->PrepareDormantState(*active);
+    ASSERT_NE(cold, nullptr);
+    std::shared_ptr<const SignalRenderPlan::DormantState> remaining;
+    EXPECT_FALSE(sleep->PruneDormantState(cold, remaining));
+    ASSERT_TRUE(active->BeginBlock(Block(0)));
+    ASSERT_TRUE(active->ProcessContent({}));
+    ASSERT_TRUE(active->CommitBlock());
+    ASSERT_TRUE(sleep->CaptureDormantState(*active, *cold));
+    ASSERT_TRUE(sleep->AdoptContinuityFrom(*active));
+    auto partial = SignalRenderPlan::Prepare(kFormat, {nodes.data(), 2}, {relations.data(), 1}, {});
+    ASSERT_TRUE(partial->ConfigurePublication(3, 100, sleep.get(), 256));
+    ASSERT_TRUE(partial->PrepareDormantContinuity(*sleep, cold));
+    ASSERT_TRUE(partial->PruneDormantState(cold, remaining));
+    ASSERT_NE(remaining, nullptr);
+    EXPECT_NE(remaining.get(), cold.get());
+    ASSERT_TRUE(partial->AdoptContinuityFrom(*sleep));
+    auto wake = SignalRenderPlan::Prepare(kFormat, nodes, relations, {});
+    ASSERT_TRUE(wake->ConfigurePublication(4, 100, partial.get(), 256));
+    ASSERT_TRUE(wake->PrepareDormantContinuity(*partial, remaining));
+    cold.reset();
+    ASSERT_TRUE(wake->AdoptContinuityFrom(*partial));
+    ASSERT_TRUE(wake->PruneDormantState(remaining, remaining));
+    EXPECT_EQ(remaining, nullptr);
+}

@@ -271,6 +271,10 @@ public:
     bool CaptureDormantState(SignalRenderPlan& previous, DormantState& state) const noexcept;
     bool PrepareDormantContinuity(const SignalRenderPlan& previous,
         std::shared_ptr<const DormantState> state) noexcept;
+    // Logic, after capture ACK: retain only endpoints absent from this accepted
+    // projection. A successful empty result releases the obsolete cold record.
+    bool PruneDormantState(std::shared_ptr<const DormantState> state,
+        std::shared_ptr<const DormantState>& remaining) const noexcept;
 
     // A legally sleeping receiver can carry a non-default floating-point
     // fixed point. Seed only an unpublished candidate; mapped live receivers

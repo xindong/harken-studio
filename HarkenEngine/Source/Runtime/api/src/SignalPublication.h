@@ -35,9 +35,13 @@ struct BusActivityRoots;
 // Membership is matched against the complete definition, not its active projection.
 bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
     std::span<const CommandRecord> prospective, BusActivityRoots& out) noexcept;
+struct BusActivitySelection;
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
-    CommandQueue::PreparedBatchProof& proof) noexcept;
+    CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected = nullptr,
+    bool adoptsTopology = true) noexcept;
+bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
+    std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept;
 
 // For an owner transaction without an existing topology publication. Its
 // reservation must not span cancellation/drain work that can enqueue commands.
