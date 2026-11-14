@@ -1,4 +1,6 @@
 #include "harken/render/BusActivityPlan.h"
+#include "harken/render/VoicePool.h"
+#include <stdexcept>
 
 namespace harken {
 
@@ -134,6 +136,11 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
         }
         plan->signalTransition = signalTransition;
         plan->replacedSignalPublication = replacedSignals != nullptr ? replacedSignals->PublicationIdentity() : 0;
+        if (signalTransition == SignalTransition::ReplaceContent && m_pendingSleep != nullptr &&
+            m_lastQueuedActivity == m_pendingSleep && replacedSignals == m_pendingSleep->signals.get()) {
+            const auto* alternate = AcceptedActivityAlternate();
+            if (alternate != nullptr) plan->replacedSignalAlternate = alternate->PublicationIdentity();
+        }
         plan->working.reserve(working.size());
         plan->directory.resize(topology.slotCount);
         plan->order.reserve(working.size());
@@ -224,6 +231,77 @@ void BusTree::CancelActivity(BusActivityPlan* plan) noexcept {
         std::memory_order_release, std::memory_order_relaxed);
 }
 
+bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
+    std::span<const WorkObservation> observations, VoicePool& voices) noexcept {
+    auto* previous = m_lastQueuedActivity;
+    if (&plan.tree != this || plan.phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Preparing ||
+        plan.adoptsTopology || previous == nullptr || m_pendingSleep != nullptr ||
+        plan.sleepPrevious != nullptr || plan.signalTransition != SignalTransition::Preserve ||
+        previous->logicPins == UINT32_MAX) return false;
+    try {
+        plan.sleepPrevious = previous;
+        ++previous->logicPins;
+        plan.sleepVoices = &voices;
+        plan.sleeping.reserve(observations.size());
+        std::uint64_t block = 0;
+        for (const auto& binding : previous->working) {
+            const auto retained = std::find_if(plan.working.begin(), plan.working.end(),
+                [&](const auto& next) { return next.bus == binding.bus; });
+            if (retained != plan.working.end()) {
+                if (retained->work != binding.work) throw std::invalid_argument("sleep replaced a retained row");
+                continue;
+            }
+            const auto fact = std::find_if(observations.begin(), observations.end(),
+                [&](const auto& value) { return value.bus == binding.bus && value.work == binding.work; });
+            if (binding.bus.index == 0 || fact == observations.end() || !fact->rendered ||
+                !fact->localRecoveryReady || fact->inputActive || fact->detectorActive || fact->physicalVoice ||
+                fact->quietFrames < m_sampleRate / 2 || (block != 0 && block != fact->blockSequence))
+                throw std::invalid_argument("invalid sleep observation");
+            block = fact->blockSequence;
+            auto saved = std::make_shared<BusActivityPlan::DormantWork>();
+            saved->bus = binding.bus;
+            if (!RetainWorkRow(binding.work)) throw std::invalid_argument("expired sleep row");
+            plan.sleeping.push_back({*fact, std::move(saved)});
+        }
+        if (plan.sleeping.size() != observations.size() || plan.sleeping.empty() ||
+            plan.working.size() + plan.sleeping.size() != previous->working.size())
+            throw std::invalid_argument("sleep must be a strict subset");
+        if (previous->signals != nullptr) {
+            if (plan.signals == nullptr) throw std::invalid_argument("missing sleep signals");
+            plan.dormantSignals = plan.signals->PrepareDormantState(*previous->signals);
+            if (!plan.dormantSignals) throw std::bad_alloc();
+        }
+        plan.sleepDecision.store(BusActivityPlan::SleepDecision::Pending, std::memory_order_release);
+        return true;
+    } catch (...) {
+        plan.ReleaseSleepHolds();
+        plan.dormantSignals.reset();
+        return false;
+    }
+}
+
+void BusTree::AcknowledgeSleep() noexcept {
+    if (m_pendingSleep == nullptr) return;
+    auto& plan = *m_pendingSleep;
+    const auto decision = plan.sleepDecision.load(std::memory_order_acquire);
+    if (decision == BusActivityPlan::SleepDecision::Pending) return;
+    if (m_lastQueuedActivity == &plan && decision == BusActivityPlan::SleepDecision::Rejected)
+        m_lastQueuedActivity = plan.sleepPrevious;
+    plan.ReleaseSleepHolds();
+    m_pendingSleep = nullptr;
+}
+
+const SignalRenderPlan* BusTree::AcceptedActivityAlternate() const noexcept {
+    return m_lastQueuedActivity != nullptr && m_lastQueuedActivity == m_pendingSleep &&
+        m_pendingSleep->sleepPrevious != nullptr ? m_pendingSleep->sleepPrevious->signals.get() : nullptr;
+}
+
+bool BusTree::PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept {
+    return m_lastQueuedActivity != m_pendingSleep || m_pendingSleep == nullptr ||
+        m_pendingSleep->dormantSignals == nullptr ||
+        next.PrepareDormantContinuity(*m_pendingSleep->signals, m_pendingSleep->dormantSignals);
+}
+
 void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
     assert(plan.phase.load(std::memory_order_relaxed) == BusActivityPlan::Phase::Preparing);
     for (const auto& binding : plan.working) {
@@ -232,6 +310,10 @@ void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
             assert(published);
             (void)published;
         }
+    }
+    if (plan.sleepDecision.load(std::memory_order_relaxed) == BusActivityPlan::SleepDecision::Pending) {
+        assert(m_pendingSleep == nullptr);
+        m_pendingSleep = &plan;
     }
     if (plan.adoptsTopology) m_acceptedTopology = plan.topologyDefinition;
     m_lastQueuedActivity = &plan;
@@ -250,12 +332,51 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
         const auto host = BusSlotRef::FromPacked(entry.adoption.host);
         if (AudioWorkRef(host.index) != entry.work || !AudioRefMatches(host)) return false;
     }
+    const bool sleeping = plan.sleepDecision.load(std::memory_order_relaxed) == BusActivityPlan::SleepDecision::Pending;
+    if (sleeping) {
+        const auto reject = [&] {
+            plan.phase.store(BusActivityPlan::Phase::Retired, std::memory_order_release);
+            plan.sleepDecision.store(BusActivityPlan::SleepDecision::Rejected, std::memory_order_release);
+            return true;
+        };
+        if (m_activeActivity != plan.sleepPrevious || plan.sleepVoices == nullptr) return reject();
+        // Commands earlier in this same drain may already have installed a
+        // Voice since the completed-block observation was published.
+        plan.sleepVoices->MarkPhysicalBusUsers(*this);
+        for (auto& entry : plan.sleeping) {
+            const auto& expected = entry.expected;
+            auto* row = ResolveWorkRow(expected.work);
+            if (row == nullptr || AudioWorkRef(expected.bus.index) != expected.work || row->host != expected.bus)
+                return reject();
+            const auto& current = row->observed;
+            if (!current.rendered || current.blockSequence < expected.blockSequence ||
+                current.graphRevision != expected.graphRevision || InstalledGraphRevision() != expected.graphRevision ||
+                row->bus.activityRevision != expected.stateRevision || current.stateRevision != expected.stateRevision ||
+                current.physicalVoice || current.inputActive || current.detectorActive ||
+                !current.localRecoveryReady || current.quietFrames < m_sampleRate / 2 || !LocalRecoveryReady(row->bus))
+                return reject();
+            auto& saved = *entry.saved;
+            const std::array sections{&row->bus.busLpf, &row->bus.busHpf, &row->bus.outputLpf, &row->bus.outputHpf};
+            for (std::size_t i = 0; i < sections.size(); ++i)
+                if (!CaptureDormantToneSection(*sections[i], m_mixChannels, saved.filters[i])) return reject();
+            for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
+                const auto& ref = row->bus.fxSlotEffectRef[i];
+                if (ref.type == kEffectTypeNone) continue;
+                if (!CaptureBuiltinEffectDormantState(ref.type, row->bus.fxSlots[i].state,
+                        m_mixChannels, saved.effects[i], &saved.tones[i])) return reject();
+                saved.identities[i] = m_effectBank.ObjectIdentity(ref);
+            }
+        }
+        if (plan.dormantSignals != nullptr &&
+            !plan.signals->CaptureDormantState(*plan.sleepPrevious->signals, *plan.dormantSignals)) return reject();
+    }
     auto* previousSignals = InstalledSignals();
     if (plan.signalTransition == SignalTransition::ReplaceContent) {
         // Content replacement is an explicit prepared transition, never a
         // fallback for a failed same-content continuity mapping.
-        if ((previousSignals != nullptr ? previousSignals->PublicationIdentity() : 0) !=
-            plan.replacedSignalPublication) return false;
+        const auto identity = previousSignals != nullptr ? previousSignals->PublicationIdentity() : 0;
+        if (identity != plan.replacedSignalPublication &&
+            (plan.replacedSignalAlternate == 0 || identity != plan.replacedSignalAlternate)) return false;
     } else if (previousSignals != nullptr) {
         if (plan.signals == nullptr || !plan.signals->AdoptContinuityFrom(*previousSignals)) return false;
     }
@@ -296,12 +417,14 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
     plan.phase.store(BusActivityPlan::Phase::Active, std::memory_order_release);
     if (previous != nullptr)
         previous->phase.store(BusActivityPlan::Phase::Retired, std::memory_order_release);
+    if (sleeping) plan.sleepDecision.store(BusActivityPlan::SleepDecision::Accepted, std::memory_order_release);
     return true;
 }
 
 void BusTree::DrainActivities() noexcept {
     std::erase_if(m_activities, [&](const auto& plan) {
-        if (plan->phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Retired) return false;
+        if (plan.get() == m_pendingSleep || plan->logicPins != 0 ||
+            plan->phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Retired) return false;
         if (m_lastQueuedActivity == plan.get()) m_lastQueuedActivity = nullptr;
         return true;
     });
@@ -309,7 +432,9 @@ void BusTree::DrainActivities() noexcept {
 }
 
 void BusTree::ShutdownActivities() noexcept {
-    m_activeActivity = m_lastQueuedActivity = nullptr;
+    m_activeActivity = m_lastQueuedActivity = m_pendingSleep = nullptr;
+    // Release backward pins before destroying any predecessor object.
+    for (auto& plan : m_activities) plan->ReleaseSleepHolds();
     m_activities.clear();
 }
 
@@ -337,10 +462,14 @@ BusTree::WorkRef BusTree::AcceptedWorkRef(BusSlotRef bus) const noexcept {
     if (!bus.Valid()) return {};
     if (m_lastQueuedActivity != nullptr) {
         const auto& plan = *m_lastQueuedActivity;
-        if (bus.index >= plan.directory.size()) return {};
-        const auto plane = plan.directory[bus.index].plane;
-        if (plane >= plan.working.size() || plan.working[plane].bus != bus) return {};
-        return plan.working[plane].work;
+        if (bus.index < plan.directory.size()) {
+            const auto plane = plan.directory[bus.index].plane;
+            if (plane < plan.working.size() && plan.working[plane].bus == bus) return plan.working[plane].work;
+        }
+        if (&plan == m_pendingSleep)
+            for (const auto& removed : plan.sleeping)
+                if (removed.expected.bus == bus) return removed.expected.work;
+        return {};
     }
     // Bootstrap rows have fixed physical slots. Do not read the audio-owned
     // installed directory or mutable DSP identity from the logic thread.

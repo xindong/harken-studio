@@ -229,9 +229,13 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         std::unique_ptr<SignalRenderPlan> signals;
         if (topology.signals != nullptr) {
             signals = topology.signals->PrepareProjection(selection.signalNodes, topology.slotCount, busBindings);
+            const bool continuous = signals != nullptr && previous != nullptr &&
+                topology.signals->SameContinuityDomain(*previous);
             if (!signals || !signals->ConfigurePublication(engine.buses.NextActivitySignalPublication(previous),
                     topology.signals->ContentIdentity(), previous,
-                    (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 10 + 999) / 1000) ||
+                    (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 10 + 999) / 1000,
+                    continuous ? engine.buses.AcceptedActivityAlternate() : nullptr) ||
+                (continuous && !engine.buses.PreparePendingSleepContinuity(*signals)) ||
                 !engine.mixer.PrepareSignalBacking(*signals)) return false;
         }
         const bool replace = previous != nullptr &&

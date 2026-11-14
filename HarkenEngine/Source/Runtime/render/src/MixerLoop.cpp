@@ -1558,6 +1558,10 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.setBusEffectBypass.expectedEffectType,
                 command.payload.setBusEffectBypass.busGeneration);
             break;
+        case kOpcodeSetBusActivity:
+            // The queue adopts (or conditionally rejects) the attached state
+            // before consuming this record. No structural plan is replaced.
+            break;
         case kOpcodeSetBusFaderPoint:
             m_buses.ApplySetBusFaderPoint(
                 command.payload.setBusFaderPoint.busIndex,

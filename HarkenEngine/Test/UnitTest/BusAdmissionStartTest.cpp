@@ -403,7 +403,9 @@ TEST(BusAdmissionStart, CommandWaistStaysFrozen) {
     EXPECT_LE(sizeof(harken::CommandRecord::Payload::SetBusTopologyPlan), 56u);
     EXPECT_EQ(harken::kOpcodeSetBusTopologyPlan, 15u);
     EXPECT_EQ(harken::kOpcodeSeekVoice, 26u);
-    EXPECT_EQ(harken::kMaxKnownOpcode, harken::kOpcodeApplyPreviewEffectChain);
+    EXPECT_EQ(harken::kOpcodeApplyPreviewEffectChain, 27u);
+    EXPECT_EQ(harken::kOpcodeSetBusActivity, 28u);
+    EXPECT_EQ(harken::kMaxKnownOpcode, harken::kOpcodeSetBusActivity);
     EXPECT_EQ(sizeof(harken::PreparedOwnerClaimV1), 56u);
     EXPECT_EQ(sizeof(harken::ProjectGenerationInstallAckIdentityV1), 40u);
     EXPECT_EQ(sizeof(harken::ProjectGenerationInstallAckV1), 40u);

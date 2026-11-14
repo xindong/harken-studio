@@ -2,6 +2,7 @@
 
 #include "harken/render/BusTree.h"
 #include "harken/render/SignalRenderPlan.h"
+#include "harken/render/BuiltinEffectDormancy.h"
 
 namespace harken {
 
@@ -52,11 +53,35 @@ struct BusActivityPlan {
         };
     }
     ~BusActivityPlan() {
+        ReleaseSleepHolds();
         if (!workingReleased)
             for (const auto& binding : working) tree.ReleaseWorkRow(binding.work);
         if (!beforeDetachReleased)
             for (const auto& entry : beforeDetach) tree.ReleaseWorkRow(entry.work);
     }
+    void ReleaseSleepHolds() noexcept {
+        for (const auto& row : sleeping) tree.ReleaseWorkRow(row.expected.work);
+        sleeping.clear();
+        if (sleepPrevious != nullptr) { --sleepPrevious->logicPins; sleepPrevious = nullptr; }
+    }
+    struct DormantWork {
+        BusSlotRef bus;
+        std::array<BusTree::DormantToneSection, 4> filters;
+        std::array<BuiltinEffectDormantState, kMaxFxSlotsPerBus> effects;
+        std::array<EffectObjectIdentity, kMaxFxSlotsPerBus> identities;
+        std::array<ToneDormantState, kMaxFxSlotsPerBus> tones;
+    };
+    struct SleepingWork {
+        BusTree::WorkObservation expected;
+        std::shared_ptr<DormantWork> saved;
+    };
+    enum class SleepDecision : std::uint8_t { None, Pending, Accepted, Rejected };
+    std::atomic<SleepDecision> sleepDecision{SleepDecision::None};
+    std::vector<SleepingWork> sleeping;
+    std::shared_ptr<SignalRenderPlan::DormantState> dormantSignals;
+    BusActivityPlan* sleepPrevious = nullptr;
+    VoicePool* sleepVoices = nullptr;
+    std::uint32_t logicPins = 0;
     BusTree& tree;
     CommandQueue::BusActivityAttachment attachment{};
     std::atomic<Phase> phase{Phase::Preparing};
@@ -67,7 +92,7 @@ struct BusActivityPlan {
     TopologyPlanView topologyDefinition;
     bool adoptsTopology = false;
     BusTree::SignalTransition signalTransition = BusTree::SignalTransition::Preserve;
-    std::uint64_t replacedSignalPublication = 0;
+    std::uint64_t replacedSignalPublication = 0, replacedSignalAlternate = 0;
     struct BeforeDetach { BusEffectChainAdoption adoption; BusTree::WorkRef work; };
     std::vector<BeforeDetach> beforeDetach;
     bool workingReleased = false;

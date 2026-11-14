@@ -43,6 +43,7 @@
 #include <vector>
 
 namespace harken {
+class VoicePool;
 struct SignalFeedbackEdge;
 struct SignalBusRoutingInfo;
 struct BusActivityPlan;
@@ -147,6 +148,15 @@ public:
         bool rendered = false, physicalVoice = false;
         bool inputActive = false, detectorActive = false, localRecoveryReady = false;
     };
+    // Conditional removal retains its predecessor and every removed work row
+    // until logic acknowledges the decision. Queued wakes own independent leases.
+    bool PrepareConditionalSleep(BusActivityPlan& plan,
+        std::span<const WorkObservation> observations, VoicePool& voices) noexcept;
+    BusActivityPlan* PendingSleep() const noexcept { return m_pendingSleep; }
+    void AcknowledgeSleep() noexcept;
+    const BusActivityPlan* AcceptedActivity() const noexcept { return m_lastQueuedActivity; }
+    const SignalRenderPlan* AcceptedActivityAlternate() const noexcept;
+    bool PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept;
     // Single logic reader; a retained WorkRef protects the snapshot storage.
     // Local readiness is a sleep proposal, not a complete dependency proof.
     bool CaptureWorkObservation(BusSlotRef bus, WorkRef work, WorkObservation& out) noexcept;
@@ -583,6 +593,7 @@ private:
     std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
     BusActivityPlan* m_lastQueuedActivity = nullptr;
     BusActivityPlan* m_activeActivity = nullptr;
+    BusActivityPlan* m_pendingSleep = nullptr;
     TopologyPlanView m_acceptedTopology;
     std::uint64_t m_activityFallbacks = 0;
     std::uint64_t m_activitySignalPublication = 0;

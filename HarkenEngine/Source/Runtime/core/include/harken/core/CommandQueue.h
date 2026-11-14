@@ -84,7 +84,9 @@ inline constexpr std::uint16_t kOpcodeSeekVoice = 26;
 // bit per opcode), so a composed scene can prove it stayed within the vocabulary
 // — the acceptance command-vocabulary check.
 inline constexpr std::uint16_t kOpcodeApplyPreviewEffectChain = 27;
-inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeApplyPreviewEffectChain;
+// The activity attachment owns the full projection; this carrier has no payload.
+inline constexpr std::uint16_t kOpcodeSetBusActivity = 28;
+inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeSetBusActivity;
 
 // SetVoiceFilter selects which tone-stage section it retunes. One opcode
 // covers both sections so the audio-thread vocabulary stays minimal.
