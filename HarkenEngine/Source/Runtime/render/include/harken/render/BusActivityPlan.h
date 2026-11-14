@@ -35,7 +35,10 @@ struct BusDormantWork {
     BusSlotRef bus;
     std::vector<std::byte> payload;
     std::uint32_t sampleRate = 0;
-    std::array<std::uint8_t, kMaxFxSlotsPerBus> types{};
+    std::array<std::uint8_t, kMaxFxSlotsPerBus> types = [] {
+        std::array<std::uint8_t, kMaxFxSlotsPerBus> values; values.fill(UINT8_MAX); return values;
+    }();
+    static_assert([] { for (const auto& row : kEffectRegistry) if (row.effectType >= UINT8_MAX) return false; return true; }());
     std::uint8_t filterMask = 0;
     std::uint8_t renderedMask = 0;
 };

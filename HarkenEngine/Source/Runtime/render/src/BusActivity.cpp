@@ -460,7 +460,7 @@ bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
         }
         for (std::uint32_t slot = 0; slot < saved.types.size(); ++slot) {
             const auto type = saved.types[slot];
-            if (type == kEffectTypeNone) continue;
+            if (type == UINT8_MAX) continue;
             std::uint32_t revision = 0;
             BuiltinEffectDormantState state;
             ToneDormantState tone;

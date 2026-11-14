@@ -1198,7 +1198,7 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     ASSERT_NE(residual, nullptr);
     EXPECT_EQ(residual->filterMask, 0u);
     EXPECT_EQ(residual->types[0], VN_EFFECT_GAIN);
-    EXPECT_EQ(std::count(residual->types.begin(), residual->types.end(), kEffectTypeNone), 7);
+    EXPECT_EQ(std::count(residual->types.begin(), residual->types.end(), UINT8_MAX), 7);
     buses.DrainActivities();
     engine.nullBackend.Pump(1);
     buses.DrainActivities();
