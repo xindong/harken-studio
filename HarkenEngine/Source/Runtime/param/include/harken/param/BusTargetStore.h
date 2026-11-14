@@ -50,7 +50,7 @@ public:
                             std::uint32_t retiringTargetCapacity = 0);
     BusTargetStore(const BusTargetStore& other);
     bool PrepareActivity(std::uint32_t busIndex, std::uint32_t targetId) noexcept;
-    void ReleaseUnusedActivities(const BindingTable& bindings) noexcept;
+    void ReleaseUnusedActivities(BindingTable& bindings) noexcept;
     std::size_t ActivityCount() const noexcept { return m_activities.size(); }
     std::uint64_t StorageBytes() const noexcept;
 

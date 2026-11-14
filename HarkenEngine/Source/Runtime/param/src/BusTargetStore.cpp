@@ -76,7 +76,7 @@ BusTargetStore::Slot BusTargetStore::ReadSlot(std::uint32_t bus, std::uint32_t t
     return slot == kSlotVariableIndex ? setting.activity->variable : setting.activity->meter;
 }
 
-void BusTargetStore::ReleaseUnusedActivities(const BindingTable& bindings) noexcept {
+void BusTargetStore::ReleaseUnusedActivities(BindingTable& bindings) noexcept {
     if (m_projectionActive || m_activities.empty()) return;
     for (auto& activity : m_activities) activity->attached = false;
     const auto mark = [&](const auto& attachment, const auto& definition) {
@@ -87,6 +87,20 @@ void BusTargetStore::ReleaseUnusedActivities(const BindingTable& bindings) noexc
     };
     bindings.ForEachBusAttachment(mark);
     bindings.ForEachProbeAttachment(mark);
+    // A callback can detach after evaluation but before this service cleanup.
+    // Even an unset contribution leaves a dirty retired dependency until the
+    // next fold. Its no-fail variable notification still needs this backing.
+    BindingDirtyTarget pending;
+    auto& dependencies = bindings.Dependencies();
+    for (std::uint32_t cursor = 0; dependencies.DirtyTargetAt(cursor, &pending); ++cursor) {
+        BindingDependencyIdentity identity;
+        if (!dependencies.TargetIdentity(pending, &identity) ||
+            identity.scope != kTargetScopeBus ||
+            identity.detail != static_cast<std::uint32_t>(BindingSourceKind::Variable)) continue;
+        const auto bus = static_cast<std::uint32_t>(identity.object);
+        if (identity.generation != 0 && identity.generation != ActiveGeneration(bus)) continue;
+        if (auto* activity = FindActivity(bus, identity.target)) activity->attached = true;
+    }
     for (std::size_t i = 0; i < m_activities.size();) {
         const auto& activity = *m_activities[i];
         const auto& state = activity.publish;
