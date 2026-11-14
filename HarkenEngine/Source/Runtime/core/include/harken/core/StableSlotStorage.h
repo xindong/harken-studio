@@ -1,6 +1,7 @@
 #ifndef HARKEN_CORE_STABLE_SLOT_STORAGE_H
 #define HARKEN_CORE_STABLE_SLOT_STORAGE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableRowStorage.h"
 
 #include <bit>
@@ -98,7 +99,7 @@ public:
         try {
             directory = std::make_unique<std::atomic<std::uint64_t>[]>(words);
             summary = std::make_unique<std::atomic<std::uint64_t>[]>(summaryWords);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         for (std::uint32_t word = 0; word < summaryWords; ++word)
             summary[word].store(0, std::memory_order_relaxed);
         for (std::uint32_t word = 0; word < words; ++word)
@@ -119,7 +120,7 @@ public:
         if (memguard::IsAudioTagged() || preparedUsers_ != 0 ||
             !reservation_.CommitRange(static_cast<std::size_t>(slot) * sizeof(T), sizeof(T))) return false;
         try { std::construct_at(AddressOf(slot), std::forward<Args>(args)...); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         constructed_.fetch_add(1, std::memory_order_relaxed);
         // Publish navigation before the existing object-publication bit. A reader
         // may see an empty hinted word and must still acquire its directory bits.

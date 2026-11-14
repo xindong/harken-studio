@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VariableControlRuntime.h"
 #include "harken/core/ScheduledTransactionPool.h"
 #include "harken/core/DecisionTable.h"
@@ -439,7 +440,7 @@ bool ResolveVariableControlCadenceFrame(
 VariableControlInstanceTable::VariableControlInstanceTable(
     std::uint32_t capacity)
     : capacity_(capacity) {
-    if (!entries_.Reserve(capacity)) throw std::bad_alloc{};
+    if (!entries_.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
 }
 
 VariableControlInstanceTable::Entry*

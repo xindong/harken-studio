@@ -38689,7 +38689,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
                 const bool captureRefused = harken::detail::g_logicAllocFault.remaining == 0;
                 harken::detail::DisarmLogicAllocFaultForTests();
                 ASSERT_TRUE(captureRefused);
-                ASSERT_EQ(VN_NO_VOICE, refused);
+                ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
                 ASSERT_EQ(0u, packFiring);
                 EXPECT_EQ(published, engine->commands.PublishedHead());
                 for (unsigned block = 0; block < 16; ++block) {

@@ -3,6 +3,8 @@
 #include "Common/TestUtil.h"
 
 #include <gtest/gtest.h>
+#include "HarkenApiInternal.h"
+#include <string>
 
 namespace {
 
@@ -17,11 +19,13 @@ protected:
 
 struct LogicAllocLogCapture {
     bool sawFailure = false;
+    std::string text;
 
     static void Callback(void* userData, uint32_t, uint32_t code,
-                         const char*) {
+                         const char* text) {
         auto* capture = static_cast<LogicAllocLogCapture*>(userData);
         capture->sawFailure |= code == harken::kLogCodeLogicAllocFailure;
+        if (code == harken::kLogCodeLogicAllocFailure) capture->text = text;
     }
 };
 
@@ -52,7 +56,7 @@ TEST_F(AbiExceptionFirewallSweep, DestroyBusDetachesCheckpoint) {
     ArmLogicAllocFaultForTests(1, LogicAllocSite::DestroyBusDetaches);
     VnResult result = VN_DEVICE_ERROR;
     EXPECT_NO_THROW(result = Vn_DestroyBus(harkentest::ObjectId(10)));
-    EXPECT_EQ(VN_BACKPRESSURE, result);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, result);
     VnSnapshot after{};
     after.structSize = sizeof(VnSnapshot);
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&after));
@@ -75,7 +79,7 @@ TEST_F(AbiExceptionFirewallSweep, AudibilityScratchInitCheckpoints) {
         VnResult result = VN_DEVICE_ERROR;
         EXPECT_NO_THROW(result = Vn_Init(&config));
         if (result == VN_OK) Vn_Term();
-        ASSERT_EQ(VN_INVALID_CONFIG, result);
+        ASSERT_EQ(VN_OUT_OF_MEMORY, result);
         EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
         EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Update());
         DisarmLogicAllocFaultForTests();
@@ -197,6 +201,140 @@ TEST_F(AbiExceptionFirewallSweep, VoiceEffectParkedCheckpoint) {
     returned.structSize = sizeof(VnSnapshot);
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&returned));
     EXPECT_EQ(0u, returned.parkedVoiceCount);
+}
+
+
+TEST_F(AbiExceptionFirewallSweep, NestedCallsIsolateAllocationFailures) {
+    using harken::detail::InvokeApi;
+    using harken::detail::RecordLogicAllocFailure;
+    EXPECT_EQ(VN_INVALID_ARG, InvokeApi([&]() -> VnResult {
+        EXPECT_EQ(VN_OUT_OF_MEMORY, InvokeApi([]() -> VnResult {
+            RecordLogicAllocFailure(LogicAllocSite::BindingStorage);
+            return VN_BACKPRESSURE;
+        }));
+        return VN_INVALID_ARG;
+    }));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, InvokeApi([&]() -> VnResult {
+        RecordLogicAllocFailure(LogicAllocSite::PackStorage);
+        EXPECT_EQ(VN_OK, InvokeApi([]() -> VnResult { return VN_OK; }));
+        return VN_BACKPRESSURE;
+    }));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, InvokeApi([&]() -> VnResult {
+        return InvokeApi([]() -> VnResult { throw std::bad_alloc(); });
+    }));
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, InvokeApi([]() -> VnResult {
+        throw harken::detail::PackDecodeCapacity{};
+    }));
+    EXPECT_EQ(VN_DEVICE_ERROR, InvokeApi([]() -> VnResult {
+        throw harken::detail::LogicPreparationFailure{};
+    }));
+    EXPECT_EQ(VN_DEVICE_ERROR, InvokeApi([]() -> VnResult {
+        throw std::bad_array_new_length{};
+    }));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, InvokeApi([]() -> VnResult {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        throw harken::detail::LogicPreparationFailure{};
+    }));
+}
+
+TEST_F(AbiExceptionFirewallSweep, SuccessfulCallsAndRecreationTakePriority) {
+    using harken::detail::InvokeApi;
+    using harken::detail::RecordLogicAllocFailure;
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    EXPECT_EQ(VN_OK, InvokeApi([]() -> VnResult {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return VN_OK;
+    }));
+    EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, InvokeApi([&]() -> VnResult {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        session.Engine()->runtimeRecreateRequired = true;
+        return VN_BACKPRESSURE;
+    }));
+    EXPECT_EQ(VN_IN_USE, InvokeApi([]() -> VnResult { return VN_IN_USE; }));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, InvokeApi([]() -> VnResult {
+        RecordLogicAllocFailure(LogicAllocSite::PackStorage);
+        return VN_BACKPRESSURE;
+    }));
+    EXPECT_EQ(VN_OK, InvokeApi([]() -> VnResult { return VN_OK; }));
+    harken::LogRecord record{};
+    bool found = false;
+    while (session.Engine()->logicLogRing.TryPop(record)) {
+        found |= record.code == harken::kLogCodeLogicAllocFailure &&
+            record.arg0 == static_cast<std::uint64_t>(LogicAllocSite::EngineStorage);
+    }
+    EXPECT_TRUE(found);
+    EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, InvokeApi([&]() -> VnResult {
+        EXPECT_EQ(VN_OK, Vn_Term());
+        auto config = harkentest::MakeNullConfig();
+        EXPECT_EQ(VN_OK, Vn_Init(&config));
+        session.Engine()->runtimeRecreateRequired = true;
+        return VN_BACKPRESSURE;
+    }));
+}
+
+TEST_F(AbiExceptionFirewallSweep, BusAllocationFailurePreservesExistingBusAndNamesStorage) {
+    auto config = harkentest::MakeNullConfig();
+    config.maxBuses = 1;
+    LogicAllocLogCapture capture;
+    config.logCallback = &LogicAllocLogCapture::Callback;
+    config.logUserData = &capture;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ArmLogicAllocFaultForTests(1, LogicAllocSite::BusDefinitionStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER));
+    EXPECT_EQ(1u, session.Engine()->buses.BusCount());
+    EXPECT_EQ(VN_OK, Vn_Update());
+    EXPECT_TRUE(capture.sawFailure);
+    EXPECT_NE(std::string::npos, capture.text.find("BusDefinitionStorage"));
+    EXPECT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER));
+}
+
+TEST_F(AbiExceptionFirewallSweep, CallbackFailureIsIsolatedFromUpdateAndOuterCall) {
+    struct Callback {
+        VnResult result = VN_OK;
+        unsigned calls = 0;
+        static void Notify(const VnNotification*, void* user) {
+            auto& self = *static_cast<Callback*>(user);
+            ++self.calls;
+            ArmLogicAllocFaultForTests(1, LogicAllocSite::BusDefinitionStorage);
+            self.result = Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER);
+        }
+    } callback;
+    auto config = harkentest::MakeNullConfig();
+    config.maxBuses = 1;
+    config.onNotification = &Callback::Notify;
+    config.notificationUserData = &callback;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    session.Engine()->logicNotifications.Push(VnNotification{});
+    EXPECT_EQ(VN_OUT_OF_MEMORY, harken::detail::InvokeApi([&]() -> VnResult {
+        harken::detail::RecordLogicAllocFailure(LogicAllocSite::PackStorage);
+        EXPECT_EQ(VN_OK, Vn_Update());
+        return VN_BACKPRESSURE;
+    }));
+    EXPECT_EQ(1u, callback.calls);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, callback.result);
+    EXPECT_EQ(VN_OK, Vn_Update());
+}
+
+TEST_F(AbiExceptionFirewallSweep, VoiceSendGenerationExhaustionIsNotOutOfMemory) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto sound = harkentest::ObjectId(10);
+    const auto bus = harkentest::ObjectId(11);
+    const auto samples = harkentest::MakeDC(48000, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+    const auto play = harkentest::MakePlayDesc(sound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    session.Engine()->nextVoiceSendIncarnation = UINT64_MAX;
+    const auto head = session.Engine()->commands.PublishedHead();
+    EXPECT_EQ(VN_DEVICE_ERROR, Vn_SetVoiceSend(voice, 0, bus, -6.0f));
+    EXPECT_EQ(head, session.Engine()->commands.PublishedHead());
+    EXPECT_FALSE(session.Engine()->runtimeRecreateRequired);
 }
 
 } // namespace

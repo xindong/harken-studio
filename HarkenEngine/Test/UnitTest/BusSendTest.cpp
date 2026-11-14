@@ -1109,7 +1109,7 @@ TEST(BusSend, StoragePreparationFailureKeepsPriorDefinitionAndAudio) {
             harken::detail::LogicAllocSite::BusSendStorage);
         const auto refused = Vn_ConnectBusSend(kBusA, kBusC, 0.0f);
         harken::detail::DisarmLogicAllocFaultForTests();
-        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
         EXPECT_EQ(before, engine->busSends);
         EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
         EXPECT_EQ(plans, engine->topologyPlans.InUse());
@@ -1279,7 +1279,7 @@ TEST(BusSend, PendingSendPreparationFailureNeverStopsVictimAndRetriesWithLatestC
         harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
         const auto result = Vn_CommitVoiceStart(pending);
         harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, result);
         EXPECT_EQ(head, engine.commands.PublishedHead());
         EXPECT_EQ(0u, engine.voiceStolenCount);
         EXPECT_NE(0u, engine.ledger.ToRender(victim));
@@ -1319,7 +1319,7 @@ TEST(BusSend, VoiceSendPreparationFailureKeepsAcceptedRouting) {
         harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
         const auto result = Vn_SetVoiceSend(handle, UINT32_MAX, VN_BUS_MASTER, -3);
         harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, result);
         EXPECT_EQ(head, engine.commands.PublishedHead());
         EXPECT_TRUE(before == engine.voiceSendConfig[static_cast<std::uint32_t>(render)]);
         PumpAndCapture(&engine, 1, output);

@@ -672,7 +672,7 @@ TEST(BusDestroy, ExhaustedRevisionsOrMeterSequencesPublishNothing) {
         const auto revision = engine->acceptedBusTopologyRevision;
         const auto head = engine->commands.PublishedHead();
         const auto plans = engine->topologyPlans.InUse();
-        EXPECT_EQ(meterExhausted ? VN_BACKPRESSURE : VN_DEVICE_ERROR, Vn_DestroyBus(kBusA));
+        EXPECT_EQ(meterExhausted ? VN_RUNTIME_RECREATE_REQUIRED : VN_DEVICE_ERROR, Vn_DestroyBus(kBusA));
         EXPECT_TRUE(engine->buses.LogicRefMatches(ref));
         EXPECT_EQ(0u, engine->buses.RetirementRevisionAt(ref.index));
         EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);

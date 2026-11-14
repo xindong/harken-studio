@@ -20,8 +20,7 @@ struct PackDecodeBudgetState {
 using PackDecodeBudget = std::shared_ptr<PackDecodeBudgetState>;
 
 inline PackDecodeBudget MakePackDecodeBudget(std::uint64_t limit) {
-    try { return std::make_shared<PackDecodeBudgetState>(limit); }
-    catch (const std::bad_alloc&) { throw PackDecodeCapacity{}; }
+    return std::make_shared<PackDecodeBudgetState>(limit);
 }
 
 inline std::uint64_t DecodeBytes(std::uint64_t count, std::uint64_t elementBytes) {

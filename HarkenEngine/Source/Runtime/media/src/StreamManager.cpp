@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/StreamManager.h"
 
 #include "harken/core/MediaContentRevision.h"
@@ -159,10 +160,10 @@ StreamManager::StreamManager(const EngineConfig& config)
       m_prebufferMs(config.prebufferMs),
       m_slots(config.maxStreams) {
     const auto channelSamples = static_cast<std::uint64_t>(config.maxStreams) * m_ringFrames;
-    if (channelSamples > UINT32_MAX) throw std::bad_alloc();
+    if (channelSamples > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
     for (auto& column : m_ringStorage) {
         if (!column.Reserve(static_cast<std::uint32_t>(channelSamples)))
-            throw std::bad_alloc();
+            throw harken::detail::LogicPreparationFailure{};
     }
     for (std::uint32_t s = 0; s < config.maxStreams; ++s) {
         float* planes[kMaxChannels];
@@ -180,7 +181,7 @@ StreamManager::StreamManager(const EngineConfig& config)
         for (unsigned i = 0; i < lanes; ++i)
             m_ioLanes[i]->thread = std::thread(&StreamManager::IoMain, this, i);
         m_thread = std::thread(&StreamManager::ThreadMain, this);
-    } catch (...) { StopIo(); throw; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage); StopIo(); throw; }
 
     // Startup handshake. Synchronous callers require a running manager, so a
     // thread that died on the way up must refuse initialization. Wait until it has published a verdict; it always
@@ -386,7 +387,7 @@ VnResult StreamManager::ResolvePackSource(
         fill(index, *record);
         *empty = std::move(record);
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage);
         return VN_BACKPRESSURE;
     }
 }
@@ -889,7 +890,7 @@ VnResult StreamManager::PostAndWait(Request& request) {
             throw std::bad_alloc{};
         }
         m_requests.push_back(&request);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage);
         request.result = VN_BAD_STREAM_FILE;
         return request.result;
     }

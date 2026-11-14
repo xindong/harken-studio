@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BusTree.h"
 
 namespace harken {
@@ -42,7 +43,7 @@ BusTree::WorkRef BusTree::PrepareWorkRow() noexcept {
         row.phase.store(WorkPhase::Preparing, std::memory_order_release);
         ++m_workRowsInUse;
         return {slot, row.generation};
-    } catch (...) { return {}; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return {}; }
 }
 
 BusTree::Bus* BusTree::PreparedWorkRow(WorkRef ref) noexcept {

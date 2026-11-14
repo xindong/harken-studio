@@ -1,5 +1,6 @@
 #pragma once
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -24,7 +25,7 @@ public:
             if (additional > rows_.max_size() - rows_.size()) return false;
             rows_.reserve(rows_.size() + additional);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     void Set(std::uint32_t bus, std::uint32_t section, Setting value) noexcept {
         auto found = Lower(bus);

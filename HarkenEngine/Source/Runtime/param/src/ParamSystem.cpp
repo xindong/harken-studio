@@ -43,13 +43,13 @@ std::uint32_t ResolvePreparationCapacity(const EngineConfig& config) {
     // both raw and instance sets, each with the original per-voice ceiling.
     const auto seats = std::uint64_t{config.voiceCapacity.Logical()} + config.voiceCapacity.Virtual();
     const auto capacity = seats * ResolveInstanceSlots(config);
-    if (capacity > UINT32_MAX) throw std::bad_alloc{};
+    if (capacity > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
     return static_cast<std::uint32_t>(capacity);
 }
 
 std::uint32_t ResolveBindingCapacity(const EngineConfig& config) {
     const auto capacity = std::uint64_t{config.voiceCapacity.Render()} * ResolveInstanceSlots(config);
-    if (capacity > UINT32_MAX) throw std::bad_alloc{};
+    if (capacity > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
     return static_cast<std::uint32_t>(capacity);
 }
 
@@ -68,7 +68,7 @@ ParamSystem::ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceR
         !m_bindings.Reserve(ResolveBindingCapacity(config)) ||
         !m_voiceStates.Reserve(config.voiceCapacity.Render()) ||
         !m_projectionVoices.Reserve(config.voiceCapacity.Render()) ||
-        !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
+        !PrepareVoiceStorage(initialVoiceRows)) throw harken::detail::LogicPreparationFailure{};
     m_projectionVariables.resize(m_variables.size());
 }
 
@@ -106,7 +106,7 @@ ParamSystem::ParamSystem(const ParamSystem& other)
         !m_projectionVoices.Reserve(other.m_projectionVoices.Capacity()) ||
         !m_projectionVoices.ConstructThrough(other.m_projectionVoices.size()) ||
         !m_bindings.Reserve(other.m_bindings.Capacity()) ||
-        !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
+        !m_bindings.ConstructThrough(other.m_bindings.size())) throw harken::detail::LogicPreparationFailure{};
     std::copy(other.m_voiceStates.begin(), other.m_voiceStates.end(), m_voiceStates.begin());
     std::copy(other.m_projectionVoices.begin(), other.m_projectionVoices.end(), m_projectionVoices.begin());
     std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
@@ -205,7 +205,7 @@ bool ParamSystem::PrepareBindingAuxiliaryStorage(std::uint32_t count) noexcept {
         if (m_primingInputs.size() < count) m_primingInputs.resize(count);
         if (m_projectionBindings.size() < count) m_projectionBindings.resize(count);
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage); return false; }
 }
 
 bool ParamSystem::PrepareBindingRows(std::uint32_t count) noexcept {
@@ -224,7 +224,7 @@ bool ParamSystem::PrepareBindingBacking(std::uint32_t count, BackingPreparation*
         if (!m_dependencies->PrepareBacking(std::min(count, m_preparationCapacity), &candidate.m_dependencies)) return false;
         try {
             m_freeDependencySlots.reserve(std::min(m_preparationCapacity, m_dependencies->BackedBindingCapacity()));
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage); return false; }
     }
     candidate.m_owner = this;
     ++m_backingPreparationCount;
@@ -260,7 +260,7 @@ bool ParamSystem::PrepareBinding(PreparedBindingToken* out) noexcept {
             if (m_backingUsers == 0 && m_freeDependencySlots.capacity() < backed)
                 m_freeDependencySlots.reserve(backed);
         }
-        catch (...) { m_dependencies->CancelBindingPreparation(slot); return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage); m_dependencies->CancelBindingPreparation(slot); return false; }
         if (append) ++m_dependencySlotCount;
         else m_freeDependencySlots.pop_back();
     }
@@ -887,7 +887,7 @@ bool ParamSystem::PrepareVariableStorage(std::uint32_t requiredCount) noexcept {
         m_variables.swap(variables);
         m_projectionVariables.swap(projection);
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage);
         return false;
     }
 }

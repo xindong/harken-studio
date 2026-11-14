@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/param/MeterProbe.h"
 
 #include "Engine.h"
@@ -1243,7 +1244,7 @@ VnResult MeterProbeSystem::PrepareBusRemovalV1(Engine& engine,
         out.domainEpoch = domain->epoch;
         out.owner = &engine;
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage);
         return VN_BACKPRESSURE;
     }
 }

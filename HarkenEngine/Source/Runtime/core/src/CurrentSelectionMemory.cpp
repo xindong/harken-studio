@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/CurrentSelection.h"
 
 #include <algorithm>
@@ -76,7 +77,7 @@ bool SelectionMemoryTableV1::Reset(
         }
         childScratch_.swap(childScratch);
         remainingScratch_.swap(remainingScratch);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return false;
     }
     config_ = config;
@@ -259,7 +260,7 @@ bool SelectionMemoryTableV1::PrepareColumn(std::vector<T>& column, std::size_t c
         if (resize) column.resize(count);
         else column.reserve(count);
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return NoteStorageFailure(SelectionStorageFailureKind::Allocation, count, resource);
     }
 }

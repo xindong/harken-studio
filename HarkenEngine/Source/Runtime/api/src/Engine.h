@@ -533,7 +533,7 @@ struct EnginePlaybackPathStorage {
             if (count <= 1 || additionalPathRows != nullptr) return true;
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlaybackPathStorage);
             additionalPathRows = std::make_unique<PlaybackPathRow[]>(kPlaybackPathRowCapacity - 1u);
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         }
         return true;
@@ -2904,7 +2904,7 @@ public:
         try {
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlayableServiceFeatures);
             featureArrays_ = std::make_unique<EngineServiceFeatureArrays>();
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         BindFeatureArrays();
         return true;
     }
@@ -3610,7 +3610,7 @@ private:
             static_cast<std::uint64_t>(firstScale) * first +
             static_cast<std::uint64_t>(secondScale) * second;
         if (value > std::numeric_limits<std::uint32_t>::max()) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         return static_cast<std::uint32_t>(value);
     }
@@ -3619,7 +3619,7 @@ private:
                                     std::uint32_t stride) {
         if (stride != 0 &&
             rows > std::numeric_limits<std::size_t>::max() / stride) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         return static_cast<std::size_t>(rows) * stride;
     }
@@ -4229,11 +4229,12 @@ public:
             if (!allowAllocation()) return nullptr;
             std::unique_ptr<EngineFrontierQueueOwnerContext> record(
                 new (std::nothrow) EngineFrontierQueueOwnerContext{});
+            if (!record) detail::RecordLogicAllocFailure(detail::LogicAllocSite::FrontierOwnerLedgerStorage);
             if (record == nullptr) return nullptr;
             auto* result = record.get();
             records_.push_back(std::move(record));
             return result;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return nullptr;
         } catch (const std::length_error&) {
             return nullptr;
@@ -4250,7 +4251,7 @@ public:
             for (std::uint32_t i = 0; i < count; ++i)
                 if (Acquire(i, count, true, allowAllocation) == nullptr) return false;
             return true;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         } catch (const std::length_error&) {
             return false;
@@ -4710,7 +4711,7 @@ struct EngineActionPlayStorage {
                 ordinals.resize(size);
                 detail::CheckedGrow(frames, size, detail::LogicAllocSite::ActionPlayContainerStorage);
                 frames.resize(size);
-            } catch (...) { return false; }
+            } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
             return !prepared[count].Valid();
         }
         bool PrepareMembers() noexcept {
@@ -4719,7 +4720,7 @@ struct EngineActionPlayStorage {
             try {
                 detail::CheckedGrow(members, count, detail::LogicAllocSite::ActionPlayContainerStorage);
                 members.resize(count);
-            } catch (...) { return false; }
+            } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
             for (std::uint32_t index = 0; index < count; ++index) {
                 if (!prepared[index].Valid()) return false;
                 members[index] = &prepared[index];
@@ -4790,7 +4791,7 @@ struct EngineActionPlayStorage {
             queueRoleCapacity(nodeCapacity),
             playableTreeExecutor(std::in_place, nodeCapacity, false) {
         if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits, 2u);
-        if (needsContainerState && !PrepareContainerStorage()) throw std::bad_alloc();
+        if (needsContainerState && !PrepareContainerStorage()) throw harken::detail::LogicPreparationFailure{};
     }
     bool PrepareContainerStorage() noexcept {
         if (containerStoragePrepared) return true;
@@ -4848,7 +4849,7 @@ struct EngineActionPlayStorage {
             // Retain completed columns across refusal; ready backing never moves.
             containerStoragePrepared = true;
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     enum class VariableControlRollbackStage : std::uint8_t {
         None,
@@ -6701,8 +6702,11 @@ struct Engine {
     };
     bool AllowNativeBackingAllocation() noexcept {
         ++nativeBackingAllocationCountForTest;
-        if (forcePreparedScheduleAllocationFailureForTest || nativeBackingAllocationFailureCountdownForTest == 0)
+        if (forcePreparedScheduleAllocationFailureForTest) return false;
+        if (nativeBackingAllocationFailureCountdownForTest == 0) {
+            detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
             return false;
+        }
         if (nativeBackingAllocationFailureCountdownForTest > 0) --nativeBackingAllocationFailureCountdownForTest;
         return true;
     }
@@ -6744,7 +6748,7 @@ struct Engine {
                 storage->resize(count);
             }
         }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     bool PrepareVariableControlOwners(EnginePlayableServiceRow& row,
@@ -6762,7 +6766,7 @@ struct Engine {
                 return true;
             };
             return grow(row.variableControlControllers, controllers) && grow(row.variableControlContainers, containers);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool PrepareVariableControlMemberWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
         return count <= config.maxVariableControlLiveRows &&
@@ -6807,7 +6811,7 @@ struct Engine {
                 arms.storage->resize(count);
             }
         }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     EngineFrontierAttemptToken NativeBackingTokenFor(const EngineActionPlayScratch& scratch) const noexcept;
@@ -7292,7 +7296,7 @@ public:
             !timelineStartScratch.transactions.Reserve(2u * kMaxKnownScheduleLeaves + 2u) ||
             !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
             !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity) ||
-            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
+            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw harken::detail::LogicPreparationFailure{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
         const auto playableMemberCapacity = static_cast<std::uint64_t>(playableStorage.memberCount) +
@@ -7305,7 +7309,7 @@ public:
             !actionPlayStorage.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
-            !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw std::bad_alloc{};
+            !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw harken::detail::LogicPreparationFailure{};
         if (playableMemberCapacity > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
             playableStorage.continuousCount > UINT32_MAX ||
             !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
@@ -7317,11 +7321,11 @@ public:
             !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!timelineArms.AttachRowStoragePreparation(this,
             [](void* context, std::uint32_t count, bool fullSourceCommandBacking) noexcept {
                 return static_cast<Engine*>(context)->PrepareOriginalSourceRowBacking(count, fullSourceCommandBacking);
-            })) throw std::bad_alloc{};
+            })) throw harken::detail::LogicPreparationFailure{};
         const bool originalPlayableResolver = playableInstances.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalPlayableBaseline, &DisposeOriginalPlayableAssociation);
         assert(originalPlayableResolver);
@@ -7380,7 +7384,7 @@ public:
             (laneHorizonQuanta > laneGroupLimit / groupsPerBucket ||
              resolved.maxDeferredIntents >
                  laneGroupLimit / groupsPerBucket - laneHorizonQuanta))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         timelinePoolConfig.maxImmediateLaneGroupRows =
             static_cast<std::uint32_t>(
                 (laneHorizonQuanta + resolved.maxDeferredIntents) *
@@ -7388,7 +7392,7 @@ public:
         timelinePoolConfig.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
         timelinePoolConfig.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
-        if (laneAttempts > UINT32_MAX) throw std::bad_alloc{};
+        if (laneAttempts > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
         if (!decisions.Valid() || !transitionInstances.Valid() ||
             !armGroups.Valid() ||
             !timelinePool.Reset(timelinePoolConfig, 0,
@@ -7413,9 +7417,9 @@ public:
                                   resolved.maxPropertiesPerCurrentSlice,
                                   resolved.maxVariableSliceTargetsTotal,
                                   variables.ApplyPayloadCapacity())) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
-        if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
+        if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw harken::detail::LogicPreparationFailure{};
         effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
         buses.AttachEffectRevisionReader(this, ReadBusEffectRevision);
         buses.AttachDormantEffects({this,
@@ -7447,15 +7451,15 @@ public:
             !initialQueueCurrentCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
             !initialQueueSuccessorCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
             !actionQueueReplacementScratch.Reserve(resolved.maxPlayableInstances))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
             !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
             !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (queueInstances.originalConditionalCapacity_ != 0) {
             if (!originalQueueConditionalHolders.Reserve(queueInstances.Capacity()) ||
                 !originalQueueReplacementHolders.Reserve(queueInstances.Capacity()))
-                throw std::bad_alloc{};
+                throw harken::detail::LogicPreparationFailure{};
             originalQueueReplacementSpans =
                 std::make_unique<PrivateSelectedQueueFutureSpanPool>(queueInstances.Capacity());
             originalQueueReplacementBatch =
@@ -7468,37 +7472,37 @@ public:
         if (!queueInstances.AttachRowStoragePreparation(this,
                 [](void* context, std::uint32_t count) noexcept {
                     return static_cast<Engine*>(context)->PrepareQueueInstanceHolders(count);
-                })) throw std::bad_alloc{};
+                })) throw harken::detail::LogicPreparationFailure{};
         originalQueueGroupCapacity = timelinePoolConfig.maxImmediateLaneGroupRows;
         if (!originalQueueGroupHolders.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (timelinePool.MaxArmsPerGroup() == 0)
-            throw std::bad_alloc{};
-        if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw std::bad_alloc{};
-        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
+        if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw harken::detail::LogicPreparationFailure{};
+        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw harken::detail::LogicPreparationFailure{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
         const auto plainCapacity = immediateActionLane.EventsPerAttempt();
         const auto plainRows = static_cast<std::uint64_t>(resolved.maxActionFirings) * plainCapacity;
         if (plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateSource) ||
             plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateStopRef))
-            throw std::bad_alloc{};
-        if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
+        if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw harken::detail::LogicPreparationFailure{};
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxPlan03GroupHeadersPerPage;
         if (pageGroupRows >
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03GroupSliceInput))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         const auto groupScratchCount = pageGroupRows +
             timelinePoolConfig.maxImmediateLaneGroupRows;
         if (groupScratchCount > UINT32_MAX ||
             groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(Plan03PageGroupView))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!timelineGroupCaptureScratch.Reserve(static_cast<std::uint32_t>(groupScratchCount)))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!PrepareTimelineGroupCaptureStorage(
                 timelinePool.CapturePendingEventStorageDemand().nativeGroups, 0))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         timelinePool.AttachPendingEventStorage(timelineGroupCapturePreparation, this,
             [](void* context, ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
                 return static_cast<Engine*>(context)->PrepareTimelineGroupCaptureStorage(demand.nativeGroups, 0);
@@ -7511,11 +7515,11 @@ public:
         if (queueEventCapacity > UINT32_MAX || queueEventCapacity >
             std::numeric_limits<std::size_t>::max() /
                 sizeof(EngineInitialQueueTimingEvent))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!initialQueueTimingProgramsScratch.Reserve(resolved.maxScheduledTransactions) ||
             !initialQueueTimingEventsScratch.Reserve(static_cast<std::uint32_t>(queueEventCapacity)) ||
             !initialQueueTimingGroupsScratch.Reserve(static_cast<std::uint32_t>(pageGroupRows)))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(ImmediateLaneEvent));
@@ -7523,16 +7527,16 @@ public:
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03ImmediateLaneGroupDescriptor));
         if (!initialQueueLaneGroupsScratch.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!timelinePool.AttachImmediateLaneRowStoragePreparation(this,
                 [](void* context, std::uint32_t required) noexcept {
                     auto& engine = *static_cast<Engine*>(context);
                     return engine.PrepareTimelineGroupCaptureStorage(0, required) &&
                         engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
                         engine.originalQueueGroupHolders.ConstructThrough(required);
-                })) throw std::bad_alloc{};
+                })) throw harken::detail::LogicPreparationFailure{};
         if (!initialFrontierEvents.Reserve(4ull * resolved.maxPlayableInstances + 1u) ||
-            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw std::bad_alloc{};
+            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw harken::detail::LogicPreparationFailure{};
         const std::uint64_t frontierNodes = resolved.maxPlayableInstances;
         const auto boundedFrontierCount = [](std::uint64_t proposed, std::uint32_t limit) {
             return static_cast<std::uint32_t>(std::min<std::uint64_t>(proposed, limit));
@@ -7595,7 +7599,7 @@ public:
             !selectionMemory.Reset(selectionConfig) ||
             !variables.NoteEmitterCreated(emitters.DefaultState()) ||
             !playablePropertyCutScratch.Reset(cutConfig)) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         voices.AttachStreamSeekHandoffs(&streamSeekHandoffs);
         streamResyncs.assign(voices.Capacity(), StreamResyncRow{});
@@ -7615,7 +7619,7 @@ public:
                                     resolved.maxEventsPerQuantum,
                                     &timelinePool, &timelineArms,
                                     &timelineSink, &decisions)) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         timelineService = std::make_unique<TimelineServiceCoordinator>(*this);
         // Section-10.4 capacity contract: binding-instance growth consults
@@ -7641,13 +7645,13 @@ public:
         }
         // One staging record per Logical Voice entry, indexed by ledger slot;
         // only deferred starts are active.
-        if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
+        if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw harken::detail::LogicPreparationFailure{};
         bindings.AttachVoiceCatalogStorage(this, [](void* context) noexcept {
             return static_cast<Engine*>(context)->PrepareVoiceBindingCatalogStorage();
         });
         const auto renderCapacity = resolved.voiceCapacity.Render();
         if (resolved.audibilityParkEnabled != 0 &&
-            !audibilityCursorRows.Reserve(renderCapacity)) throw std::bad_alloc();
+            !audibilityCursorRows.Reserve(renderCapacity)) throw harken::detail::LogicPreparationFailure{};
         if (!voiceOriginPlayable.Reserve(renderCapacity) ||
             !voicePlayFacts.Reserve(renderCapacity) || !playbackPaths.Reserve(renderCapacity) ||
             !timelineVoiceInstallIdentities.Reserve(renderCapacity) ||
@@ -7656,10 +7660,10 @@ public:
             !voices.AttachSlotStoragePreparation(logicVoiceStorageRegistration, this,
                 [](void* context, std::uint32_t count) noexcept {
                     return static_cast<Engine*>(context)->PrepareLogicVoiceStorage(count);
-                })) throw std::bad_alloc();
+                })) throw harken::detail::LogicPreparationFailure{};
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
-        if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
+        if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw harken::detail::LogicPreparationFailure{};
         if (resolved.audibilityParkEnabled != 0) {
             detail::CheckedGrow(audibilityParkedSlots, resolved.voiceCapacity.Virtual(),
                                 detail::LogicAllocSite::AudibilityParked);
@@ -8250,7 +8254,7 @@ public:
             grow(actionPlayAttemptTokens, std::min<std::size_t>(steps, actionPlayScratch.size()));
             grow(initialPendingVariableOwnerScratch, std::min<std::size_t>(steps, actionPlayScratch.size()));
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool PrepareImmediateEntryStorage(EngineImmediateEntryAttempt& attempt,
                                      EngineImmediateEntryStorageDemand demand) noexcept {
@@ -8276,7 +8280,7 @@ public:
             if (attempt.selectionCommitInputs.size() < count) attempt.selectionCommitInputs.resize(count);
             if (attempt.selectionPublicationCells.size() < count) attempt.selectionPublicationCells.resize(count);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool EnsureImmediateEntryAttempt(std::uint32_t slot) noexcept {
         if (slot < immediateEntryAttempts.size()) return true;
@@ -8337,7 +8341,7 @@ public:
             // their full backing once prepared, including across failed retries.
             held.laneMemberManifests = storage.privateInitialVcLaneMembers;
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     static bool ActionPlaySlotReusable(const EngineActionPlayScratch& scratch) noexcept {
         return scratch.storage.phase == EngineFrontierAttemptPhase::Free && scratch.storage.generation != UINT64_MAX;
@@ -9618,7 +9622,7 @@ public:
                 !allocateColumn(prepared->reprepare_.children, row.variableControlChildCount) ||
                 !allocateColumn(prepared->reprepare_.childEpochs, row.variableControlChildCount) ||
                 !allocateColumn(prepared->reprepare_.childrenReturned, row.variableControlChildCount)) return false;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         } catch (const std::length_error&) {
             return false;
@@ -10638,7 +10642,7 @@ public:
             if (queuePermutationScratch.size() < required) queuePermutationScratch.resize(required);
             if (queueProjectionScratch.size() <= required) queueProjectionScratch.resize(required + 1u);
             return true;
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         }
     }
@@ -12080,7 +12084,7 @@ public:
             try {
                 detail::LogicAllocCheckpoint(detail::LogicAllocSite::ImmediateEntryStorage);
                 attempt.originalC0Factory = std::make_unique<OriginalInitialC0FactoryRecord>();
-            } catch (...) { return false; }
+            } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         }
         auto& record = *attempt.originalC0Factory;
         record.receiver_ = this; record.root_ = attempt.root; record.attemptGeneration_ = attempt.generation;
@@ -13760,7 +13764,7 @@ public:
                 !buses.PrepareDefinitionCapacity(count)) return false;
             busDefinitionCapacity = count;
             return true;
-        } catch (...) { return false; }
+        } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BusDefinitionStorage); return false; }
     }
     bool PrepareBusOwnerCapacity(std::uint64_t required) noexcept {
         if (required >= UINT32_MAX) return false;
@@ -13781,7 +13785,7 @@ public:
             grow(preparedOwnerClaims);
             if (preparedPreviewOwnerSlots.size() < count) preparedPreviewOwnerSlots.resize(count, UINT32_MAX);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BusOwnerStorage); return false; }
     }
     // Prepared and retiring slots retain their old identities while backing grows.
     bool PrepareAdditionalBusDefinitions(std::uint64_t additions) noexcept {
@@ -14168,7 +14172,7 @@ public:
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
         try { row.members.resize(playableStorage.memberStride); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
@@ -14402,7 +14406,7 @@ public:
         if (row.memberPrograms.size() == playableStorage.initialProgramStride) return true;
         if (memguard::IsAudioTagged() || memberProgramRecords.PreparedUseActive()) return false;
         try { row.memberPrograms.resize(playableStorage.initialProgramStride); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     static bool MemberProgramReusable(const EngineMemberProgramRecord& record) noexcept {
@@ -14558,7 +14562,7 @@ public:
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableControlRetargetStorage);
             variableControlRetargetScratch =
                 std::make_unique<VariableControlRetargetTreeScratch>(config.maxPlayableInstances);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     VariableControlRetargetTreeScratch& VariableControlRetargetScratch() noexcept {
@@ -14618,14 +14622,14 @@ public:
                 initialRootArmPublicationInputs.resize(arms);
             }
             if (pendingImmediateLaneEventsScratch.size() < events) pendingImmediateLaneEventsScratch.resize(events);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     bool PrepareVoiceBindingCatalogStorage() noexcept {
         if (voiceBindingCatalogScratch.capacity() >= config.maxBindingAttachments) return true;
         if (memguard::IsAudioTagged()) return false;
         try { voiceBindingCatalogScratch.reserve(config.maxBindingAttachments); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
@@ -15654,7 +15658,7 @@ public:
         const std::uint64_t count = live + retained + 3ull * config.voiceCapacity.Logical();
         if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return false;
         try { retainedProfileKeyScratch.reserve(static_cast<std::size_t>(count)); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
@@ -15693,7 +15697,7 @@ public:
     bool PrepareBusRetirements(std::size_t additions) noexcept {
         if (additions > busRetirements.max_size() - busRetirements.size()) return false;
         try { busRetirements.reserve(busRetirements.size() + additions); return true; }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     const TopologyRetirementV1* BusRetirement(std::uint32_t bus) const noexcept {
         const auto it = std::find_if(busRetirements.begin(), busRetirements.end(),

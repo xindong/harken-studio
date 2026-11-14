@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/SignalRoutingTypes.h"
 #include "harken/render/SignalPathBounds.h"
 #include "harken/render/SignalRenderPlan.h"
@@ -84,11 +85,11 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
       m_outputScratch(config.mixChannelCount),
       m_biquadTrig(biquadTrig) {
     if (!m_workSlots.ConstructThrough(m_capacity) ||
-        !m_previewEffectStates.ConstructThrough(m_capacity)) throw std::bad_alloc{};
+        !m_previewEffectStates.ConstructThrough(m_capacity)) throw harken::detail::LogicPreparationFailure{};
     m_directPlanes.resize(m_mixChannels);
     // Only Master owns an initial work row. Definitions acquire private rows
     // through activity preparation when actual work requires them.
-    if (!m_workRows.ConstructThrough(1)) throw std::bad_alloc{};
+    if (!m_workRows.ConstructThrough(1)) throw harken::detail::LogicPreparationFailure{};
     m_freeWorkRows.reserve(1);
     auto& master = m_workRows[0];
     master.slot = 0;
@@ -142,7 +143,7 @@ bool BusTree::PrepareDefinitionCapacity(std::uint32_t count) noexcept {
             return false;
         m_capacity = count;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusDefinitionStorage); return false; }
 }
 
 void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,

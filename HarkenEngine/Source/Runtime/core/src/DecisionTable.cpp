@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/DecisionTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
 #include "harken/core/CheckedIssuer.h"
@@ -285,7 +286,7 @@ DecisionTable::DecisionTable(std::uint32_t capacity,
               : 0) {
     if (!participants_.Reserve(capacity_ * maxParticipantsPerDecision_) ||
         !frontiers_.Reserve(capacity_) || !rows_.Reserve(capacity_))
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 bool DecisionTable::PrepareSlotStorage(std::uint32_t slot) noexcept {

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/core/PlayablePropertyCut.h"
 
@@ -342,7 +343,7 @@ bool ResolvedPlayablePropertyCutStorageV1::Reset(
         candidate_ = std::move(second);
         config_ = config;
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::CapturedVoiceInstall);
         return false;
     }
 }
@@ -647,7 +648,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
             return ResolvedPlayablePropertyCutStatusV1::Capacity;
         try {
             output.sends.assign(payload.sends, payload.sends + payload.sendCount);
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::CapturedVoiceInstall);
             return ResolvedPlayablePropertyCutStatusV1::Capacity;
         }
     }

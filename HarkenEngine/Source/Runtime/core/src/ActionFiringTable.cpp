@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ActionFiringTable.h"
 
 #include <algorithm>
@@ -181,7 +182,7 @@ bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
         row.results.swap(results);
         row.monitorExecutedSteps.swap(monitorExecutedSteps);
         return true;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         ++refusalCount_;
         return false;
     }

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/PackTable.h"
 
 #include "harken/core/EngineConfig.h"
@@ -72,6 +73,7 @@ std::uint8_t* ReadWholeFileAligned(const char* utf8Path,
         static_cast<std::size_t>(size),
         std::align_val_t{kPackBlobAlign}, std::nothrow));
     if (buffer == nullptr) {
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::PackStorage);
         return nullptr;
     }
     in.read(reinterpret_cast<char*>(buffer),
@@ -149,7 +151,7 @@ PackTable::PackTable(std::uint32_t capacity,
     if (!m_slots.Reserve(capacity) ||
         !m_retiring.Reserve(retirementCapacity != 0 ? retirementCapacity : capacity) ||
         !m_resourceClosures.Reserve(static_cast<std::uint32_t>(resourceClosureCapacity)))
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 bool PackTable::PrepareContentStorage() noexcept {
@@ -212,7 +214,7 @@ VnResult PackTable::PrepareRetiringRow(
     try {
         row.entries.reserve(predecessorEntryCount);
         row.successorEntries.reserve(successorEntryCount);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         return VN_BACKPRESSURE;
     }
     row.state = RetiringState::Prepared;
@@ -346,7 +348,7 @@ VnResult PackTable::AcquireResourceClosure(
             tokens->push_back(token);
         }
         return AcquirePreparedResourceClosure(tokens, outClosureToken);
-    } catch (...) { return VN_BACKPRESSURE; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage); return VN_BACKPRESSURE; }
 }
 
 VnResult PackTable::AcquirePreparedResourceClosure(
@@ -614,7 +616,7 @@ VnResult PackTable::Load(const char* utf8Path, PCMRegistry& registry,
                 e.soundId, entries[i].registrationCookie);
             registered = i + 1;
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         for (std::uint32_t r = 0; r < registered; ++r) {
             (void)registry.UnregisterPCM(parsed[r].soundId);
         }
@@ -840,7 +842,7 @@ VnResult PackTable::CommitPreparedReplace(PreparedReplaceToken* token,
                 e.soundId, entries[i].registrationCookie);
             registered = static_cast<std::uint32_t>(i) + 1;
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         for (std::uint32_t r = 0; r < registered; ++r) {
             (void)registry.UnregisterPCM(parsed[r].soundId);
         }
@@ -1427,7 +1429,7 @@ VnResult PackTable::PrepareCanonicalSet(
         }
         *out = std::move(prepared);
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         return VN_BACKPRESSURE;
     } catch (const std::length_error&) {
         return VN_PACK_RESIDENT_CAPACITY;
@@ -1737,7 +1739,7 @@ VnResult PackTable::LoadPrepared(PreparedLoadToken* token,
                 e.soundId, entries[i].registrationCookie);
             registered = static_cast<std::uint32_t>(i) + 1;
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         for (std::uint32_t r = 0; r < registered; ++r) {
             (void)registry.UnregisterPCM(parsedMedia[r].soundId);
         }
@@ -1966,7 +1968,7 @@ VnResult PackTable::PrepareRevisionMutation(
                     prepared.m_pcm.CookieOf(entries[i].soundId);
             }
         }
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         return VN_BACKPRESSURE;
     }
     prepared.m_handle = handle;
@@ -2181,7 +2183,7 @@ VnResult PackTable::ReplacePreparedV2(
                 e.soundId, entries[i].registrationCookie);
             registered = static_cast<std::uint32_t>(i) + 1;
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         unwind();
         return VN_BACKPRESSURE; // transient shortage; zero net mutations
     }

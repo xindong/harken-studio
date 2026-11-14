@@ -1255,7 +1255,7 @@ TEST(PackReplaceSemantics, AttenuationHolePreparedTokensCancelOnLateLoadFailure)
     for (int attempt = 0; attempt < 2; ++attempt) {
         StagingFaultGuard fault(harken::PackStagingFault::InitialMediaPreparation);
         VnPackHandle refused = 0;
-        EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(path, &refused));
+        EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(path, &refused));
         EXPECT_EQ(0u, refused);
         EXPECT_EQ(2u, spatial.ProfileCount());
         EXPECT_EQ(nullptr, spatial.FindProfile(harkentest::ObjectId(7101)));

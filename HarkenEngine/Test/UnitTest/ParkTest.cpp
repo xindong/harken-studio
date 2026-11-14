@@ -2297,7 +2297,7 @@ TEST(Park, PreparedReturnNewEffectReserveFailureIsAtomicAndRetryable) {
     harken::detail::ArmLogicAllocFaultForTests(
         1, harken::detail::LogicAllocSite::VoiceEffectParked);
     EXPECT_EQ(
-        VN_NO_EFFECT,
+        VN_OUT_OF_MEMORY,
         Vn_SetVoiceEffect(
             parked, 0, VN_EFFECT_GAIN,
             reinterpret_cast<const VnEffectDesc*>(&gain)));

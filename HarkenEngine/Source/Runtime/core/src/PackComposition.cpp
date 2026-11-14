@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/core/BindingTransition.h>
 #include "harken/core/PackComposition.h"
 
@@ -2753,7 +2754,7 @@ PackComposition::PackComposition(std::size_t sharedActionDeferredCapacity,
     }
     const std::size_t leaseCount = static_cast<std::size_t>(leaseTotal);
     if (!leases_.Reserve(leaseCount) || !originalLeaseRecords_.Reserve(leaseCount) ||
-        !frozenClosures_.Reserve(leaseCount)) throw std::bad_alloc{};
+        !frozenClosures_.Reserve(leaseCount)) throw harken::detail::LogicPreparationFailure{};
     originalLeaseIncarnation_ = IssueOriginalPackIncarnation();
 }
 
@@ -3595,7 +3596,7 @@ VnResult PackComposition::PrepareCommit(
     return VN_OK;
 } catch (const detail::PackDecodeCapacity&) {
     return VN_PACK_RESIDENT_CAPACITY;
-} catch (const std::bad_alloc&) {
+} catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
     if (budget) return VN_PACK_RESIDENT_CAPACITY;
     throw;
 }

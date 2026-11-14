@@ -4166,7 +4166,7 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
             const auto result = harkentest::ActivateCanonicalMembersV1(members.data(), members.size(), rows, report);
             harken::detail::DisarmLogicAllocFaultForTests();
-            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_EQ(VN_OUT_OF_MEMORY, result);
             EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
             EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
         }

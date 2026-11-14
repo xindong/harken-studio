@@ -2056,7 +2056,7 @@ TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAccepte
     desc.actionId = kAction;
     VnActionFiringHandle firing = 0;
     harken::detail::ArmLogicAllocFaultForTests(2, harken::detail::LogicAllocSite::VariableReadCutColumns);
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
     harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(commandHead, engine.commands.PublishedHead());

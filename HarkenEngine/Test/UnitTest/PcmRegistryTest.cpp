@@ -374,7 +374,7 @@ TEST(PCMRegistry, PublicRegisterAllocationFailureStaysInsideCAbi) {
     const VnPCMDesc desc = MonoDesc(samples, 48000, VN_PCM_POLICY_COPY);
     {
         PcmRegisterFaultGuard fault(harken::PcmRegisterFault::SampleBacking);
-        EXPECT_EQ(VN_DEVICE_ERROR, Vn_RegisterPCM(harkentest::ObjectId(15), &desc));
+        EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_RegisterPCM(harkentest::ObjectId(15), &desc));
     }
 
     EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(15)).Valid());

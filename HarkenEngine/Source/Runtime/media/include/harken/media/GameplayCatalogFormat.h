@@ -1,5 +1,6 @@
 #pragma once
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/detail/PackDecodeBudget.h"
 #include "harken/media/PackFormatV2.h"
 
@@ -544,7 +545,7 @@ inline VnResult ParseGameplayCatalog(const std::uint8_t* payload,
 inline VnResult ParseGameplayCatalogWithBudget(const std::uint8_t* bytes, std::uint64_t size,
     GameplayCatalogImage* out, detail::PackDecodeCharge& retained) try {
     return ParseGameplayCatalog(bytes, size, out, &retained);
-} catch (const std::bad_alloc&) {
+} catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
     return VN_PACK_RESIDENT_CAPACITY;
 }
 

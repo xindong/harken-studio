@@ -2,6 +2,7 @@
 #define HARKEN_CORE_STABLE_ROW_STORAGE_H
 
 #include "harken/core/AllocGuard.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <algorithm>
 #include <atomic>
@@ -160,7 +161,7 @@ public:
             slot == capacity_ || !reservation_.CommitThrough((static_cast<std::size_t>(slot) + 1u) * sizeof(T)))
             return false;
         try { std::construct_at(AddressOf(slot), std::forward<Args>(args)...); }
-        catch (...) { return false; }
+        catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage); return false; }
         constructed_.store(slot + 1u, std::memory_order_release);
         return true;
     }

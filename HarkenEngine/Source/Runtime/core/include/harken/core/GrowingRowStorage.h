@@ -180,7 +180,7 @@ private:
                     auto candidate = std::make_unique<StableRowStorage<T>>();
                     if (!candidate->Reserve(segmentCapacity)) return false;
                     segments_[index] = std::move(candidate);
-                } catch (...) { return false; }
+                } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage); return false; }
                 capacity_ = first + segmentCapacity;
             }
             auto& segment = *segments_[index];

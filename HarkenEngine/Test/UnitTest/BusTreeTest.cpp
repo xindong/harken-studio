@@ -1728,7 +1728,7 @@ TEST(BusSettings, SparseDirectSettingFailurePublishesNothingAndRetryKeepsRamp) {
         harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusTargetSettings);
         const auto refused = set();
         harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_BACKPRESSURE, refused);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, refused);
         EXPECT_EQ(head, engine.commands.PublishedHead());
         EXPECT_EQ(0, engine.busTargets.Reduce(bus.index, target));
         EXPECT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());

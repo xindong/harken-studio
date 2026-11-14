@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "SignalPublication.h"
 #include "Engine.h"
 #include "HarkenApiInternal.h"
@@ -48,7 +49,7 @@ WorldInstallStatus PrepareSignalPublication(Engine& engine,
         }
         out = std::move(next);
         return WorldInstallStatus::Ok;
-    } catch (...) { return WorldInstallStatus::Capacity; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return WorldInstallStatus::Capacity; }
 }
 
 WorldInstallStatus PrepareWorldSignals(Engine& engine, const ContainerWorldInstallViewV1& world,
@@ -64,7 +65,7 @@ WorldInstallStatus PrepareWorldSignals(Engine& engine, const ContainerWorldInsta
         return PrepareSignalPublication(engine, {world.signalRelations, world.signalRelationCount},
             {world.signalReceivers, world.signalReceiverCount}, properties,
             ComputeCurrentWorldFingerprintV5(world), topology, out);
-    } catch (...) { return WorldInstallStatus::Capacity; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return WorldInstallStatus::Capacity; }
 }
 
 bool CanCommitSignals(const Engine& engine, const PreparedSignalPublication& prepared) noexcept {
@@ -136,7 +137,7 @@ WorldInstallStatus PreparePackSignals(Engine& engine, const PackComposition::Pub
             });
         return PrepareSignalPublication(engine, published->signalRelations, published->signalReceivers,
             properties, content == 0 ? 1 : content, topology, out, retained);
-    } catch (...) { return WorldInstallStatus::Capacity; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return WorldInstallStatus::Capacity; }
 }
 
 void RefreshRetainedPackSignals(Engine& engine) noexcept {
@@ -255,7 +256,7 @@ static bool SelectRetainedBusActivity(Engine& engine, const TopologyPlanView& to
         if (!PrepareBusActivitySelection(topology, topology.signals, roots.buses, roots.signals,
                 detectors, roots.members, selected)) return false;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return false; }
 }
 
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
@@ -417,7 +418,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             return false;
         }
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage);
         if (activity != nullptr) engine.buses.CancelActivity(activity);
         engine.buses.DrainActivities();
         return false;
@@ -455,7 +456,7 @@ static bool SelectBusActivityWake(Engine& engine, std::span<const CommandRecord>
              })))) return true;
         changed = true;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return false; }
 }
 
 bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
@@ -481,6 +482,7 @@ bool PreparedBusCommandBatch::PrepareWake() noexcept {
 }
 
 void ServiceBusActivity(Engine& engine) noexcept {
+    detail::LogicAllocCallScope backgroundAllocation;
     if (!AcknowledgeBusSleep(engine)) return;
 #if !defined(HARKEN_RT_QUALIFICATION)
     if (!engine.buses.AutomaticSleepEnabledForTest()) return;
@@ -576,7 +578,7 @@ void ServiceBusActivity(Engine& engine) noexcept {
             assert(published.Count() == 1);
             (void)published;
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage);
         // Optional reclamation never changes an accepted operation's result.
     }
     proof.Release();
@@ -640,7 +642,7 @@ bool PrivateSignalTopology::Prepare(const PreparedSignalPublication& signals) no
     command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision_;
     command.payload.setBusTopologyPlan.batchCommandCount = 1;
     return PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_), reservation_, {&command, 1}, proof_);
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return false; }
 }
 void PrivateSignalTopology::Commit() noexcept {
     if (index_ == UINT32_MAX) return;

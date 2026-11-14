@@ -286,7 +286,7 @@ bool PreparedBusEffectsV1::AppendSettingsWrites(std::vector<BusEffectSettings::W
             if (!row.retire && row.afterType != kEffectTypeNone)
                 writes.push_back({row.bus, row.slot, {row.afterType, row.afterIdentity, state_->nextOwner}});
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot); return false; }
 }
 
 void PreparedBusEffectsV1::Commit() noexcept {
@@ -743,7 +743,7 @@ bool ProjectCheckpoint(detail::LogicAllocSite site) noexcept {
     try {
         detail::LogicAllocCheckpoint(site);
         return true;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         return false;
     }
 }
@@ -1976,11 +1976,11 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                 return result;
             }
         }
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         ReleasePreparedSlot(engine, planIndex, ownerSlot);
         result.status = ProjectGenerationPrepareStatusV1::Capacity;
         return result;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         ReleasePreparedSlot(engine, planIndex, ownerSlot);
         result.status = ProjectGenerationPrepareStatusV1::DeviceError;
         return result;
@@ -2100,7 +2100,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
             adoptions.push_back({row.state, row.host.Packed(), row.state->preparedOwner,
                 row.state->update->targetRevision, row.releaseOwner});
         engine.preparedTopologyPlans.SetEffectUpdates(planIndex, std::move(adoptions));
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         for (auto& row : effects) engine.buses.CancelPreviewEffectChain(row);
         ReleasePreparedSlot(engine, planIndex, ownerSlot);
         result.status = ProjectGenerationPrepareStatusV1::DeviceError;
@@ -2251,10 +2251,10 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             result.status = ProjectGenerationCommitStatusV1::Backpressure;
             return result;
         }
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         result.status = ProjectGenerationCommitStatusV1::DeviceError;
         return result;
     }
@@ -2294,11 +2294,11 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             result.status = ProjectGenerationCommitStatusV1::DeviceError;
             return result;
         }
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         engine.topologyPlans.Recycle(liveIndex);
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         engine.topologyPlans.Recycle(liveIndex);
         result.status = ProjectGenerationCommitStatusV1::DeviceError;
         return result;
@@ -2310,7 +2310,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             const auto effects = prepared.effects_->Commands();
             commands.insert(commands.end(), effects.begin(), effects.end());
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot);
         engine.topologyPlans.Recycle(liveIndex);
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;
@@ -2400,7 +2400,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
                         engine.effectBank.ObjectIdentity(update.targetRefs[slot]), chain.state->preparedOwner}});
         }
         targetStorageReady &= engine.busEffects.Prepare(effectWrites);
-    } catch (...) { targetStorageReady = false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ProjectAdmissionSnapshot); targetStorageReady = false; }
     for (const auto& assignment : prepared.slotPlan_.assignments) {
         targetStorageReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusVolume);
         targetStorageReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusOutputVolume);

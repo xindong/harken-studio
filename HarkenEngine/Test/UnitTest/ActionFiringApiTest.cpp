@@ -4350,7 +4350,7 @@ void ExpectScheduleCapacityActionCompletes(
         const auto retargetRemaining = harken::detail::g_logicAllocFault.remaining;
         harken::detail::DisarmLogicAllocFaultForTests();
         EXPECT_EQ(0u, retargetRemaining);
-        EXPECT_EQ(VN_NO_VOICE, refusedRetarget);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, refusedRetarget);
         EXPECT_EQ(nullptr, engine->variableControlRetargetScratch);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(0u, engine->actionFirings.LiveCount());
@@ -4398,8 +4398,7 @@ void ExpectScheduleCapacityActionCompletes(
             const auto refused = Vn_PostAction(&desc, &firing);
             EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
             harken::detail::DisarmLogicAllocFaultForTests();
-            EXPECT_EQ(site == harken::detail::LogicAllocSite::CapturedScheduleVoices
-                          ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
+            EXPECT_EQ(VN_OUT_OF_MEMORY, refused);
             EXPECT_EQ(0u, firing);
             EXPECT_EQ(0u, engine->actionFirings.LiveCount());
             EXPECT_EQ(commandHead, engine->commands.PublishedHead());
@@ -4424,7 +4423,7 @@ void ExpectScheduleCapacityActionCompletes(
             const auto remaining = engine->nativeBackingAllocationFailureCountdownForTest;
             engine->nativeBackingAllocationFailureCountdownForTest = -1;
             if (result == VN_OK) break;
-            ASSERT_EQ(VN_BACKPRESSURE, result);
+            ASSERT_EQ(VN_OUT_OF_MEMORY, result);
             EXPECT_EQ(0, remaining);
             EXPECT_EQ(0u, firing);
             EXPECT_EQ(0u, engine->actionFirings.LiveCount());
@@ -6530,7 +6529,10 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        ASSERT_EQ((refusedStorage <= 3u || (refusedStorage >= 14u && refusedStorage <= 21u))
+        const bool allocationRefused = refusedStorage == 14u ||
+            (refusedStorage >= 17u && refusedStorage <= 22u);
+        ASSERT_EQ(allocationRefused ? VN_OUT_OF_MEMORY :
+            (refusedStorage <= 3u || refusedStorage == 15u || refusedStorage == 16u)
                 ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
@@ -9512,7 +9514,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         const auto allocationsBefore = engine->nativeBackingAllocationCountForTest;
         const auto result = Vn_PostAction(&command, &firing);
         if (refuseVoiceCapture) harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_BACKPRESSURE, result);
+        EXPECT_EQ(refuseVoiceCapture ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, result);
         EXPECT_FALSE(engine->forceTimelineVoiceCommitRollbackForTest);
         ExpectActionPreparationOwnersUnchanged(*engine, before);
         EXPECT_EQ(beforeCaptureBytes, engine->CapturedVoiceStorageBytes());
@@ -9532,7 +9534,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
                 engine->nativeBackingAllocationFailureCountdownForTest = static_cast<std::int32_t>(ordinal);
                 const auto refused = Vn_PostAction(&command, &firing);
                 engine->nativeBackingAllocationFailureCountdownForTest = -1;
-                ASSERT_EQ(VN_BACKPRESSURE, refused);
+                ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
                 ASSERT_EQ(0u, firing);
                 ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
                 EXPECT_EQ(coldScheduleBytes, engine->queueScheduleStorage.StorageBytes());
@@ -21835,7 +21837,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
                         harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::CapturedVoiceInstall);
                         const auto result = Vn_PostAction(&reset, &firing);
                         harken::detail::DisarmLogicAllocFaultForTests();
-                        ASSERT_EQ(VN_BACKPRESSURE, result);
+                        ASSERT_EQ(VN_OUT_OF_MEMORY, result);
                         EXPECT_EQ(0u, firing);
                         ExpectActionPreparationOwnersUnchanged(engine, before);
                         EXPECT_EQ(priorRoot, row.variableControlNestedQueueSuccessorInstance);
@@ -23463,7 +23465,7 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
         harken::detail::DisarmLogicAllocFaultForTests();
         // Restore even on an assertion failure; partial successful backing may remain cached.
         limitTimeline(SIZE_MAX);
-        ASSERT_EQ(VN_BACKPRESSURE, result);
+        ASSERT_EQ(warmFailure.allocation != 0 ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, result);
         EXPECT_EQ(beforeTimeline, timelineState(warmFailure.timelineColumn));
         for (unsigned column = 1; column < warmFailure.timelineColumn; ++column) {
             const auto prepared = timelineState(column);
@@ -37894,7 +37896,7 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanDoesNotMaskNativeSour
     ASSERT_TRUE(probe.called);
     ASSERT_NE(nullptr, probe.attempt);
     ASSERT_TRUE(probe.foreign.Valid());
-    ASSERT_EQ(VN_BACKPRESSURE, result);
+    ASSERT_EQ(VN_RUNTIME_RECREATE_REQUIRED, result);
     EXPECT_EQ(0u, refused);
     EXPECT_FALSE(engine.forceImmediateLaneReservationFailureForTest);
     ASSERT_NE(nullptr, probe.ordinary);
@@ -54374,7 +54376,7 @@ TEST(ActionFiringApi, OrderedVariableDoubleNestedPlayPreservesInitialPcmAndRetir
             EXPECT_GT(countdown, 0);
             break;
         }
-        ASSERT_EQ(VN_BACKPRESSURE, result) << "allocation countdown " << countdown;
+        ASSERT_EQ(VN_OUT_OF_MEMORY, result) << "allocation countdown " << countdown;
         EXPECT_EQ(0, remaining);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(commandHead, engine.commands.PublishedHead());
@@ -70328,7 +70330,7 @@ static void CheckOriginalPlainTwoSoundsAndFixedStop(bool fade, bool repeated, bo
         const auto remaining = harken::detail::g_logicAllocFault.remaining;
         harken::detail::DisarmLogicAllocFaultForTests();
         EXPECT_EQ(0u, remaining);
-        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(commandHead, engine->commands.PublishedHead());
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(*engine));
@@ -72908,7 +72910,7 @@ static void CheckQueueSourceRetainedPreparationRefusal(bool composite) {
     desc.actionId = image.actions[9].actionStableId;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
     VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, Vn_PostAction(&desc, &firing));
     engine.originalQueueSourcePreparationHookForTest = nullptr;
     engine.originalQueueSourcePreparationContextForTest = nullptr;
     ASSERT_EQ(1u, loan.calls);

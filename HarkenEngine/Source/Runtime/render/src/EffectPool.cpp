@@ -85,7 +85,7 @@ bool EffectPoolBank::GrowBacking(PoolTypeSlot& slot, std::uint32_t count) noexce
             ++slot.readyCount;
         }
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 bool EffectPoolBank::EnsureBacking(PoolTypeSlot& slot, std::uint64_t count) noexcept {

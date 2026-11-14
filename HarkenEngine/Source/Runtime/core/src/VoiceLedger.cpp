@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VoiceLedger.h"
 
 #include <cassert>
@@ -21,7 +22,7 @@ struct VoiceLedger::MonitorSelectionStorage {
         return static_cast<std::uint32_t>(capacity);
     }
     explicit MonitorSelectionStorage(std::size_t capacity) {
-        if (!slots.Reserve(CheckedCapacity(capacity))) throw std::bad_alloc();
+        if (!slots.Reserve(CheckedCapacity(capacity))) throw harken::detail::LogicPreparationFailure{};
     }
     bool Prepare(std::uint32_t count, StableStoragePreparation* out) noexcept {
         const auto previous = slots.size();
@@ -202,7 +203,7 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
     m_initialGeneration = generationFloor + 1;
     const auto logicalCapacity = capacity == 0 ? 1 : capacity;
     if (!m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
-        throw std::bad_alloc();
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 

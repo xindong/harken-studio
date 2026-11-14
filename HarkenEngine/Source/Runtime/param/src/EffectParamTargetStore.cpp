@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/param/EffectParamTargetStore.h"
 #include "harken/param/BindingTable.h"
 
@@ -15,7 +16,7 @@ EffectParamTargetStore::EffectParamTargetStore(std::uint32_t sampleRate,
     : m_sampleRate(sampleRate), m_activeCapacity(capacity),
       m_totalCapacity(capacity + retiringCapacity) {
     if (retiringCapacity > UINT32_MAX - capacity)
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 bool EffectParamTargetStore::PrepareAdditionalRecords(std::uint32_t count) noexcept {
@@ -24,7 +25,7 @@ bool EffectParamTargetStore::PrepareAdditionalRecords(std::uint32_t count) noexc
         try {
             if (m_projection.size() < required) m_projection.resize(required);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     });
 }
 

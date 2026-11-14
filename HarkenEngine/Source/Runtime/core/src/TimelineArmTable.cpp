@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
 #include "harken/core/DecisionTable.h"
@@ -198,7 +199,7 @@ bool TombstoneReservedRow(TimelineArmTable::Row* row,
 TimelineArmTable::TimelineArmTable(std::uint32_t capacity)
     : capacity_(capacity), incarnation_(NextArmTableIncarnation()) {
     if (!groupMemberScopes_.Reserve(capacity) || !rows_.Reserve(capacity))
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 TimelineArmTable::~TimelineArmTable() {

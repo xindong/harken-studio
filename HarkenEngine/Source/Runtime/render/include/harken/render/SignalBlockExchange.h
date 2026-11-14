@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_SIGNAL_BLOCK_EXCHANGE_H
 #define HARKEN_RENDER_SIGNAL_BLOCK_EXCHANGE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ChannelLayout.h"
 #include "harken/dsp/GainRamp.h"
 #include <harken/ObjectId.h>
@@ -106,7 +107,7 @@ public:
             next.m_prepared = true;
             Swap(next);
             return true;
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         }
     }

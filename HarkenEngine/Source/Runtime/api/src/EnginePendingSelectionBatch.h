@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_ENGINE_PENDING_SELECTION_BATCH_H
 #define HARKEN_API_ENGINE_PENDING_SELECTION_BATCH_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/CurrentSelection.h"
 
 #include <cassert>
@@ -240,7 +241,7 @@ private:
     static bool PrepareOrdinals(std::vector<T>& values, std::uint32_t count) noexcept {
         if (count > values.capacity() && memguard::IsAudioTagged()) return false;
         try { values.resize(count); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     void ClearReplacement() noexcept {

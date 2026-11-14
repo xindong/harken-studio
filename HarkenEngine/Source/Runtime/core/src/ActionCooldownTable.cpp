@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ActionCooldownTable.h"
 
 #include <algorithm>
@@ -53,7 +54,7 @@ bool ActionCooldownTable::Reset(std::uint32_t capacity) {
     try {
         std::vector<Row> rows(capacity);
         rows_ = std::move(rows);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return false;
     }
     liveCount_ = 0;

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StreamSeekHandoffTable.h"
 
 #include <new>
@@ -47,7 +48,7 @@ bool StreamSeekHandoffTable::Reset(std::uint32_t capacity) {
     std::unique_ptr<Row[]> rows;
     try {
         rows = std::make_unique<Row[]>(capacity);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage);
         return false;
     }
     rows_ = std::move(rows);

@@ -1194,7 +1194,7 @@ TEST(TraceReplayE2E,
         desc.utf8Path = worldPath.c_str();
         VnCurrentWorldLoadReport report{};
         report.structSize = sizeof(report);
-        EXPECT_EQ(VN_CURRENT_WORLD_CAPACITY,
+        EXPECT_EQ(VN_OUT_OF_MEMORY,
                   Vn_LoadCurrentWorld(&desc, &report));
         EXPECT_EQ(VN_CURRENT_WORLD_LOAD_CAPACITY, report.status);
         harken::detail::DisarmLogicAllocFaultForTests();
@@ -1250,9 +1250,10 @@ TEST(TraceReplayE2E,
         desc.utf8Path = worldPath.c_str();
         VnCurrentWorldLoadReport report{};
         report.structSize = sizeof(report);
-        EXPECT_EQ(VN_CURRENT_WORLD_CAPACITY,
+        EXPECT_EQ(VN_OUT_OF_MEMORY,
                   Vn_LoadCurrentWorld(&desc, &report));
         EXPECT_EQ(VN_CURRENT_WORLD_LOAD_CAPACITY, report.status);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, report.result);
         EXPECT_EQ(0u, report.resultGeneration);
         EXPECT_EQ(0u, session.Engine()->variables.CurrentWorldGeneration());
         harken::detail::DisarmLogicAllocFaultForTests();

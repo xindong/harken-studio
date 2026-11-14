@@ -1,6 +1,7 @@
 #ifndef HARKEN_CORE_SOURCE_TERMINAL_RECORD_H
 #define HARKEN_CORE_SOURCE_TERMINAL_RECORD_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/RuntimeWorkIndex.h"
 
@@ -72,9 +73,9 @@ public:
         // Prepare navigation alongside the fixed records, never during a
         // Source reservation or an audio completion publication.
         if (capacity == 0) return;
-        if (!active_.Reserve(capacity)) throw std::bad_alloc{};
+        if (!active_.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
         for (std::uint64_t slot = 0; slot < capacity; slot += 256u)
-            if (!active_.Prepare({1, static_cast<std::uint32_t>(slot), 0})) throw std::bad_alloc{};
+            if (!active_.Prepare({1, static_cast<std::uint32_t>(slot), 0})) throw harken::detail::LogicPreparationFailure{};
     }
     std::uint32_t Capacity() const noexcept {
         return static_cast<std::uint32_t>(records_.size());

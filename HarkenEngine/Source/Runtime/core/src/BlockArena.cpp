@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/BlockArena.h"
 
 #include <algorithm>
@@ -9,7 +10,7 @@ namespace harken {
 BlockArena::BlockArena(std::uint32_t capacityBytes, BackingMode mode)
     : m_storageCapacity(capacityBytes), m_capacity(capacityBytes) {
     if (!m_buffer.Reserve(std::max<std::size_t>(capacityBytes, alignof(float)), alignof(float), false) ||
-        (mode == BackingMode::Full && !PrepareBacking(capacityBytes, 0))) throw std::bad_alloc{};
+        (mode == BackingMode::Full && !PrepareBacking(capacityBytes, 0))) throw harken::detail::LogicPreparationFailure{};
 }
 
 bool BlockArena::PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes) noexcept {
@@ -130,7 +131,7 @@ void BlockArena::QuarantineHighEnd() {
 void BlockArena::SetCapacityForTests(std::uint32_t capacityBytes) {
     const auto capacity = std::min(capacityBytes, m_storageCapacity);
     // Moving the high end can place it inside the previously uncommitted gap.
-    if (!PrepareBacking(capacity, 0)) throw std::bad_alloc{};
+    if (!PrepareBacking(capacity, 0)) throw harken::detail::LogicPreparationFailure{};
     m_capacity = capacity;
 }
 

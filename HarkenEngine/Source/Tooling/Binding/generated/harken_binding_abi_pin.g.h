@@ -87,6 +87,7 @@ static_assert(static_cast<int>(VN_MONITOR_INCOMPATIBLE) == -344, "binding result
 static_assert(static_cast<int>(VN_MONITOR_SEQUENCE_EXHAUSTED) == -345, "binding result drift: VN_MONITOR_SEQUENCE_EXHAUSTED");
 static_assert(static_cast<int>(VN_MONITOR_RECORDING_FAILED) == -346, "binding result drift: VN_MONITOR_RECORDING_FAILED");
 static_assert(static_cast<int>(VN_MONITOR_RESYNC_REQUIRED) == -347, "binding result drift: VN_MONITOR_RESYNC_REQUIRED");
+static_assert(static_cast<int>(VN_OUT_OF_MEMORY) == -348, "binding result drift: VN_OUT_OF_MEMORY");
 static_assert(static_cast<int>(VN_VARIABLE_SCOPE_MISMATCH) == -1200, "binding result drift: VN_VARIABLE_SCOPE_MISMATCH");
 static_assert(static_cast<int>(VN_VARIABLE_WRITER_FORBIDDEN) == -1201, "binding result drift: VN_VARIABLE_WRITER_FORBIDDEN");
 static_assert(static_cast<int>(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED) == -1202, "binding result drift: VN_VARIABLE_EMITTER_SLOT_EXHAUSTED");

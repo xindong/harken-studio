@@ -260,7 +260,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
         !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_timelineEnvelopeCurves.Reserve(config.voiceCapacity.Render()) ||
-        !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw std::bad_alloc{};
+        !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw harken::detail::LogicPreparationFailure{};
     m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount;
     const auto monitorCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_blockFrames;
     const auto endpointCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_firstOutputStride;
@@ -268,12 +268,12 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     if (monitorCapacity > UINT32_MAX || endpointCapacity > UINT32_MAX || weightCapacity > UINT32_MAX ||
         !m_firstOutputEndpoints.Reserve(static_cast<std::uint32_t>(endpointCapacity)) ||
         !m_firstOutputWeights.Reserve(static_cast<std::uint32_t>(weightCapacity)) ||
-        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw std::bad_alloc{};
+        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw harken::detail::LogicPreparationFailure{};
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
             !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()) ||
             !m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         m_highRatioColumns.channels[ch] = m_highRatioStorage[ch].data();
     }
     // Create the fixed worker set on the logic thread. Real-device workers stay
@@ -285,10 +285,10 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     // rendering voice, which is the same bound m_jobSlots is sized from.
     if (!m_workers.Start(config.renderWorkerCount,
                          config.voiceCapacity.Render())) {
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     }
     if (config.nullDevice && !m_workers.EnableOffline()) {
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     }
 }
 
@@ -2068,7 +2068,7 @@ bool VoicePool::BindPreparedSignalPath(VnVoiceHandle handle,
         for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
             if (!registration->prepare_(registration->context_, m_slots.ConstructedCount())) return false;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VoiceSendStorage); return false; }
 }
 
 bool VoicePool::BindPreparedNativeReadCut(VnVoiceHandle handle,
@@ -4674,7 +4674,7 @@ VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
         m_retainedVoiceSends += definitions.size();
         *out = prepared;
         return VN_OK;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VoiceSendStorage);
         return VN_DEVICE_ERROR;
     }
 }

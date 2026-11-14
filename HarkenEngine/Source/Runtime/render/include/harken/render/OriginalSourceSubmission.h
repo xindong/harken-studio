@@ -104,7 +104,7 @@ public:
         CommandQueue& commands, EffectPoolBank& effects)
         : arms_(arms), voices_(voices), commands_(commands), effects_(effects),
           capacity_(arms.Capacity()), incarnation_(NextIncarnation()) {
-        if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
+        if (!rows_.Reserve(capacity_)) throw harken::detail::LogicPreparationFailure{};
     }
     ~OriginalSourceSubmissionRegistry() {
         for (auto& row : rows_) {
@@ -161,7 +161,7 @@ private:
         try {
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::SourceCommandBacking);
             row.bodyTail_ = std::make_unique<Record::CommandTail>();
-        } catch (const std::bad_alloc&) { return false; }
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::SourceCommandBacking); return false; }
         allocatedCommandTails_.fetch_add(1u, std::memory_order_relaxed);
         return true;
     }

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/SignalRenderPlan.h"
 
 namespace harken {
@@ -99,7 +100,7 @@ std::unique_ptr<SignalRenderPlan> SignalRenderPlan::PrepareProjection(
         // Continuity is configured against the actual activity predecessor,
         // separately from this immutable full-definition template.
         return result;
-    } catch (...) { return {}; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return {}; }
 }
 
 } // namespace harken

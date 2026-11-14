@@ -1307,7 +1307,7 @@ ScheduledTransactionPool::CreatePageGroupMembers(std::uint16_t count) noexcept {
         member->owner = this;
         pageMemberBytes_ += member->RequestedBytes();
         return member;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
 }
 
 std::unique_ptr<ScheduledTransactionPool::PageGroupMemberBacking>
@@ -1323,7 +1323,7 @@ ScheduledTransactionPool::PreparePageGroupMemberBacking(std::uint32_t count) noe
             backing->members.push_back(std::move(member));
         }
         return backing;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
 }
 
 bool ScheduledTransactionPool::PreparePageGroupMembers(std::size_t row, std::uint16_t count,
@@ -1415,7 +1415,7 @@ ScheduledTransactionPool::CreateImmediateLaneMembers(std::uint16_t count) noexce
         member->owner = this;
         immediateMemberBytes_ += member->RequestedBytes();
         return member;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
 }
 
 bool ScheduledTransactionPool::CanReuseImmediateLaneRow(const LaneGroupRow& row) noexcept {
@@ -1462,7 +1462,7 @@ bool ScheduledTransactionPool::PrepareImmediateLaneBacking(std::uint32_t groupCo
             member->held = true;
             candidate.members_.push_back(std::move(member));
         }
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     candidate.owner_ = this;
     ++immediateBackingHolds_;
     *out = std::move(candidate);

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/Utf8Path.h"
 
 #include <string_view>
@@ -84,7 +85,7 @@ bool TryMakeUtf8Path(const char* utf8, std::filesystem::path* out) noexcept {
     try {
         *out = std::filesystem::path(std::u8string_view(
             reinterpret_cast<const char8_t*>(utf8)));
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
         return false;
     }
     return true;

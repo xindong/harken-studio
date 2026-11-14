@@ -46,6 +46,11 @@ queries. `HarkenEngine.Update()` drains notifications, invokes callbacks, and
 flushes commits; custom hosts call the public wrapper so managed cleanup can
 observe the outermost Update return boundary.
 
+Allocation failures are isolated to the API call that failed, including calls made
+from callbacks. A successful call remains successful. If the failing operation also
+requires engine recreation, `VN_RUNTIME_RECREATE_REQUIRED` takes precedence over
+`VN_OUT_OF_MEMORY`; do not treat it as an ordinary retryable allocation failure.
+
 ## Remote communication
 
 ```csharp
@@ -95,6 +100,7 @@ The complete enum and numeric values are generated in
 | `VN_NOT_INITIALIZED` (`-303`) | No usable engine session; check owner state and lifecycle. |
 | `VN_ALREADY_INITIALIZED` (`-304`) | A second owner or init request; check singleton ownership. |
 | `VN_NO_VOICE` (`-300`) | Voice capacity exhausted. |
+| `VN_OUT_OF_MEMORY` (`-348`) | A physical allocation failed. The logic log names the affected storage. Preserve the current session and diagnose available memory before retrying. Pack budget refusals retain their dedicated result. |
 | `VN_BACKPRESSURE` (`-301`) | A command or plan could not be admitted now; the refused call did not change state. Diagnose admission and lifecycle before retry policy. |
 | `VN_IN_USE` (`-302`) | Conflicting ownership or concurrent mutation; inspect the resource scope. |
 | `VN_UNKNOWN_ID` (`-200`) / `VN_STALE_HANDLE` (`-201`) | Unknown authored identity versus an expired generational handle. |

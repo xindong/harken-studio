@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/core/BindingTransition.h>
 #include "harken/media/PackLogicImage.h"
 
@@ -676,7 +677,7 @@ struct PackVariableReadState {
     bool Attempt(Callback&& callback) noexcept {
         try {
             return callback();
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
             exception = std::current_exception();
             return false;
         }
@@ -1964,7 +1965,7 @@ VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes, std::uint6
     try {
         SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}};
         return ParsePackCanonicalCore(source, out, budget);
-    } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage); return VN_PACK_RESIDENT_CAPACITY; }
 }
 
 VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
@@ -1997,7 +1998,7 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
         *artifactHash = source.hash;
     }
     return result;
-} catch (const std::bad_alloc&) {
+} catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
     return VN_PACK_RESIDENT_CAPACITY;
 }
 

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ActionSeekTable.h"
 
 #include <atomic>
@@ -46,7 +47,7 @@ bool ActionSeekTable::Reset(std::uint32_t capacity) {
     std::unique_ptr<Row[]> rows;
     try {
         rows = std::make_unique<Row[]>(capacity);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return false;
     }
     rows_ = std::move(rows);

@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_SIGNAL_FEEDBACK_PLAN_H
 #define HARKEN_RENDER_SIGNAL_FEEDBACK_PLAN_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/DuckingReceiver.h"
 
 #include <cmath>
@@ -202,7 +203,7 @@ public:
             next.m_maximum.assign(compiled.maximum.begin(), compiled.maximum.end());
             *this = std::move(next);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool UpdateBounds(std::span<const double> bounds) noexcept {
         return SignalFeedbackView{m_nodes, m_normalOrder, m_offsets, m_outgoing,

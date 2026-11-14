@@ -425,7 +425,7 @@ ContainerPlaybackTable::ConsumeNaturalSelectionOutcome(
 
 PreparedPlayableTreeStep::PreparedPlayableTreeStep(std::uint32_t capacity, bool prepareFullStorage)
     : maxReservations_(capacity == 0 ? 1u : capacity), parentLinkProof_(0u) {
-    if (prepareFullStorage && !PrepareStorage()) throw std::bad_alloc{};
+    if (prepareFullStorage && !PrepareStorage()) throw harken::detail::LogicPreparationFailure{};
 }
 
 bool PreparedPlayableTreeStep::PrepareStorage() noexcept {
@@ -457,7 +457,7 @@ bool PreparedPlayableTreeStep::PrepareStorage() noexcept {
         reserve(parentLinkRequests_, links);
         parentLinkRequests_.resize(links);
         return parentLinkProof_.PrepareStorage(links);
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 PreparedPlayableTreeStep::PreparedPlayableTreeStep(
@@ -1350,7 +1350,7 @@ bool PlayableTreeExecutor::PrepareStorage() noexcept {
         detail::CheckedGrow(committedOwnerTokens_, kOwnerTokenCapacity, detail::LogicAllocSite::PlayableTreeStorage);
         committedOwnerTokens_.resize(kOwnerTokenCapacity);
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 PlayableTreeExecutor::PlayableTreeExecutor(PlayableTreeExecutor&& other) noexcept

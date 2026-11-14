@@ -3,6 +3,7 @@
 // before touching pool state; replaces stage and install at the fixed
 // update phase; bus attachments evaluate into the public Variable slot of the
 // Variable slot with zero audio-thread involvement.
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/core/BindingTransition.h>
 #include "harken/param/BindingTable.h"
 
@@ -48,7 +49,7 @@ BindingDependencyIndex::BindingDependencyIndex(const BindingDependencyIndex& oth
     if (!Reset(other.bindingCapacity_, other.targetCapacity_, other.keyCapacity_) ||
         !inputs_.ConstructThrough(other.inputs_.ConstructedCount()) ||
         !keys_.ConstructThrough(other.keys_.ConstructedCount()) ||
-        !targets_.ConstructThrough(other.targets_.ConstructedCount())) throw std::bad_alloc{};
+        !targets_.ConstructThrough(other.targets_.ConstructedCount())) throw harken::detail::LogicPreparationFailure{};
     std::copy(other.inputs_.begin(), other.inputs_.end(), inputs_.begin());
     std::copy(other.keys_.begin(), other.keys_.end(), keys_.begin());
     std::copy(other.targets_.begin(), other.targets_.end(), targets_.begin());
@@ -101,7 +102,7 @@ bool BindingDependencyIndex::PrepareInputs(std::uint32_t count, std::uint32_t oc
             const auto words = (std::uint64_t{required / 3u} + 63u) / 64u;
             if (preparedBindings_.size() < words) preparedBindings_.resize(static_cast<std::size_t>(words), 0);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage); return false; }
     };
     return backing != nullptr ? inputs_.PrepareBacking(count, occupied, backing, metadata)
                               : inputs_.ConstructThrough(count, metadata);
@@ -112,7 +113,7 @@ bool BindingDependencyIndex::PrepareKeys(std::uint32_t count, std::uint32_t occu
     const auto previous = keys_.ConstructedCount();
     const auto metadata = [this](std::uint32_t required) noexcept {
         try { freeKeys_.reserve(required); return true; }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage); return false; }
     };
     const bool ready = backing != nullptr ? keys_.PrepareBacking(count, occupied, backing, metadata)
                                           : keys_.ConstructThrough(count, metadata);
@@ -126,7 +127,7 @@ bool BindingDependencyIndex::PrepareTargets(std::uint32_t count, std::uint32_t o
     const auto previous = targets_.ConstructedCount();
     const auto metadata = [this](std::uint32_t required) noexcept {
         try { freeTargets_.reserve(required); dirtyTargets_.reserve(required); return true; }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage); return false; }
     };
     const bool ready = backing != nullptr ? targets_.PrepareBacking(count, occupied, backing, metadata)
                                           : targets_.ConstructThrough(count, metadata);
@@ -583,7 +584,7 @@ BindingTable::BindingTable(std::uint32_t maxDefinitions,
     const auto targets = targetCapacity == 0 ? bindings + 3ull * kVariableSliceTargetHardLimit : targetCapacity;
     if (bindings > UINT32_MAX || targets > UINT32_MAX ||
         !m_dependencies.Reset(static_cast<std::uint32_t>(bindings), static_cast<std::uint32_t>(targets)))
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     m_dependencies.paramBindingCapacity_ = renderBindingCapacity;
 }
 

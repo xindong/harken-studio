@@ -3032,7 +3032,7 @@ TEST(PackLogicStaging, BusDefinitionAllocationFailureRefusesWholeLoad) {
     harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusDefinitionStorage);
     const auto result = LoadPack(packPath, &pack);
     harken::detail::DisarmLogicAllocFaultForTests();
-    EXPECT_EQ(VN_BACKPRESSURE, result);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, result);
 
     // Zero mutation: no bus landed.
     EXPECT_EQ(1u, engine->buses.BusCount()); // the master alone
@@ -3622,7 +3622,7 @@ TEST(PackLogicInitialAtomicity,
         {
             StagingFaultGuard guard(
                 harken::PackStagingFault::InitialCommandScratchAllocation);
-            EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(packPath, &pack)) << attempt;
+            EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(packPath, &pack)) << attempt;
         }
         EXPECT_EQ(kSentinel, pack) << attempt;
         EXPECT_EQ(registryBefore, engine->registry.Count()) << attempt;
@@ -3853,7 +3853,7 @@ TEST(PackLogicInitialAtomicity,
         {
             StagingFaultGuard guard(
                 harken::PackStagingFault::InitialMediaPreparation);
-            EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(packPath, &pack)) << attempt;
+            EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(packPath, &pack)) << attempt;
         }
         expectUntouched();
     }
@@ -3986,7 +3986,7 @@ TEST(PackLogicInitialSuccess,
     EXPECT_EQ(0u, active.stateFlags & VN_DYNAMIC_ROUTE_PENDING);
 }
 
-TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
+TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsOutOfMemory) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3999,7 +3999,7 @@ TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
     VnPackHandle pack = 0;
     {
         PcmRegisterFaultGuard guard(harken::PcmRegisterFault::MapCommit);
-        EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(packPath, &pack));
+        EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(packPath, &pack));
     }
 
     EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(851)).Valid());

@@ -83,7 +83,7 @@ WorldInstallResult InstallContainerWorldV1(
         if (ValidateCurrentWorldV1(install) == WorldInstallStatus::Ok &&
             (!engine.params.PrepareVariableStorage(install.variableCount) ||
              !engine.PrepareQueueSelectionStorage(install))) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         const bool signalOnly = engine.variables.SignalOnlyWorld(install);
         const bool hasCurrentConsumers =
@@ -161,7 +161,7 @@ WorldInstallResult InstallContainerWorldV1(
             engine.trace->RecordCurrentWorldInstall(install, result, encoding);
         }
         return result;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -177,7 +177,7 @@ WorldInstallResult InstallContainerWorldV2Replay(
     Engine& engine, const HistoricalContainerWorldViewV1& install) noexcept {
     try {
         return engine.variables.InstallReplayV2(install);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -189,7 +189,7 @@ WorldInstallResult InstallContainerWorldV3Replay(
     Engine& engine, const HistoricalContainerWorldViewV1& install) noexcept {
     try {
         return engine.variables.InstallReplayV3(install);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -201,7 +201,7 @@ WorldInstallResult InstallContainerWorldV4Replay(
     Engine& engine, const HistoricalContainerWorldViewV1& install) noexcept {
     try {
         return engine.variables.InstallReplayV4(install);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -260,21 +260,21 @@ VariableServiceV1::VariableServiceV1(
         !prefixRows_.Reserve(historyCapacity) || !readCutRows_.Reserve(historyCapacity) ||
         !actionReadCutRows_.Reserve(historyCapacity) || !preparationRows_.Reserve(historyCapacity) ||
         !settledRows_.Reserve(historyCapacity) || !supersedeRows_.Reserve(historyCapacity) ||
-        !scheduledGroups_.Reserve(historyCapacity) || !outcomes_.Reserve(historyCapacity)) throw std::bad_alloc{};
+        !scheduledGroups_.Reserve(historyCapacity) || !outcomes_.Reserve(historyCapacity)) throw harken::detail::LogicPreparationFailure{};
     historyGenerations_.resize(historyCapacity, 1);
     // Only history slices form source dependencies; meter withdrawals do not.
     dependencyVisited_.resize(historyCapacity);
     if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
     readCutCapacity_ = static_cast<std::uint32_t>(readCutCapacity);
-    if (!readCuts_.Reserve(readCutCapacity_)) throw std::bad_alloc{};
+    if (!readCuts_.Reserve(readCutCapacity_)) throw harken::detail::LogicPreparationFailure{};
     timelineReadUseCapacity_ = timelineReadUseCapacity;
-    if (!timelineReadUses_.Reserve(timelineReadUseCapacity_)) throw std::bad_alloc{};
+    if (!timelineReadUses_.Reserve(timelineReadUseCapacity_)) throw harken::detail::LogicPreparationFailure{};
     freeSlots_.reserve(historyCapacity);
     for (std::uint32_t slot = historyCapacity; slot > 0; --slot) {
         freeSlots_.push_back(slot - 1);
     }
     if (!ticketQueryRecords_.Reserve(queryHistoryCapacity_) ||
-        !expiredTicketRecords_.Reserve(queryHistoryCapacity_)) throw std::bad_alloc{};
+        !expiredTicketRecords_.Reserve(queryHistoryCapacity_)) throw harken::detail::LogicPreparationFailure{};
 }
 
 TransportEpoch VariableServiceV1::CurrentTransportEpoch() const noexcept {
@@ -4245,7 +4245,7 @@ bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
             pins.resize(words);
         }
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage); return false; }
 }
 
 bool VariableServiceV1::PrepareActionResultBacking(
@@ -4352,7 +4352,7 @@ bool VariableServiceV1::ConstructReadCut(std::uint32_t slot) noexcept {
         detail::CheckedGrow(capturingCuts_, count,
             detail::LogicAllocSite::VariableReadCutColumns);
         capturingCuts_.reserve(count);
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage); return false; }
     auto& cut = readCuts_[slot];
     return PrepareReadCutColumns(cut) && (cut.calendarBacking.Valid() ||
         timeline_.PrepareCurrentSliceBacking(&cut.calendarBacking));
@@ -4377,7 +4377,7 @@ bool VariableServiceV1::PrepareReadCutColumns(ReadCutRow& cut) noexcept {
         detail::CheckedGrow(cut.candidatePins.words, words, detail::LogicAllocSite::VariableReadCutColumns);
         cut.candidatePins.words.resize(words);
         return true;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         return false;
     } catch (const std::length_error&) {
         return false;
