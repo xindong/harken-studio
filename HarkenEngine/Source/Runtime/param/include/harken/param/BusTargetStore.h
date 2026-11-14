@@ -51,6 +51,7 @@ public:
     BusTargetStore(const BusTargetStore& other);
     bool PrepareBusCapacity(std::uint32_t count) noexcept;
     bool PrepareActivity(std::uint32_t busIndex, std::uint32_t targetId) noexcept;
+    bool PrepareSettings(std::uint32_t busIndex, std::uint32_t targetId) noexcept;
     void ReleaseUnusedActivities(BindingTable& bindings) noexcept;
     std::size_t ActivityCount() const noexcept { return m_activities.size(); }
     std::uint64_t StorageBytes() const noexcept;
@@ -149,7 +150,7 @@ public:
             const std::size_t ordinal = (m_flushCursor + offset) % targetCount;
             auto& activity = *m_activities[ordinal];
             const std::size_t flat = activity.flat;
-            auto& settings = m_settings[flat];
+            auto& settings = MutableSettings(flat);
             const std::uint32_t bus =
                 static_cast<std::uint32_t>(flat / kBusTargetCount);
             const std::uint32_t t =
@@ -408,7 +409,11 @@ private:
         std::uint32_t targetId, TargetClaimOwner owner) const noexcept;
 
     std::uint32_t m_maxBuses = 0;
-    std::vector<Settings> m_settings;
+    struct SettingsRow { std::size_t flat; Settings value; };
+    Settings* FindSettings(std::size_t flat) noexcept;
+    const Settings& ReadSettings(std::size_t flat) const noexcept;
+    Settings& MutableSettings(std::size_t flat);
+    std::vector<SettingsRow> m_settings;
     std::vector<std::unique_ptr<Activity>> m_activities;
     bool m_projectionActive = false;
     std::uint32_t m_projectionDemandCount = 0;

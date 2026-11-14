@@ -2391,6 +2391,10 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             if (target.effectType != kEffectTypeNone) ++effectWrites;
     }
     targetStorageReady &= engine.busEffects.Prepare(effectWrites);
+    for (const auto& assignment : prepared.slotPlan_.assignments) {
+        targetStorageReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusVolume);
+        targetStorageReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusOutputVolume);
+    }
     engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
         targetStorageReady &= engine.busTargets.PrepareActivity(attachment.busIndex, definition.targetId);
     });

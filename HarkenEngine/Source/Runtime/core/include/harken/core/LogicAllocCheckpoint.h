@@ -50,6 +50,7 @@ enum class LogicAllocSite : unsigned int {
     VoiceSendStorage,
     BusOwnerStorage,
     BusDefinitionStorage,
+    BusTargetSettings,
 };
 
 struct LogicAllocFaultState {

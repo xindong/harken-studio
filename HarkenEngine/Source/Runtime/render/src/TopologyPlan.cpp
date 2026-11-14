@@ -19,10 +19,6 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
       m_signals(capacity),
       m_effectUpdates(capacity),
       m_acquired(capacity, 0) {
-    m_buildScratch.feeders.resize(busCapacity);
-    m_buildScratch.emittedFeeders.resize(busCapacity);
-    m_buildScratch.emitted.resize(busCapacity);
-    m_buildScratch.sendCounts.resize(busCapacity);
     m_free.reserve(capacity);
     // Freelist stack: pop the lowest index first for deterministic slot reuse.
     for (std::uint32_t i = capacity; i-- > 0;) {
@@ -44,13 +40,8 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
 
 bool TopologyPlanPool::PrepareBusCapacity(std::uint32_t count) noexcept {
     if (count <= m_busCapacity) return true;
-    try {
-        const auto grow = [count](auto& rows) { rows.reserve(count); rows.resize(count); };
-        grow(m_buildScratch.feeders); grow(m_buildScratch.emittedFeeders);
-        grow(m_buildScratch.emitted); grow(m_buildScratch.sendCounts);
-        m_busCapacity = count;
-        return true;
-    } catch (...) { return false; }
+    m_busCapacity = count;
+    return true;
 }
 
 void TopologyPlanPool::GrowBusStorage(PlanStorage& row, std::uint32_t count) {
@@ -98,8 +89,7 @@ std::uint32_t TopologyPlanPool::AcquireImpl(bool legacyRows, std::uint32_t sendA
         storage.preparedBusOutputVolumeDb.assign(m_busCapacity, 0);
         storage.preparedBusVolumeRampMs.assign(m_busCapacity, 0);
         storage.busVolumeApply.assign(m_busCapacity, 0);
-        auto& counts = m_buildScratch.sendCounts;
-        std::fill(counts.begin(), counts.end(), legacyRows ? m_slotsPerBus : 0);
+        const std::vector<std::uint32_t> counts(m_busCapacity, legacyRows ? m_slotsPerBus : 0);
         if (!PrepareSendRows(index, counts) || !ReserveSendCapacity(index, sendAllowance)) {
             storage = {};
             return kInvalidTopologyPlanIndex;
@@ -178,9 +168,7 @@ void TopologyPlanPool::SetEffectUpdates(std::uint32_t plan, std::vector<BusEffec
 std::size_t TopologyPlanPool::StorageBytes() const noexcept {
     const auto bytes = [](const auto& rows) { return rows.capacity() * sizeof(rows[0]); };
     std::size_t total = sizeof(*this) + bytes(m_storage) + bytes(m_orderCount) + bytes(m_slotCount) +
-        bytes(m_signals) + bytes(m_effectUpdates) + bytes(m_acquired) + bytes(m_free) + bytes(m_retire) +
-        bytes(m_buildScratch.feeders) + bytes(m_buildScratch.emittedFeeders) +
-        bytes(m_buildScratch.emitted) + bytes(m_buildScratch.sendCounts);
+        bytes(m_signals) + bytes(m_effectUpdates) + bytes(m_acquired) + bytes(m_free) + bytes(m_retire);
     for (const auto& row : m_storage)
         total += bytes(row.order) + bytes(row.outputLayouts) + bytes(row.parents) + bytes(row.busGenerations) +
             bytes(row.migrationTargets) + bytes(row.customDownmix) + bytes(row.preparedBusVolumeDb) +

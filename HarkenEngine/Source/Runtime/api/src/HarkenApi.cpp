@@ -79680,6 +79680,10 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
         prospective != nullptr ? prospective->busCount
                                : engine.buses.BusCount();
     plans.PreparePlanBusCapacity(planIndex, n);
+    harken::TopologyBuildScratch scratch;
+    scratch.feeders.resize(n);
+    scratch.emittedFeeders.resize(n);
+    scratch.emitted.resize(n);
     const std::uint32_t slots = engine.config.busSendSlotsPerBus;
     const auto excluded = [excludedBuses, excludedBusCount](
                               std::uint32_t index) {
@@ -79696,14 +79700,14 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                         routeUpserts, routeUpsertCount, routeRemovals,
                         routeRemovalCount, excludedBuses, excludedBusCount,
                         removedSendSlots, removedSendSlotCount, prospective,
-                        &plans.BuildScratch(), sendsOverride);
+                        &scratch, sendsOverride);
     plans.SetOrderCount(planIndex, liveCount);
     const auto included = [&](std::uint32_t from, const harken::BusSendRecord& edge,
                               std::uint32_t index) {
         return !(removedSendSlots != nullptr && index < removedSendSlotCount &&
                  removedSendSlots[index] != 0) && !excluded(from) && !excluded(edge.target);
     };
-    auto& sendCounts = plans.BuildScratch().sendCounts;
+    auto& sendCounts = scratch.feeders;
     std::fill(sendCounts.begin(), sendCounts.end(), 0u);
     for (std::uint32_t from = 0; from < n; ++from)
         ForEachTopologySend(engine, prospective, from, [&](const auto& edge, auto index) {
@@ -118531,6 +118535,8 @@ VnResult Vn_SetBusOutputVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.volumeDb = resolved;
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.outputOnly = 1;
+    if (!engine->busTargets.PrepareSettings(index, harken::kBusTargetBusOutputVolume))
+        return VN_BACKPRESSURE;
     if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     engine->busTargets.SetSlot(index, harken::kBusTargetBusOutputVolume,
         harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
@@ -118603,6 +118609,8 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
+    if (!engine->busTargets.PrepareSettings(busIndex, harken::kBusTargetBusVolume))
+        return VN_BACKPRESSURE;
     if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     engine->busTargets.SetSlot(busIndex, harken::kBusTargetBusVolume,
         harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
@@ -127347,7 +127355,14 @@ VnResult ApplyPreparedPackTransaction(
             return VN_DEVICE_ERROR;
         }
     }
-    if (!engine.busEffects.Prepare(revision.busEffectRefs.size())) {
+    bool settingsReady = true;
+    for (std::uint32_t bus = 0; revision.needsPlan && bus < revision.prospectiveBusCount; ++bus) {
+        if ((revision.prospectiveBusVolumeApply[bus] & kApplyBusVolume) != 0)
+            settingsReady &= engine.busTargets.PrepareSettings(bus, kBusTargetBusVolume);
+        if ((revision.prospectiveBusVolumeApply[bus] & kApplyBusOutputVolume) != 0)
+            settingsReady &= engine.busTargets.PrepareSettings(bus, kBusTargetBusOutputVolume);
+    }
+    if (!settingsReady || !engine.busEffects.Prepare(revision.busEffectRefs.size())) {
         if (commandCount != 0) queueGuard.Cancel();
         CancelRevisionAttenuationDiscrete(engine, revision);
         CancelRevisionBindings(engine, revision);
@@ -131366,6 +131381,10 @@ bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& pre
     if (!engine.busEffects.Prepare(prepared.busEffects ? prepared.busEffects->SettingsWriteCount() : 0))
         return false;
     bool targetsReady = true;
+    for (const auto& assignment : prepared.slotPlan.assignments) {
+        targetsReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusVolume);
+        targetsReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusOutputVolume);
+    }
     engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
         targetsReady &= engine.busTargets.PrepareActivity(attachment.busIndex, definition.targetId);
     });

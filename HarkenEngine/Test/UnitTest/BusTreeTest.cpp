@@ -1664,6 +1664,33 @@ TEST(BusSettings, FailedColdPreparationKeepsDirectValuesAndWholePropertyBatch) {
 
 } // namespace
 
+TEST(BusSettings, SparseDirectSettingFailurePublishesNothingAndRetryKeepsRamp) {
+    for (bool output : {false, true}) {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto id = harkentest::ObjectId(24001);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+        engine.nullBackend.Pump(1);
+        const auto bus = engine.buses.FindRef(id);
+        const auto target = output ? harken::kBusTargetBusOutputVolume : harken::kBusTargetBusVolume;
+        const auto set = [&] { return output ? Vn_SetBusOutputVolume(id, -9, 23) : Vn_SetBusVolume(id, -9, 23); };
+        const auto head = engine.commands.PublishedHead();
+        harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusTargetSettings);
+        const auto refused = set();
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_BACKPRESSURE, refused);
+        EXPECT_EQ(head, engine.commands.PublishedHead());
+        EXPECT_EQ(0, engine.busTargets.Reduce(bus.index, target));
+        EXPECT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
+        ASSERT_EQ(VN_OK, set());
+        EXPECT_EQ(-9, engine.busTargets.Reduce(bus.index, target));
+        EXPECT_EQ(23u, engine.busTargets.LastPublishedRampMs(bus.index, target));
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
+    }
+}
+
 TEST(BusCapacityGrowth, OwnerAllocationFailureKeepsAllPublishedLengthsAndCanRetry) {
     for (std::size_t nth = 1; nth <= 5; ++nth) {
         harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256));

@@ -1,8 +1,10 @@
 #include "harken/param/BusTargetStore.h"
 #include "harken/param/BindingTable.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <cassert>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <exception>
 #include <new>
@@ -12,14 +14,10 @@ namespace harken {
 
 BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                                std::uint32_t retiringTargetCapacity)
-    : m_maxBuses(maxBuses), m_settings(static_cast<std::size_t>(maxBuses) * kBusTargetCount),
+    : m_maxBuses(maxBuses),
       m_activeGenerations(maxBuses, 0) {
     if (!m_retiringTargets.Reserve(retiringTargetCapacity)) throw std::bad_alloc{};
-    for (std::uint32_t bus = 0; bus < maxBuses; ++bus)
-        for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-            const auto* meta = FindTargetMeta(kTargetScopeBus, t);
-            m_settings[PubIndexOf(bus, t)].lastCommitted = meta ? meta->neutral : 0;
-        }
+
 }
 
 BusTargetStore::BusTargetStore(const BusTargetStore& other)
@@ -30,11 +28,11 @@ BusTargetStore::BusTargetStore(const BusTargetStore& other)
       m_activeGenerations(other.m_activeGenerations), m_demandCount(other.m_demandCount),
       m_variableSlotCount(other.m_variableSlotCount), m_pendingInputMarks(other.m_pendingInputMarks),
       m_flushTick(other.m_flushTick), m_flushCursor(other.m_flushCursor) {
-    for (auto& setting : m_settings) setting.activity = nullptr;
+    for (auto& row : m_settings) row.value.activity = nullptr;
     m_activities.reserve(other.m_activities.size());
     for (const auto& activity : other.m_activities) {
         auto copy = std::make_unique<Activity>(*activity);
-        m_settings[copy->flat].activity = copy.get();
+        MutableSettings(copy->flat).activity = copy.get();
         m_activities.push_back(std::move(copy));
     }
     if (!m_retiringTargets.Reserve(other.m_retiringTargets.Capacity()) ||
@@ -46,22 +44,54 @@ bool BusTargetStore::PrepareBusCapacity(std::uint32_t count) noexcept {
     if (count <= m_maxBuses) return true;
     if (m_projectionActive) return false;
     try {
-        const auto rows = static_cast<std::size_t>(count) * kBusTargetCount;
-        m_settings.reserve(rows); m_settings.resize(rows);
         m_activeGenerations.reserve(count); m_activeGenerations.resize(count);
-        for (auto bus = m_maxBuses; bus < count; ++bus)
-            for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-                const auto* meta = FindTargetMeta(kTargetScopeBus, t);
-                m_settings[PubIndexOf(bus, t)].lastCommitted = meta ? meta->neutral : 0;
-            }
         m_maxBuses = count;
         return true;
     } catch (...) { return false; }
 }
 
-bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) noexcept {
+BusTargetStore::Settings* BusTargetStore::FindSettings(std::size_t flat) noexcept {
+    const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
+        [](const auto& row, auto key) { return row.flat < key; });
+    return it != m_settings.end() && it->flat == flat ? &it->value : nullptr;
+}
+
+const BusTargetStore::Settings& BusTargetStore::ReadSettings(std::size_t flat) const noexcept {
+    const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
+        [](const auto& row, auto key) { return row.flat < key; });
+    if (it != m_settings.end() && it->flat == flat) return it->value;
+    static const auto neutral = [] {
+        std::array<Settings, kBusTargetCount> rows{};
+        for (std::uint32_t target = 0; target < kBusTargetCount; ++target) {
+            const auto* meta = FindTargetMeta(kTargetScopeBus, target);
+            rows[target].lastCommitted = meta ? meta->neutral : 0;
+        }
+        return rows;
+    }();
+    return neutral[flat % kBusTargetCount];
+}
+
+BusTargetStore::Settings& BusTargetStore::MutableSettings(std::size_t flat) {
+    const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
+        [](const auto& row, auto key) { return row.flat < key; });
+    if (it != m_settings.end() && it->flat == flat) return it->value;
+    if (m_projectionActive) throw std::bad_alloc{};
+    detail::CheckedGrow(m_settings, m_settings.size() + 1, detail::LogicAllocSite::BusTargetSettings);
+    Settings value{};
+    const auto* meta = FindTargetMeta(kTargetScopeBus, static_cast<std::uint32_t>(flat % kBusTargetCount));
+    value.lastCommitted = meta ? meta->neutral : 0;
+    return m_settings.insert(it, {flat, value})->value;
+}
+
+bool BusTargetStore::PrepareSettings(std::uint32_t bus, std::uint32_t target) noexcept {
     if (!InRange(bus, target, 0)) return false;
-    auto& settings = m_settings[PubIndexOf(bus, target)];
+    try { (void)MutableSettings(PubIndexOf(bus, target)); return true; }
+    catch (...) { return false; }
+}
+
+bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) noexcept {
+    if (!PrepareSettings(bus, target)) return false;
+    auto& settings = MutableSettings(PubIndexOf(bus, target));
     if (settings.activity) return true;
     if (m_projectionActive) return false;
     try {
@@ -74,19 +104,19 @@ bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) no
 }
 
 BusTargetStore::Activity* BusTargetStore::FindActivity(std::uint32_t bus, std::uint32_t target) noexcept {
-    return InRange(bus, target, 0) ? m_settings[PubIndexOf(bus, target)].activity : nullptr;
+    return InRange(bus, target, 0) ? ReadSettings(PubIndexOf(bus, target)).activity : nullptr;
 }
 
 const BusTargetStore::PublishState& BusTargetStore::Publication(std::uint32_t bus,
     std::uint32_t target) const noexcept {
     static const PublishState empty;
-    const auto* activity = m_settings[PubIndexOf(bus, target)].activity;
+    const auto* activity = ReadSettings(PubIndexOf(bus, target)).activity;
     return activity ? activity->publish : empty;
 }
 
 BusTargetStore::Slot BusTargetStore::ReadSlot(std::uint32_t bus, std::uint32_t target,
     std::uint32_t slot) const noexcept {
-    const auto& setting = m_settings[PubIndexOf(bus, target)];
+    const auto& setting = ReadSettings(PubIndexOf(bus, target));
     if (slot < kSlotVariableIndex)
         return {setting.values[slot], (setting.activeMask & (1u << slot)) != 0};
     if (!setting.activity) return {};
@@ -128,14 +158,14 @@ void BusTargetStore::ReleaseUnusedActivities(BindingTable& bindings) noexcept {
             state.claimSnapshotCaptured || state.suppressClaimRamp || activity.meterDepartureRampMs != 0) {
             ++i; continue;
         }
-        m_settings[activity.flat].activity = nullptr;
+        MutableSettings(activity.flat).activity = nullptr;
         if (i + 1 != m_activities.size()) m_activities[i] = std::move(m_activities.back());
         m_activities.pop_back();
     }
 }
 
 std::uint64_t BusTargetStore::StorageBytes() const noexcept {
-    return m_settings.capacity() * sizeof(Settings) + m_activities.capacity() * sizeof(std::unique_ptr<Activity>) +
+    return m_settings.capacity() * sizeof(SettingsRow) + m_activities.capacity() * sizeof(std::unique_ptr<Activity>) +
         m_activities.size() * sizeof(Activity) + m_activeGenerations.capacity() * sizeof(std::uint32_t) +
         m_retiringTargets.CommittedBytes();
 }
@@ -209,7 +239,7 @@ bool BusTargetStore::InRange(std::uint32_t busIndex, std::uint32_t targetId,
 void BusTargetStore::SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
                              std::uint32_t slot, double domainValue) {
     if (!InRange(busIndex, targetId, slot)) return;
-    auto& settings = m_settings[PubIndexOf(busIndex, targetId)];
+    auto& settings = MutableSettings(PubIndexOf(busIndex, targetId));
     if (slot < kSlotVariableIndex) {
         settings.values[slot] = domainValue;
         settings.activeMask |= 1u << slot;
@@ -224,7 +254,9 @@ void BusTargetStore::SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
 void BusTargetStore::ClearSlot(std::uint32_t busIndex, std::uint32_t targetId,
                                std::uint32_t slot) {
     if (!InRange(busIndex, targetId, slot)) return;
-    auto& settings = m_settings[PubIndexOf(busIndex, targetId)];
+    auto* existing = FindSettings(PubIndexOf(busIndex, targetId));
+    if (!existing) return;
+    auto& settings = *existing;
     if (slot < kSlotVariableIndex) {
         settings.values[slot] = 0;
         settings.activeMask &= ~(1u << slot);
@@ -369,7 +401,9 @@ float BusTargetStore::ReduceWithSlot(std::uint32_t busIndex,
 void BusTargetStore::ResetActiveRows(std::uint32_t busIndex) noexcept {
     if (busIndex >= m_maxBuses) return;
     for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
-        auto& settings = m_settings[PubIndexOf(busIndex, t)];
+        auto* existing = FindSettings(PubIndexOf(busIndex, t));
+        if (!existing) continue;
+        auto& settings = *existing;
         auto* activity = settings.activity;
         if (activity) {
             if (activity->publish.dirty || activity->publish.pendingInput) --m_demandCount;
@@ -519,7 +553,7 @@ void BusTargetStore::NoteApiDirect(std::uint32_t busIndex,
                                    float committedResolved) {
     if (!InRange(busIndex, targetId, 0)) return;
     SetSlot(busIndex, targetId, kSlotApiDirectIndex, domainValue);
-    auto& settings = m_settings[PubIndexOf(busIndex, targetId)];
+    auto& settings = MutableSettings(PubIndexOf(busIndex, targetId));
     settings.lastCommitted = committedResolved;
     if (settings.activity) CleanDirty(settings.activity->publish);
     settings.lastPublishedRampMs = rampMs;
@@ -531,7 +565,7 @@ void BusTargetStore::MarkCommitted(std::uint32_t busIndex,
                                    std::uint32_t targetId, float resolved,
                                    std::uint32_t rampMs) {
     if (!InRange(busIndex, targetId, 0)) return;
-    auto& settings = m_settings[PubIndexOf(busIndex, targetId)];
+    auto& settings = MutableSettings(PubIndexOf(busIndex, targetId));
     settings.lastCommitted = resolved;
     settings.lastPublishedRampMs = rampMs;
     if (settings.activity) {
@@ -615,8 +649,8 @@ bool BusTargetStore::CaptureCandidateBaseline(
     }
     if (!state.candidateBaselineValid) {
         state.preCandidatePendingRampMs = state.pendingRampMs;
-        state.preCandidateApiRampMs = m_settings[PubIndexOf(busIndex, targetId)].apiRampMs;
-        state.preCandidateApiRampTick = m_settings[PubIndexOf(busIndex, targetId)].apiRampTick;
+        state.preCandidateApiRampMs = ReadSettings(PubIndexOf(busIndex, targetId)).apiRampMs;
+        state.preCandidateApiRampTick = ReadSettings(PubIndexOf(busIndex, targetId)).apiRampTick;
         state.candidateBaselineValid = true;
     }
     return true;
@@ -708,8 +742,8 @@ void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
             if (reason == ClaimReleaseReason::RejectCandidate) {
                 if (state.candidateBaselineValid) {
                     state.pendingRampMs = state.preCandidatePendingRampMs;
-                    m_settings[PubIndexOf(busIndex, targetId)].apiRampMs = state.preCandidateApiRampMs;
-                    m_settings[PubIndexOf(busIndex, targetId)].apiRampTick = state.preCandidateApiRampTick;
+                    MutableSettings(PubIndexOf(busIndex, targetId)).apiRampMs = state.preCandidateApiRampMs;
+                    MutableSettings(PubIndexOf(busIndex, targetId)).apiRampTick = state.preCandidateApiRampTick;
                 }
             } else if (state.preparedRampMs > state.pendingRampMs) {
                 state.pendingRampMs = state.preparedRampMs;
@@ -888,8 +922,8 @@ void BusTargetStore::MarkSliceCommitted(
     if (m_activeGenerations[busIndex] == busGeneration && FindActivity(busIndex, targetId)) {
         auto& state = FindActivity(busIndex, targetId)->publish;
         if (state.preparedOwner == owner) {
-            m_settings[PubIndexOf(busIndex, targetId)].lastCommitted = resolved;
-            m_settings[PubIndexOf(busIndex, targetId)].lastPublishedRampMs = rampMs;
+            MutableSettings(PubIndexOf(busIndex, targetId)).lastCommitted = resolved;
+            MutableSettings(PubIndexOf(busIndex, targetId)).lastPublishedRampMs = rampMs;
             if (owner.Shared()) {
                 if (Reduce(busIndex, targetId) != resolved || state.pendingInput || state.pendingRampMs != 0)
                     SetDirty(state);
@@ -958,7 +992,7 @@ float BusTargetStore::LastCommitted(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return 0.0f;
     }
-    return m_settings[PubIndexOf(busIndex, targetId)].lastCommitted;
+    return ReadSettings(PubIndexOf(busIndex, targetId)).lastCommitted;
 }
 
 float BusTargetStore::SlotValue(std::uint32_t busIndex,
@@ -986,7 +1020,7 @@ BusTargetStore::LastPublishedRampMs(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return 0;
     }
-    return m_settings[PubIndexOf(busIndex, targetId)].lastPublishedRampMs;
+    return ReadSettings(PubIndexOf(busIndex, targetId)).lastPublishedRampMs;
 }
 
 std::uint32_t BusTargetStore::PendingRampMs(std::uint32_t busIndex,
@@ -996,8 +1030,8 @@ std::uint32_t BusTargetStore::PendingRampMs(std::uint32_t busIndex,
     }
     const PublishState& state = Publication(busIndex, targetId);
     std::uint32_t rampMs = state.pendingRampMs;
-    if (m_settings[PubIndexOf(busIndex, targetId)].apiRampTick == m_flushTick && m_settings[PubIndexOf(busIndex, targetId)].apiRampMs > rampMs) {
-        rampMs = m_settings[PubIndexOf(busIndex, targetId)].apiRampMs;
+    if (ReadSettings(PubIndexOf(busIndex, targetId)).apiRampTick == m_flushTick && ReadSettings(PubIndexOf(busIndex, targetId)).apiRampMs > rampMs) {
+        rampMs = ReadSettings(PubIndexOf(busIndex, targetId)).apiRampMs;
     }
     return rampMs;
 }

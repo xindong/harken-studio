@@ -60,13 +60,12 @@ struct TopologySendRange {
     std::uint32_t count = 0;
 };
 
-// Logic-only workspace reused by structural publication. It is prepared before
+// Logic-only workspace owned by one structural publication. It is prepared before
 // a direct API commits its authoritative settings.
 struct TopologyBuildScratch {
     std::vector<std::uint32_t> feeders;
     std::vector<std::uint32_t> emittedFeeders;
     std::vector<std::uint8_t> emitted;
-    std::vector<std::uint32_t> sendCounts;
 };
 
 // Prepared on logic, exclusively mutated on audio after adoption. The owning
@@ -197,7 +196,6 @@ public:
     void SetOrderCount(std::uint32_t planIndex, std::uint32_t count);
     // Replaces only logic-owned, unpublished Send storage. Failure leaves it intact.
     bool PrepareSendRows(std::uint32_t planIndex, std::span<const std::uint32_t> counts);
-    TopologyBuildScratch& BuildScratch() noexcept { return m_buildScratch; }
     std::uint32_t* SendSlotsRow(std::uint32_t planIndex, std::uint32_t fromBus);
     std::uint64_t* SendGenerationsRow(std::uint32_t planIndex, std::uint32_t fromBus);
     std::uint32_t* SendTargetsRow(std::uint32_t planIndex,
@@ -285,7 +283,6 @@ private:
     };
     static void GrowBusStorage(PlanStorage& storage, std::uint32_t count);
     std::vector<PlanStorage> m_storage;
-    TopologyBuildScratch m_buildScratch;
     std::vector<std::uint32_t> m_slotCount;     // capacity
 
     std::vector<std::shared_ptr<SignalRenderPlan>> m_signals;
