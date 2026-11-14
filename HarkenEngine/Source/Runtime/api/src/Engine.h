@@ -7417,11 +7417,21 @@ public:
         }
         if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
         effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
-        buses.AttachEffectRevisionReader(this, [](const void* context, BusSlotRef bus,
-            std::uint32_t slot, std::uint32_t type) noexcept {
-            return static_cast<const Engine*>(context)->effectParamTargets.InstalledSlotRevision(
-                EffectParamTargetStore::Scope::Bus, bus.index, bus.generation, slot, type);
-        });
+        buses.AttachEffectRevisionReader(this, ReadBusEffectRevision);
+        buses.AttachDormantEffects({this,
+            [](void* context, std::span<const BusDormantCapture* const> captures, std::uint64_t publication) noexcept {
+                auto& engine = *static_cast<Engine*>(context);
+                return engine.busEffects.CommitDormant(captures, publication, context, ReadBusEffectRevision);
+            },
+            [](const void* context, BusTree::Bus& bus) noexcept {
+                return static_cast<const Engine*>(context)->busEffects.RestoreDormant(bus, context, ReadBusEffectRevision);
+            },
+            [](const void* context, BusSlotRef bus) noexcept {
+                return static_cast<const Engine*>(context)->busEffects.DormantReceipt(bus, context, ReadBusEffectRevision);
+            },
+            [](void* context, BusSlotRef bus) noexcept {
+                static_cast<Engine*>(context)->busEffects.ConsumeDormant(bus.index);
+            }});
         variables.AttachTargetRetirementStorage(this, [](void* context) noexcept {
             auto& engine = *static_cast<Engine*>(context);
             return engine.params.PrepareRetiringTargetStorage() && engine.busTargets.PrepareRetiringTargetStorage();
@@ -15742,6 +15752,11 @@ public:
     // Logic-owned settings survive sleep. Effect parameters remain in the
     // target store; bypass bits also survive an empty slot for later installs.
     BusFilterSettings busFilterSettings;
+    static std::uint32_t ReadBusEffectRevision(const void* context, BusSlotRef bus,
+        std::uint32_t slot, std::uint32_t type) noexcept {
+        return static_cast<const Engine*>(context)->effectParamTargets.InstalledSlotRevision(
+            EffectParamTargetStore::Scope::Bus, bus.index, bus.generation, slot, type);
+    }
     BusEffectSettings busEffects;
     std::vector<std::uint8_t> busVolumePublished;
 

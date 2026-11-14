@@ -51,6 +51,7 @@ struct SignalBusRoutingInfo;
 struct BusActivityPlan;
 struct BusDormantRegistry;
 struct BusDormantWork;
+struct BusDormantCapture;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -598,6 +599,26 @@ public:
     // Unpublished work row, same identity, format and authoritative parameters.
     static void RestoreDormantToneSection(Bus::ToneSection& section,
         const DormantToneSection& saved) noexcept;
+    struct DormantEffectReceipt {
+        std::uint64_t publication = 0;
+        std::uint8_t mask = 0;
+        bool operator==(const DormantEffectReceipt&) const = default;
+    };
+    struct DormantSource {
+        std::shared_ptr<const BusDormantWork> filters;
+        DormantEffectReceipt effects;
+        bool operator==(const DormantSource&) const = default;
+    };
+    // Control-owned cold FX live with their logical installation settings.
+    struct DormantEffects {
+        void* context = nullptr;
+        bool (*commit)(void*, std::span<const BusDormantCapture* const>, std::uint64_t) noexcept = nullptr;
+        bool (*restore)(const void*, Bus&) noexcept = nullptr;
+        DormantEffectReceipt (*receipt)(const void*, BusSlotRef) noexcept = nullptr;
+        void (*consume)(void*, BusSlotRef) noexcept = nullptr;
+    };
+    void AttachDormantEffects(DormantEffects owner) noexcept { m_dormantEffects = owner; }
+    DormantSource DormantSourceFor(BusSlotRef bus) const noexcept;
     std::shared_ptr<const BusDormantWork> DormantWorkFor(BusSlotRef bus) const noexcept;
     bool RestoreDormantWork(Bus& row) const noexcept;
     bool PrepareDormantSignalContinuity(SignalRenderPlan& next,
@@ -623,6 +644,7 @@ private:
         return m_effectRevisionReader != nullptr ? m_effectRevisionReader(m_effectRevisionContext, bus, slot, type) : 0;
     }
     std::uint64_t m_nextActivityPublication = 0;
+    DormantEffects m_dormantEffects;
     std::unique_ptr<BusDormantRegistry> m_dormant;
     BusActivityPlan* m_lastQueuedActivity = nullptr;
     BusActivityPlan* m_activeActivity = nullptr;

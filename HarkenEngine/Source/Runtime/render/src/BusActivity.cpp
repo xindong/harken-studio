@@ -23,23 +23,6 @@ bool DefaultDormantFilter(const BusTree::DormantToneSection& value) noexcept {
         });
 }
 
-bool DefaultDormantWork(const BusDormantCapture& saved) noexcept {
-    return std::all_of(saved.filters.begin(), saved.filters.end(), DefaultDormantFilter) &&
-        std::all_of(saved.effects.begin(), saved.effects.end(), [](const auto& effect) {
-            return effect.type == kEffectTypeNone;
-        });
-}
-
-std::size_t DormantValueBytes(std::uint32_t type) noexcept {
-    switch (type) {
-    case VN_EFFECT_GAIN: return sizeof(float);
-    case VN_EFFECT_LIMITER: return sizeof(double);
-    case VN_EFFECT_COMPRESSOR: return sizeof(BuiltinEffectDormantState::Values::compressor);
-    case VN_EFFECT_FEEDBACK_DELAY: return sizeof(BuiltinEffectDormantState::Values::delay);
-    default: return 0;
-    }
-}
-
 std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture& saved) {
     auto result = std::make_shared<BusDormantWork>();
     result->bus = saved.bus;
@@ -49,15 +32,6 @@ std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture
             result->filterMask |= 1u << i;
             size += sizeof(saved.filters[i]);
         }
-    for (std::uint32_t i = 0; i < saved.effects.size(); ++i) {
-        const auto& effect = saved.effects[i];
-        if (effect.type == kEffectTypeNone) continue;
-        result->types[i] = static_cast<std::uint8_t>(effect.type);
-        if (effect.hasRendered) result->renderedMask |= 1u << i;
-        if (effect.sampleRate != 0) result->sampleRate = effect.sampleRate;
-        size += sizeof(saved.revisions[i]) + DormantValueBytes(effect.type);
-        if (effect.type == VN_EFFECT_THREE_BAND_TONE) size += sizeof(ToneDormantState);
-    }
     result->payload.resize(size);
     auto* cursor = result->payload.data();
     const auto append = [&](const void* value, std::size_t bytes) {
@@ -65,13 +39,6 @@ std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture
     };
     for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
         if ((result->filterMask & (1u << i)) != 0) append(&saved.filters[i], sizeof(saved.filters[i]));
-    for (std::uint32_t i = 0; i < saved.effects.size(); ++i) {
-        const auto type = saved.effects[i].type;
-        if (type == kEffectTypeNone) continue;
-        append(&saved.revisions[i], sizeof(saved.revisions[i]));
-        append(&saved.effects[i].values, DormantValueBytes(type));
-        if (type == VN_EFFECT_THREE_BAND_TONE) append(&saved.tones[i], sizeof(saved.tones[i]));
-    }
     return result;
 }
 }
@@ -410,6 +377,8 @@ bool BusTree::AcknowledgeSleep() noexcept {
                                            : std::make_unique<BusDormantRegistry>();
             const auto* latest = m_lastQueuedActivity;
             if (latest == nullptr) return false;
+            std::vector<const BusDormantCapture*> effects;
+            effects.reserve(plan.sleeping.size());
             for (const auto& row : plan.sleeping) {
                 const auto bus = row.saved->bus;
                 if (!LogicRefMatches(bus) || bus.index >= latest->directory.size() ||
@@ -418,13 +387,17 @@ bool BusTree::AcknowledgeSleep() noexcept {
                 std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });
                 // Exact defaults reconstruct without history. Disabled filters
                 // with frozen input or non-default certificates remain owned.
-                if (!DefaultDormantWork(*row.saved)) next->buses.push_back(CompactDormantWork(*row.saved));
+                if (!std::all_of(row.saved->filters.begin(), row.saved->filters.end(), DefaultDormantFilter))
+                    next->buses.push_back(CompactDormantWork(*row.saved));
+                effects.push_back(row.saved.get());
             }
             if (plan.dormantSignals && latest->signals) {
                 std::shared_ptr<const SignalRenderPlan::DormantState> rest;
                 if (!latest->signals->PruneDormantState(plan.dormantSignals, rest)) return false;
                 if (rest) next->signals.push_back(std::move(rest));
             }
+            if (m_dormantEffects.commit != nullptr &&
+                !m_dormantEffects.commit(m_dormantEffects.context, effects, plan.publication)) return false;
             m_dormant.swap(next);
         } catch (...) { return false; }
     }
@@ -442,7 +415,13 @@ std::shared_ptr<const BusDormantWork> BusTree::DormantWorkFor(BusSlotRef bus) co
     return {};
 }
 
+BusTree::DormantSource BusTree::DormantSourceFor(BusSlotRef bus) const noexcept {
+    return {DormantWorkFor(bus), m_dormantEffects.receipt != nullptr
+        ? m_dormantEffects.receipt(m_dormantEffects.context, bus) : DormantEffectReceipt{}};
+}
+
 bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
+    if (m_dormantEffects.restore != nullptr && !m_dormantEffects.restore(m_dormantEffects.context, row)) return false;
     if (m_dormant == nullptr) return true;
     const BusSlotRef host{row.busIndex, row.generation};
     for (const auto& entry : m_dormant->buses) {
@@ -458,23 +437,6 @@ bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
             DormantToneSection state;
             read(&state, sizeof(state));
             RestoreDormantToneSection(*sections[i], state);
-        }
-        for (std::uint32_t slot = 0; slot < saved.types.size(); ++slot) {
-            const auto type = saved.types[slot];
-            if (type == UINT8_MAX) continue;
-            std::uint32_t revision = 0;
-            BuiltinEffectDormantState state;
-            ToneDormantState tone;
-            state.type = type;
-            state.sampleRate = saved.sampleRate;
-            state.hasRendered = (saved.renderedMask & (1u << slot)) != 0;
-            read(&revision, sizeof(revision));
-            read(&state.values, DormantValueBytes(type));
-            if (type == VN_EFFECT_THREE_BAND_TONE) read(&tone, sizeof(tone));
-            if (slot >= m_fxSlots || row.fxSlotEffectRef[slot].type != type ||
-                revision == 0 || InstalledEffectRevision(host, slot, type) != revision) continue;
-            if (!RestoreBuiltinEffectDormantState(row.fxSlots[slot].state, state,
-                    type == VN_EFFECT_THREE_BAND_TONE ? &tone : nullptr)) return false;
         }
         break;
     }
@@ -506,6 +468,7 @@ void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
     // A cancelled proof leaves the original cold records available.
     if (plan.remainingDormant != nullptr) m_dormant = std::move(plan.remainingDormant);
     for (const auto& binding : plan.working) {
+        if (m_dormantEffects.consume != nullptr) m_dormantEffects.consume(m_dormantEffects.context, binding.bus);
         if (PreparedWorkRow(binding.work) != nullptr) {
             const bool published = PublishWorkRow(binding.work);
             assert(published);

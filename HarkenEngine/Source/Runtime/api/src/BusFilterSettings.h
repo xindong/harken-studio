@@ -19,19 +19,22 @@ public:
         return {found->cutoff[section], found->q[section],
             (found->enabled & (1u << section)) != 0, (found->configured & (1u << section)) != 0};
     }
-    bool Prepare(std::uint32_t bus) noexcept {
+    bool Prepare(std::size_t additional) noexcept {
         try {
-            const auto found = Lower(bus);
-            if (found == rows_.end() || found->bus != bus) {
-                Row row; row.bus = bus;
-                rows_.insert(found, row);
-            }
+            if (additional > rows_.max_size() - rows_.size()) return false;
+            rows_.reserve(rows_.size() + additional);
             return true;
         } catch (...) { return false; }
     }
     void Set(std::uint32_t bus, std::uint32_t section, Setting value) noexcept {
-        const auto found = Lower(bus);
-        assert(found != rows_.end() && found->bus == bus && section < 4);
+        auto found = Lower(bus);
+        assert(section < 4);
+        if (found == rows_.end() || found->bus != bus) {
+            assert(rows_.size() < rows_.capacity());
+            if (rows_.size() == rows_.capacity()) std::terminate();
+            Row row; row.bus = bus;
+            found = rows_.insert(found, row);
+        }
         found->cutoff[section] = value.cutoffHz;
         found->q[section] = value.q;
         const auto bit = 1u << section;

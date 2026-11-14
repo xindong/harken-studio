@@ -2017,7 +2017,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     struct PreparedWork {
         Engine& engine;
         std::vector<BusTree::WorkBinding> rows;
-        std::vector<std::shared_ptr<const BusDormantWork>> sources;
+        std::vector<BusTree::DormantSource> sources;
         ~PreparedWork() { for (const auto& row : rows) engine.buses.ReleaseWorkRow(row.work); }
     } preparedWork{engine};
     try {
@@ -2039,7 +2039,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                     const auto status = engine.PrepareBusWorkState(host.index, row);
                     if (status != VN_OK) return status;
                     if (!engine.buses.RestoreDormantWork(row)) return VN_DEVICE_ERROR;
-                    preparedWork.sources.push_back(engine.buses.DormantWorkFor(host));
+                    preparedWork.sources.push_back(engine.buses.DormantSourceFor(host));
                     std::copy_n(row.fxSlotEffectRef, kMaxFxSlotsPerBus, refs.begin());
                 }
             }
@@ -2197,7 +2197,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         for (std::size_t i = 0; i < prepared.preparedWork_.size(); ++i) {
             const auto& row = prepared.preparedWork_[i];
             if (!engine.buses.LogicRefMatches(row.bus) || engine.buses.AcceptedWorkRef(row.bus).Valid() ||
-                engine.buses.DormantWorkFor(row.bus) != prepared.preparedCold_[i]) return false;
+                engine.buses.DormantSourceFor(row.bus) != prepared.preparedCold_[i]) return false;
         }
         for (const auto& row : prepared.effectChains_) {
             if (!engine.buses.CanCommitPreviewEffectChain(row) ||

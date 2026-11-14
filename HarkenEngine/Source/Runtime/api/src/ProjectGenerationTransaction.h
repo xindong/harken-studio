@@ -413,7 +413,7 @@ private:
     std::vector<PreparedBusEffectChain> effectChains_;
     std::vector<EffectParamTargetStore::PreparedSeedToken> effectSeeds_;
     std::vector<BusTree::WorkBinding> preparedWork_;
-    std::vector<std::shared_ptr<const BusDormantWork>> preparedCold_;
+    std::vector<BusTree::DormantSource> preparedCold_;
 };
 
 ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(

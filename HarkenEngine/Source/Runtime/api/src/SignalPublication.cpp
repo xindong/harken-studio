@@ -587,9 +587,9 @@ bool PreparedBusCommandBatch::Prepare(std::span<const CommandRecord> commands) n
     if (proof_.Valid() || commands.size() > UINT32_MAX) return false;
     commands_ = commands;
     if (commands.empty()) return true;
-    for (const auto& command : commands)
-        if (command.opcode == kOpcodeSetBusFilter &&
-            !engine_.busFilterSettings.Prepare(command.payload.setBusFilter.busIndex)) return false;
+    const auto filters = std::count_if(commands.begin(), commands.end(),
+        [](const auto& command) { return command.opcode == kOpcodeSetBusFilter; });
+    if (filters != 0 && !engine_.busFilterSettings.Prepare(static_cast<std::size_t>(filters))) return false;
     return engine_.commands.ReserveBatch(static_cast<std::uint32_t>(commands.size()), &reservation_) &&
         engine_.commands.ProvePreparedBatch(&reservation_, commands.data(),
             static_cast<std::uint32_t>(commands.size()), &proof_) &&

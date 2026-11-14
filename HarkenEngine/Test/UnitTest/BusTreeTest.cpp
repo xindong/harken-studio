@@ -1194,11 +1194,10 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     ASSERT_EQ(saved->effects[0].type, VN_EFFECT_GAIN);
     EXPECT_TRUE(saved->effects[0].hasRendered);
     buses.AcknowledgeSleep();
-    const auto residual = buses.DormantWorkFor(bus);
-    ASSERT_NE(residual, nullptr);
-    EXPECT_EQ(residual->filterMask, 0u);
-    EXPECT_EQ(residual->types[0], VN_EFFECT_GAIN);
-    EXPECT_EQ(std::count(residual->types.begin(), residual->types.end(), UINT8_MAX), 7);
+    const auto residual = buses.DormantSourceFor(bus);
+    EXPECT_EQ(residual.filters, nullptr);
+    EXPECT_EQ(residual.effects.mask, 1u);
+    EXPECT_EQ(residual.effects.publication, sleep->publication);
     buses.DrainActivities();
     engine.nullBackend.Pump(1);
     buses.DrainActivities();
@@ -1791,4 +1790,54 @@ TEST(BusCapacityGrowth, PublicDefinitionsGrowBeyond4096WhilePlaybackContinues) {
     EXPECT_EQ(1u, engine.buses.WorkingPlaneCount());
     EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
     EXPECT_EQ(0u, engine.mixer.Arena().OverflowCount());
+}
+
+TEST(BusSettings, CancelledFilterPreparationDoesNotAccumulateAndBatchCommitKeepsAllSettings) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::array<harken::CommandRecord, 8> commands{};
+    for (unsigned i = 0; i < commands.size(); ++i) {
+        const auto id = harkentest::ObjectId(25000 + i);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+        engine.nullBackend.Pump(1);
+        const auto bus = engine.buses.FindRef(id);
+        auto& command = commands[i];
+        command.opcode = harken::kOpcodeSetBusFilter;
+        auto& filter = command.payload.setBusFilter;
+        filter.busIndex = bus.index;
+        filter.busGeneration = bus.generation;
+        filter.cutoffHz = 1000.0f + i * 100.0f;
+        filter.q = .7f;
+    }
+    std::size_t preparedBytes = 0;
+    const auto head = engine.commands.PublishedHead();
+    for (const auto& command : commands) {
+        {
+            harken::PreparedBusCommandBatch batch(engine);
+            ASSERT_TRUE(batch.Prepare({&command, 1}));
+        }
+        EXPECT_FALSE(engine.busFilterSettings.Get(command.payload.setBusFilter.busIndex, 0).configured);
+        if (preparedBytes == 0) preparedBytes = engine.busFilterSettings.StorageBytes();
+        EXPECT_EQ(preparedBytes, engine.busFilterSettings.StorageBytes());
+        EXPECT_EQ(head, engine.commands.PublishedHead());
+    }
+    {
+        harken::PreparedBusCommandBatch batch(engine);
+        ASSERT_TRUE(batch.Prepare(commands));
+        allocation_probe::count = 0;
+        allocation_probe::enabled = true;
+        batch.Publish();
+        allocation_probe::enabled = false;
+        EXPECT_EQ(0u, allocation_probe::count);
+    }
+    for (const auto& command : commands) {
+        const auto& filter = command.payload.setBusFilter;
+        const auto setting = engine.busFilterSettings.Get(filter.busIndex, 0);
+        EXPECT_TRUE(setting.configured);
+        EXPECT_FLOAT_EQ(filter.cutoffHz, setting.cutoffHz);
+        EXPECT_FLOAT_EQ(filter.q, setting.q);
+    }
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
 }
