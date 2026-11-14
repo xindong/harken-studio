@@ -1579,4 +1579,162 @@ TEST(BusActivity, InitialTransactionalSlotBindsItsWorkIdentity) {
     buses.DrainActivities();
 }
 
+void SleepSettingsBus(harken::Engine& engine, harken::BusSlotRef bus) {
+    using namespace harken;
+    BusTree::WorkObservation fact;
+    ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, engine.buses.AcceptedWorkRef(bus), fact));
+    std::vector<BusTree::WorkBinding> retained;
+    for (const auto& binding : engine.buses.AcceptedActivity()->working)
+        if (binding.bus != bus) retained.push_back(binding);
+    auto* sleep = engine.buses.PrepareActivity(engine.buses.AcceptedTopology(), retained);
+    ASSERT_NE(sleep, nullptr);
+    ASSERT_TRUE(engine.buses.PrepareConditionalSleep(*sleep, {&fact, 1}, engine.voices));
+    CommandRecord command{};
+    command.opcode = kOpcodeSetBusActivity;
+    CommandQueue::BatchReservation reservation;
+    CommandQueue::PreparedBatchProof proof;
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof));
+    ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(sleep)));
+    ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(sleep->sleepDecision.load(), BusActivityPlan::SleepDecision::Accepted);
+    ASSERT_TRUE(AcknowledgeBusSleep(engine));
+    engine.buses.DrainActivities();
+    engine.nullBackend.Pump(1);
+    engine.buses.DrainActivities();
+    ASSERT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
+}
+
+TEST(BusSettings, DirectCommandsWakeColdBusWithoutChangingTheirRamps) {
+    using namespace harken;
+    for (unsigned operation = 0; operation != 14; ++operation) {
+        SCOPED_TRACE(operation);
+        const auto render = [&](bool cold, Capture& output) {
+            EngineSession session(MakeNullConfig(2, 64, 48000));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto& engine = *session.Engine();
+            const auto id = harkentest::ObjectId(711);
+            ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(713), VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_ConnectBusSend(id, VN_BUS_MASTER, -12));
+            VnGainDesc gain{};
+            gain.structSize = sizeof(gain);
+            gain.gainDb = -6;
+            ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+                reinterpret_cast<const VnEffectDesc*>(&gain)));
+            if (operation == 8) {
+                VnCompressorDesc compressor{};
+                compressor.structSize = sizeof(compressor);
+                compressor.thresholdDb = -12;
+                compressor.ratio = 4;
+                compressor.attackMs = 10;
+                compressor.releaseMs = 100;
+                ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 1, VN_EFFECT_COMPRESSOR,
+                    reinterpret_cast<const VnEffectDesc*>(&compressor)));
+            }
+            engine.nullBackend.Pump(400);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto bus = engine.buses.FindRef(id);
+            if (cold) {
+                SleepSettingsBus(engine, bus);
+                ASSERT_FALSE(HasFatalFailure());
+            } else engine.nullBackend.Pump(2);
+            switch (operation) {
+            case 0: ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -9, 23)); break;
+            case 1: ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(id, -9, 23)); break;
+            case 2: ASSERT_EQ(VN_OK, Vn_SetBusFilter(id, kFilterKindLowpass, 2000, .707f, 1, 23)); break;
+            case 3: ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(id, kFilterKindHighpass, 120, .707f, 1, 23)); break;
+            case 4: ASSERT_EQ(VN_OK, Vn_SetBusMute(id, 1, 23)); break;
+            case 5: ASSERT_EQ(VN_OK, Vn_SetBusSolo(harkentest::ObjectId(713), 1, 23)); break;
+            case 6: ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(id, 0, 0, -12)); break;
+            case 7: ASSERT_EQ(VN_OK, Vn_SetBusEffectBypass(id, 0, 1)); break;
+            case 8: ASSERT_EQ(VN_OK, Vn_ResetBusEffect(id, 1, VN_EFFECT_COMPRESSOR)); break;
+            case 9: ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(id, 0)); break;
+            case 10: ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(id, VN_BUS_MASTER, -18, 23)); break;
+            case 11:
+                gain.gainDb = -12;
+                ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+                    reinterpret_cast<const VnEffectDesc*>(&gain)));
+                break;
+            case 12: ASSERT_EQ(VN_OK, Vn_ClearBusEffect(id, 0)); break;
+            case 13:
+                engine.busTargets.SetSlot(bus.index, kBusTargetBusVolume,
+                    BusTargetStore::kSlotVariableIndex, -9);
+                engine.busTargets.MarkVariableChanged(bus.index, kBusTargetBusVolume, 23);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                break;
+            }
+            const auto pcm = harkentest::MakeDC(8192, .25f);
+            const auto descriptor = MonoDesc(pcm, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(712), &descriptor));
+            auto play = MakePlayDesc(harkentest::ObjectId(712));
+            play.busId = id;
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            harkentest::PumpAndCapture(&engine, 30, output);
+            EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+        };
+        Capture awake, cold;
+        ASSERT_NO_FATAL_FAILURE(render(false, awake));
+        ASSERT_NO_FATAL_FAILURE(render(true, cold));
+        EXPECT_EQ(awake.left, cold.left);
+        EXPECT_EQ(awake.right, cold.right);
+    }
+}
+
+TEST(BusSettings, FailedColdPreparationKeepsDirectValuesAndWholePropertyBatch) {
+    using namespace harken;
+    auto config = MakeNullConfig(2, 64, 48000);
+    config.gainEffectPoolCapacity = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto id = harkentest::ObjectId(721);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(722), VN_BUS_MASTER));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.gainDb = -6;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(400);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto bus = engine.buses.FindRef(id);
+    SleepSettingsBus(engine, bus);
+    ASSERT_FALSE(HasFatalFailure());
+    const auto held = engine.effectBank.Acquire(VN_EFFECT_GAIN);
+    ASSERT_EQ(held.type, VN_EFFECT_GAIN);
+    const auto head = engine.commands.PublishedHead();
+    EXPECT_EQ(Vn_SetBusVolume(id, -9, 23), VN_BACKPRESSURE);
+    EXPECT_EQ(Vn_SetBusOutputVolume(id, -9, 23), VN_BACKPRESSURE);
+    EXPECT_EQ(Vn_SetBusMute(id, 1, 23), VN_BACKPRESSURE);
+    EXPECT_EQ(Vn_SetBusSolo(harkentest::ObjectId(722), 1, 23), VN_BACKPRESSURE);
+    EXPECT_EQ(Vn_SetBusEffectParam(id, 0, 0, -12), VN_BACKPRESSURE);
+    EXPECT_EQ(engine.commands.PublishedHead(), head);
+    EXPECT_EQ(engine.busTargets.Reduce(bus.index, kBusTargetBusVolume), 0);
+    EXPECT_EQ(engine.busTargets.Reduce(bus.index, kBusTargetBusOutputVolume), 0);
+    EXPECT_EQ(engine.busMuted[bus.index], 0u);
+    EXPECT_EQ(engine.busSoloActiveCount, 0u);
+    EXPECT_EQ(engine.effectParamTargets.AuthoredBase(EffectParamTargetStore::Scope::Bus,
+        bus.index, 0, 0), -6);
+    EXPECT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
+    engine.busTargets.SetSlot(bus.index, kBusTargetBusVolume, BusTargetStore::kSlotVariableIndex, -9);
+    engine.busTargets.SetSlot(0, kBusTargetBusVolume, BusTargetStore::kSlotVariableIndex, -3);
+    engine.busTargets.MarkVariableChanged(bus.index, kBusTargetBusVolume, 23);
+    engine.busTargets.MarkVariableChanged(0, kBusTargetBusVolume, 23);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(engine.busTargets.LastCommitted(bus.index, kBusTargetBusVolume), 0);
+    EXPECT_EQ(engine.busTargets.LastCommitted(0, kBusTargetBusVolume), 0);
+    EXPECT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
+    engine.effectBank.Recycle(held);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(engine.busTargets.LastCommitted(bus.index, kBusTargetBusVolume), -9);
+    EXPECT_EQ(engine.busTargets.LastCommitted(0, kBusTargetBusVolume), -3);
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 1u);
+    EXPECT_TRUE(engine.buses.AcceptedWorkRef(bus).Valid());
+    EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+}
+
 } // namespace

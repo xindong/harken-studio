@@ -406,6 +406,31 @@ bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& rese
     } catch (...) { return false; }
 }
 
+PreparedBusCommandBatch::~PreparedBusCommandBatch() {
+    proof_.Release();
+    engine_.commands.CancelReservedBatch(&reservation_);
+    engine_.buses.DrainActivities();
+}
+
+bool PreparedBusCommandBatch::Prepare(std::span<const CommandRecord> commands) noexcept {
+    if (proof_.Valid() || commands.size() > UINT32_MAX) return false;
+    commands_ = commands;
+    if (commands.empty()) return true;
+    return engine_.commands.ReserveBatch(static_cast<std::uint32_t>(commands.size()), &reservation_) &&
+        engine_.commands.ProvePreparedBatch(&reservation_, commands.data(),
+            static_cast<std::uint32_t>(commands.size()), &proof_) &&
+        PrepareBusActivityWake(engine_, reservation_, commands, proof_);
+}
+
+void PreparedBusCommandBatch::Publish() noexcept {
+    if (commands_.empty()) return;
+    const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
+    assert(published.Count() == commands_.size());
+    (void)published;
+    for (const auto& command : commands_) engine_.NoteBusSettingCommand(command);
+    commands_ = {};
+}
+
 PrivateSignalTopology::~PrivateSignalTopology() {
     proof_.Release();
     engine_.buses.DrainActivities();

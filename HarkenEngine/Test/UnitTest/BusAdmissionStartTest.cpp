@@ -2829,6 +2829,55 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
     }
 }
 
+TEST(BusAdmissionStart, DirectPreviewControlRestoresColdChainBeforeUpdatingRevision) {
+    using namespace harken;
+    for (const auto type : {VN_EFFECT_GAIN, VN_EFFECT_LIMITER}) {
+        SCOPED_TRACE(type);
+        AdmissionSession fixture;
+        auto& engine = *fixture.session.Engine();
+        LiveBusPublication publication(engine, fixture.image, 5);
+        const auto child = harkentest::ObjectId(600);
+        const auto effect = harkentest::ObjectId(401);
+        publication.ids[1] = child;
+        publication.alive[1] = 1;
+        publication.generations[1] = 1;
+        publication.topology.busCount = publication.view.authoredBusCount = 2;
+        publication.view.busFaderPositions = publication.faders;
+        SetLiveBusLimiter(publication, child);
+        if (type == VN_EFFECT_GAIN) {
+            publication.effects[0].effectType = type;
+            publication.effects[0].parameterCount = 1;
+            publication.parameters.resize(1);
+            publication.view.effects = publication.effects;
+            publication.view.effectParameters = publication.parameters;
+        }
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        const auto host = engine.buses.FindRef(child);
+        SleepLiveBus(engine, host);
+        ASSERT_FALSE(HasFatalFailure());
+        const float parameters[]{-12, 80};
+        ASSERT_EQ(VN_OK, SetPreviewBusEffect(publication.view.ownerId, child, effect,
+            type, parameters, type == VN_EFFECT_GAIN ? 1u : 2u, 0));
+        engine.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto* work = engine.buses.BusState(host.index);
+        ASSERT_NE(work, nullptr);
+        EXPECT_EQ(work->fxSlotEffectRef[0].generation, engine.busEffectInstanceRefs[host.index][0].generation);
+        if (type == VN_EFFECT_GAIN) {
+            EXPECT_NEAR(static_cast<const GainState*>(work->fxSlots[0].state)->gainLinear,
+                std::pow(10.f, -12.f / 20), 1e-6f);
+        } else {
+            const auto* state = engine.buses.PreviewEffectState(host);
+            ASSERT_NE(state, nullptr);
+            EXPECT_EQ(work->previewEffectRevision, state->revision);
+            EXPECT_NEAR(static_cast<const LimiterState*>(work->fxSlots[0].state)->ceilingLinear,
+                std::pow(10.f, -12.f / 20), 1e-6f);
+        }
+        EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+    }
+}
+
 TEST(BusAdmissionStart, DormantPreviewGainCanBeClearedOrDeleted) {
     using namespace harken;
     for (bool removeBus : {false, true}) {

@@ -32,6 +32,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <span>
 
 namespace harken {
 
@@ -69,6 +70,9 @@ public:
     // Push after FreeSlots admitted the whole set.
     using FreeSlotsFn = std::uint32_t (*)(void* ctx);
     using PushFn = bool (*)(void* ctx, const PropertyCommit& commit);
+    // Optional transport prepares and publishes the complete staged set. False
+    // means nothing was published and every target remains dirty for retry.
+    using BatchFn = bool (*)(void* ctx, std::span<const PropertyCommit> commits);
 
     // batchCapacity bounds one tick's staged commits (the section-10.4
     // capacity contract keeps legal wirings inside it).
@@ -92,7 +96,7 @@ public:
     // releases any held reservation (a deferred batch rebuilt to empty
     // means every deferred target was consumed by other means; nothing is
     // pending anymore).
-    bool Publish(FreeSlotsFn freeSlots, PushFn push, void* ctx);
+    bool Publish(FreeSlotsFn freeSlots, PushFn push, void* ctx, BatchFn batch = nullptr);
 
     // Restarts staging for a fresh gather while a deferral may be
     // pending: discards the staged commits but KEEPS the deferred flag,

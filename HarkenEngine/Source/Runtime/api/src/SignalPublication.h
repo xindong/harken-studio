@@ -45,6 +45,23 @@ bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& rese
     std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept;
 bool AcknowledgeBusSleep(Engine& engine) noexcept;
 
+// A control-thread batch owns its reservation and optional wake until the
+// caller finishes no-fail logical commits. The command span stays alive here.
+class PreparedBusCommandBatch {
+public:
+    explicit PreparedBusCommandBatch(Engine& engine) noexcept : engine_(engine) {}
+    ~PreparedBusCommandBatch();
+    PreparedBusCommandBatch(const PreparedBusCommandBatch&) = delete;
+    PreparedBusCommandBatch& operator=(const PreparedBusCommandBatch&) = delete;
+    bool Prepare(std::span<const CommandRecord> commands) noexcept;
+    void Publish() noexcept;
+private:
+    Engine& engine_;
+    std::span<const CommandRecord> commands_;
+    CommandQueue::BatchReservation reservation_{};
+    CommandQueue::PreparedBatchProof proof_;
+};
+
 // For an owner transaction without an existing topology publication. Its
 // reservation must not span cancellation/drain work that can enqueue commands.
 class PrivateSignalTopology {

@@ -74249,102 +74249,79 @@ float WireBusVolumeDb(const harken::Engine& engine, std::uint32_t busIndex,
                                                    : kBusMuteFloorDb;
 }
 
-// Publish-phase queue view handed to the publisher: capacity via
-// CommandQueueFreeSlots above, and this push translating one staged commit
-// into its wire command. Only called after the whole set was admitted.
-bool PushPropertyCommit(void* ctx, const harken::PropertyCommit& commit) {
-    harken::Engine* engine = static_cast<harken::Engine*>(ctx);
-    if (commit.scopeKind == harken::kTargetScopeBus) {
-        /* Bus Volume and Bus Output Volume share kOpcodeSetBusVolume.
-         * outputOnly is keyed off targetId, never the opcode: Output
-         * Volume must not hit Bus.gain (Send would follow). Mute floor
-         * applies only to Bus Volume. */
-        const std::uint32_t busIndex =
-            static_cast<std::uint32_t>(commit.objectId);
-        const bool outputOnly =
-            commit.targetId == harken::kBusTargetBusOutputVolume;
-        harken::CommandRecord command{};
-        command.opcode = harken::kOpcodeSetBusVolume;
-        command.payload.setBusVolume.busIndex = busIndex;
-        command.payload.setBusVolume.volumeDb =
-            outputOnly ? commit.resolved
-                       : WireBusVolumeDb(*engine, busIndex, commit.resolved);
-        command.payload.setBusVolume.rampMs = commit.rampMs;
-        command.payload.setBusVolume.outputOnly = outputOnly ? 1u : 0u;
-        command.payload.setBusVolume.busGeneration =
-            engine->buses.GenerationAt(busIndex);
-        if (!engine->PublishBusSettingCommand(command)) {
-            return false; // unreachable under SPSC: the set was admitted
+// Translate the whole admitted set before any target is marked committed.
+// Tone grouping writes only per-flush scratch; a refused batch is rebuilt.
+bool PublishPropertyCommits(void* ctx, std::span<const harken::PropertyCommit> commits) {
+    auto& engine = *static_cast<harken::Engine*>(ctx);
+    try {
+        std::vector<harken::CommandRecord> commands;
+        std::vector<std::uint32_t> ramps;
+        commands.reserve(commits.size());
+        ramps.reserve(commits.size());
+        for (const auto& commit : commits) {
+            ramps.push_back(commit.rampMs);
+            if (commit.scopeKind == harken::kTargetScopeBus) {
+                const auto bus = static_cast<std::uint32_t>(commit.objectId);
+                const bool output = commit.targetId == harken::kBusTargetBusOutputVolume;
+                auto& command = commands.emplace_back();
+                command.opcode = harken::kOpcodeSetBusVolume;
+                command.payload.setBusVolume.busIndex = bus;
+                command.payload.setBusVolume.busGeneration = engine.buses.GenerationAt(bus);
+                command.payload.setBusVolume.volumeDb = output ? commit.resolved
+                    : WireBusVolumeDb(engine, bus, commit.resolved);
+                command.payload.setBusVolume.rampMs = commit.rampMs;
+                command.payload.setBusVolume.outputOnly = output ? 1u : 0u;
+                continue;
+            }
+            harken::ParamCommit resolved;
+            resolved.handle = commit.objectId;
+            resolved.targetId = commit.targetId;
+            resolved.rampMs = commit.rampMs;
+            resolved.resolved = commit.resolved;
+            resolved.pan2d = commit.pan2d;
+            if (commit.spatialMask == 0) {
+                const auto section = ToneSectionOfTarget(resolved.targetId);
+                if (section < 4) {
+                    const auto slot = static_cast<std::uint32_t>(resolved.handle);
+                    if (slot >= engine.toneSectionCommandsPublished.size()) return false;
+                    const auto bit = static_cast<std::uint8_t>(1u << section);
+                    const auto index = static_cast<std::size_t>(slot) * 4 + section;
+                    if ((engine.toneSectionCommandsPublished[slot] & bit) != 0) {
+                        ramps.back() = engine.toneSectionPublishedRampMs[index];
+                        continue;
+                    }
+                    engine.toneSectionCommandsPublished[slot] |= bit;
+                    ramps.back() = ToneSectionRampMs(engine, resolved.handle, section);
+                    engine.toneSectionPublishedRampMs[index] = ramps.back();
+                }
+            }
+            auto& command = commands.emplace_back();
+            if (!MakeParamCommand(engine, resolved, &command)) return false;
+            if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0 &&
+                (commit.spatialMask & harken::kSpatialPropertyWidth) != 0) {
+                command.payload.setVoicePan.width = commit.spatialWidth;
+                command.payload.setVoicePan.hasWidth = 1;
+            }
         }
-        engine->busTargets.MarkCommitted(
-            static_cast<std::uint32_t>(commit.objectId), commit.targetId,
-            commit.resolved, commit.rampMs);
+        harken::PreparedBusCommandBatch publication(engine);
+        if (!publication.Prepare(commands)) return false;
+        publication.Publish();
+        for (std::size_t i = 0; i < commits.size(); ++i) {
+            const auto& commit = commits[i];
+            if (commit.scopeKind == harken::kTargetScopeBus) {
+                engine.busTargets.MarkCommitted(static_cast<std::uint32_t>(commit.objectId),
+                    commit.targetId, commit.resolved, commit.rampMs);
+            } else if (commit.spatialMask != 0) {
+                if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0)
+                    engine.params.MarkCommitted(commit.objectId, harken::kTargetVoicePan,
+                        commit.resolved, 0, commit.pan2d);
+                if ((commit.spatialMask & harken::kSpatialPropertyWidth) != 0)
+                    engine.params.MarkCommitted(commit.objectId, harken::kTargetVoiceWidth, commit.spatialWidth);
+            } else engine.params.MarkCommitted(commit.objectId, commit.targetId,
+                commit.resolved, ramps[i], commit.pan2d);
+        }
         return true;
-    }
-    harken::ParamCommit resolved;
-    resolved.handle = commit.objectId;
-    resolved.targetId = commit.targetId;
-    resolved.rampMs = commit.rampMs;
-    /* Verbatim translation: the staged value IS current, because the batch
-     * is rebuilt by a fresh gather every tick — a deferred batch's targets
-     * stay dirty and re-collect at current resolved values, and a target a
-     * direct setter consumed during the deferral window is clean and never
-     * re-stages. One command per target per tick, no stale overwrite. */
-    resolved.resolved = commit.resolved;
-    resolved.pan2d = commit.pan2d;
-    if (commit.spatialMask != 0) {
-        harken::CommandRecord command{};
-        if (!MakeParamCommand(*engine, resolved, &command)) return false;
-        if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0 &&
-            (commit.spatialMask & harken::kSpatialPropertyWidth) != 0) {
-            command.payload.setVoicePan.width = commit.spatialWidth;
-            command.payload.setVoicePan.hasWidth = 1;
-        }
-        if (!engine->commands.TryPush(command)) return false;
-        if ((commit.spatialMask & harken::kSpatialPropertyPan) != 0)
-            engine->params.MarkCommitted(resolved.handle, harken::kTargetVoicePan,
-                                         resolved.resolved, 0, resolved.pan2d);
-        if ((commit.spatialMask & harken::kSpatialPropertyWidth) != 0)
-            engine->params.MarkCommitted(resolved.handle, harken::kTargetVoiceWidth,
-                                         commit.spatialWidth);
-        return true;
-    }
-    const std::uint32_t toneSection =
-        ToneSectionOfTarget(resolved.targetId);
-    std::uint32_t publishedRampMs = resolved.rampMs;
-    if (toneSection < 4) {
-        const std::uint32_t voiceSlot =
-            static_cast<std::uint32_t>(resolved.handle);
-        if (voiceSlot >= engine->toneSectionCommandsPublished.size()) {
-            return false;
-        }
-        const std::uint8_t bit =
-            static_cast<std::uint8_t>(1u << toneSection);
-        const std::size_t rampIndex =
-            static_cast<std::size_t>(voiceSlot) * 4 + toneSection;
-        if ((engine->toneSectionCommandsPublished[voiceSlot] & bit) != 0) {
-            publishedRampMs =
-                engine->toneSectionPublishedRampMs[rampIndex];
-            engine->params.MarkCommitted(
-                resolved.handle, resolved.targetId, resolved.resolved,
-                publishedRampMs);
-            return true;
-        }
-        engine->toneSectionCommandsPublished[voiceSlot] |= bit;
-        publishedRampMs =
-            ToneSectionRampMs(*engine, resolved.handle, toneSection);
-        engine->toneSectionPublishedRampMs[rampIndex] = publishedRampMs;
-    }
-    harken::CommandRecord command;
-    if (!MakeParamCommand(*engine, resolved, &command)) {
-        return false; // unreachable: staged values were wire-probed at gather
-    }
-    if (!engine->commands.TryPush(command)) {
-        return false; // unreachable under SPSC: the preflight admitted the set
-    }
-    engine->params.MarkCommitted(resolved.handle, resolved.targetId,
-                                 resolved.resolved, publishedRampMs, resolved.pan2d);
-    return true;
+    } catch (...) { return false; }
 }
 
 // Shared global Variable write for internal Action and legacy meter callers.
@@ -74446,8 +74423,9 @@ void Engine::NoteBusSettingCommand(const CommandRecord& command) noexcept {
 }
 
 bool Engine::PublishBusSettingCommand(const CommandRecord& command) noexcept {
-    if (!commands.TryPush(command)) return false;
-    NoteBusSettingCommand(command);
+    PreparedBusCommandBatch prepared(*this);
+    if (!prepared.Prepare({&command, 1})) return false;
+    prepared.Publish();
     return true;
 }
 
@@ -74488,10 +74466,10 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
                     64, row.downmixCoeffs);
         float gain = 1;
         if (!TryVolumeGainFromDb(::WireBusVolumeDb(*this, busIndex,
-                busTargets.Reduce(busIndex, kBusTargetBusVolume)), &gain)) return fail(VN_INVALID_ARG);
+                busTargets.LastCommitted(busIndex, kBusTargetBusVolume)), &gain)) return fail(VN_INVALID_ARG);
         row.gain.Set(gain);
         row.gainStarted = busVolumePublished[busIndex] != 0;
-        if (!TryVolumeGainFromDb(busTargets.Reduce(busIndex, kBusTargetBusOutputVolume), &gain))
+        if (!TryVolumeGainFromDb(busTargets.LastCommitted(busIndex, kBusTargetBusOutputVolume), &gain))
             return fail(VN_INVALID_ARG);
         row.outputGain.Set(gain);
         std::array<BusTree::Bus::ToneSection*, 4> sections{
@@ -74532,7 +74510,7 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
             if (effect.reset) effect.reset(state);
             if (effect.setParam)
                 for (std::uint32_t param = 0; param < EffectParamCount(type); ++param)
-                    effect.setParam(state, param, effectParamTargets.Reduce(
+                    effect.setParam(state, param, effectParamTargets.LastCommitted(
                         EffectParamTargetStore::Scope::Bus, busIndex, slot, param));
             row.fxSlots[slot] = effect;
         }
@@ -80201,7 +80179,42 @@ bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
                 EnginePlayableServiceRow*, EnginePreparedTimelineVoiceStart& start) {
                 return prepared(start.renderHandle);
             })) return false;
+        const auto setting = [&](std::uint32_t bus, std::uint32_t generation) {
+            if (bus < topology.slotCount)
+                route({bus, generation != 0 ? generation : topology.generations[bus]}, 0, false);
+        };
         for (const auto& command : prospective) {
+            switch (command.opcode) {
+            case kOpcodeSetBusVolume:
+                setting(command.payload.setBusVolume.busIndex, command.payload.setBusVolume.busGeneration); break;
+            case kOpcodeSetBusFilter:
+                setting(command.payload.setBusFilter.busIndex, command.payload.setBusFilter.busGeneration); break;
+            case kOpcodeSetBusSendLevel:
+                setting(command.payload.setBusSendLevel.fromBus, command.payload.setBusSendLevel.fromGeneration);
+                setting(command.payload.setBusSendLevel.toBus, command.payload.setBusSendLevel.toGeneration); break;
+            case kOpcodeSetBusEffect:
+                setting(command.payload.setBusEffect.busIndex, command.payload.setBusEffect.busGeneration); break;
+            case kOpcodeClearBusEffect:
+                setting(command.payload.clearBusEffect.busIndex, command.payload.clearBusEffect.busGeneration); break;
+            case kOpcodeSetBusEffectParam:
+                if (command.flags == kCommandFlagPreviewBusEffect) {
+                    const auto bus = BusSlotRef::FromPacked(command.payload.previewBusEffectControl.host);
+                    setting(bus.index, bus.generation);
+                } else if (command.flags == kCommandFlagPreparedCompressor) {
+                    const auto bus = BusSlotRef::FromPacked(command.payload.setCompressorEffectParam.host);
+                    setting(bus.index, bus.generation);
+                } else setting(command.payload.setBusEffectParam.busIndex, command.payload.setBusEffectParam.busGeneration);
+                break;
+            case kOpcodeSetBusEffectBypass:
+                if (command.flags == kCommandFlagPreviewBusEffect) {
+                    const auto bus = BusSlotRef::FromPacked(command.payload.previewBusEffectControl.host);
+                    setting(bus.index, bus.generation);
+                } else setting(command.payload.setBusEffectBypass.busIndex, command.payload.setBusEffectBypass.busGeneration);
+                break;
+            case kOpcodeSetBusFaderPoint:
+                setting(command.payload.setBusFaderPoint.busIndex, command.payload.setBusFaderPoint.busGeneration); break;
+            default: break;
+            }
             if (command.opcode == kOpcodePlay &&
                 command.payload.play.batch.batchKind != PlayLedBatchKind::TimelineControlArm &&
                 !prepared(command.payload.play.handle)) return false;
@@ -82938,9 +82951,11 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
         for (std::uint32_t i = 0; i < commandCount; ++i)
             commands[i].payload.previewBusEffectControl.revision = liveState->revision + i + 1;
     }
+    PreparedBusCommandBatch publication(*engine);
     if (commandCount != 0 && (!AtomicBatchFitsCapacities(*engine, commandCount)
         || !AdmitCommandBatch(*engine, commandCount)
-        || !engine->commands.TryPushBatch(commands.data(), commandCount))) return VN_BACKPRESSURE;
+        || !publication.Prepare({commands.data(), commandCount}))) return VN_BACKPRESSURE;
+    if (commandCount != 0) publication.Publish();
     for (std::uint32_t index = 0; index < parameterCount; ++index) {
         if (!changed[index]) continue;
         if (bound[index])
@@ -112558,8 +112573,7 @@ VnResult Vn_Update(void) {
               engine->toneSectionCommandsPublished.end(), 0);
     std::fill(engine->toneSectionPublishedRampMs.begin(),
               engine->toneSectionPublishedRampMs.end(), 0);
-    (void)publisher.Publish(&CommandQueueFreeSlots, &PushPropertyCommit,
-                            engine);
+    (void)publisher.Publish(&CommandQueueFreeSlots, nullptr, engine, &PublishPropertyCommits);
     /* Audibility parking runs after the combine flush so each voice's metric
      * (the resolved per-voice volume) is current: eligible inaudible voices
      * park (freeing their render slot), parked voices advance virtual time and
@@ -117236,7 +117250,7 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
         engine->buses.GenerationAt(from);
     cmd.payload.setBusSendLevel.toGeneration =
         engine->buses.GenerationAt(to);
-    (void)engine->PublishBusSettingCommand(cmd);
+    if (!engine->PublishBusSettingCommand(cmd)) return VN_BACKPRESSURE;
     edge->levelDb = levelDb;
     return VN_OK;
 
@@ -117598,13 +117612,15 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     command.payload.setBusEffect.busGeneration =
         engine->buses.GenerationAt(busIndex);
     if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
+    harken::PreparedBusCommandBatch coldPublication(*engine);
+    if (!publication && !coldPublication.Prepare({&command, 1})) return VN_BACKPRESSURE;
     const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
         harken::EffectParamTargetStore::Scope::Bus,
         static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
         seedParams, seedCount);
     if (!seeded) return VN_DEVICE_ERROR;
     if (publication) publication->Publish();
-    else (void)engine->PublishBusSettingCommand(command); // space verified above
+    else coldPublication.Publish();
     effectRollback.transferred = true;
     if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     // Mirror the installed type for parameter-range validation.
@@ -117719,7 +117735,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
         dynamicPlanIndex;
     if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
     if (publication) publication->Publish();
-    else (void)engine->PublishBusSettingCommand(command); // space verified above
+    else if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     harken::EffectInstanceRef released{};
     const auto releasedIdentity = engine->busEffectIdentities[busIndex][slot];
@@ -117838,11 +117854,11 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    // Record the direct value as this bus parameter's base in the binding store.
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    // Commit the direct base only after cold preparation and publication.
     engine->effectParamTargets.NoteDirect(
         harken::EffectParamTargetStore::Scope::Bus,
         static_cast<std::uint64_t>(busIndex), slot, paramIndex, value, value);
-    (void)engine->PublishBusSettingCommand(command); // space verified above
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117895,7 +117911,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->PublishBusSettingCommand(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     if (busIndex < engine->busEffectSlotBypass.size()) {
         engine->busEffectSlotBypass[busIndex][slot] =
             static_cast<std::uint8_t>(bypass01);
@@ -117971,7 +117987,7 @@ VnResult Vn_ResetBusEffect(VnBusId busId, uint32_t effectSlot,
         expectedEffectType;
     command.payload.setBusEffectBypass.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->PublishBusSettingCommand(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118440,7 +118456,7 @@ VnResult Vn_SetBusFaderPoint(VnBusId busId, uint32_t faderAfterSlot) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->PublishBusSettingCommand(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     engine->busFaderAfterSlots[busIndex] = faderAfterSlot;
     return VN_OK;
 
@@ -118476,11 +118492,7 @@ VnResult Vn_SetBusOutputVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    engine->busTargets.SetSlot(
-        index, harken::kBusTargetBusOutputVolume,
-        harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
-    const float resolved = engine->busTargets.Reduce(
-        index, harken::kBusTargetBusOutputVolume);
+    const float resolved = prospective;
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusVolume;
     command.payload.setBusVolume.busIndex = index;
@@ -118488,7 +118500,9 @@ VnResult Vn_SetBusOutputVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.volumeDb = resolved;
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.outputOnly = 1;
-    (void)engine->PublishBusSettingCommand(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    engine->busTargets.SetSlot(index, harken::kBusTargetBusOutputVolume,
+        harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
     engine->busTargets.NoteApiDirect(
         index, harken::kBusTargetBusOutputVolume, volumeDb, rampMs, resolved);
     return VN_OK;
@@ -118549,11 +118563,7 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     // always, and is additionally stamped for the tick's section-9.2
     // aggregation should binding contributions on this target also
     // change before the flush.
-    engine->busTargets.SetSlot(busIndex, harken::kBusTargetBusVolume,
-                               harken::BusTargetStore::kSlotApiDirectIndex,
-                               volumeDb);
-    const float resolved =
-        engine->busTargets.Reduce(busIndex, harken::kBusTargetBusVolume);
+    const float resolved = prospective;
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusVolume;
     command.payload.setBusVolume.volumeDb =
@@ -118562,7 +118572,9 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->PublishBusSettingCommand(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    engine->busTargets.SetSlot(busIndex, harken::kBusTargetBusVolume,
+        harken::BusTargetStore::kSlotApiDirectIndex, volumeDb);
     engine->busTargets.NoteApiDirect(busIndex, harken::kBusTargetBusVolume,
                                      volumeDb, rampMs, resolved);
     return VN_OK;
@@ -118656,7 +118668,7 @@ VnResult Vn_SetBusFilter(VnBusId busId, uint32_t filterKind, float cutoffHz,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->PublishBusSettingCommand(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118707,7 +118719,7 @@ VnResult Vn_SetBusOutputFilter(VnBusId busId, uint32_t filterKind,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->PublishBusSettingCommand(command);
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     return VN_OK;
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
@@ -118758,19 +118770,7 @@ VnResult Vn_SetBusMute(VnBusId busId, uint32_t mute01, uint32_t fadeMs) {
             return VN_BACKPRESSURE;
         }
     }
-    engine->busMuted[busIndex] = static_cast<std::uint8_t>(mute01);
-
-    {
-        harken::MonitorBusFacts facts{};
-        facts.mute01 = mute01;
-        facts.solo01 = engine->busSoloed[busIndex];
-        facts.routeBusId = engine->buses.IdAt(engine->buses.ParentOf(busIndex));
-        harken::ObserveMonitorBus(busIndex + 1u, engine->buses.GenerationAt(busIndex), busId,
-                          facts);
-    }
-    if (audibleBefore == audibleAfter) {
-        return VN_OK;
-    }
+    if (audibleBefore != audibleAfter) {
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusVolume;
     command.payload.setBusVolume.busIndex = busIndex;
@@ -118781,7 +118781,18 @@ VnResult Vn_SetBusMute(VnBusId busId, uint32_t mute01, uint32_t fadeMs) {
     command.payload.setBusVolume.rampMs = fadeMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->PublishBusSettingCommand(command); // space verified above
+    if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
+    }
+    engine->busMuted[busIndex] = static_cast<std::uint8_t>(mute01);
+
+    {
+        harken::MonitorBusFacts facts{};
+        facts.mute01 = mute01;
+        facts.solo01 = engine->busSoloed[busIndex];
+        facts.routeBusId = engine->buses.IdAt(engine->buses.ParentOf(busIndex));
+        harken::ObserveMonitorBus(busIndex + 1u, engine->buses.GenerationAt(busIndex), busId,
+                          facts);
+    }
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118842,6 +118853,23 @@ VnResult Vn_SetBusSolo(VnBusId busId, uint32_t solo01, uint32_t fadeMs) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
+    std::vector<harken::CommandRecord> commands;
+    commands.reserve(flipped.size());
+    for (const std::uint32_t i : flipped) {
+        auto& command = commands.emplace_back();
+        command.opcode = harken::kOpcodeSetBusVolume;
+        command.payload.setBusVolume.busIndex = i;
+        command.payload.setBusVolume.volumeDb =
+            BusEffectivelyAudibleWith(*engine, i, busIndex, newValue, newActive)
+                ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume)
+                : kBusMuteFloorDb;
+        command.payload.setBusVolume.rampMs = fadeMs;
+        command.payload.setBusVolume.busGeneration =
+            engine->buses.GenerationAt(i);
+    }
+    harken::PreparedBusCommandBatch publication(*engine);
+    if (!publication.Prepare(commands)) return VN_BACKPRESSURE;
+    publication.Publish();
     engine->busSoloed[busIndex] = newValue;
     engine->busSoloActiveCount = newActive;
 
@@ -118852,19 +118880,6 @@ VnResult Vn_SetBusSolo(VnBusId busId, uint32_t solo01, uint32_t fadeMs) {
         facts.routeBusId = engine->buses.IdAt(engine->buses.ParentOf(busIndex));
         harken::ObserveMonitorBus(busIndex + 1u, engine->buses.GenerationAt(busIndex), busId,
                           facts);
-    }
-    for (const std::uint32_t i : flipped) {
-        harken::CommandRecord command{};
-        command.opcode = harken::kOpcodeSetBusVolume;
-        command.payload.setBusVolume.busIndex = i;
-        command.payload.setBusVolume.volumeDb =
-            BusEffectivelyAudible(*engine, i)
-                ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume)
-                : kBusMuteFloorDb;
-        command.payload.setBusVolume.rampMs = fadeMs;
-        command.payload.setBusVolume.busGeneration =
-            engine->buses.GenerationAt(i);
-        (void)engine->PublishBusSettingCommand(command); // batch admitted above
     }
     return VN_OK;
 
