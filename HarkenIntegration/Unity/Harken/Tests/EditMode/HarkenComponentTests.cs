@@ -56,6 +56,43 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
+        public void RuntimeFaultReportsOneConsoleErrorAndOneOwnerEvent()
+        {
+            var owner = new GameObject("Runtime fault routing");
+            owner.SetActive(false);
+            var runtime = owner.AddComponent<HarkenAudioSystem>();
+            var handler = (Action<RuntimeFaultInfo>)Delegate.CreateDelegate(typeof(Action<RuntimeFaultInfo>),
+                runtime, typeof(HarkenAudioSystem).GetMethod("HandleRuntimeFault",
+                    BindingFlags.Instance | BindingFlags.NonPublic));
+            int events = 0;
+            runtime.RuntimeRecreationRequired += (sender, info) =>
+            {
+                Assert.That(sender, Is.SameAs(runtime));
+                ++events;
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+            };
+            RuntimeFaultDiagnostics.Reset();
+            RuntimeFaultDiagnostics.Reported += handler;
+            try
+            {
+                LogAssert.Expect(LogType.Error, "Runtime recreation required; fault details unavailable.");
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                typeof(HarkenAudioSystem).GetMethod("HandleLog", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(runtime, new object[] { (uint)VnLogLevel.VN_LOG_ERROR,
+                        VnConstants.VN_LOG_RUNTIME_RECREATE_REQUIRED, "duplicate", null });
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                Assert.That(events, Is.EqualTo(1));
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                RuntimeFaultDiagnostics.Reported -= handler;
+                RuntimeFaultDiagnostics.Reset();
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        [Test]
         public void PreservedScriptGuidsResolveToRenamedTypes()
         {
             AssertScriptGuid("36331721422512843a2073fdb8a0a5b7", typeof(HarkenAudioSystem));

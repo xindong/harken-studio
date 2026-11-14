@@ -5929,6 +5929,13 @@ TEST(VariableCurrentSlice,
               harken::BeginRuntimeTransportReset(*engine, resetFrame));
     EXPECT_FALSE(engine->runtimeTransportResetActive);
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     EXPECT_EQ(epochBefore, engine->variables.CurrentTransportEpoch());
     EXPECT_EQ(epochBefore, engine->timelinePool.Epoch());
     EXPECT_EQ(windowBefore, engine->timelinePool.WindowStartFrame());

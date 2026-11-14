@@ -2865,6 +2865,13 @@ TEST(TimelineVoiceInstall, EffectMirrorPublishesAuthoredConfigOnlyAfterValidated
                 ASSERT_NE(0u, firing);
                 EXPECT_FALSE(engine.forceTimelineVoiceCommitRollbackForTest);
                 EXPECT_TRUE(engine.runtimeRecreateRequired);
+                VnRuntimeFaultInfoV1 faultInfo{};
+                faultInfo.structSize = sizeof(faultInfo);
+                EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+                EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+                EXPECT_NE(nullptr, faultInfo.file);
+                EXPECT_GT(faultInfo.line, 0u);
+                EXPECT_EQ(engine.runtimeFault.line, faultInfo.line);
                 VnActionStepResult step{};
                 step.structSize = sizeof(step);
                 ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));

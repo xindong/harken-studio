@@ -31143,6 +31143,13 @@ TEST(PlayableStart, TimelineInstallIdentityClearsPrivateVoiceOnCommitRollback) {
     EXPECT_EQ(0u, engine->timelineVoiceInstallIdentities[0].renderHandle);
     // The fault closes Runtime admission, but the released ledger slot is reusable.
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     VnVoiceHandle reused = 0;
     std::uint32_t reusedSlot = 0;
     ASSERT_TRUE(engine->ledger.Acquire(&reused, &reusedSlot));

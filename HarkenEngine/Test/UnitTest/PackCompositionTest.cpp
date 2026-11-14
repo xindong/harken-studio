@@ -12087,6 +12087,13 @@ static void CheckOriginalPackStorageLeaseLifetime(bool refuseAfterSourceCapture,
     EXPECT_NE(VN_OK, engine.packs.ValidateResourceClosure(retention.lease.resourceClosureToken));
     if (failLastResourceReturn) {
         ASSERT_TRUE(engine.runtimeRecreateRequired);
+        VnRuntimeFaultInfoV1 faultInfo{};
+        faultInfo.structSize = sizeof(faultInfo);
+        EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+        EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+        EXPECT_NE(nullptr, faultInfo.file);
+        EXPECT_GT(faultInfo.line, 0u);
+        EXPECT_EQ(engine.runtimeFault.line, faultInfo.line);
         ASSERT_LT(retention.service.token.slot, engine.playableServices.size());
         auto& actualService = engine.playableServices[retention.service.token.slot];
         ASSERT_NE(nullptr, actualService.invocation);

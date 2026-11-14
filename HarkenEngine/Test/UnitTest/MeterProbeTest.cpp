@@ -117,6 +117,13 @@ TEST(MeterProbe, PreparedBusRemovalSequenceExhaustionDoesNotPartiallyRetire) {
     EXPECT_EQ(VN_BACKPRESSURE, engine->meterProbes.PrepareBusRemovalV1(*engine, refs, prepared));
     EXPECT_FALSE(engine->meterProbes.CanCommitBusRemovalV1(*engine, prepared));
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     EXPECT_TRUE(engine->logicCommits.Exhausted());
     EXPECT_EQ(head, engine->commands.PublishedHead());
     EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);

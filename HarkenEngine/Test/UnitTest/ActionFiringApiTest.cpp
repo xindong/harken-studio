@@ -4800,6 +4800,13 @@ void ExpectDirectScheduleRootPostFailureRollsBackSharedTransaction(
     EXPECT_EQ(commandFreeBefore, engine->commands.FreeSlots());
     EXPECT_EQ(startRowsBefore, activeStartRows());
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     EXPECT_FALSE(engine->forceDirectPlayablePostFailureForTest);
 }
 

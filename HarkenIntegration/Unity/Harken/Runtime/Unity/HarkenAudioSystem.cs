@@ -184,6 +184,7 @@ namespace Harken.Unity
         public event Action<HarkenAudioSystem> BecameReady;
         public event Action<HarkenAudioSystem, string, VnResult> OperationCompleted;
         public event HarkenCallbacks.NotificationHandler NotificationReceived;
+        public event Action<HarkenAudioSystem, RuntimeFaultInfo> RuntimeRecreationRequired;
         public event Action<HarkenAudioSystem, HarkenRuntimeState, string, VnResult> RuntimeEnded;
 
         public VnResult ConfigureLifecycleBeforeStartup(bool suppressAudio, bool stopWhenDisabled)
@@ -631,6 +632,8 @@ namespace Harken.Unity
             {
                 // Bootstrap recommendations do not change firing capacity. Allocate before native startup.
                 managedFirings = new ManagedFiring[checked((int)config.maxActionFirings)];
+                RuntimeFaultDiagnostics.Reported -= HandleRuntimeFault;
+                RuntimeFaultDiagnostics.Reported += HandleRuntimeFault;
                 notificationRegistration = HarkenCallbacks.InstallNotification(
                     ref config, HandleNotification, this);
                 logRegistration = HarkenCallbacks.InstallLog(
@@ -1040,7 +1043,7 @@ namespace Harken.Unity
             else message = observedOperation + ": " + result;
             resultObserved.Invoke(message);
             OperationCompleted?.Invoke(this, observedOperation, result);
-            if (result != VnResult.VN_OK)
+            if (result != VnResult.VN_OK && result != VnResult.VN_RUNTIME_RECREATE_REQUIRED)
             {
                 Debug.LogError("Harken operation failed: " + message, this);
             }
@@ -1280,6 +1283,7 @@ namespace Harken.Unity
 
         private void DisposeCallbackRegistrations()
         {
+            RuntimeFaultDiagnostics.Reported -= HandleRuntimeFault;
             notificationRegistration?.Dispose();
             notificationRegistration = null;
             logRegistration?.Dispose();
@@ -1292,8 +1296,19 @@ namespace Harken.Unity
             NotificationReceived?.Invoke(in notification, state);
         }
 
+        private void HandleRuntimeFault(RuntimeFaultInfo info)
+        {
+            Debug.LogError(info.ToString(), this);
+            RuntimeRecreationRequired?.Invoke(this, info);
+        }
+
         private void HandleLog(uint level, uint code, string text, object state)
         {
+            if (code == VnConstants.VN_LOG_RUNTIME_RECREATE_REQUIRED)
+            {
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                return;
+            }
             string message = "[Harken " + level + "/" + code + "] " + text;
             switch ((VnLogLevel)level)
             {

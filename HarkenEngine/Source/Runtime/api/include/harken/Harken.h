@@ -843,8 +843,9 @@ enum {
                                          * a higher-priority play */
     VN_NOTIFY_VOICE_PARKED = 5,          /* voice went inaudible and released its
                                          * render slot while its timeline lives */
-    VN_NOTIFY_VOICE_RETURNED = 6         /* parked voice became audible again and
+    VN_NOTIFY_VOICE_RETURNED = 6,        /* parked voice became audible again and
                                          * reacquired a render slot */
+    VN_NOTIFY_RUNTIME_RECREATE_REQUIRED = 7 /* query Vn_GetRuntimeFaultInfo */
 };
 
 /* Notification, produced on the audio thread and delivered to the
@@ -856,6 +857,38 @@ struct VnNotification {
     uint64_t blockTimestamp;   /* monotonic render-block index since
                                 * Vn_Init; the block the notification fired in */
 };
+
+/* First fatal runtime fault; the record survives notification/log overflow.
+ * Repeat count excludes the first occurrence and saturates at UINT64_MAX.
+ * file/function are immutable engine-owned UTF-8 strings, valid until the
+ * native library is unloaded. Copy them before unloading the library. */
+typedef uint32_t VnRuntimeFaultCategory;
+enum {
+    VN_RUNTIME_FAULT_NONE = 0,
+    VN_RUNTIME_FAULT_CAPACITY = 1,
+    VN_RUNTIME_FAULT_INVALID_INPUT = 2,
+    VN_RUNTIME_FAULT_INTERNAL_STATE = 3,
+    VN_RUNTIME_FAULT_GENERATION_EXHAUSTED = 4
+};
+
+typedef struct VnRuntimeFaultInfoV1 {
+    uint32_t structSize;
+    uint32_t category;
+    uint32_t line;
+    uint32_t reserved;
+    uint64_t repeatCount;
+    const char* file;
+    const char* function;
+} VnRuntimeFaultInfoV1;
+
+#define VN_LOG_RUNTIME_RECREATE_REQUIRED 34
+
+/* Logic thread only. Set structSize before calling. Available even after a
+ * fatal runtime or callback fault. VN_OK with category NONE means no fault.
+ * Vn_Init starts a fresh record. Neither this query nor notification triggers
+ * automatic recreation. Vn_Update delivers the first fault directly once to
+ * each configured notification/log sink, bypassing the overwriting queues. */
+VnResult Vn_GetRuntimeFaultInfo(VnRuntimeFaultInfoV1* outInfo);
 
 /* Pumps the engine on the calling thread: drains the notification queue
  * and invokes the VnConfig callback once per notification, then flushes

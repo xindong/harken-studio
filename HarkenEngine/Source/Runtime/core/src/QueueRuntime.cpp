@@ -2008,23 +2008,26 @@ bool QueueInstanceTable::ResolveResetSelection(
 QueueResetStatusV1 QueueInstanceTable::PrepareReset(
     const QueueResetTargetV1& target,
     PreparedQueueResetSetV1* out, std::uint64_t executeFrame,
-    std::uint32_t executionOrdinal) noexcept {
-    return PrepareResetInternal(target, nullptr, out, executeFrame, executionOrdinal);
+    std::uint32_t executionOrdinal, bool* generationExhausted) noexcept {
+    if (generationExhausted != nullptr) *generationExhausted = false;
+    return PrepareResetInternal(target, nullptr, out, executeFrame, executionOrdinal, generationExhausted);
 }
 
 QueueResetStatusV1 QueueInstanceTable::PrepareResetRemainder(
     const QueueResetTargetV1& target, const PreparedCatalogResetScope& nativeScope,
     PreparedQueueResetSetV1* out, std::uint64_t executeFrame,
-    std::uint32_t executionOrdinal) noexcept {
+    std::uint32_t executionOrdinal, bool* generationExhausted) noexcept {
+    if (generationExhausted != nullptr) *generationExhausted = false;
     if (!MatchesCatalogResetScope(nativeScope) || !nativeScope.nativeOnly_)
         return QueueResetStatusV1::InvalidInput;
-    return PrepareResetInternal(target, &nativeScope, out, executeFrame, executionOrdinal);
+    return PrepareResetInternal(target, &nativeScope, out, executeFrame, executionOrdinal, generationExhausted);
 }
 
 QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
     const QueueResetTargetV1& target, const PreparedCatalogResetScope* nativeScope,
     PreparedQueueResetSetV1* out, std::uint64_t executeFrame,
-    std::uint32_t executionOrdinal) noexcept {
+    std::uint32_t executionOrdinal, bool* generationExhausted) noexcept {
+    if (generationExhausted != nullptr) *generationExhausted = false;
     if (out == nullptr || out->Valid() || target.world == 0 ||
         target.containerStableId == VnObjectId{} ||
         target.programSemanticFingerprint == 0 ||
@@ -2032,8 +2035,10 @@ QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
                               target.emitterGeneration)) {
         return QueueResetStatusV1::InvalidInput;
     }
-    if (resetReservationCounter_ == UINT64_MAX)
+    if (resetReservationCounter_ == UINT64_MAX) {
+        if (generationExhausted != nullptr) *generationExhausted = true;
         return QueueResetStatusV1::RuntimeRecreateRequired;
+    }
     const auto reservation = ++resetReservationCounter_;
     const auto normalizedFrame = executeFrame == 0 ? logicNow_ : executeFrame;
     std::uint32_t matched = 0;
@@ -2080,6 +2085,8 @@ QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
         if (!LoadMirror(row, &current) || current.version == UINT64_MAX ||
             row.resetIntentCounter == UINT64_MAX ||
             !ValidEffectiveState(row.resetInitial, row.childCount)) {
+            if (generationExhausted != nullptr)
+                *generationExhausted = current.version == UINT64_MAX || row.resetIntentCounter == UINT64_MAX;
             ReleaseResetReservations(target, slot + 1u, reservation);
             return QueueResetStatusV1::RuntimeRecreateRequired;
         }
@@ -2099,7 +2106,8 @@ QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
 QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
     PreparedQueueResetSetV1* prepared,
     LogicCommitSequence sequence,
-    std::uint64_t executeFrame, const MonitorControlCause& cause) noexcept {
+    std::uint64_t executeFrame, const MonitorControlCause& cause, bool* generationExhausted) noexcept {
+    if (generationExhausted != nullptr) *generationExhausted = false;
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || sequence == 0 ||
         (executeFrame != UINT64_MAX && executeFrame != prepared->order_.executeFrame)) {
@@ -2127,8 +2135,11 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
             !SameResetTarget(row, prepared->target_) ||
             !row.resetReserved.load(std::memory_order_acquire) ||
             row.resetIntentGeneration != 0 || row.resetIntentCounter == UINT64_MAX ||
-            !LoadMirror(row, &current) || current.version == UINT64_MAX)
+            !LoadMirror(row, &current) || current.version == UINT64_MAX) {
+            if (generationExhausted != nullptr)
+                *generationExhausted = current.version == UINT64_MAX || row.resetIntentCounter == UINT64_MAX;
             return QueueResetStatusV1::RuntimeRecreateRequired;
+        }
         ++matchedReservations;
     }
     if (matchedReservations != prepared->reservedCount_)

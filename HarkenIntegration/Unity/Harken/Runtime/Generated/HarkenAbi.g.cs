@@ -1156,6 +1156,14 @@ namespace Harken
             Off(f, "VnBusState", "peakPreFader", Marshal.OffsetOf<VnBusState>("peakPreFader"), 36);
             Off(f, "VnBusState", "peakPostFader", Marshal.OffsetOf<VnBusState>("peakPostFader"), 40);
             Off(f, "VnBusState", "peakPostEffects", Marshal.OffsetOf<VnBusState>("peakPostEffects"), 44);
+            Size(f, "VnRuntimeFaultInfoV1", Marshal.SizeOf<VnRuntimeFaultInfoV1>(), 40);
+            Off(f, "VnRuntimeFaultInfoV1", "structSize", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("structSize"), 0);
+            Off(f, "VnRuntimeFaultInfoV1", "category", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("category"), 4);
+            Off(f, "VnRuntimeFaultInfoV1", "line", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("line"), 8);
+            Off(f, "VnRuntimeFaultInfoV1", "reserved", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("reserved"), 12);
+            Off(f, "VnRuntimeFaultInfoV1", "repeatCount", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("repeatCount"), 16);
+            Off(f, "VnRuntimeFaultInfoV1", "file", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("file"), 24);
+            Off(f, "VnRuntimeFaultInfoV1", "function", Marshal.OffsetOf<VnRuntimeFaultInfoV1>("function"), 32);
             return f;
         }
 

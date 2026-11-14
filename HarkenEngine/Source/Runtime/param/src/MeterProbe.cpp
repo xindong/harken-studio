@@ -942,7 +942,7 @@ VnResult MeterProbeSystem::Uninstall(Engine& engine,
     std::uint64_t logicSequence = 0;
     if (engine.logicCommits.TryIssue(&logicSequence) !=
         LogicCommitCoordinator::IssueStatus::Issued) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(engine.logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_BACKPRESSURE;
     }
     RetireProbe(engine, *probe, logicSequence);
@@ -1236,7 +1236,7 @@ VnResult MeterProbeSystem::PrepareBusRemovalV1(Engine& engine,
         for (auto& row : out.probes) {
             if (row.state != MeterSystem::State::Installed) continue;
             if (engine.logicCommits.TryIssue(&row.issuedSequence) != LogicCommitCoordinator::IssueStatus::Issued) {
-                if (engine.logicCommits.Exhausted()) engine.runtimeRecreateRequired = true;
+                if (engine.logicCommits.Exhausted()) engine.RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
                 return VN_BACKPRESSURE;
             }
         }
@@ -1333,7 +1333,7 @@ void MeterProbeSystem::NoteBusDestroyed(Engine& engine,
             std::uint64_t logicSequence = 0;
             if (engine.logicCommits.TryIssue(&logicSequence) !=
                 LogicCommitCoordinator::IssueStatus::Issued) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(engine.logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             RetireProbe(engine, *probe, logicSequence);
         }

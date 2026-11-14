@@ -36,6 +36,10 @@ namespace Harken
             return c;
         }
 
+        /// <summary>Queries the first fatal fault even after runtime failure; does not recreate.</summary>
+        public static VnResult QueryRuntimeFault(out RuntimeFaultInfo info)
+            => RuntimeFaultDiagnostics.Query(out info);
+
         public static VnResult Init(in VnConfig config)
         {
             VnResult support = Emitter.CheckStateOnlySupport();

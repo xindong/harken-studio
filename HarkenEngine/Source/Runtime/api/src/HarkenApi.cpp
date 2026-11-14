@@ -67,6 +67,25 @@
 #include <vector>
 #include <map>
 
+namespace {
+VnRuntimeFaultCategory RuntimeFaultForReserveRefusal(harken::ReserveRefusal refusal) noexcept {
+    if (refusal == harken::ReserveRefusal::CommitSerialExhausted)
+        return VN_RUNTIME_FAULT_GENERATION_EXHAUSTED;
+    if (refusal == harken::ReserveRefusal::TransactionEventsExceeded ||
+        refusal == harken::ReserveRefusal::SpanExceeded || harken::IsTransientReserveRefusal(refusal))
+        return VN_RUNTIME_FAULT_CAPACITY;
+    return VN_RUNTIME_FAULT_INTERNAL_STATE;
+}
+VnRuntimeFaultCategory RuntimeFaultForTransportReset(const harken::Engine& engine) noexcept {
+    bool deferredGenerationExhausted = false;
+    (void)engine.timelineDeferred.CanResetForTransport(&deferredGenerationExhausted);
+    return engine.transportEpochOwner.Exhausted() ||
+        !engine.variables.CanMintTransportResetBankVersions() ||
+        !engine.actionCooldowns.CanClearAll() || deferredGenerationExhausted
+        ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE;
+}
+} // namespace
+
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
 namespace harken::detail {
 namespace {
@@ -1383,6 +1402,7 @@ struct QueueRootPlanRequest {
 };
 
 struct QueueRootPlan {
+    VnRuntimeFaultCategory failureCategory = VN_RUNTIME_FAULT_INTERNAL_STATE;
     QueueFrontierPlan frontier{};
     harken::QueueCheckpointKey checkpointKey{};
     harken::RandomQueueSeedContext randomSeed{};
@@ -1406,7 +1426,10 @@ bool PrepareSharedQueueFrontierPlan(
 QueueRootPlanStatus ApplyQueueInitializationReset(const QueueRootPlanRequest& request,
     QueueRootPlan* out) noexcept {
     if (FindQueueInitializationReset(request.action, out->checkpointKey, false) != nullptr) {
-        if (out->frontier.initial.version == UINT64_MAX) return QueueRootPlanStatus::RuntimeRecreateRequired;
+        if (out->frontier.initial.version == UINT64_MAX) {
+            out->failureCategory = VN_RUNTIME_FAULT_GENERATION_EXHAUSTED;
+            return QueueRootPlanStatus::RuntimeRecreateRequired;
+        }
         out->frontier.next = out->frontier.resetInitial;
         out->frontier.next.version = out->frontier.initial.version + 1u;
         out->frontier.status = harken::QueueSequenceStepStatus::Successor;
@@ -1501,6 +1524,8 @@ QueueRootPlanStatus PrepareSharedQueueRootPlan(
     if (!PrepareSharedQueueFrontierPlan(
             engine, program, out->randomSeed, out->randomQueue, initial,
             &out->frontier)) {
+        if (initial.version == UINT64_MAX || initial.selectionOrdinal == UINT64_MAX)
+            out->failureCategory = VN_RUNTIME_FAULT_GENERATION_EXHAUSTED;
         return QueueRootPlanStatus::RuntimeRecreateRequired;
     }
     return ApplyQueueInitializationReset(request, out);
@@ -1734,7 +1759,7 @@ void PublishPlayableServiceOwnership(harken::Engine& engine,
                                      harken::EnginePlayableServiceRow* row) noexcept {
     if (row == nullptr) return;
     if (!engine.playablePartitions.Publish(row->partition, row->identity)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     for (auto& child : engine.playableServices) {
@@ -1744,11 +1769,11 @@ void PublishPlayableServiceOwnership(harken::Engine& engine,
         if (engine.forceDeferredFrontierChildPublishFailureForTest) {
             engine.forceDeferredFrontierChildPublishFailureForTest = false;
             engine.deferredFrontierRejectedChildForTest = child.identity;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         if (!engine.playablePartitions.Publish(child.partition, child.identity)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         child.actionPrepared = false;
@@ -4260,7 +4285,7 @@ void MarkPrivateImmediateEntryPinsRetired(harken::Engine& engine,
         if (!receiver.Valid() || receiver.lane.slot != lane.slot ||
             receiver.lane.generation != lane.generation) continue;
         if (!MatchesPrivateImmediateEntryReceiver(engine, row, false)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         receiver.commonPinsRetired = true;
@@ -4751,7 +4776,7 @@ bool CancelPrivateInitialVcPageCohort(harken::Engine& engine,
         [](const auto& side) noexcept { return side.Exact(); });
     if (held.sequence == 0 && !hasPreparedSide && !hasLane) return true;
     const auto fail = [&engine]() noexcept {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     };
     if (scratch.storage.phase == harken::EngineFrontierAttemptPhase::Published)
@@ -6820,6 +6845,49 @@ struct CallbackScope {
 private:
     Engine& m_engine;
 };
+
+// Called only by the outer update, with the existing callback lifetime guard.
+// A sink is acknowledged after invocation, even if its callback throws.
+bool DispatchRuntimeFault(Engine& engine) {
+    if (engine.runtimeFault.category == VN_RUNTIME_FAULT_NONE) return true;
+    if (!engine.runtimeFaultNotificationDelivered && engine.config.onNotification != nullptr) {
+        VnNotification notification{};
+        notification.type = VN_NOTIFY_RUNTIME_RECREATE_REQUIRED;
+        notification.blockTimestamp = engine.mixer.BlocksRendered();
+        {
+            CallbackScope callbackScope(engine);
+            try {
+                engine.config.onNotification(&notification, engine.config.notificationUserData);
+            } catch (...) {
+                engine.callbackFatalSticky = true;
+                g_callbackExceptionPending = true;
+            }
+        }
+        engine.runtimeFaultNotificationDelivered = true;
+        if (g_termPending || g_callbackExceptionPending) return false;
+    }
+    if (!engine.runtimeFaultLogDelivered && engine.config.logCallback != nullptr) {
+        char text[1024];
+        const auto& fault = engine.runtimeFault;
+        std::snprintf(text, sizeof(text),
+            "Runtime recreation required: category=%u at %s:%u in %s (repeated=%llu)",
+            fault.category, fault.file, fault.line, fault.function,
+            static_cast<unsigned long long>(fault.repeatCount));
+        {
+            CallbackScope callbackScope(engine);
+            try {
+                engine.config.logCallback(engine.config.logUserData, VN_LOG_ERROR,
+                    VN_LOG_RUNTIME_RECREATE_REQUIRED, text);
+            } catch (...) {
+                engine.callbackFatalSticky = true;
+                g_callbackExceptionPending = true;
+            }
+        }
+        engine.runtimeFaultLogDelivered = true;
+        if (g_termPending || g_callbackExceptionPending) return false;
+    }
+    return true;
+}
 
 VnResult StartRealDevice(Engine& engine,
                          const DeviceQueryResult* endpointObservation,
@@ -9250,7 +9318,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
                 : engine.voices.ReleaseObserved(releaseObserver) &&
                     engine.playableInstances.ReleaseSourceRetirementHold(programGeneration);
             if (!returned) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 status = VN_RUNTIME_RECREATE_REQUIRED;
             } else {
                 sourceRetirementHeld = false;
@@ -9770,7 +9838,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
              !PrepareInheritedAuthoredStop(engine, playableRoot, startFrame,
                  parentGroup.decision, *preparedOut))) {
             if (!CancelPreparedTimelineVoiceStart(engine, preparedOut)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             result.status = VN_BACKPRESSURE;
             return result;
@@ -10518,7 +10586,7 @@ bool CompleteDeferredPlayableCancellation(harken::Engine& engine,
     }
     harken::DecisionCommittedSnapshot decision{};
     if (!engine.decisions.CaptureCommitted(identity.decision, &decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (decision.sliceCount <= identity.sliceIndex || decision.consumedSlices <= identity.sliceIndex ||
@@ -10647,7 +10715,7 @@ QueueCancellationLeaseStatus DropLivePlan03GroupMemberArms(
     const std::size_t captured = engine.timelinePool.CaptureLivePlan03Groups(
         groups.data(), groups.size());
     if (captured > groups.size()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueCancellationLeaseStatus::Failed;
     }
     // Ring order is not dependency order when a Decision crosses the wrap.
@@ -11256,7 +11324,7 @@ void RetireCommittedAuthoredStopResources(
     auto slot = resources.firstResource;
     for (std::uint32_t index = 0; index < resources.resourceCount; ++index) {
         if (slot >= engine.authoredStopResources.size()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         auto& resource = engine.authoredStopResources[slot];
@@ -11699,7 +11767,7 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
             const auto root = engine.playableInstances.Classify(bank.supersededRoot);
             if (root.live) {
                 if (root.scheduleEpoch != bank.supersededEpoch) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 if (!HasOrdinaryRetirementOwner(engine, bank.supersededRoot, bank.supersededEpoch))
@@ -11721,7 +11789,7 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
                     const auto base = engine.playableStorage.MemberBase(owner->partition.slot);
                     if (member->physicalSlot < base || !engine.ReleasePlayableMember(
                             *owner, member->physicalSlot - base)) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         retiring = true;
                     }
                 } else retiring = true;
@@ -11819,7 +11887,7 @@ public:
           starts_(storage.starts), transactions_(storage.transactions), extraCommands_(storage.extraCommands) {
         if (storage_.occupied) {
             permanentFailure_ = !storage_.retryCleanup.active;
-            if (permanentFailure_) engine_.runtimeRecreateRequired = true;
+            if (permanentFailure_) engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         storage_.occupied = true;
@@ -11913,7 +11981,12 @@ public:
     }
 
     bool PrepareProgram(const harken::ProgramView& program) noexcept {
-        if (!ownsScratch_ || transactionCount_ == transactions_.size()) return false;
+        failureCategory_ = VN_RUNTIME_FAULT_INTERNAL_STATE;
+        if (!ownsScratch_) return false;
+        if (transactionCount_ == transactions_.size()) {
+            failureCategory_ = VN_RUNTIME_FAULT_CAPACITY;
+            return false;
+        }
         if (program.events == nullptr || program.eventCount == 0 || program.eventCount > 2u) {
             permanentFailure_ = true;
             return false;
@@ -11927,6 +12000,7 @@ public:
             }
             const auto offset = static_cast<std::uint64_t>(source.frameOffsetFromEntry);
             if (offset > UINT64_MAX - program.entryAnchorFrame) {
+                failureCategory_ = VN_RUNTIME_FAULT_GENERATION_EXHAUSTED;
                 permanentFailure_ = true;
                 return false;
             }
@@ -11953,7 +12027,10 @@ public:
         request.events = events.data();
         request.eventCount = program.eventCount;
         if (queueRow_ != nullptr) {
-            if (program.eventCount > queueEvents_.size() - queueEventCount_) return false;
+            if (program.eventCount > queueEvents_.size() - queueEventCount_) {
+                failureCategory_ = VN_RUNTIME_FAULT_CAPACITY;
+                return false;
+            }
             for (std::uint32_t index = 0; index < program.eventCount; ++index) {
                 const auto& source = events[index];
                 auto& event = queueEvents_[queueEventCount_++];
@@ -11982,6 +12059,7 @@ public:
                 &request, 1, engine_.timelinePool.PublishCutoffFrame(),
                 &transactions_[transactionCount_]);
         if (result != harken::ReserveRefusal::None) {
+            failureCategory_ = RuntimeFaultForReserveRefusal(result);
             permanentFailure_ = !harken::IsTransientReserveRefusal(result) &&
                 result != harken::ReserveRefusal::OutsideWindow;
             return false;
@@ -11991,11 +12069,19 @@ public:
     }
 
     bool PrepareGroup(const harken::Plan03GroupSliceInput& group) noexcept {
-        if (!ownsScratch_ || groupCount_ == groups_.size()) return false;
+        failureCategory_ = VN_RUNTIME_FAULT_INTERNAL_STATE;
+        if (!ownsScratch_) return false;
+        if (groupCount_ == groups_.size()) {
+            failureCategory_ = VN_RUNTIME_FAULT_CAPACITY;
+            return false;
+        }
         if (queueRow_ != nullptr) return queueBank_->continuationLane.ReserveGroup(group, engine_.timelineArms);
         const auto result = engine_.timelinePool.PreparePlan03GroupSlice(
                 group, engine_.timelineArms, &groups_[groupCount_]);
         if (result != harken::Plan03GroupReserveStatus::Committed) {
+            if (result == harken::Plan03GroupReserveStatus::PageGroupCapacity ||
+                result == harken::Plan03GroupReserveStatus::MemberCapacity)
+                failureCategory_ = VN_RUNTIME_FAULT_CAPACITY;
             permanentFailure_ = result != harken::Plan03GroupReserveStatus::OutsideWindow &&
                 result != harken::Plan03GroupReserveStatus::PageGroupCapacity &&
                 result != harken::Plan03GroupReserveStatus::MemberCapacity;
@@ -12081,6 +12167,7 @@ public:
     }
 
     bool PermanentFailure() const noexcept { return permanentFailure_; }
+    VnRuntimeFaultCategory FailureCategory() const noexcept { return failureCategory_; }
     void PublishQueueOnInstallation() noexcept { automaticQueuePublication_ = true; }
 
     void AttachPreparedTree(harken::EngineActionPlayScratch& scratch, bool& published) noexcept {
@@ -12147,6 +12234,7 @@ public:
 
     bool Commit(harken::LogicCommitSequence sequence,
                 bool ownerCancelsStartsOnFailure = false) noexcept {
+        failureCategory_ = VN_RUNTIME_FAULT_INTERNAL_STATE;
         if (committed_ || !PrepareCommit(sequence, ownerCancelsStartsOnFailure)) return false;
         if (!BindServiceFrontier()) return false;
         if (frontierSourceExit_ != nullptr &&
@@ -12183,7 +12271,7 @@ public:
         }
         committed_ = true;
         if (nativeSchedule_ != nullptr && !PublishNativeScheduleTransition(*nativeSchedule_)) {
-            engine_.runtimeRecreateRequired = true;
+            engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (treePublished_ != nullptr) *treePublished_ = true;
@@ -12194,13 +12282,13 @@ public:
         }
         for (std::uint32_t index = 0; index < transactionCount_; ++index) {
             if (!engine_.timelinePool.ReleasePreparedTransactionPublication(&transactions_[index])) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
             if (!engine_.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&committedGroups_[index])) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -12208,7 +12296,7 @@ public:
             queueBank_->groups[0] = armGroup_;
             queueBank_->published = true;
             if (automaticQueuePublication_ && !queueBank_->continuationLane.Publish()) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -12229,7 +12317,7 @@ public:
             !engine_.QueueConditionalEnded(queueBank_->chain.original)) {
             if (!engine_.queueInstances.RollbackUnpublishedConditional(queueBank_->chain.original,
                     queueBank_->continuationLane)) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
         }
@@ -12238,29 +12326,29 @@ public:
             (void)queueBank_->chain.sourceReader.Release(engine_.mixer.BlocksRendered());
         }
         if (queueBank_ != nullptr && !queueBank_->continuationLane.Retire(engine_.mixer.BlocksRendered())) {
-            engine_.runtimeRecreateRequired = true;
+            engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         if (!ReleaseServiceFrontier()) {
-            engine_.runtimeRecreateRequired = true;
+            engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         for (auto& transaction : transactions_) {
             if (transaction.Valid() &&
                 !engine_.timelinePool.CancelPreparedTransactionBatch(&transaction)) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 if (nativeSchedule_ != nullptr) return;
             }
         }
         for (std::uint32_t index = groupCount_; index-- > 0;) {
             if (groups_[index].Valid() &&
                 !engine_.timelinePool.CancelPreparedPlan03GroupSlice(&groups_[index])) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 if (nativeSchedule_ != nullptr) return;
             }
             if (committedGroups_[index].Valid() &&
                 !engine_.timelinePool.RollbackCommittedPlan03GroupSlice(&committedGroups_[index])) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 if (nativeSchedule_ != nullptr) return;
             }
         }
@@ -12275,19 +12363,19 @@ public:
         for (auto& start : starts_) {
             if (start.prepared) {
                 if (!CancelPreparedTimelineVoiceStart(engine_, &start) && !retainStartFailure)
-                    engine_.runtimeRecreateRequired = true;
+                    engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             } else if (start.renderHandle != 0) {
                 const bool released = RollbackCommittedTimelineVoiceStart(engine_, &start);
-                if (!released && !retainStartFailure) engine_.runtimeRecreateRequired = true;
+                if (!released && !retainStartFailure) engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 if (released || !retainStartFailure) start = {};
             }
         }
-        if (!CancelPreparedAuthoredStop(engine_, decisionStop_)) engine_.runtimeRecreateRequired = true;
+        if (!CancelPreparedAuthoredStop(engine_, decisionStop_)) engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (armGroup_.Valid()) {
             const bool cancelled = armGroupCommitted_
                 ? engine_.armGroups.CancelBeforePublication(armGroup_)
                 : engine_.armGroups.CancelPrepared(armGroup_);
-            if (!cancelled) engine_.runtimeRecreateRequired = true;
+            if (!cancelled) engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             if (cancelled && queueRow_ != nullptr &&
                 queueRow_->QueueFiling().queueArmGroup.slot == armGroup_.slot &&
                 queueRow_->QueueFiling().queueArmGroup.generation == armGroup_.generation) {
@@ -12299,7 +12387,7 @@ public:
             if (index < committedControlCount_) {
                 (void)AbortTimelineArm(engine_, controls_[index]);
             } else if (!engine_.timelineArms.CancelPrepared(controls_[index])) {
-                engine_.runtimeRecreateRequired = true;
+                engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             controls_[index] = {};
         }
@@ -12311,7 +12399,7 @@ public:
         assert(queueBank_ == nullptr || !engine_.OriginalQueueBankHasExternalOwners(*queueBank_));
         const bool bankCancelled = CancelQueueProgramBank(engine_, queueBank_);
         assert(bankCancelled);
-        if (!bankCancelled) engine_.runtimeRecreateRequired = true;
+        if (!bankCancelled) engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
 
 private:
@@ -12499,6 +12587,7 @@ private:
     std::array<bool, 2> frontierBound_{};
     harken::EngineQueueProgramBank* queueBank_ = nullptr;
     bool permanentFailure_ = false;
+    VnRuntimeFaultCategory failureCategory_ = VN_RUNTIME_FAULT_INTERNAL_STATE;
     bool automaticQueuePublication_ = false;
     bool ownsScratch_ = false;
     decltype(harken::EngineTimelineStartScratch::starts)& starts_;
@@ -12535,7 +12624,7 @@ bool CancelAuthoredStopOperation(
     // Disarm every descriptor before retiring arms or cancelling the operation.
     for (std::uint32_t count = 0; count < root.resourceCount; ++count) {
         if (slot >= engine.authoredStopResources.size()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         auto& resource = engine.authoredStopResources[slot];
@@ -12547,7 +12636,7 @@ engine.runtimeRecreateRequired = true;
         if (resource.fence) {
             if (resource.fence->operation != &*root.operation ||
                 resource.fence->identity != root.operation->Identity()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             disarmed = resource.fence->DisarmAndReleaseDecisionPin() && disarmed;
@@ -12702,7 +12791,7 @@ void ServiceAuthoredStops(
         if (hasUnselectedResources && root.operation->Active(identity) && !root.applied) {
             if (deadlineFailed) {
                 if (!engine.playableInstances.ActivateDelayedCancellation(&root.cancellation)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
                 CancelAuthoredStopOperation(engine, root);
                 for (auto& row : engine.playableServices) {
@@ -12737,7 +12826,7 @@ engine.runtimeRecreateRequired = true;
                             *blockingFrame = std::min(*blockingFrame,
                                                       resource.dispatchFrame);
                         else if (publication != harken::ArmPublishStatus::Published)
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     }
                     slot = resource.nextResource;
                 }
@@ -12888,7 +12977,7 @@ bool CommitPlayableSelections(
     for (std::uint32_t i = 0; i < row.selectionDeltaCount; ++i) {
         if (engine.selectionMemory.CommitHead(row.selectionDeltas[i]) !=
             harken::SelectionMemoryStatusV1::Ok) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     }
@@ -13060,7 +13149,7 @@ bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstan
             service.actionPrepared ? &engine.originalPlayableServiceLifetimeHolders[service.identity.slot] : nullptr,
             checkpointOwner)) return false;
     if (!PrepareQueueInitializationReset(action, create, context.prepared)) {
-        if (!engine.CancelOriginalQueueAcquire(&context.prepared)) engine.runtimeRecreateRequired = true;
+        if (!engine.CancelOriginalQueueAcquire(&context.prepared)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     service.queueInstance = context.prepared.Token();
@@ -13139,7 +13228,7 @@ void SetPendingImmediateEntryWork(harken::Engine& engine,
             return current == engine.CapturePlayableServiceWorkIdentity(current.slot);
         });
     assert(recorded);
-    if (!recorded) engine.runtimeRecreateRequired = true;
+    if (!recorded) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
 }
 
 harken::EnginePlayableServiceRow* NextPendingImmediateEntryService(
@@ -13389,7 +13478,7 @@ bool PreparePlayableMemberStorage(
             PlayableServiceReference(owner), owner.partition.generation, offset, leaf, epoch};
         if (privateReference != nullptr) *privateReference = reference;
         else if (!engine.SetPlayableMemberReference(logicalSlot, reference)) {
-            if (!engine.ReleasePlayableMember(owner, offset)) engine.runtimeRecreateRequired = true;
+            if (!engine.ReleasePlayableMember(owner, offset)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         *physicalSlot = slot;
@@ -13424,7 +13513,7 @@ struct PreparedPlayableMemberRecords {
             const auto offset = offsets[index];
             const auto token = owner.members[offset];
             if (token.slot != tokens[index].slot || token.generation != tokens[index].generation) continue;
-            if (!engine.ReleasePlayableMember(owner, offset)) engine.runtimeRecreateRequired = true;
+            if (!engine.ReleasePlayableMember(owner, offset)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
 };
@@ -13450,7 +13539,7 @@ void ReplacePlayableMemberReferences(harken::Engine& engine,
             replace(reference);
             const bool stored = engine.SetPlayableMemberReference(slot, reference);
             assert(stored);
-            if (!stored) engine.runtimeRecreateRequired = true;
+            if (!stored) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         });
     };
     if (aliasOwner == nullptr) {
@@ -13713,18 +13802,18 @@ bool ServiceOrdinaryUnpublishedStartExit(
             engine.timelinePool.HasProgramReference(program) ||
             engine.timelinePlanner.HasProgramReference(program)) {
             row.ordinaryStartCancelFault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         return true;
     }
     if (result == harken::OrdinaryStartCancelResult::ProtocolViolation) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (result == harken::OrdinaryStartCancelResult::Stale &&
         engine.timelinePool.HasProgramReference(program)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     return result == harken::OrdinaryStartCancelResult::Stale &&
@@ -14162,7 +14251,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
                 harken::ArmGroupSnapshot snapshot{};
                 if (engine.armGroups.Capture(local.group, &snapshot) &&
                     !ObserveActiveArrivalMembers(engine, local, &snapshot)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     complete = false;
                 }
             }
@@ -14177,7 +14266,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
                     harken::ArmGroupSnapshot snapshot{};
                     if (engine.armGroups.Capture(local.group, &snapshot) &&
                         !ObserveActiveArrivalMembers(engine, local, &snapshot)) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         complete = false;
                     }
                 }
@@ -14196,7 +14285,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
                 harken::ArmGroupSnapshot snapshot{};
                 if (engine.armGroups.Capture(local.group, &snapshot) &&
                     !ObserveActiveArrivalMembers(engine, local, &snapshot)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     complete = false;
                 }
             }
@@ -14240,7 +14329,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
                     local.decision, &committed);
                 if ((committedOwner && !sameGroup(committed.armGroup)) ||
                     !ObserveActiveArrivalMembers(engine, local, &snapshot)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     complete = false;
                 }
             }
@@ -14259,7 +14348,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
             original.decision = held.oldFuture.queueDecision;
             original.group = held.oldFuture.queueArmGroup;
             if (!ObserveActiveArrivalMembers(engine, original, &snapshot)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 complete = false;
             }
         }
@@ -14272,7 +14361,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
              record.phase != harken::EngineDecisionOwnershipPhase::ActiveSource)) continue;
         harken::ArmGroupSnapshot snapshot{};
         if (!ObserveActiveArrivalMembers(engine, record, &snapshot)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             complete = false;
         }
     }
@@ -15402,13 +15491,13 @@ bool ReconcileQueueFrontier(harken::Engine& engine, harken::EnginePlayableServic
             owner.partition.generation != row.partition.generation ||
             owner.invocationGeneration != row.invocationGeneration ||
             !(owner.stoppingEntry == row.frontierEntry)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         return false;
     }
     auto* activation = engine.decisions.ResolveFrontierActivation(row.frontierEntry.coordinator);
     if (activation == nullptr || !(activation->Descriptor().entry == row.frontierEntry)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (cancel) (void)activation->Cancel(row.frontierEntry, harken::AudioSliceInvalidateReason::Cancel);
@@ -15418,7 +15507,7 @@ engine.runtimeRecreateRequired = true;
     const auto read = activation->Read(row.frontierEntry, completedAudioSequence, &receipt);
     if (read == harken::FrontierReceiptRead::InFlight) return false;
     if (read != harken::FrontierReceiptRead::Ready) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     // Cancellation can borrow this coordinator or a member's shared lease.
@@ -15451,7 +15540,7 @@ engine.runtimeRecreateRequired = true;
             row.frontierLifetimeEntry = row.frontierEntry;
         }
         if (!engine.queueInstances.SettleSignalAdvance(row.frontierAcceptedSignal, outcome)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (receipt.outcome == harken::FrontierReceiptOutcome::Applied) {
@@ -16244,7 +16333,7 @@ bool ReleaseVariableControlStart(
         if (row.variableControlControllers[index].decision.Valid()) {
             if (!RetireNestedVariableControlDecision(
                     engine, row.variableControlControllers[index].decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             row.variableControlControllers[index].decision = {};
@@ -16391,7 +16480,7 @@ PlayableStartResetResult ResetPlayableStartRow(
             if (published) {
                 if (!engine.playablePartitions.BeginRetirement(
                         row.partition, row.identity, completedSequence)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return PlayableStartResetResult::Fault;
                 }
                 row.partitionRetiring = true;
@@ -16426,7 +16515,7 @@ PlayableStartResetResult ResetPlayableStartRow(
         if (row.QueuePayload().queueUnplacedCredit.epoch == engine.timelinePool.Epoch() &&
             !engine.timelinePool.CancelUnplacedBatchCredit(
                 &row.QueuePayload().queueUnplacedCredit)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return PlayableStartResetResult::Fault;
         }
         row.QueuePayload().queueUnplacedCredit = {};
@@ -16461,19 +16550,19 @@ PlayableStartResetResult ResetPlayableStartRow(
                     deferred->targetLease.leaseToken ||
                 deferred->lease == Lease::Released) {
                 deferred->fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return PlayableStartResetResult::Fault;
             }
             if (deferred->lease == Lease::RowOwns) {
                 if (engine.ReleasePackIdentityLease(row.Invocation().packLease) != VN_OK) {
                     deferred->fault = true;
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return PlayableStartResetResult::Fault;
                 }
                 deferred->lease = Lease::Released;
             }
         } else if (engine.ReleasePackIdentityLease(row.Invocation().packLease) != VN_OK) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return PlayableStartResetResult::Fault;
         }
         row.Invocation().packLease = {};
@@ -16488,12 +16577,12 @@ PlayableStartResetResult ResetPlayableStartRow(
             engine.ReadPlayableMember(bases.member + index).render;
         (void)engine.ClearTimelineVoiceInstallIdentity(render);
         if (!engine.ReleasePlayableMember(row, static_cast<std::uint32_t>(index))) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return PlayableStartResetResult::Fault;
         }
     }
     if (!ObserveScheduleAggregateChildBeforeRetire(engine, row, privateVariableControlOwner)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return PlayableStartResetResult::Fault;
     }
     if (auto* parent = engine.ResolvePlayableService(row.parentService))
@@ -16501,7 +16590,7 @@ PlayableStartResetResult ResetPlayableStartRow(
     const bool released = engine.ReclaimOriginalPlayableServiceStorage(
         row, completedSequence, published);
     if (!released) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return PlayableStartResetResult::Fault;
     }
     engine.ClearPlayableMemberRelations(row);
@@ -16526,12 +16615,12 @@ PlayableStartResetResult ResetPlayableStartRow(
                     !engine.OriginalPackIdentityLeaseMatches(invocation.originalPackLease,
                         deferred->targetLease)) {
                     deferred->fault = true;
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return PlayableStartResetResult::Fault;
                 }
             }
             if (engine.ReleaseOriginalPackIdentityLease(invocation.originalPackLease) != VN_OK) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return PlayableStartResetResult::Fault;
             }
             if (deferred != nullptr && deferred->active)
@@ -16607,7 +16696,7 @@ bool ServiceRetainedImmediateRetryCleanup(harken::Engine& engine) noexcept {
         row->QueuePayload().queueCurrentOccurrence.generation != held.occurrence.generation ||
         !harken::SameCompletionOwner(row->QueuePayload().queueCurrentCompletion.owner, held.owner) ||
         !harken::SamePlayableProgramKey(row->QueuePayload().queueCurrentCompletion.program, held.program)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     auto& start = scratch.starts[0];
@@ -17626,7 +17715,7 @@ bool ReleaseContainerLoopScheduleResources(
     const std::size_t memberBase = row.scheduleStorageBase;
     const std::uint32_t count = row.scheduleLeafCount;
     if (count == 0 || memberBase + count > engine.playableStorage.memberCount) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     bool mirrorsCleared = true;
@@ -18008,7 +18097,7 @@ bool RetirePlayableRoot(harken::Engine& engine,
                 return false;
     }
     if (!ObserveScheduleAggregateChildBeforeRetire(engine, row, privateVariableControlOwner)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (!OrdinaryRootReleaseReady(engine, row)) return false;
@@ -18101,7 +18190,7 @@ bool RetirePlayableRoot(harken::Engine& engine,
                 row.Invocation().actionFiring, row.Invocation().actionExecutionOrdinal,
                 row.Invocation().actionTerminalResult,
                 row.Invocation().actionTerminalReason)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         row.playableNotificationDone = true;
@@ -18110,13 +18199,13 @@ bool RetirePlayableRoot(harken::Engine& engine,
         const auto pending = row.Invocation().pendingStopRetirement;
         if (!engine.actionFirings.CompleteAuthoredStop(
                 pending.actionFiring, pending.actionExecutionOrdinal)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         } else row.Invocation().pendingStopRetirement = {};
     }
     if (engine.playablePartitions.Published(row.partition, row.identity)) {
         row.partitionRetiring = engine.playablePartitions.BeginRetirement(
             row.partition, row.identity, engine.mixer.BlocksRendered());
-        if (!row.partitionRetiring) engine.runtimeRecreateRequired = true;
+        if (!row.partitionRetiring) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     } else {
         if (ResetPlayableStartRow(engine, row, privateVariableControlOwner) !=
             PlayableStartResetResult::Released)
@@ -18245,13 +18334,13 @@ void ServiceDueMusicSourceExits(harken::Engine& engine, std::uint64_t observed) 
                 !harken::Engine::SameSelectionServiceReference(child.service, PlayableServiceReference(*source)) ||
                 !harken::Engine::SameSelectionServiceReference(source->parentService, PlayableServiceReference(parent)) ||
                 source->invocation != parent.invocation || source->invocationGeneration != parent.invocationGeneration) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             const auto status = harken::StopPlayable(engine, source->rootInstance, exit->control.fade ? 0 : 5);
             if (status == harken::PlayableControlStatus::Ok) exit->cancellationAccepted = true;
             else if (status != harken::PlayableControlStatus::Backpressure)
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         return true;
     };
@@ -18849,7 +18938,7 @@ void BeginQueueSuccessorAbort(
             !engine.compositeCompletionOwners.RollbackBeforePublication(
                 row.QueueFiling().queueSuccessorCompositeOwner,
                 engine.timelineOccurrences)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         row.QueueFiling().queueSuccessorCompositeOwner = {};
     }
@@ -18880,7 +18969,7 @@ engine.runtimeRecreateRequired = true;
             }
         }
         if (!ledgerCleared || !occurrenceCleared) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     row.QueueFiling().queueSuccessorCompletion = {};
@@ -18891,7 +18980,7 @@ engine.runtimeRecreateRequired = true;
              index < row.QueueFiling().queueSuccessorScheduleLeafCount; ++index) {
             auto* member = engine.FindQueueProgramMember(bank, first + index);
             if (member == nullptr) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             (void)AbortTimelineArm(engine, member->arm, cause);
@@ -18902,7 +18991,7 @@ engine.runtimeRecreateRequired = true;
     }
     if (row.QueuePayload().queueSourceArm.Valid()) {
         if (!AbortQueueSourceArm(engine, row)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     if (row.QueueFiling().queueTransition.Valid()) {
@@ -18923,7 +19012,7 @@ engine.runtimeRecreateRequired = true;
     }
     if (row.queueSuccessorDecision.Valid()) {
         if (!TransferDecisionRetirement(engine, row.queueSuccessorDecision, true)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         } else {
             row.queueSuccessorDecision = {};
             row.QueuePayload().queueSuccessorTicket = 0;
@@ -22408,11 +22497,11 @@ bool CancelVariableControlRetargetSubtree(
     for (std::uint32_t index = tree->containerCount; index-- > 0;) {
         auto& queue = tree->containerQueues[index];
         if (queue.current.active && !CancelRetargetQueueCurrent(queue)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (queue.engine != nullptr && !CancelQueueInstanceOwner(&queue)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         queue = {};
@@ -22438,7 +22527,7 @@ bool CancelVariableControlRetargetSubtree(
             (void)engine.decisions.CancelPreparedReservation(&tree->nestedContinuousDecisions[index]);
         if (tree->committedNestedContinuousDecisions[index].Valid() &&
             !RetireNestedVariableControlDecision(engine, tree->committedNestedContinuousDecisions[index])) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         tree->committedNestedContinuousDecisions[index] = {};
@@ -22449,7 +22538,7 @@ bool CancelVariableControlRetargetSubtree(
         if (tree->committedNestedVariableControlDecisions[index].Valid()) {
             if (!RetireNestedVariableControlDecision(
                     engine, tree->committedNestedVariableControlDecisions[index])) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             tree->committedNestedVariableControlDecisions[index] = {};
@@ -22463,7 +22552,7 @@ bool CancelVariableControlRetargetSubtree(
         }
         if (auto* service = engine.ResolvePlayableService(tree->nestedServices[index])) {
             if (!service->frontierLifetimePin.Release()) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             service->frontierLifetimeEntry = {};
@@ -22502,7 +22591,7 @@ bool CommitVariableControlRetargetSubtree(
             auto& queue = tree->containerQueues[index];
             if (!queue.current.active) continue;
             if (!CancelRetargetQueueCurrent(queue)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
             queue.current = {};
@@ -22528,7 +22617,7 @@ engine.runtimeRecreateRequired = true;
                 (void)engine.decisions.CancelPreparedReservation(&tree->nestedContinuousDecisions[index]);
             if (tree->committedNestedContinuousDecisions[index].Valid() &&
                 !RetireNestedVariableControlDecision(engine, tree->committedNestedContinuousDecisions[index])) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
             tree->committedNestedContinuousDecisions[index] = {};
@@ -22540,7 +22629,7 @@ engine.runtimeRecreateRequired = true;
                 const auto decision =
                     tree->committedNestedVariableControlDecisions[index];
                 if (!RetireNestedVariableControlDecision(engine, decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return;
                 }
                 tree->committedNestedVariableControlDecisions[index] = {};
@@ -22555,13 +22644,13 @@ engine.runtimeRecreateRequired = true;
             }
             if (auto* service = engine.ResolvePlayableService(tree->nestedServices[index])) {
                 if (!service->frontierLifetimePin.Release()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return;
                 }
                 service->frontierLifetimeEntry = {};
                 if (ResetPlayableStartRow(engine, *service) !=
                     PlayableStartResetResult::Released) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return;
                 }
                 tree->nestedServices[index] = {};
@@ -24661,7 +24750,7 @@ bool BeginVariableControlPrivateRollback(harken::Engine& engine,
     if (storage.variableControlRollbackStage == Stage::ParentReleased) return true;
     if (storage.variableControlRollbackSnapshotCaptured) return true;
     const auto fail = [&]() noexcept {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     };
     if (scratch.frontierServiceCount > storage.frontierServices.size()) return fail();
@@ -24835,7 +24924,7 @@ bool DetachVariableControlPrivateRollbackEdges(harken::Engine& engine,
     if (!storage.variableControlRollbackSnapshotCaptured ||
         storage.variableControlRollbackStage != Stage::Captured ||
         storage.variableControlRollbackEdgeCount > storage.variableControlRollbackEdges.size()) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (!storage.variableControlRollbackParent.Valid()) return true;
@@ -24844,34 +24933,34 @@ bool DetachVariableControlPrivateRollbackEdges(harken::Engine& engine,
         parent->partition.slot != storage.variableControlRollbackParentPartition.slot ||
         parent->partition.generation != storage.variableControlRollbackParentPartition.generation ||
         !engine.playablePartitions.Owns(parent->partition, parent->identity)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     const auto parentBase = engine.playableStorage.MemberBase(parent->partition.slot);
     if (parentBase > engine.playableStorage.memberCount ||
         engine.playableStorage.memberStride > engine.playableStorage.memberCount - parentBase) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     for (std::uint32_t index = 0; index < storage.variableControlRollbackEdgeCount; ++index) {
         const auto& edge = storage.variableControlRollbackEdges[index];
         if (edge.logicalSlot < parentBase ||
             edge.logicalSlot - parentBase >= engine.playableStorage.memberStride) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         const auto& current = engine.ReadPlayableMemberReference(edge.logicalSlot);
         if (edge.detached ? !SameVariableControlRollbackMember(
                 current, harken::EnginePlayableMemberReference{})
                           : !SameVariableControlRollbackMember(current, edge.reference)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         auto* child = engine.ResolvePlayableService(edge.reference.service);
         if (child == nullptr || child->partition.slot != edge.childPartition.slot ||
             child->partition.generation != edge.childPartition.generation ||
             !engine.playablePartitions.Owns(child->partition, child->identity)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (VariableControlRollbackHasMappingReaders(engine, *child)) return false;
@@ -24883,7 +24972,7 @@ bool DetachVariableControlPrivateRollbackEdges(harken::Engine& engine,
         if (!reference.Valid()) continue;
         auto* child = engine.ResolvePlayableService(reference);
         if (child == nullptr) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (VariableControlRollbackHasMappingReaders(engine, *child)) {
@@ -24927,7 +25016,7 @@ bool ReleaseVariableControlRollbackNestedServices(harken::Engine& engine,
                 auto* service = engine.ResolvePlayableService(nested);
                 if (!SameVariableControlRollbackService(frontier, nested) || service == nullptr ||
                     !engine.playablePartitions.Owns(service->partition, service->identity)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return false;
                 }
             }
@@ -24952,7 +25041,7 @@ bool ReleaseVariableControlRollbackNestedServices(harken::Engine& engine,
         }
         auto* service = engine.ResolvePlayableService(reference);
         if (service == nullptr) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (ResetPlayableStartRow(engine, *service, &scratch) !=
@@ -24970,7 +25059,7 @@ bool ReconcileRetiredVariableControlRollbackNestedServices(
         if (reference.token.slot >= engine.playableServices.size() ||
             engine.playableServices[reference.token.slot].identity.generation <=
                 reference.token.generation) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         for (std::uint32_t index = 0;
@@ -24978,7 +25067,7 @@ bool ReconcileRetiredVariableControlRollbackNestedServices(
             const auto& edge = scratch.storage.variableControlRollbackEdges[index];
             if (SameVariableControlRollbackService(edge.reference.service, reference) &&
                 !edge.detached) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -25007,19 +25096,19 @@ bool FinishDeferredContainerRollbackOwner(
             if (scratch.packLease.leaseToken != 0 &&
                 scratch.packLease.leaseToken != owner.targetLease.leaseToken) {
                 owner.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (!ReleaseImmediateActionPlayableLease(engine, &scratch, false)) {
                 if (!engine.runtimeRecreateRequired &&
                     engine.HasObservedOriginalPreparingStorageWait(scratch.storage)) return false;
                 owner.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (engine.ReleaseOriginalDeferredPack(owner.recordToken, owner.targetLease) != VN_OK) {
                 owner.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             owner.lease = Lease::Released;
@@ -25043,13 +25132,13 @@ bool FinishDeferredContainerRollbackOwner(
         const auto after = engine.actionFirings.OwnedDeferredCount(owner.firing);
         if (after != before - 1u) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         owner.firingCountDischarged = true;
         if (!completed) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     }
@@ -25069,7 +25158,7 @@ bool FinishVariableControlPrivateRollback(harken::Engine& engine,
         !scratch.storage.deferredContainerOwner.active) {
         // The record owns this lease. The separate deferred finalizer must
         // establish that it still owns the token before this attempt can exit.
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (scratch.packLeaseProvenance ==
@@ -25082,7 +25171,7 @@ bool FinishVariableControlPrivateRollback(harken::Engine& engine,
     } else if (scratch.packLeaseProvenance ==
         harken::EngineActionPlayScratch::PackLeaseProvenance::RowOwned) {
         if (scratch.packLeaseOwned || scratch.packLease.leaseToken != 0) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     }
@@ -25434,7 +25523,7 @@ bool CancelPreparedVariableControlInitial(
     if (scratch->packLeaseOrigin ==
             harken::EngineActionPlayScratch::PackLeaseProvenance::DeferredRecordBorrowed &&
         !scratch->storage.deferredContainerOwner.active) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (scratch->storage.variableControlRollbackStage ==
@@ -25667,7 +25756,7 @@ bool RollbackCommittedVariableControlInitial(
     if (scratch->packLeaseOrigin ==
             harken::EngineActionPlayScratch::PackLeaseProvenance::DeferredRecordBorrowed &&
         !scratch->storage.deferredContainerOwner.active) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (scratch->storage.variableControlRollbackStage ==
@@ -26526,7 +26615,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                 if (selection.Valid() && engine.selectionMemory.CancelPreparedPlay(&selection) !=
                         harken::SelectionMemoryStatusV1::Ok) {
                     scratch.storage.phase = harken::EngineFrontierAttemptPhase::Quarantined;
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return;
                 }
                 --scratch.selectionPlayCount;
@@ -27593,7 +27682,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         if (ResetPlayableStartRow(engine, row) !=
             PlayableStartResetResult::Released) {
             scratch->row = &row;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
             return result;
         }
@@ -27608,7 +27697,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         scratch->row = &row;
         scratch->variableControl = true;
         (void)CancelPreparedVariableControlInitial(engine, scratch);
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
         return result;
     }
@@ -28544,8 +28633,24 @@ enum class InitialFrontierPrepareStatus : std::uint8_t {
     Ready,
     // Batch precheck refused before any write. No frontier activation exists yet.
     TransientAdmission,
-    Failed
+    Failed,
+    FailedCapacity,
+    FailedGenerationExhausted
 };
+
+InitialFrontierPrepareStatus FrontierFailure(VnRuntimeFaultCategory category) noexcept {
+    if (category == VN_RUNTIME_FAULT_CAPACITY) return InitialFrontierPrepareStatus::FailedCapacity;
+    if (category == VN_RUNTIME_FAULT_GENERATION_EXHAUSTED)
+        return InitialFrontierPrepareStatus::FailedGenerationExhausted;
+    return InitialFrontierPrepareStatus::Failed;
+}
+
+VnRuntimeFaultCategory FrontierFailureCategory(InitialFrontierPrepareStatus status) noexcept {
+    if (status == InitialFrontierPrepareStatus::FailedCapacity) return VN_RUNTIME_FAULT_CAPACITY;
+    if (status == InitialFrontierPrepareStatus::FailedGenerationExhausted)
+        return VN_RUNTIME_FAULT_GENERATION_EXHAUSTED;
+    return VN_RUNTIME_FAULT_INTERNAL_STATE;
+}
 
 InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch, harken::LogicCommitSequence sequence) noexcept;
@@ -29600,6 +29705,7 @@ bool CompleteVariableControlInitialPlacement(
         row.phase = harken::EnginePlayableStartPhase::Started;
         row.controlLifecycle = harken::PlayableControlLifecycle::Active;
     }
+    auto frontierFailure = VnRuntimeFaultCategory{VN_RUNTIME_FAULT_INTERNAL_STATE};
     if (ok && row.variableControlIndependentFrontier && scratch->initialQueueSignalAdmission == nullptr) {
         const auto frontier =
             PrepareInitialVariableControlFrontier(engine, *scratch, sequence);
@@ -29610,16 +29716,17 @@ bool CompleteVariableControlInitialPlacement(
                     if (transientAdmission != nullptr) *transientAdmission = true;
                     return false;
                 }
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (transientAdmission != nullptr) *transientAdmission = true;
             return false;
         }
         ok = frontier == InitialFrontierPrepareStatus::Ready;
+        frontierFailure = FrontierFailureCategory(frontier);
     }
     if (!ok) {
-engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(frontierFailure);
         (void)RollbackCommittedVariableControlInitial(engine, scratch);
         return false;
     }
@@ -29718,9 +29825,9 @@ bool CommitPreparedVariableControlInitial(
             FindFrontierAttempt(engine, scratch->continuationScheduleAttempt) == scratch &&
             pendingParent != nullptr && MatchesPendingScheduleEntryParent(engine, *scratch, *pendingParent);
         // A still-private delayed entry can refuse locally only after complete native rollback.
-        if (!privatePendingEntry) engine.runtimeRecreateRequired = true;
+        if (!privatePendingEntry) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (!RollbackCommittedVariableControlInitial(engine, scratch))
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (!scratch->variableControlTreeTokensAdopted &&
@@ -29935,7 +30042,7 @@ bool CommitPreparedVariableControlInitial(
     row.ticket = sequence;
     row.schedule.transactionId = sequence;
     if (!ok) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         (void)RollbackCommittedVariableControlInitial(engine, scratch);
         return false;
     }
@@ -29972,7 +30079,7 @@ bool CommitPreparedVariableControlInitial(
                 row.Invocation().packLease.leaseToken !=
                     deferred.targetLease.leaseToken) {
                 deferred.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             deferred.service = row.identity;
@@ -30288,7 +30395,7 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
             scratch->directCommandsReserved = false;
         }
         (void)CancelPreparedVariableControlInitial(engine, scratch);
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
         return result;
     }
@@ -30323,7 +30430,7 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
         engine.forceContainerLoopPostFailureForTest = false;
         if (commandCount != 0) {
             if (!engine.commands.CancelReservedBatchExact(&commands)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
                 return result;
             }
@@ -30332,7 +30439,7 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
             scratch->storage.initialVcExactCommandCount = commandCount;
         }
         if (!RollbackCommittedVariableControlInitial(engine, scratch)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
         } else result.status = harken::PlayableStartStatus::Backpressure;
         return result;
@@ -30345,7 +30452,7 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
                 &commands, {engine.actionPlayCommandScratch.data(), commandCount});
         } else if (!transientAdmission) {
             if (!engine.commands.CancelReservedBatchExact(&commands)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
                 return result;
             }
@@ -30359,7 +30466,7 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
             result.status = harken::PlayableStartStatus::Backpressure;
             return result;
         }
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
         return result;
     }
@@ -30779,7 +30886,7 @@ struct PreparedQueueContinuationTree {
             row.variableControlNestedQueueSuccessorEpoch = 0;
             row.variableControlNestedQueueSuccessorOrdinal = 0;
         }
-        if (!released || !ResetImmediateActionPlayScratch(engine, scratch)) engine.runtimeRecreateRequired = true;
+        if (!released || !ResetImmediateActionPlayScratch(engine, scratch)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
 
     template <typename WorldView>
@@ -31333,7 +31440,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         row.QueueFiling().queueTransitionGroupArms.Clear();
         if (row.QueueFiling().queueTransition.Valid()) {
             if (!engine.transitionInstances.CancelBeforePublication(row.QueueFiling().queueTransition))
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             row.QueueFiling().queueTransition = {};
         }
     };
@@ -31659,7 +31766,7 @@ engine.runtimeRecreateRequired = true;
             materialized.hasZeroWorkCompletion, successorZeroWorkCompletionFrame) || !starts.Commit(row.QueuePayload().queueTicket)) {
         rollbackUnpublishedTransition();
         abortPrepared();
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueContinuationPrepareStatus::Failed;
     }
     row.QueueFiling().queueSuccessorProgramBank = starts.QueueBank();
@@ -31749,7 +31856,7 @@ bool PrepareSameKeyQueueContinuation(
     }
     if (!starts.Commit(row.QueuePayload().queueTicket)) {
         cancelSuccessorDecision();
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     row.QueueNextState() = next;
@@ -32740,7 +32847,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
                 harken::CompletionPredictability::KnownFinite ||
             !engine.timelineOccurrences.TryPinCompletionOwner(
                 row.QueueFiling().queueSuccessorOccurrence, owner)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
@@ -32751,7 +32858,7 @@ engine.runtimeRecreateRequired = true;
             !engine.ledger.BindCompletionMutation(
                 starts.At(0)->ledgerSlot,
                 {row.QueueFiling().queueSuccessorOccurrence, owner})) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             abortPrepared();
             return QueueContinuationPrepareStatus::Failed;
         }
@@ -32767,7 +32874,7 @@ engine.runtimeRecreateRequired = true;
         row.QueueFiling().queueTransitionGroupArms.Clear();
         if (row.QueueFiling().queueTransition.Valid()) {
             if (!engine.transitionInstances.CancelBeforePublication(row.QueueFiling().queueTransition))
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             row.QueueFiling().queueTransition = {};
         }
     };
@@ -33128,7 +33235,7 @@ engine.runtimeRecreateRequired = true;
     if (!conditionalReady || !engine.queueInstances.CommitPreparedConditional(
             &preparedConditional, &row.QueueFiling().queueConditional)) {
         if (preparedConditional.Valid() && !engine.queueInstances.CancelPreparedConditional(&preparedConditional))
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         rollbackUnpublishedTransition();
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
@@ -33212,7 +33319,7 @@ void PrepareQueueLookahead(harken::Engine& engine, harken::EnginePlayableService
                 if (row.QueuePayload().queueAbortedSuccessorOccurrence.generation != 0 &&
                     !TryReleaseOccurrenceAfterFence(engine, row.QueuePayload().queueAbortedSuccessorOccurrence, 0))
                     row.QueuePayload().queueLookaheadRollbackOccurrence = row.QueuePayload().queueAbortedSuccessorOccurrence;
-                if (result == QueueContinuationPrepareStatus::Prepared) engine.runtimeRecreateRequired = true;
+                if (result == QueueContinuationPrepareStatus::Prepared) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
         }
         if (following == nullptr) {
@@ -33574,7 +33681,8 @@ bool PrepareFrontierCoordinator(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch,
     const harken::FrontierOwnerIdentity& owner, std::uint64_t world,
     std::uint64_t fingerprint, std::uint64_t frame, harken::LogicCommitSequence ticket,
-    bool immediateLane = false) noexcept {
+    bool immediateLane = false, VnRuntimeFaultCategory* failure = nullptr) noexcept {
+    if (failure != nullptr) *failure = VN_RUNTIME_FAULT_INTERNAL_STATE;
     harken::DecisionReserveRequest reserve{};
     reserve.ticket.sequence = ticket;
     reserve.world = world;
@@ -33605,7 +33713,10 @@ bool PrepareFrontierCoordinator(harken::Engine& engine,
         return false;
     } else if (!engine.decisions.Reserve(reserve, &scratch.frontierCoordinator) ||
                !engine.armGroups.Reserve(scratch.frontierCoordinator, nullptr, 0,
-                   &scratch.frontierCoordinatorGroup)) return false;
+                   &scratch.frontierCoordinatorGroup)) {
+        if (failure != nullptr) *failure = VN_RUNTIME_FAULT_CAPACITY;
+        return false;
+    }
     harken::Plan03GroupSliceInput primary{};
     primary.executeFrame = frame;
     primary.decision = scratch.frontierCoordinator;
@@ -33996,13 +34107,14 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
     };
     scratch.continuationTransportEpoch = engine.timelinePool.Epoch();
     scratch.continuationOrder.logicCommitSequence = sequence;
+    VnRuntimeFaultCategory coordinatorFailure = VN_RUNTIME_FAULT_INTERNAL_STATE;
     if (row.pendingImmediateEntry) {
         return PrepareFrontierCoordinator(engine, scratch, ownerIdentity(row),
             row.Invocation().worldGeneration,
             row.root.expectedProgramSemanticFingerprint, entryFrame,
-            sequence, true)
+            sequence, true, &coordinatorFailure)
             ? InitialFrontierPrepareStatus::Ready
-            : InitialFrontierPrepareStatus::Failed;
+            : FrontierFailure(coordinatorFailure);
     }
     if (scratch.initialForestCancellationSealed) return InitialFrontierPrepareStatus::Failed;
     if (scratch.nativeEntryCoordinatorReserved) {
@@ -34020,7 +34132,8 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             !engine.timelinePool.MatchesCommittedPlan03GroupSlice(scratch.frontierPrimary, descriptor.primary))
             return InitialFrontierPrepareStatus::Failed;
     } else if (!PrepareFrontierCoordinator(engine, scratch, ownerIdentity(row), row.Invocation().worldGeneration,
-            row.root.expectedProgramSemanticFingerprint, entryFrame, sequence)) return InitialFrontierPrepareStatus::Failed;
+            row.root.expectedProgramSemanticFingerprint, entryFrame, sequence, false, &coordinatorFailure))
+        return FrontierFailure(coordinatorFailure);
     auto& captures = engine.timelineGroupCaptureScratch;
     const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(captures.data(), captures.size());
     if (groupCount > captures.size()) return InitialFrontierPrepareStatus::Failed;
@@ -34328,7 +34441,8 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             engine.timelinePool.PublishCutoffFrame(), &scratch.queueTransactions);
         if (harken::IsTransientReserveRefusal(batchRefusal))
             return InitialFrontierPrepareStatus::TransientAdmission;
-        if (batchRefusal != harken::ReserveRefusal::None) return InitialFrontierPrepareStatus::Failed;
+        if (batchRefusal != harken::ReserveRefusal::None)
+            return FrontierFailure(RuntimeFaultForReserveRefusal(batchRefusal));
     }
     if (!BindPreparedFrontierCoordinator(engine, scratch, entryEventCount)) return InitialFrontierPrepareStatus::Failed;
     for (std::uint32_t index = 0; index < scratch.initialFrontierSideCount; ++index) {
@@ -35581,7 +35695,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     }
     if (!engine.queueInstances.PublishPreparedSignalAdvance(&scratch.frontierSignal, &row.frontierAcceptedSignal) ||
         !engine.decisions.PublishFrontierActivation(scratch.frontierCoordinator)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueContinuationPrepareStatus::Failed;
     }
     row.frontierEntry = scratch.frontierDescriptor.entry;
@@ -35658,7 +35772,7 @@ engine.runtimeRecreateRequired = true;
     }
     else row.frontierChildService = {};
     if (!BindSinglePlayableProgram(engine, resource, programBank, 0)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueContinuationPrepareStatus::Failed;
     }
     scratch.storage.phase = harken::EngineFrontierAttemptPhase::Published;
@@ -35666,11 +35780,11 @@ engine.runtimeRecreateRequired = true;
         {preparedVoice.commands.data(), preparedVoice.commandCount});
     scratch.directCommandsReserved = false;
     if (!engine.timelinePool.ReleasePreparedTransactionPublication(&scratch.queueTransactions)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueContinuationPrepareStatus::Failed;
     }
     if (!TransferFrontierAttempt(engine, scratch)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueContinuationPrepareStatus::Failed;
     }
     row.phase = harken::EnginePlayableStartPhase::Filed;
@@ -35792,7 +35906,7 @@ QueueContinuationPrepareStatus PromoteNestedQueueParent(
         }
         return resumed;
     }
-    if (!engine.ReleaseOriginalQueue(nested)) engine.runtimeRecreateRequired = true;
+    if (!engine.ReleaseOriginalQueue(nested)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     return QueueContinuationPrepareStatus::Prepared;
 }
 
@@ -36300,7 +36414,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         row.terminalObserved = false;
         row.phase = harken::EnginePlayableStartPhase::AwaitingArmAck;
         if (!transferSuccessor(*service)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return ContainerLoopSuccessorStatus::Refused;
         }
         return ContainerLoopSuccessorStatus::Started;
@@ -36643,7 +36757,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         }
         scratch.storage.phase = harken::EngineFrontierAttemptPhase::Published;
         if (!transferSuccessor(markerRow)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return ContainerLoopSuccessorStatus::Refused;
         }
         return ContainerLoopSuccessorStatus::Started;
@@ -37059,13 +37173,13 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         for (std::uint32_t index = 0; index < scheduleLeafCount; ++index) {
             const auto old = engine.ReadPlayableMemberReference(memberBase + index);
             if (!engine.BindPlayableMember(scheduleRow, index, programBank.members[index])) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return ContainerLoopSuccessorStatus::Refused;
             }
             if (!engine.SetPlayableMemberReference(memberBase + index, {
                 PlayableServiceReference(scheduleRow), scheduleRow.partition.generation, index,
                 scheduleLeafInstances[index], scheduleLeafEpochs[index]})) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return ContainerLoopSuccessorStatus::Refused;
             }
             ReplacePlayableMemberReferences(engine, old, engine.ReadPlayableMemberReference(memberBase + index));
@@ -37122,12 +37236,12 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             &commandReservation, {engine.playLedBatchScratch.data(), commandCount});
         commandsReserved = false;
         if (!engine.timelinePool.ReleasePreparedTransactionPublication(&transactionBatch)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return ContainerLoopSuccessorStatus::Refused;
         }
         PublishMonitorInitialSelections(engine, scratch, false);
         if (!transferSuccessor(scheduleRow)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return ContainerLoopSuccessorStatus::Refused;
         }
         return ContainerLoopSuccessorStatus::Started;
@@ -37333,7 +37447,7 @@ engine.runtimeRecreateRequired = true;
     if (!childAlreadyRetired) retiring.Commit(row);
     ClearOrdinaryCurrentProgram(row);
     if (!BindSinglePlayableProgram(engine, scheduleRow, programBank, 0)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return ContainerLoopSuccessorStatus::Refused;
     }
     scratch.frontierProgramBank = nullptr;
@@ -37371,12 +37485,12 @@ engine.runtimeRecreateRequired = true;
         {preparedVoice.commands.data(), preparedVoice.commandCount});
     commandsReserved = false;
     if (!engine.timelinePool.ReleasePreparedTransactionPublication(&transactionBatch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return ContainerLoopSuccessorStatus::Refused;
     }
     PublishMonitorInitialSelections(engine, scratch, false);
     if (!transferSuccessor(scheduleRow)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return ContainerLoopSuccessorStatus::Refused;
     }
     return ContainerLoopSuccessorStatus::Started;
@@ -37518,7 +37632,7 @@ bool ServiceScheduleChildRecord(
     const auto view = engine.playableInstances.Classify(child.service.owner);
     if (source != nullptr) {
         if (engine.ResolvePlayableService(source->parentService) != &row) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         row.lastAppliedBlockSequence = std::max(row.lastAppliedBlockSequence,
@@ -37529,7 +37643,7 @@ bool ServiceScheduleChildRecord(
             view.terminalOutcome.kind == harken::PlayableTerminalKind::NaturalCompletion) {
             if (!RecordScheduleAggregateOutcome(child, view.terminalOutcome,
                     harken::PlayableControlReason::Natural)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -37537,7 +37651,7 @@ bool ServiceScheduleChildRecord(
             source->controlReason != harken::PlayableControlReason::Natural) {
             child.reason = source->controlReason;
             if (!CaptureScheduleSourceFailureOwner(engine, *source, child)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -37547,7 +37661,7 @@ bool ServiceScheduleChildRecord(
         if (!child.service.Valid() || child.service.token.slot >= engine.playableServices.size() ||
             engine.playableServices[child.service.token.slot].identity.generation <=
                 child.service.token.generation || view.live || !child.logicalComplete) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         child.resourcesReleased = true;
@@ -37558,13 +37672,13 @@ bool ServiceScheduleChildRecord(
         if (key == nullptr || key->arrangingInstance != row.ownerInstance ||
             deadline.occurrenceEpoch == 0 || deadline.arrangingEpoch != row.ownerEpoch ||
             engine.timelineOccurrences.ScheduleEpochOf(deadline.occurrence) != deadline.occurrenceEpoch) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (child.logicalComplete) {
             if (engine.timelineOccurrences.StageOf(deadline.occurrence) == harken::OccurrenceStage::Active &&
                 !engine.timelineOccurrences.Advance(deadline.occurrence, harken::OccurrenceStage::LogicalDone)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             // This identity has no Source completion binding. Keep it until
@@ -37572,11 +37686,11 @@ bool ServiceScheduleChildRecord(
             if (child.resourcesReleased) {
                 if (engine.timelineOccurrences.StageOf(deadline.occurrence) == harken::OccurrenceStage::LogicalDone &&
                     !engine.timelineOccurrences.Advance(deadline.occurrence, harken::OccurrenceStage::AwaitingEventFence)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return false;
                 }
                 if (engine.timelineOccurrences.StageOf(deadline.occurrence) != harken::OccurrenceStage::AwaitingEventFence) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return false;
                 }
                 if (engine.timelineOccurrences.ReleaseAfterFence(deadline.occurrence, engine.mixer.BlocksRendered()))
@@ -37673,7 +37787,7 @@ bool ServiceScheduleTerminalChild(
          !IsNaturalDrainingQueueScheduleWrapper(engine, row, child)) ||
         engine.playableInstances.Classify(row.ownerInstance).kind != harken::PlayableKind::Container ||
         !ServicePendingScheduleChild(engine, row, child, blockingFrame)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return true;
     }
     if (child.pendingEntry) {
@@ -37683,7 +37797,7 @@ bool ServiceScheduleTerminalChild(
         return true;
     }
     if (!ServiceScheduleChildRecord(engine, row, child)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return true;
     }
     const bool failed = child.reason != harken::PlayableControlReason::None &&
@@ -37758,7 +37872,7 @@ bool ServiceScheduleVariableChildren(
             row.scheduleLeafCount != discrete + continuous ||
             !inspect(0, discrete, 0) ||
             !inspect(row.variableControlContinuousMemberOffset, continuous, discrete)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return true;
         }
         // Retarget may place a static member after a native alias. Compact all
@@ -37794,7 +37908,7 @@ bool ServiceScheduleVariableChildren(
         if (!child.lifecycleOwned) continue;
         if (engine.playableInstances.Classify(row.ownerInstance).kind != harken::PlayableKind::Container ||
             !ServiceScheduleChildRecord(engine, row, child)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return true;
         }
     }
@@ -38003,7 +38117,7 @@ bool ServiceScheduleAggregate(
         !(owner.kind == harken::PlayableKind::Container && aggregate.ordinary != nullptr &&
           (aggregate.ordinary->mode == static_cast<std::uint8_t>(harken::ContainerModeV1::Random) ||
            aggregate.ordinary->mode == static_cast<std::uint8_t>(harken::ContainerModeV1::Sequence))))) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return true;
     }
     bool candidate = owner.live && owner.kind == harken::PlayableKind::Segment &&
@@ -38134,7 +38248,7 @@ bool ServiceScheduleAggregate(
             return true;
         }
         if (!ServicePendingScheduleChild(engine, row, child, blockingFrame)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (child.pendingEntry) {
@@ -38241,7 +38355,7 @@ bool ServiceScheduleAggregate(
         } else if (engine.scheduleAggregateDue.Contains(workIdentity)) {
             recorded = engine.scheduleAggregateDue.Erase(workIdentity);
         }
-        if (!recorded) engine.runtimeRecreateRequired = true;
+        if (!recorded) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         else if (suspend) engine.SetPlayableServiceNeedsWork(row, false);
     }
     if (row.phase == harken::EnginePlayableStartPhase::Cancelling) {
@@ -38285,7 +38399,7 @@ bool ServiceScheduleAggregate(
     }
     if (!hasChildren) {
         if (!row.hasZeroWorkCompletion) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return true;
         }
         if (frame < row.zeroWorkCompletionFrame) {
@@ -38298,7 +38412,7 @@ bool ServiceScheduleAggregate(
     }
     if (allLogical && allNatural) {
         if (!PublishNaturalPlayableCompletion(engine, row.rootInstance, aggregate.completionOrdinal)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return true;
         }
         row.phase = harken::EnginePlayableStartPhase::Started;
@@ -38307,7 +38421,7 @@ bool ServiceScheduleAggregate(
         row.pendingFutureCount = 0;
         if (!aggregate.parentNotified) {
             if (owner.parent != 0 && !ConsumeNaturalContainerChild(engine, owner.parent, row.rootInstance)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return true;
             }
             aggregate.parentNotified = true;
@@ -39073,7 +39187,7 @@ bool PromoteVariableControlDiscreteRetargetSubtree(
         const auto decision = row.variableControlControllers[index].decision;
         if (decision.Valid()) {
             if (!RetireNestedVariableControlDecision(engine, decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             row.variableControlControllers[index].decision = {};
@@ -39402,7 +39516,29 @@ enum class VariableRetargetPrepareStatus : std::uint8_t {
     Retry = 2,
     Fatal = 3,
     Capacity = 4,
+    FatalCapacity,
+    FatalGenerationExhausted,
 };
+
+VariableRetargetPrepareStatus FatalRetarget(VnRuntimeFaultCategory category) noexcept {
+    if (category == VN_RUNTIME_FAULT_CAPACITY) return VariableRetargetPrepareStatus::FatalCapacity;
+    if (category == VN_RUNTIME_FAULT_GENERATION_EXHAUSTED)
+        return VariableRetargetPrepareStatus::FatalGenerationExhausted;
+    return VariableRetargetPrepareStatus::Fatal;
+}
+
+bool IsFatalRetarget(VariableRetargetPrepareStatus status) noexcept {
+    return status == VariableRetargetPrepareStatus::Fatal ||
+        status == VariableRetargetPrepareStatus::FatalCapacity ||
+        status == VariableRetargetPrepareStatus::FatalGenerationExhausted;
+}
+
+VnRuntimeFaultCategory RetargetFailureCategory(VariableRetargetPrepareStatus status) noexcept {
+    if (status == VariableRetargetPrepareStatus::FatalCapacity) return VN_RUNTIME_FAULT_CAPACITY;
+    if (status == VariableRetargetPrepareStatus::FatalGenerationExhausted)
+        return VN_RUNTIME_FAULT_GENERATION_EXHAUSTED;
+    return VN_RUNTIME_FAULT_INTERNAL_STATE;
+}
 
 bool PrepareDiscreteRetargetStorage(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
@@ -39656,7 +39792,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
                 harken::VariableControlSide::Discrete,
                 decision,
                 control.discrete.decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         sidePrepared = false;
     };
@@ -39716,7 +39852,8 @@ engine.runtimeRecreateRequired = true;
         superseded.slot != control.discrete.decision.slot ||
         superseded.generation != control.discrete.decision.generation) {
         rollback();
-        return VariableRetargetPrepareStatus::Fatal;
+        return prepareStatus == harken::VariableControlInstanceStatus::Capacity
+            ? VariableRetargetPrepareStatus::FatalGenerationExhausted : VariableRetargetPrepareStatus::Fatal;
     }
 
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
@@ -39787,7 +39924,7 @@ engine.runtimeRecreateRequired = true;
     if (!postedAll ||
         !starts.PrepareGroup(slice)) {
         rollback();
-        return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+        return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                          : VariableRetargetPrepareStatus::Retry;
     }
     std::uint32_t page = 0;
@@ -39797,7 +39934,7 @@ engine.runtimeRecreateRequired = true;
         (header = engine.timelinePool.Page(page)) == nullptr ||
         header->pageGeneration == 0 ||
         header->pageGeneration > UINT32_MAX) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(header != nullptr && header->pageGeneration > UINT32_MAX ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         rollback();
         return VariableRetargetPrepareStatus::Fatal;
     }
@@ -39831,7 +39968,7 @@ engine.runtimeRecreateRequired = true;
     }
     if (!starts.PrepareServiceFrontier(row, decision, ticket) || !starts.Commit(ticket)) {
         rollback();
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(starts.FailureCategory());
         return VariableRetargetPrepareStatus::Fatal;
     }
 
@@ -40119,7 +40256,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
                 harken::VariableControlSide::Discrete,
                 decision,
                 control.discrete.decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         sidePrepared = false;
     };
@@ -40127,7 +40264,7 @@ engine.runtimeRecreateRequired = true;
         starts.Cancel();
         if (!CancelPreparedMemberStorage(engine, row.scheduleStorageBase, targetStorageCount,
                 targetSlots, priorReferences)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         targetStorageCount = 0;
@@ -40139,7 +40276,7 @@ engine.runtimeRecreateRequired = true;
         }
         if (!CancelVariableControlRetargetSubtree(
                 engine, &incomingTree, incomingLeafPrepared)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         for (std::uint32_t index = incomingLeafCount; index-- > 0;) {
@@ -40325,7 +40462,8 @@ engine.runtimeRecreateRequired = true;
                    superseded.generation !=
                        control.discrete.decision.generation
              : superseded.Valid())) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(prepareStatus == harken::VariableControlInstanceStatus::Capacity
+    ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         cancelIncomingPrepared();
         starts.Cancel();
         (void)engine.decisions.Cancel(decision);
@@ -40431,7 +40569,7 @@ engine.runtimeRecreateRequired = true;
         cancelIncomingPrepared();
         (void)engine.decisions.Cancel(decision);
         (void)engine.decisions.ReclaimCancelled(decision);
-        return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+        return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                          : VariableRetargetPrepareStatus::Retry;
     }
     std::uint32_t page = 0;
@@ -40441,7 +40579,7 @@ engine.runtimeRecreateRequired = true;
         (header = engine.timelinePool.Page(page)) == nullptr ||
         header->pageGeneration == 0 ||
         header->pageGeneration > UINT32_MAX) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(header != nullptr && header->pageGeneration > UINT32_MAX ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         cancelIncomingPrepared();
         starts.Cancel();
         (void)engine.decisions.Cancel(decision);
@@ -40450,7 +40588,7 @@ engine.runtimeRecreateRequired = true;
     }
 
     if (!engine.playableInstances.CommitPrepared(&incomingChildPrepared)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         cancelIncomingPrepared();
         starts.Cancel();
         (void)engine.decisions.Cancel(decision);
@@ -40461,7 +40599,7 @@ engine.runtimeRecreateRequired = true;
     if (desiredKind == harken::PlayableKind::Container) {
         if (!CommitVariableControlRetargetSubtree(
                 engine, &incomingTree, incomingLeafPrepared, ticket, starts)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             cancelIncomingPrepared();
             starts.Cancel();
         (void)engine.decisions.Cancel(decision);
@@ -40473,7 +40611,7 @@ engine.runtimeRecreateRequired = true;
             if (incomingLeafPrepared[index].Valid() &&
                 !engine.playableInstances.CommitPrepared(
                     &incomingLeafPrepared[index])) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 cancelIncomingPrepared();
                 starts.Cancel();
         (void)engine.decisions.Cancel(decision);
@@ -40487,7 +40625,7 @@ engine.runtimeRecreateRequired = true;
         cancelIncomingPrepared();
         (void)engine.decisions.Cancel(decision);
         (void)engine.decisions.ReclaimCancelled(decision);
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VariableRetargetPrepareStatus::Fatal;
     }
     const std::size_t base = row.scheduleStorageBase;
@@ -40675,7 +40813,7 @@ NativeScheduleTransitionPreparation::~NativeScheduleTransitionPreparation() {
         return;
     }
     if (transition != nullptr && transition->Valid()) {
-        if (!engine->transitionInstances.CancelBeforePublication(*transition)) engine->runtimeRecreateRequired = true;
+        if (!engine->transitionInstances.CancelBeforePublication(*transition)) engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         *transition = {};
     }
 }
@@ -40684,7 +40822,7 @@ bool NativeScheduleTransitionPreparation::Cancel() noexcept {
     if (engine == nullptr || published || scratch == nullptr) return true;
     if (FindFrontierAttempt(*engine, attempt) == scratch &&
         !ReleaseImmediateActionPlay(*engine, scratch, nullptr)) {
-        engine->runtimeRecreateRequired = true;
+        engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     scratch = nullptr;
@@ -41317,7 +41455,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     std::uint32_t targetStorageCount = 0;
     const auto rollbackTransition = [&]() {
         if (transition.Valid() && !engine.transitionInstances.CancelBeforePublication(transition))
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         transition = {};
     };
     bool sidePrepared = false;
@@ -41328,7 +41466,7 @@ engine.runtimeRecreateRequired = true;
                 harken::VariableControlSide::Discrete,
                 decision,
                 supersededDecision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         sidePrepared = false;
     };
@@ -41347,7 +41485,7 @@ engine.runtimeRecreateRequired = true;
         } else membersRestored = CancelPreparedMemberStorage(engine, base + row.variableControlDiscreteTransitionOffset,
             targetStorageCount, targetSlots, priorReferences);
         if (!membersRestored) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         targetStorageCount = 0;
@@ -41368,7 +41506,7 @@ engine.runtimeRecreateRequired = true;
         }
         if (!CancelVariableControlRetargetSubtree(
                 engine, &incomingTree, incomingLeafPrepared)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         for (std::uint32_t index = incomingLeafCount; index-- > 0;) {
@@ -41588,7 +41726,8 @@ engine.runtimeRecreateRequired = true;
     if (!sidePrepared ||
         superseded.slot != supersededDecision.slot ||
         superseded.generation != supersededDecision.generation) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(prepareStatus == harken::VariableControlInstanceStatus::Capacity
+    ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Fatal;
     }
@@ -41841,7 +41980,7 @@ engine.runtimeRecreateRequired = true;
         !starts.PrepareGroup(slice) ||
         !PrepareRetargetNestedDecisions(starts, row.rootInstance, targetStartFrame, incomingTree)) {
         rollbackBeforeInstall();
-        return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+        return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                          : VariableRetargetPrepareStatus::Retry;
     }
     if (sourceBoundaryPrelude) {
@@ -41850,7 +41989,7 @@ engine.runtimeRecreateRequired = true;
         completion.sliceIndex = 1;
         if (!starts.PrepareGroup(completion)) {
             rollbackBeforeInstall();
-            return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+            return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                              : VariableRetargetPrepareStatus::Retry;
         }
     }
@@ -41861,7 +42000,7 @@ engine.runtimeRecreateRequired = true;
         (header = engine.timelinePool.Page(page)) == nullptr ||
         header->pageGeneration == 0 ||
         header->pageGeneration > UINT32_MAX) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(header != nullptr && header->pageGeneration > UINT32_MAX ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Fatal;
     }
@@ -41909,7 +42048,7 @@ engine.runtimeRecreateRequired = true;
     if (!starts.PrepareServiceFrontier(row, decision, ticket, transition, musicSourceFade.get()) ||
         !starts.ReserveCommands()) {
         rollbackBeforeInstall();
-        return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+        return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                          : VariableRetargetPrepareStatus::Retry;
     }
     // Publish the prepared playable subtree only after every transition,
@@ -41922,7 +42061,7 @@ engine.runtimeRecreateRequired = true;
         }
         starts.AttachNativeSchedule(native);
     } else if (!engine.playableInstances.CommitPrepared(&incomingChildPrepared)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Fatal;
     }
@@ -41930,7 +42069,7 @@ engine.runtimeRecreateRequired = true;
     if (!nativeTargets && desiredKind == harken::PlayableKind::Container) {
         if (!CommitVariableControlRetargetSubtree(
                 engine, &incomingTree, incomingLeafPrepared, ticket, starts)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             rollbackBeforeInstall();
             return VariableRetargetPrepareStatus::Fatal;
         }
@@ -41939,7 +42078,7 @@ engine.runtimeRecreateRequired = true;
             if (incomingLeafPrepared[index].Valid() &&
                 !engine.playableInstances.CommitPrepared(
                     &incomingLeafPrepared[index])) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 rollbackBeforeInstall();
                 return VariableRetargetPrepareStatus::Fatal;
             }
@@ -41958,7 +42097,7 @@ engine.runtimeRecreateRequired = true;
         rollbackBeforeInstall();
         if (nativeTargets && !native.published && native.scratch == nullptr && !engine.runtimeRecreateRequired)
             return VariableRetargetPrepareStatus::Retry;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VariableRetargetPrepareStatus::Fatal;
     }
     row.VariablePayload().variableControlDiscreteRetargetIncomingChild = incomingChild;
@@ -42442,7 +42581,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
                 harken::VariableControlSide::Continuous,
                 decision,
                 control.continuous.decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         sidePrepared = false;
     };
@@ -42583,7 +42722,7 @@ engine.runtimeRecreateRequired = true;
         schedule.armToken = event.armToken;
         if (!starts.PrepareProgram(schedule)) {
             rollback();
-            return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+            return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                              : VariableRetargetPrepareStatus::Retry;
         }
     }
@@ -42594,7 +42733,7 @@ engine.runtimeRecreateRequired = true;
     groupSlice.memberCount = audioArmCount;
     if (!starts.PrepareGroup(groupSlice)) {
         rollback();
-        return starts.PermanentFailure() ? VariableRetargetPrepareStatus::Fatal
+        return starts.PermanentFailure() ? FatalRetarget(starts.FailureCategory())
                                          : VariableRetargetPrepareStatus::Retry;
     }
     std::uint32_t page = 0;
@@ -42604,7 +42743,7 @@ engine.runtimeRecreateRequired = true;
         (header = engine.timelinePool.Page(page)) == nullptr ||
         header->pageGeneration == 0 ||
         header->pageGeneration > UINT32_MAX) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(header != nullptr && header->pageGeneration > UINT32_MAX ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         rollback();
         return VariableRetargetPrepareStatus::Fatal;
     }
@@ -42661,12 +42800,12 @@ engine.runtimeRecreateRequired = true;
     if (!currentMembersValid || !starts.PrepareServiceFrontier(row, decision, ticket) || !starts.Commit(ticket)) {
         rollback();
         if (!currentMembersValid) return VariableRetargetPrepareStatus::Retry;
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(starts.FailureCategory());
         return VariableRetargetPrepareStatus::Fatal;
     }
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
         if (!engine.SetPlayableMemberReference(currentBase + index, currentReferences[index])) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VariableRetargetPrepareStatus::Fatal;
         }
         row.VariablePayload().variableControlMemberWeights[index] = currentWeights[index];
@@ -43068,7 +43207,7 @@ void ObserveVariableControlMemberCompletion(
                 continue;
             if (!engine.playableInstances.ReleaseSourceRetirementHold(source.leaf) ||
                 !engine.sourceTerminals.Release(token))
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             else engine.ObservePendingVariableSourceTerminalReturn(token, source);
             continue;
         }
@@ -43124,7 +43263,7 @@ void ObserveVariableControlMemberCompletion(
             ? engine.ResolvePlayableService(row.parentService) : nullptr;
         if (scheduleParent != nullptr &&
             !ObserveScheduleAggregateChildBeforeRetire(engine, row, nullptr)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         if (((row.queueMode && !row.parentService.Valid()) ||
@@ -43134,7 +43273,7 @@ void ObserveVariableControlMemberCompletion(
             if (engine.containerPlayback.Capture(leaf.parent, &playback) &&
                 playback.activeChild == source.leaf &&
                 !ConsumeNaturalContainerChild(engine, leaf.parent, source.leaf)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
         }
@@ -43143,7 +43282,7 @@ void ObserveVariableControlMemberCompletion(
             !CompleteVariableControlNestedQueueChild(engine, row,
                 source.completedSequence.load(std::memory_order_relaxed),
                 source.leaf, source.acceptedEpoch, source.render)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         if (!source.releaseSeen && engine.voices.ReleaseObserved(source.release)) {
@@ -43165,11 +43304,11 @@ engine.runtimeRecreateRequired = true;
         const auto controller = source.controller;
         const bool retireAncestors = source.retiring;
         if (!engine.playableInstances.ReleaseSourceRetirementHold(originalLeaf)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         if (!engine.sourceTerminals.Release(token)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         engine.ObservePendingVariableSourceTerminalReturn(token, source);
@@ -43261,7 +43400,7 @@ void ReconcileVariableFutureInvalidation(harken::Engine& engine,
     auto& groups = engine.timelineGroupCaptureScratch;
     const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
     if (count > groups.size()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     for (std::size_t index = 0; index < count; ++index) {
@@ -47265,7 +47404,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             // An already committed or missed gate needs retirement, not another abort.
             (void)attempt.gate.Abort(attempt.generation);
             if (!attempt.gate.Retire(attempt.generation)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             engine.SetImmediateEntryAttemptActive(attempt, false);
@@ -47456,7 +47595,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     attempt.QueueCoordinators().initialQueueDescriptor) ||
                 !cancelEntry(attempt.QueueCoordinators().queueContinuationCoordinator,
                     attempt.QueueCoordinators().queueContinuationDescriptor)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
         }
@@ -47618,7 +47757,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     receipt.audioSequence != 0 &&
                     receipt.reason == harken::FrontierReceiptReason::None);
                 if (read == harken::FrontierReceiptRead::Stale)
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 if (read != harken::FrontierReceiptRead::InFlight) {
                     for (auto& member : engine.playableServices) {
                         if (member.PendingImmediateCohortRoot() != attempt.root ||
@@ -47662,7 +47801,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             if (activation == nullptr ||
                 !(activation->Descriptor().entry ==
                   attempt.QueueCoordinators().initialQueueDescriptor.entry)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             const auto read = activation->Read(attempt.QueueCoordinators().initialQueueDescriptor.entry,
@@ -47670,7 +47809,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
             // Audio can finish after this service pass captured its completion fence.
             if (read == harken::FrontierReceiptRead::InFlight) continue;
             if (read != harken::FrontierReceiptRead::Ready) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             initialQueueApplied = receipt.outcome ==
@@ -47733,7 +47872,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 member.QueuePayload().queueCurrentScheduleLeafCount == 1 && member.frontierArmPin.Valid() &&
                 !member.pendingImmediateRetry &&
                 !member.frontierArmPin.Release(observedAudioSequence))
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         attempt.lane = {};
         if (initialQueue) {
@@ -47743,7 +47882,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         member.PendingImmediateCohortRoot() == attempt.root;
                 });
             if (root == engine.playableServices.end()) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             if (initialQueueApplied) {
@@ -47776,7 +47915,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         member.PendingImmediateCohortRoot() == attempt.root;
                 });
             if (root == engine.playableServices.end()) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             if (!attempt.queueContinuationFailed && !observation.cancelled && !observation.missed) {
@@ -51376,7 +51515,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
     if (!PublishPendingVariableControlRoot(engine, scratch, attempt)) return false;
     attempt.producerAbortFullyPrivate = false;
     attempt.producerAbortPartialArmPublished = false;
-    if (!selection.Apply()) { engine.runtimeRecreateRequired = true; return false; }
+    if (!selection.Apply()) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     PublishMonitorPendingCensusSelections(engine, attempt);
     PublishMonitorPendingInitialSelections(engine, scratch);
     row.frontierEntry = descriptor.entry;
@@ -51407,7 +51546,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
             });
         if (holder == engine.playableServices.end() ||
             holder->QueueFiling().queueSuccessorProgramBank != timing.successorBank) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             queueRowsTransferred = false;
             continue;
         }
@@ -51432,7 +51571,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
             holder->QueuePayload().queueUnplacedGroupCount = 0;
             holder->QueuePayload().queueUnplacedTransactionCount = 0;
         } else if (holder->QueuePayload().queueUnplacedCredit.Valid()) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             queueRowsTransferred = false;
         }
         holder->immediateLane = attempt.lane;
@@ -51871,7 +52010,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
     ApplyInitialQueueSuccessorStartMirrors(engine, attempt, queueProgramCount, false);
     ApplyPendingPrivateVcRootPublication(attempt, publication);
     attempt.producerAbortFullyPrivate = false;
-    if (!selection.Apply()) { engine.runtimeRecreateRequired = true; return false; }
+    if (!selection.Apply()) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     PublishMonitorPendingCensusSelections(engine, attempt);
     // Transfer every row before releasing any original producer node.
     token = attempt.privateVcProducerHead;
@@ -51889,7 +52028,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
         RebasePendingImmediateStopIntents(engine, transferred);
         for (std::uint32_t side = 0; side < producer.initialFrontierSideCount; ++side) {
             auto* nested = engine.ResolvePlayableService(producer.storage.initialFrontierSides[side].service);
-            if (nested == nullptr) { engine.runtimeRecreateRequired = true; return false; }
+            if (nested == nullptr) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
             if (nested == &transferred) continue;
             nested->immediateLane = attempt.lane;
             nested->pendingImmediateEntry = false;
@@ -51899,7 +52038,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
         token = producer.privateInitialVcPageCohort.rootProducerNext;
     }
     if (!TransferPendingVariableQueueRows(engine, attempt, anchor, queueMemberCount)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     for (std::uint32_t index = 0; index < count; ++index)
@@ -53338,11 +53477,12 @@ void ServicePendingImmediateEntries(
                 const auto admitted = ActionImmediateStartFrame(engine);
                 if (admitted > UINT64_MAX - (blockFrames - 1u)) continue;
                 const auto anchor = ((admitted + blockFrames - 1u) / blockFrames) * blockFrames;
-                const auto selected = engine.ServicePendingOrdinarySelections(*pending, anchor);
+                VnRuntimeFaultCategory selectionFailure = VN_RUNTIME_FAULT_INTERNAL_STATE;
+                const auto selected = engine.ServicePendingOrdinarySelections(*pending, anchor, &selectionFailure);
                 if (selected == harken::Engine::PendingOrdinarySelectionResult::Rejected) {
                     if (!engine.immediateActionLane.Cancel(pending->lane) ||
                         !engine.RetireOriginalImmediateEntryLane(*pending, engine.mixer.BlocksRendered()))
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     else pending->lane = {};
                     continue;
                 }
@@ -53350,14 +53490,15 @@ void ServicePendingImmediateEntries(
                 std::uint32_t inputs = 0;
                 if (selected != harken::Engine::PendingOrdinarySelectionResult::Ready ||
                     !engine.PreparePendingSelectionCensusCommitInputs(*pending, &inputs)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(selectionFailure);
                     continue;
                 }
                 const auto ready = engine.selectionMemory.CanCommitPendingBatches(
                     pending->selectionCommitInputs.data(), inputs);
                 if (ready == harken::SelectionMemoryStatusV1::NotHead) continue;
                 if (ready != harken::SelectionMemoryStatusV1::Ok) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(ready == harken::SelectionMemoryStatusV1::RuntimeRecreateRequired
+                        ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
             }
@@ -53569,7 +53710,7 @@ void ServicePendingImmediateEntries(
                         RetryCompletionWithdrawal* withdrawal = nullptr;
                         if (terminalCurrent) {
                             if (withdrawalCount == withdrawals.size()) {
-                                engine.runtimeRecreateRequired = true;
+                                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 replaced = false;
                                 break;
                             }
@@ -53681,14 +53822,14 @@ void ServicePendingImmediateEntries(
                             (installed == nullptr ||
                              !engine.ledger.ClearCompletionMutationExact(installed->ledgerSlot,
                                 {proof.row->QueuePayload().queueCurrentOccurrence, proof.row->QueuePayload().queueCurrentCompletion.owner}))) {
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             continue;
                         }
                         proof.mutationBound = false;
                         if (proof.newPinGranted) {
                             proof.ownerWithdrawn = engine.timelineOccurrences.RollbackCompletionOwnerPinExact(
                                 proof.row->QueuePayload().queueCurrentOccurrence, proof.row->QueuePayload().queueCurrentCompletion.owner);
-                            if (!proof.ownerWithdrawn) engine.runtimeRecreateRequired = true;
+                            if (!proof.ownerWithdrawn) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             else proof.newPinGranted = false;
                         }
                     }
@@ -53738,7 +53879,7 @@ void ServicePendingImmediateEntries(
                             const auto* installed = starts.At(index++);
                             if (storedSingle(member) != nullptr) {
                                 if (!BindSinglePlayableProgram(engine, member, *starts.QueueBank(), singleProgramIndex++))
-                                    engine.runtimeRecreateRequired = true;
+                                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 continue;
                             }
                             if (member.scheduleLeafCount > 1u || member.usesCapturedScheduleVoices) {
@@ -53769,7 +53910,7 @@ void ServicePendingImmediateEntries(
                                 if (!harken::BindKnownCompletionPredicate(installed->completionPredicate,
                                         member.QueuePayload().queueCurrentCompletion.program, member.QueuePayload().queueCurrentCompletion.owner,
                                         &rebound)) {
-                                    engine.runtimeRecreateRequired = true;
+                                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                     continue;
                                 }
                                 member.QueuePayload().queueCurrentCompletion = rebound;
@@ -54784,20 +54925,21 @@ void ServicePendingImmediateEntries(
                     std::max(1u, engine.config.publishLeadQuanta), &startFrame, &originalC0Placement);
         }
         if (ordinarySelection) {
+            VnRuntimeFaultCategory selectionFailure = VN_RUNTIME_FAULT_INTERNAL_STATE;
             const auto selected = filingFailed ? harken::Engine::PendingOrdinarySelectionResult::Waiting
-                : engine.ServicePendingOrdinarySelections(*attempt, startFrame);
+                : engine.ServicePendingOrdinarySelections(*attempt, startFrame, &selectionFailure);
             if (selected != harken::Engine::PendingOrdinarySelectionResult::Ready) {
                 originalC0Placement.Release();
                 if (!engine.immediateActionLane.Cancel(attempt->lane) ||
                     !engine.RetireOriginalImmediateEntryLane(*attempt, engine.mixer.BlocksRendered())) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 attempt->lane = {};
                 if (selected == harken::Engine::PendingOrdinarySelectionResult::Refused ||
                     (selected != harken::Engine::PendingOrdinarySelectionResult::Rejected &&
                      !engine.ReserveOriginalImmediateEntryLane(*attempt, attempt->originalLaneDemand)))
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(selectionFailure);
                 continue;
             }
         }
@@ -55440,7 +55582,7 @@ void ServicePendingImmediateEntries(
                 filingFailed = true;
         }
         if (!filingFailed && ordinarySelection && !selectionPublication->Apply()) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             filingFailed = true;
         }
         if (!filingFailed && ordinarySelection) PublishMonitorPendingCensusSelections(engine, *attempt);
@@ -55641,7 +55783,7 @@ void ServicePendingImmediateEntries(
                 if (holder == nullptr || !holder->queueTimingPending ||
                     holder->PendingImmediateCohortRoot() != root ||
                     engine.InitialQueueFilingFuture(*holder).queueSuccessorProgramBank != timing.successorBank) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 holder->startFrame = timing.newEntryFrame;
@@ -55674,7 +55816,7 @@ void ServicePendingImmediateEntries(
                     holder->QueuePayload().queueUnplacedGroupCount = 0;
                     holder->QueuePayload().queueUnplacedTransactionCount = 0;
                 } else if (holder->QueuePayload().queueUnplacedCredit.Valid()) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
             }
             for (harken::Engine::PlayableCohortCursor occupiedCursor{};
@@ -55877,7 +56019,7 @@ void ServiceNativeQueueFollowing(harken::Engine& engine, harken::EnginePlayableS
             if (publication != nullptr) *publication = std::max(*publication,
                 RollingPlayablePublicationFrame(engine, observed, filing.queueTransitionEndFrame));
             const auto ready = CommitNativeQueueFutureDecision(engine, row, filing, exit->queueChain.pages);
-            if (ready < 0) engine.runtimeRecreateRequired = true;
+            if (ready < 0) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             if (ready == 0 && blocking != nullptr) *blocking = std::min(*blocking, exit->control.fadeStartFrame);
         }
 }
@@ -55981,7 +56123,7 @@ bool ServiceNativeQueueMusicTransition(harken::Engine& engine, harken::EnginePla
     if (!cancelling) ServiceNativeQueueFollowing(engine, row, observed, blocking, publication);
     if (publication != nullptr) *publication = std::max(*publication,
         RollingPlayablePublicationFrame(engine, observed, filing.queueTransitionEndFrame));
-    const auto fail = [&]() noexcept { engine.runtimeRecreateRequired = true; return true; };
+    const auto fail = [&]() noexcept { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return true; };
     harken::QueueInstanceSnapshot queue{};
     if (!engine.queueInstances.Capture(row.queueInstance, &queue)) return fail();
     if (!payload.nativeTransitionApplied && queue.pendingActivation != harken::ConditionalQueueActivation::Waiting &&
@@ -56870,7 +57012,7 @@ bool PublishPrivateInitialNativePlacement(harken::Engine& engine,
     if (!PublishInitialScheduleFrontiers(engine, root,
             {engine.initialRootActivationPublicationProofs.data(), publication.activationCount}) ||
         (transferOwnership && !TransferFrontierAttempt(engine, root))) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (transferOwnership) root.initialNativePlacementPending = false;
@@ -56974,7 +57116,7 @@ void ServiceSourceStartLanes(harken::Engine& engine, harken::EnginePlayableServi
         auto& held = **it;
         harken::ImmediateLaneObservation observed{};
         if (!engine.immediateActionLane.Observe(held.lane, &observed)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         if (observed.missed || observed.protocolRefused || observed.arenaCapacityMissed) {
@@ -56994,7 +57136,7 @@ void ServiceSourceStartLanes(harken::Engine& engine, harken::EnginePlayableServi
             continue;
         }
         if (!engine.ReturnSourceStartLane(held.sourceArm, held.source)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         it = row.sourceStartLanes.erase(it);
@@ -57163,7 +57305,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         }
         if (!hasCommittedDeferred)
             for (std::uint32_t index = 0; index < count; ++index) programs[index]->entryAnchorFrame -= shift;
-        if (!clean) engine.runtimeRecreateRequired = true;
+        if (!clean) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return clean;
     };
     for (std::uint32_t leader = 0; leader < count; ++leader) {
@@ -57274,7 +57416,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     }
     for (std::uint32_t index = 0; index < deferredCount; ++index) {
         if (!engine.timelinePlanner.CommitPreparedDeferredPlay(&deferred[index])) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             (void)withdraw(); return Result::Refused;
         }
         hasCommittedDeferred = true;
@@ -57342,12 +57484,12 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
 #endif
     }
     if (transactions.Valid()) released = engine.timelinePool.ReleasePreparedTransactionPublication(&transactions) && released;
-    if (!released) engine.runtimeRecreateRequired = true;
+    if (!released) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     if (released && aggregateAttempt != nullptr && !transferred) {
         aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
         released = PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
             TransferFrontierAttempt(engine, *aggregateAttempt);
-        if (!released) engine.runtimeRecreateRequired = true;
+        if (!released) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     return released ? Result::Filed : Result::Refused;
 }
@@ -57434,7 +57576,7 @@ void PublishSharedScheduleSources(harken::Engine& engine, std::uint64_t* blockin
         if (row == nullptr) continue;
         if (row->scheduleTerminalChild != nullptr &&
             !ServicePendingScheduleChild(engine, *row, *row->scheduleTerminalChild, blockingFrame))
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (row->scheduleAggregate == nullptr || !row->scheduleAggregate->committed) continue;
         if (row->scheduleAggregate->ordinary != nullptr) {
             const auto earliest = QueueEarliestContinuationFrame(engine);
@@ -57444,12 +57586,12 @@ void PublishSharedScheduleSources(harken::Engine& engine, std::uint64_t* blockin
                 row->scheduleAggregate->failureReason = harken::PlayableControlReason::StartRefused;
         }
         if (!RegisterSharedScheduleSourceCensus(engine, *row)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         if (!row->scheduleAggregate->VisitChildren([&](auto& child) noexcept {
                 return ServicePendingScheduleChild(engine, *row, child, blockingFrame);
-            })) engine.runtimeRecreateRequired = true;
+            })) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     // Factories above explicitly append new services. Each contributes metadata
     // immediately; only the synchronization owner publishes the complete set.
@@ -57473,7 +57615,7 @@ void ServicePlayableStarts(harken::Engine& engine,
         engine.scheduleAggregateDue.VisitDue({through}, [&](auto identity) noexcept {
             if (identity == engine.CapturePlayableServiceWorkIdentity(identity.slot))
                 engine.SetPlayableServiceNeedsWork(engine.playableServices[identity.slot], true);
-            else engine.runtimeRecreateRequired = true;
+            else engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }, true);
         if (requiredPublicationFrame != nullptr)
             *requiredPublicationFrame = std::max(*requiredPublicationFrame,
@@ -57813,7 +57955,7 @@ void ServicePlayableStarts(harken::Engine& engine,
             if (engine.playablePartitions.CanRelease(row.partition, row.identity, observedAudioSequence)) {
                 const auto reset = ResetPlayableStartRow(engine, row);
                 if (reset == PlayableStartResetResult::Fault)
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             continue;
         }
@@ -57851,7 +57993,7 @@ void ServicePlayableStarts(harken::Engine& engine,
                 (!PublishNaturalPlayableCompletion(engine, child, std::max<std::uint64_t>(1u, observedAudioSequence)) ||
                  (engine.containerPlayback.Capture(view.parent, &playback) && playback.activeChild == child &&
                   !ConsumeNaturalContainerChild(engine, view.parent, child)))) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             if (view.live &&
@@ -57924,13 +58066,13 @@ void ServicePlayableStarts(harken::Engine& engine,
                     harken::PlayableControlLifecycle::Active;
                 row.pendingFutureCount = 0;
                 if (!PublishNaturalPlayableCompletion(engine, row.rootInstance, row.ticket)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 const auto completed = engine.playableInstances.Classify(row.rootInstance);
                 if (row.root.kind == harken::PlayableKindV1::Sound && completed.parent != 0 &&
                     !ConsumeNaturalContainerChild(engine, completed.parent, row.rootInstance)) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 row.controlLifecycle =
@@ -57982,7 +58124,7 @@ void ServicePlayableStarts(harken::Engine& engine,
             harken::Plan03PageGroupView group{};
             if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                     identity, &group) || group.lease == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             const harken::AudioSliceLeaseSnapshot lease =
@@ -57995,7 +58137,7 @@ engine.runtimeRecreateRequired = true;
             if (lease.state != harken::AudioSliceState::SliceApplied ||
                 (lease.pendingReasonBits &
                  harken::AudioSliceReasonSupersede) == 0) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             identity = {};
@@ -58451,7 +58593,7 @@ engine.runtimeRecreateRequired = true;
                     if (row.VariableControlRetargetIncoming().controllers[index].service.Valid()) {
                         if (!RetireNestedVariableControlService(engine,
                                 row.VariableControlRetargetIncoming().controllers[index].service, true)) {
-    engine.runtimeRecreateRequired = true;
+    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             return;
                         }
                         row.VariableControlRetargetIncoming().controllers[index].instance = {};
@@ -58467,7 +58609,7 @@ engine.runtimeRecreateRequired = true;
                         row.VariableControlRetargetIncoming().controllers[index].decision;
                     if (nestedDecision.Valid()) {
                         if (!RetireNestedVariableControlDecision(engine, nestedDecision)) {
-    engine.runtimeRecreateRequired = true;
+    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             return;
                         }
                         row.VariableControlRetargetIncoming().controllers[index].decision = {};
@@ -58646,7 +58788,7 @@ engine.runtimeRecreateRequired = true;
                     (engine.playableInstances.Classify(row.ownerInstance).parent != 0 &&
                      !ConsumeNaturalContainerChild(engine,
                          engine.playableInstances.Classify(row.ownerInstance).parent, row.ownerInstance))) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 const bool deferRetirementForTest =
@@ -58670,7 +58812,7 @@ engine.runtimeRecreateRequired = true;
                     continue;
                 if (!harken::Engine::SameSelectionServiceReference(record.service, row.frontierChildService) ||
                     record.outcome.kind != harken::PlayableTerminalKind::NaturalCompletion) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
             }
@@ -58706,7 +58848,7 @@ engine.runtimeRecreateRequired = true;
                         ? row.variableControlDiscreteTransitionOffset : 0u);
                 std::size_t slot = 0;
                 if (!engine.ResolvePlayableMemberSlot(logicalSlot, &slot)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     break;
                 }
                 requirePublication(engine.ReadPlayableMember(slot).startFrame);
@@ -58726,7 +58868,7 @@ engine.runtimeRecreateRequired = true;
                     harken::Plan03PageGroupView group{};
                     if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                             identity, &group) || group.lease == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         return;
                     }
                     const harken::AudioSliceInvalidateDisposition disposition =
@@ -58763,7 +58905,7 @@ engine.runtimeRecreateRequired = true;
                                             PostStartInvalidated);
                         };
                         if (!invalidateDecision()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             return;
                         }
                         if (row.VariablePayload().variableControlDiscreteRetargetTransition.Valid() &&
@@ -58775,7 +58917,7 @@ engine.runtimeRecreateRequired = true;
                                     &snapshot) ||
                                 snapshot.state !=
                                     harken::TransitionAudibleGateState::Invalidated) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 return;
                             }
                         }
@@ -58786,7 +58928,7 @@ engine.runtimeRecreateRequired = true;
                     ResolveVariableControlProgram(engine, row);
                 if (program == nullptr || program->discreteAxisCount == 0 ||
                     program->discreteAxisCount > 32) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 } else {
                     std::array<VnVariableId, 32> variableIds{};
                     for (std::uint32_t axis = 0;
@@ -58816,7 +58958,7 @@ engine.runtimeRecreateRequired = true;
                         }
                     }
                     if (!captured) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else if (newestOrdinal != 0) {
                         if (newestFrame >
                                 row.VariablePayload().variableControlDiscretePendingDesiredFrame ||
@@ -58834,7 +58976,7 @@ engine.runtimeRecreateRequired = true;
                         harken::Plan03PageGroupView group{};
                         if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                                 identity, &group) || group.lease == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else {
                             const harken::AudioSliceLeaseSnapshot lease =
                                 group.lease->Capture();
@@ -58909,7 +59051,7 @@ engine.runtimeRecreateRequired = true;
                         }
                         std::size_t physicalSlot = 0;
                         if (!engine.ResolvePlayableMemberSlot(enteringSlot, &physicalSlot)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             continue;
                         }
                         const VnVoiceHandle render =
@@ -59012,7 +59154,7 @@ engine.runtimeRecreateRequired = true;
                     retired = retired && sideCancelled && decisionStopped &&
                         transitionStopped;
                     if (!retired || maxTombstoneSequence == 0) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else {
                         row.variableControlDiscreteRetargetCleanupStarted =
                             true;
@@ -59035,7 +59177,7 @@ engine.runtimeRecreateRequired = true;
                                     row.variableControlContinuousDecisionCommitted,
                                     row.variableControlContinuousCleanupStarted);
                             if (!discreteCleanup || !continuousCleanup) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             }
                         }
                     }
@@ -59093,7 +59235,7 @@ engine.runtimeRecreateRequired = true;
                     if (!published || !engine.decisions.Commit(
                             row.VariablePayload().variableControlDiscreteRetargetDecision,
                             payload)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else {
                         row.variableControlDiscreteRetargetDecisionCommitted =
                             true;
@@ -59105,7 +59247,7 @@ engine.runtimeRecreateRequired = true;
                 if (!engine.decisions.CaptureCommitted(
                         row.VariablePayload().variableControlDiscreteRetargetDecision,
                         &decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 } else if (decision.audioState ==
                                harken::AudioGroupState::Admitted ||
                            decision.audioState ==
@@ -59128,7 +59270,7 @@ engine.runtimeRecreateRequired = true;
                             row.VariableControlRetargetIncoming().controllers.data(),
                             row.VariablePayload().variableControlDiscreteRetargetIncomingNestedVariableControlCount, decision,
                             row.VariableControlDiscreteRetargetEnteringSchedule().entryAnchorFrame,
-                            observedAudioSequence, row.VariablePayload().variableControlDiscreteRetargetIncomingChild)) engine.runtimeRecreateRequired = true;
+                            observedAudioSequence, row.VariablePayload().variableControlDiscreteRetargetIncomingChild)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     bool anyTombstoned = memberCount == 0 && decision.lastAudioSequence != 0 &&
                         decision.lastAudioSequence <= observedAudioSequence;
                     for (std::uint32_t index = 0;
@@ -59168,7 +59310,7 @@ engine.runtimeRecreateRequired = true;
                                 row.VariablePayload().variableControlDiscreteRetargetArmGroup,
                                 &updatedGroup);
                         if (!captured) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else if (updatedGroup.tombstonedCount ==
                                    memberCount) {
                             const auto retirementSequence = memberCount == 0
@@ -59182,7 +59324,7 @@ engine.runtimeRecreateRequired = true;
                                     row.VariablePayload().variableControlDiscreteRetargetTransition,
                                     retirementSequence);
                             if (!retired || !transitionRetired) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             } else {
                             row.variableControlDiscreteRetargetCleanupStarted =
                                 true;
@@ -59198,7 +59340,7 @@ engine.runtimeRecreateRequired = true;
                     std::array<std::size_t, harken::kMaxKnownScheduleLeaves> sourceSlots{};
                     if (!engine.ResolvePlayableMemberSlots(base,
                             row.VariablePayload().variableControlDiscreteRetargetSourceMemberCount, sourceSlots)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         continue;
                     }
                     bool allSourcesExited = true;
@@ -59227,7 +59369,7 @@ engine.runtimeRecreateRequired = true;
                     if (allSourcesExited && allTargetsReady) {
                         if (!PromoteVariableControlDiscreteRetargetSubtree(
                                 engine, row)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else {
                             for (std::uint32_t index = 0;
                                  index < row.
@@ -59265,7 +59407,7 @@ engine.runtimeRecreateRequired = true;
                             }
                             std::size_t firstSlot = 0;
                             if (!engine.ResolvePlayableMemberSlot(base, &firstSlot)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 continue;
                             }
                             row.leaf = engine.ReadPlayableMember(firstSlot).leaf;
@@ -59295,7 +59437,7 @@ engine.runtimeRecreateRequired = true;
                     if (allTargetsReady) {
                         if (!PromoteVariableControlDiscreteRetargetSubtree(
                                 engine, row)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else {
                             row.variableControlDiscreteMemberCount =
                                 row.VariablePayload().variableControlDiscreteRetargetTargetMemberCount;
@@ -59316,7 +59458,7 @@ engine.runtimeRecreateRequired = true;
                             }
                             std::size_t firstSlot = 0;
                             if (!engine.ResolvePlayableMemberSlot(base, &firstSlot)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 continue;
                             }
                             row.leaf = engine.ReadPlayableMember(firstSlot).leaf;
@@ -59332,7 +59474,7 @@ engine.runtimeRecreateRequired = true;
                     std::array<std::size_t, harken::kMaxKnownScheduleLeaves> sourceSlots{};
                     if (!engine.ResolvePlayableMemberSlots(base,
                             row.VariablePayload().variableControlDiscreteRetargetSourceMemberCount, sourceSlots)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         continue;
                     }
                     bool allSourcesExited =
@@ -59374,7 +59516,7 @@ engine.runtimeRecreateRequired = true;
                     ? UINT64_MAX
                     : observedAudioSequence * blockFrames;
             if (program == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             } else if (observedFrame >= row.variableControlDiscreteNextEvaluationFrame &&
                        (engine.playableInstances.FirstChild(row.rootInstance) != 0 ||
                         (row.hasZeroWorkCompletion && observedFrame < row.zeroWorkCompletionFrame))) {
@@ -59413,13 +59555,12 @@ engine.runtimeRecreateRequired = true;
                                     ? UINT64_MAX
                                     : observedFrame + 1u,
                                 &next)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(program->evaluationPeriodFrames != 0 ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else {
                             row.variableControlDiscreteNextEvaluationFrame = next;
                         }
-                    } else if (status ==
-                               VariableRetargetPrepareStatus::Fatal) {
-engine.runtimeRecreateRequired = true;
+                    } else if (IsFatalRetarget(status)) {
+                        engine.RequireRecreation(RetargetFailureCategory(status));
                     }
                 }
             }
@@ -59437,7 +59578,7 @@ engine.runtimeRecreateRequired = true;
                     const auto& reference = member.reference;
                     const bool stored = engine.SetPlayableMemberReference(currentBase + index, reference);
                     assert(stored);
-                    if (!stored) engine.runtimeRecreateRequired = true;
+                    if (!stored) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     row.VariablePayload().variableControlMemberWeights[index] = member.pendingWeight;
                     const auto leafIndex = row.variableControlDiscreteMemberCount + index;
                     row.variableControlLeafInstances[leafIndex] = reference.leaf;
@@ -59517,7 +59658,7 @@ engine.runtimeRecreateRequired = true;
                     &owner, &retargetMemberSlots[index]);
             }
             if (!membersValid) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             const auto audioMemberCount = static_cast<std::uint32_t>(std::count_if(
@@ -59540,7 +59681,7 @@ engine.runtimeRecreateRequired = true;
                     harken::Plan03PageGroupView group{};
                     if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                             identity, &group) || group.lease == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         return;
                     }
                     const harken::AudioSliceInvalidateDisposition disposition =
@@ -59574,7 +59715,7 @@ engine.runtimeRecreateRequired = true;
                              terminal.audioState ==
                                  harken::AudioGroupState::Retired);
                         if (!lifecycleComplete) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             return;
                         }
                         row.VariablePayload().variableControlDeferredSupersedeBank = desired;
@@ -59603,7 +59744,7 @@ engine.runtimeRecreateRequired = true;
                                             PostStartInvalidated);
                         };
                         if (!invalidateDecision()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             return;
                         }
                         row.variableControlRetargetSuperseded = true;
@@ -59628,7 +59769,7 @@ engine.runtimeRecreateRequired = true;
                     supersedePendingCut(row.VariablePayload().variableControlRetargetBank);
                 } else if (program == nullptr || program->continuousAxisCount == 0 ||
                     program->continuousAxisCount > 32) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 } else {
                     std::array<VnVariableId, 32> variableIds{};
                     std::array<float, 32> values{};
@@ -59646,7 +59787,7 @@ engine.runtimeRecreateRequired = true;
                         harken::Plan03PageGroupView group{};
                         if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
                                 identity, &group) || group.lease == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else if (group.lease->Capture().state ==
                                    harken::AudioSliceState::Ready) {
                             // A pending write supersedes an unclaimed cut;
@@ -59664,7 +59805,7 @@ engine.runtimeRecreateRequired = true;
                                 row.VariablePayload().variableControlRetargetBank.slot ||
                             newest.generation <
                                 row.VariablePayload().variableControlRetargetBank.generation) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else if (newest.generation >
                                    row.VariablePayload().variableControlRetargetBank.generation) {
                             supersedePendingCut(newest);
@@ -59773,7 +59914,7 @@ engine.runtimeRecreateRequired = true;
                                   row.VariablePayload().variableControlRetargetDecision);
                     retired = retired && sideRestored && decisionStopped;
                     if (!retired || maxTombstoneSequence == 0) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else {
                         row.variableControlRetargetCleanupStarted = true;
                         row.variableControlRetargetExitsIssued = true;
@@ -59799,7 +59940,7 @@ engine.runtimeRecreateRequired = true;
                                     row.variableControlContinuousDecisionCommitted,
                                     row.variableControlContinuousCleanupStarted);
                             if (!discreteCleanup || !continuousCleanup) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             }
                         }
                     }
@@ -59857,7 +59998,7 @@ engine.runtimeRecreateRequired = true;
                         !engine.decisions.Commit(
                             row.VariablePayload().variableControlRetargetDecision,
                             payload)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else {
                         row.variableControlRetargetDecisionCommitted = true;
                     }
@@ -59867,7 +60008,7 @@ engine.runtimeRecreateRequired = true;
                 harken::DecisionCommittedSnapshot decision{};
                 if (!engine.decisions.CaptureCommitted(
                         row.VariablePayload().variableControlRetargetDecision, &decision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 } else if (decision.audioState ==
                                harken::AudioGroupState::Admitted ||
                            decision.audioState ==
@@ -59880,7 +60021,7 @@ engine.runtimeRecreateRequired = true;
                                 nullptr, 0, decision,
                                 row.VariablePayload().variableControlRetargetFrame,
                                 observedAudioSequence, 0)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         }
                     }
                     bool allTombstoned = true;
@@ -59936,7 +60077,7 @@ engine.runtimeRecreateRequired = true;
                                 row.VariablePayload().variableControlRetargetDecision,
                                 maxTombstoneSequence);
                         if (!retiring) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else {
                             row.variableControlRetargetCleanupStarted = true;
                         }
@@ -59954,7 +60095,7 @@ engine.runtimeRecreateRequired = true;
                     ? UINT64_MAX
                     : observedAudioSequence * blockFrames;
             if (program == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             } else if (row.VariablePayload().variableControlNextEvaluationFrame != 0 &&
                        observedFrame >= row.VariablePayload().variableControlNextEvaluationFrame &&
                        (engine.playableInstances.FirstChild(row.rootInstance) != 0 ||
@@ -59971,13 +60112,12 @@ engine.runtimeRecreateRequired = true;
                                 ? UINT64_MAX
                                 : observedFrame + 1u,
                             &next)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(program->evaluationPeriodFrames != 0 ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else {
                         row.VariablePayload().variableControlNextEvaluationFrame = next;
                     }
-                } else if (status ==
-                           VariableRetargetPrepareStatus::Fatal) {
-engine.runtimeRecreateRequired = true;
+                } else if (IsFatalRetarget(status)) {
+                        engine.RequireRecreation(RetargetFailureCategory(status));
                 }
             }
         }
@@ -60262,7 +60402,7 @@ engine.runtimeRecreateRequired = true;
             if (count == 0 ||
                 memberBase + count >
                     engine.playableStorage.memberCount) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 row.controlLifecycle = harken::PlayableControlLifecycle::
                     FailingSourceActive;
                     row.controlReason =
@@ -60289,7 +60429,7 @@ engine.runtimeRecreateRequired = true;
                         cleared;
                 }
                 if (!cleared) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     row.controlLifecycle = harken::PlayableControlLifecycle::
                         FailingSourceActive;
                     row.controlReason =
@@ -60647,7 +60787,7 @@ engine.runtimeRecreateRequired = true;
                             auto* member = engine.FindQueueProgramMember(row.QueueFiling().queueSuccessorProgramBank,
                                 row.QueueFiling().queueSuccessorPrograms.first + index);
                             if (member == nullptr) {
-                                engine.runtimeRecreateRequired = true;
+                                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 break;
                             }
                             auto& selection = member->monitorSelection;
@@ -60754,14 +60894,14 @@ engine.runtimeRecreateRequired = true;
                         std::size_t currentMember = currentMemberBase + index;
                         if (row.parentService.Valid() &&
                             !engine.ResolvePlayableMemberSlot(currentMember, &currentMember)) {
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             break;
                         }
                         const auto programIndex = row.QueueFiling().queueSuccessorPrograms.first + index;
                         if (!row.parentService.Valid()) {
                             if (!engine.BindPlayableMember(row, index,
                                     row.QueueFiling().queueSuccessorProgramBank->members[programIndex])) {
-                                engine.runtimeRecreateRequired = true;
+                                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 break;
                             }
                             eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
@@ -60770,7 +60910,7 @@ engine.runtimeRecreateRequired = true;
                         auto* retained = engine.FindQueueProgramMember(row.QueueFiling().queueSuccessorProgramBank, programIndex);
                         if (retained == nullptr || !retained->primaryOwned ||
                             engine.FindPlayableMember(currentMember) != retained) {
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             break;
                         }
                         eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
@@ -60803,7 +60943,7 @@ engine.runtimeRecreateRequired = true;
                     std::size_t firstMember = currentMemberBase;
                     if (row.parentService.Valid() &&
                         !engine.ResolvePlayableMemberSlot(firstMember, &firstMember)) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         continue;
                     }
                     row.arm =
@@ -60821,7 +60961,7 @@ engine.runtimeRecreateRequired = true;
                            row.QueueFiling().queueSuccessorArm.Valid()) {
                     const auto* successor = ResolveQueueSuccessorProgram(row.QueueFiling(), 0);
                     if (successor == nullptr) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         continue;
                     }
                     const auto memberIndex = row.QueueFiling().queueSuccessorPrograms.first;
@@ -60837,7 +60977,7 @@ engine.runtimeRecreateRequired = true;
                         : engine.BindPlayableMember(row, 0,
                             row.QueueFiling().queueSuccessorProgramBank->members[memberIndex]));
                     if (!rebound) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         continue;
                     }
                     row.capturedVoice = {};
@@ -60864,7 +61004,7 @@ engine.runtimeRecreateRequired = true;
                         ? row.QueueFiling().queueSuccessorScheduleLeafCount : row.QueueFiling().queueSuccessorArm.Valid() ? 1u : 0u;
                     for (std::uint32_t index = retainedCount; index < row.members.size(); ++index) {
                         if (!engine.ReleasePlayableMember(row, index)) {
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             break;
                         }
                     }
@@ -61054,7 +61194,7 @@ engine.runtimeRecreateRequired = true;
                         playback.lastConsumedOutcomeOrdinal != 0 &&
                         !CompleteVariableControlNestedQueueChild(engine, row,
                             playback.lastConsumedOutcomeOrdinal)) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     }
                 }
                 if (row.QueuePayload().queueCurrentProgramBank != nullptr && row.QueuePayload().queueCurrentProgramBank->chain.recorded &&
@@ -61078,7 +61218,7 @@ engine.runtimeRecreateRequired = true;
             2u * harken::kMaxKnownScheduleLeaves;
         std::array<std::size_t, kMaxObservedMemberSpan> observedMemberSlots;
         if (!engine.ResolvePlayableMemberSlots(variableBase, memberStorageSpan, observedMemberSlots)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                     row.controlReason = harken::PlayableControlReason::StartRefused;
             row.phase = harken::EnginePlayableStartPhase::Cancelling;
@@ -61107,7 +61247,7 @@ engine.runtimeRecreateRequired = true;
             if (memberStorageSpan > kMaxObservedMemberSpan ||
                 base + memberStorageSpan >
                     engine.playableStorage.memberCount) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 row.controlLifecycle = harken::PlayableControlLifecycle::
                     FailingSourceActive;
                     row.controlReason =
@@ -61709,7 +61849,7 @@ engine.runtimeRecreateRequired = true;
                     if (!CompleteVariableControlNestedQueueChild(
                             engine, row,
                             observation.logicalCompletionSequence)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     }
                 }
                 allLogical = allLogical && logical;
@@ -61718,7 +61858,7 @@ engine.runtimeRecreateRequired = true;
                 if (observation.state == harken::ArmState::Tombstoned &&
                     !recordQueueArrivalTombstone(
                         engine.ReadPlayableMember(slot).arm, observation)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
             }
             const bool physicalScheduleTombstoned = allTombstoned;
@@ -61953,7 +62093,7 @@ engine.runtimeRecreateRequired = true;
                     ActivateVariableControlNestedQueueSuccessor(engine, row);
                 if (successorActivated) {
                     if (!discreteCleanup || !continuousCleanup) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     }
                     continue;
                 }
@@ -62040,7 +62180,7 @@ engine.runtimeRecreateRequired = true;
                             std::max(observedAudioSequence, logicalOutcomeOrdinal)) ||
                         !engine.containerPlayback.MarkLogicalComplete(row.rootInstance) ||
                         (instance.parent != 0 && !ConsumeNaturalContainerChild(engine, instance.parent, row.rootInstance))) {
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         continue;
                     }
                     row.controlLifecycle = harken::PlayableControlLifecycle::LogicalComplete;
@@ -62125,7 +62265,7 @@ engine.runtimeRecreateRequired = true;
                     row.variableControlContinuousCleanupStarted);
                 if (!discreteCancelled || !continuousCancelled ||
                     !discreteCleanup || !continuousCleanup) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
                 if (allTombstoned &&
                     !row.variableControlDiscreteDecision.Valid() &&
@@ -62134,7 +62274,7 @@ engine.runtimeRecreateRequired = true;
                     !row.VariablePayload().variableControlRetargetDecision.Valid()) {
                     if (!engine.variableControlInstances.Release(
                             row.variableControlInstance)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     } else {
                         row.variableControlInstance = {};
                     }
@@ -62756,7 +62896,7 @@ engine.runtimeRecreateRequired = true;
                     }
                     row.terminalObserved = true;
                     if (!recordQueueArrivalTombstone(row.arm, arm)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     }
                     if (row.queueNestedParentPending &&
                         row.controlLifecycle == harken::PlayableControlLifecycle::Active) {
@@ -62790,7 +62930,7 @@ engine.runtimeRecreateRequired = true;
                                 decision,
                                 arm.tombstoneAudioSequence);
                         if (!retired) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         } else {
                             cleanupStarted = true;
                         }
@@ -62954,7 +63094,7 @@ engine.runtimeRecreateRequired = true;
                                     completedArm, arm, PlayableServiceReference(row)};
                                 harken::TimelineArmObservation validated{};
                                 if (!RestoreDeferredQueueSourceObservation(engine, row, &validated)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                     continue;
                                 }
                             } else if (resumeStatus != QueueContinuationPrepareStatus::Deferred) {
@@ -62963,7 +63103,7 @@ engine.runtimeRecreateRequired = true;
                             if (resumeStatus == QueueContinuationPrepareStatus::NaturalEnd) {
                                 if (!ClearQueueCompletionOwner(engine, row.renderHandle,
                                         row.QueuePayload().queueCurrentCompletion)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                     continue;
                                 }
                                 row.QueuePayload().queueCurrentCompletion = {};
@@ -63070,7 +63210,7 @@ engine.runtimeRecreateRequired = true;
                             harken::QueueCheckpointImage checkpoint{};
                             if (!engine.queueInstances.ResolveEffective(
                                     row.queueInstance, &effective)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             } else {
                                 checkpoint.effective = effective;
                                 checkpoint.randomSeed =
@@ -63081,7 +63221,7 @@ engine.runtimeRecreateRequired = true;
                                 if (!engine.StoreOriginalQueueCheckpoint(
                                         row.queueInstance, row.QueueCheckpointKey(),
                                         checkpoint)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                                 }
                             }
                         }
@@ -63090,7 +63230,7 @@ engine.runtimeRecreateRequired = true;
                             if (TransferDecisionRetirement(engine, row.QueueFiling().queueDecision, true)) {
                                 row.QueueFiling().queueDecision = {};
                             } else {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             }
                         }
                         row.queueFinalSourceTombstoned = true;
@@ -63349,7 +63489,7 @@ bool Engine::FinishOriginalQueueCheckpointReturn(OriginalQueueFactoryLifetimeHol
     QueueCheckpointTable::BackingPreparation* destination) noexcept {
     if (destination != nullptr) {
         if (!factory.checkpointBacking_.ReturnTo(destination)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     } else factory.checkpointBacking_.Release();
@@ -64356,9 +64496,16 @@ bool PreparePendingOrdinaryMemberDirectories(Engine& engine, EnginePlayableServi
 }
 
 Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
-    EngineImmediateEntryAttempt& attempt, std::uint64_t anchor) noexcept {
+    EngineImmediateEntryAttempt& attempt, std::uint64_t anchor,
+    VnRuntimeFaultCategory* failureCategory) noexcept {
     using Result = PendingOrdinarySelectionResult;
-    if (!MatchesPendingSelectionCensus(attempt) || anchor == UINT64_MAX) return Result::Refused;
+    const auto refuse = [&](VnRuntimeFaultCategory category) {
+        if (failureCategory != nullptr) *failureCategory = category;
+        return Result::Refused;
+    };
+    if (failureCategory != nullptr) *failureCategory = VN_RUNTIME_FAULT_INTERNAL_STATE;
+    if (!MatchesPendingSelectionCensus(attempt)) return Result::Refused;
+    if (anchor == UINT64_MAX) return refuse(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
     const auto reject = [&](VnResult status) noexcept {
         for (auto& member : playableServices) {
             if (member.PendingImmediateCohortRoot() != attempt.root ||
@@ -64447,15 +64594,21 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             const auto selected = pack ? traverse(row.Invocation().packPlaybackView) : traverse(*world);
             if (selected.status != ContainerTraversalStatus::Ok || selected.child == nullptr || selected.program == nullptr ||
                 (selected.program->mode != ContainerModeV1::Random && selected.program->mode != ContainerModeV1::Sequence))
-                return Result::Refused;
+                return refuse(selected.selectionStatus == SelectionMemoryStatusV1::Capacity
+                    ? VN_RUNTIME_FAULT_CAPACITY
+                    : selected.selectionStatus == SelectionMemoryStatusV1::RuntimeRecreateRequired
+                        ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
             ordinals[selectionCount] = selected.selectedChildOrdinal;
             path[selectionCount++] = selected.pathNode;
             current = selected.canonicalChild;
             if (selectionCount == 1) firstChild = current;
         }
-        if (current.kind != PlayableKindV1::Sound || selectionCount == 0 ||
-            batch->SealReplacement(anchor, ordinals.data(), selectionCount) != SelectionMemoryStatusV1::Ok)
-            return Result::Refused;
+        if (current.kind != PlayableKindV1::Sound || selectionCount == 0) return Result::Refused;
+        const auto sealed = batch->SealReplacement(anchor, ordinals.data(), selectionCount);
+        if (sealed != SelectionMemoryStatusV1::Ok)
+            return refuse(sealed == SelectionMemoryStatusV1::Capacity ? VN_RUNTIME_FAULT_CAPACITY
+                : sealed == SelectionMemoryStatusV1::RuntimeRecreateRequired
+                    ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (selectionCount == row.selectionCount &&
             std::equal(ordinals.begin(), ordinals.begin() + selectionCount, row.selectedChildOrdinals.begin()) &&
             !holder->retirement.Valid()) {
@@ -64749,18 +64902,18 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             !tree.ProveParentLinks(playableInstances) || !IssueOriginalPlayableTreeLifetimes(tree) ||
             batch->CanInstallReplacement() != SelectionMemoryStatusV1::Ok || !tree.Validate()) return Result::Waiting;
         if (!tree.Commit(identity.ticket)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Result::Refused;
         }
         for (std::uint32_t index = 0; index < selectionCount; ++index) {
             if (!PlayableTreeExecutor::ServiceActiveChild(playableInstances, containerPlayback, containers[index],
                     tree.PreparedInstanceHandle(index))) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return Result::Refused;
             }
         }
         if (batch->InstallReplacement() != SelectionMemoryStatusV1::Ok) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Result::Refused;
         }
         row.capturedVoice = std::move(holder->replacementVoice);
@@ -64791,14 +64944,14 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             row.frontierChildService = firstService;
         }
         if (!BindSinglePlayableProgram(*this, *resource, replacementBank, 0)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Result::Refused;
         }
         child->frontierProgramBank = nullptr;
         replacementBank.published = true;
         if (resource != &row) {
             if (!ForwardPlainInitialQueuePending(*this, row, *resource)) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return Result::Refused;
             }
         }
@@ -64811,7 +64964,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         holder->retirement.Release();
         holder->sourceRetired = false;
         if (!variables.CommitTimelineReadUse(start.initialVariableReadUse)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Result::Refused;
         }
         start.initialVariableReadUse = {};
@@ -64820,7 +64973,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         for (std::uint32_t index = 0; index < child->frontierServiceCount; ++index) {
             auto* service = ResolvePlayableService(child->storage.frontierServices[index].service);
             if (service == nullptr || !playablePartitions.Publish(service->partition, service->identity)) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return Result::Refused;
             }
             service->actionPrepared = false;
@@ -64828,7 +64981,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         NativeBackingReturnPlan nativeTransfer;
         if (!PrepareNativeBackingReturn(*child, &nativeTransfer)) return Result::Refused;
         if (!tree.ReleasePublishedOwnership() || !child->storage.ownerLedger.Transfer(child->storage.generation)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Result::Refused;
         }
         producer->voiceStarts[0] = std::move(start);
@@ -69217,16 +69370,16 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     const bool treeTransferred = futuresTransferred && child.playableTreeExecutor.ReleasePublishedOwnership();
     const bool ledgerTransferred = treeTransferred && child.storage.ownerLedger.Transfer(child.storage.generation);
     assert(treeTransferred && ledgerTransferred);
-    if (!ledgerTransferred) { runtimeRecreateRequired = true; return false; }
+    if (!ledgerTransferred) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     CommitNativeBackingTransferEnd(child, nativeTransfer);
     TransferFrontierQueueCurrentResponsibilities(*this, child);
     for (std::uint32_t index = 0; index < child.pendingVariableReplacementQueueLaneCount; ++index) {
         const auto& owned = child.pendingVariableReplacementQueueLanes[index];
         auto borrowed = BorrowQueueLaneRecord(*this, owned.continuation, owned.recordIndex);
-        if (!borrowed) { runtimeRecreateRequired = true; return false; }
+        if (!borrowed) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
         const auto& record = *borrowed;
         auto* service = ResolvePlayableService(record.service, record.ownerInstance, record.ownerEpoch);
-        if (service == nullptr) { runtimeRecreateRequired = true; return false; }
+        if (service == nullptr) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
         service->pendingImmediateEntry = false;
         service->queueTimingPending = false;
         service->queueTimingFinalized = true;
@@ -69263,7 +69416,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     row.variableControlNestedVariableControlCount = child.variableControlNestedVariableControlCount;
     for (std::uint32_t index = 0; index < child.variableControlNestedVariableControlCount; ++index) {
         auto* service = ResolvePlayableService(child.variableControlNestedServices[index]);
-        if (service == nullptr) { runtimeRecreateRequired = true; return false; }
+        if (service == nullptr) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
         row.variableControlControllers[index].service = child.variableControlNestedServices[index];
         row.variableControlControllers[index].instance = service->variableControlInstance;
         row.variableControlControllers[index].decision = child.variableControlNestedDecisionContinuous[index]
@@ -69277,7 +69430,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     for (std::uint32_t index = 2; index < child.pendingVariableReplacementControlCount; ++index) {
         const auto& control = child.pendingVariableReplacementControls[index];
         auto* service = ResolvePlayableService(control.service);
-        if (service == nullptr) { runtimeRecreateRequired = true; return false; }
+        if (service == nullptr) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
         const auto& native = child.pendingVariableReplacementGroups[index + 1u];
         const PreparedGroupToken pages{static_cast<std::uint32_t>(native.committedRow), native.rowClaimGeneration};
         if (control.side == VariableControlSide::Discrete) {
@@ -69374,13 +69527,13 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
         auto reference = leaf.storageReference;
         reference.authoredChildOrdinal = leaf.authoredChildOrdinal;
         if (!SetPlayableMemberReference(bases.member + logicalOffset, reference)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         EnginePlayableServiceRow* resource = nullptr;
         std::size_t physicalSlot = 0;
         if (!ResolvePlayableMember(reference, &resource, &physicalSlot)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         MutablePlayableMember(physicalSlot).leaf = leaf.leaf;
@@ -69393,7 +69546,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
         else {
             const auto& control = child.pendingVariableReplacementControls[leaf.controlIndex];
             auto* service = ResolvePlayableService(control.service);
-            if (service == nullptr) { runtimeRecreateRequired = true; return false; }
+            if (service == nullptr) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
             if (control.side == VariableControlSide::Discrete)
                 service->variableControlInitialArms.Discrete()[leaf.nativeMemberOrdinal] = start.arm;
             else service->variableControlInitialArms.Continuous()[leaf.nativeMemberOrdinal] = start.arm;
@@ -69401,7 +69554,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
         PreparedVariableControlLeafBinding binding{};
         if (!ResolveVariableControlLeafBinding(*this, child.storage.frontierPolicies,
                 child.frontierPolicyCount, leaf.frontierPolicyIndex, anchor, &binding)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         for (std::uint32_t member = 0; member < binding.memberCount; ++member) {
@@ -69413,7 +69566,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
             auto memberReference = leaf.storageReference;
             memberReference.authoredChildOrdinal = mapping.ordinal;
             if (!SetPlayableMemberReference(serviceBases.member + offset, memberReference)) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (mapping.discrete) {
@@ -69448,7 +69601,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     for (std::uint32_t index = 0; index < child.frontierServiceCount; ++index) {
         auto* service = ResolvePlayableService(child.storage.frontierServices[index].service);
         if (service == nullptr || !playablePartitions.Publish(service->partition, service->identity)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         service->actionPrepared = false;
@@ -69461,7 +69614,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     for (std::uint32_t index = 0; index < child.variableControlNestedVariableControlCount; ++index) {
         auto* service = ResolvePlayableService(child.variableControlNestedServices[index]);
         if (service == nullptr || !playablePartitions.Publish(service->partition, service->identity)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         service->actionPrepared = false;
@@ -69474,12 +69627,12 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     child.storage.phase = EngineFrontierAttemptPhase::Published;
     const bool entryReadCommitted = variables.CommitFrontierEntryReadUse(group.cut, activation, groups);
     assert(entryReadCommitted);
-    if (!entryReadCommitted) { runtimeRecreateRequired = true; return false; }
+    if (!entryReadCommitted) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     for (std::uint32_t index = 0; index < child.voiceStartCount; ++index) {
         auto& use = child.voiceStarts[index].initialVariableReadUse;
         const bool committed = variables.CommitTimelineReadUse(use);
         assert(committed);
-        if (!committed) { runtimeRecreateRequired = true; return false; }
+        if (!committed) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
         use = {};
     }
     for (std::uint32_t index = 0; index < child.pendingVariableReplacementTopology.nodeCount; ++index)
@@ -69523,7 +69676,7 @@ bool Engine::PublishPendingVariableGroupReplacement(EngineActionPlayScratch& pro
     ApplyPendingPrivateVcRootLanePublication(publication);
     attempt.producerAbortFullyPrivate = false;
     attempt.producerAbortPartialArmPublished = false;
-    if (!selection.Apply()) { runtimeRecreateRequired = true; return false; }
+    if (!selection.Apply()) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     PublishMonitorPendingCensusSelections(*this, attempt);
     PublishMonitorPendingInitialSelections(*this, producer);
     // Original group registrations remain in the engine until ordinary retirement.
@@ -69633,7 +69786,7 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
         if (children[index] != nullptr) {
             if (!TransferPendingVariableGroupReplacementPublication(*producers[index], *children[index], *groups[index], attempt,
                     initialRootActivationPublicationProofs[activationIndex++], publication.groups)) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             activationIndex += children[index]->pendingVariableReplacementQueueLaneCount;
@@ -69652,7 +69805,7 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
     ApplyPendingPrivateVcRootLanePublication(publication);
     attempt.producerAbortFullyPrivate = false;
     attempt.producerAbortPartialArmPublished = false;
-    if (!selection.Apply()) { runtimeRecreateRequired = true; return false; }
+    if (!selection.Apply()) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     PublishMonitorPendingCensusSelections(*this, attempt);
     for (std::uint32_t index = 0; index < count; ++index)
         PublishMonitorPendingInitialSelections(*this, *producers[index]);
@@ -72463,15 +72616,19 @@ QueueResetStatusV1 ApplyQueueReset(Engine& engine,
                                    LogicCommitSequence sequence,
                                    bool* outIdempotent,
                                    const MonitorControlCause& cause = {},
-                                   std::uint32_t stepIndex = UINT32_MAX) noexcept {
+                                   std::uint32_t stepIndex = UINT32_MAX,
+                                   bool* generationExhausted = nullptr) noexcept {
+    if (generationExhausted != nullptr) *generationExhausted = false;
     PreparedQueueResetSetV1 preparedQueue;
     const std::uint64_t completed = engine.mixer.BlocksRendered();
     if (engine.config.blockFrames == 0 ||
-        completed > UINT64_MAX / engine.config.blockFrames)
+        completed > UINT64_MAX / engine.config.blockFrames) {
+        if (generationExhausted != nullptr) *generationExhausted = engine.config.blockFrames != 0;
         return QueueResetStatusV1::RuntimeRecreateRequired;
+    }
     const std::uint64_t admittedFrame = completed * engine.config.blockFrames;
     const QueueResetStatusV1 queueStatus =
-        engine.queueInstances.PrepareReset(target, &preparedQueue, admittedFrame);
+        engine.queueInstances.PrepareReset(target, &preparedQueue, admittedFrame, 0, generationExhausted);
     if (queueStatus != QueueResetStatusV1::Ok) return queueStatus;
     const QueueCheckpointKey checkpoint =
         MakeQueueCheckpointResetKey(engine, target);
@@ -72488,13 +72645,14 @@ QueueResetStatusV1 ApplyQueueReset(Engine& engine,
     }
     engine.actionFirings.ObserveStepExecution(cause.actionFiring, stepIndex);
     const QueueResetStatusV1 committedQueue =
-        engine.queueInstances.CommitPreparedReset(&preparedQueue, sequence, UINT64_MAX, cause);
+        engine.queueInstances.CommitPreparedReset(&preparedQueue, sequence, UINT64_MAX, cause, generationExhausted);
     const QueueResetStatusV1 committedCheckpoint =
         engine.queueCheckpoints.CommitPreparedReset(&preparedCheckpoint,
                                                     sequence);
     if (committedQueue != QueueResetStatusV1::Ok ||
         committedCheckpoint != QueueResetStatusV1::Ok) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(generationExhausted != nullptr && *generationExhausted
+    ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         return QueueResetStatusV1::RuntimeRecreateRequired;
     }
     return QueueResetStatusV1::Ok;
@@ -72598,13 +72756,13 @@ bool FinalizeActionDeferredClaimKeepLease(
     const ActionDeferredRecord& record) noexcept {
     if (!engine.OriginalDeferredPackFinalizationReady(recordToken)) return false;
     bool ok = engine.timelineDeferred.Release(poolToken);
-    if (!ok) { engine.runtimeRecreateRequired = true; return false; }
+    if (!ok) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     ok = engine.actionDeferredRecords.FinalizeClaim(recordToken);
-    if (!ok) { engine.runtimeRecreateRequired = true; return false; }
+    if (!ok) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
     engine.ForgetFinalizedOriginalDeferredPack(recordToken);
     ok = engine.actionFirings.ReleaseDeferred(record.firing);
     if (!ok) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     return ok;
 }
@@ -72726,7 +72884,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPlayOrStop(
                                     ActionTerminalReason reason) noexcept {
         if (!engine.actionFirings.SettleDeferredStopLeaf(
                 record.firing, record.stepIndex, stopped, result, reason)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     };
     const auto finalize = [&]() noexcept {
@@ -72791,7 +72949,7 @@ engine.runtimeRecreateRequired = true;
                                         VnResult result) noexcept {
         if (owned == nullptr ||
             !owned->storage.deferredContainerOwner.active) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return TimelineDeferredMaterializeStatus::NotOwned;
         }
         failPlay(result, ActionDeferredTerminalReason(result));
@@ -72821,7 +72979,7 @@ engine.runtimeRecreateRequired = true;
             !owned->storage.ownerLedger.Empty() ||
             owned->playableTreeExecutor.OwnerTokenCount() != 0) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             if (newPageStartBlocker != nullptr) *newPageStartBlocker = 0;
             return TimelineDeferredMaterializeStatus::RetainedOwned;
         }
@@ -72829,7 +72987,7 @@ engine.runtimeRecreateRequired = true;
             if (engine.runtimeRecreateRequired ||
                 !engine.HasObservedOriginalPreparingStorageWait(owned->storage)) {
                 owner.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             if (newPageStartBlocker != nullptr) *newPageStartBlocker = 0;
             return TimelineDeferredMaterializeStatus::RetainedOwned;
@@ -72838,7 +72996,7 @@ engine.runtimeRecreateRequired = true;
         if (!ResetImmediateActionPlayScratch(engine, owned)) {
             owner.active = true;
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             if (newPageStartBlocker != nullptr) *newPageStartBlocker = 0;
             return TimelineDeferredMaterializeStatus::RetainedOwned;
         }
@@ -72937,7 +73095,7 @@ engine.runtimeRecreateRequired = true;
         }
         auto* attempt = FindImmediateActionPlay(plan, 0);
         if (attempt == nullptr) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return finalize();
         }
         auto& scratch = *attempt;
@@ -72959,7 +73117,7 @@ engine.runtimeRecreateRequired = true;
                 TimelineEventKind::Start ||
             retained.active ||
             scratch.row->privateOrdinaryDeferredRollbackGeneration != 0) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return TimelineDeferredMaterializeStatus::NotOwned;
         }
         retained.poolToken = claim.token;
@@ -72994,7 +73152,7 @@ engine.runtimeRecreateRequired = true;
             result.producedPlayableInstance = PublicPlayableInstance(*scratch.row);
             (void)TransitionActionDeferredStep(engine, record, result);
             if (!TransferFrontierAttempt(engine, scratch))
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return keepLease();
         }
         failPlay(VN_RUNTIME_RECREATE_REQUIRED,
@@ -73027,7 +73185,7 @@ engine.runtimeRecreateRequired = true;
             auto* owned = FindImmediateActionPlay(plan, 0);
             if (owned == nullptr ||
                 !owned->storage.deferredContainerOwner.active) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return TimelineDeferredMaterializeStatus::NotOwned;
             }
             owned->storage.deferredContainerOwner.allowFinalization = true;
@@ -73052,7 +73210,7 @@ engine.runtimeRecreateRequired = true;
     if (attempt == nullptr || attempt->row == nullptr ||
         attempt->row->rootInstance == 0 ||
         attempt->row->phase == EnginePlayableStartPhase::Free) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         failPlay(VN_RUNTIME_RECREATE_REQUIRED,
                  ActionTerminalReason::GenerationExhausted);
         return finalize();
@@ -73090,19 +73248,19 @@ engine.runtimeRecreateRequired = true;
                     row->publishedDeferredStoppingSlot = engine.actionPlayStorage.IndexOf(scratch.storage);
                     row->publishedDeferredStoppingGeneration = scratch.storage.generation;
                     if (newPageStartBlocker != nullptr) *newPageStartBlocker = 0;
-                } else engine.runtimeRecreateRequired = true;
-            } else engine.runtimeRecreateRequired = true;
+                } else engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
+            } else engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             owner.rollbackRequested = true;
             owner.allowFinalization = true;
             return TimelineDeferredMaterializeStatus::RetainedOwned;
         }
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     } else if (scratch.storage.deferredContainerOwner.active) {
         auto& owner = scratch.storage.deferredContainerOwner;
         if (owner.lease != harken::EngineActionPlayStorage::
                 DeferredContainerOwner::LeaseDisposition::RowOwns) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return TimelineDeferredMaterializeStatus::RetainedOwned;
         }
         owner.active = false;
@@ -73130,7 +73288,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredClaim(
         !emitterCurrent;
     if (cancelled) {
         if (!captured) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         } else if (firing.state == ActionFiringState::Active &&
                    (!ownerCurrent || !emitterCurrent)) {
             const ActionTerminalReason reason =
@@ -73139,10 +73297,10 @@ engine.runtimeRecreateRequired = true;
                     ? ActionTerminalReason::WorldReplaced
                     : ActionTerminalReason::TargetGone;
             if (!engine.actionFirings.MarkTreeStopping(record.firing, reason)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
         } else if (firing.state == ActionFiringState::Active) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         return FinalizeOrRetainActionDeferredClaim(engine, claim.token, recordToken, record);
     }
@@ -73488,7 +73646,7 @@ bool DrainCancelledActionDeferredClaims(Engine& engine) noexcept {
                 continue;
             if (owner.recordToken.generation != recordToken.generation ||
                 owner.firing != record.firing) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 ok = false;
             }
             privatelyOwned = true;
@@ -73501,7 +73659,7 @@ bool DrainCancelledActionDeferredClaims(Engine& engine) noexcept {
                     continue;
                 if (owner.recordToken.generation != recordToken.generation ||
                     owner.firing != record.firing) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     ok = false;
                 }
                 privatelyOwned = true;
@@ -73561,7 +73719,8 @@ void TimelineServiceCoordinator::Service() {
         ++reclaimed;
     }
     if (!engine_.timelinePool.Valid()) {
-        engine_.runtimeRecreateRequired = true;
+        engine_.RequireRecreation(engine_.timelinePool.TerminalGenerationExhausted()
+            ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
 
@@ -73980,7 +74139,7 @@ void TimelineServiceCoordinator::Service() {
                 : engine_.packComposition.ValidateLease(
                       state.targetPackLease);
         engine_.hasDeferredPairFault = true;
-        engine_.runtimeRecreateRequired = true;
+        engine_.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     };
     if (fixedPlayQuotaQuantum_ != observedAudioSequence) {
         fixedPlayQuotaQuantum_ = observedAudioSequence;
@@ -81262,7 +81421,7 @@ static PlayableControlStatus BeginPlayableCancellation(
                     return PlayableControlStatus::Backpressure;
             }
             if (!engine.actionFirings.MarkTreeStopping(attempt->root, ActionTerminalReason::TransportReset)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return PlayableControlStatus::Backpressure;
             }
             // Preserve the originals until the registered abort has captured and returned every owner.
@@ -81815,14 +81974,14 @@ static PlayableControlStatus BeginPlayableCancellation(
                 (preflightOnly || !preparedCommit)) {
                 if (!preflightOnly && DropLivePlan03GroupMemberArms(engine,
                         engine.mixer.BlocksRendered(), true, row, false, sliceReason, true) ==
-                    QueueCancellationLeaseStatus::Failed) engine.runtimeRecreateRequired = true;
+                    QueueCancellationLeaseStatus::Failed) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 engine.commands.NoteBackpressure();
                 return PlayableControlStatus::Backpressure;
             }
         }
         if (queueLease == QueueCancellationLeaseStatus::Failed) {
             if (intent != PlayableCancellationIntent::Stop) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return PlayableControlStatus::Backpressure;
             }
         }
@@ -81860,7 +82019,7 @@ engine.runtimeRecreateRequired = true;
             stop.payload.stop.handle = render;
             stop.payload.stop.fadeMs = fadeMs;
             if (publishStop(stop)) MarkObservedPlayableVoiceTerminating(engine, render, cause);
-            else engine.runtimeRecreateRequired = true;
+            else engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         });
         return acceptCancellation();
     }
@@ -82019,7 +82178,7 @@ engine.runtimeRecreateRequired = true;
     if (requestedInstance != instance)
         engine.playableInstances.RecordControlCause(requestedInstance, cause);
     if (!CancelTransferredQueueArrivals(engine, *row, false)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return PlayableControlStatus::Backpressure;
     }
 
@@ -82031,7 +82190,7 @@ engine.runtimeRecreateRequired = true;
             row->Invocation().actionFiring,
             contentRevision ? ActionTerminalReason::WorldReplaced
                             : ActionTerminalReason::TransportReset)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return PlayableControlStatus::Backpressure;
     }
     if ((contentRevision || transportReset) && row->Invocation().actionFiring != 0) {
@@ -82044,7 +82203,7 @@ engine.runtimeRecreateRequired = true;
             stoppedRoot = snapshot.parent;
         }
         if (!capturedRoot) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return PlayableControlStatus::Backpressure;
         }
         bool returned = true;
@@ -82151,7 +82310,7 @@ engine.runtimeRecreateRequired = true;
                   invalidation == DecisionInvalidationDisposition::AlreadyInvalidated;
             if (!stopped || !engine.queueInstances.RetireConditionalForAbort(
                     row->queueInstance, row->QueueFiling().queueConditional, row->QueueFiling().queueDecision)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return PlayableControlStatus::Backpressure;
             }
             BeginQueueSuccessorAbort(engine, *row);
@@ -82160,7 +82319,7 @@ engine.runtimeRecreateRequired = true;
         }
         if (row->queueSuccessorDecision.Valid()) {
             if (!TransferDecisionRetirement(engine, row->queueSuccessorDecision, true)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return PlayableControlStatus::Backpressure;
             }
             row->queueSuccessorDecision = {};
@@ -82271,7 +82430,7 @@ engine.runtimeRecreateRequired = true;
                 stop.payload.stop.fadeMs = voice != nullptr && voice->timelineGated ? 0 : fadeMs;
                 if (!engine.ledger.IsTerminating(render)) {
                     if (publishStop(stop)) MarkObservedPlayableVoiceTerminating(engine, render, cause);
-                    else engine.runtimeRecreateRequired = true;
+                    else engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
             });
     }
@@ -82471,7 +82630,7 @@ RuntimeTransportResetStatus BeginRuntimeTransportReset(
             !engine.variables.CanMintTransportResetBankVersions() ||
             !engine.timelineDeferred.CanResetForTransport() ||
             !engine.actionCooldowns.CanClearAll()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(RuntimeFaultForTransportReset(engine));
             return RuntimeTransportResetStatus::RuntimeRecreateRequired;
         }
         engine.runtimeTransportResetActive = true;
@@ -82488,7 +82647,7 @@ engine.runtimeRecreateRequired = true;
         }
         if (!CancelActionDeferred(engine, ActionDeferredCancelMatch::All, 0,
                                   ActionTerminalReason::TransportReset)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return RuntimeTransportResetStatus::RuntimeRecreateRequired;
         }
     }
@@ -82510,7 +82669,7 @@ engine.runtimeRecreateRequired = true;
             PlayableCancellationIntent::TransportReset);
         if (status == PlayableControlStatus::InvalidHandle ||
             status == PlayableControlStatus::StaleHandle) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return RuntimeTransportResetStatus::RuntimeRecreateRequired;
         }
     }
@@ -82533,19 +82692,19 @@ engine.runtimeRecreateRequired = true;
         return RuntimeTransportResetStatus::Backpressure;
     }
     if (!engine.timelineDeferred.ResetForTransport()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(RuntimeFaultForTransportReset(engine));
         return RuntimeTransportResetStatus::RuntimeRecreateRequired;
     }
     if (!engine.variables.ResetTransport(resetFrame)) {
         if (engine.transportEpochOwner.Exhausted() ||
             !engine.variables.CanMintTransportResetBankVersions()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
             return RuntimeTransportResetStatus::RuntimeRecreateRequired;
         }
         return RuntimeTransportResetStatus::Backpressure;
     }
     if (!engine.timelinePlanner.ResetForTransport()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return RuntimeTransportResetStatus::RuntimeRecreateRequired;
     }
     engine.timelinePrograms.ResetForTransport();
@@ -82554,7 +82713,7 @@ engine.runtimeRecreateRequired = true;
         set.reset();
     }
     if (!engine.actionCooldowns.ClearAll()) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
         return RuntimeTransportResetStatus::RuntimeRecreateRequired;
     }
     engine.queueCheckpoints.ClearAll();
@@ -82765,17 +82924,19 @@ PlayableResetStatus ResetCurrentPlayableByIdentity(
         if (status == SelectionMemoryStatusV1::Capacity)
             return PlayableResetStatus::Backpressure;
         if (status == SelectionMemoryStatusV1::RuntimeRecreateRequired) {
-            engine->runtimeRecreateRequired = true;
+            engine->RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
             return PlayableResetStatus::RuntimeRecreateRequired;
         }
         return PlayableResetStatus::InvalidInput;
     };
+    bool queueGenerationExhausted = false;
     const auto mapQueue = [&](QueueResetStatusV1 status) {
         if (status == QueueResetStatusV1::Ok) return PlayableResetStatus::Ok;
         if (status == QueueResetStatusV1::Backpressure)
             return PlayableResetStatus::Backpressure;
         if (status == QueueResetStatusV1::RuntimeRecreateRequired) {
-            engine->runtimeRecreateRequired = true;
+            engine->RequireRecreation(queueGenerationExhausted
+                ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
             return PlayableResetStatus::RuntimeRecreateRequired;
         }
         return PlayableResetStatus::InvalidInput;
@@ -82783,7 +82944,7 @@ PlayableResetStatus ResetCurrentPlayableByIdentity(
     const auto issueSequence = [&](LogicCommitSequence* out) {
         if (engine->logicCommits.TryIssue(out) !=
             LogicCommitCoordinator::IssueStatus::Issued) {
-            engine->runtimeRecreateRequired = true;
+            engine->RequireRecreation(engine->logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         return true;
@@ -82814,7 +82975,7 @@ PlayableResetStatus ResetCurrentPlayableByIdentity(
         LogicCommitSequence sequence = 0;
         if (!issueSequence(&sequence))
             return PlayableResetStatus::RuntimeRecreateRequired;
-        return mapQueue(ApplyQueueReset(*engine, target, sequence, nullptr, cause));
+        return mapQueue(ApplyQueueReset(*engine, target, sequence, nullptr, cause, UINT32_MAX, &queueGenerationExhausted));
     }
     return PlayableResetStatus::CapabilityUnavailable;
 }
@@ -83526,8 +83687,8 @@ TimelineRuntimeInstallResult InstallTimelineProgram(
                                 ? TimelineRuntimeInstallStatus::
                                       RuntimeRecreateRequired
                                 : TimelineRuntimeInstallStatus::ProgramCapacity;
-            engine->runtimeRecreateRequired =
-                engine->timelinePrograms.GenerationExhausted();
+            if (engine->timelinePrograms.GenerationExhausted())
+                engine->RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
             return result;
         }
         if (previous != 0) {
@@ -84228,18 +84389,18 @@ void SettleHeldPendingImmediateStopIntent(
             harken::ActionDeferredCancelOwnership::Canceller ||
         !engine.actionDeferredRecords.PoolToken(token, &poolToken) ||
         !engine.timelineDeferred.Cancel(poolToken)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     engine.MarkOriginalDeferredHeldCancellation(token);
     if (!harken::ReleaseActionDeferredTargetLease(engine, token, record) ||
         !engine.actionDeferredRecords.FinalizeHeld(token)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     engine.ForgetFinalizedOriginalDeferredPack(token);
     if (!engine.actionFirings.ReleaseDeferred(record.firing))
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
 }
 
 void RebasePendingImmediateStopIntent(
@@ -84298,7 +84459,7 @@ void RebasePendingImmediateStopIntent(
     }
     if (!engine.actionDeferredRecords.RebaseHeldPendingStop(
             token, &engine.timelineDeferred, fadeStart, silence))
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
 }
 
 void ServicePendingImmediateStopIntents(
@@ -84931,7 +85092,7 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
     auto& firing = plan->engine->actionFiringPlanScratch[plan->firingCount];
     if (firing.originalPackLease.Valid() ||
         (original != nullptr && !plan->engine->OriginalPackIdentityLeaseMatches(*original, owner.pack))) {
-        plan->engine->runtimeRecreateRequired = true;
+        plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         plan->result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
@@ -85258,7 +85419,7 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
                 ? plan->engine->ReleaseOriginalPackIdentityLease(plan->engine->originalActionFiringPreparation)
                 : plan->engine->ReleasePackIdentityLease(childOwner.pack);
             if (released == VN_OK) childLeaseHeld = false;
-            else plan->engine->runtimeRecreateRequired = true;
+            else plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             if (released != VN_OK) {
                 plan->result = released;
                 return false;
@@ -85312,7 +85473,7 @@ void ReleaseImmediateActionCooldown(void* opaque,
         return;
     }
     if (!AbandonPreparedActionCooldowns(*plan)) {
-        plan->engine->runtimeRecreateRequired = true;
+        plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
 }
 
@@ -85329,7 +85490,7 @@ void CommitImmediateActionCooldown(
         if (planned.cooldownToken.Valid() &&
             !plan->engine->actionCooldowns.Commit(
                 &planned.cooldownToken)) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
 }
@@ -85343,14 +85504,14 @@ VnResult ReleaseImmediateActionPlanOwnerLeases(
     VnResult result = VN_OK;
     if (plan.engine->originalActionFiringPreparation.Valid()) {
         result = plan.engine->ReleaseOriginalPackIdentityLease(plan.engine->originalActionFiringPreparation);
-        if (result != VN_OK) plan.engine->runtimeRecreateRequired = true;
+        if (result != VN_OK) plan.engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     for (std::uint32_t index = 0; index < plan.firingCount; ++index) {
         auto& row = plan.engine->actionFiringPlanScratch[index];
         if (row.originalPackLease.Valid()) {
             const auto released = plan.engine->ReleaseOriginalPackIdentityLease(row.originalPackLease);
             if (released == VN_OK) row.ownerLeaseHeld = false;
-            else { plan.engine->runtimeRecreateRequired = true; if (result == VN_OK) result = released; }
+            else { plan.engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); if (result == VN_OK) result = released; }
             continue;
         }
         if (!row.ownerLeaseHeld) {
@@ -85369,14 +85530,14 @@ void TransferImmediateActionPlanOwnerLeases(
     ImmediateActionPlan& plan) noexcept {
     for (std::uint32_t index = 0; index < plan.firingCount; ++index) {
         auto& firing = plan.engine->actionFiringPlanScratch[index];
-        if (firing.originalPackLease.Valid()) plan.engine->runtimeRecreateRequired = true;
+        if (firing.originalPackLease.Valid()) plan.engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         else firing.ownerLeaseHeld = false;
     }
     if (plan.playCommitSucceeded) {
         for (std::uint32_t index = 0; index < plan.playCount; ++index) {
             auto* scratch = FindImmediateActionPlay(plan, index);
             if (scratch == nullptr || !TransferFrontierAttempt(*plan.engine, *scratch))
-                plan.engine->runtimeRecreateRequired = true;
+                plan.engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
 }
@@ -85564,7 +85725,7 @@ bool ReserveImmediateActionDeferred(void* opaque,
     }
     auto& engine = *plan->engine;
     if (engine.originalDeferredTargetPreparation.Valid()) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         plan->result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
@@ -85572,14 +85733,14 @@ bool ReserveImmediateActionDeferred(void* opaque,
     const auto abandonPrepared = [&]() noexcept {
         if (engine.originalDeferredTargetPreparation.Valid() &&
             engine.ReleaseOriginalPackIdentityLease(engine.originalDeferredTargetPreparation) != VN_OK)
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         for (std::uint32_t index = plan->deferredPreparedCount;
              index-- > 0;) {
             auto& scratch = engine.actionDeferredScratch[index];
             scratch.pairCommitProof.Release();
             if (scratch.originalPackLease.Valid()) {
                 if (engine.ReleaseOriginalPackIdentityLease(scratch.originalPackLease) != VN_OK) {
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     continue;
                 }
                 scratch.targetPackLease = {};
@@ -85596,7 +85757,7 @@ bool ReserveImmediateActionDeferred(void* opaque,
             if (scratch.targetPackLease.leaseToken != 0) {
                 if (engine.ReleasePackIdentityLease(
                         scratch.targetPackLease) != VN_OK) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
                 scratch.targetPackLease = {};
             }
@@ -85629,7 +85790,7 @@ engine.runtimeRecreateRequired = true;
             auto& scratch = engine.actionDeferredScratch[plan->deferredPreparedCount++];
             if (scratch.originalPackLease.Valid()) {
                 plan->result = VN_RUNTIME_RECREATE_REQUIRED;
-                engine.runtimeRecreateRequired = true; abandonPrepared(); return false;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); abandonPrepared(); return false;
             }
             scratch = {};
             scratch.plannedStepIndex = index;
@@ -85686,7 +85847,7 @@ engine.runtimeRecreateRequired = true;
                 plan->result = VN_BACKPRESSURE;
                 if (!nativeTarget && targetPackLease.leaseToken != 0 &&
                     engine.ReleasePackIdentityLease(targetPackLease) != VN_OK)
-                    engine.runtimeRecreateRequired = true;
+                    engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 abandonPrepared();
                 return false;
             }
@@ -85725,7 +85886,7 @@ engine.runtimeRecreateRequired = true;
                             !engine.OriginalPackIdentityLeaseMatches(
                                 engine.originalDeferredTargetPreparation, targetPackLease)) {
                             plan->result = VN_RUNTIME_RECREATE_REQUIRED;
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                             abandonPrepared();
                             return false;
                         }
@@ -85865,14 +86026,14 @@ void ReleaseImmediateActionDeferred(void* opaque,
     auto& engine = *plan->engine;
     if (engine.originalDeferredTargetPreparation.Valid() &&
         engine.ReleaseOriginalPackIdentityLease(engine.originalDeferredTargetPreparation) != VN_OK)
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     for (std::uint32_t index = plan->deferredPreparedCount;
          index-- > 0;) {
         auto& scratch = engine.actionDeferredScratch[index];
         scratch.pairCommitProof.Release();
         if (scratch.originalPackLease.Valid()) {
             if (engine.ReleaseOriginalPackIdentityLease(scratch.originalPackLease) != VN_OK) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             scratch.targetPackLease = {};
@@ -85889,7 +86050,7 @@ void ReleaseImmediateActionDeferred(void* opaque,
         if (scratch.targetPackLease.leaseToken != 0) {
             if (engine.ReleasePackIdentityLease(
                     scratch.targetPackLease) != VN_OK) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             scratch.targetPackLease = {};
         }
@@ -85922,7 +86083,7 @@ void CommitImmediateActionDeferred(void* opaque, std::uint32_t count,
         auto& scratch = engine.actionDeferredScratch[index];
         engine.ConsumeOriginalDeferredPackPreparation(scratch);
         if (scratch.originalPackLease.Valid() || scratch.pairCommitProof.Valid()) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             continue;
         }
         scratch.recordToken = {};
@@ -85957,7 +86118,7 @@ void CommitImmediateActionFirings(
         : engine.actionFirings.Commit(&engine.actionFiringPlanScratch[0].prepared, sequence);
     plan->originalActionFiringFactoryCommitted = committed;
     plan->originalActionFiringCommitSucceeded = committed;
-    if (!committed) { engine.runtimeRecreateRequired = true; return; }
+    if (!committed) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
     for (std::uint32_t index = 0; index < plan->firingCount; ++index) {
         auto& row = engine.actionFiringPlanScratch[index];
         bool transferred = true;
@@ -85966,7 +86127,7 @@ void CommitImmediateActionFirings(
         else if (row.originalPackLease.Valid())
             transferred = engine.AdoptOriginalActionFiringPack(row.handle, row.originalPackLease, row.owner);
         if (!transferred) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             plan->originalActionFiringCommitSucceeded = false;
             return;
         }
@@ -86063,7 +86224,7 @@ bool ReleaseImmediateActionPlayableLease(
                 ? engine.ReleaseOriginalDeferredPack(scratch->storage.originalDeferredPackRecord, scratch->packLease)
                 : engine.ReleasePackIdentityLease(scratch->packLease);
         if (result != VN_OK) {
-            if (result != VN_IN_USE) engine.runtimeRecreateRequired = true;
+            if (result != VN_IN_USE) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         scratch->storage.originalPackLeaseGeneration = 0;
@@ -86119,7 +86280,7 @@ bool AcquireImmediateActionPlayableAnchor(
         if (!plan.engine->BindOriginalDeferredPlayAttempt(scratch->storage,
                 plan.deferredRecordToken, plan.targetPackLease)) {
             plan.result = VN_RUNTIME_RECREATE_REQUIRED;
-            plan.engine->runtimeRecreateRequired = true;
+            plan.engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         scratch->packLease = plan.targetPackLease;
@@ -86528,7 +86689,7 @@ bool FinishOrdinaryDeferredRollback(
         if (owner.recordOwnsLease && owner.targetLease.leaseToken != 0 &&
             engine.ReleaseOriginalDeferredPack(owner.recordToken, owner.targetLease) != VN_OK) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         owner.leaseReleased = true;
@@ -86536,7 +86697,7 @@ bool FinishOrdinaryDeferredRollback(
     if (!owner.poolReleased) {
         if (!engine.timelineDeferred.Release(owner.poolToken)) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         owner.poolReleased = true;
@@ -86544,7 +86705,7 @@ bool FinishOrdinaryDeferredRollback(
     if (!owner.recordFinalized) {
         if (!engine.actionDeferredRecords.FinalizeClaim(owner.recordToken)) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         engine.ForgetFinalizedOriginalDeferredPack(owner.recordToken);
@@ -86555,7 +86716,7 @@ bool FinishOrdinaryDeferredRollback(
         if (!engine.actionFirings.Capture(owner.firing, &before) ||
             engine.actionFirings.OwnedDeferredCount(owner.firing) == 0) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         const auto countBefore =
@@ -86569,13 +86730,13 @@ bool FinishOrdinaryDeferredRollback(
             : UINT32_MAX;
         if (!sameFiring || countAfter != countBefore - 1u) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         owner.firingCountDischarged = true;
         if (!completed) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     }
@@ -86759,7 +86920,7 @@ bool ReleaseImmediateActionPlay(
             harken::EngineActionPlayScratch::PackLeaseProvenance::DeferredRecordBorrowed &&
         !scratch->storage.deferredContainerOwner.active) {
         if (!BeginVariableControlPrivateRollback(engine, *scratch)) return false;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (scratch->row != nullptr && !scratch->row->queueMode &&
@@ -86776,7 +86937,7 @@ bool ReleaseImmediateActionPlay(
              row.privateOrdinaryDeferredRollbackGeneration !=
                  scratch->storage.generation)) {
             deferredOwner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         const auto program = row.schedule.runtimeProgram;
@@ -86791,7 +86952,7 @@ bool ReleaseImmediateActionPlay(
         if (alias.leaseToken != 0 &&
             alias.leaseToken != deferredOwner.targetLease.leaseToken) {
             deferredOwner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         alias = {};
@@ -87287,7 +87448,7 @@ bool ReleaseImmediateActionPlay(
                  harken::OccurrenceStage::Free)) {
             if (ResetPlayableStartRow(engine, *scratch->row) ==
                 PlayableStartResetResult::Fault)
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         return false;
     }
@@ -87323,7 +87484,7 @@ void ServiceDeferredContainerRetryAfterRollback(
         return;
     const auto fault = [&]() noexcept {
         owner.fault = true;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     };
     harken::ActionDeferredRecordToken recordToken{};
     harken::ActionDeferredRecord record{};
@@ -87452,7 +87613,7 @@ bool FinishPublishedDeferredCancelledOwner(
     auto& owner = scratch.storage.deferredContainerOwner;
     const auto fault = [&]() noexcept {
         owner.fault = true;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     };
     using Lease = harken::EngineActionPlayStorage::DeferredContainerOwner::
@@ -87560,7 +87721,7 @@ void ServicePublishedDeferredOwnerAfterGroups(harken::Engine& engine,
     auto& owner = scratch.storage.deferredContainerOwner;
     const auto fault = [&]() noexcept {
         owner.fault = true;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     };
     if (!owner.unpublishedGroupsRetired ||
         !owner.unpublishedDecisionTransferred ||
@@ -87778,7 +87939,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         !(row.frontierEntry == owner.stoppingEntry) ||
         !engine.playablePartitions.Owns(row.partition, row.identity)) {
         owner.fault = true;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     auto* activation = engine.decisions.ResolveFrontierActivation(
@@ -87787,7 +87948,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         !(activation->Descriptor().entry == owner.stoppingEntry) ||
         !(activation->Descriptor().primary == owner.stoppingPrimary)) {
         owner.fault = true;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     if (row.controlLifecycle != harken::PlayableControlLifecycle::Cancelling &&
@@ -87800,7 +87961,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
             harken::AudioSliceInvalidateReason::Cancel);
         if (cancellation == harken::FrontierCancelDisposition::Stale) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
     }
@@ -87849,7 +88010,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
     if (!owner.unpublishedGroupsRetired &&
         !engine.timelinePool.CaptureExactPlan03Group(owner.stoppingPrimary, &primary)) {
         owner.fault = true;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     if (!owner.unpublishedBindingsReleased) {
@@ -87860,7 +88021,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
             if (result == harken::Plan03UnpublishedRetirementResult::Fault ||
                 result == harken::Plan03UnpublishedRetirementResult::Stale) {
                 owner.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             return;
         }
@@ -87880,7 +88041,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
             reconciled.outcome != receipt.outcome ||
             reconciled.reason != receipt.reason) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         owner.unpublishedActivationReconciled = true;
@@ -87895,7 +88056,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         if (result == harken::Plan03UnpublishedRetirementResult::Pending) return;
         if (result != harken::Plan03UnpublishedRetirementResult::Ready) {
             owner.fault = true;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         owner.unpublishedGroupsRetired = true;
@@ -87920,7 +88081,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
 #endif
             if (!postcheck) {
                 owner.fault = true;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
         }
@@ -95799,7 +95960,7 @@ bool PrepareContainerCompositeQueueChild(
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         const auto reset = ResetPlayableStartRow(engine, *row);
         if (reset != PlayableStartResetResult::Released)
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         context.result = reset == PlayableStartResetResult::Released
             ? VN_DEVICE_ERROR : VN_RUNTIME_RECREATE_REQUIRED;
         return false;
@@ -95810,7 +95971,7 @@ bool PrepareContainerCompositeQueueChild(
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         if (ResetPlayableStartRow(engine, *row) !=
             PlayableStartResetResult::Released)
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         context.result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
@@ -96904,7 +97065,7 @@ bool PrepareContainerExecution(
             engine.logicCommits.Current();
         if (currentSequence == UINT64_MAX) {
             context.result = VN_RUNTIME_RECREATE_REQUIRED;
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
             return false;
         }
         SharedInitialFrontier& queueFrontier = g_actionQueueFrontier;
@@ -96975,7 +97136,7 @@ engine.runtimeRecreateRequired = true;
             if (frontierStatus ==
                 SharedInitialFrontierStatus::RuntimeRecreateRequired) {
                 context.result = VN_RUNTIME_RECREATE_REQUIRED;
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(queueFrontier.queue.failureCategory);
             } else if (frontierStatus ==
                        SharedInitialFrontierStatus::Capacity) {
                 context.result = VN_NO_VOICE;
@@ -97158,7 +97319,7 @@ engine.runtimeRecreateRequired = true;
                     nestedQueueFrontier.authoredChild == nullptr) {
                     if (nestedStatus == SharedInitialFrontierStatus::
                                             RuntimeRecreateRequired) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(nestedQueueFrontier.queue.failureCategory);
                         failNestedTraversal(VN_RUNTIME_RECREATE_REQUIRED);
                     } else if (nestedStatus ==
                                SharedInitialFrontierStatus::Capacity) {
@@ -97797,7 +97958,7 @@ engine.runtimeRecreateRequired = true;
                                     : VN_CAPABILITY_UNAVAILABLE;
             if (frontierStatus == SharedInitialFrontierStatus::
                                       RuntimeRecreateRequired) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(nestedQueueFrontier.queue.failureCategory);
             }
             rollbackPrepared();
             return ContainerTraversalDirective::Fail;
@@ -98576,7 +98737,7 @@ bool ConsumeCompletedMusicVariableCrop(ContainerPreparationContext& context,
         auto& choices = producer.storage.musicSelection;
         for (auto index = choices.prepared.size(); index-- > firstOperation;)
             if (choices.prepared[index].Valid() && engine.selectionMemory.CancelPreparedPlay(&choices.prepared[index]) !=
-                    harken::SelectionMemoryStatusV1::Ok) { engine.runtimeRecreateRequired = true; return false; }
+                    harken::SelectionMemoryStatusV1::Ok) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
         choices.count = firstOperation;
         choices.prepared.resize(firstOperation);
         choices.ordinals.resize(firstOperation);
@@ -98990,7 +99151,7 @@ bool PrepareScheduleContainerExecution(ContainerPreparationContext& context,
             auto& choices = producer->storage.musicSelection;
             for (auto index = static_cast<std::uint32_t>(choices.prepared.size()); index-- > firstOperation;)
                 if (choices.prepared[index].Valid() && engine.selectionMemory.CancelPreparedPlay(&choices.prepared[index]) !=
-                        harken::SelectionMemoryStatusV1::Ok) { engine.runtimeRecreateRequired = true; return false; }
+                        harken::SelectionMemoryStatusV1::Ok) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
             choices.count = firstOperation;
             choices.prepared.resize(firstOperation);
             choices.ordinals.resize(firstOperation);
@@ -99333,7 +99494,7 @@ void PublishInitialScheduleMonitorSelections(harken::Engine& engine,
     if (!VisitInitialScheduleAttempts(engine, root, [&](auto& scratch) noexcept {
             PublishMonitorInitialSelections(engine, scratch);
             return true;
-        })) engine.runtimeRecreateRequired = true;
+        })) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
 }
 
 bool PrepareScheduleChildGraphProofs(harken::Engine& engine,
@@ -99809,7 +99970,7 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
                     !engine.commands.PreparedBatchMatches(engine.preparedVoiceCommandBatchProof,
                         &commandOwner->directCommandReservation, commandCount)) ||
                 !engine.commands.CancelReservedBatchExact(&commandOwner->directCommandReservation)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             } else {
                 engine.preparedVoiceCommandBatchProof.Release();
                 commandOwner->directCommandsReserved = false;
@@ -99817,7 +99978,7 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
         }
         (void)CancelScheduleSourceNativeAttempts(engine, cohort);
         if (transactions.Valid() && !engine.timelinePool.CancelPreparedTransactionBatch(&transactions))
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         (void)RollbackScheduleSourceCohortPages(engine, cohort);
         return false;
     };
@@ -100114,7 +100275,7 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
                 PublishPendingScheduleEntry(engine, *engine.ResolvePlayableService(attempt->continuationService),
                     *attempt->pendingScheduleChild, *attempt, 0) !=
                     PendingScheduleEntryStatus::Published) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             token = {};
@@ -100122,9 +100283,9 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
         if (!engine.decisions.PublishFrontierActivation(cohort.decision)) return refuse();
         cohort.sealed = cohort.published = true;
         for (auto& side : cohort.sides)
-            if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&side->page)) engine.runtimeRecreateRequired = true;
+            if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&side->page)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&cohort.page) ||
-            !engine.timelinePool.ReleasePreparedTransactionPublication(&transactions)) engine.runtimeRecreateRequired = true;
+            !engine.timelinePool.ReleasePreparedTransactionPublication(&transactions)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return !engine.runtimeRecreateRequired;
     } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return refuse(); }
 }
@@ -100664,7 +100825,7 @@ PendingScheduleEntryStatus PrepareMusicOrdinarySuccessor(harken::Engine& engine,
         (void)consumed;
         if (engine.selectionMemory.CommitPendingBatches(&input, 1) != harken::SelectionMemoryStatusV1::Ok ||
             !scratch->storage.initialSelectionBatch.ReturnAfterCommit()) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Status::Failed;
         }
         cursor.plannedSelections = candidate.plannedSelections;
@@ -100849,7 +101010,7 @@ PendingScheduleEntryStatus PublishPendingScheduleEntry(harken::Engine& engine,
     }
     scratch->storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!CommitInitialScheduleReadUses(engine, *scratch) || !PublishInitialScheduleFrontiers(engine, *scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     if (commandCount != 0) {
@@ -100860,16 +101021,16 @@ PendingScheduleEntryStatus PublishPendingScheduleEntry(harken::Engine& engine,
     PublishInitialScheduleMonitorSelections(engine, *scratch);
     if (IsScheduleSourceNativeForest(engine, *scratch) &&
         !FilePublishedInitialVariableControlServices(engine, *scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     if (!TransferFrontierAttempt(engine, *scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     if (terminalEntry) {
         if (!engine.containerPlayback.SetActiveChild(parent.ownerInstance, entry.ownerInstance, entry.ownerEpoch)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Status::Failed;
         }
         parent.frontierChildService = PlayableServiceReference(entry);
@@ -100885,7 +101046,7 @@ PendingScheduleEntryStatus PublishPendingScheduleEntry(harken::Engine& engine,
     engine.CommitNativeBackingTransferEnd(*scratch, transfer);
     if ((scratch->packLeaseBorrowed && !ReleaseImmediateActionPlayableLease(engine, scratch, true)) ||
         !ResetImmediateActionPlayScratch(engine, scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     engine.AcceptSourceCommandPublications();
@@ -101007,7 +101168,7 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
                 if (status == Status::Failed) pending.reason = harken::PlayableControlReason::StartRefused;
                 return Status::Waiting;
             }
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Status::Failed;
         }
         return engine.runtimeRecreateRequired ? Status::Failed : status;
@@ -101178,14 +101339,14 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     // until every recoverable check above has succeeded.
     for (auto& post : scratch->queueCurrentDeferredStarts) {
         if (!engine.timelinePlanner.CommitPreparedDeferredPlay(&post)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return Status::Failed;
         }
     }
     scratch->queueCurrentDeferredStarts.clear();
     if (scratch->queueCurrentStartTransactions.Valid() &&
         !engine.timelinePool.ReleasePreparedTransactionPublication(&scratch->queueCurrentStartTransactions)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     return PublishPendingScheduleEntry(engine, parent, pending, *scratch, commandCount);
@@ -101304,7 +101465,7 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
         }
         if (cohort.published && !cohort.bindingsReleased) {
             auto* activation = engine.decisions.ResolveFrontierActivation(cohort.decision);
-            if (activation == nullptr) { engine.runtimeRecreateRequired = true; retired = false; continue; }
+            if (activation == nullptr) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); retired = false; continue; }
             if (cohort.cancelling)
                 (void)activation->Cancel(cohort.descriptor.entry, harken::AudioSliceInvalidateReason::Cancel);
             harken::FrontierActivationReceipt receipt{};
@@ -101832,7 +101993,7 @@ struct EngineNativeQueueMusicCandidate {
         }
         return true;
     }
-    ~EngineNativeQueueMusicCandidate() { if (!Cancel()) engine.runtimeRecreateRequired = true; }
+    ~EngineNativeQueueMusicCandidate() { if (!Cancel()) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); }
 };
 void EngineNativeQueueMusicCandidateDeleter::operator()(EngineNativeQueueMusicCandidate* candidate) const noexcept {
     delete candidate;
@@ -102273,13 +102434,13 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
     if (!engine.queueInstances.PrepareConditional(row.queueInstance, candidate.request, &prepared,
         engine.originalQueueLifetimeHolders[row.queueInstance.slot], &candidate.exit->queueChain.original)) return false;
     if (!engine.queueInstances.CommitPreparedConditional(&prepared, &conditional)) {
-        if (!engine.queueInstances.CancelPreparedConditional(&prepared)) engine.runtimeRecreateRequired = true;
+        if (!engine.queueInstances.CancelPreparedConditional(&prepared)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (PublishNativeQueueMusicCandidate(candidate, conditional)) return true;
-    if (candidate.native.published) engine.runtimeRecreateRequired = true;
+    if (candidate.native.published) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     else if (!engine.queueInstances.RetireConditionalForAbort(row.queueInstance, conditional, candidate.decision))
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     filing.queueConditional = {};
     filing.queueDecision = {};
     filing.queueTransition = {};
@@ -102310,19 +102471,19 @@ bool PrepareFollowingNativeQueueMusicTransition(harken::Engine& engine,
             predecessor.queueChain.original, proof, &prepared,
             engine.originalQueueLifetimeHolders[row.queueInstance.slot], &exit->queueChain.original)) return false;
     if (!engine.queueInstances.CommitPreparedConditional(&prepared, &conditional)) {
-        if (!engine.queueInstances.CancelPreparedConditional(&prepared)) engine.runtimeRecreateRequired = true;
+        if (!engine.queueInstances.CancelPreparedConditional(&prepared)) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     if (PublishNativeQueueMusicCandidate(candidate, conditional)) return true;
     candidate.starts.Cancel();
     if (candidate.native.published ||
         !engine.queueInstances.RollbackUnpublishedConditional(exit->queueChain.original, engine.decisions)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     exit->queueFollowingFiling.reset();
     exit->queueChain.original.Release();
-    if (!candidate.Cancel()) engine.runtimeRecreateRequired = true;
+    if (!candidate.Cancel()) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     return false;
 }
 
@@ -102601,11 +102762,11 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     if (!harken::PlayableTreeExecutor::ServiceActiveChild(engine.playableInstances, engine.containerPlayback,
             parent.ownerInstance, entry.ownerInstance)) return Status::Failed;
     if (!engine.queueInstances.PublishPreparedSignalAdvance(&scratch.frontierSignal, &parent.frontierAcceptedSignal)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     if (retiring != nullptr && !CommitQueueMixedCurrentRetirement(engine, parent, *retiring)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     parent.ordinaryLifecycleOwned = true;
@@ -102629,7 +102790,7 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     std::copy(selectedOrdinals.begin(), selectedOrdinals.end(), parent.selectedChildOrdinals.begin());
     scratch.storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!CommitInitialScheduleReadUses(engine, scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     if (commandCount != 0) {
@@ -102638,25 +102799,25 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
         scratch.directCommandsReserved = false;
     }
     if (!PublishInitialScheduleFrontiers(engine, scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     PublishInitialScheduleMonitorSelections(engine, scratch);
     if (signal.committed.Valid() &&
         !engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&signal.committed)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     scratch.initialQueueSignalAdmission.reset();
     if (!TransferFrontierAttempt(engine, scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     record.lifecycleOwned = true;
     engine.CommitNativeBackingTransferEnd(scratch, nativeTransfer);
     if ((scratch.packLeaseBorrowed && !ReleaseImmediateActionPlayableLease(engine, &scratch, true)) ||
         !ResetImmediateActionPlayScratch(engine, &scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return Status::Failed;
     }
     engine.AcceptSourceCommandPublications();
@@ -102817,7 +102978,7 @@ bool PrepareStaticScheduleExecution(
         if (reset == PlayableStartResetResult::Released)
             (void)operations.ReleaseLease(scratch);
         else
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         context.result = reset == PlayableStartResetResult::Released
             ? VN_DEVICE_ERROR : VN_RUNTIME_RECREATE_REQUIRED;
         return false;
@@ -102830,7 +102991,7 @@ bool PrepareStaticScheduleExecution(
             PlayableStartResetResult::Released)
             (void)operations.ReleaseLease(scratch);
         else
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         context.result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
@@ -103056,7 +103217,7 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
             !scratch->instance.Valid() && !scratch->packLeaseOwned && !scratch->packLeaseBorrowed;
         const bool released = alreadyReleased || ReleaseImmediateActionPlay(engine, scratch, nullptr);
         if (!released || committed)
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         result.status = engine.runtimeRecreateRequired ? Status::RuntimeRecreateRequired
             : directFailure != Status::Accepted ? directFailure
             : reason == VN_BACKPRESSURE ? Status::Backpressure
@@ -103238,7 +103399,7 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
     if (!heldScheduleAnchor) scratch->storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!heldScheduleAnchor && !privateNativePlacement && (!CommitInitialScheduleReadUses(engine, *scratch) ||
         !PublishInitialScheduleFrontiers(engine, *scratch))) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         result.status = Status::RuntimeRecreateRequired;
         return result;
     }
@@ -103264,7 +103425,7 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
         }
     }
     if (!heldScheduleAnchor && !TransferFrontierAttempt(engine, *scratch)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         result.status = Status::RuntimeRecreateRequired;
         return result;
     }
@@ -103589,7 +103750,7 @@ bool CaptureDeferredActionStopRoots(
         auto& scratch =
             engine.actionDeferredScratch[plan.deferredPreparedCount++];
         if (scratch.originalPackLease.Valid()) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             plan.result = VN_RUNTIME_RECREATE_REQUIRED;
             return false;
         }
@@ -105561,7 +105722,7 @@ bool ReserveImmediateActionPlays(void* opaque,
         plan.engine->initialQueueEntryDecisionOwnersScratch[0].root ==
             plan.rootHandle &&
         !ReleaseInitialQueueEntryDecisionOwners(plan))
-        plan.engine->runtimeRecreateRequired = true;
+        plan.engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     return false;
 }
 
@@ -105592,21 +105753,21 @@ void ReleaseImmediateActionPlays(void* opaque,
             plan->playCommandsDisposition.CancelledUnpublishedFrom(plan->engine->commands) ||
             plan->engine->commands.CancelReservedBatchExact(&plan->playCommands);
         if (!plan->playCommandsCancelledUnpublished) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         plan->playCommandsReserved = false;
     }
     // Return real unpublished Source borrows before their groups and Decisions.
     if (!WithdrawUnpublishedImmediateActionSources(*plan)) {
-        plan->engine->runtimeRecreateRequired = true;
+        plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     bool laneRetired = true;
     for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
         auto* scratch = FindImmediateActionPlay(*plan, index);
         if (scratch != nullptr && !CancelPrivateInitialVcPageCohort(*plan->engine, *scratch)) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
     }
@@ -105620,12 +105781,12 @@ void ReleaseImmediateActionPlays(void* opaque,
         const bool futureReadersReleased =
             ReleaseQueueFutureReaderPins(*plan->engine, attempt, completed);
         if (!continuationReadersReleased || !futureReadersReleased)
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         const bool groupsCancelled =
             plan->engine->CancelOriginalQueueLaneGroups(
                 plan->rootHandle, plan->engine->mixer.BlocksRendered());
         if (!groupsCancelled && !InitialQueueOriginalAttemptRetryRetained(*plan, attempt))
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         bool groupsDisposed = groupsCancelled;
         if (groupsCancelled) {
             for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
@@ -105638,7 +105799,7 @@ void ReleaseImmediateActionPlays(void* opaque,
             attempt.ClearQueuePrimaryGroups();
             groupsDisposed = MarkQueueContinuationGroupsCancelled(*plan->engine, attempt);
             groupsDisposed = MarkQueueFutureGroupsCancelled(*plan->engine, attempt) && groupsDisposed;
-            if (!groupsDisposed) plan->engine->runtimeRecreateRequired = true;
+            if (!groupsDisposed) plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         bool retired = true;
         bool coordinatorReleased = false;
@@ -105655,7 +105816,7 @@ void ReleaseImmediateActionPlays(void* opaque,
                 const bool entryOwnersReleased = ReleaseInitialQueueEntryDecisionOwners(*plan);
                 storagePrefixReleased = coordinatorReleased && entryOwnersReleased;
                 if (!storagePrefixReleased && !InitialQueueOriginalAttemptRetryRetained(*plan, attempt))
-                    plan->engine->runtimeRecreateRequired = true;
+                    plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             retired = plan->engine->RetireOriginalImmediateEntryLane(attempt, completed);
             if (retired) {
@@ -105673,20 +105834,20 @@ void ReleaseImmediateActionPlays(void* opaque,
             ClearPrivateImmediateVcProducerChain(attempt);
         } else if (retired && groupsCancelled &&
                    !InitialQueueOriginalAttemptRetryRetained(*plan, attempt)) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         plan->reservedCohortAttempt = nullptr;
     }
     if (laneRetired &&
         !ReleaseInitialQueueEntryDecisionOwners(*plan))
-        plan->engine->runtimeRecreateRequired = true;
+        plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     if (plan->playCommandsReserved) {
         plan->engine->commands.CancelReservedBatch(
             &plan->playCommands);
         plan->playCommandsReserved = false;
     }
     if (!ReleaseImmediateActionStops(*plan)) {
-        plan->engine->runtimeRecreateRequired = true;
+        plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     for (std::uint32_t index = plan->playCount; index-- > 0;) {
         auto* attempt = FindImmediateActionPlay(*plan, index);
@@ -105705,7 +105866,7 @@ void ReleaseImmediateActionPlays(void* opaque,
             wait != ImmediateActionReleaseWait::OriginalPackStorage &&
             wait != ImmediateActionReleaseWait::DeferredContainerCleanup &&
             !InitialQueueOriginalScratchRetryRetained(*plan->engine, scratch)) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     CancelImmediateActionPreparedVariables(*plan);
@@ -106211,7 +106372,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         plan.result = status == harken::Plan03GroupReserveStatus::PageGroupCapacity
             ? VN_BACKPRESSURE : VN_RUNTIME_RECREATE_REQUIRED;
         if (plan.result == VN_RUNTIME_RECREATE_REQUIRED)
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(status == harken::Plan03GroupReserveStatus::MemberCapacity ? VN_RUNTIME_FAULT_CAPACITY : VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     };
     for (std::uint32_t index = 0; index < plan.playCount; ++index) {
@@ -106221,7 +106382,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         if (held.sequence != 0 || scratch.frontierCoordinator.Valid() ||
             scratch.frontierPreparedPrimary.Valid() || scratch.frontierPrimary.Valid()) {
             plan.result = VN_RUNTIME_RECREATE_REQUIRED;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         held.backing = row.pendingImmediateEntry
@@ -106301,7 +106462,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         if (!PreparePrivateInitialVcPageBatch(engine, scratch, &batchRefusal)) {
             plan.result = harken::IsTransientReserveRefusal(batchRefusal)
                 ? VN_BACKPRESSURE : VN_RUNTIME_RECREATE_REQUIRED;
-            if (plan.result == VN_RUNTIME_RECREATE_REQUIRED) engine.runtimeRecreateRequired = true;
+            if (plan.result == VN_RUNTIME_RECREATE_REQUIRED) engine.RequireRecreation(RuntimeFaultForReserveRefusal(batchRefusal));
             return false;
         }
     }
@@ -106310,7 +106471,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         auto* scratch = FindImmediateActionPlay(plan, index);
         if (scratch == nullptr || !DeclarePrivateInitialVcLaneMembers(engine, *scratch)) {
             plan.result = VN_RUNTIME_RECREATE_REQUIRED;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     }
@@ -106324,7 +106485,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
             !ProvePrivateInitialVcPageBatchTransfer(engine, *scratch) ||
             !PrepareInitialVariableControlOwners(engine, scratch)) {
             plan.result = VN_RUNTIME_RECREATE_REQUIRED;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (!ProveInitialVariableControlVoiceCommits(engine, *scratch) ||
@@ -106336,13 +106497,13 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
             !ProvePrivateInitialVcLaneTransfer(engine, *scratch) ||
             !scratch->playableTreeExecutor.Validate()) {
             plan.result = VN_RUNTIME_RECREATE_REQUIRED;
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
     }
     if (!FreezePrivateImmediateVcProducerChain(plan)) {
         plan.result = VN_RUNTIME_RECREATE_REQUIRED;
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
     return true;
@@ -107513,10 +107674,10 @@ void CommitImmediateActionPlays(
     if (engine.forceActionPlayCommitFailureForTest ||
         ((plan->nativeFixedSelection || plan->nativeMusicSelection) && !plan->fixedSelectionCommitReady)) {
         engine.forceActionPlayCommitFailureForTest = false;
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         ReleaseImmediateActionPlays(plan, count);
         if (!FailCommittedImmediateActionPlaySteps(*plan)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         return;
     }
@@ -107905,14 +108066,14 @@ engine.runtimeRecreateRequired = true;
                 plan->playCommandsReserved = false;
         }
         if (!WithdrawUnpublishedImmediateActionSources(*plan)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         // Return each private producer before cohort-wide cancellation spends its groups.
         for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
             auto* scratch = FindImmediateActionPlay(*plan, index);
             if (scratch != nullptr && !CancelPrivateInitialVcPageCohort(engine, *scratch)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
         }
@@ -107926,7 +108087,7 @@ engine.runtimeRecreateRequired = true;
             const bool futureReadersReleased =
                 ReleaseQueueFutureReaderPins(engine, attempt, completed);
             if (!continuationReadersReleased || !futureReadersReleased)
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             const bool groupsCancelled =
                 engine.CancelOriginalQueueLaneGroups(
                     plan->rootHandle, engine.mixer.BlocksRendered());
@@ -107942,7 +108103,7 @@ engine.runtimeRecreateRequired = true;
                 attempt.ClearQueuePrimaryGroups();
                 groupsDisposed = MarkQueueContinuationGroupsCancelled(engine, attempt);
                 groupsDisposed = MarkQueueFutureGroupsCancelled(engine, attempt) && groupsDisposed;
-                if (!groupsDisposed) engine.runtimeRecreateRequired = true;
+                if (!groupsDisposed) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             bool laneRetired = true;
             bool coordinatorReleased = false;
@@ -107957,7 +108118,7 @@ engine.runtimeRecreateRequired = true;
                     const bool entryOwnersReleased = ReleaseInitialQueueEntryDecisionOwners(*plan);
                     storagePrefixReleased = coordinatorReleased && entryOwnersReleased;
                     if (!storagePrefixReleased && !InitialQueueOriginalAttemptRetryRetained(*plan, attempt))
-                        engine.runtimeRecreateRequired = true;
+                        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 }
                 laneRetired = engine.RetireOriginalImmediateEntryLane(attempt, completed);
                 if (laneRetired) attempt.lane = {};
@@ -107967,10 +108128,10 @@ engine.runtimeRecreateRequired = true;
             if ((!groupsCancelled || !coordinatorReleased ||
                  (!laneRetired && !storagePrefixReleased)) &&
                 !InitialQueueOriginalAttemptRetryRetained(*plan, attempt))
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         if (!ReleaseInitialQueueEntryDecisionOwners(*plan))
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         for (std::uint32_t index = plan->playCount; index-- > 0;) {
             auto* attempt = FindImmediateActionPlay(*plan, index);
             if (attempt == nullptr) continue;
@@ -107985,7 +108146,7 @@ engine.runtimeRecreateRequired = true;
                 wait != ImmediateActionReleaseWait::OriginalPackStorage &&
                 wait != ImmediateActionReleaseWait::DeferredContainerCleanup &&
                 !InitialQueueOriginalScratchRetryRetained(engine, scratch))
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     if (ok) {
@@ -108021,7 +108182,7 @@ engine.runtimeRecreateRequired = true;
                         receiver.partition = row.partition;
                         receiver.invocationGeneration = row.invocationGeneration;
                         if (!MatchesPrivateImmediateEntryReceiver(engine, row))
-                            engine.runtimeRecreateRequired = true;
+                            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     }
                 }
                 attempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
@@ -108033,9 +108194,9 @@ engine.runtimeRecreateRequired = true;
         plan->playCommandsReserved = false;
     }
     if (!ok) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (!FailCommittedImmediateActionPlaySteps(*plan)) {
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     plan->playCommitSucceeded = ok;
@@ -108094,19 +108255,19 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
         (plan->fixedSelectionCommitReady && PrepareFixedInitialSelectionInputs(*plan, true) &&
          engine.selectionMemory.CanCommitPendingBatches(engine.actionFixedSelectionCommitInputs.data(),
              plan->preparedPlayCount) == harken::SelectionMemoryStatusV1::Ok);
-    if (!selectionReady) engine.runtimeRecreateRequired = true;
+    if (!selectionReady) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     bool scheduleChildrenReady = true;
     for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
         auto* scratch = FindImmediateActionPlay(*plan, index);
         scheduleChildrenReady = scratch != nullptr &&
             CanTransferScheduleChildResponsibilities(engine, *scratch) && scheduleChildrenReady;
     }
-    if (!scheduleChildrenReady) engine.runtimeRecreateRequired = true;
+    if (!scheduleChildrenReady) engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     const bool ownersCommitted = plan->playCommitSucceeded &&
         plan->queueReplacementCommitSucceeded && selectionReady && scheduleChildrenReady;
     if (ownersCommitted) {
         if (plan->queueMusicSelectionCohort && !CommitQueueMusicSelectionCohort(*plan)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         for (std::uint32_t index = 0; index < plan->queueReplacementCount; ++index) {
@@ -108114,7 +108275,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
             if (replacement.musicCandidate == nullptr) continue;
             auto& candidate = *replacement.musicCandidate;
             if (!PublishNativeQueueMusicCandidate(candidate, {candidate.next.version})) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
             replacement.musicCandidate.reset();
@@ -108123,14 +108284,14 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
         for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
             auto* scratch = FindImmediateActionPlay(*plan, index);
             if (scratch == nullptr || !CommitInitialScheduleReadUses(engine, *scratch)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
         }
         for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
             auto* scratch = FindImmediateActionPlay(*plan, index);
             if (scratch == nullptr || !PublishInitialScheduleFrontiers(engine, *scratch)) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
         }
@@ -108161,7 +108322,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
             if (row.QueuePayload().queueTicket != sequence || !row.QueueFiling().queueDecisionCommitted || bank == nullptr ||
                 !bank->continuationLane.Active() || bank->continuationLane.Published()) continue;
             if (!bank->continuationLane.Publish()) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
         }
@@ -108178,7 +108339,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
         if (!published || (!plan->queueMusicSelectionCohort &&
             engine.selectionMemory.CommitPendingBatches(engine.actionFixedSelectionCommitInputs.data(),
                 plan->preparedPlayCount) != harken::SelectionMemoryStatusV1::Ok)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
@@ -108186,7 +108347,7 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
             if (scratch != nullptr) PublishInitialScheduleMonitorSelections(engine, *scratch);
             if (scratch == nullptr || (!plan->queueMusicSelectionCohort &&
                 !scratch->storage.initialSelectionBatch.ReturnAfterCommit())) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return;
             }
             engine.actionFixedSelectionCommitInputs[index] = {};
@@ -108255,7 +108416,7 @@ void CommitImmediateActionVariables(
     const auto actualSequence = plan->deferredParentFiring != 0
         ? plan->deferredChildActivation.Sequence() : plan->consumedIssue.Sequence();
     if (actualSequence != sequence || !plan->originalActionFiringFactoryCommitted) {
-        plan->engine->runtimeRecreateRequired = true;
+        plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return;
     }
     for (std::uint32_t index = 0; index < plan->stepCount; ++index) {
@@ -108265,7 +108426,7 @@ void CommitImmediateActionVariables(
         else
             plan->engine->variables.CommitPreparedActionWrite(&write, plan->consumedIssue);
         if (write.Valid()) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
     }
@@ -108404,7 +108565,7 @@ void CommitImmediateActionSelectionResets(
                 sequence);
         if (status != harken::SelectionMemoryStatusV1::Ok &&
             plan->engine->actionSelectionResetScratch[index].Valid()) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     if ((plan->nativeFixedSelection || plan->nativeMusicSelection)) {
@@ -108414,7 +108575,7 @@ void CommitImmediateActionSelectionResets(
             plan->engine->selectionMemory.CanCommitPendingBatches(
                 plan->engine->actionFixedSelectionCommitInputs.data(), plan->preparedPlayCount) ==
                 harken::SelectionMemoryStatusV1::Ok);
-        if (!plan->fixedSelectionCommitReady) plan->engine->runtimeRecreateRequired = true;
+        if (!plan->fixedSelectionCommitReady) plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
 }
 
@@ -109137,7 +109298,7 @@ bool PrepareImmediateActionQueueReplacement(
         harken::EngineQueueProgramBank* value = nullptr;
         ~PreparedBank() {
             if (!CancelQueueProgramBank(engine, value))
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     } bank{engine};
     if (!resolution.sameProgramKey || continuation != nullptr) {
@@ -110119,7 +110280,7 @@ bool ReserveImmediateActionQueueReplacements(
     const auto refuseCommands = [&]() noexcept {
         for (std::uint32_t prior = plan->queueReplacementCount; prior-- > 0;)
             if (!ReleaseImmediateActionQueueReplacement(engine, engine.actionQueueReplacementScratch[prior]))
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         plan->queueReplacementCount = 0;
         plan->queueReplacementCommandCount = 0;
         plan->continuationResetPrepared = false;
@@ -110583,14 +110744,14 @@ void CommitImmediateActionQueueReplacements(
         if (scratch.musicCandidate != nullptr) {
             if (!CommitImmediateActionNativeMusicReplacement(engine, scratch, sequence)) {
                 plan->queueReplacementCommitSucceeded = false;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             continue;
         }
         if (scratch.nativeReplacement.Valid()) {
             if (!CommitNativeImmediateActionQueueReplacement(engine, scratch, sequence)) {
                 plan->queueReplacementCommitSucceeded = false;
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             continue;
         }
@@ -110964,7 +111125,7 @@ void CommitImmediateActionQueueReplacements(
         std::construct_at(&scratch);
         if (!ok) {
             plan->queueReplacementCommitSucceeded = false;
-engine.runtimeRecreateRequired = true;
+engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     if (!plan->queueMusicSelectionCohort) plan->queueReplacementCount = 0;
@@ -111095,7 +111256,7 @@ void ServiceNativeQueueReplacements(harken::Engine& engine, std::uint64_t comple
             continue;
         }
         auto* row = engine.ResolvePlayableService(holder.service);
-        if (row == nullptr) { engine.runtimeRecreateRequired = true; continue; }
+        if (row == nullptr) { engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); continue; }
         const auto* original = engine.OriginalQueueConditionalForService(*row);
         harken::QueueInstanceTable::OriginalConditionalLaneClockState nativeState{};
         if (holder.phase == Phase::Selected && row->phase == harken::EnginePlayableStartPhase::Cancelling) {
@@ -111233,7 +111394,7 @@ void CommitImmediateActionQueueResets(
                     0, plan->engine->actionStepPlanScratch[index].executionOrdinal});
         if (status != harken::QueueResetStatusV1::Ok &&
             plan->engine->actionQueueResetScratch[index].Valid()) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
 }
@@ -111336,7 +111497,7 @@ void CommitImmediateActionQueueCheckpointResets(
                 sequence);
         if (status != harken::QueueResetStatusV1::Ok &&
             plan->engine->actionQueueCheckpointResetScratch[index].Valid()) {
-            plan->engine->runtimeRecreateRequired = true;
+            plan->engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
 }
@@ -111430,7 +111591,7 @@ VnResult MaterializeClaimedQueueReset(Engine& engine, const DeferredIntentClaim&
     }
     engine.actionFirings.ObserveStepExecution(record.firing, record.stepIndex);
     if (!bundle.CommitReserved(sequence)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
     FinishImmediateActionNativeQueueResets(plan);
@@ -111453,11 +111614,11 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     plan.prepareActivityAfterSources = true;
     const auto cleanup = [&]() noexcept -> VnResult {
         if (plan.originalActionFiringFactoryCommitted && !plan.originalActionFiringCommitSucceeded) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         if (!AbandonPreparedActionCooldowns(plan)) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         return ReleaseImmediateActionPlanOwnerLeases(plan);
@@ -111521,7 +111682,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
                   engine.variables.CurrentWorldGeneration(), firing.owner.projectId);
     std::uint32_t childIndex = UINT32_MAX;
     if (!engine.ActionPlanWorkspaceFits(child->expandedStepOccurrenceCount, child->expandedFiringCount)) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_CAPACITY);
         return finish(ActionStepState::Failed, VN_RUNTIME_RECREATE_REQUIRED,
                       ActionTerminalReason::GenerationExhausted);
     }
@@ -111642,7 +111803,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
                       ActionTerminalReason::GenerationExhausted);
     }
     if (!plan.originalActionFiringCommitSucceeded) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return TimelineDeferredMaterializeStatus::NotOwned;
     }
     TransferImmediateActionPlanOwnerLeases(plan);
@@ -112113,6 +112274,18 @@ VnResult Vn_Term(void) {
     });
 }
 
+VnResult Vn_GetRuntimeFaultInfo(VnRuntimeFaultInfoV1* outInfo) {
+    return harken::detail::InvokeApi([&]() -> VnResult {
+        if (outInfo == nullptr || outInfo->structSize != sizeof(VnRuntimeFaultInfoV1))
+            return VN_INVALID_ARG;
+        const harken::Engine* engine = harken::detail::g_engine;
+        if (engine == nullptr) return VN_NOT_INITIALIZED;
+        *outInfo = engine->runtimeFault;
+        outInfo->structSize = sizeof(VnRuntimeFaultInfoV1);
+        return VN_OK;
+    });
+}
+
 VnResult Vn_Update(void) {
     return harken::detail::InvokeApi([&]() -> VnResult {
     harken::monitor::IdentityMutationScope identityMutation;
@@ -112131,6 +112304,11 @@ VnResult Vn_Update(void) {
         return VN_OK;
     }
     harken::detail::g_callbackExceptionPending = false;
+    if (!harken::detail::DispatchRuntimeFault(*engine)) {
+        const bool failed = harken::detail::g_callbackExceptionPending;
+        if (harken::detail::g_termPending) harken::detail::TeardownEngine(engine);
+        return failed ? VN_DEVICE_ERROR : VN_OK;
+    }
     harken::VariableOperationScope variableOperation(engine, false);
     struct OrdinaryVariableReservationScope {
         harken::Engine* engine;
@@ -112748,6 +112926,11 @@ VnResult Vn_Update(void) {
     engine->CompleteVariableOperation();
     engine->variables.ReleaseUnusedReadCutBacking();
     harken::ServiceBusActivity(*engine);
+    if (!harken::detail::DispatchRuntimeFault(*engine)) {
+        const bool failed = harken::detail::g_callbackExceptionPending;
+        if (harken::detail::g_termPending) harken::detail::TeardownEngine(engine);
+        return failed ? VN_DEVICE_ERROR : VN_OK;
+    }
     while (engine->logicLogRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;
@@ -120695,11 +120878,11 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
     if (!harken::CancelActionDeferred(
             *engine, harken::ActionDeferredCancelMatch::Emitter, handle,
             harken::ActionTerminalReason::TargetGone)) {
-        engine->runtimeRecreateRequired = true;
+        engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
     if (!engine->CancelInitialSelectionBatchesForEmitter(handle) || !engine->emitters.Destroy(handle)) {
-        engine->runtimeRecreateRequired = true;
+        engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
     engine->spatial.NoteEmitterDestroyed(handle);
@@ -121292,7 +121475,7 @@ VnResult harken::detail::PostActionWithValidation(
                          play->variableControlOuterTreeTokensAdopted) &&
                         !CommitPreparedActionFinalOwnerFault(engine, 0)) {
                         bundle.Abandon();
-                        engine->runtimeRecreateRequired = true;
+                        engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                         return VN_RUNTIME_RECREATE_REQUIRED;
                     }
                 }
@@ -121322,13 +121505,13 @@ VnResult harken::detail::PostActionWithValidation(
                                : VN_DEVICE_ERROR;
                 }
                 if (!plan.originalActionFiringCommitSucceeded) {
-                    engine->runtimeRecreateRequired = true;
+                    engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     packLeaseHeld = false;
                     return VN_RUNTIME_RECREATE_REQUIRED;
                 }
                 if (plan.privatePageBatchCommitAttempted &&
                     !plan.playCommitSucceeded) {
-                    engine->runtimeRecreateRequired = true;
+                    engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     bool released = true;
                     for (std::uint32_t index = 0;
                          index < plan.preparedPlayCount; ++index) {
@@ -121367,7 +121550,7 @@ VnResult harken::detail::PostActionWithValidation(
         }
         if (result != VN_OK &&
             !AbandonPreparedActionCooldowns(plan)) {
-            engine->runtimeRecreateRequired = true;
+            engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             result = VN_RUNTIME_RECREATE_REQUIRED;
             *outFiring = 0;
         }
@@ -121754,7 +121937,7 @@ VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitte
             harken::BeginPlayableCancellation(engine, scratch.row->rootInstance, fadeMs,
                 harken::PlayableCancellationIntent::Stop, false, nullptr, true, nullptr, false, false, cause) !=
                 harken::PlayableControlStatus::Ok) {
-            engine.runtimeRecreateRequired = true;
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     return engine.runtimeRecreateRequired ? VN_RUNTIME_RECREATE_REQUIRED : VN_OK;
@@ -121842,7 +122025,7 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
             invariantFailed = true;
     }
     if (invariantFailed) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
     return VN_OK;
@@ -122343,7 +122526,7 @@ static VnResult StopActionObserved(VnActionFiringHandle firing,
                     invariantFailed = true;
                 }
                 if (invariantFailed) {
-                    engine->runtimeRecreateRequired = true;
+                    engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return VN_RUNTIME_RECREATE_REQUIRED;
                 }
                 return VN_OK;

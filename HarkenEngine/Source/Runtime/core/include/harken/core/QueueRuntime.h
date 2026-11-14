@@ -1085,15 +1085,17 @@ public:
         const QueueResetTargetV1& target,
         PreparedQueueResetSetV1* out,
         std::uint64_t executeFrame = 0,
-        std::uint32_t executionOrdinal = 0) noexcept;
+        std::uint32_t executionOrdinal = 0,
+        bool* generationExhausted = nullptr) noexcept;
     QueueResetStatusV1 PrepareResetRemainder(const QueueResetTargetV1& target,
         const PreparedCatalogResetScope& nativeScope, PreparedQueueResetSetV1* out,
-        std::uint64_t executeFrame = 0, std::uint32_t executionOrdinal = 0) noexcept;
+        std::uint64_t executeFrame = 0, std::uint32_t executionOrdinal = 0,
+        bool* generationExhausted = nullptr) noexcept;
     QueueResetStatusV1 CommitPreparedReset(
         PreparedQueueResetSetV1* prepared,
         LogicCommitSequence sequence,
         std::uint64_t executeFrame = UINT64_MAX,
-        const MonitorControlCause& cause = {}) noexcept;
+        const MonitorControlCause& cause = {}, bool* generationExhausted = nullptr) noexcept;
     void ApplyDue(std::uint64_t now) noexcept;
     QueueResetStatusV1 CancelPreparedReset(
         PreparedQueueResetSetV1* prepared) noexcept;
@@ -1612,7 +1614,7 @@ private:
     bool HasCurrentNativeConditional(const Row& row) const noexcept;
     QueueResetStatusV1 PrepareResetInternal(const QueueResetTargetV1& target,
         const PreparedCatalogResetScope* nativeScope, PreparedQueueResetSetV1* out,
-        std::uint64_t executeFrame, std::uint32_t executionOrdinal) noexcept;
+        std::uint64_t executeFrame, std::uint32_t executionOrdinal, bool* generationExhausted) noexcept;
     void ReleaseCatalogResetScope(PreparedCatalogResetScope& original) noexcept;
     bool MatchesOriginalLifetimePin(const OriginalLifetimePin& original) const noexcept;
     bool BorrowOriginalLifetimePin(const OriginalLifetimePin& original,

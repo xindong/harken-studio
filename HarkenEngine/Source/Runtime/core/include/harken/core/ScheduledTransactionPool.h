@@ -1404,6 +1404,9 @@ public:
                        TransportEpoch epoch) noexcept;
 
     bool Valid() const { return terminalState_.load(std::memory_order_acquire) == 0; }
+    bool TerminalGenerationExhausted() const noexcept {
+        return terminalState_.load(std::memory_order_acquire) == 2;
+    }
     TransportEpoch Epoch() const { return epoch_; }
     std::uint32_t PageCount() const { return pageCount_; }
     std::uint32_t QuantumFrames() const { return quantumFrames_; }
@@ -2709,6 +2712,11 @@ private:
     std::unique_ptr<std::atomic<std::uint64_t>> consumedFrontierQuantum_;
     bool consumerFrontierEnabled_ = false;
 
+    void MarkTerminalFault(bool generationExhausted = false) noexcept {
+        std::uint8_t healthy = 0;
+        terminalState_.compare_exchange_strong(healthy, generationExhausted ? 2 : 1,
+            std::memory_order_release, std::memory_order_relaxed);
+    }
     std::atomic<std::uint8_t> terminalState_{1};
 };
 

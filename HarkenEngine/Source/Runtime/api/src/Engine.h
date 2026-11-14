@@ -5,6 +5,8 @@
 #ifndef HARKEN_API_ENGINE_H
 #define HARKEN_API_ENGINE_H
 
+#include <source_location>
+
 #include "BusEffectSettings.h"
 #include "BusFilterSettings.h"
 #include <harken/ObjectId.h>
@@ -7754,7 +7756,7 @@ private:
         }
         if (!record.definitionEnded) (void)packComposition.EndOriginalDefinition(original.index_);
         if (record.phase == PackComposition::OriginalLeasePhase::Faulted) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         return packComposition.DischargeOriginalLease(original);
@@ -7770,7 +7772,7 @@ private:
         if (result != VN_OK) { *out = prepared; return result; }
         const auto abortBeforeResource = [&](VnResult failure) noexcept {
             const auto returned = packComposition.AbortOriginalPreparedLease(native);
-            if (returned != VN_OK) runtimeRecreateRequired = true;
+            if (returned != VN_OK) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             prepared.result = returned == VN_OK ? failure : VN_RUNTIME_RECREATE_REQUIRED;
             prepared.lease = {}; prepared.action = nullptr; prepared.playableRow = nullptr;
             *out = prepared;
@@ -8038,15 +8040,15 @@ public:
                 !actionFirings.Capture(holder.firing_, &actual) || actual.owner != holder.owner_ ||
                 actual.state != ActionFiringState::TerminalRetained ||
                 actual.ownedDeferredCount != 0 || actual.livePlayableCount != 0) {
-                runtimeRecreateRequired = true; return VN_RUNTIME_RECREATE_REQUIRED;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return VN_RUNTIME_RECREATE_REQUIRED;
             }
             if (holder.returned_) continue;
             if (!OriginalPackIdentityLeaseMatches(holder.original_, holder.owner_.pack)) {
-                runtimeRecreateRequired = true; return VN_RUNTIME_RECREATE_REQUIRED;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return VN_RUNTIME_RECREATE_REQUIRED;
             }
             const auto result = ReleaseOriginalPackIdentityLease(holder.original_);
             if (result != VN_OK) {
-                if (result != VN_IN_USE) runtimeRecreateRequired = true;
+                if (result != VN_IN_USE) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return result;
             }
             holder.returned_ = true;
@@ -8058,7 +8060,7 @@ public:
         for (auto& holder : originalActionFiringPackHolders) {
             if (holder.firing_ == 0 || holder.root_ != root) continue;
             if (!holder.returned_ || holder.original_.Valid()) {
-                runtimeRecreateRequired = true; continue;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); continue;
             }
             holder.firing_ = 0; holder.root_ = 0; holder.owner_ = {}; holder.returned_ = false;
         }
@@ -8085,7 +8087,7 @@ public:
     void ForgetFinalizedOriginalDeferredPack(ActionDeferredRecordToken token) noexcept {
         if (!MatchesOriginalDeferredPackRecord(token)) return;
         assert(OriginalDeferredPackFinalizationReady(token));
-        if (!OriginalDeferredPackFinalizationReady(token)) { runtimeRecreateRequired = true; return; }
+        if (!OriginalDeferredPackFinalizationReady(token)) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
         auto& original = originalDeferredPackHolders[token.slot];
         original.record_ = {}; original.pool_ = {}; original.lease_ = {};
         original.transferred_ = false; original.transferredActionFiring_ = 0; original.returned_ = false;
@@ -8098,20 +8100,20 @@ public:
         if (!MatchesOriginalDeferredPackRecord(token)) return ReleasePackIdentityLease(lease);
         auto& original = originalDeferredPackHolders[token.slot];
         if (!packComposition.SameFullOriginalLease(original.lease_, lease)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         if (original.returned_) return VN_OK;
         if (original.transferred_ || !original.original_.Valid() ||
             !packComposition.SameFullOriginalLease(original.original_.OriginalLease(), lease))
-            { runtimeRecreateRequired = true; return VN_RUNTIME_RECREATE_REQUIRED; }
+            { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return VN_RUNTIME_RECREATE_REQUIRED; }
         const auto result = ReleaseOriginalPackIdentityLease(original.original_);
         if (result == VN_OK) original.returned_ = true;
         else if (result == VN_IN_USE) {
             const auto state = actionDeferredRecords.State(token);
             if (state == ActionDeferredRecordState::Claimed || state == ActionDeferredRecordState::CancelRequested)
                 original.claimFinalizationPending_ = true;
-        } else runtimeRecreateRequired = true;
+        } else RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return result;
     }
 
@@ -8122,7 +8124,7 @@ public:
         auto& original = originalDeferredPackHolders[token.slot];
         if (!original.original_.Valid() || original.transferred_ || original.returned_ ||
             !packComposition.SameFullOriginalLease(original.original_.OriginalLease(), lease)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         return RetagOriginalPackIdentityLease(original.original_, PackLeaseSlice::Playable);
@@ -8174,7 +8176,7 @@ public:
     void ConsumeOriginalDeferredPackPreparation(EngineActionDeferredScratch& scratch) noexcept {
         const bool ready = PrepareOriginalDeferredPackCommit(scratch);
         assert(ready);
-        if (!ready) { runtimeRecreateRequired = true; return; }
+        if (!ready) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
         const auto token = scratch.recordToken;
         const auto pool = scratch.poolToken;
         actionDeferredRecords.ConsumePreparedPair(std::move(scratch.pairCommitProof));
@@ -8455,12 +8457,12 @@ public:
             if (association.engine_ != nullptr) return false;
             if (!preparingStorage->originalPendingVariableProducer.Empty()) return false;
             if (nextOriginalPendingVariableProducerMarker == UINT64_MAX) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
                 return false;
             }
             if (preparingStorage->originalDeferredPackRecord.Valid() &&
                 OriginalPreparingPackOwner(*preparingStorage) == nullptr) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (auto* issuedPack = OriginalPreparingPackOwner(*preparingStorage)) {
@@ -8485,7 +8487,7 @@ public:
             ? playablePartitions.Reserve(row.identity, nullptr, &original.baseline_)
             : context->ReserveOriginalService(playablePartitions, this, row, &original.baseline_);
         if (!partition.Valid()) {
-            if (playablePartitions.OriginalStorageIssuerExhausted()) runtimeRecreateRequired = true;
+            if (playablePartitions.OriginalStorageIssuerExhausted()) RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
             return false;
         }
         row.invocation = &invocation;
@@ -8933,7 +8935,8 @@ public:
     }
     enum class PendingOrdinarySelectionResult : std::uint8_t { Ready, Waiting, Refused, Rejected };
     PendingOrdinarySelectionResult ServicePendingOrdinarySelections(
-        EngineImmediateEntryAttempt& attempt, std::uint64_t anchor) noexcept;
+        EngineImmediateEntryAttempt& attempt, std::uint64_t anchor,
+        VnRuntimeFaultCategory* failureCategory = nullptr) noexcept;
 
     bool ClosePendingOrdinarySelection(OriginalPendingOrdinarySelectionHolder& holder) noexcept {
         if (holder.Empty()) return true;
@@ -10440,7 +10443,7 @@ public:
             group->retiredDecisions[slot] = {old[slot], group->initialDecisionInputs[slot], tickets[slot]};
             const bool finished = variableControlInstances.FinishInitialSideReplacement(held[slot], true);
             assert(finished);
-            if (!finished) { runtimeRecreateRequired = true; return false; }
+            if (!finished) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
             if (slot == 0) { row.variableControlDiscreteDecision = next[slot]; row.variableControlDiscreteTicket = next[slot].Valid() ? row.ticket : 0; }
             else { row.variableControlContinuousDecision = next[slot]; row.variableControlContinuousTicket = next[slot].Valid() ? row.ticket : 0; }
             group->initialDecisionInputs[slot] = nextInputs[slot];
@@ -10533,7 +10536,7 @@ public:
                 packComposition.SameFullOriginalLease(pack.lease, invocation.packLease) &&
                 !invocation.originalPackLease.Valid();
             assert(exact);
-            if (!exact) { runtimeRecreateRequired = true; return; }
+            if (!exact) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
             // All staged duties refer to this one genuine owner before moving it.
             for (const auto& service : originalPlayableServiceLifetimeHolders) {
                 if (service.engine_ != this || service.invocation_ != &invocation ||
@@ -10541,7 +10544,7 @@ public:
                     service.packDutyOwner_ != &owner) continue;
                 const bool dutyReady = MatchesOriginalPlayableServicePackDuty(service);
                 assert(dutyReady);
-                if (!dutyReady) { runtimeRecreateRequired = true; return; }
+                if (!dutyReady) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
             }
             invocation.originalPackLease = std::move(owner);
             // The native move is the only ownership transfer; no lease is acquired.
@@ -10581,7 +10584,7 @@ public:
                 pack.originalInvocationSlot == invocation.slot && !pack.originalInvocationEnded;
             assert(exact);
             if (exact) pack.originalInvocationEnded = true;
-            else runtimeRecreateRequired = true;
+            else RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         // End only already-issued associations at this actual final native exit.
         for (auto& storage : actionPlayStorage) {
@@ -11182,7 +11185,7 @@ public:
             commit.Release();
             const bool cleared = ledger.ClearCompletionMutationExact(voice.ledgerSlot, mutation);
             assert(cleared);
-            if (!cleared) runtimeRecreateRequired = true;
+            if (!cleared) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             else voice.ledgerPreparation.completionMutation = {};
             return false;
         }
@@ -11633,7 +11636,7 @@ public:
         // Native storage is unavailable while any original loan remains.
         if (holder.original_.Valid()) {
             (void)timelineOccurrences.CancelPreparedAcquire(token, nullptr, &actual);
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         holder.receiver_ = this;
@@ -11669,7 +11672,7 @@ public:
         if (holder.original_.Valid()) {
             // A Free native row cannot have an outstanding same-slot loan.
             (void)compositeCompletionOwners.CancelPrepared(*out);
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return CompositeCompletionAcquireStatus::Invalid;
         }
         holder.receiver_ = this;
@@ -12693,7 +12696,7 @@ public:
                 ConsumeOriginalQueueLaneGroup(std::move(transfer)) == holder.groups[i]) continue;
             transfer.Release();
             if (!timelinePool.CancelPrivateImmediateLaneGroup(&issued, &holder.groups[i]))
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         const auto& parent = originalQueueLifetimeHolders[holder.queue.slot];
@@ -13474,7 +13477,7 @@ public:
             const bool cancelled = queueInstances.CancelPreparedAcquire(prepared, &original);
             assert(cancelled);
             returnCheckpoint();
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         originalQueueLifetimeHolders[token.slot] = std::move(original);
@@ -13705,7 +13708,7 @@ public:
         proof.Release();
         const bool cancelled = timelinePool.CancelPrivateImmediateLaneGroup(&original, &identity);
         assert(cancelled);
-        if (!cancelled) runtimeRecreateRequired = true;
+        if (!cancelled) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
 
@@ -14141,7 +14144,7 @@ public:
         auto* source = MemberRelationOwner(from);
         auto* target = MemberRelationOwner(to);
         assert(source != nullptr && target != nullptr);
-        if (source == nullptr || target == nullptr) { runtimeRecreateRequired = true; return; }
+        if (source == nullptr || target == nullptr) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
         ClearPlayableMemberReferences(to, 1);
         const auto sourceOffset = static_cast<std::uint32_t>(from % playableStorage.memberStride);
         auto* sourceLink = MemberRelationLink(*source, sourceOffset);
@@ -14207,7 +14210,7 @@ public:
         const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(record), record.generation};
         if (FindPlayableMember(token) != &record ||
             (source.Valid() && source.slot >= sourcePlayableMembers.size())) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (source.Valid()) {
@@ -14215,7 +14218,7 @@ public:
             if (existing != nullptr && existing != &record &&
                 existing->completion.source.slot == source.slot &&
                 existing->completion.source.generation == source.generation) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -14510,11 +14513,11 @@ public:
             if (!record.occupied || record.directoryOwned || MemberProgramHasReaders(record)) continue;
             const auto* member = FindPlayableMember(record.memberToken);
             if (member == nullptr) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             if (member->release.Valid() && !voices.ReleaseObserved(member->release)) continue;
-            if (!RecycleMemberProgram(record)) runtimeRecreateRequired = true;
+            if (!RecycleMemberProgram(record)) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     bool RetiredMemberProgramsHoldService(const EnginePlayableServiceRow& row) noexcept {
@@ -14524,7 +14527,7 @@ public:
             auto* owner = ResolvePlayableService(record.member.service);
             for (std::size_t depth = 0;; ++depth) {
                 if (owner == nullptr || depth == playableServices.size()) {
-                    runtimeRecreateRequired = true;
+                    RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return true;
                 }
                 if (owner == &row) return true;
@@ -14727,7 +14730,7 @@ public:
             });
         assert(recorded);
         if (!recorded) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         if (occupied) LinkPlayableServiceCohort(row);
@@ -14745,7 +14748,7 @@ public:
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (pending) {
             // Source receipts wake the exact registered parent before the child
             // can retire. Keep its deadline until service actually handles it.
@@ -14756,7 +14759,7 @@ public:
                 if (!playableServiceWork.MarkDirty(parentIdentity,
                         [&](PlayableServiceWorkIdentity current) noexcept {
                             return current == CapturePlayableServiceWorkIdentity(current.slot);
-                        })) runtimeRecreateRequired = true;
+                        })) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             // Shared source groups can span several real parent services.
             // Their exact synchronization owner must observe the same wake.
@@ -14766,7 +14769,7 @@ public:
                 if (!playableServiceWork.MarkDirty(ownerIdentity,
                         [&](PlayableServiceWorkIdentity current) noexcept {
                             return current == CapturePlayableServiceWorkIdentity(current.slot);
-                        })) runtimeRecreateRequired = true;
+                        })) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
         }
     }
@@ -14783,7 +14786,7 @@ public:
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     EnginePlayableServiceRow* NextPlayableServiceSourceExit(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::NextBlock, cursor,
@@ -15145,7 +15148,7 @@ public:
                 return current == PlayableMemberOnsetIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
         const auto* record = FindPlayableMember(slot);
@@ -15157,7 +15160,7 @@ public:
                     return current == PlayableMemberOnsetIdentity(current.slot);
                 });
             assert(removed);
-            if (!removed) runtimeRecreateRequired = true;
+            if (!removed) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     void SetPlayableMemberCompletion(std::size_t slot, VariableControlMemberCompletion value) noexcept {
@@ -15165,7 +15168,7 @@ public:
         auto* record = FindPlayableMember(slot);
         if (record == nullptr) {
             assert(value.leafInstance == 0);
-            if (value.leafInstance != 0) runtimeRecreateRequired = true;
+            if (value.leafInstance != 0) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         SetPlayableMemberCompletion(*record, value);
@@ -15403,7 +15406,25 @@ public:
     bool currentWorldReplacementAdmissionClosed = false;
     bool runtimeTransportResetActive = false;
     std::uint64_t runtimeTransportResetFrame = 0;
+    // Logic-thread state, independent of the lossy advisory queues.
+    VnRuntimeFaultInfoV1 runtimeFault{};
+    bool runtimeFaultNotificationDelivered = false;
+    bool runtimeFaultLogDelivered = false;
     bool runtimeRecreateRequired = false;
+
+    void RequireRecreation(VnRuntimeFaultCategory category,
+        std::source_location location = std::source_location::current()) noexcept {
+        runtimeRecreateRequired = true;
+        if (runtimeFault.category == VN_RUNTIME_FAULT_NONE) {
+            runtimeFault.structSize = sizeof(runtimeFault);
+            runtimeFault.category = category;
+            runtimeFault.line = location.line();
+            runtimeFault.file = location.file_name();
+            runtimeFault.function = location.function_name();
+        } else if (runtimeFault.repeatCount != UINT64_MAX) {
+            ++runtimeFault.repeatCount;
+        }
+    }
     bool forceActionPlayCommitFailureForTest = false;
     bool forceImmediateLaneReservationFailureForTest = false;
     std::uint32_t forceImmediateLaneBindLeafFailureForTest = UINT32_MAX;

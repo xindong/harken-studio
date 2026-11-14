@@ -638,6 +638,7 @@ namespace Harken.Test
 
             try
             {
+                if (!CheckRuntimeFaultDiagnostics()) return 1;
                 if (!CheckCurrentWorldContract(currentWorldPath))
                 {
                     return 1;
@@ -652,6 +653,74 @@ namespace Harken.Test
             {
                 HarkenEngine.Term();
             }
+        }
+
+        private static unsafe bool CheckRuntimeFaultDiagnostics()
+        {
+            int reports = 0;
+            int forwarded = 0;
+            bool queryOk = true;
+            Action<RuntimeFaultInfo> observer = info =>
+            {
+                ++reports;
+                var queryResult = HarkenEngine.QueryRuntimeFault(out _);
+                queryOk &= queryResult == VnResult.VN_OK;
+                if (queryResult != VnResult.VN_OK) Console.WriteLine("[Fault query] " + queryResult);
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+            };
+            RuntimeFaultDiagnostics.Reported += observer;
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            using var notify = HarkenCallbacks.InstallNotification(ref config,
+                (in VnNotification notification, object state) => ++forwarded);
+            using var log = HarkenCallbacks.InstallLog(ref config, (level, code, text, state) => { });
+            var notifyThunk = Marshal.GetDelegateForFunctionPointer<VnNotificationCallback>(config.onNotification);
+            var logThunk = Marshal.GetDelegateForFunctionPointer<VnLogFn>(config.logCallback);
+            VnNotification fault = default;
+            fault.type = (uint)VnNotificationType.VN_NOTIFY_RUNTIME_RECREATE_REQUIRED;
+            bool passed;
+            try
+            {
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_OK);
+                passed = reports == 0 && HarkenEngine.QueryRuntimeFault(out var none) == VnResult.VN_OK &&
+                    none.Category == VnRuntimeFaultCategory.VN_RUNTIME_FAULT_NONE;
+                // Drive the actual managed callback thunks; native first-fault capture is covered in Runtime tests.
+                notifyThunk((IntPtr)(&fault), config.notificationUserData);
+                logThunk(config.logUserData, (uint)VnLogLevel.VN_LOG_ERROR,
+                    VnConstants.VN_LOG_RUNTIME_RECREATE_REQUIRED, IntPtr.Zero);
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                passed &= reports == 1 && forwarded == 1 && queryOk;
+                passed &= HarkenEngine.Init(config) != VnResult.VN_OK;
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                passed &= reports == 1;
+                passed &= HarkenEngine.Term() == VnResult.VN_OK && HarkenEngine.Init(config) == VnResult.VN_OK;
+                notifyThunk((IntPtr)(&fault), config.notificationUserData);
+                passed &= reports == 2 && forwarded == 2;
+            }
+            finally { RuntimeFaultDiagnostics.Reported -= observer; }
+            Action<RuntimeFaultInfo> ending = info =>
+            {
+                ++reports;
+                notify.Dispose();
+                HarkenEngine.Term();
+                throw new InvalidOperationException("diagnostic observer failure");
+            };
+            RuntimeFaultDiagnostics.Reported += ending;
+            try
+            {
+                passed &= HarkenEngine.Term() == VnResult.VN_OK && HarkenEngine.Init(config) == VnResult.VN_OK;
+                notifyThunk((IntPtr)(&fault), config.notificationUserData);
+                passed &= reports == 3 && forwarded == 2;
+                passed &= HarkenEngine.QueryRuntimeFault(out _) == VnResult.VN_NOT_INITIALIZED;
+            }
+            finally { RuntimeFaultDiagnostics.Reported -= ending; }
+            config.onNotification = IntPtr.Zero;
+            config.notificationUserData = IntPtr.Zero;
+            config.logCallback = IntPtr.Zero;
+            config.logUserData = IntPtr.Zero;
+            passed &= HarkenEngine.Init(config) == VnResult.VN_OK;
+            Console.WriteLine("Runtime fault diagnostics: " + (passed ? "PASS" : "FAIL"));
+            return passed;
         }
 
         private static bool CheckCurrentWorldContract(string artifactPath)

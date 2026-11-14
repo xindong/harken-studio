@@ -3738,7 +3738,7 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedBatch(
         std::any_of(privateCommittedGroups_.begin(),
                     privateCommittedGroups_.begin() + groupCount,
                     [](const auto& handle) { return handle.Valid(); })) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         *groupStatus = Plan03GroupReserveStatus::Invalid;
         return false;
     }
@@ -3910,7 +3910,7 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedCohort(
         std::any_of(privateCommittedGroups_.begin(),
                     privateCommittedGroups_.begin() + groupCount,
                     [](const auto& handle) { return handle.Valid(); })) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         *groupStatus = Plan03GroupReserveStatus::Invalid;
         return false;
     }
@@ -4121,7 +4121,7 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
     PrivateMaterializationTransaction* transaction) noexcept {
     if (transaction == nullptr || transaction->owner_ != this ||
         transaction->committed_) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         return false;
     }
     const auto creditCount = transaction->cohortCreditCount_ != 0
@@ -4134,14 +4134,14 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
         const auto* credit = creditAt(index);
         if (credit == nullptr || !credit->Valid() ||
             credit->slot >= unplacedCredits_.size()) {
-            terminalState_.store(1, std::memory_order_release);
+            MarkTerminalFault();
             return false;
         }
         const auto& holder = unplacedCredits_[credit->slot];
         if (!holder.active || !holder.materializing ||
             holder.generation != credit->generation ||
             holder.epoch != credit->epoch) {
-            terminalState_.store(1, std::memory_order_release);
+            MarkTerminalFault();
             return false;
         }
     }
@@ -4149,7 +4149,7 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
     // are held from publication, and no other logic admission can run between
     // this proof and the checked cancellation below.
     if (!CanRollbackPrivateMaterialization(*transaction)) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         return false;
     }
     bool rolledBack = true;
@@ -4167,7 +4167,7 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
         rolledBack = CancelPreparedTransactionBatch(
             &transaction->transactions_) && rolledBack;
     if (!rolledBack) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < creditCount; ++index) {
@@ -4203,13 +4203,13 @@ bool ScheduledTransactionPool::PrivateMaterializationTransaction::Commit(
     if (transactions_.Valid() &&
         !owner_->CommitPreparedTransactionBatch(
             &transactions_, sequence, true)) {
-        owner_->terminalState_.store(1, std::memory_order_release);
+        owner_->MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < groupCount_; ++index) {
         if (!owner_->CommitPreparedPlan03GroupSlice(
                 &groups_[index], &committedGroups_[index], true)) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
     }
@@ -4231,25 +4231,25 @@ bool ScheduledTransactionPool::PrivateMaterializationTransaction::
         const auto* credit = creditAt(index);
         if (credit == nullptr || !credit->Valid() ||
             credit->slot >= owner_->unplacedCredits_.size()) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
         const auto& holder = owner_->unplacedCredits_[credit->slot];
         if (!holder.active || !holder.materializing ||
             holder.generation != credit->generation ||
             holder.epoch != credit->epoch) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
     }
     if (transactions_.Valid() &&
         !owner_->CanReleasePreparedTransactionPublication(transactions_)) {
-        owner_->terminalState_.store(1, std::memory_order_release);
+        owner_->MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < groupCount_; ++index) {
         if (!committedGroups_[index].Valid()) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
     }
@@ -4261,7 +4261,7 @@ bool ScheduledTransactionPool::PrivateMaterializationTransaction::
         released = owner_->ReleaseCommittedPlan03GroupSliceOwnership(
             &committedGroups_[index]) && released;
     if (!released) {
-        owner_->terminalState_.store(1, std::memory_order_release);
+        owner_->MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < creditCount; ++index) {
@@ -10614,7 +10614,7 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         // and frontier value untouched, enter the terminal invalid state, and
         // let the session recreate the Runtime under its recreate-required
         // policy.
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault(true);
         return 0;
     }
     const std::uint32_t leaving = ringStart_;
@@ -10691,7 +10691,7 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         if (heldIngress != 0) {
             return 0;
         }
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault(true);
         return 0;
     }
     pageQuantumStamp_[leaving].store(kUnpublishedQuantumStamp,

@@ -3696,6 +3696,23 @@ static_assert(offsetof(VnBusState, peakPostFader) == 40,
 static_assert(offsetof(VnBusState, peakPostEffects) == 44,
               "wire table offset drift: VnBusState.peakPostEffects");
 
+static_assert(sizeof(VnRuntimeFaultInfoV1) == 40,
+              "wire table size drift: VnRuntimeFaultInfoV1");
+static_assert(offsetof(VnRuntimeFaultInfoV1, structSize) == 0,
+              "wire table offset drift: VnRuntimeFaultInfoV1.structSize");
+static_assert(offsetof(VnRuntimeFaultInfoV1, category) == 4,
+              "wire table offset drift: VnRuntimeFaultInfoV1.category");
+static_assert(offsetof(VnRuntimeFaultInfoV1, line) == 8,
+              "wire table offset drift: VnRuntimeFaultInfoV1.line");
+static_assert(offsetof(VnRuntimeFaultInfoV1, reserved) == 12,
+              "wire table offset drift: VnRuntimeFaultInfoV1.reserved");
+static_assert(offsetof(VnRuntimeFaultInfoV1, repeatCount) == 16,
+              "wire table offset drift: VnRuntimeFaultInfoV1.repeatCount");
+static_assert(offsetof(VnRuntimeFaultInfoV1, file) == 24,
+              "wire table offset drift: VnRuntimeFaultInfoV1.file");
+static_assert(offsetof(VnRuntimeFaultInfoV1, function) == 32,
+              "wire table offset drift: VnRuntimeFaultInfoV1.function");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

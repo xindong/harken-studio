@@ -248,7 +248,7 @@ TEST_F(AbiExceptionFirewallSweep, SuccessfulCallsAndRecreationTakePriority) {
     }));
     EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, InvokeApi([&]() -> VnResult {
         RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
-        session.Engine()->runtimeRecreateRequired = true;
+        session.Engine()->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_BACKPRESSURE;
     }));
     EXPECT_EQ(VN_IN_USE, InvokeApi([]() -> VnResult { return VN_IN_USE; }));
@@ -268,7 +268,7 @@ TEST_F(AbiExceptionFirewallSweep, SuccessfulCallsAndRecreationTakePriority) {
         EXPECT_EQ(VN_OK, Vn_Term());
         auto config = harkentest::MakeNullConfig();
         EXPECT_EQ(VN_OK, Vn_Init(&config));
-        session.Engine()->runtimeRecreateRequired = true;
+        session.Engine()->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_BACKPRESSURE;
     }));
 }

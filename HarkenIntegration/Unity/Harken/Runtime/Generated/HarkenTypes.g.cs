@@ -270,6 +270,7 @@ namespace Harken
         VN_NOTIFY_VOICE_STOLEN = 4,
         VN_NOTIFY_VOICE_PARKED = 5,
         VN_NOTIFY_VOICE_RETURNED = 6,
+        VN_NOTIFY_RUNTIME_RECREATE_REQUIRED = 7,
     }
 
     public enum VnLogLevel : uint
@@ -679,6 +680,15 @@ namespace Harken
         VN_BUS_STATE_RENDERED = 4,
     }
 
+    public enum VnRuntimeFaultCategory : uint
+    {
+        VN_RUNTIME_FAULT_NONE = 0,
+        VN_RUNTIME_FAULT_CAPACITY = 1,
+        VN_RUNTIME_FAULT_INVALID_INPUT = 2,
+        VN_RUNTIME_FAULT_INTERNAL_STATE = 3,
+        VN_RUNTIME_FAULT_GENERATION_EXHAUSTED = 4,
+    }
+
     /// <summary>Harken.h #define constants.</summary>
     public static class VnConstants
     {
@@ -721,6 +731,7 @@ namespace Harken
         public const int VN_BYTE_READ_OK = 0;
         public const int VN_BYTE_READ_CANCELLED = 1;
         public const int VN_BYTE_READ_IO_ERROR = 2;
+        public const uint VN_LOG_RUNTIME_RECREATE_REQUIRED = 34u;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -2278,6 +2289,18 @@ namespace Harken
     public float peakPreFader;
     public float peakPostFader;
     public float peakPostEffects;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRuntimeFaultInfoV1
+    {
+    public uint structSize;
+    public uint category;
+    public uint line;
+    public uint reserved;
+    public ulong repeatCount;
+    public IntPtr file;
+    public IntPtr function;
     }
 
 }

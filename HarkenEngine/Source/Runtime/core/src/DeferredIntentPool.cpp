@@ -320,12 +320,14 @@ bool DeferredIntentPool::Cancel(DeferredIntentToken token) {
     return true;
 }
 
-bool DeferredIntentPool::CanResetForTransport() const noexcept {
+bool DeferredIntentPool::CanResetForTransport(bool* generationExhausted) const noexcept {
+    if (generationExhausted != nullptr) *generationExhausted = false;
     for (const Entry& entry : m_entries) {
         if (entry.preparedPairOwner != nullptr) return false;
         if ((entry.state == DeferredIntentEntryState::Held ||
              entry.state == DeferredIntentEntryState::Claimed) &&
             entry.generation == UINT64_MAX) {
+            if (generationExhausted != nullptr) *generationExhausted = true;
             return false;
         }
     }
