@@ -3055,6 +3055,120 @@ TEST(BusAdmissionStart, LiveBusV5DirectBypassAdvancesNewBranchAndClearRetirement
         harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
 }
 
+TEST(BusAdmissionStart, PreviewRetirementReusesCompletedMiddleWhileOtherChainsRemainBlocked) {
+    using namespace harken;
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    auto& buses = engine.buses;
+    buses.SetAutomaticSleepEnabledForTest(false);
+    const std::array ids{harkentest::ObjectId(650), harkentest::ObjectId(651),
+                         harkentest::ObjectId(652)};
+    for (const auto id : ids) ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    engine.nullBackend.Pump(1);
+    const std::array hosts{buses.FindRef(ids[0]), buses.FindRef(ids[1]), buses.FindRef(ids[2])};
+    std::array<BusEffectChainState*, 3> states{};
+    std::array<std::array<EffectInstanceRef, kMaxFxSlotsPerBus>, 3> original{};
+    std::array<EffectRetireQueue*, 3> lanes{};
+    const auto apply = [&](std::size_t index,
+                           const std::array<PreviewEffectChainEntry, kMaxFxSlotsPerBus>& targets) {
+        const auto* bus = buses.BusState(hosts[index].index);
+        ASSERT_NE(nullptr, bus);
+        std::array<EffectInstanceRef, kMaxFxSlotsPerBus> current{};
+        std::copy_n(bus->fxSlotEffectRef, current.size(), current.begin());
+        PreparedBusEffectChain prepared;
+        ASSERT_EQ(VN_OK, buses.PreparePreviewEffectChain(hosts[index], 77, targets,
+            current, harkentest::ObjectId(653), prepared));
+        ASSERT_TRUE(prepared.changes);
+        ASSERT_TRUE(buses.CanCommitPreviewEffectChain(prepared));
+        states[index] = prepared.state;
+        const auto revision = prepared.state->update->targetRevision;
+        buses.CommitPreviewEffectChain(prepared);
+        buses.ApplyPreviewEffectChain({prepared.state, hosts[index].Packed(), 77, revision, false});
+    };
+    // Four live refs span three existing retirement lanes. The second chain's
+    // two refs share a lane, allowing independent backpressure per chain.
+    for (std::size_t i = 0; i < hosts.size(); ++i) {
+        std::array<PreviewEffectChainEntry, kMaxFxSlotsPerBus> targets{};
+        targets[0] = {harkentest::ObjectId(660 + static_cast<unsigned>(i)),
+                      VN_EFFECT_LIMITER, false, -18, 100};
+        if (i == 1) targets[1] = {harkentest::ObjectId(664), VN_EFFECT_LIMITER, false, -18, 100};
+        apply(i, targets);
+        ASSERT_FALSE(HasFatalFailure());
+    }
+    engine.nullBackend.Pump(4);
+    buses.DrainPreviewEffectChains();
+    ASSERT_EQ(4u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    for (std::size_t i = 0; i < hosts.size(); ++i) {
+        ASSERT_EQ(EffectChainUpdate::Phase::Free, states[i]->phase.load());
+        const auto* bus = buses.BusState(hosts[i].index);
+        ASSERT_NE(nullptr, bus);
+        std::copy_n(bus->fxSlotEffectRef, original[i].size(), original[i].begin());
+        lanes[i] = &detail::EffectPoolTestAccess::RetireLane(engine.effectBank, original[i][0]);
+    }
+    ASSERT_NE(lanes[0], lanes[1]);
+    ASSERT_NE(lanes[0], lanes[2]);
+    ASSERT_NE(lanes[1], lanes[2]);
+    ASSERT_EQ(lanes[1], &detail::EffectPoolTestAccess::RetireLane(engine.effectBank, original[1][1]));
+    for (auto* lane : lanes) while (lane->TryPush({})) {}
+    for (std::size_t i = 0; i < hosts.size(); ++i) {
+        apply(i, {});
+        ASSERT_FALSE(HasFatalFailure());
+    }
+    engine.nullBackend.Pump(4);
+    for (auto* state : states) ASSERT_EQ(EffectChainUpdate::Phase::Retiring, state->phase.load());
+
+    // Select the middle from the completed render order, without depending on
+    // the topological ordering of sibling Buses.
+    std::size_t middle = states.size();
+    for (std::size_t i = 0; i < states.size(); ++i)
+        if (states[i]->retiringNext != nullptr && std::any_of(states.begin(), states.end(),
+                [&](const auto* state) { return state->retiringNext == states[i]; })) middle = i;
+    ASSERT_LT(middle, states.size());
+    EffectInstanceRef dummy;
+    while (lanes[middle]->TryPop(dummy)) ASSERT_EQ(kEffectTypeNone, dummy.type);
+    buses.ServicePreviewEffectRetirements();
+    ASSERT_EQ(EffectChainUpdate::Phase::Complete, states[middle]->phase.load());
+    for (std::size_t i = 0; i < states.size(); ++i)
+        if (i != middle) ASSERT_EQ(EffectChainUpdate::Phase::Retiring, states[i]->phase.load());
+    buses.DrainPreviewEffectChains();
+    ASSERT_EQ(EffectChainUpdate::Phase::Free, states[middle]->phase.load());
+    ASSERT_EQ(nullptr, states[middle]->update.get());
+    // Logic drain also consumed the other lanes' dummy records. Refill them
+    // before any further audio work so their original refs stay owned.
+    for (std::size_t i = 0; i < lanes.size(); ++i)
+        if (i != middle) while (lanes[i]->TryPush({})) {}
+    auto* reused = states[middle];
+    std::array<PreviewEffectChainEntry, kMaxFxSlotsPerBus> replacement{};
+    replacement[0] = {harkentest::ObjectId(665), VN_EFFECT_LIMITER, false, -12, 100};
+    apply(middle, replacement);
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_EQ(reused, states[middle]);
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(EffectChainUpdate::Phase::Complete, reused->phase.load());
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        if (i == middle) continue;
+        ASSERT_EQ(EffectChainUpdate::Phase::Retiring, states[i]->phase.load());
+        EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(original[i][0]));
+    }
+    // Remove the replacement, then let all three owners finish and reclaim.
+    buses.DrainPreviewEffectChains();
+    apply(middle, {});
+    ASSERT_FALSE(HasFatalFailure());
+    engine.nullBackend.Pump(4);
+    buses.DrainPreviewEffectChains();
+    for (auto* state : states) {
+        EXPECT_EQ(EffectChainUpdate::Phase::Free, state->phase.load());
+        EXPECT_EQ(nullptr, state->update.get());
+    }
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    for (const auto& refs : original)
+        for (const auto& ref : refs)
+            if (ref.type != kEffectTypeNone) EXPECT_EQ(nullptr, engine.effectBank.LiveStateFor(ref));
+    engine.nullBackend.Pump(1);
+    buses.DrainPreviewEffectChains();
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}
+
 TEST(BusAdmissionStart, LiveBusV5DeletionRetainsRetirementAndReusesNewGeneration) {
     AdmissionSession fixture;
     auto& engine = *fixture.session.Engine();
