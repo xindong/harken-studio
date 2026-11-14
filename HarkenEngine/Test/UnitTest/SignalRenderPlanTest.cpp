@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <array>
 #include <limits>
+#include <thread>
 
 namespace {
 using namespace harken;
@@ -659,6 +660,50 @@ TEST(SignalRenderPlan, ColdCaptureRefusesRealInputSourceHistoryAndConnectionRamp
     ASSERT_TRUE(active->SetConnectionLevel(0, 0, 0));
     ASSERT_TRUE(sleep->CaptureDormantState(*active, *cold));
     EXPECT_FALSE(sleep->CaptureDormantState(*active, *cold));
+}
+
+TEST(SignalRenderPlan, ActivityObservationCopiesOnePinnedBlockAndKeepsUnrelatedHold) {
+    std::array<SignalRenderNodeInput, 4> nodes{};
+    for (unsigned i = 0; i < nodes.size(); ++i) {
+        nodes[i].kind = SignalEndpointKindV1::Sound;
+        nodes[i].stableId = {0, i + 1u};
+        nodes[i].receiver = (i & 1) != 0;
+    }
+    const std::array relations{SignalConnectionInput{0, 1, 1, {0, 10}},
+        SignalConnectionInput{2, 3, 1, {0, 11}}};
+    auto plan = SignalRenderPlan::Prepare(kFormat, nodes, relations, {});
+    ASSERT_TRUE(plan->ConfigurePublication(1, 100, nullptr, 256));
+    std::atomic<bool> done{false}, valid{true};
+    std::thread audio([&] {
+        for (unsigned epoch = 0; epoch != 1000; ++epoch)
+            if (!plan->BeginBlock(Block(epoch)) || !plan->ProcessContent({}) || !plan->CommitBlock())
+                valid.store(false);
+        done.store(true);
+    });
+    SignalRenderPlan::ActivityObservation observed;
+    unsigned captures = 0;
+    bool coherent = true;
+    do {
+        if (plan->CaptureActivityObservation(observed)) {
+            ++captures;
+            for (const auto& node : observed.nodes)
+                coherent &= node.ready && node.quietFrames == (observed.blockSequence - 1) * kFrames;
+        }
+    } while (!done.load());
+    audio.join();
+    EXPECT_TRUE(valid.load());
+    EXPECT_TRUE(coherent);
+    ASSERT_GT(captures, 0u);
+    ASSERT_TRUE(plan->SetConnectionLevel(0, .5f, 0));
+    ASSERT_TRUE(plan->BeginBlock(Block(1000)));
+    ASSERT_TRUE(plan->ProcessContent({}));
+    ASSERT_TRUE(plan->CommitBlock());
+    ASSERT_TRUE(plan->CaptureActivityObservation(observed));
+    EXPECT_EQ(observed.blockSequence, 1001u);
+    EXPECT_EQ(observed.nodes[0].quietFrames, 0u);
+    EXPECT_EQ(observed.nodes[1].quietFrames, 0u);
+    EXPECT_EQ(observed.nodes[2].quietFrames, 1000u * kFrames);
+    EXPECT_EQ(observed.nodes[3].quietFrames, 1000u * kFrames);
 }
 
 TEST(SignalRenderPlan, ColdRegistryPrunesOnlyRestoredComponents) {

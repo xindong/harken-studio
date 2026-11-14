@@ -397,6 +397,10 @@ private:
         return m_sourceBank.data() +
             (static_cast<std::size_t>(bank) * m_sources + source) * m_planeSamples;
     }
+    const float* Source(std::uint32_t bank, std::uint32_t source) const noexcept {
+        return m_sourceBank.data() +
+            (static_cast<std::size_t>(bank) * m_sources + source) * m_planeSamples;
+    }
     SignalBlockFormat m_format{};
     SignalBlockIdentity m_previous{}, m_current{};
     std::uint32_t m_sources = 0, m_targets = 0, m_readBank = 0, m_writeBank = 1;

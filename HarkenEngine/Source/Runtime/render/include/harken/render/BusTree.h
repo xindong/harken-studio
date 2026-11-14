@@ -48,6 +48,7 @@ struct SignalFeedbackEdge;
 struct SignalBusRoutingInfo;
 struct BusActivityPlan;
 struct BusDormantRegistry;
+struct BusDormantWork;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -578,6 +579,7 @@ public:
     // Unpublished work row, same identity, format and authoritative parameters.
     static void RestoreDormantToneSection(Bus::ToneSection& section,
         const DormantToneSection& saved) noexcept;
+    std::shared_ptr<const BusDormantWork> DormantWorkFor(BusSlotRef bus) const noexcept;
     bool RestoreDormantWork(Bus& row) const noexcept;
     bool PrepareDormantSignalContinuity(SignalRenderPlan& next,
         const SignalRenderPlan& previous) const noexcept;

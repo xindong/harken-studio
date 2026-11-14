@@ -3,6 +3,7 @@
 
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/PlaybackPath.h"
+#include "harken/core/PinnedSnapshot3.h"
 #include "harken/render/SignalBlockExchange.h"
 #include "harken/render/SignalFeedbackPlan.h"
 
@@ -147,6 +148,7 @@ public:
             next->gain_.resize(format.capacityFrames);
             next->pre_.resize(format.capacityFrames);
             next->post_.resize(format.capacityFrames);
+            next->PrepareActivityObservation();
             return next;
         } catch (...) { return {}; }
     }
@@ -220,6 +222,7 @@ public:
                 mapping.exchangeContinuous = SameStructure(*prior);
                 std::vector<std::uint32_t> nodePredecessors(nodes_.size(), UINT32_MAX);
                 mapping.receivers.assign(nodes_.size(), UINT32_MAX);
+                mapping.nodes.assign(nodes_.size(), UINT32_MAX);
                 mapping.sources.assign(exchange_.m_sources, UINT32_MAX);
                 mapping.connections.assign(relations_.size(), UINT32_MAX);
                 for (std::size_t i = 0; i < nodes_.size(); ++i) {
@@ -228,7 +231,7 @@ public:
                     for (std::uint32_t j = 0; j < prior->nodes_.size(); ++j) {
                         if (!SameNodeDefinition(i, *prior, j)) continue;
                         const auto& old = prior->nodes_[j];
-                        nodePredecessors[i] = j;
+                        nodePredecessors[i] = mapping.nodes[i] = j;
                         if (next.target != UINT32_MAX && old.target != UINT32_MAX) mapping.receivers[i] = j;
                         if (next.source != UINT32_MAX) mapping.sources[next.source] = old.source;
                         break;
@@ -265,12 +268,25 @@ public:
     }
     std::uint64_t PublicationIdentity() const noexcept { return publicationIdentity_; }
 
+    struct NodeActivityObservation {
+        std::uint64_t quietFrames = 0;
+        bool ready = false;
+    };
+    struct ActivityObservation {
+        std::uint64_t publication = 0, history = 0, mutation = 0, blockSequence = 0;
+        std::vector<NodeActivityObservation> nodes;
+    };
+    bool CaptureActivityObservation(ActivityObservation& out) const noexcept;
+
     struct DormantState;
     // Logic prepares immutable identity maps and storage. Audio fills them
     // once, before detaching the completed predecessor. Each wake owns its
     // payload independently of the sleep publication's acknowledgement.
     std::shared_ptr<DormantState> PrepareDormantState(const SignalRenderPlan& previous) const noexcept;
     bool CaptureDormantState(SignalRenderPlan& previous, DormantState& state) const noexcept;
+    bool PrepareSleepObservation(const SignalRenderPlan& previous, DormantState& state,
+        std::uint64_t& blockSequence, bool& removesNodes) const noexcept;
+    bool ValidateSleepObservation(const SignalRenderPlan& previous, const DormantState& state) const noexcept;
     bool PrepareDormantContinuity(const SignalRenderPlan& previous,
         std::shared_ptr<const DormantState> state) noexcept;
     // Logic, after capture ACK: retain only endpoints absent from this accepted
@@ -358,10 +374,15 @@ public:
     }
     bool HasContent() const noexcept { return !membership_.empty(); }
     bool SetConnectionLevel(std::uint32_t connection, float level, std::uint64_t frames) noexcept {
-        return !open_ && exchange_.SetLevel(connection, level, frames);
+        if (open_ || !exchange_.SetLevel(connection, level, frames)) return false;
+        NoteActivityMutation(relations_[connection].source);
+        NoteActivityMutation(relations_[connection].target);
+        return true;
     }
     bool UpdateBounds(std::span<const double> bounds) noexcept {
-        return !open_ && feedback_.UpdateBounds(bounds);
+        if (open_ || !feedback_.UpdateBounds(bounds)) return false;
+        for (std::uint32_t i = 0; i < nodes_.size(); ++i) NoteActivityMutation(i);
+        return true;
     }
 
     bool BeginBlock(const SignalBlockIdentity& identity) noexcept {
@@ -376,9 +397,9 @@ public:
             identity.frameBegin == previous_.frameBegin + previous_.frames;
         if (!continuous) {
             if (historyRevision_ != UINT64_MAX) ++historyRevision_;
-            for (auto& node : nodes_) node.receiver.Reset();
+            for (auto& node : nodes_) { node.receiver.Reset(); node.activity = {}; }
         }
-        for (auto& node : nodes_) { node.processed = false; node.deferOutput = false; }
+        for (auto& node : nodes_) { node.processed = false; node.deferOutput = false; node.physicalMember = false; }
         contentProcessed_ = false;
         preparedSoundRouting_ = false;
         blockRouting_ = {};
@@ -419,9 +440,11 @@ public:
                     finite &= std::isfinite(samples[n]);
                 if (!finite) return false;
             }
-            for (auto node : member.nodes)
+            for (auto node : member.nodes) {
                 if (node >= nodes_.size() || nodes_[node].kind == SignalEndpointKindV1::Bus)
                     return false;
+                nodes_[node].physicalMember = true;
+            }
         }
         for (const auto index : blockRouting_.nodes.empty() ? feedback_.NormalOrder() : blockRouting_.order) {
             if (index >= nodes_.size()) continue;
@@ -561,13 +584,14 @@ public:
         previous_ = current_;
         committed_ = true;
         open_ = false;
+        PublishActivityObservation();
         return true;
     }
     void Invalidate() noexcept {
         exchange_.Invalidate();
         open_ = committed_ = false;
         if (historyRevision_ != UINT64_MAX) ++historyRevision_;
-        for (auto& node : nodes_) node.receiver.Reset();
+        for (auto& node : nodes_) { node.receiver.Reset(); node.activity = {}; }
     }
 
 private:
@@ -627,6 +651,8 @@ private:
         DuckingReceiver receiver;
         bool processed = false;
         bool deferOutput = false;
+        bool physicalMember = false;
+        NodeActivityObservation activity;
         bool dormantInputsQuiet = false, dormantBoundMain = false, dormantFeedback = false;
         double dormantSlope = 0;
         std::size_t outputGainOffset = SIZE_MAX;
@@ -829,7 +855,7 @@ private:
     struct Continuity {
         std::uint64_t identity = 0;
         bool exchangeContinuous = false;
-        std::vector<std::uint32_t> receivers, sources, connections;
+        std::vector<std::uint32_t> nodes, receivers, sources, connections;
     };
     std::array<Continuity, 2> continuity_;
     std::uint64_t updateRampFrames_ = 0;
@@ -840,6 +866,20 @@ private:
         std::vector<std::uint32_t> receivers, connections;
     };
     std::vector<DormantRestore> dormantRestores_;
+    struct ActivitySnapshot {
+        std::uint64_t publication = 0, history = 0, mutation = 0, blockSequence = 0;
+        NodeActivityObservation* nodes = nullptr;
+    };
+    std::array<std::vector<NodeActivityObservation>, 3> activityBuffers_;
+    PinnedSnapshot3<ActivitySnapshot> activitySnapshot_;
+    std::uint64_t activityMutation_ = 1;
+    void PrepareActivityObservation();
+    void PublishActivityObservation() noexcept;
+    bool NodeRecoveryReady(std::uint32_t node) const noexcept;
+    void NoteActivityMutation(std::uint32_t node) noexcept {
+        if (activityMutation_ != UINT64_MAX) ++activityMutation_;
+        nodes_[node].activity = {};
+    }
     bool adopted_ = false;
 };
 

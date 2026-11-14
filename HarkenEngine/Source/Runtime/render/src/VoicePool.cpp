@@ -4602,6 +4602,19 @@ void VoicePool::ApplyBusTombstones(const std::uint8_t* alive,
     }
 }
 
+bool VoicePool::UsesRemovedSignalNodes(const SignalRenderPlan& previous,
+    const SignalRenderPlan& next, std::span<std::uint32_t> scratch) const noexcept {
+    for (const auto& slot : m_slots) {
+        const auto state = slot.state.load(std::memory_order_relaxed);
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting) continue;
+        const auto count = previous.MatchMember(slot.render.signalPath, scratch);
+        if (count == UINT32_MAX) return true;
+        for (std::uint32_t i = 0; i < count; ++i)
+            if (!next.ContainsNodeDefinition(previous, scratch[i])) return true;
+    }
+    return false;
+}
+
 void VoicePool::MarkPhysicalBusUsers(BusTree& buses) const noexcept {
     for (const auto& slot : m_slots) {
         const auto state = slot.state.load(std::memory_order_relaxed);

@@ -4,6 +4,75 @@
 
 namespace harken {
 
+void SignalRenderPlan::PrepareActivityObservation() {
+    std::array<ActivitySnapshot, 3> snapshots;
+    for (std::size_t i = 0; i < snapshots.size(); ++i) {
+        activityBuffers_[i].resize(nodes_.size());
+        snapshots[i].nodes = activityBuffers_[i].data();
+    }
+    activitySnapshot_.Initialize(snapshots);
+}
+
+bool SignalRenderPlan::CaptureActivityObservation(ActivityObservation& out) const noexcept {
+    try {
+        out.nodes.resize(nodes_.size());
+        const bool copied = activitySnapshot_.CaptureWith([&](const ActivitySnapshot& snapshot) noexcept {
+            out.publication = snapshot.publication;
+            out.history = snapshot.history;
+            out.mutation = snapshot.mutation;
+            out.blockSequence = snapshot.blockSequence;
+            std::copy_n(snapshot.nodes, out.nodes.size(), out.nodes.begin());
+        });
+        return copied && out.publication == publicationIdentity_ && out.blockSequence != 0;
+    } catch (...) { return false; }
+}
+
+bool SignalRenderPlan::NodeRecoveryReady(std::uint32_t index) const noexcept {
+    const auto& node = nodes_[index];
+    if (open_ || !committed_ || node.physicalMember || !node.processed) return false;
+    if (node.source != UINT32_MAX) {
+        const auto* pcm = exchange_.Source(exchange_.m_readBank, node.source);
+        for (std::size_t i = 0; i < exchange_.m_planeSamples; ++i)
+            if (std::bit_cast<std::uint32_t>(pcm[i]) != 0) return false;
+    }
+    if (node.target != UINT32_MAX) {
+        DuckingDormantState state;
+        if (!node.dormantInputsQuiet || !node.receiver.CaptureDormantState(format_.channels,
+                exchange_.HasTargetInput(node.target), node.dormantFeedback,
+                node.dormantSlope, node.dormantBoundMain, state)) return false;
+    }
+    return true;
+}
+
+void SignalRenderPlan::PublishActivityObservation() noexcept {
+    auto& snapshot = activitySnapshot_.BeginWrite();
+    snapshot.publication = publicationIdentity_;
+    snapshot.history = historyRevision_;
+    snapshot.mutation = activityMutation_;
+    snapshot.blockSequence = current_.epoch == UINT64_MAX ? 0 : current_.epoch + 1;
+    for (std::uint32_t i = 0; i < nodes_.size(); ++i)
+        snapshot.nodes[i].ready = (nodes_[i].source != UINT32_MAX || nodes_[i].target != UINT32_MAX) &&
+            historyRevision_ != UINT64_MAX && activityMutation_ != UINT64_MAX && NodeRecoveryReady(i);
+    for (std::uint32_t i = 0; i < relations_.size(); ++i) {
+        const auto& gain = exchange_.m_connections[i].gain;
+        if (gain.remainingFrames != 0 || !std::isfinite(gain.current) || !std::isfinite(gain.target)) {
+            snapshot.nodes[relations_[i].source].ready = false;
+            snapshot.nodes[relations_[i].target].ready = false;
+        }
+    }
+    for (std::uint32_t i = 0; i < nodes_.size(); ++i) {
+        auto& next = snapshot.nodes[i];
+        const auto& prior = nodes_[i].activity;
+        // A fixed point first observed at block end does not prove that the
+        // preceding recovery interval was already quiet.
+        next.quietFrames = next.ready && prior.ready
+            ? (current_.frames > UINT64_MAX - prior.quietFrames ? UINT64_MAX : prior.quietFrames + current_.frames)
+            : 0;
+        nodes_[i].activity = next;
+    }
+    activitySnapshot_.EndWrite();
+}
+
 struct SignalRenderPlan::DormantState {
     struct Node {
         SignalRenderNodeInput definition;
@@ -26,6 +95,8 @@ struct SignalRenderPlan::DormantState {
     // Only audio writes the payload, once. The control owner can read after
     // the sleep ACK; queued wakes use this independent publication fence.
     std::uint64_t historyRevision = 0;
+    std::uint64_t observedHistory = 0, observedMutation = 0, observedBlock = 0;
+    bool sleepProof = false;
     std::atomic<bool> captured{false};
 };
 
@@ -79,6 +150,41 @@ std::shared_ptr<SignalRenderPlan::DormantState> SignalRenderPlan::PrepareDormant
         }
         return result;
     } catch (...) { return {}; }
+}
+
+bool SignalRenderPlan::PrepareSleepObservation(const SignalRenderPlan& previous,
+    DormantState& state, std::uint64_t& blockSequence, bool& removesNodes) const noexcept {
+    removesNodes = !state.nodes.empty();
+    if (!removesNodes) return true;
+    if (state.sourcePublication != previous.publicationIdentity_ || state.sleepPublication != publicationIdentity_)
+        return false;
+    ActivityObservation observation;
+    if (!previous.CaptureActivityObservation(observation) ||
+        (blockSequence != 0 && observation.blockSequence != blockSequence) ||
+        observation.history == UINT64_MAX || observation.mutation == UINT64_MAX) return false;
+    for (const auto& node : state.nodes)
+        if (node.prior >= observation.nodes.size() || !observation.nodes[node.prior].ready ||
+            observation.nodes[node.prior].quietFrames < format_.sampleRate / 2) return false;
+    blockSequence = observation.blockSequence;
+    state.observedHistory = observation.history;
+    state.observedMutation = observation.mutation;
+    state.observedBlock = observation.blockSequence;
+    state.sleepProof = true;
+    return true;
+}
+
+bool SignalRenderPlan::ValidateSleepObservation(const SignalRenderPlan& previous,
+    const DormantState& state) const noexcept {
+    if (state.nodes.empty()) return true;
+    if (!state.sleepProof || previous.open_ || !previous.committed_ ||
+        state.sourcePublication != previous.publicationIdentity_ || state.sleepPublication != publicationIdentity_ ||
+        state.observedHistory != previous.historyRevision_ || state.observedMutation != previous.activityMutation_ ||
+        previous.previous_.epoch == UINT64_MAX || previous.previous_.epoch + 1 < state.observedBlock) return false;
+    for (const auto& node : state.nodes)
+        if (node.prior >= previous.nodes_.size() || !previous.nodes_[node.prior].activity.ready ||
+            previous.nodes_[node.prior].activity.quietFrames < format_.sampleRate / 2 ||
+            !previous.NodeRecoveryReady(node.prior)) return false;
+    return true;
 }
 
 bool SignalRenderPlan::CaptureDormantState(SignalRenderPlan& previous,
@@ -269,11 +375,21 @@ bool SignalRenderPlan::AdoptContinuityFrom(SignalRenderPlan& previous) noexcept 
     if (mapping->exchangeContinuous) exchange_.Swap(previous.exchange_);
     else if (!exchange_.AdoptMappedContinuityFrom(previous.exchange_, mapping->sources, mapping->connections))
         return false;
+    for (std::size_t i = 0; i < mapping->nodes.size(); ++i) {
+        const auto prior = mapping->nodes[i];
+        if (prior != UINT32_MAX && nodes_[i].attackMs == previous.nodes_[prior].attackMs &&
+            nodes_[i].releaseMs == previous.nodes_[prior].releaseMs)
+            nodes_[i].activity = previous.nodes_[prior].activity;
+    }
     for (std::size_t i = 0; i < mapping->receivers.size(); ++i)
         if (mapping->receivers[i] != UINT32_MAX)
             nodes_[i].receiver.AdoptStateFrom(previous.nodes_[mapping->receivers[i]].receiver);
     for (std::uint32_t i = 0; i < relations_.size(); ++i) {
         const auto prior = mapping->exchangeContinuous ? i : mapping->connections[i];
+        if (prior == UINT32_MAX || relations_[i].level != previous.relations_[prior].level) {
+            nodes_[relations_[i].source].activity = {};
+            nodes_[relations_[i].target].activity = {};
+        }
         if (prior != UINT32_MAX && relations_[i].level != previous.relations_[prior].level) {
             const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
             assert(changed); (void)changed;

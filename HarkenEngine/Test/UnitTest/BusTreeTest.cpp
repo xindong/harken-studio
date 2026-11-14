@@ -1181,6 +1181,90 @@ TEST(BusActivity, PendingSleepAllowsExplicitContentReplacementOnEitherBranch) {
     }
 }
 
+TEST(BusActivity, SignalOnlySleepWaitsForFreshHoldAndRejectsLateMembersOrMutation) {
+    using namespace harken;
+    for (unsigned late = 0; late != 3; ++late) {
+        SCOPED_TRACE(late);
+        EngineSession session(MakeNullConfig(2, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        auto& buses = engine.buses;
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(630), VN_BUS_MASTER));
+        engine.nullBackend.Pump(1);
+        const std::array working{BusTree::WorkBinding{buses.RefAt(0), buses.AcceptedWorkRef(buses.RefAt(0))},
+            BusTree::WorkBinding{buses.RefAt(1), buses.AcceptedWorkRef(buses.RefAt(1))}};
+        std::array<SignalRenderNodeInput, 4> nodes{};
+        for (unsigned i = 0; i < 2; ++i) {
+            nodes[i].busIndex = i;
+            nodes[i].stableId = nodes[i].busId = buses.IdAt(i);
+            nodes[i].busGeneration = buses.GenerationAt(i);
+        }
+        for (unsigned i = 2; i < 4; ++i) {
+            nodes[i].kind = SignalEndpointKindV1::Sound;
+            nodes[i].stableId = harkentest::ObjectId(630 + i);
+        }
+        nodes[3].receiver = true;
+        const std::array relations{SignalConnectionInput{2, 3, 1, harkentest::ObjectId(634)}};
+        const SignalMemberProof member{nodes[2].stableId, 77, {}, 2};
+        const auto publish = [&](BusActivityPlan* candidate) {
+            ASSERT_NE(candidate, nullptr);
+            CommandRecord command{};
+            command.opcode = kOpcodeSetBusActivity;
+            CommandQueue::BatchReservation reservation;
+            CommandQueue::PreparedBatchProof proof;
+            ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+            ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof));
+            ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *buses.ActivityAttachment(candidate)));
+            ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+        };
+        auto original = SignalRenderPlan::Prepare({2, 64, 48000, VN_CHANNEL_LAYOUT_STEREO},
+            nodes, relations, {}, {&member, 1});
+        ASSERT_NE(original, nullptr);
+        original->EnableActualRouting(2);
+        ASSERT_TRUE(original->ConfigurePublication(801, 81, nullptr, 64));
+        publish(buses.PrepareActivity(buses.AcceptedTopology(), working, std::move(original)));
+        engine.nullBackend.Pump(100);
+        const auto* previous = buses.AcceptedActivitySignals();
+        const std::uint32_t retained[]{0, 1};
+        auto projected = previous->PrepareProjection(retained, 2);
+        ASSERT_NE(projected, nullptr);
+        ASSERT_TRUE(projected->ConfigurePublication(802, 81, previous, 64));
+        auto* sleep = buses.PrepareActivity(buses.AcceptedTopology(), working, std::move(projected));
+        ASSERT_NE(sleep, nullptr);
+        EXPECT_FALSE(buses.PrepareConditionalSleep(*sleep, {}, engine.voices));
+        engine.nullBackend.Pump(400);
+        ASSERT_TRUE(buses.PrepareConditionalSleep(*sleep, {}, engine.voices));
+        if (late == 1) ASSERT_TRUE(buses.InstalledSignals()->SetConnectionLevel(0, .5f, 0));
+        if (late == 2) {
+            const auto samples = harkentest::MakeDC(4096, .25f);
+            const auto desc = MonoDesc(samples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(nodes[2].stableId, &desc));
+            const auto pcm = engine.registry.Lookup(nodes[2].stableId);
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 1, false, 0, 0, 0,
+                ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 0,
+                ResampleProfile::LegacyCompatibility, &voice, buses.GenerationAt(0)));
+            PlaybackPathRow path;
+            path.rowKind = ResolvedPlayablePathRowKindV1::Definition;
+            path.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
+            path.stableId = member.stableId;
+            path.propertyFingerprint = member.propertyFingerprint;
+            ASSERT_TRUE(engine.voices.BindPreparedSignalPath(voice, {&path, 1}));
+            // An earlier Play in the same audio drain has not rendered a block
+            // yet. The completed silence snapshot alone cannot permit sleep.
+            engine.voices.ApplyPlay(voice, voice, 0, 0);
+        }
+        publish(sleep);
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(sleep->sleepDecision.load(), late == 0 ? BusActivityPlan::SleepDecision::Accepted
+                                                        : BusActivityPlan::SleepDecision::Rejected);
+        EXPECT_EQ(buses.WorkingPlaneCount(), 2u);
+        EXPECT_EQ(buses.InstalledSignals()->NodeCount(), late == 0 ? 2u : 4u);
+        EXPECT_TRUE(buses.AcknowledgeSleep());
+        buses.DrainActivities();
+    }
+}
+
 TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     using namespace harken;
     EngineSession session(MakeNullConfig(2, 64, 48000));

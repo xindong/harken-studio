@@ -659,6 +659,8 @@ public:
     void ApplyVoiceSendSet(VoiceSendSet& set, const BusTree& buses) noexcept;
     // Audio coordinator after joining every worker; never a logic-side query.
     void MarkPhysicalBusUsers(BusTree& buses) const noexcept;
+    bool UsesRemovedSignalNodes(const SignalRenderPlan& previous, const SignalRenderPlan& next,
+        std::span<std::uint32_t> scratch) const noexcept;
     void CancelVoiceSendSet(VoiceSendSet& set) noexcept;
     void DrainVoiceSendSets() noexcept;
     std::uint64_t RetainedVoiceSendCount() const noexcept { return m_retainedVoiceSends; }

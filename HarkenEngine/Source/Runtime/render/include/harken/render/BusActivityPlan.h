@@ -87,6 +87,7 @@ struct BusActivityPlan {
     std::atomic<SleepDecision> sleepDecision{SleepDecision::None};
     std::vector<SleepingWork> sleeping;
     std::shared_ptr<SignalRenderPlan::DormantState> dormantSignals;
+    std::vector<std::uint32_t> sleepSignalScratch;
     std::unique_ptr<BusDormantRegistry> remainingDormant;
     struct PreparedEffects {
         BusSlotRef bus;

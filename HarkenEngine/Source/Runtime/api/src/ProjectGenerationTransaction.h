@@ -331,6 +331,7 @@ private:
         effectChains_.clear();
         effectSeeds_.clear();
         preparedWork_.clear();
+        preparedCold_.clear();
     }
 
     void MoveFrom(PreparedProjectGenerationV1& other) noexcept {
@@ -370,6 +371,7 @@ private:
         effectChains_ = std::move(other.effectChains_);
         effectSeeds_ = std::move(other.effectSeeds_);
         preparedWork_ = std::move(other.preparedWork_);
+        preparedCold_ = std::move(other.preparedCold_);
         other.ClearFields();
     }
 
@@ -409,6 +411,7 @@ private:
     std::vector<PreparedBusEffectChain> effectChains_;
     std::vector<EffectParamTargetStore::PreparedSeedToken> effectSeeds_;
     std::vector<BusTree::WorkBinding> preparedWork_;
+    std::vector<std::shared_ptr<const BusDormantWork>> preparedCold_;
 };
 
 ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(

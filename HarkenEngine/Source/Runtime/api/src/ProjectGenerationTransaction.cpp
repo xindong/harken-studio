@@ -1993,11 +1993,13 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     struct PreparedWork {
         Engine& engine;
         std::vector<BusTree::WorkBinding> rows;
+        std::vector<std::shared_ptr<const BusDormantWork>> sources;
         ~PreparedWork() { for (const auto& row : rows) engine.buses.ReleaseWorkRow(row.work); }
     } preparedWork{engine};
     try {
         effects.reserve(slotPlan.assignments.size() + slotPlan.removed.size());
         preparedWork.rows.reserve(slotPlan.assignments.size());
+        preparedWork.sources.reserve(slotPlan.assignments.size());
         const auto prepareChain = [&](BusSlotRef host,
             const std::array<PreviewEffectChainEntry, kMaxFxSlotsPerBus>& targets) -> VnResult {
             effects.emplace_back();
@@ -2013,6 +2015,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                     const auto status = engine.PrepareBusWorkState(host.index, row);
                     if (status != VN_OK) return status;
                     if (!engine.buses.RestoreDormantWork(row)) return VN_DEVICE_ERROR;
+                    preparedWork.sources.push_back(engine.buses.DormantWorkFor(host));
                     std::copy_n(row.fxSlotEffectRef, kMaxFxSlotsPerBus, refs.begin());
                 }
             }
@@ -2082,6 +2085,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     out.effectChains_ = std::move(effects);
     out.effectSeeds_ = std::move(seeds.tokens);
     out.preparedWork_ = std::move(preparedWork.rows);
+    out.preparedCold_ = std::move(preparedWork.sources);
     out.domain_ = engine.projectGenerationReservationDomain;
     out.domainEpoch_ = engine.projectGenerationReservationDomain->epoch;
     out.engine_ = &engine;
@@ -2166,9 +2170,11 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             (prepared.slotPlan_.neutralSlots[0] != 0) == PreviewOwnsSoleMasterV1(engine, prepared.slotPlan_.ownerId);
     };
     const auto effectSourceReady = [&]() noexcept {
-        for (const auto& row : prepared.preparedWork_)
-            if (!engine.buses.LogicRefMatches(row.bus) || engine.buses.AcceptedWorkRef(row.bus).Valid())
-                return false;
+        for (std::size_t i = 0; i < prepared.preparedWork_.size(); ++i) {
+            const auto& row = prepared.preparedWork_[i];
+            if (!engine.buses.LogicRefMatches(row.bus) || engine.buses.AcceptedWorkRef(row.bus).Valid() ||
+                engine.buses.DormantWorkFor(row.bus) != prepared.preparedCold_[i]) return false;
+        }
         for (const auto& row : prepared.effectChains_) {
             if (!engine.buses.CanCommitPreviewEffectChain(row) ||
                 HasPreviewEffectAttachment(engine, row.host) ||
@@ -2479,6 +2485,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     for (const auto& published : commands) engine.NoteBusSettingCommand(published);
     for (const auto& row : prepared.preparedWork_) engine.buses.ReleaseWorkRow(row.work);
     prepared.preparedWork_.clear();
+    prepared.preparedCold_.clear();
 
     ReleasePreparedSlot(engine, prepared.preparedPlanIndex_,
                         prepared.preparedOwnerSlot_);

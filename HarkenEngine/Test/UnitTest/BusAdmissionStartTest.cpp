@@ -2747,7 +2747,7 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
     using namespace harken;
     // Parameter update, identical publication, deletion, and a stale preparation
     // exercise the same accepted logical chain after its physical row retires.
-    for (unsigned change = 0; change != 4; ++change) {
+    for (unsigned change = 0; change != 5; ++change) {
         SCOPED_TRACE(change);
         AdmissionSession fixture;
         auto& engine = *fixture.session.Engine();
@@ -2769,7 +2769,7 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
         ASSERT_NE(state, nullptr);
         const auto oldRevision = state->revision;
         publication.Next(0);
-        if (change == 0 || change == 3) publication.parameters[0].value = -12;
+        if (change == 0 || change >= 3) publication.parameters[0].value = -12;
         if (change == 2) {
             publication.topology.busCount = publication.view.authoredBusCount = 1;
             publication.view.busFaderPositions = {publication.faders.data(), 1};
@@ -2784,7 +2784,7 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
         ASSERT_FALSE(engine.buses.AcceptedWorkRef(host).Valid());
         ASSERT_EQ(PrepareProjectGenerationV1(engine, publication.view, prepared).status,
             ProjectGenerationPrepareStatusV1::Ok);
-        if (change == 3) {
+        if (change >= 3) {
             CommandRecord command{};
             command.opcode = kOpcodeSetBusActivity;
             CommandQueue::BatchReservation reservation;
@@ -2793,6 +2793,10 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
             ASSERT_TRUE(PrepareTopologyActivity(engine, engine.buses.AcceptedTopology(),
                 reservation, {&command, 1}, proof, nullptr, false));
             ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+            if (change == 4) {
+                SleepLiveBus(engine, host);
+                ASSERT_FALSE(HasFatalFailure());
+            }
             const auto head = engine.commands.PublishedHead();
             EXPECT_EQ(CommitPreparedProjectGenerationV1(engine, prepared).status,
                 ProjectGenerationCommitStatusV1::InvalidPrepared);
@@ -2805,9 +2809,11 @@ TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwner
         engine.nullBackend.Pump(8);
         ASSERT_EQ(VN_OK, Vn_Update());
         EXPECT_EQ(state->update.phase.load(), EffectChainUpdate::Phase::Free);
-        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), change == 2 ? 0u : 1u);
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), change == 2 || change == 4 ? 0u : 1u);
         if (change == 2) {
             EXPECT_FALSE(engine.buses.FindRef(child).Valid());
+        } else if (change == 4) {
+            EXPECT_FALSE(engine.buses.AcceptedWorkRef(host).Valid());
         } else {
             const auto* work = engine.buses.BusState(host.index);
             ASSERT_NE(work, nullptr);

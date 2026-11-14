@@ -288,14 +288,23 @@ bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
             if (!RetainWorkRow(binding.work)) throw std::invalid_argument("expired sleep row");
             plan.sleeping.push_back({*fact, std::move(saved)});
         }
-        if (plan.sleeping.size() != observations.size() || plan.sleeping.empty() ||
+        if (plan.sleeping.size() != observations.size() ||
             plan.working.size() + plan.sleeping.size() != previous->working.size())
             throw std::invalid_argument("sleep must be a strict subset");
+        bool removesSignals = false;
         if (previous->signals != nullptr) {
             if (plan.signals == nullptr) throw std::invalid_argument("missing sleep signals");
+            for (std::uint32_t i = 0; i < plan.signals->NodeCount(); ++i)
+                if (!previous->signals->ContainsNodeDefinition(*plan.signals, i))
+                    throw std::invalid_argument("sleep introduced a signal node");
             plan.dormantSignals = plan.signals->PrepareDormantState(*previous->signals);
             if (!plan.dormantSignals) throw std::bad_alloc();
+            if (!plan.signals->PrepareSleepObservation(*previous->signals, *plan.dormantSignals, block, removesSignals))
+                throw std::invalid_argument("invalid signal sleep observation");
+            plan.sleepSignalScratch.resize(previous->signals->NodeCount());
         }
+        if (plan.sleeping.empty() && !removesSignals)
+            throw std::invalid_argument("sleep must remove work");
         plan.sleepDecision.store(BusActivityPlan::SleepDecision::Pending, std::memory_order_release);
         return true;
     } catch (...) {
@@ -340,6 +349,12 @@ bool BusTree::AcknowledgeSleep() noexcept {
     plan.dormantSignals.reset();
     m_pendingSleep = nullptr;
     return true;
+}
+
+std::shared_ptr<const BusDormantWork> BusTree::DormantWorkFor(BusSlotRef bus) const noexcept {
+    if (m_dormant != nullptr)
+        for (const auto& row : m_dormant->buses) if (row->bus == bus) return row;
+    return {};
 }
 
 bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
@@ -454,7 +469,9 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
             }
         }
         if (plan.dormantSignals != nullptr &&
-            !plan.signals->CaptureDormantState(*plan.sleepPrevious->signals, *plan.dormantSignals)) return reject();
+            (!plan.signals->ValidateSleepObservation(*plan.sleepPrevious->signals, *plan.dormantSignals) ||
+             plan.sleepVoices->UsesRemovedSignalNodes(*plan.sleepPrevious->signals, *plan.signals, plan.sleepSignalScratch) ||
+             !plan.signals->CaptureDormantState(*plan.sleepPrevious->signals, *plan.dormantSignals))) return reject();
     }
     auto* previousSignals = InstalledSignals();
     if (plan.signalTransition == SignalTransition::ReplaceContent) {

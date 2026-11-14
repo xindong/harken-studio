@@ -6,6 +6,7 @@
 #ifndef HARKEN_CORE_PINNED_SNAPSHOT3_H
 #define HARKEN_CORE_PINNED_SNAPSHOT3_H
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -33,23 +34,36 @@ public:
         m_lastPublished = m_writeIndex;
     }
 
-    bool Capture(Payload& out) const {
+    // Owner-only initialization before either thread can access this object.
+    // Indirect storage must remain alive and retain one buffer per slot.
+    void Initialize(const std::array<Payload, 3>& slots) noexcept {
+        for (std::uint32_t i = 0; i < kSlotCount; ++i) m_slots[i] = slots[i];
+    }
+
+    // Copy indirect payload bytes while the slot is still pinned. The callback
+    // must not retain references or pointers into the published storage.
+    template<class Copy>
+    bool CaptureWith(Copy&& copy) const noexcept {
+        static_assert(std::is_nothrow_invocable_v<Copy, const Payload&>);
         for (int attempt = 0; attempt < kCaptureAttempts; ++attempt) {
-            const std::uint32_t candidate =
-                m_published.load(std::memory_order_seq_cst);
+            const std::uint32_t candidate = m_published.load(std::memory_order_seq_cst);
             m_pin.store(candidate, std::memory_order_seq_cst);
             if (m_published.load(std::memory_order_seq_cst) != candidate) {
                 m_pin.store(kNoPin, std::memory_order_release);
                 continue;
             }
-            Payload scratch{};
-            std::memcpy(&scratch, &m_slots[candidate], sizeof scratch);
+            copy(static_cast<const Payload&>(m_slots[candidate]));
             m_pin.store(kNoPin, std::memory_order_release);
-            out = scratch;
             return true;
         }
         m_pin.store(kNoPin, std::memory_order_release);
         return false;
+    }
+
+    bool Capture(Payload& out) const noexcept {
+        return CaptureWith([&](const Payload& value) noexcept {
+            std::memcpy(&out, &value, sizeof out);
+        });
     }
 
 private:
