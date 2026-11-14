@@ -54,10 +54,12 @@ public:
     PreparedBusCommandBatch(const PreparedBusCommandBatch&) = delete;
     PreparedBusCommandBatch& operator=(const PreparedBusCommandBatch&) = delete;
     bool Prepare(std::span<const CommandRecord> commands) noexcept;
+    bool PrepareWake() noexcept;
     void Publish() noexcept;
 private:
     Engine& engine_;
     std::span<const CommandRecord> commands_;
+    CommandRecord wakeCommand_{};
     CommandQueue::BatchReservation reservation_{};
     CommandQueue::PreparedBatchProof proof_;
 };

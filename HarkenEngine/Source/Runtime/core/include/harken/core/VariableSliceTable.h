@@ -166,6 +166,10 @@ public:
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
+    // Logic-owned pending payloads keep exact target incarnations alive until
+    // application is acknowledged; retained history alone is not a user.
+    bool VisitPendingTargets(void* context,
+        bool (*visit)(void*, VariableSliceRef, const VariableTargetLocator&)) const;
     bool Publish(VariableSliceRef ref) noexcept;
     bool CanPublishPrepared(VariableSliceRef ref, bool allowPreparedSources = false) const noexcept;
     VariableSliceInvalidationResult Invalidate(
@@ -176,7 +180,8 @@ public:
                void (*apply)(void*,
                              const VariableSliceTarget&) noexcept,
                std::uint64_t settledCommandFrontier = UINT64_MAX,
-               std::uint64_t settledInitialSourceFrontier = UINT64_MAX) noexcept;
+               std::uint64_t settledInitialSourceFrontier = UINT64_MAX,
+               bool (*ready)(void*, const VariableSliceTarget&) noexcept = nullptr) noexcept;
     VariableSliceState State(VariableSliceRef ref) const noexcept;
     std::uint64_t AppliedBlockSequence(VariableSliceRef ref) const noexcept;
     std::uint32_t TargetCount(VariableSliceRef ref) const noexcept;

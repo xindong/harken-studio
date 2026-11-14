@@ -3594,7 +3594,9 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.state = RowState::SlicePrepared;
             SyncBatchState(row);
         }
-        if (!slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
+        PreparedBusCommandBatch wake(engine);
+        if ((!row.reserved && !wake.PrepareWake()) ||
+            !slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
                 row.requiredInitialSourceFrontier) ||
             !PinHistorySlice(row) || (row.used && !slices_.Publish(row.slice))) {
             cancelPlacement();
@@ -3605,6 +3607,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.preparedEngine = &engine;
             continue;
         }
+        wake.Publish();
         const bool released = timeline_.ReleaseHeldCurrentSlice(&held);
         assert(released);
         (void)released;

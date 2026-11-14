@@ -703,7 +703,15 @@ void MixerLoop::ApplyStagedCurrentSlices(
                             target.toneBand)) return;
                     mixer->ApplyCommandRecord(target.command, 0);
                 }
-            }, m_commands.SettledFrontier(), m_commands.InitialSourceSettledFrontier());
+            }, m_commands.SettledFrontier(), m_commands.InitialSourceSettledFrontier(),
+            [](void* context, const VariableSliceTarget& target) noexcept {
+                auto& buses = static_cast<ApplyContext*>(context)->mixer->m_buses;
+                if (target.locator.scope != VariableTargetScope::Bus &&
+                    target.locator.scope != VariableTargetScope::BusEffect) return true;
+                const BusSlotRef host{static_cast<std::uint32_t>(target.locator.object),
+                    target.locator.objectGeneration};
+                return !buses.AudioRefMatches(host) || buses.BusState(host.index) != nullptr;
+            });
         const auto state = m_variableSlices->State(ref);
         if (state != VariableSliceState::PageCommitted && state != VariableSliceState::AudioClaimed)
             pending.active = false;

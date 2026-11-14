@@ -269,7 +269,8 @@ TEST(VariableSliceTable, FailedSourceRejectsWholeDependentSliceButIndependentSli
     ASSERT_EQ(harken::VariableSliceInvalidationResult::InvalidatedBeforeClaim, table.Invalidate(source, 1));
     ApplyProbe probe{};
     EXPECT_FALSE(table.Apply(source, 4, &probe, ValidateTarget, ApplyCommand));
-    EXPECT_FALSE(table.Apply(dependent, 4, &probe, ValidateTarget, ApplyCommand));
+    EXPECT_FALSE(table.Apply(dependent, 4, &probe, ValidateTarget, ApplyCommand,
+        UINT64_MAX, UINT64_MAX, [](void*, const harken::VariableSliceTarget&) noexcept { return false; }));
     EXPECT_EQ(0u, probe.validationCount);
     EXPECT_EQ(0u, probe.applyCount);
     EXPECT_EQ(harken::VariableSliceState::Invalidated, table.State(dependent));
@@ -283,6 +284,47 @@ TEST(VariableSliceTable, FailedSourceRejectsWholeDependentSliceButIndependentSli
     EXPECT_TRUE(table.Reclaim(source, 5));
     EXPECT_FALSE(table.SourceApplied(proof));
     EXPECT_EQ(4u, table.FreeTargetCapacity() + table.TargetCount(independent));
+}
+
+TEST(VariableSliceTable, UnreadyTargetDefersWholeSliceAndAcknowledgementEndsTargetOwnership) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(2, 2, 4));
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 2, 1, &ref));
+    FillTargets(table, ref, 2);
+    const auto countTargets = [&]() {
+        std::uint32_t count = 0;
+        EXPECT_TRUE(table.VisitPendingTargets(&count,
+            [](void* context, harken::VariableSliceRef, const harken::VariableTargetLocator&) {
+                ++*static_cast<std::uint32_t*>(context);
+                return true;
+            }));
+        return count;
+    };
+    EXPECT_EQ(2u, countTargets());
+    ASSERT_TRUE(table.Publish(ref));
+    ApplyProbe probe{};
+    EXPECT_FALSE(table.Apply(ref, 4, &probe, ValidateTarget, ApplyCommand,
+        UINT64_MAX, UINT64_MAX, [](void*, const harken::VariableSliceTarget& target) noexcept {
+            return target.locator.targetId == 0;
+        }));
+    EXPECT_EQ(0u, probe.validationCount);
+    EXPECT_EQ(0u, probe.applyCount);
+    EXPECT_EQ(harken::VariableSliceState::PageCommitted, table.State(ref));
+    EXPECT_EQ(2u, countTargets());
+    ASSERT_TRUE(table.Apply(ref, 5, &probe, ValidateTarget, ApplyCommand,
+        UINT64_MAX, UINT64_MAX, [](void*, const harken::VariableSliceTarget&) noexcept { return true; }));
+    EXPECT_EQ(2u, probe.applyCount);
+    EXPECT_EQ(2u, countTargets());
+    ASSERT_TRUE(table.Acknowledge(ref));
+    EXPECT_EQ(0u, countTargets());
+    ASSERT_TRUE(table.Reclaim(ref, 6));
+    ASSERT_TRUE(ReserveTargets(table, 1, 2, &ref));
+    FillTargets(table, ref, 1);
+    ASSERT_TRUE(table.Publish(ref));
+    EXPECT_EQ(1u, countTargets());
+    EXPECT_EQ(harken::VariableSliceInvalidationResult::InvalidatedBeforeClaim, table.Invalidate(ref, 6));
+    EXPECT_EQ(0u, countTargets());
 }
 
 TEST(VariableSliceTable, AppliedSourceStaysPinnedUntilDependentReclaimAndRejectsWrongIdentity) {

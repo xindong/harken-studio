@@ -7032,6 +7032,8 @@ struct ImmediateActionPlan {
     harken::CommandQueue::PreparedBatchDispositionReceipt playCommandsDisposition;
     bool playCommandsReserved = false;
     bool playCommandsCancelledUnpublished = false;
+    bool prepareActivityAfterSources = false;
+    std::optional<harken::PreparedBusCommandBatch> busWake;
     std::uint32_t variableWriteCount = 0;
     std::uint32_t deferredCount = 0;
     std::uint32_t deferredPreparedCount = 0;
@@ -8024,7 +8026,8 @@ void PublishTimelineEffectMirror(harken::Engine& engine,
 bool PrepareVoiceCommandBatch(harken::Engine& engine,
     harken::CommandQueue::BatchReservation* reservation,
     std::span<const harken::CommandRecord> commands,
-    harken::CommandQueue::PreparedBatchDispositionReceipt* disposition = nullptr) noexcept {
+    harken::CommandQueue::PreparedBatchDispositionReceipt* disposition = nullptr,
+    bool prepareActivity = true) noexcept {
     auto& proof = engine.preparedVoiceCommandBatchProof;
     if (proof.Valid()) return false;
     proof.Release();
@@ -8087,7 +8090,7 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
         proof.Release();
         return false;
     }
-    if (!harken::PrepareBusActivityWake(engine, *reservation, commands, proof)) {
+    if (prepareActivity && !harken::PrepareBusActivityWake(engine, *reservation, commands, proof)) {
         proof.Release();
         return false;
     }
@@ -80179,6 +80182,19 @@ bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
                 EnginePlayableServiceRow*, EnginePreparedTimelineVoiceStart& start) {
                 return prepared(start.renderHandle);
             })) return false;
+        struct SliceRoots { const TopologyPlanView& topology; BusActivityRoots& roots; };
+        SliceRoots sliceRoots{topology, next};
+        if (!engine.variableSlices.VisitPendingTargets(&sliceRoots,
+            [](void* context, VariableSliceRef, const VariableTargetLocator& target) {
+                auto& data = *static_cast<SliceRoots*>(context);
+                if (target.scope != VariableTargetScope::Bus && target.scope != VariableTargetScope::BusEffect)
+                    return true;
+                if (target.object >= data.topology.slotCount) return true;
+                const auto bus = static_cast<std::uint32_t>(target.object);
+                if (data.topology.alive[bus] && data.topology.generations[bus] == target.objectGeneration)
+                    data.roots.buses.push_back({bus, target.objectGeneration});
+                return true;
+            })) return false;
         const auto setting = [&](std::uint32_t bus, std::uint32_t generation) {
             if (bus < topology.slotCount)
                 route({bus, generation != 0 ? generation : topology.generations[bus]}, 0, false);
@@ -86432,9 +86448,24 @@ void CancelImmediateActionPreparedVariables(
 
 bool SealImmediateActionVariableSources(ImmediateActionPlan& plan) noexcept {
     if (plan.engine == nullptr) return false;
-    return plan.deferredParentFiring != 0
-        ? plan.engine->variables.SealPreparedActionSources(*plan.engine, plan.deferredChildIdentity)
-        : plan.engine->variables.SealPreparedActionSources(plan.originalSingleIssue);
+    auto& engine = *plan.engine;
+    const bool sealed = plan.deferredParentFiring != 0
+        ? engine.variables.SealPreparedActionSources(engine, plan.deferredChildIdentity)
+        : engine.variables.SealPreparedActionSources(plan.originalSingleIssue);
+    if (!sealed) { plan.result = VN_STALE_HANDLE; return false; }
+    bool ready = true;
+    if (plan.playCommandsReserved) {
+        ready = harken::PrepareBusActivityWake(engine, plan.playCommands,
+            {engine.actionPlayCommandScratch.data(), plan.playCommandCount}, engine.preparedVoiceCommandBatchProof);
+    } else if (plan.queueReplacementCommandsReserved) {
+        ready = harken::PrepareBusActivityWake(engine, plan.queueReplacementCommands,
+            {engine.playLedBatchScratch.data(), plan.queueReplacementCommandCount}, engine.preparedVoiceCommandBatchProof);
+    } else {
+        plan.busWake.emplace(engine);
+        ready = plan.busWake->PrepareWake();
+    }
+    if (!ready) plan.result = VN_BACKPRESSURE;
+    return ready;
 }
 
 bool FinishOrdinaryDeferredRollback(
@@ -104851,7 +104882,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
               singleSource) ||
           !PrepareVoiceCommandBatch(engine, &plan->playCommands,
               {engine.actionPlayCommandScratch.data(), plan->playCommandCount},
-              &plan->playCommandsDisposition)))) {
+              &plan->playCommandsDisposition, !plan->prepareActivityAfterSources)))) {
         (void)ReleaseImmediateActionStops(*plan);
         for (std::uint32_t prior = preparedCount;
              prior-- > 0;) {
@@ -107970,7 +108001,8 @@ bool ReserveImmediateActionCommandHead(void* opaque, std::uint32_t count) noexce
     if (plan->nativeMusicResetPlaysFirst && plan->playCommandCount != 0 && !plan->playCommandsReserved) {
         if (!ReserveVoiceCommandTransport(engine, plan->playCommandCount, &plan->playCommands) ||
             !PrepareVoiceCommandBatch(engine, &plan->playCommands,
-                {engine.actionPlayCommandScratch.data(), plan->playCommandCount}, &plan->playCommandsDisposition)) {
+                {engine.actionPlayCommandScratch.data(), plan->playCommandCount}, &plan->playCommandsDisposition,
+                !plan->prepareActivityAfterSources)) {
             engine.commands.CancelReservedBatch(&plan->playCommands);
             plan->result = VN_BACKPRESSURE;
             return false;
@@ -107992,8 +108024,10 @@ bool ReserveImmediateActionCommandHead(void* opaque, std::uint32_t count) noexce
     return matched;
 }
 
-void ReleaseImmediateActionCommandHead(void*, std::uint32_t) noexcept {
-    // Reverse bundle release returns the actual reservation through its owner.
+void ReleaseImmediateActionCommandHead(void* opaque, std::uint32_t) noexcept {
+    // Play/replacement reservations return through their original owner.
+    auto* plan = static_cast<ImmediateActionPlan*>(opaque);
+    if (plan != nullptr) plan->busWake.reset();
 }
 
 void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
@@ -108062,6 +108096,10 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
         else
             engine.commands.CancelReservedBatch(&plan->queueReplacementCommands);
         plan->queueReplacementCommandsReserved = false;
+    }
+    if (plan->busWake) {
+        if (ownersCommitted) plan->busWake->Publish();
+        plan->busWake.reset();
     }
     if (ownersCommitted) {
         for (auto& row : engine.playableServices) {
@@ -110226,7 +110264,8 @@ bool ReserveImmediateActionQueueReplacements(
                 plan->queueReplacementCommandCount,
                 &plan->queueReplacementCommands) ||
             !PrepareVoiceCommandBatch(*plan->engine, &plan->queueReplacementCommands,
-                {plan->engine->playLedBatchScratch.data(), plan->queueReplacementCommandCount})) {
+                {plan->engine->playLedBatchScratch.data(), plan->queueReplacementCommandCount}, nullptr,
+                !plan->prepareActivityAfterSources)) {
             for (std::uint32_t prior = plan->queueReplacementCount;
                  prior-- > 0;) {
                 (void)ReleaseImmediateActionQueueReplacement(
@@ -111358,6 +111397,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     plan.playbackRequest = firing.playbackRequest;
     plan.emitterOrigin = firing.emitterOrigin;
     plan.engine = &engine;
+    plan.prepareActivityAfterSources = true;
     const auto cleanup = [&]() noexcept -> VnResult {
         if (plan.originalActionFiringFactoryCommitted && !plan.originalActionFiringCommitSucceeded) {
             engine.runtimeRecreateRequired = true;
@@ -111525,7 +111565,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     }
     if (!SealImmediateActionVariableSources(plan)) {
         bundle.Abandon();
-        return finish(ActionStepState::Failed, VN_STALE_HANDLE, ActionTerminalReason::TargetGone);
+        return finish(ActionStepState::Failed, plan.result, ActionDeferredTerminalReason(plan.result));
     }
     if (plan.nativeResetScope.Valid() || plan.continuationResetPrepared) {
         harken::LogicCommitSequence accepted = 0;
@@ -121167,6 +121207,7 @@ VnResult harken::detail::PostActionWithValidation(
         ImmediateActionPlan plan{};
         plan.playbackRequest = request;
         plan.engine = engine;
+        plan.prepareActivityAfterSources = true;
         plan.emitter = desc->emitter == 0 ? engine->emitters.DefaultState()
                                           : desc->emitter;
         plan.emitterOrigin = engine->monitorEmitters.CaptureOrigin(plan.emitter);
@@ -121385,7 +121426,7 @@ VnResult harken::detail::PostActionWithValidation(
                 }
                 if (!SealImmediateActionVariableSources(plan)) {
                     bundle.Abandon();
-                    return VN_STALE_HANDLE;
+                    return plan.result;
                 }
                 bool committedOriginalBundle = false;
                 if (plan.nativeResetScope.Valid() || plan.continuationResetPrepared) {

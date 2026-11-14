@@ -371,6 +371,25 @@ std::uint64_t VariableSliceTable::EffectiveFrame(VariableSliceRef ref) const noe
     return row == nullptr ? 0 : row->effectiveFrame;
 }
 
+bool VariableSliceTable::VisitPendingTargets(void* context,
+    bool (*visit)(void*, VariableSliceRef, const VariableTargetLocator&)) const {
+    if (visit == nullptr) return false;
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        const auto& row = rows_[slot];
+        const auto state = row.state.load(std::memory_order_acquire);
+        if (state != VariableSliceState::Prepared && state != VariableSliceState::PageCommitted &&
+            state != VariableSliceState::AudioClaimed &&
+            !(state == VariableSliceState::SliceApplied && !row.logicAcknowledged)) continue;
+        const VariableSliceRef ref{slot,
+            static_cast<std::uint32_t>(row.identity.load(std::memory_order_acquire) >> 32)};
+        const auto* payload = ResolvePayload(&row);
+        if (payload == nullptr) continue;
+        for (std::uint32_t i = 0; i < payload->targetCount; ++i)
+            if (!visit(context, ref, payload->targets[i].locator)) return false;
+    }
+    return true;
+}
+
 bool VariableSliceTable::SetPreparedCommandFrontier(VariableSliceRef ref,
     std::uint64_t frontier, std::uint64_t initialSourceFrontier) noexcept {
     auto* row = Resolve(ref);
@@ -473,7 +492,8 @@ bool VariableSliceTable::Apply(
     bool (*validate)(void*, const VariableSliceTarget&) noexcept,
     void (*apply)(void*, const VariableSliceTarget&) noexcept,
     std::uint64_t settledCommandFrontier,
-    std::uint64_t settledInitialSourceFrontier) noexcept {
+    std::uint64_t settledInitialSourceFrontier,
+    bool (*ready)(void*, const VariableSliceTarget&) noexcept) noexcept {
     Row* row = Resolve(ref);
     if (row == nullptr || blockSequence == 0 || validate == nullptr || apply == nullptr) {
         return false;
@@ -497,6 +517,16 @@ bool VariableSliceTable::Apply(
             else if (state != VariableSliceState::SliceApplied) waiting = true;
         }
         if (waiting && !failed) return false;
+        // Unavailable physical targets defer the whole slice before its claim.
+        // Invalid sources/payloads still follow the existing rejection path.
+        const auto* pending = ResolvePayload(row);
+        if (!failed && ready != nullptr && pending != nullptr &&
+            pending->targetCount == pending->targetSpanCapacity &&
+            pending->targetSpanOffset <= targetPoolCapacity_ &&
+            pending->targetCount <= targetPoolCapacity_ - pending->targetSpanOffset) {
+            for (std::uint32_t i = 0; i < pending->targetCount; ++i)
+                if (!ready(context, pending->targets[i])) return false;
+        }
     }
     VariableSliceState expected = VariableSliceState::PageCommitted;
     if (!row->state.compare_exchange_strong(

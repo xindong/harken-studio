@@ -1,6 +1,7 @@
 #include "harken/param/MeterProbe.h"
 
 #include "Engine.h"
+#include "SignalPublication.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/param/ParamTargetTable.h"
 #include "harken/dsp/GainRamp.h"
@@ -536,15 +537,17 @@ bool MeterProbeSystem::CaptureAndScheduleWithdrawalChunk(
     input.kind = CurrentSliceKind::MeterProbeWithdrawal;
     input.slice = {probe.withdrawalSlice.slot,
                    probe.withdrawalSlice.generation};
-    const ReserveResult reserved = engine.timelinePool.ReserveCurrentSlice(
-        input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame,
-        nextOpenFrame);
-    if (reserved.status != ReserveStatus::Committed) {
+    HeldCurrentSliceToken held;
+    const ReserveResult reserved = engine.timelinePool.ReserveHeldCurrentSlice(
+        input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, nextOpenFrame, &held);
+    if (reserved.status != ReserveStatus::Committed) return false;
+    PreparedBusCommandBatch wake(engine);
+    if (!engine.timelinePool.CanReleaseHeldCurrentSlice(held) ||
+        !engine.variableSlices.CanPublishPrepared(probe.withdrawalSlice) || !wake.PrepareWake())
         return false;
-    }
-    if (!engine.variableSlices.Publish(probe.withdrawalSlice)) {
-        std::terminate();
-    }
+    if (!engine.variableSlices.Publish(probe.withdrawalSlice)) std::terminate();
+    wake.Publish();
+    if (!engine.timelinePool.ReleaseHeldCurrentSlice(&held)) std::terminate();
     probe.withdrawalPageCommitted = true;
     ReleaseWithdrawalChunkRows(engine, probe);
     engine.variables.PublishPreparedPlaybackPages(

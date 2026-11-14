@@ -342,8 +342,9 @@ bool AcknowledgeBusSleep(Engine& engine) noexcept {
     return true;
 }
 
-bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
-    std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept {
+static bool SelectBusActivityWake(Engine& engine, std::span<const CommandRecord> commands,
+    BusActivitySelection& selected, bool& changed) noexcept {
+    changed = false;
     const auto topology = engine.buses.AcceptedTopology();
     const auto* current = engine.buses.AcceptedActivity();
     // Bootstrap and the complete projection already own every possible route.
@@ -394,7 +395,6 @@ bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& rese
                 engine.voices.IsAlive((static_cast<std::uint64_t>(route.sourceGeneration) << 32) | route.sourceIndex))
                 roots.buses.push_back(target);
         });
-        BusActivitySelection selected;
         if (!PrepareBusActivitySelection(topology, topology.signals, roots.buses, roots.signals,
                 detectors, roots.members, selected)) return false;
         if (engine.buses.PendingSleep() == nullptr && selected.buses == current->order &&
@@ -402,8 +402,31 @@ bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& rese
              std::all_of(selected.signalNodes.begin(), selected.signalNodes.end(), [&](auto node) {
                 return current->signals->ContainsNodeDefinition(*topology.signals, node);
              })))) return true;
-        return PrepareTopologyActivity(engine, topology, reservation, commands, proof, &selected, false);
+        changed = true;
+        return true;
     } catch (...) { return false; }
+}
+
+bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
+    std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept {
+    BusActivitySelection selected;
+    bool changed = false;
+    if (!SelectBusActivityWake(engine, commands, selected, changed)) return false;
+    return !changed || PrepareTopologyActivity(engine, engine.buses.AcceptedTopology(),
+        reservation, commands, proof, &selected, false);
+}
+
+bool PreparedBusCommandBatch::PrepareWake() noexcept {
+    if (proof_.Valid()) return false;
+    BusActivitySelection selected;
+    bool changed = false;
+    if (!SelectBusActivityWake(engine_, {}, selected, changed)) return false;
+    if (!changed) return true;
+    wakeCommand_.opcode = kOpcodeSetBusActivity;
+    commands_ = {&wakeCommand_, 1};
+    return engine_.commands.ReserveBatch(1, &reservation_) &&
+        PrepareTopologyActivity(engine_, engine_.buses.AcceptedTopology(), reservation_,
+            commands_, proof_, &selected, false);
 }
 
 PreparedBusCommandBatch::~PreparedBusCommandBatch() {
