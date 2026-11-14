@@ -14,7 +14,7 @@ EffectParamTargetStore::EffectParamTargetStore(std::uint32_t sampleRate,
                                                std::uint32_t retiringCapacity)
     : m_sampleRate(sampleRate), m_activeCapacity(capacity),
       m_totalCapacity(capacity + retiringCapacity) {
-    if (retiringCapacity > UINT32_MAX - capacity || !m_records.Reserve(m_totalCapacity))
+    if (retiringCapacity > UINT32_MAX - capacity)
         throw std::bad_alloc{};
 }
 

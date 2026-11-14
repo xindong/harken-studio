@@ -134,9 +134,9 @@ struct EngineConfig {
     std::uint32_t blockFrames = 256;
     VoiceCapacityModel voiceCapacity;
     std::uint32_t fxSlotsPerVoice = 8;
-    std::uint32_t arenaBytes = 2u << 20;
+    std::uint32_t arenaBytes = UINT32_MAX;
     bool nullDevice = true;
-    std::uint32_t maxBuses = 32;
+    std::uint32_t maxBuses = 1; // Initial Master directory; not an admission limit.
     std::uint32_t commandQueueDepth = 256;
     // Most control commands one MixQuantum will apply. The drain used to run
     // until the queue was empty, which tied its cost to the queue depth and to
@@ -172,7 +172,7 @@ struct EngineConfig {
     std::uint32_t dynamicRoutePlanPoolCapacity = 4;
     std::uint32_t dynamicBusTapCapacity = 16;
     std::uint32_t dynamicVoiceTapCapacity = 16;
-    std::uint32_t maxBusTopologyOwners = 64;
+    std::uint32_t maxBusTopologyOwners = 1; // Initial storage; grows on logic.
     std::uint64_t maxTopologyPlanBytes = 256ull * 1024ull * 1024ull;
     std::uint64_t topologyPlanPoolBytes = 0;
     std::uint64_t preparedTopologyPlanPoolBytes = 0;

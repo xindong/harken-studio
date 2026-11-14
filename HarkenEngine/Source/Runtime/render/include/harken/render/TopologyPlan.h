@@ -166,6 +166,9 @@ public:
     // Takes a free plan slot to build into, or kInvalidTopologyPlanIndex when
     // the pool is exhausted. The slot's contents are cleared (order empty, every
     // send target kEmptySendTarget) so a builder only writes what it populates.
+    bool PrepareBusCapacity(std::uint32_t count) noexcept;
+    // Only unpublished private plans may grow; acquired audio plans stay fixed.
+    void PreparePlanBusCapacity(std::uint32_t index, std::uint32_t count);
     std::uint32_t Acquire();
     // Production builders prepare only actual edges. The allowance covers any
     // no-throw direct mutation between reservation and publication.
@@ -280,6 +283,7 @@ private:
         std::vector<std::uint32_t> ramps;
         mutable std::vector<BusSendState> states;
     };
+    static void GrowBusStorage(PlanStorage& storage, std::uint32_t count);
     std::vector<PlanStorage> m_storage;
     TopologyBuildScratch m_buildScratch;
     std::vector<std::uint32_t> m_slotCount;     // capacity

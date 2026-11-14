@@ -69,7 +69,7 @@ VnPreviewCommitStatus CommitStatus(harken::ProjectGenerationCommitStatusV1 statu
 
 bool BuildTopology(const VnPreviewProjectDescV1& desc, const float* sendLevelsDb,
                    const harken::Engine& engine, PreparedProject& project) {
-    const auto maxBuses = harken::LiveMaxBusesV1(engine);
+    const auto maxBuses = desc.busCount;
     if (maxBuses == 0 || desc.busCount == 0
         || desc.busCount > maxBuses || !desc.buses
         || (desc.sendCount != 0 && !desc.sends)) return false;
@@ -132,8 +132,7 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
                                 bool authoredSends = false,
                                 const VnPreviewProjectDescV4* effects = nullptr) {
     const auto& base = desc.base;
-    if (base.busCount == 0 || base.busCount > engine.config.maxBuses ||
-        base.busCount > 4096 || base.buses == nullptr || desc.busVolumes == nullptr ||
+    if (base.busCount == 0 || base.busCount == UINT32_MAX || base.buses == nullptr || desc.busVolumes == nullptr ||
         desc.busVolumeCount != base.busCount ||
         (base.sendCount != 0 && base.sends == nullptr) ||
         desc.profileVintage != 1 || desc.renderSampleRateHz == 0 ||

@@ -52,7 +52,7 @@ std::uint64_t NeutralMasterFingerprintV1(const Engine& engine) noexcept;
 bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint,
     std::uint64_t ownerId = 0) noexcept;
 bool HasPreviewEffectAttachment(const Engine& engine, BusSlotRef host) noexcept;
-std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t ownerId) noexcept;
+std::uint32_t SelectPreviewOwnerDestination(Engine& engine, std::uint64_t ownerId) noexcept;
 bool HasPredecessorDirectWorldPublication(const Engine& engine) noexcept;
 inline constexpr std::uint64_t kCanonicalPackSetMasterOwnerId = 0x5053434E00000001ull;
 bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot,

@@ -46,8 +46,7 @@ namespace {
 constexpr std::uint32_t kMaxSampleRate = 384000;
 constexpr std::uint32_t kMaxBlockFrames = 1 << 16;
 constexpr std::uint32_t kMaxVoicesCeiling = 1 << 14;
-constexpr std::uint32_t kMaxArenaBytes = 1 << 28;
-constexpr std::uint32_t kMaxBusesCeiling = 1 << 12;
+constexpr std::uint32_t kMaxArenaBytes = UINT32_MAX;
 constexpr std::uint32_t kMaxQueueDepthCeiling = 1 << 20;
 // The per-block control-command ceiling is counted in the same unit as the
 // queue that feeds it, so the largest queue this validator will admit is also
@@ -95,7 +94,6 @@ constexpr std::uint32_t kMaxEmittersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxEmitterVariableSlotsCeiling = 1 << 12;
 constexpr std::uint32_t kMaxParkedVoicesCeiling = 1 << 14;
 constexpr std::uint32_t kMaxTopologyPlanPoolCeiling = 1 << 12;
-constexpr std::uint32_t kMaxBusTopologyOwnersCeiling = 1 << 16;
 constexpr std::uint64_t kMaxTopologyPlanBytesCeiling =
     1ull * 1024ull * 1024ull * 1024ull;
 // The steal policy is a small enum; anything above steal-oldest is a header
@@ -320,7 +318,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     if (config->fxSlotsPerVoice != 0) resolved.fxSlotsPerVoice = config->fxSlotsPerVoice;
     if (config->arenaBytes != 0) resolved.arenaBytes = config->arenaBytes;
     if (hasTransportFields) {
-        if (config->maxBuses != 0) resolved.maxBuses = config->maxBuses;
+        // maxBuses is a retained ABI field; definitions grow on demand.
         if (config->commandQueueDepth != 0)
             resolved.commandQueueDepth = config->commandQueueDepth;
         if (config->notificationQueueDepth != 0)
@@ -459,9 +457,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.dynamicVoiceTapCapacity = config->dynamicVoiceTapCapacity;
     }
     if (hasTopologySnapshotFields) {
-        if (config->maxBusTopologyOwners != 0) {
-            resolved.maxBusTopologyOwners = config->maxBusTopologyOwners;
-        }
+        // Owner identities grow independently of the retained ABI hint.
         if (config->maxTopologyPlanBytes != 0) {
             resolved.maxTopologyPlanBytes = config->maxTopologyPlanBytes;
         }
@@ -567,7 +563,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.voiceCapacity.Render() > kMaxVoicesCeiling ||
         resolved.fxSlotsPerVoice > kMaxFxSlotsPerVoice ||
         resolved.arenaBytes > kMaxArenaBytes ||
-        resolved.maxBuses > kMaxBusesCeiling ||
         resolved.commandQueueDepth > kMaxQueueDepthCeiling ||
         resolved.maxControlCommandsPerQuantum >
             kMaxControlCommandsPerQuantumCeiling ||
@@ -607,7 +602,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         // Bus effect chains share the compile-time slot maximum with voices.
         resolved.fxSlotsPerBus > kMaxFxSlotsPerVoice ||
         resolved.topologyPlanPoolCapacity > kMaxTopologyPlanPoolCeiling ||
-        resolved.maxBusTopologyOwners > kMaxBusTopologyOwnersCeiling ||
         resolved.maxTopologyPlanBytes > kMaxTopologyPlanBytesCeiling ||
         resolved.maxBindings > kMaxBindingsCeiling ||
         resolved.maxBindingAttachments > kMaxBindingAttachmentsCeiling ||

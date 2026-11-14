@@ -49,6 +49,7 @@ public:
     explicit BusTargetStore(std::uint32_t maxBuses,
                             std::uint32_t retiringTargetCapacity = 0);
     BusTargetStore(const BusTargetStore& other);
+    bool PrepareBusCapacity(std::uint32_t count) noexcept;
     bool PrepareActivity(std::uint32_t busIndex, std::uint32_t targetId) noexcept;
     void ReleaseUnusedActivities(BindingTable& bindings) noexcept;
     std::size_t ActivityCount() const noexcept { return m_activities.size(); }

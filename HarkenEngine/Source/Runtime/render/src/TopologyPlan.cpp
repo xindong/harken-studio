@@ -42,6 +42,35 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
     m_retireMask = cap - 1;
 }
 
+bool TopologyPlanPool::PrepareBusCapacity(std::uint32_t count) noexcept {
+    if (count <= m_busCapacity) return true;
+    try {
+        const auto grow = [count](auto& rows) { rows.reserve(count); rows.resize(count); };
+        grow(m_buildScratch.feeders); grow(m_buildScratch.emittedFeeders);
+        grow(m_buildScratch.emitted); grow(m_buildScratch.sendCounts);
+        m_busCapacity = count;
+        return true;
+    } catch (...) { return false; }
+}
+
+void TopologyPlanPool::GrowBusStorage(PlanStorage& row, std::uint32_t count) {
+    count = std::max(count, static_cast<std::uint32_t>(row.parents.size()));
+    const auto old = row.migrationTargets.size();
+    row.order.resize(count); row.outputLayouts.resize(count);
+    row.parents.resize(count, kPlanParentUnset); row.alive.resize(count);
+    row.busIds.resize(count); row.busGenerations.resize(count);
+    row.migrationTargets.resize(count);
+    for (std::size_t i = old; i < count; ++i) row.migrationTargets[i] = static_cast<std::uint32_t>(i);
+    row.preparedBusVolumeDb.resize(count); row.preparedBusOutputVolumeDb.resize(count);
+    row.preparedBusVolumeRampMs.resize(count); row.busVolumeApply.resize(count);
+    row.ranges.resize(count);
+}
+
+void TopologyPlanPool::PreparePlanBusCapacity(std::uint32_t index, std::uint32_t count) {
+    if (!IsAcquired(index) || !PrepareBusCapacity(count)) throw std::bad_alloc{};
+    GrowBusStorage(m_storage[index], count);
+}
+
 std::uint32_t TopologyPlanPool::Acquire() {
     return AcquireImpl(true, 0);
 }
@@ -90,7 +119,6 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
                                     std::uint32_t sourceIndex,
                                     std::uint32_t destinationIndex) {
     if (sourceIndex >= source.m_capacity || destinationIndex >= m_capacity ||
-        source.m_busCapacity != m_busCapacity ||
         source.m_slotsPerBus != m_slotsPerBus) {
         return false;
     }
@@ -120,6 +148,7 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
         next.ramps = prior.ramps;
         // Send envelopes belong to audio; continuity adopts them at publication.
         next.states.resize(prior.states.size());
+        GrowBusStorage(next, m_busCapacity);
         auto effects = source.m_effectUpdates[sourceIndex];
         m_storage[destinationIndex] = std::move(next);
         m_effectUpdates[destinationIndex] = std::move(effects);

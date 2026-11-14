@@ -1792,8 +1792,9 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         const std::uint32_t busCount = m_buses.WorkingPlaneCount();
 
         m_busPlanes = m_buses.AudioPlanes();
-        planesOk = m_busPlanes.size() >= static_cast<std::size_t>(busCount) * m_mixChannels;
-        for (std::uint32_t i = 0; planesOk && i < busCount * m_mixChannels; ++i) {
+        const auto planeCount = static_cast<std::size_t>(busCount) * m_mixChannels;
+        planesOk = m_busPlanes.size() >= planeCount;
+        for (std::size_t i = 0; planesOk && i < planeCount; ++i) {
             m_busPlanes[i] = m_arena.AllocFloats(frames);
             if (m_busPlanes[i] == nullptr) {
                 planesOk = false;

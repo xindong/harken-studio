@@ -7120,7 +7120,7 @@ public:
                      static_cast<std::uint64_t>(resolved.maxPlayableInstances) +
                          resolved.voiceCapacity.Logical() +
                          resolved.maxDeferredIntents,
-                     voices.Capacity(), resolved.maxBuses),
+                     voices.Capacity(), resolved.maxVariableSliceTargetsTotal),
           actionFiringPlanScratch(1),
           actionFiringOwnerReleaseScratch(resolved.maxActionFirings),
           originalActionFiringPackHolders(resolved.maxActionFirings),
@@ -13734,6 +13734,52 @@ public:
     }
 
     const EngineConfig config;
+    // Logic-only storage readiness, independent of the legacy ABI hints.
+    std::uint32_t BusCapacity() const noexcept { return busDefinitionCapacity; }
+    bool PrepareBusDefinitionCapacity(std::uint64_t required) noexcept {
+        if (required <= BusCapacity()) return true;
+        if (required >= UINT32_MAX) return false;
+        const auto count = static_cast<std::uint32_t>(required);
+        const auto effectCapacity = (static_cast<std::uint64_t>(config.voiceCapacity.Logical()) *
+            config.fxSlotsPerVoice + required * config.fxSlotsPerBus) * kMaxEffectParamCount;
+        if (effectCapacity > UINT32_MAX) return false;
+        try {
+            const auto grow = [count](auto& rows, auto value) {
+                rows.reserve(count); rows.resize(count, value);
+            };
+            grow(influenceVisited, 0); grow(influenceStack, 0);
+            grow(busOwnerCookies, 0); grow(busTopologyOwnerIds, 0);
+            busFilterSettings.reserve(count); busFilterSettings.resize(count);
+            grow(busVolumePublished, 0); grow(busEffectSlotBypass, 0);
+            grow(busFaderAfterSlots, config.fxSlotsPerBus);
+            grow(busMuted, 0); grow(busSoloed, 0); grow(busOutputLayout, config.mixChannelLayout);
+            if (!busTargets.PrepareBusCapacity(count) ||
+                !effectParamTargets.PrepareActiveCapacity(static_cast<std::uint32_t>(effectCapacity)) ||
+                !topologyPlans.PrepareBusCapacity(count) || !preparedTopologyPlans.PrepareBusCapacity(count) ||
+                !buses.PrepareDefinitionCapacity(count)) return false;
+            busDefinitionCapacity = count;
+            return true;
+        } catch (...) { return false; }
+    }
+    bool PrepareBusOwnerCapacity(std::uint64_t required) noexcept {
+        if (required >= UINT32_MAX) return false;
+        const auto count = static_cast<std::size_t>(required);
+        try {
+            const auto grow = [count](auto& rows) { if (rows.size() < count) rows.resize(count); };
+            grow(busTopologyOwners); grow(previewMasterHolders); grow(currentWorldBusAdmission);
+            grow(preparedOwnerClaims);
+            if (preparedPreviewOwnerSlots.size() < count) preparedPreviewOwnerSlots.resize(count, UINT32_MAX);
+            return true;
+        } catch (...) { return false; }
+    }
+    // Prepared and retiring slots retain their old identities while backing grows.
+    bool PrepareAdditionalBusDefinitions(std::uint64_t additions) noexcept {
+        const auto reusable = buses.FreeBusSlotCount();
+        return additions <= reusable || PrepareBusDefinitionCapacity(
+            static_cast<std::uint64_t>(BusCapacity()) + additions - reusable);
+    }
+    std::uint32_t busDefinitionCapacity = config.maxBuses;
+
     MonitorRequestSource monitorRequests{AllocateMonitorEngineInstance()};
     struct MonitorPlaybackEvent {
         std::uint64_t instance = 0;

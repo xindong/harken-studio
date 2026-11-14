@@ -79679,6 +79679,7 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
     const std::uint32_t n =
         prospective != nullptr ? prospective->busCount
                                : engine.buses.BusCount();
+    plans.PreparePlanBusCapacity(planIndex, n);
     const std::uint32_t slots = engine.config.busSendSlotsPerBus;
     const auto excluded = [excludedBuses, excludedBusCount](
                               std::uint32_t index) {
@@ -79994,7 +79995,7 @@ void ResetBusLogicSlot(harken::Engine& engine,
                        std::uint32_t busIndex,
                        std::uint32_t retiringGeneration,
                        std::uint32_t newGeneration) noexcept {
-    if (busIndex >= engine.config.maxBuses) {
+    if (busIndex >= engine.BusCapacity()) {
         return;
     }
     if (retiringGeneration != 0) {
@@ -115804,9 +115805,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         topology->sendStructSize != sizeof(VnBusTopologySend)) {
         return refuse(VN_INVALID_ARG, kTopologyRefusalValidation);
     }
-    if (topology->busCount >= engine->config.maxBuses) {
-        return refuse(VN_NO_BUS, kTopologyRefusalCapacity);
-    }
+    if (topology->busCount == UINT32_MAX) return refuse(VN_INVALID_ARG, kTopologyRefusalValidation);
 
 
     struct CanonicalBus {
@@ -115935,8 +115934,12 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     if (disposition == harken::TopologyOwnerRevisionDispositionV1::Retry) return VN_OK;
     if (disposition == harken::TopologyOwnerRevisionDispositionV1::Conflict)
         return refuse(VN_REVISION_CONFLICT, kTopologyRefusalRevision);
-    if (ownerRecord == nullptr && freeOwnerRecord == nullptr)
-        return refuse(VN_NO_TOPOLOGY_OWNER, kTopologyRefusalCapacity);
+    if (ownerRecord == nullptr && freeOwnerRecord == nullptr) {
+        const auto next = engine->busTopologyOwners.size();
+        if (!engine->PrepareBusOwnerCapacity(next + 1))
+            return refuse(VN_BACKPRESSURE, kTopologyRefusalCapacity);
+        freeOwnerRecord = &engine->busTopologyOwners[next];
+    }
     auto* ownerDestination = ownerRecord != nullptr ? ownerRecord : freeOwnerRecord;
     const auto ownerSlot = static_cast<std::uint32_t>(ownerDestination - engine->busTopologyOwners.data());
     if (destinationReserved(ownerSlot)) return refuse(VN_IN_USE, kTopologyRefusalOwnership);
@@ -115949,8 +115952,13 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     if (neutralMaster && !harken::CanResetNeutralBusPropertiesV1(*engine, 0))
         return refuse(VN_IN_USE, kTopologyRefusalOwnership);
 
+    std::uint64_t additions = 0;
+    for (const auto& row : desiredBuses)
+        if (engine->buses.FindIndex(row.busId) == harken::kInvalidBusIndex) ++additions;
+    if (!engine->PrepareAdditionalBusDefinitions(additions))
+        return refuse(VN_BACKPRESSURE, kTopologyRefusalCapacity);
     const std::uint32_t oldCount = engine->buses.BusCount();
-    const std::uint32_t capacity = engine->config.maxBuses;
+    const std::uint32_t capacity = engine->BusCapacity();
     std::vector<VnBusId> busIds(capacity);
     std::vector<std::uint32_t> generations(capacity, 0);
     std::vector<std::uint32_t> parents(capacity, 0);
@@ -116590,9 +116598,7 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
     if (engine->buses.FindIndex(parentId) == harken::kInvalidBusIndex) {
         return VN_UNKNOWN_ID;
     }
-    if (engine->buses.FreeBusSlotCount() == 0) {
-        return VN_NO_BUS;
-    }
+    if (!engine->PrepareAdditionalBusDefinitions(1)) return VN_BACKPRESSURE;
     // A create is a structural change: it publishes a topology plan. Secure the
     // plan slot + command admission BEFORE mutating the tree so a resource
     // shortage refuses with zero side effects.
@@ -124309,10 +124315,7 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
     // Buses: capacity, parent-first creation order (a parent cycle among
     // pack buses can never order), send-slot budgets, and the combined
     // tree+send cycle check.
-    if (engine.buses.BusCount() + image.buses.size() >
-        engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (!engine.PrepareAdditionalBusDefinitions(image.buses.size())) return VN_BACKPRESSURE;
     staging.busApplyOrder.clear();
     staging.busApplyOrder.reserve(image.buses.size());
     {
@@ -125486,12 +125489,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             return VN_IN_USE;
         }
     }
-    const std::uint64_t finalActiveBusCount =
-        static_cast<std::uint64_t>(engine.buses.ActiveBusCount()) -
-        revision.removeBuses.size() + revision.addBuses.size();
-    if (finalActiveBusCount > engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (!engine.PrepareAdditionalBusDefinitions(revision.addBuses.size())) return VN_BACKPRESSURE;
     for (const PackBusEffectEntry& oldEffect : record.busEffects) {
         const std::uint32_t busIndex =
             engine.buses.FindIndex(oldEffect.busId);
@@ -126281,19 +126279,17 @@ bool PrepareRevisionProspectiveTopology(
         return true;
     }
     const std::uint32_t oldCount = engine.buses.BusCount();
-    const std::uint32_t capacity = engine.config.maxBuses;
-    if (revision.prospectiveBusIds.size() < capacity ||
-        revision.prospectiveBusGenerations.size() < capacity ||
-        revision.prospectiveParents.size() < capacity ||
-        revision.prospectiveAlive.size() < capacity ||
-        revision.topologyFeederCount.size() < capacity ||
-        revision.topologyEmittedFeeders.size() < capacity ||
-        revision.topologyEmitted.size() < capacity ||
-        revision.prospectiveBusVolumeDb.size() < capacity ||
-        revision.prospectiveBusOutputVolumeDb.size() < capacity ||
-        revision.prospectiveBusVolumeApply.size() < capacity) {
-        return false;
-    }
+    const std::uint32_t capacity = engine.BusCapacity();
+    revision.prospectiveBusIds.resize(capacity);
+    revision.prospectiveBusGenerations.resize(capacity);
+    revision.prospectiveParents.resize(capacity);
+    revision.prospectiveAlive.resize(capacity);
+    revision.topologyFeederCount.resize(capacity);
+    revision.topologyEmittedFeeders.resize(capacity);
+    revision.topologyEmitted.resize(capacity);
+    revision.prospectiveBusVolumeDb.resize(capacity);
+    revision.prospectiveBusOutputVolumeDb.resize(capacity);
+    revision.prospectiveBusVolumeApply.resize(capacity);
     std::fill(revision.prospectiveBusIds.begin(),
               revision.prospectiveBusIds.end(), VnBusId{});
     std::fill(revision.prospectiveBusGenerations.begin(),
@@ -127775,12 +127771,7 @@ VnResult PrepareAndApplyInitialPackLogic(
             return VN_INVALID_CONFIG;
         }
     }
-    const std::uint64_t prospectiveBusCount =
-        static_cast<std::uint64_t>(engine.buses.BusCount()) +
-        revision.addBuses.size();
-    if (prospectiveBusCount > engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (!engine.PrepareAdditionalBusDefinitions(revision.addBuses.size())) return VN_BACKPRESSURE;
     std::uint64_t commandCount =
         revision.addBusEffects.size() +
         (revision.needsPlan ? 1u : 0u);
@@ -127798,7 +127789,7 @@ VnResult PrepareAndApplyInitialPackLogic(
             engine, static_cast<std::uint32_t>(commandCount))) {
         return VN_INVALID_CONFIG;
     }
-    const std::size_t busCapacity = engine.config.maxBuses;
+    const std::size_t busCapacity = engine.BusCapacity();
 
     // Every allocation is complete before the Pack token or any runtime
     // reservation is acquired.
@@ -128206,7 +128197,7 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
         RevisionCommandCount(engine, *record, revision));
     revision.preparedBusSlots.resize(revision.addBuses.size());
     if (revision.needsPlan) {
-        const std::size_t busCapacity = engine.config.maxBuses;
+        const std::size_t busCapacity = engine.BusCapacity();
         revision.prospectiveBusIds.resize(busCapacity);
         revision.prospectiveBusGenerations.resize(busCapacity);
         revision.prospectiveParents.resize(busCapacity);
@@ -130860,7 +130851,7 @@ bool SnapshotHasMaster(const PackCanonicalImage& image) noexcept {
 
 VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
                             VnPackHandle initHandle, PreparedCanonicalPackSetV1& out) {
-    if (initHandle == 0 || engine.config.maxBuses == 0 ||
+    if (initHandle == 0 || engine.BusCapacity() == 0 ||
         (image != nullptr && (!image->hasBusDefinitionSnapshot || !SnapshotHasMaster(*image)))) {
         return VN_BAD_PACK;
     }
@@ -130915,9 +130906,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     if (!graph.contains(VN_BUS_MASTER)) {
         return VN_BAD_PACK;
     }
-    if (graph.size() > engine.config.maxBuses) {
-        return VN_NO_BUS;
-    }
+    if (graph.size() >= UINT32_MAX) return VN_BACKPRESSURE;
     for (const auto& [id, row] : graph) {
         if (id != VN_BUS_MASTER && !graph.contains(row.first)) {
             return row.second ? VN_BAD_PACK : VN_IN_USE;
@@ -131011,7 +131000,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         }
     }
     out.slotPlan.sends.Swap(remappedSends);
-    const auto capacity = engine.config.maxBuses;
+    const auto capacity = engine.BusCapacity();
     const auto oldCount = engine.buses.BusCount();
     out.slotPlan.preservesForeign = true;
     out.slotPlan.ownerId = 0;
@@ -131164,7 +131153,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     }
     engine.topologyPlans.MigrationTargetsData(out.planIndex)[0] = 0;
     for (std::uint32_t slot = 0; slot < out.slotPlan.busCount &&
-         slot < engine.config.maxBuses; ++slot) {
+         slot < engine.BusCapacity(); ++slot) {
         engine.topologyPlans.MigrationTargetsData(out.planIndex)[slot] =
             out.slotPlan.migrationTargets.empty() ? slot : out.slotPlan.migrationTargets[slot];
     }

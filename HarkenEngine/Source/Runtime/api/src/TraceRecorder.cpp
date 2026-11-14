@@ -345,7 +345,7 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
         for (std::uint32_t j = 0; j < range.count; ++j)
             sends += plan.sendTargets[range.first + j] != kEmptySendTarget;
     }
-    if (count > engine.config.maxBuses || sends > UINT32_MAX) {
+    if (count > engine.BusCapacity() || sends > UINT32_MAX) {
         out->Reset();
         return false;
     }
@@ -543,7 +543,7 @@ void TraceRecorder::RecordPreparedTopologyPlan(
         for (std::uint32_t j = 0; j < range.count; ++j)
             sendCount += plan.sendTargets[range.first + j] != kEmptySendTarget;
     }
-    if (n > m_engine.config.maxBuses || 16ull + n * 32ull + sendCount * 24ull > UINT32_MAX) {
+    if (n > m_engine.BusCapacity() || 16ull + n * 32ull + sendCount * 24ull > UINT32_MAX) {
         FailTrace();
         return;
     }
@@ -1482,7 +1482,7 @@ TraceCallScribe& TraceCallScribe::BusTopologyDesc(
         d->structSize == sizeof(VnBusTopologyDesc) &&
         d->busStructSize == sizeof(VnBusTopologyBus) &&
         d->sendStructSize == sizeof(VnBusTopologySend) &&
-        d->busCount < engine.config.maxBuses &&
+        d->busCount < UINT32_MAX &&
         (d->busCount == 0 || d->buses != nullptr) &&
         (d->sendCount == 0 || d->sends != nullptr);
     if (!valid) {

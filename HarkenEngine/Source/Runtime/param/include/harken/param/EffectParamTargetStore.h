@@ -28,7 +28,7 @@
 
 #include <harken/ObjectId.h>
 #include "harken/core/VariableSliceTable.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
 
@@ -77,6 +77,13 @@ public:
     EffectParamTargetStore(std::uint32_t sampleRate, std::uint32_t capacity,
                            std::uint32_t retiringCapacity = 0);
 
+    bool PrepareActiveCapacity(std::uint32_t count) noexcept {
+        if (count <= m_activeCapacity) return true;
+        const auto retired = m_totalCapacity - m_activeCapacity;
+        if (m_projectionActive || count > UINT32_MAX - retired) return false;
+        m_activeCapacity = count; m_totalCapacity = count + retired;
+        return true;
+    }
     void AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept {
         m_dependencies = dependencies;
     }
@@ -439,7 +446,7 @@ private:
     std::uint32_t m_activeCapacity = 0;
     std::uint32_t m_totalCapacity = 0;
     BindingDependencyIndex* m_dependencies = nullptr;
-    StableRowStorage<Record> m_records;
+    GrowingRowStorage<Record> m_records;
     std::vector<VariableEvaluation> m_projection;
     bool m_projectionActive = false;
     std::size_t m_projectionRecordCount = 0;

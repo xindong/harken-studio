@@ -450,7 +450,7 @@ bool PreviewOwnsSoleMasterV1(const Engine& engine, std::uint64_t ownerId) noexce
 
 bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot,
                                     std::uint64_t allowedEffectOwner) noexcept {
-    if (slot >= engine.config.maxBuses || engine.busSoloActiveCount != 0) return false;
+    if (slot >= engine.BusCapacity() || engine.busSoloActiveCount != 0) return false;
     if (slot >= engine.buses.BusCount() || !engine.buses.AliveAt(slot)) return true;
     const auto generation = engine.buses.GenerationAt(slot);
     if (engine.busOwnerCookies[slot] != 0) return false;
@@ -516,7 +516,7 @@ bool CanResetVolumeOnlyNonVolumePropertiesV2(const Engine& engine,
                                               std::uint64_t allowedOwnerCookie,
                                               std::uint64_t allowedEffectOwner) noexcept {
     static_assert(kBusTargetCount == 2);
-    if (slot >= engine.config.maxBuses) return false;
+    if (slot >= engine.BusCapacity()) return false;
     if (slot >= engine.buses.BusCount() || !engine.buses.AliveAt(slot)) return true;
     const auto generation = engine.buses.GenerationAt(slot);
     if ((engine.busOwnerCookies[slot] != 0 &&
@@ -794,7 +794,7 @@ bool CurrentWorldCommitBlocked(const Engine& engine, std::uint32_t vintage,
 
 } // namespace
 
-std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t ownerId) noexcept {
+std::uint32_t SelectPreviewOwnerDestination(Engine& engine, std::uint64_t ownerId) noexcept {
     const auto reserved = [&](std::uint32_t destination) {
         for (std::size_t i = 0; i < engine.preparedOwnerClaims.size(); ++i) {
             if (engine.preparedOwnerClaims[i].inUse != 0 && engine.preparedPreviewOwnerSlots[i] == destination) return true;
@@ -808,7 +808,8 @@ std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t 
     for (std::uint32_t i = 0; i < engine.busTopologyOwners.size(); ++i) {
         if (!engine.busTopologyOwners[i].live && !reserved(i)) return i;
     }
-    return UINT32_MAX;
+    const auto slot = engine.busTopologyOwners.size();
+    return engine.PrepareBusOwnerCapacity(slot + 1) ? static_cast<std::uint32_t>(slot) : UINT32_MAX;
 }
 
 bool SameOwnerRow(const BusTopologyOwnerRecord& a, const BusTopologyOwnerRecord& b) noexcept {
@@ -873,7 +874,13 @@ bool BuildSlotPlanFromProspective(Engine& engine,
                                   std::uint64_t ownerId,
                                   SlotPlanV1& out) {
     out = SlotPlanV1{};
-    const std::uint32_t capacity = engine.config.maxBuses;
+    std::uint64_t additions = 0;
+    if (prospective != nullptr && prospective->busIds != nullptr)
+        for (std::uint32_t i = 0; i < prospective->busCount; ++i)
+            if ((prospective->alive == nullptr || prospective->alive[i]) &&
+                engine.buses.FindIndex(prospective->busIds[i]) == kInvalidBusIndex) ++additions;
+    if (!engine.PrepareAdditionalBusDefinitions(additions)) return false;
+    const std::uint32_t capacity = engine.BusCapacity();
     const std::uint32_t sendSlots = engine.config.busSendSlotsPerBus;
     if (capacity == 0) {
         return false;
@@ -1088,7 +1095,13 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
         std::uint64_t generation = 0;
     };
     struct Node { VnBusId parent{}; bool owned = false; std::vector<Edge> edges; };
-    const auto capacity = engine.config.maxBuses;
+    std::uint64_t additions = 0;
+    if (incoming != nullptr && incoming->busIds != nullptr)
+        for (std::uint32_t i = 0; i < incoming->busCount; ++i)
+            if ((incoming->alive == nullptr || incoming->alive[i]) &&
+                engine.buses.FindIndex(incoming->busIds[i]) == kInvalidBusIndex) ++additions;
+    if (!engine.PrepareAdditionalBusDefinitions(additions)) return false;
+    const auto capacity = engine.BusCapacity();
     const auto sendSlots = engine.config.busSendSlotsPerBus;
     const auto oldCount = engine.buses.BusCount();
     const VnBusId masterId = VN_BUS_MASTER;
@@ -1430,7 +1443,7 @@ bool SlotPlanMatchesLive(const Engine& engine, const SlotPlanV1& plan) noexcept 
         (plan.sourceGraphRevision != engine.acceptedBusTopologyRevision ||
          plan.sourceBusCount != engine.buses.BusCount())) return false;
     if (!plan.valid || plan.busCount == 0 ||
-        plan.busCount > engine.config.maxBuses) {
+        plan.busCount > engine.BusCapacity()) {
         return false;
     }
     if (plan.busIds.empty() || plan.alive.empty() || plan.parents.empty()) {
@@ -1701,9 +1714,13 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         }
     }
     if (ownerSlot == UINT32_MAX) {
-        engine.preparedTopologyPlans.Recycle(planIndex);
-        result.status = ProjectGenerationPrepareStatusV1::Capacity;
-        return result;
+        const auto next = engine.preparedOwnerClaims.size();
+        if (!engine.PrepareBusOwnerCapacity(next + 1)) {
+            engine.preparedTopologyPlans.Recycle(planIndex);
+            result.status = ProjectGenerationPrepareStatusV1::Capacity;
+            return result;
+        }
+        ownerSlot = static_cast<std::uint32_t>(next);
     }
     auto& owner = engine.preparedOwnerClaims[ownerSlot];
     owner.inUse = 1;
@@ -1737,7 +1754,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
             result.status = ProjectGenerationPrepareStatusV1::Capacity;
             return result;
         }
-        coldSlots.assign(engine.config.maxBuses, 0);
+        engine.preparedTopologyPlans.PreparePlanBusCapacity(planIndex, engine.BusCapacity());
+        coldSlots.assign(engine.BusCapacity(), 0);
         const auto isCold = [&](const SlotAssignmentV1& assignment) {
             if (engine.buses.LogicRefMatches({assignment.slot, assignment.generation}))
                 for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot) {
@@ -2598,7 +2616,7 @@ bool CurrentWorldBusAdmissionIsOpenV1(Engine& engine,
 }
 
 std::uint32_t LiveMaxBusesV1(const Engine& engine) noexcept {
-    return engine.config.maxBuses;
+    return engine.BusCapacity();
 }
 
 std::uint32_t LiveBusSendSlotsPerBusV1(const Engine& engine) noexcept {

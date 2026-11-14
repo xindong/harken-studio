@@ -21,12 +21,12 @@ BusTree::~BusTree() {
     ShutdownActivities();
     ShutdownPreviewEffectChains();
     ShutdownWorkRows();
-    for (std::uint32_t i = 0; i < m_capacity; ++i)
+    for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i)
         delete m_previewEffectStates[i].load(std::memory_order_relaxed);
 }
 
 BusEffectChainState* BusTree::PreviewEffectState(BusSlotRef ref) const noexcept {
-    if (!ref.Valid() || ref.index >= m_capacity) return nullptr;
+    if (!ref.Valid() || ref.index >= m_previewEffectStates.ConstructedCount()) return nullptr;
     auto* state = m_previewEffectStates[ref.index].load(std::memory_order_acquire);
     return state != nullptr && state->acceptedHost == ref ? state : nullptr;
 }
@@ -360,7 +360,7 @@ void BusTree::ForgetPreviewEffectOwner(BusSlotRef ref) noexcept {
 
 void BusTree::ServicePreviewEffectRetirements() noexcept {
     if (m_pendingPreviewEffects.load(std::memory_order_acquire) == 0) return;
-    for (std::uint32_t i = 0; i < m_capacity; ++i) {
+    for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
         if (state != nullptr && state->update.phase.load(std::memory_order_acquire) == Phase::Retiring)
             RetirePreviewEffectReferences(state->update);
@@ -369,7 +369,7 @@ void BusTree::ServicePreviewEffectRetirements() noexcept {
 
 void BusTree::DrainPreviewEffectChains() noexcept {
     if (m_pendingPreviewEffects.load(std::memory_order_acquire) == 0) return;
-    for (std::uint32_t i = 0; i < m_capacity; ++i) {
+    for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
         if (state == nullptr || state->update.phase.load(std::memory_order_acquire) != Phase::Complete) continue;
         m_effectBank.DrainRetire();
@@ -382,7 +382,7 @@ void BusTree::DrainPreviewEffectChains() noexcept {
 
 void BusTree::ShutdownPreviewEffectChains() noexcept {
     // Engine destruction excludes callbacks before this owner is destroyed.
-    for (std::uint32_t i = 0; i < m_capacity; ++i) {
+    for (std::uint32_t i = 0; i < m_previewEffectStates.ConstructedCount(); ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
         if (state == nullptr) continue;
         RetirePreviewEffectReferences(state->update, true);

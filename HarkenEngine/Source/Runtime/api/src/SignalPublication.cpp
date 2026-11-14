@@ -16,7 +16,7 @@ WorldInstallStatus PrepareSignalPublication(Engine& engine,
         if (!next.changed) { out = std::move(next); return WorldInstallStatus::Ok; }
         if (next.predecessor == UINT64_MAX) return WorldInstallStatus::Capacity;
         if (!relations.empty() || !receivers.empty()) {
-            std::vector<SignalBusInput> buses(engine.config.maxBuses);
+            std::vector<SignalBusInput> buses(engine.BusCapacity());
             if (topology != nullptr) {
                 if (!topology->valid || topology->slotCount > buses.size()) return WorldInstallStatus::InvalidWorld;
                 for (std::uint32_t i = 0; i < topology->slotCount; ++i)

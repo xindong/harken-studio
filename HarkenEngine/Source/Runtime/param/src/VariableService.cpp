@@ -227,7 +227,7 @@ VariableServiceV1::VariableServiceV1(
     LogicCommitCoordinator& commits, TransportEpochOwner& transport,
     VariableSliceTable& slices, ScheduledTransactionPool& timeline,
     std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity,
-    std::uint32_t meterProbeCapacity)
+    std::uint32_t withdrawalSliceCapacity)
     : maxEmitters_(maxEmitters),
       overridesPerEmitter_(overridesPerEmitter),
       censusScratch_(maxPropertiesPerCurrentSlice <=
@@ -248,11 +248,11 @@ VariableServiceV1::VariableServiceV1(
     queryHistoryCapacity_ = static_cast<std::uint32_t>(std::max<std::uint64_t>(kVariableHistoryCapacity, cells));
     const auto revisions = cells + queryHistoryCapacity_;
     const auto storage = revisions + kVariableBatchWriteCapacity;
-    const auto proofs = storage + 2ull * meterProbeCapacity;
+    const auto proofs = storage + static_cast<std::uint64_t>(withdrawalSliceCapacity);
     if (proofs > UINT32_MAX) throw std::length_error("variable revision capacity overflow");
     revisionCapacity_ = static_cast<std::uint32_t>(revisions);
     completionCapacity_ = static_cast<std::uint32_t>(proofs);
-    applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + 2ull * meterProbeCapacity);
+    applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + static_cast<std::uint64_t>(withdrawalSliceCapacity));
     const auto historyCapacity = static_cast<std::uint32_t>(storage);
     if (!history_.Reserve(historyCapacity) ||
         !preparedWritePlacements_.Reserve(historyCapacity) ||

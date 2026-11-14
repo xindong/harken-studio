@@ -60,8 +60,6 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
     : m_plans(plans),
       m_effectBank(effects),
       m_dynamicRoutes(dynamicRoutes),
-      m_workSlots(config.maxBuses),
-      m_previewEffectStates(std::make_unique<std::atomic<BusEffectChainState*>[]>(config.maxBuses)),
       m_logicParent(config.maxBuses, 0),
       m_logicAlive(config.maxBuses, 0),
       m_logicId(config.maxBuses),
@@ -85,6 +83,8 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
                              config.blockFrames),
       m_outputScratch(config.mixChannelCount),
       m_biquadTrig(biquadTrig) {
+    if (!m_workSlots.ConstructThrough(m_capacity) ||
+        !m_previewEffectStates.ConstructThrough(m_capacity)) throw std::bad_alloc{};
     m_directPlanes.resize(m_mixChannels);
     // Only Master owns an initial work row. Definitions acquire private rows
     // through activity preparation when actual work requires them.
@@ -130,6 +130,19 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
             m_outputScratchStorage.data() +
             static_cast<std::size_t>(ch) * config.blockFrames;
     }
+}
+
+bool BusTree::PrepareDefinitionCapacity(std::uint32_t count) noexcept {
+    if (count <= m_capacity) return true;
+    try {
+        const auto grow = [count](auto& rows) { rows.reserve(count); rows.resize(count); };
+        grow(m_logicParent); grow(m_logicAlive); grow(m_logicId);
+        grow(m_logicGeneration); grow(m_logicQuarantined); grow(m_logicRetireRevision);
+        if (!m_workSlots.ConstructThrough(count) || !m_previewEffectStates.ConstructThrough(count))
+            return false;
+        m_capacity = count;
+        return true;
+    } catch (...) { return false; }
 }
 
 void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
@@ -1594,7 +1607,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         effectType, poolIndex, poolGeneration};
     void* incomingState = m_effectBank.LiveStateFor(incoming);
     if (incomingState == nullptr) { return; }
-    if (busIndex >= m_capacity || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1634,7 +1647,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
 
 void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
                                   std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1675,7 +1688,7 @@ void BusTree::ApplySetBusEffectParam(std::uint32_t busIndex, std::uint32_t slot,
                                      std::uint32_t tailFrames,
                                      std::uint32_t transitionFrames,
                                      std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1719,7 +1732,7 @@ void BusTree::ApplySetBusCompressorParameters(
     std::uint32_t transitionFrames,
     std::uint32_t busGeneration) {
     if (effectType != VN_EFFECT_COMPRESSOR ||
-        busIndex >= m_capacity || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+        busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1744,7 +1757,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
                                       std::uint32_t action,
                                       std::uint32_t expectedEffectType,
                                       std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1791,7 +1804,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
 void BusTree::ApplySetBusFaderPoint(std::uint32_t busIndex,
                                     std::uint32_t faderAfterSlot,
                                     std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration}))) {
         return;

@@ -145,7 +145,7 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     // Arena size is a parameter: the determinism gate uses a generous arena
     // (degradation is a defined path but not what that gate measures), while the
     // tight-arena gate below drives it into the shortfall region on purpose.
-    config.arenaBytes = arenaBytes;
+    config.arenaBytes = std::max(arenaBytes, 1u << 20);
 
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -221,6 +221,9 @@ void RenderScene(std::uint32_t workerCount, std::uint32_t mixLayout,
     ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handles[5], 0, kSendBus, -6.0f));
 
     ASSERT_EQ(VN_OK, Vn_Update());
+    // Admission now proves backing before publication. Inject exhaustion only
+    // after preparation to exercise the independent render degradation path.
+    engine->mixer.ArenaForTests().SetCapacityForTests(arenaBytes);
     const auto before = engine->mixer.BlocksRendered();
     PumpAndCaptureMulti(engine, blocks, out);
     EXPECT_EQ(before + blocks, engine->mixer.BlocksRendered());

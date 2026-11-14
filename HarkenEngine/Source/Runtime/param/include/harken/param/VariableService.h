@@ -293,7 +293,7 @@ public:
                       ScheduledTransactionPool& timeline,
                       std::uint64_t readCutCapacity,
                       std::uint32_t timelineReadUseCapacity,
-                      std::uint32_t meterProbeCapacity = 0);
+                      std::uint32_t withdrawalSliceCapacity = 0);
 
     WorldInstallResult Install(const ContainerWorldInstallViewV1& install);
     WorldInstallResult InstallWithReplacementAdmission(

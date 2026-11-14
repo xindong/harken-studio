@@ -220,6 +220,8 @@ public:
     // bus. The topology planner and the create preflight (logic thread) read
     // it. The audio thread must NOT read this — it learns of a new bus only
     // through AudioBusCount(), which advances at the plan swap.
+    bool PrepareDefinitionCapacity(std::uint32_t count) noexcept;
+    std::uint32_t DefinitionCapacity() const noexcept { return m_capacity; }
     std::uint32_t BusCount() const { return m_count; }
     std::uint32_t ActiveBusCount() const { return m_activeCount; }
     std::uint32_t FreeBusSlotCount() const;
@@ -691,7 +693,7 @@ private:
     // Offline direct-construction seam; normal publication uses activity planes.
     std::vector<float*> m_directPlanes;
     GrowingRowStorage<WorkRow> m_workRows;
-    std::vector<WorkRef> m_workSlots;
+    GrowingRowStorage<WorkRef> m_workSlots;
     std::vector<std::uint32_t> m_freeWorkRows;
     std::atomic<WorkRow*> m_workRetireRequests{nullptr};
     std::atomic<WorkRow*> m_workRetired{nullptr};
@@ -719,7 +721,7 @@ private:
     const Bus& WorkState(std::uint32_t busIndex) const noexcept {
         return m_workRows[m_workSlots[busIndex].slot].bus;
     }
-    std::unique_ptr<std::atomic<BusEffectChainState*>[]> m_previewEffectStates;
+    GrowingRowStorage<std::atomic<BusEffectChainState*>> m_previewEffectStates;
     std::atomic<std::uint32_t> m_pendingPreviewEffects{0};
     // Logic-owned tree-parent shadow and slot liveness, indexed by dense bus
     // index and sized to capacity at init. CreateBus (and a live reparent)

@@ -42,6 +42,23 @@ BusTargetStore::BusTargetStore(const BusTargetStore& other)
     std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
 }
 
+bool BusTargetStore::PrepareBusCapacity(std::uint32_t count) noexcept {
+    if (count <= m_maxBuses) return true;
+    if (m_projectionActive) return false;
+    try {
+        const auto rows = static_cast<std::size_t>(count) * kBusTargetCount;
+        m_settings.reserve(rows); m_settings.resize(rows);
+        m_activeGenerations.reserve(count); m_activeGenerations.resize(count);
+        for (auto bus = m_maxBuses; bus < count; ++bus)
+            for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
+                const auto* meta = FindTargetMeta(kTargetScopeBus, t);
+                m_settings[PubIndexOf(bus, t)].lastCommitted = meta ? meta->neutral : 0;
+            }
+        m_maxBuses = count;
+        return true;
+    } catch (...) { return false; }
+}
+
 bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) noexcept {
     if (!InRange(bus, target, 0)) return false;
     auto& settings = m_settings[PubIndexOf(bus, target)];
