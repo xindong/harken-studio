@@ -117652,7 +117652,9 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
     harken::PreparedBusCommandBatch coldPublication(*engine);
     if (!publication && !coldPublication.Prepare({&command, 1})) return VN_BACKPRESSURE;
-    if (!engine->busEffects.Prepare(1)) return VN_DEVICE_ERROR;
+    const harken::BusEffectSettings::Write settingsWrite{busIndex, slot,
+        {type, {desc->effectId, engine->CurrentProjectId()}, 0}};
+    if (!engine->busEffects.Prepare({&settingsWrite, 1})) return VN_DEVICE_ERROR;
     const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
         harken::EffectParamTargetStore::Scope::Bus,
         static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
@@ -127362,7 +127364,17 @@ VnResult ApplyPreparedPackTransaction(
         if ((revision.prospectiveBusVolumeApply[bus] & kApplyBusOutputVolume) != 0)
             settingsReady &= engine.busTargets.PrepareSettings(bus, kBusTargetBusOutputVolume);
     }
-    if (!settingsReady || !engine.busEffects.Prepare(revision.busEffectRefs.size())) {
+    try {
+        std::vector<BusEffectSettings::Write> effectWrites;
+        effectWrites.reserve(revision.busEffectRefs.size());
+        for (const auto& reservation : revision.busEffectRefs) {
+            const auto& effect = image.busEffects[reservation.imageIndex];
+            effectWrites.push_back({ProspectiveRevisionBusIndex(engine, revision, effect.busId), effect.slot,
+                {effect.effectType, engine.effectBank.ObjectIdentity(reservation.ref), revision.handle}});
+        }
+        settingsReady &= engine.busEffects.Prepare(effectWrites);
+    } catch (...) { settingsReady = false; }
+    if (!settingsReady) {
         if (commandCount != 0) queueGuard.Cancel();
         CancelRevisionAttenuationDiscrete(engine, revision);
         CancelRevisionBindings(engine, revision);
@@ -131378,8 +131390,11 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
 }
 
 bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
-    if (!engine.busEffects.Prepare(prepared.busEffects ? prepared.busEffects->SettingsWriteCount() : 0))
-        return false;
+    try {
+        std::vector<BusEffectSettings::Write> effectWrites;
+        if (prepared.busEffects && !prepared.busEffects->AppendSettingsWrites(effectWrites)) return false;
+        if (!engine.busEffects.Prepare(effectWrites)) return false;
+    } catch (...) { return false; }
     bool targetsReady = true;
     for (const auto& assignment : prepared.slotPlan.assignments) {
         targetsReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusVolume);

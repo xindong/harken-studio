@@ -4,6 +4,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "HarkenApiInternal.h"
+#include "AllocationProbe.h"
 #include "SignalPublication.h"
 #include "harken/render/BusActivityPlan.h"
 
@@ -1663,6 +1664,56 @@ TEST(BusSettings, FailedColdPreparationKeepsDirectValuesAndWholePropertyBatch) {
 }
 
 } // namespace
+
+TEST(BusSettings, GroupedEffectIdentitiesRetainMixedScopesAcrossClearAndPreparedReinsert) {
+    using Settings = harken::BusEffectSettings;
+    Settings settings;
+    const auto make = [](unsigned bus, unsigned slot, unsigned scope) {
+        return Settings::Write{bus, slot, {VN_EFFECT_GAIN,
+            {harkentest::ObjectId(30000 + bus * 8 + slot), harkentest::ObjectId(31000 + scope)}, scope}};
+    };
+    const std::array initial{make(1, 0, 1), make(1, 1, 2)};
+    ASSERT_TRUE(settings.Prepare(initial));
+    for (const auto& write : initial) settings.Set(write.bus, write.slot, write.value);
+    settings.Set(1, 0, {});
+    const auto extra = make(1, 2, 2);
+    ASSERT_TRUE(settings.Prepare({&extra, 1}));
+    allocation_probe::count = 0;
+    allocation_probe::enabled = true;
+    settings.Set(extra.bus, extra.slot, extra.value);
+    allocation_probe::enabled = false;
+    EXPECT_EQ(0u, allocation_probe::count);
+    EXPECT_EQ(extra.value.identity.projectId, settings.Get(1, 2).identity.projectId);
+    EXPECT_EQ(2u, settings.Get(1, 2).owner);
+    EXPECT_EQ(2u, settings.Count());
+    std::vector<Settings::Write> writes;
+    for (unsigned slot = 0; slot < 8; ++slot) writes.push_back(make(2, slot, 3));
+    writes.push_back(make(1, 0, 4));
+    writes.push_back(make(1, 1, 5));
+    ASSERT_TRUE(settings.Prepare(writes));
+    allocation_probe::count = 0;
+    allocation_probe::enabled = true;
+    for (unsigned slot = 0; slot < 8; ++slot) settings.Set(2, slot, writes[slot].value);
+    settings.ClearBus(1);
+    settings.Set(1, 0, writes[8].value);
+    settings.Set(1, 1, writes[9].value);
+    allocation_probe::enabled = false;
+    EXPECT_EQ(0u, allocation_probe::count);
+    EXPECT_EQ(10u, settings.Count());
+    for (const auto& write : writes) {
+        const auto actual = settings.Get(write.bus, write.slot);
+        EXPECT_EQ(write.value.identity.effectId, actual.identity.effectId);
+        EXPECT_EQ(write.value.identity.projectId, actual.identity.projectId);
+        EXPECT_EQ(write.value.owner, actual.owner);
+        EXPECT_EQ(write.value.type, actual.type);
+    }
+    EXPECT_TRUE(settings.HasOwner(1, 4));
+    EXPECT_TRUE(settings.HasOwner(1, 5));
+    EXPECT_FALSE(settings.HasOwner(1, 1));
+    settings.ClearBus(2);
+    EXPECT_EQ(2u, settings.Count());
+    EXPECT_EQ(harken::kEffectTypeNone, settings.Get(2, 7).type);
+}
 
 TEST(BusSettings, SparseDirectSettingFailurePublishesNothingAndRetryKeepsRamp) {
     for (bool output : {false, true}) {

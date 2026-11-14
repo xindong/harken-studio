@@ -930,6 +930,8 @@ TEST(EffectParamBindingE2E, PreviewBusParameterVectorPreservesBindingsAcrossDire
     engine.busTopologyOwnerIds[bus] = ownerId;
     auto ownedSetting = engine.busEffects.Get(bus, kSlot);
     ownedSetting.owner = ownerId;
+    const harken::BusEffectSettings::Write ownedWrite{bus, kSlot, ownedSetting};
+    ASSERT_TRUE(engine.busEffects.Prepare({&ownedWrite, 1}));
     engine.busEffects.Set(bus, kSlot, ownedSetting);
     const auto binding = EffectParamBinding(VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
         VN_EFFECT_COMPRESSOR, harken::kCompressorParamThresholdDb, -12.0f, -12.0f);

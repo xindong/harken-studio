@@ -4,6 +4,7 @@
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
 #include "BusSendTable.h"
+#include "BusEffectSettings.h"
 #include "VoiceSendConfig.h"
 #include "SignalPublication.h"
 #include "harken/core/PreviewBusEffects.h"
@@ -246,7 +247,7 @@ public:
         std::uint64_t allowedOwner, std::uint64_t nextOwner,
         bool deferStructureWhilePlaying = false);
     bool CanCommit() const noexcept;
-    std::size_t SettingsWriteCount() const noexcept;
+    bool AppendSettingsWrites(std::vector<BusEffectSettings::Write>& writes) const noexcept;
     void Commit() noexcept;
     std::span<const CommandRecord> Commands() const noexcept;
 private:

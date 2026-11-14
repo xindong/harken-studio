@@ -280,9 +280,13 @@ bool PreparedBusEffectsV1::CanCommit() const noexcept {
     return true;
 }
 
-std::size_t PreparedBusEffectsV1::SettingsWriteCount() const noexcept {
-    return state_ ? std::count_if(state_->rows.begin(), state_->rows.end(),
-        [](const auto& row) { return !row.retire && row.afterType != kEffectTypeNone; }) : 0;
+bool PreparedBusEffectsV1::AppendSettingsWrites(std::vector<BusEffectSettings::Write>& writes) const noexcept {
+    try {
+        if (state_) for (const auto& row : state_->rows)
+            if (!row.retire && row.afterType != kEffectTypeNone)
+                writes.push_back({row.bus, row.slot, {row.afterType, row.afterIdentity, state_->nextOwner}});
+        return true;
+    } catch (...) { return false; }
 }
 
 void PreparedBusEffectsV1::Commit() noexcept {
@@ -2384,13 +2388,19 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     command.payload.setBusTopologyPlan.batchCommandCount = static_cast<std::uint32_t>(commands.size());
     CommandQueue::PreparedBatchProof proof;
     bool targetStorageReady = engine.PrepareBusRetirements(prepared.slotPlan_.removed.size());
-    std::size_t effectWrites = prepared.effects_ ? prepared.effects_->SettingsWriteCount() : 0;
-    for (const auto& chain : prepared.effectChains_) {
-        if (!chain.changes || chain.releaseOwner) continue;
-        for (const auto& target : chain.state->update.targets)
-            if (target.effectType != kEffectTypeNone) ++effectWrites;
-    }
-    targetStorageReady &= engine.busEffects.Prepare(effectWrites);
+    try {
+        std::vector<BusEffectSettings::Write> effectWrites;
+        if (prepared.effects_) targetStorageReady &= prepared.effects_->AppendSettingsWrites(effectWrites);
+        for (const auto& chain : prepared.effectChains_) {
+            if (!chain.changes || chain.releaseOwner) continue;
+            const auto& update = chain.state->update;
+            for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot)
+                if (update.targets[slot].effectType != kEffectTypeNone)
+                    effectWrites.push_back({chain.host.index, slot, {update.targets[slot].effectType,
+                        engine.effectBank.ObjectIdentity(update.targetRefs[slot]), chain.state->owner}});
+        }
+        targetStorageReady &= engine.busEffects.Prepare(effectWrites);
+    } catch (...) { targetStorageReady = false; }
     for (const auto& assignment : prepared.slotPlan_.assignments) {
         targetStorageReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusVolume);
         targetStorageReady &= engine.busTargets.PrepareSettings(assignment.slot, kBusTargetBusOutputVolume);
