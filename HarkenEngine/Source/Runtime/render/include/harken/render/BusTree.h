@@ -156,6 +156,10 @@ public:
         std::span<const WorkObservation> observations, VoicePool& voices) noexcept;
     BusActivityPlan* PendingSleep() const noexcept { return m_pendingSleep; }
     bool AcknowledgeSleep() noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    bool AutomaticSleepEnabledForTest() const noexcept { return m_automaticSleepForTest; }
+    void SetAutomaticSleepEnabledForTest(bool enabled) noexcept { m_automaticSleepForTest = enabled; }
+#endif
     const BusActivityPlan* AcceptedActivity() const noexcept { return m_lastQueuedActivity; }
     const SignalRenderPlan* AcceptedActivityAlternate() const noexcept;
     bool PreparePendingSleepContinuity(SignalRenderPlan& next) const noexcept;
@@ -702,6 +706,9 @@ private:
         if (bus.activityRevision != UINT64_MAX) ++bus.activityRevision;
     }
     bool LocalRecoveryReady(const Bus& bus) const noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    bool m_automaticSleepForTest = true;
+#endif
     bool HasWorkRow(std::uint32_t index) const noexcept {
         return index < m_audioCount && m_workSlots[index].Valid();
     }

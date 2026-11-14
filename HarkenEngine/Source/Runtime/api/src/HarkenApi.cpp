@@ -112697,6 +112697,7 @@ VnResult Vn_Update(void) {
     engine->variables.AcknowledgeFinishedNativeReadCuts();
     engine->CompleteVariableOperation();
     engine->variables.ReleaseUnusedReadCutBacking();
+    harken::ServiceBusActivity(*engine);
     while (engine->logicLogRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;

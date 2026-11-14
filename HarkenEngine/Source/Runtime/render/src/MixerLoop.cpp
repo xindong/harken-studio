@@ -710,7 +710,7 @@ void MixerLoop::ApplyStagedCurrentSlices(
                     target.locator.scope != VariableTargetScope::BusEffect) return true;
                 const BusSlotRef host{static_cast<std::uint32_t>(target.locator.object),
                     target.locator.objectGeneration};
-                return !buses.AudioRefMatches(host) || buses.BusState(host.index) != nullptr;
+                return !buses.AudioRefMatches(host) || buses.AudioWorkRef(host.index).Valid();
             });
         const auto state = m_variableSlices->State(ref);
         if (state != VariableSliceState::PageCommitted && state != VariableSliceState::AudioClaimed)

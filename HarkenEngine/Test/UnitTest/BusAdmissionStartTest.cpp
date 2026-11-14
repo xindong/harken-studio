@@ -2719,6 +2719,12 @@ void SleepLiveBus(harken::Engine& engine, harken::BusSlotRef bus) {
     using namespace harken;
     engine.nullBackend.Pump(600);
     ASSERT_EQ(VN_OK, Vn_Update());
+    if (engine.buses.PendingSleep()) {
+        engine.nullBackend.Pump(1);
+        ASSERT_TRUE(AcknowledgeBusSleep(engine));
+        engine.buses.DrainActivities();
+    }
+    if (!engine.buses.AcceptedWorkRef(bus).Valid()) return;
     BusTree::WorkObservation fact;
     ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, engine.buses.AcceptedWorkRef(bus), fact));
     ASSERT_GE(fact.quietFrames, 24000u);

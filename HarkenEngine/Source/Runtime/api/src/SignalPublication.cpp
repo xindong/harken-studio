@@ -171,7 +171,8 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
     CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected,
-    bool adoptsTopology, std::span<const BusTree::WorkBinding> providedWork) noexcept {
+    bool adoptsTopology, std::span<const BusTree::WorkBinding> providedWork,
+    bool conditionalSleep, std::span<const BusTree::WorkObservation> sleeping) noexcept {
     if (!topology.valid || commands.empty() || commands.size() > UINT32_MAX) return false;
     const bool alreadyFrozen = proof.Valid();
     if (alreadyFrozen && !engine.commands.PreparedBatchMatches(proof, &reservation,
@@ -311,7 +312,8 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             for (const auto& entry : plan.preparedEffects)
                 owner.busEffectInstanceRefs[entry.bus.index] = entry.effects;
         };
-        if ((!alreadyFrozen && !engine.commands.ProvePreparedBatch(&reservation, commands.data(),
+        if ((conditionalSleep && !engine.buses.PrepareConditionalSleep(*activity, sleeping, engine.voices)) ||
+            (!alreadyFrozen && !engine.commands.ProvePreparedBatch(&reservation, commands.data(),
                 static_cast<std::uint32_t>(commands.size()), &proof)) ||
             !engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(activity))) {
             proof.Release();
@@ -427,6 +429,110 @@ bool PreparedBusCommandBatch::PrepareWake() noexcept {
     return engine_.commands.ReserveBatch(1, &reservation_) &&
         PrepareTopologyActivity(engine_, engine_.buses.AcceptedTopology(), reservation_,
             commands_, proof_, &selected, false);
+}
+
+void ServiceBusActivity(Engine& engine) noexcept {
+    if (!AcknowledgeBusSleep(engine)) return;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    if (!engine.buses.AutomaticSleepEnabledForTest()) return;
+#endif
+    const auto topology = engine.buses.AcceptedTopology();
+    const auto* current = engine.buses.AcceptedActivity();
+    if (!topology.valid || current == nullptr) return;
+    CommandQueue::BatchReservation reservation;
+    CommandQueue::PreparedBatchProof proof;
+    try {
+        BusActivityRoots roots;
+        if (!CaptureBusActivityOwners(engine, topology, {}, roots)) return;
+        std::vector<BusTree::WorkObservation> facts(current->working.size());
+        std::uint64_t block = 0;
+        for (std::size_t i = 0; i < facts.size(); ++i) {
+            const auto& binding = current->working[i];
+            if (engine.buses.CaptureWorkObservation(binding.bus, binding.work, facts[i]))
+                block = std::max(block, facts[i].blockSequence);
+        }
+        SignalRenderPlan::ActivityObservation signals;
+        const bool signalFacts = current->signals && current->signals->CaptureActivityObservation(signals);
+        if (signalFacts) block = std::max(block, signals.blockSequence);
+        if (block == 0) return;
+        const auto hold = engine.config.mixRate.SampleRate() / 2;
+        for (std::size_t i = 0; i < facts.size(); ++i) {
+            const auto& fact = facts[i];
+            if (fact.blockSequence != block || !fact.rendered || !fact.localRecoveryReady ||
+                fact.inputActive || fact.detectorActive || fact.physicalVoice || fact.quietFrames < hold)
+                roots.buses.push_back(current->working[i].bus);
+        }
+        std::vector<std::uint32_t> formalDefinitions;
+        if (current->signals && topology.signals) {
+            std::vector<std::uint8_t> formal(current->signals->NodeCount());
+            for (const auto& relation : current->signals->Relations())
+                formal[relation.source] = formal[relation.target] = 1;
+            for (std::uint32_t i = 0; i < current->signals->NodeCount(); ++i) {
+                const auto node = current->signals->NodeDefinition(i);
+                if (!formal[i] && !node.receiver) continue;
+                const bool ready = signalFacts && signals.blockSequence == block && i < signals.nodes.size() &&
+                    signals.nodes[i].ready && signals.nodes[i].quietFrames >= hold;
+                for (std::uint32_t j = 0; j < topology.signals->NodeCount(); ++j) {
+                    const auto other = topology.signals->NodeDefinition(j);
+                    if (node.kind == other.kind && node.stableId == other.stableId &&
+                        node.busId == other.busId && node.busGeneration == other.busGeneration) {
+                        formalDefinitions.push_back(j);
+                        if (!ready) roots.signals.push_back(j);
+                        break;
+                    }
+                }
+            }
+        }
+        std::vector<BusActivityDetectorDependency> detectors;
+        engine.dynamicRoutes.ForEachDefinition([&](const DynamicRouteDefinition& route) {
+            if (route.targetBusIndex >= topology.slotCount || !topology.alive[route.targetBusIndex]) return;
+            const BusSlotRef target{route.targetBusIndex, topology.generations[route.targetBusIndex]};
+            if (route.sourceKind == VN_DYNAMIC_SOURCE_BUS && route.sourceIndex < topology.slotCount &&
+                topology.alive[route.sourceIndex] && topology.generations[route.sourceIndex] == route.sourceGeneration)
+                detectors.push_back({target, {route.sourceIndex, route.sourceGeneration}});
+            else if (route.sourceKind == VN_DYNAMIC_SOURCE_VOICE &&
+                engine.voices.IsAlive((static_cast<std::uint64_t>(route.sourceGeneration) << 32) | route.sourceIndex))
+                roots.buses.push_back(target);
+        });
+        BusActivitySelection selected;
+        if (!PrepareBusActivitySelection(topology, topology.signals, roots.buses, roots.signals,
+                detectors, roots.members, selected)) return;
+        // Missing owners need an unconditional wake, never a mixed sleep/wake.
+        const bool addsBus = std::any_of(selected.buses.begin(), selected.buses.end(), [&](auto bus) {
+            return !engine.buses.AcceptedWorkRef({bus, topology.generations[bus]}).Valid();
+        });
+        const bool addsSignal = topology.signals && std::any_of(selected.signalNodes.begin(),
+            selected.signalNodes.end(), [&](auto node) {
+                return !current->signals || !current->signals->ContainsNodeDefinition(*topology.signals, node);
+            });
+        if (addsBus || addsSignal) {
+            PreparedBusCommandBatch wake(engine);
+            if (wake.PrepareWake()) wake.Publish();
+            return;
+        }
+        const bool removesSignal = std::any_of(formalDefinitions.begin(), formalDefinitions.end(), [&](auto node) {
+            return std::find(selected.signalNodes.begin(), selected.signalNodes.end(), node) == selected.signalNodes.end();
+        });
+        if (selected.buses == current->order && !removesSignal) return;
+        std::vector<BusTree::WorkObservation> sleeping;
+        for (std::size_t i = 0; i < facts.size(); ++i)
+            if (std::find(selected.buses.begin(), selected.buses.end(), current->working[i].bus.index) == selected.buses.end())
+                sleeping.push_back(facts[i]);
+        CommandRecord command{};
+        command.opcode = kOpcodeSetBusActivity;
+        if (engine.commands.ReserveBatch(1, &reservation) &&
+            PrepareTopologyActivity(engine, topology, reservation, {&command, 1}, proof,
+                &selected, false, {}, true, sleeping)) {
+            const auto published = engine.commands.ConsumePreparedBatch(std::move(proof));
+            assert(published.Count() == 1);
+            (void)published;
+        }
+    } catch (...) {
+        // Optional reclamation never changes an accepted operation's result.
+    }
+    proof.Release();
+    engine.commands.CancelReservedBatch(&reservation);
+    engine.buses.DrainActivities();
 }
 
 PreparedBusCommandBatch::~PreparedBusCommandBatch() {

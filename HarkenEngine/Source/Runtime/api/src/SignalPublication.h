@@ -40,10 +40,12 @@ struct BusActivitySelection;
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
     CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected = nullptr,
-    bool adoptsTopology = true, std::span<const BusTree::WorkBinding> providedWork = {}) noexcept;
+    bool adoptsTopology = true, std::span<const BusTree::WorkBinding> providedWork = {},
+    bool conditionalSleep = false, std::span<const BusTree::WorkObservation> sleeping = {}) noexcept;
 bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
     std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept;
 bool AcknowledgeBusSleep(Engine& engine) noexcept;
+void ServiceBusActivity(Engine& engine) noexcept;
 
 // A control-thread batch owns its reservation and optional wake until the
 // caller finishes no-fail logical commits. The command span stays alive here.

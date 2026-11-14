@@ -1581,6 +1581,12 @@ TEST(BusActivity, InitialTransactionalSlotBindsItsWorkIdentity) {
 
 void SleepSettingsBus(harken::Engine& engine, harken::BusSlotRef bus) {
     using namespace harken;
+    if (engine.buses.PendingSleep()) {
+        engine.nullBackend.Pump(1);
+        ASSERT_TRUE(AcknowledgeBusSleep(engine));
+        engine.buses.DrainActivities();
+    }
+    if (!engine.buses.AcceptedWorkRef(bus).Valid()) return;
     BusTree::WorkObservation fact;
     ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, engine.buses.AcceptedWorkRef(bus), fact));
     std::vector<BusTree::WorkBinding> retained;
@@ -1614,6 +1620,7 @@ TEST(BusSettings, DirectCommandsWakeColdBusWithoutChangingTheirRamps) {
             EngineSession session(MakeNullConfig(2, 64, 48000));
             ASSERT_EQ(VN_OK, session.InitResult());
             auto& engine = *session.Engine();
+            engine.buses.SetAutomaticSleepEnabledForTest(cold);
             const auto id = harkentest::ObjectId(711);
             ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
             ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(713), VN_BUS_MASTER));
