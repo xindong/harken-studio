@@ -3013,9 +3013,9 @@ TEST(PackLogicLoad, LegacyVariableEntryKindsRefuseWithZeroSideEffects) {
 // --- staging atomicity ---
 
 
-TEST(PackLogicStaging, BusPoolExhaustionRefusesWholeLoad) {
+TEST(PackLogicStaging, BusDefinitionAllocationFailureRefusesWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
-    config.maxBuses = 3; // master + 2: three pack buses cannot fit
+    config.maxBuses = 3; // Growth failure must preserve the existing world.
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3029,12 +3029,17 @@ TEST(PackLogicStaging, BusPoolExhaustionRefusesWholeLoad) {
            { "id": "3da91a64-b947-4560-0000-000000000323", "parent": "00000000-0000-0000-0000-000000000001" } ])")));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BUS, LoadPack(packPath, &pack));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusDefinitionStorage);
+    const auto result = LoadPack(packPath, &pack);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(VN_BACKPRESSURE, result);
 
     // Zero mutation: no bus landed.
     EXPECT_EQ(1u, engine->buses.BusCount()); // the master alone
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(801), -1.0f, 0));
     EXPECT_EQ(0u, engine->packs.LoadedCount());
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
+    EXPECT_EQ(4u, engine->buses.BusCount());
 }
 
 TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {

@@ -33,7 +33,7 @@ TEST(VoiceCapacity, ResolvesDefaultExplicitAndLegacyVintageRelationships) {
     EXPECT_EQ(256u, resolved.voiceCapacity.Render());
     EXPECT_EQ(256u, resolved.voiceCapacity.Virtual());
     EXPECT_EQ(512u, resolved.voiceCapacity.Logical());
-    EXPECT_EQ(2u << 20, resolved.arenaBytes);
+    EXPECT_EQ(UINT32_MAX, resolved.arenaBytes);
 
     VnConfig explicitConfig =
         harkentest::MakeNullConfig(/*maxVoices=*/3, kBlockFrames, kSampleRate);
@@ -68,7 +68,7 @@ TEST(VoiceCapacity, DefaultRenderCapacityHasStereoScratchForEveryVoice) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(256u, engine->config.voiceCapacity.Render());
-    ASSERT_EQ(2u << 20, engine->config.arenaBytes);
+    ASSERT_EQ(UINT32_MAX, engine->config.arenaBytes);
 
     const std::vector<float> source(kBlockFrames * 8u * 2u, 0.001f);
     const VnPCMDesc pcm =

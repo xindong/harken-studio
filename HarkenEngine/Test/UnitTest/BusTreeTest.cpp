@@ -98,7 +98,7 @@ TEST(BusTree, AliveRetirementHoldKeepsMaximumFutureRevisionAndCounts) {
     EXPECT_TRUE(buses.AliveAt(ref.index));
     EXPECT_EQ(2u, buses.ActiveBusCount());
     EXPECT_EQ(0u, buses.QuarantinedBusSlotCount());
-    ExpectRetirementCapacity(buses, 3);
+    ExpectRetirementCapacity(buses, session.Engine()->BusCapacity());
     buses.AcknowledgeInstalledGraphRevision(10);
     const auto before = RetirementState(buses, ref.index);
     EXPECT_FALSE(buses.HoldSlotReuse(ref, 8));
@@ -111,13 +111,13 @@ TEST(BusTree, AliveRetirementHoldKeepsMaximumFutureRevisionAndCounts) {
     buses.AcknowledgeInstalledGraphRevision(20);
     ASSERT_TRUE(buses.ReleaseRetiredSlot(ref, 20));
     EXPECT_TRUE(buses.AliveAt(ref.index));
-    ExpectRetirementCapacity(buses, 3);
+    ExpectRetirementCapacity(buses, session.Engine()->BusCapacity());
     const auto master = buses.FindRef(VN_BUS_MASTER);
     ASSERT_TRUE(buses.HoldSlotReuse(master, 30));
     const auto masterBefore = RetirementState(buses, master.index);
     EXPECT_FALSE(buses.HoldRetiredSlot(master, 31));
     EXPECT_EQ(masterBefore, RetirementState(buses, master.index));
-    ExpectRetirementCapacity(buses, 3);
+    ExpectRetirementCapacity(buses, session.Engine()->BusCapacity());
     buses.AcknowledgeInstalledGraphRevision(30);
     EXPECT_TRUE(buses.ReleaseRetiredSlot(master, 30));
 }
@@ -155,7 +155,7 @@ TEST(BusTree, InvalidOrAlreadyInstalledRetirementRequestsNeverMutateState) {
         EXPECT_FALSE(buses.HoldRetiredSlot(master, 101));
         EXPECT_EQ(masterBefore, RetirementState(buses, master.index));
         EXPECT_EQ(0u, buses.RetirementRevisionAt(UINT32_MAX));
-        ExpectRetirementCapacity(buses, 3);
+        ExpectRetirementCapacity(buses, session.Engine()->BusCapacity());
     }
 }
 
@@ -227,7 +227,7 @@ TEST(BusTree, CreateBusRequiresInit) {
 
 TEST(BusTree, CreateBusValidationAndCapacity) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
-    config.maxBuses = 3; // master plus two
+    config.maxBuses = 3; // Legacy hints no longer restrict definition count.
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -243,12 +243,12 @@ TEST(BusTree, CreateBusValidationAndCapacity) {
     EXPECT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER));
     EXPECT_EQ(VN_IN_USE, Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER));
 
-    // Nesting under a created bus works; the table is now full.
+    // Nesting and growth beyond the legacy hint both remain valid.
     EXPECT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(11), harkentest::ObjectId(10)));
-    EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(harkentest::ObjectId(12), VN_BUS_MASTER));
+    EXPECT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(12), VN_BUS_MASTER));
 
     // Refusals left the tree usable: the created buses still resolve.
-    EXPECT_EQ(3u, session.Engine()->buses.BusCount());
+    EXPECT_EQ(4u, session.Engine()->buses.BusCount());
 }
 
 TEST(BusTree, UnusedDefinitionCapacityDoesNotCreateWorkingRows) {
@@ -470,6 +470,7 @@ TEST(BusWorkRows, CandidateKeepsDetachedEffectUntilAudioRetirement) {
     auto& engine = *session.Engine();
     auto& buses = engine.buses;
     const auto id = harkentest::ObjectId(10);
+    ASSERT_TRUE(engine.PrepareBusDefinitionCapacity(2));
     // Isolate row leases from the activity owner's additional lease.
     ASSERT_EQ(VN_OK, buses.CreateBus(id, VN_BUS_MASTER));
     const auto topology = engine.topologyPlans.AcquireSparse(0);
@@ -1461,6 +1462,7 @@ TEST(BusActivity, LogicalSlotUsesIndependentlyPreparedWorkIdentity) {
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     auto& buses = engine.buses;
+    ASSERT_TRUE(engine.PrepareBusDefinitionCapacity(2));
     buses.CommitLogicSlot(1, harkentest::ObjectId(10), 0, 1);
     EXPECT_EQ(1u, buses.WorkRowsInUse());
     EXPECT_FALSE(buses.AcceptedWorkRef(buses.RefAt(1)).Valid());
@@ -1657,3 +1659,28 @@ TEST(BusSettings, FailedColdPreparationKeepsDirectValuesAndWholePropertyBatch) {
 }
 
 } // namespace
+
+TEST(BusCapacityGrowth, OwnerAllocationFailureKeepsAllPublishedLengthsAndCanRetry) {
+    for (std::size_t nth = 1; nth <= 5; ++nth) {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto before = engine.busTopologyOwners.size();
+        harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::BusOwnerStorage);
+        const bool prepared = engine.PrepareBusOwnerCapacity(before + 1);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_FALSE(prepared) << nth;
+        EXPECT_EQ(before, engine.busTopologyOwners.size());
+        EXPECT_EQ(before, engine.previewMasterHolders.size());
+        EXPECT_EQ(before, engine.currentWorldBusAdmission.size());
+        EXPECT_EQ(before, engine.preparedOwnerClaims.size());
+        EXPECT_EQ(before, engine.preparedPreviewOwnerSlots.size());
+        ASSERT_TRUE(engine.PrepareBusOwnerCapacity(before + 1));
+        EXPECT_EQ(before + 1, engine.busTopologyOwners.size());
+        EXPECT_EQ(before + 1, engine.previewMasterHolders.size());
+        EXPECT_EQ(before + 1, engine.currentWorldBusAdmission.size());
+        EXPECT_EQ(before + 1, engine.preparedOwnerClaims.size());
+        EXPECT_EQ(before + 1, engine.preparedPreviewOwnerSlots.size());
+        EXPECT_EQ(UINT32_MAX, engine.preparedPreviewOwnerSlots.back());
+    }
+}

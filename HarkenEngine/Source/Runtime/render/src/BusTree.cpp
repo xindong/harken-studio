@@ -148,7 +148,7 @@ bool BusTree::PrepareDefinitionCapacity(std::uint32_t count) noexcept {
 void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
                                 std::uint32_t parentIndex,
                                 std::uint32_t generation) noexcept {
-    assert(busIndex < m_capacity);
+    assert(busIndex < m_workSlots.ConstructedCount());
     Bus& bus = WorkState(busIndex);
     bus = Bus{};
     bus.id = id;
@@ -316,7 +316,7 @@ std::uint32_t BusTree::AudioGenerationAt(std::uint32_t index) const {
 std::uint32_t BusTree::FreeBusSlotCount() const {
     std::uint32_t free = m_capacity - m_count;
     for (std::uint32_t i = 1; i < m_count; ++i) {
-        if (m_logicAlive[i] == 0 && !QuarantinedAt(i)) {
+        if (m_logicAlive[i] == 0 && !QuarantinedAt(i) && NextGenerationForSlot(i) != 0) {
             ++free;
         }
     }

@@ -58,6 +58,7 @@ protected:
         ASSERT_EQ(VN_OK, session->InitResult());
         engine = session->Engine();
         ASSERT_NE(nullptr, engine);
+        ASSERT_TRUE(engine->PrepareBusDefinitionCapacity(4));
         ASSERT_EQ(VN_OK, engine->buses.CreateBus(kBusA, VN_BUS_MASTER));
         ASSERT_EQ(VN_OK, engine->buses.CreateBus(kBusB, VN_BUS_MASTER));
         ASSERT_EQ(VN_OK, engine->buses.CreateBus(kBusC, VN_BUS_MASTER));
@@ -1454,6 +1455,7 @@ TEST_F(BusSendSlotReconcile, SignalFeedbackRunsThroughMixerAndPostOutputVolume) 
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
     engine = session->Engine();
+    ASSERT_TRUE(engine->PrepareBusDefinitionCapacity(4));
     ASSERT_EQ(VN_OK, engine->buses.CreateBus(kBusA, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, engine->buses.CreateBus(kBusB, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, engine->buses.CreateBus(kBusC, VN_BUS_MASTER));

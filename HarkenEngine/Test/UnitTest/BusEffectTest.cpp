@@ -288,19 +288,16 @@ TEST(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
     EXPECT_NEAR(payload.busPeaks[busIndex], expectedEffects, 1e-5f);
 
     std::uint64_t blockIndex = 0;
-    const float* prePeaks = nullptr;
-    const float* postPeaks = nullptr;
-    const float* effectsPeaks = nullptr;
-    ASSERT_TRUE(engine->meterRing.FrontTaps(
-        &blockIndex, &prePeaks, &postPeaks, &effectsPeaks));
+    ASSERT_TRUE(engine->meterRing.FrontBlock(&blockIndex));
     EXPECT_EQ(blockIndex, 0u);
-    EXPECT_NEAR(prePeaks[busIndex], expectedPre, 1e-5f);
-    EXPECT_NEAR(postPeaks[busIndex], expectedPost, 1e-5f);
-    EXPECT_NEAR(effectsPeaks[busIndex], expectedEffects, 1e-5f);
-
-    const float* legacyPeaks = nullptr;
-    ASSERT_TRUE(engine->meterRing.Front(&blockIndex, &legacyPeaks));
-    EXPECT_NEAR(legacyPeaks[busIndex], expectedEffects, 1e-5f);
+    float peak = 0;
+    const auto generation = engine->buses.GenerationAt(busIndex);
+    ASSERT_TRUE(engine->meterRing.FrontSample(busIndex, generation, VN_BUS_METER_TAP_PRE_FADER, peak));
+    EXPECT_NEAR(peak, expectedPre, 1e-5f);
+    ASSERT_TRUE(engine->meterRing.FrontSample(busIndex, generation, VN_BUS_METER_TAP_POST_FADER, peak));
+    EXPECT_NEAR(peak, expectedPost, 1e-5f);
+    ASSERT_TRUE(engine->meterRing.FrontSample(busIndex, generation, VN_BUS_METER_TAP_POST_EFFECTS, peak));
+    EXPECT_NEAR(peak, expectedEffects, 1e-5f);
 }
 
 TEST(BusEffect, MeterProbesSelectAllThreeSignalTaps) {

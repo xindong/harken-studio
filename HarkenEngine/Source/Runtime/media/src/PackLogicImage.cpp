@@ -151,7 +151,7 @@ bool HasDuplicateId(const std::vector<T>& entries, IdFn&& idOf) {
 bool ValidateCanonicalBusParentForestV2(
     std::span<const PackBusDefinitionBus> buses, const detail::PackDecodeBudget& budget) {
     detail::PackDecodeCharge scratch(budget);
-    if (buses.empty() || buses.size() > 4096) return false;
+    if (buses.empty() || buses.size() >= UINT32_MAX) return false;
     scratch.AddRows<std::pair<const VnObjectId, std::size_t>>(buses.size());
     std::map<VnObjectId, std::size_t> indices;
     for (std::size_t i = 0; i < buses.size(); ++i) {
@@ -904,7 +904,7 @@ VnResult ParseBusDefinitionSnapshotPayload(
     detail::PackDecodeCharge scratch(staging.Budget());
     PackBusDefinitionSnapshotHeader header;
     if (!ReadPackBusDefinitionSnapshotHeader(payload, size, &header) ||
-        header.busCount == 0 || header.busCount > 4096 ||
+        header.busCount == 0 || header.busCount == UINT32_MAX ||
         (header.publicationCapabilityVintage != 5 &&
          (header.effectCount != 0 || header.effectParameterCount != 0)) ||
         header.effectCount > static_cast<std::uint64_t>(header.busCount) * kMaxFxSlotsPerBus ||

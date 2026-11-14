@@ -632,7 +632,9 @@ TEST(BusDestroy, CascadeRetirementWaitsForAcknowledgementAndMeterWithdrawal) {
     EXPECT_NE(0u, engine->buses.RetirementRevisionAt(parent.index));
     EXPECT_NE(0u, engine->buses.RetirementRevisionAt(child.index));
     EXPECT_EQ(harken::MeterSystem::State::Withdrawing, probe->state);
-    EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(kBusC, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusC, VN_BUS_MASTER));
+    EXPECT_NE(parent.index, engine->buses.FindIndex(kBusC));
+    EXPECT_NE(child.index, engine->buses.FindIndex(kBusC));
     EXPECT_EQ(0u, harken::DrainTopologyRetirementsV1(*engine));
     const auto audio = PumpBlock(engine);
     EXPECT_NEAR(0.25f, audio.left.back(), 1e-5f);
@@ -646,7 +648,8 @@ TEST(BusDestroy, CascadeRetirementWaitsForAcknowledgementAndMeterWithdrawal) {
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(harken::MeterSystem::State::Retired, probe->state);
     EXPECT_EQ(0u, engine->buses.RetirementRevisionAt(child.index));
-    EXPECT_EQ(VN_OK, Vn_CreateBus(kBusC, VN_BUS_MASTER));
+    EXPECT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(9911), VN_BUS_MASTER));
+    EXPECT_EQ(parent.index, engine->buses.FindIndex(harkentest::ObjectId(9911)));
 }
 
 TEST(BusDestroy, ExhaustedRevisionsOrMeterSequencesPublishNothing) {

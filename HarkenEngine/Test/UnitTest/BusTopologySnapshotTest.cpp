@@ -228,7 +228,7 @@ TEST(BusTopologySnapshot, FullCapacityReplacementReusesGenerationalSlots) {
     const VnSnapshot after = Snapshot();
     EXPECT_EQ(3u, after.busCount);
     EXPECT_EQ(3u, after.activeBusCount);
-    EXPECT_EQ(0u, after.freeBusSlotCount);
+    EXPECT_EQ(session.Engine()->BusCapacity() - after.activeBusCount, after.freeBusSlotCount);
     EXPECT_EQ(before.busSlotReuseCount + 2, after.busSlotReuseCount);
     EXPECT_GT(after.busGenerations[1], before.busGenerations[1]);
     EXPECT_GT(after.busGenerations[2], before.busGenerations[2]);
@@ -258,7 +258,8 @@ TEST(BusTopologySnapshot, PureRemovalWaitsForAudioAcknowledgementBeforeSlotReuse
     EXPECT_EQ(generation, engine->BusRetirement(index)->generation);
     EXPECT_EQ(kOwner, engine->BusRetirement(index)->ownerId);
     EXPECT_EQ(kOwner, engine->busTopologyOwnerIds[index]);
-    EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(30), VN_BUS_MASTER));
+    EXPECT_NE(index, engine->buses.FindIndex(harkentest::ObjectId(30)));
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(revision, engine->buses.RetirementRevisionAt(index));
 
@@ -389,7 +390,8 @@ TEST(BusTopologySnapshot, RemovedSourceMetersRetireForPureAndReusedSlots) {
             EXPECT_EQ(0u, engine->buses.RetirementRevisionAt(old.index));
         } else {
             EXPECT_NE(0u, engine->buses.RetirementRevisionAt(old.index));
-            EXPECT_EQ(VN_NO_BUS, Vn_CreateBus(harkentest::ObjectId(20), VN_BUS_MASTER));
+            ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(30), VN_BUS_MASTER));
+            EXPECT_NE(old.index, engine->buses.FindIndex(harkentest::ObjectId(30)));
         }
         for (std::uint32_t i = 0; i < 4; ++i) {
             Pump(engine);

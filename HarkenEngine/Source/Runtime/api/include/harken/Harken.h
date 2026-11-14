@@ -202,13 +202,13 @@ typedef struct VnConfig {
     uint32_t maxVoices;      /* legacy field name: Render Voice capacity;
                               * 0 = 256 */
     uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
-    uint32_t arenaBytes;     /* per-block bump arena size; 0 = 2097152 */
+    uint32_t arenaBytes;     /* per-block arena reserve; 0 = automatic, committed on demand */
     uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
     uint32_t reserved0;      /* keeps 8-byte alignment for future fields */
     VnNotificationCallback onNotification; /* notification callback, or NULL
                                              * for none */
     void* notificationUserData; /* passed through to onNotification verbatim */
-    uint32_t maxBuses;          /* bus tree capacity incl. master; 0 = 32 */
+    uint32_t maxBuses;          /* legacy field, ignored; Bus storage grows on demand */
     uint32_t commandQueueDepth; /* logic->audio queue; 0 = 256; rounded up
                                  * to a power of two */
     uint32_t notificationQueueDepth; /* audio->logic queue; 0 = 256;
@@ -381,8 +381,7 @@ typedef struct VnConfig {
      * this vintage reads the documented defaults. The command ceiling occupies
      * the alignment slot this vintage already carried, so naming it changes no
      * offset and no struct size. */
-    uint32_t maxBusTopologyOwners;         /* retained owner revision records;
-                                            * 0 = 64 */
+    uint32_t maxBusTopologyOwners;         /* legacy field, ignored; owner records grow on demand */
     uint32_t maxControlCommandsPerQuantum; /* most control commands one render
                                             * block applies; 0 = 256. Commands
                                             * past the ceiling apply on a later

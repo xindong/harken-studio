@@ -1053,8 +1053,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     const auto proofCapacity = engine.variableSlices.Capacity();
     const auto payloadCapacity = engine.variableSlices.PayloadCapacity();
     const auto targetCapacity = engine.variableSlices.TargetPoolCapacity();
-    EXPECT_EQ(engine.variables.RevisionStorageCapacity() + 2 * config.maxBuses, proofCapacity);
-    EXPECT_EQ(engine.variables.PendingCapacity() + 2 * config.maxBuses, payloadCapacity);
+    EXPECT_EQ(engine.variables.RevisionStorageCapacity() + engine.variableSlices.TargetPoolCapacity(), proofCapacity);
+    EXPECT_EQ(engine.variables.PendingCapacity() + engine.variableSlices.TargetPoolCapacity(), payloadCapacity);
     ASSERT_EQ(proofCapacity, engine.variableSlices.FreeRowCount());
     ASSERT_EQ(payloadCapacity, engine.variableSlices.FreePayloadCount());
     ASSERT_TRUE(engine.variableSlices.Reset(proofCapacity, 1, targetCapacity, payloadCapacity));

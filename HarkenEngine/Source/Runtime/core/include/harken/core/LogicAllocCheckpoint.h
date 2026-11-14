@@ -48,6 +48,8 @@ enum class LogicAllocSite : unsigned int {
     FrontierOwnerLedgerStorage,
     BusSendStorage,
     VoiceSendStorage,
+    BusOwnerStorage,
+    BusDefinitionStorage,
 };
 
 struct LogicAllocFaultState {

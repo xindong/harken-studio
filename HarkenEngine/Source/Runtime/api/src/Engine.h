@@ -7173,19 +7173,9 @@ public:
                      resolved.maxVariableSliceTargetsTotal),
           effectParamTargets(
               resolved.mixRate.SampleRate(),
-              // Every installed, stale-until-Update, Pending-claim prepared,
-              // or Parked-return prepared voice record set is owned by one
-              // Logical ledger identity. A physical Render slot can advance
-              // generations before Update clears an old identity's records,
-              // so Logical capacity, not Render capacity, is the hard bound.
-              // Bus records retain one installed generation; claimed records
-              // can retire into the fixed lifecycle headroom below. Validated
-              // capacity/slot ceilings keep this product within uint32_t.
-              (resolved.voiceCapacity.Logical() *
-                   resolved.fxSlotsPerVoice +
-               static_cast<std::uint32_t>(resolved.maxBuses) *
-                   resolved.fxSlotsPerBus) *
-                  harken::kMaxEffectParamCount,
+              // Stable records are constructed only for actual parameters.
+              // Admission is bounded by record identity representation, not Bus count.
+              UINT32_MAX - resolved.maxVariableSliceTargetsTotal,
               resolved.maxVariableSliceTargetsTotal),
           meterDetectors(resolved.maxBuses, resolved.blockFrames,
                          resolved.mixRate.SampleRate()),
@@ -13740,10 +13730,8 @@ public:
         if (required <= BusCapacity()) return true;
         if (required >= UINT32_MAX) return false;
         const auto count = static_cast<std::uint32_t>(required);
-        const auto effectCapacity = (static_cast<std::uint64_t>(config.voiceCapacity.Logical()) *
-            config.fxSlotsPerVoice + required * config.fxSlotsPerBus) * kMaxEffectParamCount;
-        if (effectCapacity > UINT32_MAX) return false;
         try {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::BusDefinitionStorage);
             const auto grow = [count](auto& rows, auto value) {
                 rows.reserve(count); rows.resize(count, value);
             };
@@ -13754,7 +13742,6 @@ public:
             grow(busFaderAfterSlots, config.fxSlotsPerBus);
             grow(busMuted, 0); grow(busSoloed, 0); grow(busOutputLayout, config.mixChannelLayout);
             if (!busTargets.PrepareBusCapacity(count) ||
-                !effectParamTargets.PrepareActiveCapacity(static_cast<std::uint32_t>(effectCapacity)) ||
                 !topologyPlans.PrepareBusCapacity(count) || !preparedTopologyPlans.PrepareBusCapacity(count) ||
                 !buses.PrepareDefinitionCapacity(count)) return false;
             busDefinitionCapacity = count;
@@ -13765,6 +13752,16 @@ public:
         if (required >= UINT32_MAX) return false;
         const auto count = static_cast<std::size_t>(required);
         try {
+            // Publish matching lengths only after every allocation succeeds.
+            const auto reserve = [count](auto& rows) {
+                using Row = typename std::decay_t<decltype(rows)>::value_type;
+                static_assert(std::is_nothrow_default_constructible_v<Row>);
+                detail::CheckedGrow(rows, count, detail::LogicAllocSite::BusOwnerStorage);
+                rows.reserve(count);
+            };
+            reserve(busTopologyOwners); reserve(previewMasterHolders);
+            reserve(currentWorldBusAdmission); reserve(preparedOwnerClaims);
+            reserve(preparedPreviewOwnerSlots);
             const auto grow = [count](auto& rows) { if (rows.size() < count) rows.resize(count); };
             grow(busTopologyOwners); grow(previewMasterHolders); grow(currentWorldBusAdmission);
             grow(preparedOwnerClaims);

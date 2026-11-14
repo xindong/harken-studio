@@ -1317,6 +1317,7 @@ TEST(BusAdmissionStart, PairedCommitRecyclesStaleCurrentWorldAdmissionRows) {
     ASSERT_EQ(Vn_RegisterPCM(kSound, &pcm), VN_OK);
     harken::Engine* engine = session.Engine();
     ASSERT_NE(engine, nullptr);
+    ASSERT_TRUE(engine->PrepareBusOwnerCapacity(2));
     ASSERT_EQ(engine->currentWorldBusAdmission.size(), 2u);
     AdmissionWorldImage image(engine->registry.Lookup(kSound).contentRevision);
     ASSERT_EQ(harken::InstallContainerWorldV1(*engine, image.world).status,
