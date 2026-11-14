@@ -1586,7 +1586,11 @@ void SleepSettingsBus(harken::Engine& engine, harken::BusSlotRef bus) {
         ASSERT_TRUE(AcknowledgeBusSleep(engine));
         engine.buses.DrainActivities();
     }
-    if (!engine.buses.AcceptedWorkRef(bus).Valid()) return;
+    if (!engine.buses.AcceptedWorkRef(bus).Valid()) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        return;
+    }
     BusTree::WorkObservation fact;
     ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, engine.buses.AcceptedWorkRef(bus), fact));
     std::vector<BusTree::WorkBinding> retained;
