@@ -1188,6 +1188,12 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     ASSERT_EQ(saved->effects[0].type, VN_EFFECT_GAIN);
     EXPECT_TRUE(saved->effects[0].hasRendered);
     buses.AcknowledgeSleep();
+    const auto residual = buses.DormantWorkFor(bus);
+    ASSERT_NE(residual, nullptr);
+    EXPECT_TRUE(residual->filters.empty());
+    ASSERT_EQ(residual->effects.size(), 1u);
+    EXPECT_EQ(residual->effects[0].slot, 0u);
+    EXPECT_TRUE(residual->tones.empty());
     buses.DrainActivities();
     engine.nullBackend.Pump(1);
     buses.DrainActivities();
@@ -1249,7 +1255,7 @@ TEST(BusActivity, DeletedBusDoesNotReturnToDormantRegistryAtSleepAcknowledgement
     auto* sleep = buses.PrepareActivity(buses.AcceptedTopology(), compact);
     ASSERT_NE(sleep, nullptr);
     ASSERT_TRUE(buses.PrepareConditionalSleep(*sleep, {&fact, 1}, engine.voices));
-    std::weak_ptr<const BusDormantWork> residual = sleep->sleeping[0].saved;
+    std::weak_ptr<const BusDormantCapture> residual = sleep->sleeping[0].saved;
     CommandRecord command{};
     command.opcode = kOpcodeSetBusActivity;
     CommandQueue::BatchReservation reservation;

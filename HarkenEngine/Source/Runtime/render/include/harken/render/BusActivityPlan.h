@@ -21,12 +21,23 @@ struct BusActivityRoots {
     std::vector<BusActivityMemberRoute> members;
 };
 
-struct BusDormantWork {
+// Audio writes into fully prepared capture storage. It is released after ACK.
+struct BusDormantCapture {
     BusSlotRef bus;
     std::array<BusTree::DormantToneSection, 4> filters;
     std::array<BuiltinEffectDormantState, kMaxFxSlotsPerBus> effects;
     std::array<EffectObjectIdentity, kMaxFxSlotsPerBus> identities;
     std::array<ToneDormantState, kMaxFxSlotsPerBus> tones;
+};
+
+struct BusDormantWork {
+    struct Filter { std::uint32_t section; BusTree::DormantToneSection state; };
+    struct Effect { std::uint32_t slot; BuiltinEffectDormantState state; EffectObjectIdentity identity; };
+    struct Tone { std::uint32_t slot; ToneDormantState state; };
+    BusSlotRef bus;
+    std::vector<Filter> filters;
+    std::vector<Effect> effects;
+    std::vector<Tone> tones;
 };
 
 // Control-owned immutable residuals, independent of retired work-row storage.
@@ -79,10 +90,9 @@ struct BusActivityPlan {
         sleeping.clear();
         if (sleepPrevious != nullptr) { --sleepPrevious->logicPins; sleepPrevious = nullptr; }
     }
-    using DormantWork = BusDormantWork;
     struct SleepingWork {
         BusTree::WorkObservation expected;
-        std::shared_ptr<DormantWork> saved;
+        std::shared_ptr<BusDormantCapture> saved;
     };
     enum class SleepDecision : std::uint8_t { None, Pending, Accepted, Rejected };
     std::atomic<SleepDecision> sleepDecision{SleepDecision::None};

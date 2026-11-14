@@ -21,11 +21,30 @@ bool DefaultDormantFilter(const BusTree::DormantToneSection& value) noexcept {
         });
 }
 
-bool DefaultDormantWork(const BusDormantWork& saved) noexcept {
+bool DefaultDormantWork(const BusDormantCapture& saved) noexcept {
     return std::all_of(saved.filters.begin(), saved.filters.end(), DefaultDormantFilter) &&
         std::all_of(saved.effects.begin(), saved.effects.end(), [](const auto& effect) {
             return effect.type == kEffectTypeNone;
         });
+}
+
+std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture& saved) {
+    auto result = std::make_shared<BusDormantWork>();
+    result->bus = saved.bus;
+    result->filters.reserve(std::count_if(saved.filters.begin(), saved.filters.end(),
+        [](const auto& value) { return !DefaultDormantFilter(value); }));
+    result->effects.reserve(std::count_if(saved.effects.begin(), saved.effects.end(),
+        [](const auto& value) { return value.type != kEffectTypeNone; }));
+    result->tones.reserve(std::count_if(saved.effects.begin(), saved.effects.end(),
+        [](const auto& value) { return value.type == VN_EFFECT_THREE_BAND_TONE; }));
+    for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
+        if (!DefaultDormantFilter(saved.filters[i])) result->filters.push_back({i, saved.filters[i]});
+    for (std::uint32_t i = 0; i < saved.effects.size(); ++i) {
+        if (saved.effects[i].type == kEffectTypeNone) continue;
+        result->effects.push_back({i, saved.effects[i], saved.identities[i]});
+        if (saved.effects[i].type == VN_EFFECT_THREE_BAND_TONE) result->tones.push_back({i, saved.tones[i]});
+    }
+    return result;
 }
 }
 
@@ -308,7 +327,7 @@ bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
                 fact->quietFrames < m_sampleRate / 2 || (block != 0 && block != fact->blockSequence))
                 throw std::invalid_argument("invalid sleep observation");
             block = fact->blockSequence;
-            auto saved = std::make_shared<BusActivityPlan::DormantWork>();
+            auto saved = std::make_shared<BusDormantCapture>();
             saved->bus = binding.bus;
             if (!RetainWorkRow(binding.work)) throw std::invalid_argument("expired sleep row");
             plan.sleeping.push_back({*fact, std::move(saved)});
@@ -360,7 +379,7 @@ bool BusTree::AcknowledgeSleep() noexcept {
                 std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });
                 // Exact defaults reconstruct without history. Disabled filters
                 // with frozen input or non-default certificates remain owned.
-                if (!DefaultDormantWork(*row.saved)) next->buses.push_back(row.saved);
+                if (!DefaultDormantWork(*row.saved)) next->buses.push_back(CompactDormantWork(*row.saved));
             }
             if (plan.dormantSignals && latest->signals) {
                 std::shared_ptr<const SignalRenderPlan::DormantState> rest;
@@ -391,16 +410,20 @@ bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
         if (entry->bus != host) continue;
         const auto& saved = *entry;
         const std::array sections{&row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
-        for (std::size_t i = 0; i < sections.size(); ++i)
-            RestoreDormantToneSection(*sections[i], saved.filters[i]);
-        for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
+        for (const auto& filter : saved.filters)
+            RestoreDormantToneSection(*sections[filter.section], filter.state);
+        for (const auto& stored : saved.effects) {
+            const auto slot = stored.slot;
+            if (slot >= m_fxSlots) continue;
             const auto& effect = row.fxSlotEffectRef[slot];
             const auto identity = m_effectBank.ObjectIdentity(effect);
-            if (effect.type == kEffectTypeNone || effect.type != saved.effects[slot].type ||
-                identity.effectId != saved.identities[slot].effectId ||
-                identity.projectId != saved.identities[slot].projectId) continue;
+            if (effect.type == kEffectTypeNone || effect.type != stored.state.type ||
+                identity.effectId != stored.identity.effectId ||
+                identity.projectId != stored.identity.projectId) continue;
+            const auto tone = std::find_if(saved.tones.begin(), saved.tones.end(),
+                [slot](const auto& value) { return value.slot == slot; });
             if (!RestoreBuiltinEffectDormantState(row.fxSlots[slot].state,
-                    saved.effects[slot], &saved.tones[slot])) return false;
+                    stored.state, tone != saved.tones.end() ? &tone->state : nullptr)) return false;
         }
         break;
     }
