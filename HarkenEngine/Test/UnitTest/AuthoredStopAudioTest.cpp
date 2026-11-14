@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Engine.h"
 #include "Common/TestUtil.h"
@@ -3134,10 +3135,10 @@ TEST(AuthoredStopAudio, PrebufferUsesActualRingReadinessWithoutInventingSourcePr
             samples.fill(0.25f);
             float* planes[harken::kMaxChannels]{};
             planes[0] = samples.data();
-            harken::StreamRing ring;
+            harkentest::PcmStreamFixture ring;
             ring.Wire(planes, static_cast<std::uint32_t>(samples.size()));
             ring.ResetForUse(1);
-            ring.writeIndex.store(ready ? 512 : 16, std::memory_order_release);
+            ring.PublishFrames(ready ? 512 : 16);
             StopAudioHarness h(workers);
             const auto render = h.Play(false);
             auto* context = h.engine->voices.Resolve(render);

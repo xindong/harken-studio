@@ -2249,25 +2249,6 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         result = Vn_SetVoiceEffectParam(handle, slot, paramIndex, value);
         break;
     }
-    case harken::kTraceCallRegisterStreamFile:
-    case harken::kTraceCallReplaceStreamFile: {
-        const VnObjectId soundId = r.ObjectId();
-        FileRef ref;
-        if (!ReadFileRef(r, &ref)) {
-            return 1;
-        }
-        const int gate = VerifyFileRef(ref);
-        if (gate != 0) {
-            return gate;
-        }
-        result = (callId == harken::kTraceCallRegisterStreamFile)
-                     ? Vn_RegisterStreamFile(soundId, ref.path.c_str())
-                     : Vn_ReplaceStreamFile(soundId, ref.path.c_str());
-        break;
-    }
-    case harken::kTraceCallUnregisterStreamFile:
-        result = Vn_UnregisterStreamFile(r.ObjectId());
-        break;
     case harken::kTraceCallCreateEmitter:
     case harken::kTraceCallCreateEmitterEx: {
         VnEmitterHandle handle = 0;

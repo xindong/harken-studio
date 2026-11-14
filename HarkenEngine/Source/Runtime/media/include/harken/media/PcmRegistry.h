@@ -15,6 +15,7 @@
 #include "harken/core/PcmView.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/media/PackMediaRange.h"
+#include "harken/core/MediaCodec.h"
 
 #include <atomic>
 #include <cstdint>
@@ -63,6 +64,8 @@ struct PcmMediaFacts {
     bool Valid() const noexcept { return channelCount > 0 && frames > 0; }
 };
 
+class VorbisCodec;
+
 class PCMRegistry {
 private:
     struct Entry {
@@ -73,6 +76,7 @@ private:
         // Optional immutable Pack range. Resident storage may be added once,
         // at a transaction commit, to an entry backed only by this range.
         std::shared_ptr<const PackMediaRange> range;
+        std::shared_ptr<const EncodedMedia> encoded;
         std::atomic<std::uint32_t> uses{0};
         std::uint64_t cookie = 0;         // provenance stamp of this
                                           // registration (see RegisterPCM)
@@ -88,7 +92,7 @@ public:
         // True when the backing does not borrow a Pack byte buffer.
         bool OwnsSamples() const noexcept {
             return entry_ != nullptr &&
-                   (entry_->ownedSamples != nullptr || entry_->range != nullptr);
+                   (entry_->ownedSamples != nullptr || entry_->range != nullptr || entry_->encoded != nullptr);
         }
         PCMView View() const noexcept { return entry_ != nullptr ? entry_->view : PCMView{}; }
         PcmMediaFacts Facts() const noexcept {
@@ -98,6 +102,7 @@ public:
             return entry_ != nullptr ? entry_->range : nullptr;
         }
         std::uint64_t Cookie() const noexcept { return entry_ != nullptr ? entry_->cookie : 0; }
+        bool SharesEntry(const PackReference& other) const noexcept { return entry_ == other.entry_; }
 
     private:
         friend class PCMRegistry;
@@ -196,6 +201,8 @@ public:
         VnPCMDesc desc{};
         PcmLoopRegion loop{};
         PreparedPackSamples* samples = nullptr;
+        // Reuse semantic identity without conflating per-Pack byte sources.
+        PackReference identity;
     };
 
     class PreparedPackMutation {
@@ -210,6 +217,8 @@ public:
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
         std::uint64_t CookieOf(VnSoundId soundId) const noexcept;
         PackReference ReferenceOf(VnSoundId soundId) const noexcept;
+        static PackReference AdoptExternalAlias(PreparedPackSamples& samples,
+            const PackReference& identity) noexcept;
 
     private:
         friend class PCMRegistry;
@@ -315,6 +324,9 @@ public:
     VnResult BeginPackSamples(VnSoundId soundId, const VnPCMDesc* shape,
                              PackSampleBuilder* out, PcmLoopRegion loop = {},
                              const PreparedPackSamples* equalCandidate = nullptr);
+
+    VnResult PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
+        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out);
 
     // Range-only record. A caller that has proven bit-exact equality with an
     // earlier prepared record of the same id passes it to share that entry.

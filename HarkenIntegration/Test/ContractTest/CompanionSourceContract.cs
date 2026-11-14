@@ -39,6 +39,8 @@ namespace Harken.Test
                 using (var context = new ControlContext()) context.Run(VersionedRefresh);
                 using (var context = new ControlContext()) context.Run(Asynchronous);
                 using (var context = new ControlContext()) context.Run(ReentrantMetadata);
+                using (var context = new ControlContext()) context.Run(LanguageSwitch);
+                using (var context = new ControlContext()) context.Run(LanguageSwitchBatchAndReentrancy);
                 ReentrantShutdown();
                 Console.WriteLine("[Companion sources] Reader snapshots, async sharing, cancellation, retry, rename and restart isolation PASS.");
                 return true;
@@ -58,7 +60,8 @@ namespace Harken.Test
         {
             var reader = new RetainedReader();
             var config = Config();
-            Ok(PackBootstrap.Start(PackSource.FromReader(reader.ReadFile), ref config,
+            Ok(PackBootstrap.Start(PackSource.FromReader(reader.ReadFile, streamOpen: (path, revision, bytes, cancellation) =>
+                { GC.KeepAlive(reader); return null; }), ref config,
                 out PackBootstrapSession session), "retained reader start");
             Ok(session.PrepareActions(new[] { "Play_Head" }, session.ProjectId,
                 out ActionPreparation scope), "retained scope");
@@ -342,6 +345,181 @@ namespace Harken.Test
                 var ready = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
                 Ok(ready.Result, "metadata callback returns without self-deadlock");
                 Ok(ready.Preparation.Release(), "metadata callback scope release");
+            }
+        }
+
+        private static async Task LanguageSwitch()
+        {
+            foreach (int mode in new[] { 0, 1, 2 })
+            {
+                PackSource source = mode == 0 ? PackSource.FromDirectory(Root) : mode == 1
+                    ? PackSource.FromReader(Read, streamOpen: (path, revision, length, cancel) => null)
+                    : PackSource.FromAsyncReader(async (path, token) => { await Task.Yield(); return Read(path); });
+                PackStartupResult start = await PackBootstrap.StartAsync(source, Config());
+                Ok(start.Result, "language Init");
+                using (PackBootstrapSession session = start.Session)
+                {
+                    ActionPreparationResult prepared = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                    Ok(prepared.Result, "language preparation");
+                    ActionPreparation scope = prepared.Preparation;
+                    Ok(Actions.Resolve("Play_Head", out ActionResolved before), "language root");
+                    Ok(Actions.Post(in before, Emitter.None, 71, out ActionFiring old), "old language firing");
+                    Ok(source.IsAsync ? VnResult.VN_OK : source.Capture("Play_Head", VnObjectId.Parse(session.ProjectId),
+                        Read("Init.bytes"), out _), "source remains readable");
+                    var general = await source.CaptureAsync("Play_Head", VnObjectId.Parse(session.ProjectId), Read("Init.bytes"), default);
+                    Ok(session.AcquirePack(general.Input.Facts.packStableId, out Pack raw), "old language raw lease");
+                    ulong revision = session.SetRevision;
+                    Ok(await session.SetLanguageAsync("English"), "select English");
+                    Check(session.Language == "English" && session.SetRevision != revision && scope.IsPrepared,
+                        "selection commits without invalidating preparation");
+                    Ok(old.Query(out _), "old language firing survives");
+                    var english = await source.ForLanguage("English").CaptureAsync("Play_Head", VnObjectId.Parse(session.ProjectId), Read("Init.bytes"), default);
+                    if (mode == 1)
+                    {
+                        Check(!PackStreamBinding.Same(general.Input.Streams, english.Input.Streams), "localized stream scope changes");
+                        var generic = await source.ForLanguage("French").CaptureAsync("Play_Head", VnObjectId.Parse(session.ProjectId), Read("Init.bytes"), default);
+                        Check(PackStreamBinding.Same(general.Input.Streams, generic.Input.Streams), "generic fallback retains stream provider identity");
+                    }
+                    Ok(session.AcquirePack(english.Input.Facts.packStableId, out Pack localized), "new language Pack");
+                    Ok(session.ReleasePack(english.Input.Facts.packStableId, localized), "localized lease release");
+                    Ok(session.ReleasePack(general.Input.Facts.packStableId, raw), "old raw lease follows owner");
+                    Ok(Actions.Resolve("Play_Head", out ActionResolved after), "new language root");
+                    Ok(Actions.Post(in after, Emitter.None, 72, out _), "new language firing");
+                    Ok(await session.SetLanguageAsync("French"), "missing language falls back");
+                    Ok(session.AcquirePack(general.Input.Facts.packStableId, out Pack fallback), "fallback is General");
+                    revision = session.SetRevision;
+                    Ok(await session.SetLanguageAsync("German"), "generic remains installed");
+                    Check(session.SetRevision == revision, "generic selection does not replace content");
+                    Ok(session.ReleasePack(general.Input.Facts.packStableId, fallback), "fallback raw lease release");
+                    Ok(scope.Release(), "language scope release");
+                    Ok(await session.SetLanguageAsync("English"), "select with unloaded owner");
+                    Ok(await scope.PrepareAsync(), "released scope prepares new language");
+                    Ok(scope.Release(), "reprepared scope release");
+                    Check(await session.SetLanguageAsync("../English") == VnResult.VN_INVALID_ARG, "invalid language refused");
+                }
+            }
+
+            bool block = false, corrupt = false, mutate = false;
+            ulong version = 1;
+            var gates = new Queue<TaskCompletionSource<byte[]>>();
+            CancellationToken provider = default;
+            var asynchronous = PackSource.FromAsyncReader((path, token) =>
+            {
+                if (path == "English/Play_Head.bytes" && block)
+                {
+                    provider = token;
+                    var gate = new TaskCompletionSource<byte[]>();
+                    gates.Enqueue(gate);
+                    return gate.Task;
+                }
+                if (path == "English/Play_Head.json")
+                {
+                    if (mutate) ++version;
+                    if (corrupt) return Task.FromResult(Encoding.UTF8.GetBytes("{"));
+                }
+                return Task.FromResult(Read(path));
+            }, revision: () => version);
+            PackStartupResult started = await PackBootstrap.StartAsync(asynchronous, Config());
+            Ok(started.Result, "cancelable language Init");
+            using (PackBootstrapSession session = started.Session)
+            {
+                var prepared = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                Ok(prepared.Result, "cancelable language scope");
+                ulong revision = session.SetRevision;
+                corrupt = true;
+                Check(await session.SetLanguageAsync("English") == VnResult.VN_BAD_PACK, "corrupt variant refused");
+                corrupt = false; mutate = true;
+                Check(await session.SetLanguageAsync("English") == VnResult.VN_PACK_STALE_REVISION, "changing publication refused");
+                mutate = false;
+                Check(session.Language == string.Empty && session.SetRevision == revision && prepared.Preparation.IsPrepared,
+                    "failures preserve language, publication and preparation");
+                block = true;
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    Task<VnResult> switching = session.SetLanguageAsync("English", cancellation.Token);
+                    Check(!switching.IsCompleted, "switch waits for content");
+                    Check(prepared.Preparation.Release() == VnResult.VN_IN_USE && prepared.Preparation.IsPrepared,
+                        "rejected release preserves preparation");
+                    Check(await session.SetLanguageAsync("French") == VnResult.VN_IN_USE, "parallel switch refused");
+                    Check((await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId)).Result == VnResult.VN_IN_USE,
+                        "parallel preparation refused");
+                    cancellation.Cancel();
+                    await Cancelled(switching);
+                    Check(provider.IsCancellationRequested && session.Language == string.Empty && session.SetRevision == revision,
+                        "cancellation leaves old publication");
+                    block = false;
+                    Ok(await session.SetLanguageAsync("English"), "new switch after cancellation");
+                    gates.Dequeue().SetResult(Read("English/Play_Head.bytes"));
+                    await Task.Yield();
+                    Check(session.Language == "English", "late read cannot overwrite selection");
+                }
+                Ok(await session.SetLanguageAsync(string.Empty), "return to General");
+                block = true;
+                Task<VnResult> shutdownRead = session.SetLanguageAsync("English");
+                Ok(session.Shutdown(), "shutdown during switch");
+                await Cancelled(shutdownRead);
+                Check(provider.IsCancellationRequested, "shutdown cancels provider");
+                gates.Dequeue().SetResult(Read("English/Play_Head.bytes"));
+                await Task.Yield();
+            }
+            Console.WriteLine("[Language switch] Directory/readers, fallback, retained leases, rollback, cancellation and shutdown PASS.");
+        }
+
+        private static async Task LanguageSwitchBatchAndReentrancy()
+        {
+            string directory = Path.Combine(AppContext.BaseDirectory, "NativePublications", "UnityFixture", "U4Original");
+            bool corrupt = false;
+            var captures = new List<string>();
+            PackSource source = PackSource.FromReader(path =>
+            {
+                if (path.StartsWith("French/", StringComparison.Ordinal)) return null;
+                string file = Path.Combine(directory, path);
+                if (path != "Init.json" && path.EndsWith(".json", StringComparison.Ordinal))
+                {
+                    captures.Add(path);
+                    if (corrupt && captures.Count == 2) return Encoding.UTF8.GetBytes("{");
+                }
+                return File.Exists(file) ? File.ReadAllBytes(file) : null;
+            });
+            var config = Config();
+            Ok(PackBootstrap.Start(source, ref config, out PackBootstrapSession session), "batch language Init");
+            using (session)
+            {
+                Ok(session.PrepareActions(new[] { "Play_U4_A", "Play_U4_B" }, session.ProjectId,
+                    out ActionPreparation ready), "batch language prepare");
+                Ok(Actions.Resolve("Play_U4_A", out ActionResolved a), "batch A");
+                Ok(Actions.Resolve("Play_U4_B", out ActionResolved b), "batch B");
+                ulong revision = session.SetRevision;
+                corrupt = true; captures.Clear();
+                Check(await session.SetLanguageAsync("French") == VnResult.VN_BAD_PACK, "second Action failure refuses whole selection");
+                Check(captures.Count == 2 && session.SetRevision == revision && session.Language == string.Empty && ready.IsPrepared,
+                    "batch rollback preserves both owners and selected language");
+                Ok(Actions.Post(in a, Emitter.None, 81, out _), "old A token remains valid");
+                Ok(Actions.Post(in b, Emitter.None, 82, out _), "old B token remains valid");
+                corrupt = false;
+                Ok(await session.SetLanguageAsync("French"), "batch fallback retry");
+                Check(session.SetRevision == revision, "all-generic switch keeps content");
+                Ok(ready.Release(), "batch language release");
+            }
+
+            session = null;
+            var reentrant = PackSource.FromAsyncReader((path, token) =>
+            {
+                if (path == "English/Play_Head.bytes")
+                {
+                    token.Register(() => throw new InvalidOperationException("Foreign cancellation callback."));
+                    Ok(session.Shutdown(), "reader can shut down pending switch");
+                }
+                return Task.FromResult(Read(path));
+            });
+            var start = await PackBootstrap.StartAsync(reentrant, Config());
+            Ok(start.Result, "reentrant switch Init");
+            using (session = start.Session)
+            {
+                var ready = await session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId);
+                Ok(ready.Result, "reentrant switch prepare");
+                await Cancelled(session.SetLanguageAsync("English"));
+                Check(!session.IsActive, "reentrant shutdown remains final despite foreign callback failure");
             }
         }
 

@@ -15,7 +15,7 @@
     },
     {
       "path": "allowlist_wire_opcodes.json",
-      "sha256": "d5cdb2da3221e9df41bc09183aa04e09d21a8cc90f23059b9747b04b76210dce",
+      "sha256": "ba25929e80c39ee27a13510dd1fff93c6485922c862a6449e0626141a68b3c05",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -24,7 +24,7 @@
     },
     {
       "path": "contract.expected.json",
-      "sha256": "bc4fb56ab9e9d63822f93cf329de515eea185798898628e3d168fea87854745f",
+      "sha256": "80923171e1abe985c640042a031e03342e4a2923ce6b0380d2fd883d42cffcfa",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,

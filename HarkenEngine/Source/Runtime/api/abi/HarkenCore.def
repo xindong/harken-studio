@@ -8,13 +8,11 @@
 EXPORTS
     Vn_ActivateCanonicalPackSetV1
     Vn_ActivateCanonicalPackSetV2
+    Vn_ActivateCanonicalPackSetV3
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
     Vn_AttachBinding
-    Vn_BeginStreamFile
-    Vn_BeginStreamSource
     Vn_BindVoiceAttenuation
-    Vn_CancelStreamSource
     Vn_CaptureCompressorRuntimeInfo
     Vn_CaptureEffectCapabilities
     Vn_CaptureEffectDynamicCapabilities
@@ -29,7 +27,6 @@ EXPORTS
     Vn_ClearVoiceBinding
     Vn_ClearVoiceEffect
     Vn_ClearVoiceSend
-    Vn_CommitStreamSource
     Vn_CommitVoiceStart
     Vn_ConnectBusSend
     Vn_CreateBus
@@ -79,14 +76,12 @@ EXPORTS
     Vn_QueryActionPlaybackReadiness
     Vn_QueryActionSeek
     Vn_QueryActionStep
-    Vn_QueryStreamSource
     Vn_QueryVariable
     Vn_QueryVariableCatalog
     Vn_QueryVariableTicket
     Vn_RegisterAttenuation
     Vn_RegisterBinding
     Vn_RegisterPCM
-    Vn_RegisterStreamFile
     Vn_ReleaseActionFiring
     Vn_ReleaseActionSeek
     Vn_RemoteGetStatus
@@ -97,7 +92,6 @@ EXPORTS
     Vn_ReplaceBinding
     Vn_ReplacePCM
     Vn_ReplacePack
-    Vn_ReplaceStreamFile
     Vn_ResetBusDownmixMatrix
     Vn_ResetBusEffect
     Vn_ResetValues
@@ -162,5 +156,4 @@ EXPORTS
     Vn_UnloadPackEx
     Vn_UnregisterBinding
     Vn_UnregisterPCM
-    Vn_UnregisterStreamFile
     Vn_Update

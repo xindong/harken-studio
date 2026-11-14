@@ -16,6 +16,8 @@ namespace Harken
         private readonly Func<string, byte[]> reader;
         private readonly Func<string, CancellationToken, Task<byte[]>> asyncReader;
         private readonly Func<ulong> revision;
+        private readonly PackStreamOpen streamOpen;
+        private readonly object streamSourceIdentity;
         private readonly PackDirectorySource directory;
         private readonly Func<string, VnObjectId, byte[], CompanionCapture> snapshot;
         private readonly Func<CompanionInput, VnResult> snapshotValidation;
@@ -27,13 +29,16 @@ namespace Harken
             Func<string, CancellationToken, Task<byte[]>> asyncReader = null,
             Func<ulong> revision = null, PackDirectorySource directory = null,
             Func<string, VnObjectId, byte[], CompanionCapture> snapshot = null,
-            Func<CompanionInput, VnResult> snapshotValidation = null)
+            Func<CompanionInput, VnResult> snapshotValidation = null, PackStreamOpen streamOpen = null,
+            object streamSourceIdentity = null)
         {
             if (!PackDirectorySource.ValidLanguage(language)) throw new ArgumentException("Invalid Pack language.", nameof(language));
             Language = language ?? string.Empty;
             this.reader = reader;
             this.asyncReader = asyncReader;
             this.revision = revision;
+            this.streamOpen = streamOpen;
+            this.streamSourceIdentity = streamSourceIdentity ?? new object();
             this.directory = directory;
             this.snapshot = snapshot;
             this.snapshotValidation = snapshotValidation;
@@ -47,13 +52,22 @@ namespace Harken
             => new PackSource(language, directory: new PackDirectorySource(platformDirectory, language));
 
         public static PackSource FromReader(Func<string, byte[]> reader, string language = null,
-            Func<ulong> revision = null)
-            => new PackSource(language, reader: reader ?? throw new ArgumentNullException(nameof(reader)), revision: revision);
+            Func<ulong> revision = null, PackStreamOpen streamOpen = null)
+            => new PackSource(language, reader: reader ?? throw new ArgumentNullException(nameof(reader)), revision: revision, streamOpen: streamOpen);
 
         /// <summary>The reader is invoked on the caller's control thread, including after awaits.</summary>
         public static PackSource FromAsyncReader(Func<string, CancellationToken, Task<byte[]>> reader,
-            string language = null, Func<ulong> revision = null)
-            => new PackSource(language, asyncReader: reader ?? throw new ArgumentNullException(nameof(reader)), revision: revision);
+            string language = null, Func<ulong> revision = null, PackStreamOpen streamOpen = null)
+            => new PackSource(language, asyncReader: reader ?? throw new ArgumentNullException(nameof(reader)), revision: revision, streamOpen: streamOpen);
+
+        internal PackSource ForLanguage(string language)
+        {
+            // A frozen catalog contains only its captured language selection.
+            if (snapshot != null) return null;
+            return new PackSource(language, reader, asyncReader, revision,
+                directory == null ? null : new PackDirectorySource(directory.Root, language),
+                streamOpen: streamOpen, streamSourceIdentity: streamSourceIdentity);
+        }
 
         internal static bool HasControlContext => SynchronizationContext.Current != null &&
             SynchronizationContext.Current.GetType() != typeof(SynchronizationContext);
@@ -169,7 +183,8 @@ namespace Harken
                 names.ProjectId = facts.projectId;
                 return new CompanionCapture(VnResult.VN_OK, new CompanionInput
                 {
-                    Bytes = bytes, Json = json, Names = names, Facts = facts, SourceRevision = version
+                    Bytes = bytes, Json = json, Names = names, Facts = facts, SourceRevision = version,
+                    Streams = streamOpen == null ? null : new PackStreamBinding(streamSourceIdentity, scope, version, null, streamOpen)
                 });
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }

@@ -25,6 +25,92 @@ namespace Harken
         private readonly Dictionary<string, PendingCapture> companionReads = new Dictionary<string, PendingCapture>(StringComparer.Ordinal);
         private readonly AsyncLocal<bool> inCompanionReadCallback = new AsyncLocal<bool>();
 
+        private CancellationTokenSource languageSwitchCancellation;
+        internal bool LanguageSwitchPending => languageSwitchCancellation != null;
+
+        /// <summary>
+        /// Atomically selects a language for loaded Actions and future preparation. Existing firings
+        /// retain their old content. Concurrent preparation or switching returns VN_IN_USE.
+        /// Frozen catalog sources cannot select another language; directory and reader sources can.
+        /// </summary>
+        public async Task<VnResult> SetLanguageAsync(string language, CancellationToken cancellation = default)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            VnResult allowed = CompanionMutationAllowed();
+            if (allowed != VnResult.VN_OK) return allowed;
+            if (!PackDirectorySource.ValidLanguage(language)) return VnResult.VN_INVALID_ARG;
+            language = language ?? string.Empty;
+            if (language == Language) return VnResult.VN_OK;
+            if (companionSource == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            if (companionReads.Count != 0) return VnResult.VN_IN_USE;
+            if (companionSource.IsAsync && !PackSource.HasControlContext) return VnResult.VN_INVALID_ARG;
+            CancellationTokenSource operation = null;
+            try
+            {
+                PackSource source = companionSource.ForLanguage(language);
+                if (source == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+                operation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+                languageSwitchCancellation = operation;
+                CancellationToken operationToken = operation.Token;
+                var nextPacks = new Dictionary<ulong, SharedPack>(packs);
+                var nextNames = new Dictionary<string, SharedPack>(companionNames, StringComparer.Ordinal);
+                var changes = new Dictionary<SharedPack, CompanionInput>();
+                var captures = new List<CompanionInput>();
+                SharedPack[] owners = companionOwners;
+                byte[] init = initBytes;
+                VnObjectId project = VnObjectId.Parse(ProjectId);
+                foreach (SharedPack owner in owners)
+                {
+                    if (!owner.Handle.IsValid) continue;
+                    CompanionCapture captured = await source.CaptureAsync(owner.Names.Name, project,
+                        init, operationToken, SetReadCallbackPhase);
+                    if (RequireOwnerThread() != VnResult.VN_OK) return VnResult.VN_INVALID_ARG;
+                    if (!active) return VnResult.VN_NOT_INITIALIZED;
+                    if (captured.Result != VnResult.VN_OK) return captured.Result;
+                    CompanionInput input = captured.Input;
+                    if (input.Names.RootId != owner.Names.RootId) return VnResult.VN_PACK_STALE_REVISION;
+                    captures.Add(input);
+                    // A missing localized variant keeps an already loaded generic Pack unchanged.
+                    if (owner.Names.Language.Length == 0 && input.Names.Language.Length == 0) continue;
+                    nextPacks.Remove(owner.StableId);
+                    if (nextPacks.TryGetValue(input.Facts.packStableId, out SharedPack collision) &&
+                        !ReferenceEquals(collision, owner)) return VnResult.VN_BAD_PACK;
+                    nextPacks[input.Facts.packStableId] = owner;
+                    changes.Add(owner, input);
+                }
+                foreach (CompanionInput input in captures)
+                {
+                    VnResult valid = source.Validate(input);
+                    if (!active) return VnResult.VN_NOT_INITIALIZED;
+                    if (valid != VnResult.VN_OK) return valid;
+                }
+                operationToken.ThrowIfCancellationRequested();
+                if (changes.Count != 0)
+                {
+                    VnResult result = CommitCompanions(nextPacks, nextNames, changes);
+                    if (result != VnResult.VN_OK) return result;
+                }
+                // Publication is irreversible for this call; cancellation after it cannot discard ownership.
+                companionSource = source;
+                Language = language;
+                return VnResult.VN_OK;
+            }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            finally
+            {
+                // A broken host context is reclaimed by owner-thread Shutdown.
+                if (RequireOwnerThread() == VnResult.VN_OK)
+                {
+                    if (ReferenceEquals(languageSwitchCancellation, operation))
+                    {
+                        languageSwitchCancellation = null;
+                        mutationPhase = MutationPhase.Idle;
+                    }
+                    operation?.Dispose();
+                }
+            }
+        }
+
         private sealed class PendingCapture
         {
             internal readonly CancellationTokenSource Cancellation = new CancellationTokenSource();
@@ -113,7 +199,8 @@ namespace Harken
                         // Another waiter may have installed this exact captured input already.
                         if (!refresh && owner.Handle.IsValid && owner.StableId == input.Facts.packStableId &&
                             owner.ContentHash == input.Facts.contentHash && owner.ByteCount == input.Bytes.Length &&
-                            owner.Names.Name == input.Names.Name && owner.Names.Language == input.Names.Language) break;
+                            owner.Names.Name == input.Names.Name && owner.Names.Language == input.Names.Language &&
+                            PackStreamBinding.Same(owner.Streams, input.Streams)) break;
                         return VnResult.VN_PACK_STALE_REVISION;
                     }
                 }
@@ -181,6 +268,15 @@ namespace Harken
         {
             try { await pending.Task; } catch { }
             finally { pending.Cancellation.Dispose(); }
+        }
+
+        private void CancelLanguageSwitch()
+        {
+            CancellationTokenSource pending = languageSwitchCancellation;
+            languageSwitchCancellation = null;
+            if (pending == null) return;
+            try { pending.Cancel(); } catch { }
+            pending.Dispose();
         }
 
         private void CancelCompanionReads()

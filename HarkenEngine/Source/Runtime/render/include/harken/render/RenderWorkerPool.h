@@ -142,6 +142,8 @@ bool HasCleanRestartState(const RenderWorkerPool& pool);
 
 class RenderWorkerPool {
 public:
+    // Zero is the callback/coordinator; worker IDs occupy [1, workerCount].
+    static std::uint32_t CurrentRenderThread() noexcept;
     // One unit of work: run the job at `jobIndex` (0-based, < the dispatched
     // count). The pool passes `userData` through unchanged. A job must not
     // touch the system heap, take a blocking lock, or do I/O — it runs on a

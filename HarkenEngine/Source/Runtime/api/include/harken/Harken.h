@@ -221,8 +221,8 @@ typedef struct VnConfig {
                                        * all voice and bus chains; 0 = grow on demand */
     uint32_t toneEffectPoolCapacity;  /* three-band-tone instances shared across
                                        * all voice and bus chains; 0 = grow on demand */
-    uint32_t streamRingFrames;   /* per-stream ring capacity in frames;
-                                  * 0 = 16384; rounded up to a power of two */
+    uint32_t streamRingBytes;   /* per-stream ring capacity in bytes;
+                                  * 0 = 262144; rounded up to a power of two */
     uint32_t maxStreams;         /* stream slot capacity; 0 = 16. A streamed
                                   * Render Voice also consumes one such slot. */
     uint32_t prebufferMs;        /* ring fill required before a streamed
@@ -430,6 +430,7 @@ typedef struct VnConfig {
     uint32_t maxActionCooldownRows;         /* committed Action cooldown rows;
                                             * 0 = 256 */
     uint32_t reserved12;                    /* must be 0 */
+    uint64_t compressedDecoderBytes;        /* live and cached decoder state; 0 = 2 MiB */
 } VnConfig;
 
 /* Create the engine and initialize configured resources. Effect pool capacities
@@ -1816,6 +1817,37 @@ VnResult Vn_ActivateCanonicalPackSetV2(
     const VnCanonicalPackSetActivationDescV2* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
 
+typedef struct VnPackStreamResolverV1 VnPackStreamResolverV1;
+
+typedef struct VnCanonicalPackSetMemberV3 {
+    uint32_t structSize;
+    uint32_t reserved0;
+    VnCanonicalPackSetMemberV2 member;
+    const VnPackStreamResolverV1* streams;
+} VnCanonicalPackSetMemberV3;
+
+/* External stream resolution belongs to each Content member's generation.
+ * Keep and NameOnly retain the existing source and require streams == NULL.
+ * Path members resolve relative to their own Pack directory when streams is
+ * NULL. Provider members with external media require a resolver. */
+typedef struct VnCanonicalPackSetActivationDescV3 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnPackHandle expectedCurrentInitHandle;
+    uint64_t baseSetRevision;
+    uint64_t setRevision;
+    uint32_t memberCount;
+    uint32_t memberStructSize;
+    const VnCanonicalPackSetMemberV3* members;
+    uint32_t outputMemberCapacity;
+    uint32_t outputMemberStructSize;
+    VnCanonicalPackSetMemberResultV1* outputMembers;
+} VnCanonicalPackSetActivationDescV3;
+
+VnResult Vn_ActivateCanonicalPackSetV3(
+    const VnCanonicalPackSetActivationDescV3* desc,
+    VnCanonicalPackSetActivationReportV1* outReport);
+
 typedef struct VnInitPackInspectReport {
     uint32_t structSize;
     uint32_t status;
@@ -2499,12 +2531,6 @@ VnResult Vn_SetVoiceEffectParam(VnVoiceHandle handle, uint32_t slot,
  * synchronized engine control thread; callbacks must not call Runtime or host
  * main-thread APIs. Ready is validated but unpublished, not playback prebuffer.
  * Descriptor/info/view structSize must equal the exact V1 size. */
-typedef uint64_t VnStreamSourceRequest;
-#define VN_STREAM_SOURCE_REGISTER 0u
-#define VN_STREAM_SOURCE_REPLACE 1u
-#define VN_STREAM_SOURCE_PREPARING 1u
-#define VN_STREAM_SOURCE_READY 2u
-#define VN_STREAM_SOURCE_FAILED 3u
 #define VN_BYTE_READ_OK 0
 #define VN_BYTE_READ_CANCELLED 1
 #define VN_BYTE_READ_IO_ERROR 2
@@ -2533,58 +2559,35 @@ typedef struct VnByteSourceDescV1 {
     VnByteSourceReadAtFn readAt;
     VnByteSourceReleaseFn release;
 } VnByteSourceDescV1;
-typedef struct VnStreamSourceInfoV1 {
+
+typedef VnResult (*VnPackStreamRetainFn)(void* userData);
+typedef VnResult (*VnPackStreamPathFn)(void* userData, uint64_t packStableId,
+    const char* relativeLocatorUtf8, uint64_t expectedContentRevision,
+    uint64_t expectedByteLength, const char** outPathUtf8);
+typedef VnResult (*VnPackStreamOpenFn)(void* userData, uint64_t packStableId,
+    const char* relativeLocatorUtf8, uint64_t expectedContentRevision,
+    uint64_t expectedByteLength, const VnReadCancellationViewV1* cancellation,
+    VnByteSourceDescV1* outSource);
+
+/* Immutable context, copied and retained during activation. Each successful
+ * retain has exactly one release, including rollback; release can run on a
+ * control or I/O thread after all generation owners drain. Never reenter
+ * Runtime or throw across callbacks. Exactly one of path/open is required.
+ * path runs on the control thread without opening or reading media. Its UTF-8
+ * result is copied immediately and must remain valid until the next path call
+ * or context release. open runs only on an I/O executor and may overlap with
+ * other opens/reads. VN_OK transfers outSource's lease, including on subsequent
+ * validation failure; other results transfer nothing. Term drains all reads.
+ * The context and its returned identities must not change after retention. */
+struct VnPackStreamResolverV1 {
     uint32_t structSize;
-    uint32_t state;
-    VnResult result;
-    uint32_t reserved0;
-} VnStreamSourceInfoV1;
-
-/* Begin zeroes outRequest on refusal and invokes no provider callback,
- * including Release. VN_OK transfers one immutable lease to native; native
- * owes exactly one Release after all reads/owners drain, including failure,
- * Cancel and Term. Release runs outside locks off the control/render stack.
- * Callbacks may run before Begin returns. Flags must be zero, readAt/release
- * required. BeginFile copies the UTF-8 path and opens it on the I/O executor.
- * These calls do not wait for I/O, validation or cleanup. */
-VnResult Vn_BeginStreamSource(VnSoundId soundId, uint32_t mode,
-    const VnByteSourceDescV1* source, VnStreamSourceRequest* outRequest);
-VnResult Vn_BeginStreamFile(VnSoundId soundId, uint32_t mode,
-    const char* utf8Path, VnStreamSourceRequest* outRequest);
-/* Query/Cancel remain usable after stream-worker failure. Failed requests
- * retain their error and lease until Cancel. Successful Commit consumes the
- * request; Preparing returns VN_BACKPRESSURE. Transient Commit refusal keeps
- * Ready for retry; identity conflicts become Failed without changing old data.
- * Cancel discards the handle immediately, but does not prove physical release.
- * Repeated/old-engine handles return VN_STALE_HANDLE. Term drains all leases;
- * a nonreturning callback can delay shutdown and cannot be forcibly reclaimed. */
-VnResult Vn_QueryStreamSource(VnStreamSourceRequest request, VnStreamSourceInfoV1* outInfo);
-VnResult Vn_CancelStreamSource(VnStreamSourceRequest request);
-VnResult Vn_CommitStreamSource(VnStreamSourceRequest request);
-
-/* Registers a .stream file for streamed playback under a sound id. The
- * path is UTF-8 regardless of the process codepage. The file is opened and
- * validated (header sanity, TOC + chunk-checksum-table checksum) by the
- * streaming thread during this call — the call blocks until that check
- * completes, and the file stays open until unregistration. Entries play
- * through the internal raw-Voice start seam: starting a streamed id claims
- * a voice slot and a stream slot, holds the voice silent (PREPARING) until
- * the prebuffer threshold is met, then sounds. Refusals: a null path is
- * VN_INVALID_ARG; an id already registered (PCM or stream) is VN_IN_USE;
- * an unreadable, malformed, or checksum-failing file is VN_BAD_STREAM_FILE.
- * A refused call has no side effects. VN_DEVICE_ERROR means the streaming
- * thread itself has stopped, so no stream request can be served: the condition
- * is the subsystem, not this file, and retrying another path will not clear it.
- * Voices that were streaming end, and further stream calls keep returning it
- * for the life of the engine. */
-VnResult Vn_RegisterStreamFile(VnSoundId soundId, const char* utf8Path);
-
-/* Removes a registered stream file and closes it. Refused with VN_IN_USE
- * while any voice is playing it; VN_UNKNOWN_ID when the id names no
- * registered stream; VN_DEVICE_ERROR when the streaming thread has stopped
- * (see Vn_RegisterStreamFile). */
-VnResult Vn_UnregisterStreamFile(VnSoundId soundId);
-
+    uint32_t flags;
+    void* userData;
+    VnPackStreamRetainFn retain;
+    VnByteSourceReleaseFn release;
+    VnPackStreamPathFn path;
+    VnPackStreamOpenFn open;
+};
 /* Creates an emitter — a game object whose position and orientation many
  * voices can follow, and which carries a small local Variable table. The
  * engine mints a generational handle into *outHandle (never 0). A voice
@@ -3160,17 +3163,6 @@ VnResult Vn_SetBusFaderPoint(VnBusId busId, uint32_t faderAfterSlot);
  * same window in which unregister would have been refused VN_IN_USE), and the
  * NEW memory from this call until its own unregister or replace. */
 VnResult Vn_ReplacePCM(VnSoundId soundId, const VnPCMDesc* desc);
-
-/* Replaces a registered streamed sound's backing .stream file. The new file
- * is opened and validated end to end by the streaming thread during this call
- * (the Vn_RegisterStreamFile contract, including the TOC-carries-this-id
- * check); any failure is VN_BAD_STREAM_FILE with the old registration
- * untouched. VN_UNKNOWN_ID when the id names no registered stream; VN_IN_USE
- * while a previous replace of this id is still draining; VN_DEVICE_ERROR when
- * the streaming thread has stopped (see Vn_RegisterStreamFile). Voices already
- * playing (or pending) keep streaming from the old file, which closes when
- * the last of them drains. */
-VnResult Vn_ReplaceStreamFile(VnSoundId soundId, const char* utf8Path);
 
 /* Replaces a loaded pack wholesale with the container at desc->utf8Path. The
  * new file loads and validates fully first (any failure is VN_BAD_PACK — or

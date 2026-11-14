@@ -1,3 +1,4 @@
+#include "Common/ExternalPcmRenderFixture.h"
 // Job-parallel voice rendering (M5 §8 / acceptance §11.4). Four things are
 // proven here:
 //   1. Determinism: serial (renderWorkerCount = 0) and parallel (N in {1,2,4})
@@ -701,7 +702,7 @@ void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
     config.voiceSendSlots = 2;
     config.renderWorkerCount = workerCount;
     config.arenaBytes = arenaBytes;
-    config.streamRingFrames = 512;       // two blocks of ring
+    config.streamRingBytes = (512) * sizeof(float);       // two blocks of ring
     config.prebufferMs = 1;              // tiny gate, opens on the activation fill
     config.starvationCooldownBlocks = 1; // emit STARVED every starved block
     config.maxStreams = 2;
@@ -727,16 +728,19 @@ void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
                                    ".stream";
     harkentest::WriteFileBytes(streamPath,
                               harkentest::BuildStreamBytes(spec, streamSine));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kStarveStream, streamPath.c_str()));
+    harkentest::ExternalPcmRenderFixture stream(*engine, streamPath);
+    ASSERT_EQ(VN_OK, stream.Result());
 
     // The streamed voice takes slot 0 (first Free), so its scratch + tap are
     // reserved before the PCM voices — the tap participates in the sequence
     // ahead of the voices that degrade under a tight arena.
-    VnPlayDesc streamPlay = MakePlayDesc(kStarveStream);
-    VnVoiceHandle streamVoice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&streamPlay, &streamVoice));
+    VnVoiceHandle streamRender = 0;
+    ASSERT_EQ(VN_OK, stream.Start(0.0f, 1, &streamRender));
+    engine->streams.SyncServe();
     if (sendOnStream) {
-        ASSERT_EQ(VN_OK, Vn_SetVoiceSend(streamVoice, 0, kSendBus, -3.0f));
+        const auto bus = engine->buses.FindRef(kSendBus);
+        ASSERT_TRUE(bus.Valid());
+        engine->voices.ApplySetVoiceSend(streamRender, 0, bus.index, -3.0f, bus.generation);
     }
 
     // Six ordinary PCM voices for the scratch load (single-pass sources longer

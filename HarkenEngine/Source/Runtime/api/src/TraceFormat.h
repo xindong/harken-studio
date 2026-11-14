@@ -50,10 +50,11 @@ inline constexpr std::uint32_t kTraceFormatVersion = 7;
 //   u64      cpuTicksPerSecond    recorder QPC rate; analysis aid only
 inline constexpr std::uint32_t kTraceFixedHeaderBytes = 4 + 4 + 4 + 4 + 8 + 8;
 inline constexpr std::uint32_t kTraceConfigSchemaVersion = 1;
-inline constexpr std::uint32_t kTraceConfigVintageCount = 16;
+inline constexpr std::uint32_t kTraceConfigVintageCount = 17;
 // Vintage 14 appends one 32-bit firing-capacity field to the unchanged
 // vintage-13 image. Vintage 15 appends the Pack catalog/resident budgets.
 // Vintage 16 appends the Action cooldown capacity.
+// Vintage 17 appends the compressed decoder budget.
 // Reserved native fields are never serialized.
 inline constexpr std::uint32_t kTraceConfigWireBytesV13 =
     4 + 4 + 2 * 4 + 49 * 4 + 8;
@@ -61,8 +62,10 @@ inline constexpr std::uint32_t kTraceConfigWireBytesV14 =
     kTraceConfigWireBytesV13 + 4;
 inline constexpr std::uint32_t kTraceConfigWireBytesV15 =
     kTraceConfigWireBytesV14 + 4 + 6 * 8;
-inline constexpr std::uint32_t kTraceConfigWireBytes =
+inline constexpr std::uint32_t kTraceConfigWireBytesV16 =
     kTraceConfigWireBytesV15 + 4;
+inline constexpr std::uint32_t kTraceConfigWireBytes =
+    kTraceConfigWireBytesV16 + 8;
 // Repository history emitted VTRC v2 before and after the append-only
 // Bus-topology VnConfig tail. These are the only full config-image sizes a v2
 // reader may accept. A future VnConfig append requires VTRC v3.
@@ -206,8 +209,6 @@ enum : std::uint16_t {
     kTraceCallClearVoiceEffect = 20, // u64 handle, u32 slot
     kTraceCallSetVoiceEffectParam = 21, // u64 handle, u32 slot,
                                         //   u32 paramIndex, f32 value
-    kTraceCallRegisterStreamFile = 22, // u64 soundId, fileref
-    kTraceCallUnregisterStreamFile = 23, // u64 soundId
     kTraceCallCreateEmitter = 24,  // v4: u64 trace-local emitter ordinal
     kTraceCallDestroyEmitter = 25, // u64 handle
     kTraceCallSetEmitterPosition = 26, // u64 handle, vec3
@@ -240,7 +241,6 @@ enum : std::uint16_t {
     kTraceCallReservedLegacyActionTriggerByName = 48,
     kTraceCallReplacePCM = 49,     // u64 soundId, desc(VnPCMDesc) + samples
                                    //   (the RegisterPCM encoding)
-    kTraceCallReplaceStreamFile = 50, // u64 soundId, fileref
     kTraceCallReplacePack = 51,    // u64 handle, desc(VnPackDesc), fileref
     kTraceCallReplaceAttenuation = 52, // u64 id, desc(VnAttenuationDesc)
     kTraceCallReservedLegacyActionReplace = 53,
@@ -324,10 +324,6 @@ enum : std::uint16_t {
     kTraceCallActivateCanonicalPackSetV2 = 137,
     kTraceCallUnloadCanonicalPackSet = 138,
     kTraceCallUnloadCompanionPack = 139,
-    kTraceCallBeginStreamSource = 140, // local callback lease, unreplayable
-    kTraceCallBeginStreamFile = 141, // asynchronous request identity, unreplayable
-    kTraceCallCancelStreamSource = 142,
-    kTraceCallCommitStreamSource = 143,
     kTraceCallSetValues = 192,
     kTraceCallSetEmitterValues = 193,
     kTraceCallClearEmitterValues = 194,

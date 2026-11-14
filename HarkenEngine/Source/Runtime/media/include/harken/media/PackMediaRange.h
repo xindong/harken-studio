@@ -13,15 +13,28 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace harken {
+class VorbisStreamMedia;
 
 // The streaming compiler's default chunk length. It bounds per-slot staging
 // well below kMaxStreamChunkFrames.
 inline constexpr std::uint32_t kPackMediaRangeChunkFrames = 4096;
 
+struct PackExternalStream {
+    enum class Codec { Pcm, Vorbis };
+    Codec codec = Codec::Vorbis;
+    std::shared_ptr<const StreamByteLocator> locator;
+    std::uint64_t fileBytes = 0;
+    // Immutable media-relative PCM metadata and optional payload prefix.
+    std::vector<std::uint8_t> pcmPrefix;
+};
+
 struct PackMediaRange {
+    std::shared_ptr<const PackExternalStream> external;
+    std::shared_ptr<const VorbisStreamMedia> vorbis;
     std::shared_ptr<const StreamByteSource> source;
     std::uint64_t blobOffset = 0;
     std::uint32_t sampleRate = 0;
@@ -38,8 +51,19 @@ struct PackMediaRange {
     }
 };
 
+// Typed metadata consumed before any external source is opened. The locator
+// in range.external is supplied by the owning Pack's host binding.
+struct PackExternalMediaReference {
+    VnSoundId soundId{};
+    std::string relativeLocator;
+    std::shared_ptr<const PackMediaRange> range;
+};
+
 // Chunk count for a planar blob, or zero when the shape cannot be chunked.
 std::uint32_t PackMediaChunkCount(std::uint64_t frameCount, std::uint32_t chunkFrames) noexcept;
+
+// Checks immutable facts without opening external media or reading payload.
+bool ValidPackMediaRange(const PackMediaRange& range) noexcept;
 
 // Reads chunk `chunk` of a planar blob into staging (chunkFrames * channels
 // floats). Frames past the media end are zero. Validation is the caller's.

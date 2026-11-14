@@ -452,6 +452,7 @@ struct ImmediateLaneAttempt {
     PrivateImmediateLanePlacementProof* privatePlacementProof = nullptr;
     PrivateImmediateLanePublicationProof* privatePublicationProof = nullptr;
     std::uint64_t originalLifetimeMarker = 0;
+    std::shared_ptr<ImmediateLaneAppliedReceipt> appliedReceipt;
     std::uint32_t originalLifetimePins = 0;
     bool conditionalProjectionIssued = false;
     bool conditionalProjectionBound = false;
@@ -924,6 +925,8 @@ public:
                                   const Plan03GroupSliceIdentity& target,
                                   ImmediateLaneMemberManifest* out,
                                   std::uint16_t memberIndex = UINT16_MAX) const noexcept;
+    bool PrepareAppliedReceipt(const OriginalImmediateLaneAttemptLifetimePin& original,
+        std::shared_ptr<const ImmediateLaneAppliedReceipt>* out) noexcept;
     bool EntryApplied(std::uint32_t slot,
                       std::uint32_t attemptGeneration) const noexcept;
     bool EntryApplied(std::uint32_t slot, std::uint32_t attemptGeneration,
@@ -955,6 +958,9 @@ private:
     friend class PrivateReservedPlainLayoutCommitProof;
     friend class PrivateImmediateLanePlacementProof;
     friend class PrivateImmediateLanePublicationProof;
+    friend class ImmediateLaneTimelineFinalizer;
+    void PublishInitialAppliedReceipt(std::uint32_t slot, const ImmediateLaneBucket* bucket,
+        std::uint64_t audioSequence) noexcept;
     bool ValidatePrivatePublication(ImmediateLaneHandle handle,
         const ImmediateLaneAttempt& attempt) const noexcept;
     void ApplyPrivatePublicationImpl(ImmediateLaneHandle handle,

@@ -16,6 +16,7 @@
 #include "harken/core/CompletionProgress.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/PcmView.h"
+#include "harken/core/MediaCodec.h"
 #include "harken/core/StreamRing.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TimelineExecutionOrder.h"
@@ -289,6 +290,9 @@ struct VoiceRenderContext {
     VnVoiceHandle dynamicSourceIdentity = 0;
     // Source: immutable registered PCM plus the read cursor.
     PCMView pcm;
+    MediaDecoder* mediaDecoder = nullptr;
+    bool mediaDecodeFailed = false;
+    std::uint32_t mediaRenderThread = 0;
     std::uint64_t srcCursor = 0;
     std::uint64_t sourceActivationStartFrame = 0;
     std::uint64_t authoredSourceDeadlineFrame = UINT64_MAX;

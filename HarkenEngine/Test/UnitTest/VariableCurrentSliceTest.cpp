@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
 
@@ -884,139 +885,7 @@ TEST(VariableCurrentSlice, DirectQueueRefusalReleasesCapturedResourcesAndPreserv
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
-TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAndNativeAck) {
-    for (const std::uint32_t workers : {0u, 2u}) {
-        SCOPED_TRACE(workers);
-        auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
-        config.renderWorkerCount = workers;
-        config.prebufferMs = 1;
-        config.streamRingFrames = 512;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto& e = *session.Engine();
-        InstallVariable(&e);
-        const auto sound = harkentest::ObjectId(7241);
-        harkentest::StreamSpec spec;
-        spec.soundId = sound;
-        spec.sampleRate = kSampleRate;
-        spec.channelCount = 1;
-        spec.chunkFrames = 256;
-        const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_direct_starvation.stream";
-        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(
-            spec, std::vector<float>(kSampleRate, 0.05f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
-        RegisterVoiceAttachment(harkentest::ObjectId(7242), sound);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(2);
-        e.streams.SetThrottled(true);
-        e.streams.SyncServe();
-        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
-        const auto play = MakePlayDesc(sound);
-        VnVoiceHandle handle = 0;
-        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-        const auto render = harkentest::RenderHandle(&e, handle);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(8);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        EXPECT_FALSE(e.variables.HasNativePublicationHold(render));
-        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(8);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(1);
-        ASSERT_NE(nullptr, e.voices.Resolve(render));
-        EXPECT_EQ(0u, e.voices.Resolve(render)->cascade.produced);
-        EXPECT_FLOAT_EQ(DbToLinear(-12), e.voices.Resolve(render)->gain.target);
-        for (std::uint32_t i = 0; i < 2 * kBlockFrames; ++i)
-            EXPECT_FLOAT_EQ(0, e.nullBackend.LastBlock()[i]);
-        e.streams.SetThrottled(false);
-        e.streams.SyncServe();
-        e.nullBackend.Pump(1);
-        for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-12),
-                e.nullBackend.LastBlock()[2 * i], 1e-6f);
-        e.streams.SyncServe();
-        e.nullBackend.Pump(1);
-        for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
-    }
-}
 
-TEST(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStreamStarves) {
-    for (const std::uint32_t workers : {0u, 2u}) {
-        SCOPED_TRACE(workers);
-        auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
-        config.renderWorkerCount = workers;
-        config.prebufferMs = 1;
-        config.streamRingFrames = 512;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto& e = *session.Engine();
-        InstallVariable(&e);
-        const auto sound = harkentest::ObjectId(7243);
-        harkentest::StreamSpec spec;
-        spec.soundId = sound;
-        spec.sampleRate = kSampleRate;
-        spec.channelCount = 1;
-        spec.chunkFrames = 256;
-        const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_direct_setter_starvation.stream";
-        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(
-            spec, std::vector<float>(kSampleRate, 0.05f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
-        RegisterVoiceAttachment(harkentest::ObjectId(7244), sound);
-        const auto pitchBinding = harkentest::ObjectId(7245);
-        RegisterLinearBinding(pitchBinding, kVariable, VN_TARGET_SCOPE_VOICE,
-            harken::kTargetVoicePitch, 0, 1200);
-        VnBindingAttachDesc attach{};
-        attach.structSize = sizeof(attach);
-        attach.scopeKind = VN_TARGET_SCOPE_VOICE;
-        attach.objectId = sound;
-        ASSERT_EQ(VN_OK, Vn_AttachBinding(pitchBinding, &attach));
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(2);
-        e.streams.SetThrottled(true);
-        e.streams.SyncServe();
-        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
-        const auto play = MakePlayDesc(sound);
-        VnVoiceHandle handle = 0;
-        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-        const auto render = harkentest::RenderHandle(&e, handle);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(8);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        ASSERT_FALSE(e.variables.HasNativePublicationHold(render));
-        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(8);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(1);
-        ASSERT_NE(nullptr, e.voices.Resolve(render));
-        ASSERT_EQ(0u, e.voices.Resolve(render)->cascade.produced);
-        ASSERT_FLOAT_EQ(DbToLinear(-12), e.voices.Resolve(render)->gain.target);
-        ASSERT_DOUBLE_EQ(2, e.voices.Resolve(render)->resampler.TargetRatio());
-        ASSERT_FALSE(e.variables.HasNativePublicationHold(render));
-        ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, -6, 0));
-        ASSERT_EQ(VN_OK, Vn_SetVoicePitch(handle, 1.5f));
-        ASSERT_EQ(VN_OK, Vn_SetVoicePan(handle, -1));
-        e.nullBackend.Pump(1);
-        ASSERT_EQ(0u, e.voices.Resolve(render)->cascade.produced);
-        ASSERT_FLOAT_EQ(DbToLinear(-6), e.voices.Resolve(render)->gain.target);
-        ASSERT_NEAR(1.5, e.voices.Resolve(render)->resampler.TargetRatio(), 1e-7);
-        e.streams.SetThrottled(false);
-        for (std::uint32_t block = 0; block < 4; ++block) {
-            SCOPED_TRACE(block);
-            e.streams.SyncServe();
-            e.nullBackend.Pump(1);
-            ASSERT_GT(e.voices.Resolve(render)->cascade.produced, 0u);
-            EXPECT_FLOAT_EQ(DbToLinear(-6), e.voices.Resolve(render)->gain.target);
-            EXPECT_NEAR(1.5, e.voices.Resolve(render)->resampler.TargetRatio(), 1e-7);
-            for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-                // The spatial mono law anchors stereo center at unity per side.
-                EXPECT_NEAR(0.05f * DbToLinear(-6) * std::sqrt(2.0f),
-                    e.nullBackend.LastBlock()[2 * i], 1e-6f);
-        }
-    }
-}
 
 TEST(VariableCurrentSlice, StagedStartsCaptureApplicableWritesAtCommitAndKeepOwnFirstPcm) {
     for (const bool writeBeforeStaging : {false, true}) {
@@ -1152,12 +1021,11 @@ TEST(VariableCurrentSlice, StagedSourceFailureOrStopReleasesNativeReceiptAndAllo
 }
 
 TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpdate) {
-    for (const bool stream : {false, true}) {
-        SCOPED_TRACE(stream);
+    {
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
         config.voiceStealPolicy = 1;
         config.prebufferMs = 1;
-        config.streamRingFrames = 512;
+        config.streamRingBytes = (512) * sizeof(float);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
@@ -1165,18 +1033,7 @@ TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpda
         const auto sound = harkentest::ObjectId(7291);
         const std::vector<float> samples(kSampleRate, 0.05f);
         const auto pcm = MonoDesc(samples, kSampleRate);
-        if (stream) {
-            harkentest::StreamSpec spec;
-            spec.soundId = sound;
-            spec.sampleRate = kSampleRate;
-            spec.channelCount = 1;
-            spec.chunkFrames = 256;
-            const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_pending.stream";
-            harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
-        } else {
-            ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
-        }
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
         RegisterVoiceAttachment(harkentest::ObjectId(7292), sound);
         ASSERT_EQ(VN_OK, Vn_Update());
         e.nullBackend.Pump(2);
@@ -1196,7 +1053,6 @@ TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpda
         ASSERT_NE(0u, render);
         bool heard = false;
         for (std::uint32_t step = 0; step < 16 && !heard; ++step) {
-            if (stream) e.streams.SyncServe();
             e.nullBackend.Pump(1);
             const auto* output = e.nullBackend.LastBlock();
             if (std::abs(output[2 * (kBlockFrames - 1)]) < 1e-7f) continue;
@@ -1543,91 +1399,6 @@ TEST(VariableCurrentSlice, ParkedNonRecipeEffectsReduceEveryBindingFromReturnCut
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
-TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArenaRefusal) {
-    for (const auto workers : {0u, 2u}) {
-        SCOPED_TRACE(workers);
-        auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
-        config.maxParkedVoices = 1;
-        config.audibilityParkEnabled = 1;
-        config.voiceStealPolicy = 2;
-        config.prebufferMs = 1;
-        config.streamRingFrames = 512;
-        config.renderWorkerCount = workers;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto& e = *session.Engine();
-        InstallVariable(&e);
-        const auto sound = harkentest::ObjectId(7371);
-        const std::vector<float> samples(kSampleRate, 0.05f);
-        harkentest::StreamSpec spec;
-        spec.soundId = sound;
-        spec.sampleRate = kSampleRate;
-        spec.channelCount = 1;
-        spec.chunkFrames = 256;
-        const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_pressure_return.stream";
-        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
-        RegisterVoiceAttachment(harkentest::ObjectId(7372), sound);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.nullBackend.Pump(2);
-        const auto play = MakePlayDesc(sound);
-        VnVoiceHandle handle = 0;
-        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-        e.streams.SyncServe();
-        e.nullBackend.Pump(3);
-        const auto claimant = PlayDc(&e, harkentest::ObjectId(7373), VN_BUS_MASTER);
-        ASSERT_NE(0u, claimant);
-        e.streams.SyncServe();
-        ASSERT_EQ(VN_OK, Vn_Update());
-        const auto parked = e.ledger.Classify(handle);
-        ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, parked.kind);
-        ASSERT_EQ(harken::ParkRecord::State::StreamResumeReady, e.parkRecords[parked.ledgerSlot].state);
-        const auto resumeFrame = e.parkRecords[parked.ledgerSlot].streamResumeFrame;
-        ASSERT_GT(resumeFrame, 0u);
-        e.streams.SetThrottled(true);
-        ASSERT_EQ(VN_OK, Vn_Stop(claimant, 0));
-        e.nullBackend.Pump(1);
-        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
-        ASSERT_EQ(VN_OK, Vn_Update());
-        ASSERT_EQ(harken::VoiceLedger::HandleKind::Live, e.ledger.Classify(handle).kind);
-        const auto render = harkentest::RenderHandle(&e, handle);
-        const auto* ctx = e.voices.Resolve(render);
-        ASSERT_NE(nullptr, ctx);
-        EXPECT_TRUE(ctx->streamGateOpen);
-        EXPECT_EQ(0u, ctx->streamActivationStartFrame);
-        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
-        const auto laterSequence = e.logicCommits.Current();
-        ASSERT_EQ(VN_OK, Vn_Update());
-        e.mixer.ArenaForTests().SetCapacityForTests(0);
-        for (std::uint32_t step = 0; step < 8; ++step) {
-            e.nullBackend.Pump(1);
-            ASSERT_EQ(VN_OK, Vn_Update());
-            EXPECT_FLOAT_EQ(0, e.nullBackend.LastBlock()[2 * (kBlockFrames - 1)]);
-        }
-        e.mixer.ArenaForTests().RestoreCapacityForTests();
-        e.streams.SetThrottled(false);
-        e.streams.SyncServe();
-        bool heard = false;
-        for (std::uint32_t step = 0; step < 16 && !heard; ++step) {
-            e.nullBackend.Pump(1);
-            heard = std::abs(e.nullBackend.LastBlock()[2 * (kBlockFrames - 1)]) > 1e-7f;
-        }
-        ASSERT_TRUE(heard);
-        for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-12),
-                e.nullBackend.LastBlock()[2 * i], 1e-6f);
-        for (std::uint32_t step = 0; step < 16 &&
-             !e.variables.SliceForTicketForTests(laterSequence).Valid(); ++step) {
-            e.streams.SyncServe();
-            e.nullBackend.Pump(1);
-            ASSERT_EQ(VN_OK, Vn_Update());
-        }
-        e.streams.SyncServe();
-        e.nullBackend.Pump(8);
-        for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
-    }
-}
 
 TEST(VariableCurrentSlice, VoiceAndBusTargetsApplyInOneAudioSlice) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
@@ -9263,14 +9034,14 @@ TEST(VariableCurrentSlice, FirstOutputOwnedWeightRemovalDoesNotResurrectCancelle
     EXPECT_EQ(2u, e.voices.Resolve(voice)->variableWeightControls[0].segment.segmentGeneration);
 }
 
-TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
-    for (const std::uint32_t workers : {0u, 2u}) {
-        SCOPED_TRACE(workers);
-        constexpr auto capacity = 8 * kBlockFrames;
+TEST(VariableCurrentSlice, NativeStreamFirstOutputSurvivesAckStarvationAndArenaRefusal) {
+    for (const std::uint32_t workers : {0u, 2u}) for (const bool directSetters : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << workers << ':' << directSetters);
+        constexpr auto capacity = 16 * kBlockFrames;
         std::array<float, capacity> storage{};
         storage.fill(0.05f);
         float* planes[harken::kMaxChannels] = {storage.data()};
-        harken::StreamRing ring;
+        harkentest::PcmStreamFixture ring;
         ring.Wire(planes, capacity);
         ring.ResetForUse(1);
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
@@ -9279,34 +9050,119 @@ TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
         VnVoiceHandle voice = 0;
-        ASSERT_EQ(VN_OK, e.voices.PlayStream(&ring, 1, kSampleRate, kBlockFrames, -12, 1,
-            0, false, 0, 0, 0, harken::ResolvePanGains(config.mixChannelLayout, -1),
+        ASSERT_EQ(VN_OK, e.voices.PlayStream(&ring, 1, kSampleRate, kBlockFrames, -12, 2,
+            0, false, 0, 0, 0, harken::ResolvePanGains(config.mixChannelLayout, 0),
             0, kSampleRate, 0, kSampleRate, 0,
             harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice,
             e.buses.GenerationAt(0), UINT32_MAX, 0, nullptr, 0, true));
-        ASSERT_TRUE(e.voices.BindPreparedFirstOutputOrder(voice, {0, 1, 0}));
+        constexpr auto frame = 4 * kBlockFrames;
+        harken::VariableReadCutRef cut{};
+        ASSERT_TRUE(e.variables.CaptureReadCut(0, frame, 2, 0, &cut));
+        harken::HeldCurrentSliceToken calendar;
+        ASSERT_TRUE(e.variables.ReserveNativeReadCutCalendar(cut, 0, &calendar));
+        ASSERT_EQ(harken::VariableReadCutStatus::Applied, e.variables.PublishReadCut(cut, frame));
+        harken::VariableNativeStartIdentity identity{};
+        ASSERT_TRUE(e.variables.PrepareNativeReadCut(cut, voice, frame, &identity));
+        ASSERT_TRUE(e.voices.BindPreparedNativeReadCut(voice, identity));
+        ASSERT_TRUE(e.variables.CommitNativeReadCut(identity));
         ASSERT_TRUE(e.voices.CommitPreparedVoice(voice));
-        e.voices.ApplyPlay(voice, voice, 0, 0);
-        harken::CommandRecord command{};
-        command.opcode = harken::kOpcodeSetVoiceVolume;
-        command.payload.setVoiceVolume.handle = voice;
-        command.payload.setVoiceVolume.volumeDb = -6;
-        ASSERT_TRUE(e.voices.DeferVariableCommandUntilFirstOutput(command, {0, 2, 0}, 1));
+        ASSERT_TRUE(e.timelinePool.ReleaseHeldCurrentSlice(&calendar));
+        harken::CommandRecord play{};
+        play.opcode = harken::kOpcodePlay;
+        play.payload.play.handle = play.payload.play.sourceIdentity = voice;
+        play.payload.play.batch = {harken::kPlayLedBatchVersion,
+            harken::PlayLedBatchKind::DirectStart, 0, 1, 0};
+        ASSERT_TRUE(e.commands.TryPush(play));
+        e.timelinePool.Publish(frame + kBlockFrames);
+        while (e.mixer.BlocksRendered() <= 4) e.nullBackend.Pump(1);
+        ASSERT_EQ(harken::VariableNativeStartReceipt::Activated, e.variables.NativeReadCutStatus(identity));
+        ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
+        ASSERT_FALSE(e.variables.HasNativePublicationHold(voice));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto laterFrame = std::max(e.timelinePool.PublishCutoffFrame(),
+            e.mixer.BlocksRendered() * kBlockFrames);
+        harken::VariableSliceRef slice{};
+        ASSERT_TRUE(e.variableSlices.Reserve(e.variables.CurrentWorldGeneration(),
+            e.variables.CurrentTransportEpoch(), 3, laterFrame, 3, 2, &slice));
+        for (const bool pitch : {false, true}) {
+            harken::VariableSliceTarget target{};
+            target.locator.scope = harken::VariableTargetScope::Voice;
+            target.locator.object = voice;
+            target.locator.objectGeneration = static_cast<std::uint32_t>(voice >> 32);
+            target.locator.targetId = pitch ? harken::kTargetVoicePitch : harken::kTargetVoiceVolume;
+            target.targetRevision = 1;
+            target.command.opcode = pitch ? harken::kOpcodeSetVoicePitch : harken::kOpcodeSetVoiceVolume;
+            if (pitch) {
+                target.command.payload.setVoicePitch.handle = voice;
+                target.command.payload.setVoicePitch.ratio = 1;
+            } else {
+                target.command.payload.setVoiceVolume.handle = voice;
+                target.command.payload.setVoiceVolume.volumeDb = 0;
+            }
+            ASSERT_TRUE(e.variableSlices.AddTarget(slice, target));
+        }
+        ASSERT_TRUE(e.variableSlices.Publish(slice));
+        harken::ScheduledCurrentSliceInput input{};
+        input.executeFrame = laterFrame;
+        input.logicCommitSequence = 3;
+        input.slice = {slice.slot, slice.generation};
+        harken::HeldCurrentSliceToken held;
+        ASSERT_EQ(harken::ReserveStatus::Committed,
+            e.timelinePool.ReserveHeldCurrentSlice(input, harken::PrePublishLatePolicy::Refuse, laterFrame, &held).status);
+        ASSERT_TRUE(e.timelinePool.ReleaseHeldCurrentSlice(&held));
+        e.timelinePool.Publish(laterFrame + kBlockFrames);
+        while (e.mixer.BlocksRendered() * kBlockFrames <= laterFrame) e.nullBackend.Pump(1);
         e.nullBackend.Pump(2);
         ASSERT_NE(nullptr, e.voices.Resolve(voice));
         EXPECT_EQ(0u, e.voices.Resolve(voice)->cascade.produced);
         EXPECT_FLOAT_EQ(DbToLinear(-12), e.voices.Resolve(voice)->gain.target);
+        EXPECT_DOUBLE_EQ(2, e.voices.Resolve(voice)->resampler.TargetRatio());
         for (std::uint32_t i = 0; i < 2 * kBlockFrames; ++i)
             EXPECT_FLOAT_EQ(0, e.nullBackend.LastBlock()[i]);
-        ring.PublishWrite(capacity);
-        e.nullBackend.Pump(1);
-        for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
-        e.nullBackend.Pump(1);
-        for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-6) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
+        if (directSetters) {
+            std::array<harken::CommandRecord, 3> commands{};
+            commands[0].opcode = harken::kOpcodeSetVoiceVolume;
+            commands[0].payload.setVoiceVolume.handle = voice;
+            commands[0].payload.setVoiceVolume.volumeDb = -6;
+            commands[1].opcode = harken::kOpcodeSetVoicePitch;
+            commands[1].payload.setVoicePitch.handle = voice;
+            commands[1].payload.setVoicePitch.ratio = 1.5;
+            const auto pan = harken::ResolvePanGains(config.mixChannelLayout, -1);
+            commands[2].opcode = harken::kOpcodeSetVoicePan;
+            commands[2].payload.setVoicePan.handle = voice;
+            commands[2].payload.setVoicePan.pan = commands[2].payload.setVoicePan.pan2d = -1;
+            commands[2].payload.setVoicePan.gain0 = pan.gain0;
+            commands[2].payload.setVoicePan.gain1 = pan.gain1;
+            commands[2].payload.setVoicePan.channel0 = pan.channel0;
+            commands[2].payload.setVoicePan.channel1 = pan.channel1;
+            ASSERT_TRUE(e.commands.TryPushBatch(commands.data(), commands.size()));
+            e.nullBackend.Pump(1);
+            EXPECT_EQ(0u, e.voices.Resolve(voice)->cascade.produced);
+            EXPECT_FLOAT_EQ(DbToLinear(-6), e.voices.Resolve(voice)->gain.target);
+            EXPECT_DOUBLE_EQ(1.5, e.voices.Resolve(voice)->resampler.TargetRatio());
+        }
+        ring.PublishFrames(capacity);
+        e.mixer.ArenaForTests().SetCapacityForTests(0);
+        e.nullBackend.Pump(2);
+        for (std::uint32_t i = 0; i < 2 * kBlockFrames; ++i)
+            EXPECT_FLOAT_EQ(0, e.nullBackend.LastBlock()[i]);
+        e.mixer.ArenaForTests().RestoreCapacityForTests();
+        for (unsigned block = 0; block < 4; ++block) {
+            e.nullBackend.Pump(1);
+            const auto expectedDb = directSetters ? -6 : block == 0 ? -12 : 0;
+            const auto expectedRatio = directSetters ? 1.5 : block == 0 ? 2.0 : 1.0;
+            const auto expected = 0.05f * DbToLinear(expectedDb) * (directSetters ? std::sqrt(2.0f) : 1.0f);
+            ASSERT_GT(e.voices.Resolve(voice)->cascade.produced, 0u);
+            EXPECT_FLOAT_EQ(DbToLinear(expectedDb), e.voices.Resolve(voice)->gain.target);
+            EXPECT_DOUBLE_EQ(expectedRatio, e.voices.Resolve(voice)->resampler.TargetRatio());
+            for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i) {
+                EXPECT_NEAR(expected, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+                EXPECT_NEAR(directSetters ? 0.0f : expected, e.nullBackend.LastBlock()[2 * i + 1], 1e-6f);
+            }
+        }
     }
 }
+
 
 TEST(VariableCurrentSlice, FirstOutputOldEffectAndStoppedGenerationCannotChangeReplacementPcm) {
     for (const bool stopAndReuse : {false, true}) {

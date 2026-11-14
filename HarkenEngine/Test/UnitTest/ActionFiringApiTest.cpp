@@ -1,3 +1,5 @@
+#include "UnitTest/StreamPackFixture.h"
+#include "Common/PcmStreamFixture.h"
 #include "../Common/MonitorExecutionTestSupport.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
@@ -28765,10 +28767,10 @@ TEST(ActionFiringApi, VariableControlSourceFailurePreservesOriginalStreamReason)
         std::array<float, 512> storage{};
         storage.fill(0.25f);
         float* planes[harken::kMaxChannels] = {storage.data()};
-        harken::StreamRing ring;
+        harkentest::PcmStreamFixture ring;
         ring.Wire(planes, storage.size());
         ring.ResetForUse(1);
-        ring.PublishWrite(256);
+        ring.PublishFrames(256);
         ring.state.store(harken::StreamSlotState::Active);
         ASSERT_TRUE(ring.MarkEndOfData(reason));
         harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
@@ -33951,16 +33953,31 @@ TEST(ActionFiringContract, RelativeSeekFrameOverflowRefusesWithoutTicket) {
     EXPECT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
 }
 
+VnResult ActivateSoundActionPack(harkentest::StreamPackFixture& pack,
+    const CanonicalActionWorld& image, bool secondSound = false) {
+    auto world = image.world;
+    world.playablePropertyCount = secondSound ? 2u : 1u;
+    world.playableOccurrences = nullptr;
+    world.playableOccurrenceCount = 0;
+    world.containers = nullptr;
+    world.containerCount = 0;
+    world.actions = image.actions + 9;
+    world.actionCount -= 9;
+    auto result = pack.Activate(world);
+    return result == VN_OK ? pack.PrepareSources() : result;
+}
+
 TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
     for (const bool streamed : {false, true}) {
         SCOPED_TRACE(streamed);
         VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = 2;
-        config.streamRingFrames = 4096;
+        config.streamRingBytes = (4096) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
+        harkentest::StreamPackFixture pack(*engine, "SeekPreservesResamplingOfNonUnityPitch");
         std::vector<float> samples(32768);
         for (std::size_t i = 0; i < samples.size(); ++i) {
             samples[i] = i % 4 < 2 ? 0.25f : -0.25f;
@@ -33970,18 +33987,14 @@ TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
             const auto path = WriteActionStream(
                 "action_stream_seek_resampling.stream",
                 CanonicalActionWorld::kFirstSound, samples);
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                CanonicalActionWorld::kFirstSound, path.c_str()));
-            harken::StreamManager::StreamFacts facts{};
-            ASSERT_TRUE(engine->streams.FindFile(
-                CanonicalActionWorld::kFirstSound, &facts));
+            ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+            const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
             revision = facts.contentRevision;
         } else {
             const auto pcm = harkentest::MonoDesc(samples, 48000);
-            ASSERT_EQ(VN_OK, Vn_RegisterPCM(
-                CanonicalActionWorld::kFirstSound, &pcm));
-            revision = engine->registry.Lookup(
-                CanonicalActionWorld::kFirstSound).contentRevision;
+            ASSERT_EQ(VN_OK, pack.AddPcm(
+                CanonicalActionWorld::kFirstSound, pcm));
+            revision = pack.Facts(CanonicalActionWorld::kFirstSound).contentRevision;
         }
         CanonicalActionWorld image(revision);
         image.properties[0].payload.presentMask |= UINT64_C(1) << 1;
@@ -33993,8 +34006,7 @@ TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
         }
         image.RelinkFirstSound();
         image.MakeImmediateSoundPlayAction();
-        ASSERT_EQ(harken::WorldInstallStatus::Ok,
-                  harken::InstallContainerWorldV1(*engine, image.world).status);
+        ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
         auto post = ValidPostDesc();
         post.actionId = image.actions[9].actionStableId;
         VnActionFiringHandle firing = 0;
@@ -34660,19 +34672,18 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
             (void)Vn_Term();
             auto config = harkentest::MakeNullConfig(1, 64, 48000);
             config.maxStreams = 2;
-            config.streamRingFrames = 256;
+            config.streamRingBytes = (256) * sizeof(float);
             config.prebufferMs = 1;
             harkentest::EngineSession session(config);
             ASSERT_EQ(VN_OK, session.InitResult());
             auto& engine = *session.Engine();
+            harkentest::StreamPackFixture pack(engine, "StreamLocalStopPreservesMissingBoundaryPolicy");
             engine.streams.SetMaxServeFramesForTest(512);
             const std::vector<float> samples(4096, 0.25f);
             const auto path = WriteActionStream("action_stream_local_stop.stream",
                 CanonicalActionWorld::kFirstSound, samples);
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                CanonicalActionWorld::kFirstSound, path.c_str()));
-            harken::StreamManager::StreamFacts facts{};
-            ASSERT_TRUE(engine.streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
+            ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+            const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
             CanonicalActionWorld image(facts.contentRevision);
             image.properties[0].payload.presentMask |= UINT64_C(0x10);
             image.properties[0].payload.values[4].bits = 1;
@@ -34680,8 +34691,7 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
             image.MakeImmediateSoundPlayAction();
             image.MakeQuantizedSoundStopAction(timing, ifSilent, 0,
                 harken::ActionTargetKindV1::Sound, 10, 14, harkentest::ObjectId(51));
-            ASSERT_EQ(harken::WorldInstallStatus::Ok,
-                harken::InstallContainerWorldV1(engine, image.world).status);
+            ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
             auto post = ValidPostDesc();
             post.actionId = image.actions[9].actionStableId;
             VnActionFiringHandle play = 0;
@@ -34715,85 +34725,21 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
             EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
             EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stop));
             EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
-            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
         }
     }
 }
 
-TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision) {
-    auto config = harkentest::MakeNullConfig(1, 64, 48000);
-    config.maxStreams = 2;
-    config.streamRingFrames = 256;
-    config.prebufferMs = 1;
-    harkentest::EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    auto* engine = session.Engine();
-    const std::vector<float> samples(4096, 0.25f);
-    const auto original = WriteActionStream("action_loop_revision_old.stream",
-        CanonicalActionWorld::kFirstSound, samples);
-    const auto replacement = WriteActionStream("action_loop_revision_new.stream",
-        CanonicalActionWorld::kFirstSound, samples, true);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-        CanonicalActionWorld::kFirstSound, original.c_str()));
-    harken::StreamManager::StreamFacts facts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
-    CanonicalActionWorld oldWorld(facts.contentRevision);
-    const auto prepare = [](CanonicalActionWorld& image) {
-        image.properties[0].payload.presentMask |= UINT64_C(0x10);
-        image.properties[0].payload.values[4].bits = 1;
-        image.RelinkFirstSound();
-        image.MakeImmediateSoundPlayAction();
-    };
-    prepare(oldWorld);
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, oldWorld.world).status);
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(
-        CanonicalActionWorld::kFirstSound, replacement.c_str()));
-    const auto head = engine->commands.PublishedHead();
-    auto post = ValidPostDesc();
-    post.actionId = oldWorld.actions[9].actionStableId;
-    VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_PostAction(&post, &firing));
-    EXPECT_EQ(0u, firing);
-    EXPECT_EQ(head, engine->commands.PublishedHead());
-    EXPECT_EQ(0u, engine->voices.ActiveCount());
-    EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
-
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
-    CanonicalActionWorld newWorld(facts.contentRevision);
-    prepare(newWorld);
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, newWorld.world).status);
-    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
-    EXPECT_NE(0u, firing);
-    for (unsigned block = 0; block < 4; ++block) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        engine->streams.SyncServe();
-        engine->nullBackend.Pump(1);
-    }
-    EXPECT_EQ(1u, engine->voices.ActiveCount());
-    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
-    for (unsigned block = 0; block < 8; ++block) {
-        engine->streams.SyncServe();
-        engine->nullBackend.Pump(1);
-        ASSERT_EQ(VN_OK, Vn_Update());
-    }
-    EXPECT_EQ(0u, engine->voices.ActiveCount());
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
-    engine->streams.SyncServe();
-    EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
-}
 
 TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    harkentest::StreamPackFixture pack(*engine, "StreamSeekSwapsExactRingAndRendersRequestedSourceFrames");
     engine->streams.SetMaxServeFramesForTest(512);
 
     std::vector<float> samples(4096, -0.25f);
@@ -34801,11 +34747,8 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     const std::string path = WriteActionStream(
         "action_stream_seek_exact.stream", CanonicalActionWorld::kFirstSound,
         samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                         CanonicalActionWorld::kFirstSound, path.c_str()));
-    harken::StreamManager::StreamFacts facts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
-                                         &facts));
+    ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+    const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
 
     CanonicalActionWorld image(facts.contentRevision);
     image.properties[0].payload.presentMask |= UINT64_C(0x10);
@@ -34815,8 +34758,7 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
         std::bit_cast<std::uint32_t>(0.25f);
     image.RelinkFirstSound();
     image.MakeImmediateSoundPlayAction();
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, image.world).status);
+    ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
 
     VnPostActionDesc post = ValidPostDesc();
     post.actionId = image.actions[9].actionStableId;
@@ -35065,29 +35007,26 @@ TEST(ActionFiringApi, StreamSeekNaturalEndCompletesAndReclaimsTheFiring) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    harkentest::StreamPackFixture pack(*engine, "StreamSeekNaturalEndCompletesAndReclaimsTheFiring");
     engine->streams.SetMaxServeFramesForTest(512);
 
     const std::vector<float> samples(4096, 0.375f);
     const std::string path = WriteActionStream(
         "action_stream_seek_natural_end.stream",
         CanonicalActionWorld::kFirstSound, samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                         CanonicalActionWorld::kFirstSound, path.c_str()));
-    harken::StreamManager::StreamFacts facts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
-                                         &facts));
+    ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+    const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
     CanonicalActionWorld image(facts.contentRevision);
     image.properties[0].payload.presentMask |= UINT64_C(0x10);
     image.properties[0].payload.values[4].bits = 1;
     image.RelinkFirstSound();
     image.MakeImmediateSoundPlayAction();
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, image.world).status);
+    ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
     const std::uint32_t playableBaseline =
         engine->playableInstances.LiveCount();
     const auto occupiedSourceTerminals = [&]() {
@@ -35184,38 +35123,33 @@ TEST(ActionFiringApi, StreamSeekNaturalEndCompletesAndReclaimsTheFiring) {
     engine->streams.SyncServe();
     EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
-    EXPECT_EQ(VN_OK,
-              Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
 }
 
 TEST(ActionFiringApi, MixedResidentAndStreamSeekBackpressureIsAtomic) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     config.maxStreams = 1;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    harkentest::StreamPackFixture pack(*engine, "MixedResidentAndStreamSeekBackpressureIsAtomic");
     engine->streams.SetMaxServeFramesForTest(512);
 
     const std::vector<float> streamSamples(4096, 0.25f);
     const std::string path = WriteActionStream(
         "action_mixed_seek_atomic.stream",
         CanonicalActionWorld::kFirstSound, streamSamples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                         CanonicalActionWorld::kFirstSound, path.c_str()));
-    harken::StreamManager::StreamFacts streamFacts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
-                                         &streamFacts));
+    ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+    const auto streamFacts = pack.Facts(CanonicalActionWorld::kFirstSound);
     const std::vector<float> residentSamples(4096, -0.25f);
     const VnPCMDesc residentPcm =
         harkentest::MonoDesc(residentSamples, 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound,
-                                    &residentPcm));
-    const harken::PCMView residentView =
-        engine->registry.Lookup(CanonicalActionWorld::kSecondSound);
-    ASSERT_TRUE(residentView.Valid());
+    ASSERT_EQ(VN_OK, pack.AddPcm(CanonicalActionWorld::kSecondSound,
+                                    residentPcm));
+    const auto residentView = pack.Facts(CanonicalActionWorld::kSecondSound);
+    ASSERT_NE(0u, residentView.contentRevision);
 
     CanonicalActionWorld image(streamFacts.contentRevision,
                                residentView.contentRevision);
@@ -35234,8 +35168,7 @@ TEST(ActionFiringApi, MixedResidentAndStreamSeekBackpressureIsAtomic) {
         harken::ComputeActionProgramFingerprintV1(image.actions[9]);
     image.world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(image.world);
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, image.world).status);
+    ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image, true));
 
     VnPostActionDesc post = ValidPostDesc();
     post.actionId = image.actions[9].actionStableId;
@@ -35328,11 +35261,12 @@ TEST(ActionFiringApi, StreamSeekPreparationFailurePreservesThePlayingRing) {
         (void)Vn_Term();
         VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = throttleReplacement ? 2 : 1;
-        config.streamRingFrames = 256;
+        config.streamRingBytes = (256) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
+        harkentest::StreamPackFixture pack(*engine, "StreamSeekPreparationFailurePreservesThePlayingRing");
         engine->streams.SetMaxServeFramesForTest(512);
 
         const std::vector<float> samples(4096, 0.375f);
@@ -35340,18 +35274,14 @@ TEST(ActionFiringApi, StreamSeekPreparationFailurePreservesThePlayingRing) {
             throttleReplacement ? "action_stream_seek_throttled.stream"
                                 : "action_stream_seek_no_slot.stream",
             CanonicalActionWorld::kFirstSound, samples);
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                             CanonicalActionWorld::kFirstSound, path.c_str()));
-        harken::StreamManager::StreamFacts facts{};
-        ASSERT_TRUE(engine->streams.FindFile(
-            CanonicalActionWorld::kFirstSound, &facts));
+        ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+        const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
         CanonicalActionWorld image(facts.contentRevision);
         image.properties[0].payload.presentMask |= UINT64_C(0x10);
         image.properties[0].payload.values[4].bits = 1;
         image.RelinkFirstSound();
         image.MakeImmediateSoundPlayAction();
-        ASSERT_EQ(harken::WorldInstallStatus::Ok,
-                  harken::InstallContainerWorldV1(*engine, image.world).status);
+        ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
 
         VnPostActionDesc post = ValidPostDesc();
         post.actionId = image.actions[9].actionStableId;
@@ -35422,29 +35352,26 @@ TEST(ActionFiringApi, StreamSeekWorkerFailurePublishesNoTicketOrCommand) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    harkentest::StreamPackFixture pack(*engine, "StreamSeekWorkerFailurePublishesNoTicketOrCommand");
     engine->streams.SetMaxServeFramesForTest(512);
 
     const std::vector<float> samples(4096, 0.375f);
     const std::string path = WriteActionStream(
         "action_stream_seek_worker_failure.stream",
         CanonicalActionWorld::kFirstSound, samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                         CanonicalActionWorld::kFirstSound, path.c_str()));
-    harken::StreamManager::StreamFacts facts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
-                                         &facts));
+    ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+    const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
     CanonicalActionWorld image(facts.contentRevision);
     image.properties[0].payload.presentMask |= UINT64_C(0x10);
     image.properties[0].payload.values[4].bits = 1;
     image.RelinkFirstSound();
     image.MakeImmediateSoundPlayAction();
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, image.world).status);
+    ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
 
     VnPostActionDesc post = ValidPostDesc();
     post.actionId = image.actions[9].actionStableId;
@@ -35519,11 +35446,12 @@ TEST(ActionFiringApi, StreamSeekRefusalsLeavePlaybackAndRingOwnershipUnchanged) 
         (void)Vn_Term();
         VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = 2;
-        config.streamRingFrames = 256;
+        config.streamRingBytes = (256) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
+        harkentest::StreamPackFixture pack(*engine, "StreamSeekRefusalsLeavePlaybackAndRingOwnershipUnchanged");
         engine->streams.SetMaxServeFramesForTest(512);
 
         const std::vector<float> samples(4096, 0.375f);
@@ -35531,11 +35459,8 @@ TEST(ActionFiringApi, StreamSeekRefusalsLeavePlaybackAndRingOwnershipUnchanged) 
             looped ? "action_stream_seek_loop_refusal.stream"
                    : "action_stream_seek_relative_refusal.stream",
             CanonicalActionWorld::kFirstSound, samples, looped);
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                             CanonicalActionWorld::kFirstSound, path.c_str()));
-        harken::StreamManager::StreamFacts facts{};
-        ASSERT_TRUE(engine->streams.FindFile(
-            CanonicalActionWorld::kFirstSound, &facts));
+        ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+        const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
         CanonicalActionWorld image(facts.contentRevision);
         image.properties[0].payload.presentMask |= UINT64_C(0x10);
         image.properties[0].payload.values[4].bits = 1;
@@ -35545,8 +35470,7 @@ TEST(ActionFiringApi, StreamSeekRefusalsLeavePlaybackAndRingOwnershipUnchanged) 
         }
         image.RelinkFirstSound();
         image.MakeImmediateSoundPlayAction();
-        ASSERT_EQ(harken::WorldInstallStatus::Ok,
-                  harken::InstallContainerWorldV1(*engine, image.world).status);
+        ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
 
         VnPostActionDesc post = ValidPostDesc();
         post.actionId = image.actions[9].actionStableId;
@@ -35624,11 +35548,12 @@ TEST(ActionFiringApi, StreamSeekTargetsOnlyTheSelectedConcurrentFiring) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     config.maxStreams = 3;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    harkentest::StreamPackFixture pack(*engine, "StreamSeekTargetsOnlyTheSelectedConcurrentFiring");
     engine->streams.SetMaxServeFramesForTest(512);
 
     std::vector<float> samples(4096, -0.25f);
@@ -35636,18 +35561,14 @@ TEST(ActionFiringApi, StreamSeekTargetsOnlyTheSelectedConcurrentFiring) {
     const std::string path = WriteActionStream(
         "action_stream_seek_isolation.stream",
         CanonicalActionWorld::kFirstSound, samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
-                         CanonicalActionWorld::kFirstSound, path.c_str()));
-    harken::StreamManager::StreamFacts facts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
-                                         &facts));
+    ASSERT_EQ(VN_OK, pack.AddStreamFile(CanonicalActionWorld::kFirstSound, path));
+    const auto facts = pack.Facts(CanonicalActionWorld::kFirstSound);
     CanonicalActionWorld image(facts.contentRevision);
     image.properties[0].payload.presentMask |= UINT64_C(0x10);
     image.properties[0].payload.values[4].bits = 1;
     image.RelinkFirstSound();
     image.MakeImmediateSoundPlayAction();
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, image.world).status);
+    ASSERT_EQ(VN_OK, ActivateSoundActionPack(pack, image));
 
     VnPostActionDesc post = ValidPostDesc();
     post.actionId = image.actions[9].actionStableId;

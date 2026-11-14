@@ -1,20 +1,7 @@
-// Per-stream SPSC frame ring: the only channel between the streaming
-// thread (producer) and the audio thread (consumer). Planar float frames
-// over preallocated storage, power-of-two capacity, absolute uint64
-// indices with release/acquire pairing — the same lock-free discipline as
-// the command queue, carrying sample frames instead of records.
-//
-// This lives in core because both sides consume it across the module
-// boundary: media owns the slots and feeds them, render reads them. The
-// audio thread never blocks, allocates, or locks here; the producer's only
-// coupling to the consumer is the read index it observes.
-//
-// The ring also carries the slot's lifecycle word, because the audio
-// thread must be able to give the slot back without touching any
-// logic-side structure: Free -> Active is published by the logic thread
-// once the slot is fully wired (release), Active -> Retired is stored by
-// the audio thread when the voice releases (release), and the streaming
-// thread detaches a Retired slot and returns it to Free.
+// Per-stream SPSC byte storage. The producer publishes verified encoded bytes;
+// only the renderer converts them to samples. Frame counters separately track
+// playable supply and frames delivered to the resampler, including decoded
+// samples whose compressed packet has already left the byte ring.
 #ifndef HARKEN_CORE_STREAM_RING_H
 #define HARKEN_CORE_STREAM_RING_H
 
@@ -22,8 +9,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <algorithm>
+#include <cassert>
 
 namespace harken {
+class MediaDecoder;
 
 enum class StreamSlotState : std::uint32_t {
     Free = 0,    // unclaimed; invisible to both real-time threads
@@ -106,19 +97,22 @@ inline StreamLifecycleWinner LifecycleWinnerForTerminalReason(
 }
 
 struct StreamRing {
-    // One plane per channel, `capacity` floats each, wired once at init
-    // into pool-owned storage. Only the first channelCount planes carry
-    // data for the current stream.
-    float* planes[kMaxChannels] = {};
-    std::uint32_t capacity = 0; // power of two
+    std::uint8_t* bytes = nullptr;
+    std::uint32_t capacity = 0;
     std::uint32_t mask = 0;
     std::uint32_t channelCount = 0;
-
-    // Absolute frame counts; at 48 kHz a uint64 cannot wrap in practice.
-    // writeIndex is producer-owned (consumer acquires), readIndex is
-    // consumer-owned (producer acquires).
+    std::uint32_t bytesPerFrame = 0;
+    bool packetEncoded = false;
+    // Logic publishes once for an initially unprepared encoded source. Only
+    // its renderer takes ownership while Active; detach retires an unclaimed
+    // value before publishing Free. A consumed nullptr is never republished.
+    std::atomic<MediaDecoder*> pendingDecoder{nullptr};
+    std::atomic<std::uint32_t> filledFrameLimit{UINT32_MAX};
+    std::atomic<VnResult> preparationResult{VN_OK};
     std::atomic<std::uint64_t> writeIndex{0};
     std::atomic<std::uint64_t> readIndex{0};
+    std::atomic<std::uint64_t> writeFrames{0};
+    std::atomic<std::uint64_t> readFrames{0};
 
     // The producer and audio thread compete on one generation-bound winner.
     // Producer terminal publication is release-ordered after the final write;
@@ -142,20 +136,17 @@ struct StreamRing {
     std::uint64_t sourceGeneration = 0;
     std::uint64_t contentRevision = 0;
 
-    // Init-time wiring; both real-time threads exist only after this.
-    void Wire(float* const* storage, std::uint32_t cap) {
-        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-            planes[ch] = storage[ch];
-        }
-        capacity = cap;
-        mask = cap - 1;
+    void Wire(std::uint8_t* storage, std::uint32_t byteCapacity) {
+        assert(byteCapacity != 0 && (byteCapacity & (byteCapacity - 1)) == 0);
+        bytes = storage; capacity = byteCapacity; mask = byteCapacity - 1;
     }
 
     // Claim-time reset, logic thread only, while state is Free — neither
     // real-time thread observes a Free slot, so plain stores suffice until
     // the Active publication (a release store by the caller) makes the
     // whole wiring visible.
-    void ResetForUse(std::uint32_t channels) {
+    void ResetForUse(std::uint32_t channels, bool encoded = false) {
+        assert(pendingDecoder.load(std::memory_order_relaxed) == nullptr);
         std::uint32_t next =
             generation.load(std::memory_order_relaxed) + 1u;
         if (next == 0) {
@@ -168,6 +159,12 @@ struct StreamRing {
         appliedReplacementSerial.store(0, std::memory_order_relaxed);
         observationRender.store(0, std::memory_order_relaxed);
         channelCount = channels;
+        packetEncoded = encoded;
+        filledFrameLimit.store(UINT32_MAX, std::memory_order_relaxed);
+        preparationResult.store(VN_OK, std::memory_order_relaxed);
+        bytesPerFrame = channels * sizeof(float);
+        writeFrames.store(0, std::memory_order_relaxed);
+        readFrames.store(0, std::memory_order_relaxed);
         writeIndex.store(0, std::memory_order_relaxed);
         readIndex.store(0, std::memory_order_relaxed);
         winnerGeneration.store(next, std::memory_order_relaxed);
@@ -175,34 +172,40 @@ struct StreamRing {
                               std::memory_order_relaxed);
     }
 
-    // --- producer side (streaming thread) ---
-
-    std::uint32_t WriteAvailable() const {
-        const std::uint64_t w = writeIndex.load(std::memory_order_relaxed);
-        const std::uint64_t r = readIndex.load(std::memory_order_acquire);
-        return capacity - static_cast<std::uint32_t>(w - r);
+    std::uint32_t WriteAvailableBytes() const {
+        const auto w = writeIndex.load(std::memory_order_relaxed);
+        const auto r = readIndex.load(std::memory_order_acquire);
+        return static_cast<std::uint32_t>(capacity - (w - r));
     }
 
-    // Largest contiguous span writable from the current write position:
-    // bounded by free space and by the wrap point. Fills outPlanes with
-    // the write cursors of the first channelCount planes.
-    std::uint32_t ContiguousWrite(float** outPlanes) {
-        const std::uint32_t avail = WriteAvailable();
-        const std::uint32_t pos = static_cast<std::uint32_t>(
-                                      writeIndex.load(
-                                          std::memory_order_relaxed)) &
-                                  mask;
-        const std::uint32_t untilWrap = capacity - pos;
-        const std::uint32_t span = avail < untilWrap ? avail : untilWrap;
-        for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-            outPlanes[ch] = planes[ch] + pos;
-        }
-        return span;
+    // Copying and publication are separate so a complete packet or PCM frame
+    // becomes visible only after every wrapped byte has been written.
+    void CopyIn(std::uint64_t at, const void* source, std::uint32_t count) {
+        assert(count <= capacity);
+        const auto pos = static_cast<std::uint32_t>(at) & mask;
+        const auto first = std::min(count, capacity - pos);
+        std::memcpy(bytes + pos, source, first);
+        std::memcpy(bytes, static_cast<const std::uint8_t*>(source) + first, count - first);
     }
-
-    void PublishWrite(std::uint32_t frames) {
-        writeIndex.store(writeIndex.load(std::memory_order_relaxed) + frames,
-                         std::memory_order_release);
+    void CopyOut(std::uint64_t at, void* destination, std::uint32_t count) const {
+        assert(count <= capacity);
+        const auto pos = static_cast<std::uint32_t>(at) & mask;
+        const auto first = std::min(count, capacity - pos);
+        std::memcpy(destination, bytes + pos, first);
+        std::memcpy(static_cast<std::uint8_t*>(destination) + first, bytes, count - first);
+    }
+    void PublishBytes(std::uint32_t count, std::uint32_t frames) {
+        writeIndex.store(writeIndex.load(std::memory_order_relaxed) + count, std::memory_order_release);
+        writeFrames.store(writeFrames.load(std::memory_order_relaxed) + frames, std::memory_order_release);
+    }
+    // Admission can query a free slot before its next generation is reset.
+    std::uint32_t FrameCapacity(std::uint32_t channels = 0, bool encoded = false) const {
+        if (encoded || (!channels && packetEncoded)) return UINT32_MAX;
+        const auto stride = channels ? channels * sizeof(float) : bytesPerFrame;
+        return stride ? static_cast<std::uint32_t>(capacity / stride) : 0;
+    }
+    std::uint32_t PrebufferTarget(std::uint32_t requested) const noexcept {
+        return std::min(requested, filledFrameLimit.load(std::memory_order_acquire));
     }
 
     bool MarkEndOfData(StreamTerminalReason reason) {
@@ -225,32 +228,21 @@ struct StreamRing {
             std::memory_order_acquire);
     }
 
-    // --- consumer side (audio thread) ---
-
-    std::uint32_t ReadAvailable() const {
-        const std::uint64_t w = writeIndex.load(std::memory_order_acquire);
-        const std::uint64_t r = readIndex.load(std::memory_order_relaxed);
+    std::uint32_t ReadAvailableBytes() const {
+        const auto w = writeIndex.load(std::memory_order_acquire);
+        const auto r = readIndex.load(std::memory_order_relaxed);
         return static_cast<std::uint32_t>(w - r);
     }
-
-    // Largest contiguous span readable from the current read position.
-    std::uint32_t ContiguousRead(const float** outPlanes) const {
-        const std::uint32_t avail = ReadAvailable();
-        const std::uint32_t pos = static_cast<std::uint32_t>(
-                                      readIndex.load(
-                                          std::memory_order_relaxed)) &
-                                  mask;
-        const std::uint32_t untilWrap = capacity - pos;
-        const std::uint32_t span = avail < untilWrap ? avail : untilWrap;
-        for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-            outPlanes[ch] = planes[ch] + pos;
-        }
-        return span;
+    std::uint32_t BufferedFrames() const {
+        const auto r = readFrames.load(std::memory_order_acquire);
+        const auto w = writeFrames.load(std::memory_order_acquire);
+        return w > r ? static_cast<std::uint32_t>(std::min<std::uint64_t>(w - r, UINT32_MAX)) : 0;
     }
-
-    void AdvanceRead(std::uint32_t frames) {
-        readIndex.store(readIndex.load(std::memory_order_relaxed) + frames,
-                        std::memory_order_release);
+    void ConsumeBytes(std::uint32_t count) {
+        readIndex.store(readIndex.load(std::memory_order_relaxed) + count, std::memory_order_release);
+    }
+    void DeliverFrames(std::uint32_t frames) {
+        readFrames.store(readFrames.load(std::memory_order_relaxed) + frames, std::memory_order_release);
     }
 
     bool SourceEnded() const {

@@ -194,7 +194,7 @@ static_assert(alignof(VnMonitorSessionFileHeader) == 8, "file header align");
 static_assert(alignof(VnMonitorRemoteHandshake) == 8, "handshake align");
 static_assert(sizeof(VnMonitorSessionHandle) == 8, "session handle");
 static_assert(sizeof(uint32_t) == 4, "enums stay uint32");
-static_assert(sizeof(VnConfig) == 352, "Monitor must not resize VnConfig");
+static_assert(sizeof(VnConfig) == 360, "Monitor must not resize VnConfig");
 static_assert(sizeof(VnMonitorRecordHeader) % 8 == 0, "record header size align");
 static_assert(offsetof(VnMonitorRecordHeader, measurementSegmentGeneration) ==
                   offsetof(VnMonitorRecordHeader, clockAnchorGeneration) + 8,

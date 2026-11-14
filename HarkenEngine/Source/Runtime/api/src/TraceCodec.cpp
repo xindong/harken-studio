@@ -20,7 +20,7 @@ NativeConfigVintages() noexcept {
         static_cast<std::uint32_t>(offsetof(VnConfig, logCallback)),
         static_cast<std::uint32_t>(
             offsetof(VnConfig, delayEffectPoolCapacity)),
-        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames)),
+        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes)),
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActions)),
         static_cast<std::uint32_t>(offsetof(VnConfig, maxTriggerDepth)),
         static_cast<std::uint32_t>(offsetof(VnConfig, mixChannelLayout)),
@@ -45,6 +45,9 @@ NativeConfigVintages() noexcept {
         static_cast<std::uint32_t>(
             offsetof(VnConfig, reserved12) +
             sizeof(VnConfig::reserved12)),
+        static_cast<std::uint32_t>(
+            offsetof(VnConfig, compressedDecoderBytes) +
+            sizeof(VnConfig::compressedDecoderBytes)),
     };
 }
 
@@ -162,7 +165,7 @@ struct PrefixDecodeVisitor {
     X(notificationQueueDepth)                                               \
     X(delayEffectPoolCapacity)                                              \
     X(toneEffectPoolCapacity)                                               \
-    X(streamRingFrames)                                                     \
+    X(streamRingBytes)                                                     \
     X(maxStreams)                                                           \
     X(prebufferMs)                                                          \
     X(starvationCooldownBlocks)                                             \
@@ -246,7 +249,7 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
         (vintage >= 14 &&
          (config.pendingActionCapacity != 0 || config.reserved10 != 0)) ||
         (vintage >= 15 && config.reserved11 != 0) ||
-        (vintage == 16 && config.reserved12 != 0)) {
+        (vintage >= 16 && config.reserved12 != 0)) {
         return false;
     }
     try {
@@ -291,11 +294,15 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
             AppendU64(out, config.maxPackResourceBytes);
             AppendU64(out, config.maxPackReplacementPeakBytes);
         }
-        if (vintage == 16) {
+        if (vintage >= 16) {
             AppendU32(out, config.maxActionCooldownRows);
         }
+        if (vintage >= 17) {
+            AppendU64(out, config.compressedDecoderBytes);
+        }
         const std::size_t expectedBytes =
-            vintage == 16   ? kTraceConfigWireBytes
+            vintage == 17   ? kTraceConfigWireBytes
+            : vintage == 16 ? kTraceConfigWireBytesV16
             : vintage == 15 ? kTraceConfigWireBytesV15
             : vintage == 14 ? kTraceConfigWireBytesV14
                             : kTraceConfigWireBytesV13;
@@ -315,6 +322,7 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
         (byteCount != kTraceConfigWireBytesV13 &&
          byteCount != kTraceConfigWireBytesV14 &&
          byteCount != kTraceConfigWireBytesV15 &&
+         byteCount != kTraceConfigWireBytesV16 &&
          byteCount != kTraceConfigWireBytes)) {
         return false;
     }
@@ -326,7 +334,8 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     if (schema != kTraceConfigSchemaVersion || vintage == 0 ||
         vintage > kTraceConfigVintageCount || resolvedRate == 0 ||
         resolvedLayout == VN_CHANNEL_LAYOUT_DEFAULT ||
-        byteCount != (vintage == 16   ? kTraceConfigWireBytes
+        byteCount != (vintage == 17   ? kTraceConfigWireBytes
+            : vintage == 16 ? kTraceConfigWireBytesV16
                       : vintage == 15 ? kTraceConfigWireBytesV15
                       : vintage == 14 ? kTraceConfigWireBytesV14
                                       : kTraceConfigWireBytesV13)) {
@@ -352,8 +361,11 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
         decoded.maxPackResourceBytes = reader.U64();
         decoded.maxPackReplacementPeakBytes = reader.U64();
     }
-    if (vintage == 16) {
+    if (vintage >= 16) {
         decoded.maxActionCooldownRows = reader.U32();
+    }
+    if (vintage >= 17) {
+        decoded.compressedDecoderBytes = reader.U64();
     }
     const std::uint32_t historicalPendingCapacity =
         decoded.pendingActionCapacity;

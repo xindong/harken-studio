@@ -91,6 +91,7 @@
 #include "harken/render/NullBackend.h"
 #include "harken/render/TopologyPlan.h"
 #include "harken/render/VoicePool.h"
+#include "harken/media/VorbisDecoder.h"
 #include "harken/render/VoiceTimelineSink.h"
 
 #include <algorithm>
@@ -2278,6 +2279,8 @@ struct EngineScheduleAggregateState {
     bool parentNotified = false;
     bool cancellationRequested = false;
     bool sourceScopeMayAppend = false;
+    std::shared_ptr<const ImmediateLaneAppliedReceipt> initialLaneApplied;
+    bool initialAnchorRetry = false;
 
     template<class Visitor>
     bool VisitChildren(Visitor&& visitor) {
@@ -2378,6 +2381,7 @@ struct EnginePlayableServiceRow {
     bool pendingImmediateEntry = false;
     bool pendingImmediateRetry = false;
     bool pendingDirectStartBinding = false;
+    bool pendingImmediateScheduleAnchor = false;
     std::vector<std::unique_ptr<EngineSourceStartLane>> sourceStartLanes;
     std::uint64_t pendingDirectEntryFrame = 0;
     bool zeroWorkMarker = false;
@@ -7064,6 +7068,7 @@ public:
                     const EngineHandleGenerationFloors& handleFloors = {})
         : config(resolved),
           playableStorage(resolved),
+          vorbis(resolved.compressedDecoderBytes, resolved.renderWorkerCount),
           logicPacks(resolved.maxPacks),
           packComposition(PackIdentityLeaseCapacity(resolved) -
                               resolved.maxPlayableInstances,
@@ -8515,7 +8520,11 @@ public:
         }
         const bool inheritPackDuty = parentOriginal != nullptr && parentOriginal->packDutyOwner_ != nullptr &&
             (preparingStorage == nullptr || OriginalPreparingPackOwner(*preparingStorage) == nullptr);
-        if (inheritPackDuty && !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
+        const bool inheritWorldDuty = parentOriginal != nullptr && parentOriginal->HasOriginalWorldNoPackDuty() &&
+            (preparingStorage == nullptr || (!HasOriginalWorldNoPackPreparation(*preparingStorage) &&
+                OriginalPreparingPackOwner(*preparingStorage) == nullptr));
+        if ((inheritPackDuty || inheritWorldDuty) &&
+            !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
         auto& original = originalPlayableServiceLifetimeHolders[row.identity.slot];
         if (original.engine_ != nullptr || original.baseline_.Valid()) return false;
         if (!playableServiceWork.Prepare({row.identity.generation, row.identity.slot, 0}))
@@ -8591,7 +8600,9 @@ public:
             original.worldNoPackProject_ = duty.project_;
             original.worldNoPackFingerprint_ = duty.worldFingerprint_;
             original.worldNoPackTarget_ = duty.target_;
-        } else if (preparingStorage == nullptr && parentOriginal != nullptr && parentOriginal->HasOriginalWorldNoPackDuty()) {
+        } else if (inheritWorldDuty) {
+            // Continuation scratch may have no new authority. It inherits the
+            // parent's frozen world, just as a child inherits a Pack lease.
             original.packDuty_ = OriginalPlayableServicePackDuty::WorldNoPack;
             original.worldNoPackGeneration_ = parentOriginal->worldNoPackGeneration_;
             original.worldNoPackProject_ = parentOriginal->worldNoPackProject_;
@@ -13794,6 +13805,7 @@ public:
     ResampleTables tables;
     MultirateResampleTables multirateTables;
     BiquadTrigTable biquadTrig;
+    VorbisCodec vorbis;
     PCMRegistry registry;
     // Logic-pack ledger (section 19): applied entries + dependency edges
     // per loaded v2 pack, keyed by the pack handle. Declared before

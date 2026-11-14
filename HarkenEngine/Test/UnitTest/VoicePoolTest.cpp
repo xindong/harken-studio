@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 #include "harken/render/SignalRenderPlan.h"
 // Voice pool capacity and handle behavior: VN_NO_VOICE on exhaustion,
 // generational stale-handle detection with its counter, slot recycling,
@@ -5,6 +6,8 @@
 // multi-voice render run.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
+#include "Common/MonitorExecutionTestSupport.h"
 
 #include "Engine.h"
 #include "VoicePoolReleaseTestAccess.h"
@@ -32,6 +35,69 @@ using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlockFrames = 256;
 constexpr std::uint32_t kSampleRate = 48000;
+
+TEST(VoicePool, StreamAudioObservationReportsCurrentDecoderFailureAfterProducerEnd) {
+    auto config = harkentest::MakeNullConfig(1, kBlockFrames, kSampleRate);
+    config.maxTriggerDepth = 2;
+    config.renderWorkerCount = 0;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto fixture = harken::test::MakeVorbisFixture(1, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    const std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
+    harken::VorbisPrepareResult result;
+    auto encoded = harken::VorbisStreamMedia::Prepare(engine.vorbis, prefix, fixture.media.size(),
+        1024 * 1024, result);
+    ASSERT_NE(encoded, nullptr);
+    const auto monitor = harkentest::monitor::OpenIdentityEvents(4);
+    ASSERT_NE(0u, monitor);
+    std::array<std::uint8_t, 256> bytes{};
+    harken::StreamRing ring;
+    ring.Wire(bytes.data(), static_cast<std::uint32_t>(bytes.size()));
+    for (bool capacityFailure : {false, true}) {
+        SCOPED_TRACE(capacityFailure);
+        ring.ResetForUse(1, true);
+        ring.state.store(harken::StreamSlotState::Active);
+        ring.sourceGeneration = capacityFailure ? 42 : 41;
+        const auto token = (std::uint64_t(ring.generation.load()) << 32) | 1;
+        const harken::StreamPacketHeader header{1, 1, 0, 1};
+        const std::uint8_t invalidPacket = 0xff;
+        ring.CopyIn(0, &header, sizeof(header));
+        ring.CopyIn(sizeof(header), &invalidPacket, 1);
+        ring.PublishBytes(sizeof(header) + 1, 1);
+        ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate, 0, 0, 1,
+            0, false, 0, 0, 0, harken::ResolvePanGains(config.mixChannelLayout, 0),
+            0, media.frames, 0, media.frames, 1,
+            harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice,
+            1, UINT32_MAX, 0, nullptr, 0, false, 1, {}, encoded.get()));
+        ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, &ring, token));
+        engine.voices.ApplyPlay(voice, voice, 0, engine.mixer.BlocksRendered());
+        const auto baseline = engine.mixer.BlocksRendered();
+        if (capacityFailure) ring.preparationResult.store(VN_NO_STREAM);
+        engine.nullBackend.Pump(1);
+        const auto records = harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(monitor);
+        const auto row = std::find_if(records.begin(), records.end(), [&](const auto& entry) {
+            return entry.fact.flags == VN_MONITOR_STREAM_FACT_AUDIO && entry.fact.ringToken == token &&
+                entry.fact.renderActivation == voice && entry.fact.audioBlock == baseline + 1;
+        });
+        ASSERT_NE(records.end(), row);
+        EXPECT_EQ(ring.sourceGeneration, row->fact.sourceGeneration);
+        EXPECT_EQ(VN_PLAYBACK_READINESS_FAILED, row->fact.state);
+        EXPECT_EQ(capacityFailure ? VN_NO_STREAM : VN_BAD_STREAM_FILE, row->fact.result);
+        EXPECT_EQ(static_cast<std::uint32_t>(capacityFailure ? harken::StreamTerminalReason::ProducerFailure :
+            harken::StreamTerminalReason::IntegrityAbort), row->fact.terminalReason);
+        EXPECT_EQ(0u, row->fact.producedFrames);
+        EXPECT_EQ(harken::StreamTerminalReason::NaturalEnd, ring.TerminalReason());
+        EXPECT_EQ(nullptr, engine.voices.Resolve(voice));
+        engine.vorbis.states.Collect();
+        EXPECT_EQ(0u, engine.vorbis.states.ActiveBytes());
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
+}
 
 TEST(VoicePool, CroppedResidentStartMatchesUninterruptedSamplesAndRemainingLoops) {
     for (const auto workers : {0u, 2u}) {
@@ -230,7 +296,7 @@ void ExpectStreamResampleProfile(std::uint32_t sourceRate,
     std::array<float, kStreamCapacity> storage{};
     float* planes[harken::kMaxChannels] = {};
     planes[0] = storage.data();
-    harken::StreamRing ring;
+    harkentest::PcmStreamFixture ring;
     ring.Wire(planes, kStreamCapacity);
     ring.ResetForUse(1);
 
@@ -551,10 +617,10 @@ TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct)
             std::array<float, 2048> storage{};
             storage.fill(0.25f);
             float* planes[harken::kMaxChannels] = {storage.data()};
-            harken::StreamRing ring;
+            harkentest::PcmStreamFixture ring;
             ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
             ring.ResetForUse(1);
-            ring.PublishWrite(1024);
+            ring.PublishFrames(1024);
             ring.state.store(harken::StreamSlotState::Active);
             const bool staleGeneration = reason == harken::StreamTerminalReason::Count;
             if (reason != harken::StreamTerminalReason::None)
@@ -581,10 +647,10 @@ TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct)
             engine.nullBackend.Pump(1);
             harken::SourceTerminalPayload result{};
             EXPECT_FALSE(engine.sourceTerminals.Capture(source.token, engine.mixer.BlocksRendered(), &result));
-            EXPECT_GT(ring.ReadAvailable(), 0u);
+            EXPECT_GT(ring.BufferedFrames(), 0u);
             EXPECT_FALSE(engine.voices.ReleaseObserved(source.release));
             for (std::uint32_t block = 0; block < 12; ++block) engine.nullBackend.Pump(1);
-            EXPECT_EQ(0u, ring.ReadAvailable());
+            EXPECT_EQ(0u, ring.BufferedFrames());
             const bool completed = engine.sourceTerminals.Capture(source.token,
                 engine.mixer.BlocksRendered(), &result);
             if (reason == harken::StreamTerminalReason::None) {
@@ -610,14 +676,14 @@ TEST(VoicePool, StreamResyncRetryWaitsForNewTokenPublication) {
     std::array<float, 2048> storage{};
     storage.fill(0.25f);
     float* planes[harken::kMaxChannels] = {storage.data()};
-    std::array<harken::StreamRing, 3> rings;
+    std::array<harkentest::PcmStreamFixture, 3> rings;
     for (auto& ring : rings) {
         ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
         ring.ResetForUse(1);
         ring.state.store(harken::StreamSlotState::Active);
     }
-    rings[0].PublishWrite(1024);
-    rings[2].PublishWrite(2048);
+    rings[0].PublishFrames(1024);
+    rings[2].PublishFrames(2048);
     EngineSession session(VoicePoolConfig(1, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -677,10 +743,10 @@ TEST(VoicePool, StreamNaturalEndDuringPreventiveFadePreservesBufferedTail) {
     std::array<float, 2048> storage{};
     storage.fill(0.25f);
     float* planes[harken::kMaxChannels] = {storage.data()};
-    harken::StreamRing ring;
+    harkentest::PcmStreamFixture ring;
     ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
     ring.ResetForUse(1);
-    ring.PublishWrite(1024);
+    ring.PublishFrames(1024);
     ring.state.store(harken::StreamSlotState::Active);
     EngineSession session(VoicePoolConfig(1, block));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -710,7 +776,7 @@ TEST(VoicePool, StreamNaturalEndDuringPreventiveFadePreservesBufferedTail) {
     const float unity = output.left[512];
     ASSERT_GT(unity, 0.1f);
     const float lastGain = output.left.back() / unity;
-    ring.PublishWrite(1024);
+    ring.PublishFrames(1024);
     ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
     harkentest::PumpAndCapture(&engine, 40, output);
     float previous = lastGain;
@@ -737,10 +803,10 @@ TEST(VoicePool, LatchedStreamResyncPreservesProducerFailure) {
         std::array<float, 2048> storage{};
         storage.fill(0.25f);
         float* planes[harken::kMaxChannels] = {storage.data()};
-        harken::StreamRing ring;
+        harkentest::PcmStreamFixture ring;
         ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
         ring.ResetForUse(1);
-        ring.PublishWrite(1024);
+        ring.PublishFrames(1024);
         ring.state.store(harken::StreamSlotState::Active);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -1332,7 +1398,7 @@ TEST(VoicePool, PreparedCommitStreamRequiresOriginalRingAndAllowsProducerFill) {
     std::array<float, 64> storage{};
     float* planes[harken::kMaxChannels] = {};
     planes[0] = storage.data();
-    harken::StreamRing ring;
+    harkentest::PcmStreamFixture ring;
     ring.Wire(planes, 64);
     ring.ResetForUse(1);
     const auto generation = ring.generation.load();
@@ -1359,9 +1425,9 @@ TEST(VoicePool, PreparedCommitStreamRequiresOriginalRingAndAllowsProducerFill) {
     ASSERT_TRUE(engine.voices.ProvePreparedCommit(input, &proof));
     EXPECT_FALSE(engine.voices.BindStreamRingToken(input.renderHandle, &ring, ringToken));
     float* writable[harken::kMaxChannels] = {};
-    ASSERT_GE(ring.ContiguousWrite(writable), 16u);
+    ASSERT_GE(ring.ContiguousStaging(writable), 16u);
     std::fill_n(writable[0], 16, 0.25f);
-    ring.PublishWrite(16);
+    ring.PublishFrames(16);
     std::uint64_t captured = 0;
     ASSERT_TRUE(engine.voices.CaptureStreamRingToken(input.renderHandle, &captured));
     EXPECT_EQ(ringToken, captured);
@@ -1842,7 +1908,7 @@ TEST(VoicePool, ReleaseObserverMaximumPermanentlyExhaustsAdmission) {
     EXPECT_EQ(VN_NO_VOICE, engine.voices.CheckCapacityForPlay());
     EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &voice));
     EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &voice, false, 0));
-    harken::StreamRing ring;
+    harkentest::PcmStreamFixture ring;
     const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f);
     for (const auto slot : {UINT32_MAX, 0u}) {
         EXPECT_EQ(VN_NO_VOICE, engine.voices.PlayStream(
@@ -2262,11 +2328,11 @@ TEST(VoicePool, ProfessionalStreamSeekAndParkResumeReuseWorkingSet) {
     std::array<float, 4096> storage;
     storage.fill(0.25f);
     float* planes[harken::kMaxChannels] = {storage.data()};
-    std::array<harken::StreamRing, 3> rings;
+    std::array<harkentest::PcmStreamFixture, 3> rings;
     for (auto& ring : rings) {
         ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
         ring.ResetForUse(1);
-        ring.PublishWrite(static_cast<std::uint32_t>(storage.size()));
+        ring.PublishFrames(static_cast<std::uint32_t>(storage.size()));
         ring.state.store(harken::StreamSlotState::Active);
     }
     const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0);
@@ -2746,7 +2812,7 @@ TEST(VoicePool, BusTombstonesInterleaveWithPlayAndRelease) {
         }
 
         std::array<float, kStreamCapacity> streamStorage{};
-        harken::StreamRing stream;
+        harkentest::PcmStreamFixture stream;
         VnVoiceHandle handle = 0;
         std::atomic<bool> ready{false};
         std::atomic<bool> free{true};

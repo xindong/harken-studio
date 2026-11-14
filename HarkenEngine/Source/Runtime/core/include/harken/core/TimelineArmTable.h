@@ -24,6 +24,19 @@ class AuthoredStopOperation;
 struct ScheduledEventInput;
 struct ConsumedEvent;
 class ImmediateActionLane;
+// A durable fact issued by one initial lane episode. Only its actual audio
+// application can publish success; owners may retain it after lane retirement.
+class ImmediateLaneAppliedReceipt {
+public:
+    bool Applied(std::uint64_t through = UINT64_MAX) const noexcept {
+        const auto sequence = sequence_.load(std::memory_order_acquire);
+        return sequence != 0 && sequence <= through;
+    }
+private:
+    friend class ImmediateActionLane;
+    ImmediateLaneAppliedReceipt() = default;
+    std::atomic<std::uint64_t> sequence_{0};
+};
 class PrivateImmediateLanePlacementProof;
 class MixerLoop;
 class PrivateSelectedQueueFutureSpanPool;
@@ -197,6 +210,7 @@ public:
         std::atomic<std::uint64_t> actualStartFrame{UINT64_MAX};
         std::atomic<std::uint64_t> logicalCompletionSequence{0};
         TimelineArmReaderPin pendingControlSourceReader{};
+        std::shared_ptr<const ImmediateLaneAppliedReceipt> initialLaneApplied;
         TimelineArmToken originalPlainControl{};
         AuthoredStopOperationIdentity originalPlainControlIdentity{};
         TimelineArmToken appliedPlainStopSource{};
@@ -311,6 +325,10 @@ public:
     static void AcknowledgeSourceCommand(SourceCommandRowProof& proof,
         std::uint64_t completionSequence, std::uint64_t publicationSequence = 0) noexcept;
     bool SourcePublicationAccepted(TimelineArmToken token) const noexcept;
+    bool BindInitialLaneApplied(TimelineArmToken token,
+        std::shared_ptr<const ImmediateLaneAppliedReceipt> receipt) noexcept;
+    bool HasInitialLaneDependency(TimelineArmToken token) const noexcept;
+    bool InitialLaneApplied(TimelineArmToken token, std::uint64_t through = UINT64_MAX) const noexcept;
 
     // Issued by the real fixed Source factory; the original owner retains its row.
     class PublicationAfterInstallation {

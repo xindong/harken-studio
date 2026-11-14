@@ -85,7 +85,7 @@ namespace Harken
         /// <summary>Releases this scope's references. Retain the scope and retry if unloading fails.</summary>
         public VnResult Release()
         {
-            if (preparing) return VnResult.VN_IN_USE;
+            if (preparing || owner.LanguageSwitchPending) return VnResult.VN_IN_USE;
             return ReleaseCore();
         }
 
@@ -127,6 +127,7 @@ namespace Harken
             internal ulong ContentHash;
             internal int ByteCount;
             internal PackCompanion Names;
+            internal PackStreamBinding Streams;
             public Pack Handle;
             public int Requests;
             public byte[] Bytes;
@@ -153,7 +154,7 @@ namespace Harken
         public InitPackInspection Inspection { get; }
         public bool IsActive => active;
         public string ContainmentRoot { get; }
-        public string Language { get; }
+        public string Language { get; private set; }
         public GameplayPublication Publication => null;
         /// <summary>The actual project identified by the session's validated Init Pack.</summary>
         public string ProjectId { get; private set; }
@@ -253,10 +254,12 @@ namespace Harken
                 if (term == VnResult.VN_OK)
                 {
                     active = false;
+                    foreach (SharedPack pack in packs.Values) pack.Streams = null;
                     packs.Clear();
                     companionNames.Clear();
                     rawCompanionLeases.Clear();
                     CancelCompanionReads();
+                    CancelLanguageSwitch();
                     // Pending captures own their inputs until their real completion.
                     // An inactive session only retains its public diagnostic state.
                     initBytes = null;

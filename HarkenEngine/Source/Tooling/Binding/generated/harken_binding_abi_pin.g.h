@@ -765,11 +765,6 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_I
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN) == 1ull, "binding define drift: VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_REGISTER) == 0ull, "binding define drift: VN_STREAM_SOURCE_REGISTER");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_REPLACE) == 1ull, "binding define drift: VN_STREAM_SOURCE_REPLACE");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_PREPARING) == 1ull, "binding define drift: VN_STREAM_SOURCE_PREPARING");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_READY) == 2ull, "binding define drift: VN_STREAM_SOURCE_READY");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_FAILED) == 3ull, "binding define drift: VN_STREAM_SOURCE_FAILED");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_OK) == 0ull, "binding define drift: VN_BYTE_READ_OK");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_CANCELLED) == 1ull, "binding define drift: VN_BYTE_READ_CANCELLED");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_IO_ERROR) == 2ull, "binding define drift: VN_BYTE_READ_IO_ERROR");
@@ -816,7 +811,7 @@ static_assert(offsetof(VnRemoteStatus, projectName) == 280, "binding offset drif
 static_assert(offsetof(VnRemoteStatus, engineVersion) == 408, "binding offset drift: VnRemoteStatus.engineVersion");
 static_assert(offsetof(VnRemoteStatus, buildId) == 440, "binding offset drift: VnRemoteStatus.buildId");
 static_assert(offsetof(VnRemoteStatus, platform) == 568, "binding offset drift: VnRemoteStatus.platform");
-static_assert(sizeof(VnConfig) == 352, "binding size drift: VnConfig");
+static_assert(sizeof(VnConfig) == 360, "binding size drift: VnConfig");
 static_assert(offsetof(VnConfig, structSize) == 0, "binding offset drift: VnConfig.structSize");
 static_assert(offsetof(VnConfig, sampleRate) == 4, "binding offset drift: VnConfig.sampleRate");
 static_assert(offsetof(VnConfig, blockFrames) == 8, "binding offset drift: VnConfig.blockFrames");
@@ -835,7 +830,7 @@ static_assert(offsetof(VnConfig, logCallback) == 64, "binding offset drift: VnCo
 static_assert(offsetof(VnConfig, logUserData) == 72, "binding offset drift: VnConfig.logUserData");
 static_assert(offsetof(VnConfig, delayEffectPoolCapacity) == 80, "binding offset drift: VnConfig.delayEffectPoolCapacity");
 static_assert(offsetof(VnConfig, toneEffectPoolCapacity) == 84, "binding offset drift: VnConfig.toneEffectPoolCapacity");
-static_assert(offsetof(VnConfig, streamRingFrames) == 88, "binding offset drift: VnConfig.streamRingFrames");
+static_assert(offsetof(VnConfig, streamRingBytes) == 88, "binding offset drift: VnConfig.streamRingBytes");
 static_assert(offsetof(VnConfig, maxStreams) == 92, "binding offset drift: VnConfig.maxStreams");
 static_assert(offsetof(VnConfig, prebufferMs) == 96, "binding offset drift: VnConfig.prebufferMs");
 static_assert(offsetof(VnConfig, starvationCooldownBlocks) == 100, "binding offset drift: VnConfig.starvationCooldownBlocks");
@@ -894,6 +889,7 @@ static_assert(offsetof(VnConfig, maxPackResourceBytes) == 328, "binding offset d
 static_assert(offsetof(VnConfig, maxPackReplacementPeakBytes) == 336, "binding offset drift: VnConfig.maxPackReplacementPeakBytes");
 static_assert(offsetof(VnConfig, maxActionCooldownRows) == 344, "binding offset drift: VnConfig.maxActionCooldownRows");
 static_assert(offsetof(VnConfig, reserved12) == 348, "binding offset drift: VnConfig.reserved12");
+static_assert(offsetof(VnConfig, compressedDecoderBytes) == 352, "binding offset drift: VnConfig.compressedDecoderBytes");
 static_assert(sizeof(VnPCMDesc) == 48, "binding size drift: VnPCMDesc");
 static_assert(offsetof(VnPCMDesc, structSize) == 0, "binding offset drift: VnPCMDesc.structSize");
 static_assert(offsetof(VnPCMDesc, sampleRate) == 4, "binding offset drift: VnPCMDesc.sampleRate");
@@ -2447,11 +2443,6 @@ static_assert(offsetof(VnByteSourceDescV1, byteLength) == 8, "binding offset dri
 static_assert(offsetof(VnByteSourceDescV1, userData) == 16, "binding offset drift: VnByteSourceDescV1.userData");
 static_assert(offsetof(VnByteSourceDescV1, readAt) == 24, "binding offset drift: VnByteSourceDescV1.readAt");
 static_assert(offsetof(VnByteSourceDescV1, release) == 32, "binding offset drift: VnByteSourceDescV1.release");
-static_assert(sizeof(VnStreamSourceInfoV1) == 16, "binding size drift: VnStreamSourceInfoV1");
-static_assert(offsetof(VnStreamSourceInfoV1, structSize) == 0, "binding offset drift: VnStreamSourceInfoV1.structSize");
-static_assert(offsetof(VnStreamSourceInfoV1, state) == 4, "binding offset drift: VnStreamSourceInfoV1.state");
-static_assert(offsetof(VnStreamSourceInfoV1, result) == 8, "binding offset drift: VnStreamSourceInfoV1.result");
-static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12, "binding offset drift: VnStreamSourceInfoV1.reserved0");
 static_assert(sizeof(VnPlaybackReadinessMemberV1) == 160, "binding size drift: VnPlaybackReadinessMemberV1");
 static_assert(offsetof(VnPlaybackReadinessMemberV1, structSize) == 0, "binding offset drift: VnPlaybackReadinessMemberV1.structSize");
 static_assert(offsetof(VnPlaybackReadinessMemberV1, state) == 4, "binding offset drift: VnPlaybackReadinessMemberV1.state");
@@ -2536,6 +2527,31 @@ static_assert(offsetof(VnMonitorStreamFactV1, producedFrames) == 280, "binding o
 static_assert(offsetof(VnMonitorStreamFactV1, starved) == 284, "binding offset drift: VnMonitorStreamFactV1.starved");
 static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288, "binding offset drift: VnMonitorStreamFactV1.readStatus");
 static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292, "binding offset drift: VnMonitorStreamFactV1.reserved0");
+static_assert(sizeof(VnCanonicalPackSetMemberV3) == 104, "binding size drift: VnCanonicalPackSetMemberV3");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, structSize) == 0, "binding offset drift: VnCanonicalPackSetMemberV3.structSize");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, reserved0) == 4, "binding offset drift: VnCanonicalPackSetMemberV3.reserved0");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, member) == 8, "binding offset drift: VnCanonicalPackSetMemberV3.member");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, streams) == 96, "binding offset drift: VnCanonicalPackSetMemberV3.streams");
+static_assert(sizeof(VnCanonicalPackSetActivationDescV3) == 64, "binding size drift: VnCanonicalPackSetActivationDescV3");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, structSize) == 0, "binding offset drift: VnCanonicalPackSetActivationDescV3.structSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, flags) == 4, "binding offset drift: VnCanonicalPackSetActivationDescV3.flags");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, expectedCurrentInitHandle) == 8, "binding offset drift: VnCanonicalPackSetActivationDescV3.expectedCurrentInitHandle");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, baseSetRevision) == 16, "binding offset drift: VnCanonicalPackSetActivationDescV3.baseSetRevision");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, setRevision) == 24, "binding offset drift: VnCanonicalPackSetActivationDescV3.setRevision");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, memberCount) == 32, "binding offset drift: VnCanonicalPackSetActivationDescV3.memberCount");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, memberStructSize) == 36, "binding offset drift: VnCanonicalPackSetActivationDescV3.memberStructSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, members) == 40, "binding offset drift: VnCanonicalPackSetActivationDescV3.members");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMemberCapacity) == 48, "binding offset drift: VnCanonicalPackSetActivationDescV3.outputMemberCapacity");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMemberStructSize) == 52, "binding offset drift: VnCanonicalPackSetActivationDescV3.outputMemberStructSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMembers) == 56, "binding offset drift: VnCanonicalPackSetActivationDescV3.outputMembers");
+static_assert(sizeof(VnPackStreamResolverV1) == 48, "binding size drift: VnPackStreamResolverV1");
+static_assert(offsetof(VnPackStreamResolverV1, structSize) == 0, "binding offset drift: VnPackStreamResolverV1.structSize");
+static_assert(offsetof(VnPackStreamResolverV1, flags) == 4, "binding offset drift: VnPackStreamResolverV1.flags");
+static_assert(offsetof(VnPackStreamResolverV1, userData) == 8, "binding offset drift: VnPackStreamResolverV1.userData");
+static_assert(offsetof(VnPackStreamResolverV1, retain) == 16, "binding offset drift: VnPackStreamResolverV1.retain");
+static_assert(offsetof(VnPackStreamResolverV1, release) == 24, "binding offset drift: VnPackStreamResolverV1.release");
+static_assert(offsetof(VnPackStreamResolverV1, path) == 32, "binding offset drift: VnPackStreamResolverV1.path");
+static_assert(offsetof(VnPackStreamResolverV1, open) == 40, "binding offset drift: VnPackStreamResolverV1.open");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY
@@ -2549,6 +2565,7 @@ static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292, "binding offset
 // linkage; static gives each an internal, unused-safe definition.
 extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ActivateCanonicalPackSetV2)(const VnCanonicalPackSetActivationDescV2*, VnCanonicalPackSetActivationReportV1*) = &Vn_ActivateCanonicalPackSetV2;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_ActivateCanonicalPackSetV3)(const VnCanonicalPackSetActivationDescV3*, VnCanonicalPackSetActivationReportV1*) = &Vn_ActivateCanonicalPackSetV3;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_InspectCanonicalPackV1)(const VnPackInspectDescV1*, VnPackInspectReportV1*) = &Vn_InspectCanonicalPackV1;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_Init)(const VnConfig*) = &Vn_Init;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_Term)(void) = &Vn_Term;
@@ -2584,8 +2601,6 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceEffect)(VnVoiceHandle, uint32_t, VnEffectType, const VnEffectDesc*) = &Vn_SetVoiceEffect;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ClearVoiceEffect)(VnVoiceHandle, uint32_t) = &Vn_ClearVoiceEffect;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceEffectParam)(VnVoiceHandle, uint32_t, uint32_t, float) = &Vn_SetVoiceEffectParam;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_RegisterStreamFile)(VnSoundId, const char*) = &Vn_RegisterStreamFile;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_UnregisterStreamFile)(VnSoundId) = &Vn_UnregisterStreamFile;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CreateEmitter)(VnEmitterHandle*) = &Vn_CreateEmitter;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_DestroyEmitter)(VnEmitterHandle) = &Vn_DestroyEmitter;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetEmitterPosition)(VnEmitterHandle, VnVec3) = &Vn_SetEmitterPosition;
@@ -2604,7 +2619,6 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusEffectBypass)(VnBusId, uint32_t, uint32_t) = &Vn_SetBusEffectBypass;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusFaderPoint)(VnBusId, uint32_t) = &Vn_SetBusFaderPoint;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplacePCM)(VnSoundId, const VnPCMDesc*) = &Vn_ReplacePCM;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplaceStreamFile)(VnSoundId, const char*) = &Vn_ReplaceStreamFile;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplacePack)(VnPackHandle, const VnPackDesc*) = &Vn_ReplacePack;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplaceAttenuation)(VnAttenuationId, const VnAttenuationDesc*) = &Vn_ReplaceAttenuation;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusOutputLayout)(VnBusId, uint32_t) = &Vn_SetBusOutputLayout;
@@ -2700,11 +2714,6 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorEndHostSession)(uint64_t, uint64_t) = &Vn_MonitorEndHostSession;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorRegisterHost)(const VnMonitorHostRegistrationV1*) = &Vn_MonitorRegisterHost;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorRegisterHostV2)(const VnMonitorHostRegistrationV2*) = &Vn_MonitorRegisterHostV2;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_BeginStreamSource)(VnSoundId, uint32_t, const VnByteSourceDescV1*, VnStreamSourceRequest*) = &Vn_BeginStreamSource;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_BeginStreamFile)(VnSoundId, uint32_t, const char*, VnStreamSourceRequest*) = &Vn_BeginStreamFile;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryStreamSource)(VnStreamSourceRequest, VnStreamSourceInfoV1*) = &Vn_QueryStreamSource;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_CancelStreamSource)(VnStreamSourceRequest) = &Vn_CancelStreamSource;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_CommitStreamSource)(VnStreamSourceRequest) = &Vn_CommitStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryActionPlaybackReadiness)(VnActionFiringHandle, VnActionPlaybackReadinessV1*, VnPlaybackReadinessMemberV1*, uint32_t) = &Vn_QueryActionPlaybackReadiness;
 }
 

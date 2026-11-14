@@ -1,4 +1,5 @@
 #include "harken/media/PcmRegistry.h"
+#include "harken/media/VorbisDecoder.h"
 
 #include "harken/core/MediaContentRevision.h"
 
@@ -481,13 +482,24 @@ PcmMediaFacts PCMRegistry::Entry::Facts() const noexcept {
     return {};
 }
 
+VnResult PCMRegistry::PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
+    std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out) {
+    if (!out || out->IsPrepared()) return VN_INVALID_ARG;
+    VorbisPrepareResult result;
+    auto source = VorbisResident::Prepare(codec, std::move(bytes), budget, result);
+    if (!source) return result == VorbisPrepareResult::OutOfMemory ? VN_PACK_RESIDENT_CAPACITY :
+        result == VorbisPrepareResult::Unsupported ? VN_CAPABILITY_UNAVAILABLE : VN_BAD_PACK;
+    auto entry = std::make_shared<Entry>();
+    entry->view = source->View(); entry->view.useCount = &entry->uses;
+    entry->encoded = std::move(source);
+    out->m_soundId = soundId; out->m_entry = std::move(entry);
+    return VN_OK;
+}
+
 VnResult PCMRegistry::PreparePackRangeSamples(VnSoundId soundId,
     std::shared_ptr<const PackMediaRange> range, PreparedPackSamples* out,
     const PreparedPackSamples* provenEqual) {
-    if (out == nullptr || out->IsPrepared() || range == nullptr || range->source == nullptr ||
-        range->channelCount == 0 || range->channelCount > kMaxChannels || range->frameCount == 0 ||
-        range->sampleRate == 0 ||
-        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
+    if (out == nullptr || out->IsPrepared() || range == nullptr || !ValidPackMediaRange(*range))
         return VN_INVALID_ARG;
     if (provenEqual != nullptr) {
         if (!provenEqual->IsPrepared() || provenEqual->m_soundId != soundId ||
@@ -519,6 +531,8 @@ VnResult PCMRegistry::PrepareResidentUpgrade(const PackReference& reference,
     if (target == nullptr) return VN_STALE_HANDLE;
     const auto range = target->range;
     if (target->view.Valid() || range == nullptr) return VN_INVALID_ARG;
+    // Compressed and external streams cannot be reinterpreted as planar PCM.
+    if (range->vorbis || range->external) return VN_CAPABILITY_UNAVAILABLE;
     const auto count = static_cast<std::size_t>(range->frameCount) * range->channelCount;
     if (PcmRegisterFaultForTests() == PcmRegisterFault::SampleBacking) throw std::bad_alloc{};
     detail::PcmSampleBuffer samples;
@@ -585,7 +599,7 @@ VnResult PCMRegistry::BeginPackSamples(
         equalCandidate->m_soundId == soundId && equalCandidate->m_entry->cookie == 0) {
         const auto& candidate = equalCandidate->m_entry->view;
         const auto& target = builder.m_entry->view;
-        if (candidate.sampleRate == target.sampleRate &&
+        if (candidate.encoded == nullptr && candidate.sampleRate == target.sampleRate &&
             candidate.channelCount == target.channelCount &&
             candidate.frames == target.frames && candidate.stride == target.stride &&
             candidate.loop.startFrame == loop.startFrame && candidate.loop.endFrame == loop.endFrame)
@@ -833,8 +847,17 @@ VnResult PCMRegistry::PreparePackMutation(
             auto [it, inserted] = prepared.m_staged.try_emplace(registration.soundId);
             if (!inserted) return VN_IN_USE;
             it->second = std::move(samples.m_entry);
-            if (nextCookie == 0) nextCookie = 1;
-            it->second->cookie = nextCookie++;
+            if (registration.identity.Valid()) it->second->cookie = registration.identity.Cookie();
+            else {
+                if (nextCookie == 0) nextCookie = 1;
+                it->second->cookie = nextCookie++;
+            }
+            continue;
+        }
+        if (registration.identity.Valid()) {
+            const auto [it, inserted] = prepared.m_staged.emplace(
+                registration.soundId, std::const_pointer_cast<Entry>(registration.identity.entry_));
+            if (!inserted) return VN_IN_USE;
             continue;
         }
         const VnResult valid = ValidateDesc(&registration.desc);
@@ -915,6 +938,16 @@ VnResult PCMRegistry::PreparePackMutation(
     prepared.m_nextCookie = nextCookie;
     *out = std::move(prepared);
     return VN_OK;
+}
+
+PCMRegistry::PackReference PCMRegistry::PreparedPackMutation::AdoptExternalAlias(
+    PreparedPackSamples& samples, const PackReference& identity) noexcept {
+    PackReference result;
+    if (!samples.IsPrepared() || !samples.Range() || !samples.Range()->external ||
+        !identity.Valid()) return result;
+    samples.m_entry->cookie = identity.Cookie();
+    result.entry_ = std::move(samples.m_entry);
+    return result;
 }
 
 void PCMRegistry::CommitPreparedPackMutation(

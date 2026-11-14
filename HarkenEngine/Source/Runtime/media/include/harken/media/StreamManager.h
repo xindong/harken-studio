@@ -27,12 +27,8 @@
 #include <thread>
 #include <vector>
 
-// The Windows SDK aliases ReplaceFile to its encoding-specific entry point.
-#ifdef ReplaceFile
-#undef ReplaceFile
-#endif
-
 namespace harken {
+class VorbisCodec;
 
 namespace detail { struct StreamManagerTestAccess; }
 
@@ -82,44 +78,18 @@ enum class StreamWorkerState : std::uint32_t {
 
 class StreamManager {
 public:
+    enum class PreparationState { Invalid, Preparing, Ready, Cancelled, Failed };
+
     explicit StreamManager(const EngineConfig& config);
     ~StreamManager();
 
     StreamManager(const StreamManager&) = delete;
     StreamManager& operator=(const StreamManager&) = delete;
 
-    // Registers a .stream file under soundId. Blocks while the
-    // preparation lane opens the file and verifies the header, TOC, and
-    // chunk-checksum table (the table's own bytes are covered by the TOC
-    // checksum; per-chunk payload verification happens later, as chunks
-    // are read). The file stays open until unregistration. VN_IN_USE for
-    // an id already registered here; VN_BAD_STREAM_FILE for an
-    // unreadable, malformed, or checksum-failing file. Logic thread only.
-    VnResult RegisterFile(VnSoundId soundId, const char* utf8Path);
-
-    // Removes a registration and closes the file (served by the streaming
-    // thread; blocks like RegisterFile). VN_UNKNOWN_ID when the id names
-    // no registered stream; VN_IN_USE while any stream slot still plays
-    // it. Logic thread only.
-    VnResult UnregisterFile(VnSoundId soundId);
-
-    // Hot reload: rebinds a registered stream id to a new .stream file. The
-    // new file opens and validates end to end on the preparation lane (the
-    // RegisterFile contract, including entry.soundId == soundId); any
-    // failure is VN_BAD_STREAM_FILE with the old registration untouched.
-    // VN_UNKNOWN_ID when the id names no registered stream; VN_IN_USE while
-    // a previous replace of this id still has a retiring file open (one
-    // retiring generation per asset). On success the id resolves to the new
-    // file immediately, while the old file stays open as a retiring
-    // generation: slots already active on it (and pending-start pins) keep
-    // reading it by file index, and the streaming thread closes it once its
-    // active and pending counts both drain. Logic thread only.
-    VnResult ReplaceFile(VnSoundId soundId, const char* utf8Path);
-
-    // Play-time facts of a registered stream, resolved on the logic side
-    // exactly like pack loop metadata — the audio thread never looks
-    // anything up.
+    // Playback facts resolved on logic; render never performs source lookup.
     struct StreamFacts {
+        const EncodedMedia* encoded = nullptr;
+        bool encodedPending = false;
         std::uint32_t fileIndex = 0;
         std::uint32_t sampleRate = 0;
         std::uint32_t channelCount = 0;
@@ -131,47 +101,24 @@ public:
         std::uint64_t loopEndFrame = 0;
     };
 
-    // Logic thread. False when the id names no registered stream. A
-    // retiring file (replaced, still draining) is not registered under any
-    // id and never matches here.
-    bool FindFile(VnSoundId soundId, StreamFacts* out) const;
-
-    // Pack media resolved through an exact closure: returns the private file
-    // record for this range identity, creating it on first use. Private
-    // records are never registered under a sound id and are invisible to the
-    // public registration queries. The caller's closure keeps the range alive
-    // until an active stream or pending reference pins the record; the record
-    // is reclaimed once the range has expired and both counts drained.
-    // Logic thread only.
+    // Resolve an exact Pack range. The closure retains its range until an active
+    // stream or pending reference pins the record. Expired, unreferenced records
+    // are reclaimed by the manager. Logic thread only.
     VnResult ResolvePackSource(const std::shared_ptr<const PackMediaRange>& range,
                                StreamFacts* out);
 
-    // Facts by file index rather than id — the generation-pinned lookup a
-    // deferred stream start uses so it begins on the file it was admitted
-    // against, even if the id was replaced while it waited. Works for
-    // retiring files. False when the index holds no open file. Logic thread
-    // only.
+    // Logic thread, with an existing pending or active reference. Metadata I/O
+    // uses the source lane; setup construction stays on logic. Failure and
+    // pending are distinct even on budget exhaustion. The caller retains its reference
+    // until success, failure or cancellation.
+    PreparationState PreparePackSource(std::uint32_t fileIndex, std::uint64_t sourceGeneration,
+        VorbisCodec& codec, std::size_t resourceBudget, VnResult* error);
+
+    // Generation-pinned facts remain available through Pack replacement.
     bool FactsForFileIndex(std::uint32_t fileIndex, StreamFacts* out) const;
 
-    // Retiring files still open (the stream share of the snapshot's
-    // pinnedGenerationCount). Logic thread.
-    std::uint32_t RetiringFileCount() const;
-
-    // Whether a retiring file that was replaced away from this id is still
-    // open. Logic thread.
-    bool HasRetiringFor(VnSoundId soundId) const;
-
-    // Pins a registered stream against unregistration while a steal's pending-
-    // start voice waits for a render slot. A pending stream voice holds no
-    // stream slot, so without a reference the source could be unregistered
-    // (dropping the deferred start) or unregistered and re-registered to a
-    // different asset under the same id (starting the wrong source). While any
-    // pending reference is held, UnregisterFile refuses VN_IN_USE, which also
-    // blocks re-registration of the id — so both the source and its exact
-    // registration survive the pending window. fileIndex comes from
-    // StreamFacts. Balanced by ReleasePendingRef at start (handed off to the
-    // active stream's own count) or cancel. False if the index no longer names
-    // a registered file. Logic thread only.
+    // Retain an exact source while preparation waits for an active slot.
+    // ReleasePendingRef balances this reference on activation or cancellation.
     bool AcquirePendingRef(std::uint32_t fileIndex);
     void ReleasePendingRef(std::uint32_t fileIndex);
 
@@ -240,7 +187,7 @@ public:
         std::uint64_t generation = 0;
     };
 
-    enum class PreparationState { Invalid, Preparing, Ready, Cancelled, Failed };
+
 
     struct PreparedStream {
         std::uint32_t slot = UINT32_MAX;
@@ -286,22 +233,13 @@ public:
     VnResult TransferReplacement(PreparedToken token, PreparedStream* out) noexcept;
     PreparationState PromoteTransferredStream(const PreparedStream& stream) noexcept;
     void ServiceTransferredPreparations() noexcept;
+    // Logic prepares lazy metadata and decoder state before the existing
+    // prebuffer/promotion gate can make that stream ready.
+    void ServicePackSources(VorbisCodec& codec, std::size_t resourceBudget);
 
-    struct SourceToken { std::uint64_t value = 0; };
-    // Ready sources are validated but unpublished. Take installs exactly once.
-    // A lease is retained only when Begin succeeds. Callbacks run on I/O lanes.
-    VnResult BeginSource(VnSoundId soundId, std::shared_ptr<const StreamByteSource> source,
-                         bool replace, std::uint64_t expectedOldGeneration, SourceToken* out);
-    VnResult BeginFileSource(VnSoundId soundId, const char* path, bool replace,
-                             std::uint64_t expectedOldGeneration, SourceToken* out);
-    PreparationState QuerySource(SourceToken token, VnResult* error = nullptr,
-        VnSoundId* soundId = nullptr, bool* replace = nullptr) const;
-    bool CancelSource(SourceToken token);
-    VnResult TakeSource(SourceToken token, StreamFacts* out = nullptr, VnResult authority = VN_OK);
     std::uint64_t SourcePreparationBytes() const;
     // Actual private read-window capacity, separate from staging and metadata.
     std::uint64_t ReadWindowBytes() const noexcept;
-    bool HasPendingSource(VnSoundId soundId) const;
 
     static std::uint64_t RingToken(std::uint32_t slot,
                                    std::uint32_t generation) noexcept {
@@ -361,22 +299,21 @@ public:
 
 private:
     struct StreamFile {
-        VnSoundId soundId{};
-        // A replaced-away old generation: no longer registered under its id
-        // (FindFile, register-duplicate, and unregister all skip it), kept
-        // open only for the slots and pending pins still reading it by file
-        // index. retiredFromId keys the one-retiring-generation-per-asset
-        // refusal. Cleanup is dispatched off the manager once both counts
-        // drain and every bound slot has settled its last I/O job.
-        bool retiring = false;
-        VnSoundId retiredFromId{};
-        // Pack media read through an exact closure. The weak range is identity
-        // only; source, blob location and checksums are owned copies so
-        // in-flight reads outlive the Pack entry.
-        bool packPrivate = false;
+        // The weak range identifies the Pack source; owned I/O data outlives its entry.
+        std::shared_ptr<const VorbisStreamMedia> vorbis;
         std::weak_ptr<const PackMediaRange> packRange;
         std::uint64_t packBlobOffset = 0;
         std::shared_ptr<const StreamByteSource> source;
+        std::shared_ptr<const PackExternalStream> external;
+        VnResult metadataResult = VN_OK;
+        std::optional<StreamHeader> pcmHeader;
+        bool MetadataReady() const noexcept { return !external || vorbis || pcmHeader.has_value(); }
+        bool PacketEncoded() const noexcept {
+            return vorbis || (external && external->codec == PackExternalStream::Codec::Vorbis);
+        }
+        // Multiple slots may prepare the same unopened resource concurrently.
+        // Only I/O executors take this mutex; active references exclude close.
+        std::mutex openMutex;
         std::unique_ptr<StreamFile> nextCleanup;
         StreamTocEntry toc;
         std::uint32_t chunkFrames = 0;
@@ -434,6 +371,8 @@ private:
 
     struct StreamSlot {
         StreamRing ring;
+        bool metadataWaiting = false; // Protected by the manager mutex.
+        bool prefetchedStart = false; // Immutable during the Active generation.
         bool promotionPending = false; // Logic-owned; not ring ownership.
         int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
         SlotIoJob io;
@@ -460,16 +399,19 @@ private:
         bool loopInfinite = false;
         std::uint32_t loopPassesRemaining = 1;
         std::uint32_t stagedChunk = kNoChunk;
+        std::uint64_t packetOffset = 0, packetDiscard = 0;
+        std::uint32_t packetPreviousBlock = 0;
+        bool packetCapacityLimited = false;
         bool feedStopped = false;        // end reached or integrity abort
         std::vector<float> staging;      // one verified chunk, planar
     };
 
     struct SourceRequest {
-        std::uint64_t generation = 0;
-        VnSoundId soundId{};
-        bool replace = false;
-        std::uint64_t expectedOldGeneration = 0;
-        std::string path;
+        // A metadata request pins an existing private file until physical I/O
+        // completion. Its candidate owns the opened handle until publication.
+        StreamFile* metadataFile = nullptr;
+        std::vector<std::uint8_t> metadataPrefix;
+        std::size_t metadataBudget = 0, metadataRead = 0;
         std::unique_ptr<StreamFile> candidate;
         PreparationState state = PreparationState::Preparing;
         VnResult result = VN_OK;
@@ -489,8 +431,7 @@ private:
         std::uint64_t writeIndex = 0, exceptionSerial = 0;
     };
     struct Request {
-        enum class Kind { Unregister, Serve, Reap } kind;
-        VnSoundId soundId{};
+        enum class Kind { Serve, Reap } kind;
         VnResult result = VN_OK;
         bool done = false, started = false, forceServe = false;
         std::uint32_t onlySlot = UINT32_MAX, onlyGeneration = 0;
@@ -499,7 +440,6 @@ private:
 
     void ThreadMain();
     VnResult PostAndWait(Request& request);
-    void HandleUnregister(Request& request);
     // Caller holds m_mutex and has acquired the source's active reference.
     // The slot is private and its storage is already prepared; cannot fail.
     std::uint64_t InitializeSlot(std::uint32_t slot, std::uint32_t fileIndex,
@@ -509,10 +449,8 @@ private:
                                 std::uint32_t loopCount);
     // Source validation and I/O are split into bounded execution steps.
     // Manager methods hold m_mutex; executors touch private job data only.
-    VnResult BeginSourceImpl(VnSoundId soundId, std::shared_ptr<const StreamByteSource> source,
-        const char* path, bool replace, std::uint64_t expected, SourceToken* out);
-    VnResult RegisterSourceAndWait(VnSoundId soundId, const char* path, bool replace);
-    static void ValidateSourceSlice(SourceRequest& request);
+    static void ValidatePcmSourceSlice(SourceRequest& request);
+    static void ReadExternalMetadataSlice(SourceRequest& request);
     void SettleIo();
     void CompleteReadObservation(StreamSlot& slot, const ChunkJob& job,
         const VnMonitorStreamFactV1& facts, bool valid, bool exception) noexcept;
@@ -546,9 +484,9 @@ private:
     // thread-entry catch, where there is nowhere left to report.
     void HandleTerminalWorkerFailure() noexcept;
     void DetachRetiredSlots();
-    // Closes retiring files whose active and pending counts both drained.
+    // Reclaims expired Pack records and closes idle external handles.
     // Streaming thread, under the mutex (m_files mutation).
-    void CloseDrainedRetiringFiles();
+    void CloseUnreferencedFiles();
     void ServeSlots();
 
     struct IoLane {
@@ -573,6 +511,8 @@ private:
                           const StreamByteSource& source);
     static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                   const ReadWindow& window) noexcept;
+    static std::shared_ptr<const StreamByteSource> AcquireReadSource(
+        const ChunkJob& job, VnMonitorStreamFactV1& facts);
     static bool ValidateChunk(const ChunkJob& job,
                               const std::vector<float>& staging,
                               std::uint64_t checksum);
@@ -587,11 +527,15 @@ private:
     };
     ServiceCursor BeginSlotService(StreamSlot& slot) const;
     bool AdvanceSlot(ServiceCursor& cursor, ChunkJob* job);
+    bool AdvancePacketSlot(ServiceCursor& cursor, ChunkJob* job);
+    static void ResetPacketCursor(StreamSlot& slot, const StreamFile& file);
+    static bool AdoptPcmMetadata(StreamFile& file, SourceRequest& request);
+    static VnResult PreparePcmPrefix(StreamFile& file);
 
-    std::uint32_t m_ringFrames = 0; // per-slot capacity, power of two
+    std::uint32_t m_ringBytes = 0; // per-slot byte capacity, power of two
     const std::uint32_t m_prebufferMs;
 
-    // Registered files. Publication and retirement share m_mutex with logic.
+    // Pack source records. Publication and retirement share m_mutex with logic.
     // Records stay stable while slots or pending starts hold references.
     std::vector<std::unique_ptr<StreamFile>> m_files;
     // Monotonic identities; exhaustion refuses publication rather than reuse.
@@ -611,9 +555,9 @@ private:
     std::unique_ptr<StreamFile> m_cleanup;
     std::size_t m_sourceCursor = 0, m_slotCursor = 0;
     friend struct detail::StreamManagerTestAccess;
-    std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
+    StableRowStorage<std::uint8_t> m_ringStorage;
     // Logic-owned backing demand follows the existing file pending references.
-    std::array<std::uint32_t, kMaxChannels> m_pendingRingSlots{};
+    std::uint32_t m_pendingRingSlots = 0;
 
     // Request transport between the logic and streaming threads. The
     // audio thread never touches any of this.

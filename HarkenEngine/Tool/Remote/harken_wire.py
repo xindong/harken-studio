@@ -112,7 +112,7 @@ TABLE_JSON = r'''
           "onNotification",
           "logCallback",
           "delayEffectPoolCapacity",
-          "streamRingFrames",
+          "streamRingBytes",
           "maxActions",
           "maxTriggerDepth",
           "mixChannelLayout",
@@ -123,7 +123,8 @@ TABLE_JSON = r'''
           "maxBusTopologyOwners",
           "maxActionFirings",
           "maxCatalogEntries",
-          "maxActionCooldownRows"
+          "maxActionCooldownRows",
+          "compressedDecoderBytes"
         ],
         "missingFields": "engine-defaults",
         "unknownSize": "reject"
@@ -464,7 +465,7 @@ TABLE_JSON = r'''
           "u32"
         ],
         [
-          "streamRingFrames",
+          "streamRingBytes",
           "u32"
         ],
         [
@@ -698,6 +699,10 @@ TABLE_JSON = r'''
         [
           "reserved12",
           "u32"
+        ],
+        [
+          "compressedDecoderBytes",
+          "u64"
         ]
       ]
     },
@@ -7448,26 +7453,6 @@ TABLE_JSON = r'''
         ]
       ]
     },
-    "VnStreamSourceInfoV1": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "state",
-          "u32"
-        ],
-        [
-          "result",
-          "i32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ]
-      ]
-    },
     "VnPlaybackReadinessMemberV1": {
       "fields": [
         [
@@ -7807,6 +7792,140 @@ TABLE_JSON = r'''
           "u32"
         ]
       ]
+    },
+    "VnCanonicalPackSetMemberV3": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "member",
+          {
+            "struct": "VnCanonicalPackSetMemberV2"
+          }
+        ],
+        [
+          "streams",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPackStreamResolverV1*"
+          }
+        ]
+      ]
+    },
+    "VnCanonicalPackSetActivationDescV3": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "expectedCurrentInitHandle",
+          "u64"
+        ],
+        [
+          "baseSetRevision",
+          "u64"
+        ],
+        [
+          "setRevision",
+          "u64"
+        ],
+        [
+          "memberCount",
+          "u32"
+        ],
+        [
+          "memberStructSize",
+          "u32"
+        ],
+        [
+          "members",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "memberCount",
+              "stride": "VnCanonicalPackSetMemberV3"
+            },
+            "ctype": "const VnCanonicalPackSetMemberV3*"
+          }
+        ],
+        [
+          "outputMemberCapacity",
+          "u32"
+        ],
+        [
+          "outputMemberStructSize",
+          "u32"
+        ],
+        [
+          "outputMembers",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "outputMemberCapacity",
+              "stride": "VnCanonicalPackSetMemberResultV1"
+            },
+            "ctype": "VnCanonicalPackSetMemberResultV1*"
+          }
+        ]
+      ]
+    },
+    "VnPackStreamResolverV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "userData",
+          {
+            "ptr": "opaque",
+            "ctype": "void*"
+          }
+        ],
+        [
+          "retain",
+          {
+            "ptr": "opaque",
+            "ctype": "VnPackStreamRetainFn"
+          }
+        ],
+        [
+          "release",
+          {
+            "ptr": "opaque",
+            "ctype": "VnByteSourceReleaseFn"
+          }
+        ],
+        [
+          "path",
+          {
+            "ptr": "opaque",
+            "ctype": "VnPackStreamPathFn"
+          }
+        ],
+        [
+          "open",
+          {
+            "ptr": "opaque",
+            "ctype": "VnPackStreamOpenFn"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -7819,6 +7938,24 @@ TABLE_JSON = r'''
           "ctype": "const VnCanonicalPackSetActivationDescV2*",
           "wire": "desc",
           "type": "VnCanonicalPackSetActivationDescV2"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnCanonicalPackSetActivationReportV1*",
+          "wire": "outstruct",
+          "type": "VnCanonicalPackSetActivationReportV1"
+        }
+      ]
+    },
+    {
+      "name": "Vn_ActivateCanonicalPackSetV3",
+      "note": "Atomic companion activation with generation-owned external stream resolvers. Process-local callbacks, no remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnCanonicalPackSetActivationDescV3*",
+          "wire": "desc",
+          "type": "VnCanonicalPackSetActivationDescV3"
         },
         {
           "name": "outReport",
@@ -8421,35 +8558,6 @@ TABLE_JSON = r'''
       ]
     },
     {
-      "opcode": 25,
-      "name": "Vn_RegisterStreamFile",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "utf8Path",
-          "ctype": "const char*",
-          "wire": "string"
-        }
-      ]
-    },
-    {
-      "opcode": 26,
-      "name": "Vn_UnregisterStreamFile",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        }
-      ]
-    },
-    {
       "opcode": 27,
       "name": "Vn_CreateEmitter",
       "policy": "mirror",
@@ -8873,23 +8981,6 @@ TABLE_JSON = r'''
           "ctype": "const VnPCMDesc*",
           "wire": "desc",
           "type": "VnPCMDesc"
-        }
-      ]
-    },
-    {
-      "opcode": 53,
-      "name": "Vn_ReplaceStreamFile",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "utf8Path",
-          "ctype": "const char*",
-          "wire": "string"
         }
       ]
     },
@@ -10740,98 +10831,6 @@ TABLE_JSON = r'''
       "note": "Optional atomic host identity and description; local C ABI only, no remote mutation opcode."
     },
     {
-      "name": "Vn_BeginStreamSource",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "mode",
-          "ctype": "uint32_t",
-          "wire": "u32"
-        },
-        {
-          "name": "source",
-          "ctype": "const VnByteSourceDescV1*",
-          "wire": "desc",
-          "type": "VnByteSourceDescV1"
-        },
-        {
-          "name": "outRequest",
-          "ctype": "VnStreamSourceRequest*",
-          "wire": "out"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_BeginStreamFile",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "mode",
-          "ctype": "uint32_t",
-          "wire": "u32"
-        },
-        {
-          "name": "utf8Path",
-          "ctype": "const char*",
-          "wire": "string"
-        },
-        {
-          "name": "outRequest",
-          "ctype": "VnStreamSourceRequest*",
-          "wire": "out"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_QueryStreamSource",
-      "params": [
-        {
-          "name": "request",
-          "ctype": "VnStreamSourceRequest",
-          "wire": "u64"
-        },
-        {
-          "name": "outInfo",
-          "ctype": "VnStreamSourceInfoV1*",
-          "wire": "outstruct",
-          "type": "VnStreamSourceInfoV1"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_CancelStreamSource",
-      "params": [
-        {
-          "name": "request",
-          "ctype": "VnStreamSourceRequest",
-          "wire": "u64"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_CommitStreamSource",
-      "params": [
-        {
-          "name": "request",
-          "ctype": "VnStreamSourceRequest",
-          "wire": "u64"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
       "name": "Vn_QueryActionPlaybackReadiness",
       "params": [
         {
@@ -11030,7 +11029,6 @@ TABLE_JSON = r'''
       "VnMonitorChannelMode": "u32",
       "VnMonitorChunkKind": "u32",
       "VnMonitorChunkFlags": "u32",
-      "VnStreamSourceRequest": "u64",
       "VnPlaybackReadinessState": "u32"
     },
     "results": {
@@ -12458,26 +12456,6 @@ TABLE_JSON = r'''
         "type": "u32",
         "value": 1
       },
-      "VN_STREAM_SOURCE_REGISTER": {
-        "type": "u32",
-        "value": 0
-      },
-      "VN_STREAM_SOURCE_REPLACE": {
-        "type": "u32",
-        "value": 1
-      },
-      "VN_STREAM_SOURCE_PREPARING": {
-        "type": "u32",
-        "value": 1
-      },
-      "VN_STREAM_SOURCE_READY": {
-        "type": "u32",
-        "value": 2
-      },
-      "VN_STREAM_SOURCE_FAILED": {
-        "type": "u32",
-        "value": 3
-      },
       "VN_BYTE_READ_OK": {
         "type": "i32",
         "value": 0
@@ -12655,6 +12633,94 @@ TABLE_JSON = r'''
             "name": "userData",
             "kind": "ptr",
             "ctype": "void*"
+          }
+        ]
+      },
+      "VnPackStreamRetainFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          }
+        ]
+      },
+      "VnPackStreamPathFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "packStableId",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "relativeLocatorUtf8",
+            "kind": "ptr",
+            "ctype": "const char*"
+          },
+          {
+            "name": "expectedContentRevision",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "expectedByteLength",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "outPathUtf8",
+            "kind": "ptr",
+            "ctype": "const char**"
+          }
+        ]
+      },
+      "VnPackStreamOpenFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "packStableId",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "relativeLocatorUtf8",
+            "kind": "ptr",
+            "ctype": "const char*"
+          },
+          {
+            "name": "expectedContentRevision",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "expectedByteLength",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "cancellation",
+            "kind": "ptr",
+            "ctype": "const VnReadCancellationViewV1*"
+          },
+          {
+            "name": "outSource",
+            "kind": "ptr",
+            "ctype": "VnByteSourceDescV1*"
           }
         ]
       }

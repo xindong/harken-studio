@@ -61,6 +61,11 @@
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
 
+namespace harken::detail {
+void SetDirectStartPublicationHookForTest(
+    void (*hook)(Engine&, EnginePlayableServiceRow&, void*), void* context) noexcept;
+}
+
 namespace harkentest {
 
 VnResult LoadCanonicalPackOrActivateInit(const VnPackLoadDesc& load,
@@ -28572,23 +28577,46 @@ TEST(PackComposition, V19MusicPackPlaysIntroBodyCountOutroAndRetainsUnloadedMedi
         const auto service = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
             [&](const auto& row) { return row.ownerInstance == step.producedPlayableInstance; });
         ASSERT_NE(engine->playableServices.end(), service);
-        const auto start = service->startFrame;
+        struct AnchorObservation {
+            harken::PlayableInstanceHandle owner = 0;
+            std::uint64_t frame = 0;
+            unsigned publications = 0;
+        } anchor{step.producedPlayableInstance};
+        struct HookGuard {
+            ~HookGuard() { harken::detail::SetDirectStartPublicationHookForTest(nullptr, nullptr); }
+        } hookGuard;
+        harken::detail::SetDirectStartPublicationHookForTest([](
+            harken::Engine&, harken::EnginePlayableServiceRow& published, void* opaque) {
+            auto& observed = *static_cast<AnchorObservation*>(opaque);
+            if (published.ownerInstance != observed.owner) return;
+            observed.frame = published.startFrame;
+            ++observed.publications;
+        }, &anchor);
         ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
         EXPECT_FALSE(engine->registry.Lookup(soundId).Valid());
-        const auto end = start + 800u + 800u * count;
         for (unsigned block = 0; block < 100; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
-            const auto frame = engine->mixer.BlocksRendered() * 64u;
-            engine->nullBackend.Pump(1);
+            const auto before = engine->mixer.BlocksRendered();
+            const auto frame = before * 64u;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            do {
+                engine->nullBackend.Pump(1);
+                if (engine->mixer.BlocksRendered() != before) break;
+                std::this_thread::yield();
+            } while (std::chrono::steady_clock::now() < deadline);
+            ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
+            const auto start = anchor.frame;
+            const auto end = start + 800u + 800u * count;
             for (unsigned f = 0; f < 64; ++f) {
                 const auto now = frame + f;
-                const float expected = now < start || (count != 0 && now >= end) ? 0.f
+                const float expected = anchor.publications == 0 || now < start || (count != 0 && now >= end) ? 0.f
                     : now < start + 400 ? .1f
                     : count == 0 || now < end - 400 ? .2f : .3f;
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[f * 2], 2e-5f)
                     << "frame=" << now << " start=" << start << " end=" << end;
             }
         }
+        EXPECT_EQ(1u, anchor.publications);
         if (count == 0) {
             ASSERT_EQ(PlayableControlStatus::Ok, StopPlayable(*engine, step.producedPlayableInstance, 0));
             for (unsigned block = 0; block < 32; ++block) {
