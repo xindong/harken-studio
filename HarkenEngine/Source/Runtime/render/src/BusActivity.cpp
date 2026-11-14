@@ -639,6 +639,34 @@ const SignalRenderPlan* BusTree::AcceptedActivitySignals() const noexcept {
     return m_lastQueuedActivity != nullptr ? m_lastQueuedActivity->signals.get() : nullptr;
 }
 
+BusTree::WorkRef BusTree::LogicEffectWorkRef(BusSlotRef bus) const noexcept {
+    const auto accepted = AcceptedWorkRef(bus);
+    if (accepted.Valid()) return accepted;
+    // A later W can omit a Bus removed by S before S has been acknowledged.
+    // S still pins its old physical owner; a newer W containing it wins above.
+    if (m_pendingSleep != nullptr)
+        for (const auto& row : m_pendingSleep->sleeping)
+            if (row.expected.bus == bus) return row.expected.work;
+    return {};
+}
+
+const BusTree::LogicEffectReferences& BusTree::LogicEffects(BusSlotRef bus) const noexcept {
+    const auto ref = LogicEffectWorkRef(bus);
+    const auto* row = m_workRows.TryAt(ref.slot);
+    static const LogicEffectReferences empty{};
+    return row != nullptr && row->generation == ref.generation && row->host == bus
+        ? row->logicEffects : empty;
+}
+
+void BusTree::SetLogicEffects(BusSlotRef bus, const LogicEffectReferences& effects) noexcept {
+    SetLogicEffects(LogicEffectWorkRef(bus), bus, effects);
+}
+
+void BusTree::SetLogicEffects(WorkRef work, BusSlotRef bus, const LogicEffectReferences& effects) noexcept {
+    auto* row = ResolveWorkRow(work);
+    if (row != nullptr && row->host == bus) row->logicEffects = effects;
+}
+
 std::uint64_t BusTree::NextActivitySignalPublication(const SignalRenderPlan* previous) noexcept {
     if (previous != nullptr) m_activitySignalPublication =
         std::max(m_activitySignalPublication, previous->PublicationIdentity());

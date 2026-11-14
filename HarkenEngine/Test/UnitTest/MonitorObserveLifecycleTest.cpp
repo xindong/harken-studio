@@ -691,8 +691,8 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     ASSERT_NE(masterIndex, harken::kInvalidBusIndex);
     EXPECT_NE(masterIndex, engine.Engine()->buses.FindIndex(VN_BUS_MASTER));
     EXPECT_EQ(engine.Engine()->buses.ParentOf(masterIndex), 0u);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[masterIndex][0], handle);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[0][0], 0u);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(masterIndex, 0).owner, handle);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(0, 0).owner, 0u);
     harken::monitor::DrainOnceForTests();
     PollArgs poll;
     ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
@@ -720,7 +720,7 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(handle));
     EXPECT_EQ(masterIndex, engine.Engine()->buses.FindIndex(masterId));
-    EXPECT_EQ(handle, engine.Engine()->busEffectOwnerCookies[masterIndex][0]);
+    EXPECT_EQ(handle, engine.Engine()->busEffects.Get(masterIndex, 0).owner);
     harken::monitor::DrainOnceForTests();
     ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
     for (std::uint64_t offset = 0; offset < poll.result.bytesWritten;) {
@@ -762,9 +762,9 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     }
     EXPECT_EQ(released, 1u);
     EXPECT_EQ(engine.Engine()->buses.FindIndex(masterId), harken::kInvalidBusIndex);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[masterIndex][0], 0u);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(masterIndex, 0).owner, 0u);
     EXPECT_EQ(engine.Engine()->buses.FindIndex(VN_BUS_MASTER), 0u);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[0][0], 0u);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(0, 0).owner, 0u);
     harken::monitor::StartDrainForTests();
     ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }

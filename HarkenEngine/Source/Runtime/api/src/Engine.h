@@ -1,3 +1,4 @@
+#include "BusEffectSettings.h"
 // Internal engine object behind the C API. This header is not installed; the
 // test harness and the future host include it directly to reach the null
 // backend's pump (the public API stays narrow — spec section 16 drives blocks
@@ -7677,20 +7678,9 @@ public:
         // effectSlotTypes analogue). One row per possible bus, all empty.
         // Dense indices are append-only and tombstones are never reused, so no
         // per-create reset is needed — a fresh bus's row is already all-none.
-        std::array<std::uint32_t, kMaxFxSlotsPerBus> emptyBusSlots;
-        emptyBusSlots.fill(kEffectTypeNone);
-        busEffectSlotTypes.assign(resolved.maxBuses, emptyBusSlots);
-        std::array<EffectInstanceRef, kMaxFxSlotsPerBus> emptyBusRefs;
-        emptyBusRefs.fill(EffectInstanceRef{});
-        busEffectInstanceRefs.assign(resolved.maxBuses, emptyBusRefs);
-        busEffectIdentities.resize(resolved.maxBuses);
         busFilterSettings.resize(resolved.maxBuses);
         busVolumePublished.assign(resolved.maxBuses, 0);
-        std::array<VnPackHandle, kMaxFxSlotsPerBus> emptyBusOwners{};
-        busEffectOwnerCookies.assign(resolved.maxBuses, emptyBusOwners);
-        std::array<std::uint8_t, kMaxFxSlotsPerBus> emptyBusBypass{};
-        emptyBusBypass.fill(0);
-        busEffectSlotBypass.assign(resolved.maxBuses, emptyBusBypass);
+        busEffectSlotBypass.assign(resolved.maxBuses, 0);
         busFaderAfterSlots.assign(resolved.maxBuses, resolved.fxSlotsPerBus);
         // Per-bus mute/solo audibility state: every bus starts unmuted and
         // unsoloed (fully audible).
@@ -15707,7 +15697,7 @@ public:
     // Authored settings survive physical DSP-instance retirement. Parameters
     // remain authoritative in BusTargetStore and EffectParamTargetStore.
     std::vector<std::array<BusFilterSetting, 4>> busFilterSettings;
-    std::vector<std::array<EffectObjectIdentity, kMaxFxSlotsPerBus>> busEffectIdentities;
+    BusEffectSettings busEffects;
     std::vector<std::uint8_t> busVolumePublished;
 
     // Prepares an unpublished cold row. The caller must cancel or transfer
@@ -15718,12 +15708,25 @@ public:
     void NoteBusSettingCommand(const CommandRecord& command) noexcept;
     bool PublishBusSettingCommand(const CommandRecord& command) noexcept;
 
-    std::vector<std::array<std::uint32_t, kMaxFxSlotsPerBus>> busEffectSlotTypes;
-    std::vector<std::array<EffectInstanceRef, kMaxFxSlotsPerBus>>
-        busEffectInstanceRefs;
-    std::vector<std::array<VnPackHandle, kMaxFxSlotsPerBus>>
-        busEffectOwnerCookies;
-    std::vector<std::array<std::uint8_t, kMaxFxSlotsPerBus>> busEffectSlotBypass;
+    const BusTree::LogicEffectReferences& BusEffectRefs(std::uint32_t bus) const noexcept {
+        return buses.LogicEffects(buses.RefAt(bus));
+    }
+    void SetBusEffectRefs(std::uint32_t bus, const BusTree::LogicEffectReferences& refs) noexcept {
+        buses.SetLogicEffects(buses.RefAt(bus), refs);
+    }
+    void SetBusEffectRef(std::uint32_t bus, std::uint32_t slot, EffectInstanceRef ref) noexcept {
+        auto refs = BusEffectRefs(bus);
+        refs[slot] = ref;
+        SetBusEffectRefs(bus, refs);
+    }
+    std::vector<std::uint8_t> busEffectSlotBypass;
+    bool BusEffectBypass(std::uint32_t bus, std::uint32_t slot) const noexcept {
+        return (busEffectSlotBypass[bus] & (1u << slot)) != 0;
+    }
+    void SetBusEffectBypass(std::uint32_t bus, std::uint32_t slot, bool value) noexcept {
+        const auto mask = static_cast<std::uint8_t>(1u << slot);
+        busEffectSlotBypass[bus] = value ? busEffectSlotBypass[bus] | mask : busEffectSlotBypass[bus] & ~mask;
+    }
     std::vector<std::uint32_t> busFaderAfterSlots;
 
     // Per-bus mute/solo state, indexed by dense bus index. Both are logic-side

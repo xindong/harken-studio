@@ -113,6 +113,10 @@ public:
     void DrainActivities() noexcept;
     CommandQueue::BusActivityAttachment* ActivityAttachment(BusActivityPlan* plan) noexcept;
     WorkRef AcceptedWorkRef(BusSlotRef bus) const noexcept;
+    using LogicEffectReferences = std::array<EffectInstanceRef, kMaxFxSlotsPerBus>;
+    const LogicEffectReferences& LogicEffects(BusSlotRef bus) const noexcept;
+    void SetLogicEffects(BusSlotRef bus, const LogicEffectReferences& effects) noexcept;
+    void SetLogicEffects(WorkRef work, BusSlotRef bus, const LogicEffectReferences& effects) noexcept;
     bool HasAcceptedActivity() const noexcept { return m_lastQueuedActivity != nullptr; }
     const SignalRenderPlan* AcceptedActivitySignals() const noexcept;
     // Logic-only latest published structural definition. Its pool slot cannot
@@ -671,6 +675,8 @@ private:
         // adoption. A new logical incarnation requires a new prepared row.
         BusSlotRef host{};
         VnBusId hostId{};
+        // Logic-only publication mirror; never inspect the audio-owned chain.
+        LogicEffectReferences logicEffects{};
         std::atomic<std::uint32_t> references{0};
         std::atomic<WorkPhase> phase{WorkPhase::Free};
         std::uint64_t generation = 0;
@@ -688,6 +694,7 @@ private:
     std::atomic<WorkRow*> m_workRetired{nullptr};
     std::uint32_t m_workRowsInUse = 0;
     WorkRow* ResolveWorkRow(WorkRef ref) noexcept;
+    WorkRef LogicEffectWorkRef(BusSlotRef bus) const noexcept;
     void AudioReleaseWorkRow(WorkRef ref) noexcept;
     void RetireWorkRow(WorkRow& row) noexcept;
     void RecycleWorkRow(WorkRow& row) noexcept;

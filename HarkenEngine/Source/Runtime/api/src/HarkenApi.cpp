@@ -6700,7 +6700,7 @@ VnResult CaptureCompressorRuntimeInfo(
         for (std::uint32_t effectSlot = 0;
              effectSlot < engine.config.fxSlotsPerBus; ++effectSlot) {
             const EffectInstanceRef& ref =
-                engine.busEffectInstanceRefs[bus][effectSlot];
+                engine.BusEffectRefs(bus)[effectSlot];
             if (ref.type == VN_EFFECT_COMPRESSOR) {
                 const VnBusId busId = engine.buses.IdAt(bus);
                 emit(ref, VN_EFFECT_HOST_SCOPE_BUS, bus, busId, 0, 0,
@@ -74496,10 +74496,10 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
             if (prepared.enabled) section.glide.Snap(prepared.cutoffHz, setting.q, 0);
         }
         for (std::uint32_t slot = 0; slot < config.fxSlotsPerBus; ++slot) {
-            row.fxBypassMix[slot] = row.fxBypassTarget[slot] = busEffectSlotBypass[busIndex][slot] ? 1.f : 0.f;
-            const auto type = busEffectSlotTypes[busIndex][slot];
+            row.fxBypassMix[slot] = row.fxBypassTarget[slot] = BusEffectBypass(busIndex, slot) ? 1.f : 0.f;
+            const auto type = busEffects.Get(busIndex, slot).type;
             if (type == kEffectTypeNone) continue;
-            const auto ref = effectBank.AcquirePrepared(type, busEffectIdentities[busIndex][slot]);
+            const auto ref = effectBank.AcquirePrepared(type, busEffects.Get(busIndex, slot).identity);
             if (ref.type == kEffectTypeNone) return fail(VN_NO_EFFECT);
             row.fxSlotEffectRef[slot] = ref;
             void* state = effectBank.StateFor(ref.type, ref.poolIndex);
@@ -80007,14 +80007,14 @@ void ResetBusLogicSlot(harken::Engine& engine,
     if (newGeneration != 0) {
         engine.busTargets.InitializeBusGeneration(busIndex, newGeneration);
     }
-    engine.busEffectSlotTypes[busIndex].fill(harken::kEffectTypeNone);
-    engine.busEffectInstanceRefs[busIndex].fill(harken::EffectInstanceRef{});
-    engine.busEffectIdentities[busIndex] = {};
+    engine.busEffects.ClearBus(busIndex);
+    engine.SetBusEffectRefs(busIndex, {});
+
     engine.busFilterSettings[busIndex] = {};
     engine.busVolumePublished[busIndex] = 0;
-    engine.busEffectOwnerCookies[busIndex].fill(0);
+
     if (busIndex < engine.busEffectSlotBypass.size()) {
-        engine.busEffectSlotBypass[busIndex].fill(0);
+        engine.busEffectSlotBypass[busIndex] = 0;
     }
     engine.busFaderAfterSlots[busIndex] = engine.config.fxSlotsPerBus;
     engine.busOwnerCookies[busIndex] = 0;
@@ -82892,14 +82892,14 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
         return VN_IN_USE;
     std::uint32_t slot = engine->config.fxSlotsPerBus;
     for (std::uint32_t index = 0; index < engine->config.fxSlotsPerBus; ++index) {
-        if (engine->busEffectSlotTypes[bus][index] == effectType
-            && engine->busEffectIdentities[bus][index].effectId == effectId) {
+        if (engine->busEffects.Get(bus, index).type == effectType
+            && engine->busEffects.Get(bus, index).identity.effectId == effectId) {
             slot = index;
             break;
         }
     }
     if (slot == engine->config.fxSlotsPerBus) return VN_UNKNOWN_ID;
-    if (engine->busEffectOwnerCookies[bus][slot] != ownerId) return VN_IN_USE;
+    if (engine->busEffects.Get(bus, slot).owner != ownerId) return VN_IN_USE;
     if (liveState && HasPreviewEffectAttachment(*engine, host))
         return VN_IN_USE;
     const auto generation = engine->buses.GenerationAt(bus);
@@ -82941,7 +82941,7 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
     }
     if (commandCount != 0 && (effectType == VN_EFFECT_COMPRESSOR || effectType == VN_EFFECT_THREE_BAND_TONE) &&
         engine->effectParamTargets.ForeignClaimInSlot(scope, bus, generation, slot)) return VN_BACKPRESSURE;
-    if (engine->busEffectSlotBypass[bus][slot] != bypass) {
+    if (engine->BusEffectBypass(bus, slot) != bypass) {
         auto& command = commands[commandCount++];
         command.opcode = kOpcodeSetBusEffectBypass;
         if (liveState) {
@@ -82978,8 +82978,8 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
         liveState->accepted[slot].releaseMs = parameters[1];
         liveState->accepted[slot].bypass = bypass != 0;
     }
-    engine->busEffectSlotBypass[bus][slot] = static_cast<std::uint8_t>(bypass);
-    const auto& reference = engine->busEffectInstanceRefs[bus][slot];
+    engine->SetBusEffectBypass(bus, slot, static_cast<std::uint8_t>(bypass));
+    const auto& reference = engine->BusEffectRefs(bus)[slot];
     MonitorEffectFacts facts{};
     facts.bypass01 = bypass;
     void* storage = engine->effectBank.StateFor(reference.type, reference.poolIndex);
@@ -112432,8 +112432,8 @@ VnResult Vn_Update(void) {
             } else {
                 const std::uint32_t busIndex =
                     static_cast<std::uint32_t>(objectId);
-                if (busIndex < engine->busEffectSlotTypes.size()) {
-                    effectType = engine->busEffectSlotTypes[busIndex][slot];
+                if (busIndex < engine->busOwnerCookies.size()) {
+                    effectType = engine->busEffects.Get(busIndex, slot).type;
                 }
             }
             harken::CommandRecord command{};
@@ -116182,13 +116182,8 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         if (removedOld[i] == 0) {
             continue;
         }
-        for (VnPackHandle cookie :
-             engine->busEffectOwnerCookies[i]) {
-            if (cookie != 0) {
-                return refuse(VN_IN_USE, kTopologyRefusalOwnership,
-                              engine->buses.IdAt(i));
-            }
-        }
+        if (engine->busEffects.HasOwner(i))
+            return refuse(VN_IN_USE, kTopologyRefusalOwnership, engine->buses.IdAt(i));
     }
     std::vector<std::uint32_t> routeRemovals;
     std::vector<harken::DynamicRouteDefinition> expectedRouteRemovals;
@@ -117537,7 +117532,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     const std::uint32_t busGeneration =
@@ -117642,6 +117637,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
     harken::PreparedBusCommandBatch coldPublication(*engine);
     if (!publication && !coldPublication.Prepare({&command, 1})) return VN_BACKPRESSURE;
+    if (!engine->busEffects.Prepare(1)) return VN_DEVICE_ERROR;
     const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
         harken::EffectParamTargetStore::Scope::Bus,
         static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
@@ -117652,17 +117648,16 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     effectRollback.transferred = true;
     if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     // Mirror the installed type for parameter-range validation.
-    if (busIndex < engine->busEffectSlotTypes.size()) {
-        engine->busEffectSlotTypes[busIndex][slot] = type;
-        engine->busEffectInstanceRefs[busIndex][slot] = ref;
-        engine->busEffectIdentities[busIndex][slot] = {desc->effectId, engine->CurrentProjectId()};
+    if (busIndex < engine->busOwnerCookies.size()) {
+        engine->busEffects.Set(busIndex, slot, {type, {desc->effectId, engine->CurrentProjectId()}, 0});
+        engine->SetBusEffectRef(busIndex, slot, ref);
         engine->effectBank.PublishInstalled(ref);
     }
     {
         harken::MonitorEffectFacts facts{};
         facts.bypass01 =
             (busIndex < engine->busEffectSlotBypass.size())
-                ? engine->busEffectSlotBypass[busIndex][slot]
+                ? engine->BusEffectBypass(busIndex, slot)
                 : 0u;
         facts.latencyFrames = 0;
         void* state = engine->effectBank.StateFor(ref.type, ref.poolIndex);
@@ -117702,7 +117697,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     const std::uint32_t busGeneration =
@@ -117766,15 +117761,13 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     else if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     harken::EffectInstanceRef released{};
-    const auto releasedIdentity = engine->busEffectIdentities[busIndex][slot];
-    if (busIndex < engine->busEffectInstanceRefs.size()) {
-        released = engine->busEffectInstanceRefs[busIndex][slot];
+    const auto releasedIdentity = engine->busEffects.Get(busIndex, slot).identity;
+    if (busIndex < engine->busOwnerCookies.size()) {
+        released = engine->BusEffectRefs(busIndex)[slot];
     }
-    if (busIndex < engine->busEffectSlotTypes.size()) {
-        engine->busEffectSlotTypes[busIndex][slot] = harken::kEffectTypeNone;
-        engine->busEffectInstanceRefs[busIndex][slot] =
-            harken::EffectInstanceRef{};
-        engine->busEffectIdentities[busIndex][slot] = {};
+    if (busIndex < engine->busOwnerCookies.size()) {
+        engine->busEffects.Set(busIndex, slot, {});
+        engine->SetBusEffectRef(busIndex, slot, harken::EffectInstanceRef{});
     }
     if (released.generation != 0 && released.type != harken::kEffectTypeNone) {
         const std::uint64_t handle =
@@ -117836,15 +117829,15 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
         return SetPreviewBusEffectControl(*engine, busIndex, slot, paramIndex, value, false);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     // The installed type at this slot fixes the parameter's valid range, read
     // from the logic-side mirror (an empty slot has no parameterizable effect).
-    if (busIndex >= engine->busEffectSlotTypes.size()) {
+    if (busIndex >= engine->busOwnerCookies.size()) {
         return VN_INVALID_ARG;
     }
-    const std::uint32_t type = engine->busEffectSlotTypes[busIndex][slot];
+    const std::uint32_t type = engine->busEffects.Get(busIndex, slot).type;
     if (type == harken::kEffectTypeNone) {
         return VN_INVALID_ARG; // no effect installed to parameterize
     }
@@ -117922,7 +117915,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
         return SetPreviewBusEffectControl(*engine, busIndex, slot, bypass01, 0, true);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
+    if (engine->busEffects.Get(busIndex, slot).owner != 0) {
         return VN_IN_USE;
     }
     // Per-slot bypass is independent of an installed effect: a slot bypassed
@@ -117941,12 +117934,11 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
     }
     if (!engine->PublishBusSettingCommand(command)) return VN_BACKPRESSURE;
     if (busIndex < engine->busEffectSlotBypass.size()) {
-        engine->busEffectSlotBypass[busIndex][slot] =
-            static_cast<std::uint8_t>(bypass01);
+        engine->SetBusEffectBypass(busIndex, slot, static_cast<std::uint8_t>(bypass01));
     }
-    if (busIndex < engine->busEffectInstanceRefs.size()) {
+    if (busIndex < engine->busOwnerCookies.size()) {
         const harken::EffectInstanceRef& ref =
-            engine->busEffectInstanceRefs[busIndex][slot];
+            engine->BusEffectRefs(busIndex)[slot];
         if (ref.generation != 0 && ref.type != harken::kEffectTypeNone) {
             harken::MonitorEffectFacts facts{};
             facts.bypass01 = bypass01;
@@ -117960,7 +117952,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
             const std::uint64_t handle =
                 PackedMonitorEffectHandle(busIndex, slot);
             harken::ObserveMonitorEffect(handle, ref.generation,
-                                 engine->busEffectIdentities[busIndex][slot].effectId,
+                                 engine->busEffects.Get(busIndex, slot).identity.effectId,
                                  VN_ACTION_TERMINAL_NONE, facts);
         }
     }
@@ -117994,11 +117986,11 @@ VnResult Vn_ResetBusEffect(VnBusId busId, uint32_t effectSlot,
     std::uint32_t busIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (engine->busEffectOwnerCookies[busIndex][effectSlot] != 0) {
+    if (engine->busEffects.Get(busIndex, effectSlot).owner != 0) {
         return VN_IN_USE;
     }
-    if (busIndex >= engine->busEffectSlotTypes.size() ||
-        engine->busEffectSlotTypes[busIndex][effectSlot] !=
+    if (busIndex >= engine->busOwnerCookies.size() ||
+        engine->busEffects.Get(busIndex, effectSlot).type !=
             expectedEffectType) {
         return VN_INVALID_ARG;
     }
@@ -118112,8 +118104,8 @@ VnResult Vn_SetBusEffectDynamicRoute(
     }
 
     // Capability and host guard follows identity validation.
-    if (targetBusIndex >= engine->busEffectSlotTypes.size() ||
-        engine->busEffectSlotTypes[targetBusIndex][effectSlot] !=
+    if (targetBusIndex >= engine->busOwnerCookies.size() ||
+        engine->busEffects.Get(targetBusIndex, effectSlot).type !=
             VN_EFFECT_COMPRESSOR) {
         return VN_INVALID_ARG;
     }
@@ -118288,8 +118280,8 @@ VnResult Vn_ClearBusEffectDynamicRoute(
     std::uint32_t targetBusIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, targetBusId, targetBusIndex);
     if (mutableBus != VN_OK) return mutableBus;
-    if (targetBusIndex >= engine->busEffectSlotTypes.size() ||
-        engine->busEffectSlotTypes[targetBusIndex][effectSlot] !=
+    if (targetBusIndex >= engine->busOwnerCookies.size() ||
+        engine->busEffects.Get(targetBusIndex, effectSlot).type !=
             expectedEffectType) {
         return VN_INVALID_ARG;
     }
@@ -124731,8 +124723,8 @@ VnResult UnloadReversibleResident(Engine& engine,
         const std::uint32_t bus = engine.buses.FindIndex(effect.busId);
         if (bus == kInvalidBusIndex ||
             effect.slot >= engine.config.fxSlotsPerBus ||
-            engine.busEffectOwnerCookies[bus][effect.slot] != handle ||
-            engine.busEffectSlotTypes[bus][effect.slot] !=
+            engine.busEffects.Get(bus, effect.slot).owner != handle ||
+            engine.busEffects.Get(bus, effect.slot).type !=
                 effect.effectType) {
             return VN_IN_USE;
         }
@@ -124753,14 +124745,14 @@ VnResult UnloadReversibleResident(Engine& engine,
         for (std::uint32_t slot = 0;
              slot < engine.config.fxSlotsPerBus; ++slot) {
             const std::uint32_t type =
-                engine.busEffectSlotTypes[bus][slot];
+                engine.busEffects.Get(bus, slot).type;
             if (type == kEffectTypeNone) {
                 continue;
             }
             const PackBusEffectEntry* authored =
                 FindOwnedPackEffect(record, busId, slot);
             if (authored == nullptr || authored->effectType != type ||
-                engine.busEffectOwnerCookies[bus][slot] != handle) {
+                engine.busEffects.Get(bus, slot).owner != handle) {
                 return VN_IN_USE;
             }
         }
@@ -125104,11 +125096,8 @@ VnResult UnloadReversibleResident(Engine& engine,
     }
     for (const PackBusEffectEntry& effect : record.busEffects) {
         const std::uint32_t bus = engine.buses.FindIndex(effect.busId);
-        engine.busEffectSlotTypes[bus][effect.slot] = kEffectTypeNone;
-        engine.busEffectInstanceRefs[bus][effect.slot] =
-            EffectInstanceRef{};
-        engine.busEffectIdentities[bus][effect.slot] = {};
-        engine.busEffectOwnerCookies[bus][effect.slot] = 0;
+        engine.busEffects.Set(bus, effect.slot, {});
+        engine.SetBusEffectRef(bus, effect.slot, EffectInstanceRef{});
         engine.effectParamTargets.ClearSlot(
             EffectParamTargetStore::Scope::Bus,
             static_cast<std::uint64_t>(bus),
@@ -125502,7 +125491,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         const std::uint32_t busIndex =
             engine.buses.FindIndex(oldEffect.busId);
         if (busIndex == kInvalidBusIndex ||
-            engine.busEffectOwnerCookies[busIndex][oldEffect.slot] !=
+            engine.busEffects.Get(busIndex, oldEffect.slot).owner !=
                 revision.handle) {
             return VN_BAD_PACK;
         }
@@ -125541,12 +125530,11 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             if (engine.busFaderAfterSlots[busIndex] !=
                     effect.faderPointGuard ||
                 (oldIdentity
-                     ? engine.busEffectOwnerCookies[busIndex][effect.slot] !=
+                     ? engine.busEffects.Get(busIndex, effect.slot).owner !=
                            revision.handle
-                     : engine.busEffectSlotTypes[busIndex][effect.slot] !=
+                     : engine.busEffects.Get(busIndex, effect.slot).type !=
                                kEffectTypeNone ||
-                           engine.busEffectOwnerCookies[busIndex]
-                                                       [effect.slot] != 0)) {
+                           engine.busEffects.Get(busIndex, effect.slot).owner != 0)) {
                 return VN_BAD_PACK;
             }
         } else if (effect.faderPointGuard !=
@@ -127330,6 +127318,12 @@ VnResult ApplyPreparedPackTransaction(
             return VN_DEVICE_ERROR;
         }
     }
+    if (!engine.busEffects.Prepare(revision.busEffectRefs.size())) {
+        if (commandCount != 0) queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_DEVICE_ERROR;
+    }
     if (commandCount != 0 && !(revision.needsPlan
             ? PrepareTopologyActivity(engine, engine.topologyPlans.View(revision.planIndex),
                 queueReservation, packCommands, queueGuard.proof)
@@ -127511,12 +127505,8 @@ VnResult ApplyPreparedPackTransaction(
         if (busIndex == kInvalidBusIndex) {
             continue;
         }
-        engine.busEffectSlotTypes[busIndex][effect.slot] =
-            kEffectTypeNone;
-        engine.busEffectInstanceRefs[busIndex][effect.slot] =
-            EffectInstanceRef{};
-        engine.busEffectIdentities[busIndex][effect.slot] = {};
-        engine.busEffectOwnerCookies[busIndex][effect.slot] = 0;
+        engine.busEffects.Set(busIndex, effect.slot, {});
+        engine.SetBusEffectRef(busIndex, effect.slot, EffectInstanceRef{});
         engine.effectParamTargets.ClearSlot(
             EffectParamTargetStore::Scope::Bus,
             static_cast<std::uint64_t>(busIndex),
@@ -127531,14 +127521,10 @@ VnResult ApplyPreparedPackTransaction(
             image.busEffects[reservation.imageIndex];
         const std::uint32_t busIndex =
             engine.buses.FindIndex(effect.busId);
-        engine.busEffectSlotTypes[busIndex][effect.slot] =
-            effect.effectType;
-        engine.busEffectInstanceRefs[busIndex][effect.slot] =
-            reservation.ref;
-        engine.busEffectIdentities[busIndex][effect.slot] = engine.effectBank.ObjectIdentity(reservation.ref);
+        engine.busEffects.Set(busIndex, effect.slot, {effect.effectType,
+            engine.effectBank.ObjectIdentity(reservation.ref), revision.handle});
+        engine.SetBusEffectRef(busIndex, effect.slot, reservation.ref);
         engine.effectBank.PublishInstalled(reservation.ref);
-        engine.busEffectOwnerCookies[busIndex][effect.slot] =
-            revision.handle;
         engine.effectParamTargets.CommitPreparedInstalledEffectSeed(
             &revision.effectParamSeedTokens[reservationIndex]);
     }
@@ -131025,8 +131011,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     out.slotPlan.busCookies = engine.busOwnerCookies;
     out.slotPlan.neutralSlots.assign(capacity, 0);
     if (volumeOnly || (image == nullptr && oldHandle != 0 &&
-        std::any_of(engine.busEffectOwnerCookies[0].begin(), engine.busEffectOwnerCookies[0].end(),
-            [&](const auto owner) { return owner == oldHandle; }))) out.slotPlan.neutralSlots[0] = 1;
+        engine.busEffects.HasOwner(0, oldHandle))) out.slotPlan.neutralSlots[0] = 1;
     out.slotPlan.migrationTargets.assign(capacity, 0);
     for (std::uint32_t slot = 0; slot < capacity; ++slot) {
         out.slotPlan.migrationTargets[slot] = slot;
@@ -131350,6 +131335,8 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
 }
 
 bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
+    if (!engine.busEffects.Prepare(prepared.busEffects ? prepared.busEffects->SettingsWriteCount() : 0))
+        return false;
     bool targetsReady = true;
     engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
         targetsReady &= engine.busTargets.PrepareActivity(attachment.busIndex, definition.targetId);

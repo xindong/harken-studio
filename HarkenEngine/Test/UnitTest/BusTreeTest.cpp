@@ -1233,7 +1233,7 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     const auto* restored = buses.BusState(bus.index);
     ASSERT_NE(restored, nullptr);
     EXPECT_TRUE(static_cast<const GainState*>(restored->fxSlots[0].state)->hasRendered);
-    EXPECT_EQ(engine.busEffectInstanceRefs[bus.index][0].generation, restored->fxSlotEffectRef[0].generation);
+    EXPECT_EQ(engine.BusEffectRefs(bus.index)[0].generation, restored->fxSlotEffectRef[0].generation);
     for (auto sample : captured.left) EXPECT_NEAR(sample, .25f * (1 + std::pow(10.f, -6.f / 20)), 1e-6f);
     EXPECT_EQ(buses.ActivityFallbackCount(), 0u);
 }

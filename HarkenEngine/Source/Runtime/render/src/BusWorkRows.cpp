@@ -29,6 +29,7 @@ BusTree::WorkRef BusTree::PrepareWorkRow() noexcept {
         row.bus = {};
         row.host = {};
         row.hostId = {};
+        row.logicEffects = {};
         row.next = nullptr;
         row.observed = {};
         row.nextRecoveryProbeFrame = 0;

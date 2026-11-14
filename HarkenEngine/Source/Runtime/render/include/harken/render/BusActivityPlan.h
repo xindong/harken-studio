@@ -102,6 +102,7 @@ struct BusActivityPlan {
     std::unique_ptr<BusDormantRegistry> remainingDormant;
     struct PreparedEffects {
         BusSlotRef bus;
+        BusTree::WorkRef work;
         std::array<EffectInstanceRef, kMaxFxSlotsPerBus> effects;
     };
     std::vector<PreparedEffects> preparedEffects;

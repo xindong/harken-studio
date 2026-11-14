@@ -246,6 +246,7 @@ public:
         std::uint64_t allowedOwner, std::uint64_t nextOwner,
         bool deferStructureWhilePlaying = false);
     bool CanCommit() const noexcept;
+    std::size_t SettingsWriteCount() const noexcept;
     void Commit() noexcept;
     std::span<const CommandRecord> Commands() const noexcept;
 private:

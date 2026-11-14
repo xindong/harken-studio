@@ -928,7 +928,9 @@ TEST(EffectParamBindingE2E, PreviewBusParameterVectorPreservesBindingsAcrossDire
     ASSERT_EQ(VN_OK, Vn_SetBusEffect(busId, kSlot, VN_EFFECT_COMPRESSOR, AsBase(&compressor)));
     const auto bus = engine.buses.FindIndex(busId);
     engine.busTopologyOwnerIds[bus] = ownerId;
-    engine.busEffectOwnerCookies[bus][kSlot] = ownerId;
+    auto ownedSetting = engine.busEffects.Get(bus, kSlot);
+    ownedSetting.owner = ownerId;
+    engine.busEffects.Set(bus, kSlot, ownedSetting);
     const auto binding = EffectParamBinding(VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
         VN_EFFECT_COMPRESSOR, harken::kCompressorParamThresholdDb, -12.0f, -12.0f);
     ASSERT_EQ(VN_OK, Vn_RegisterBinding(bindingId, &binding));

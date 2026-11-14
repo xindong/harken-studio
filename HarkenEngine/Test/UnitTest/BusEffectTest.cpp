@@ -943,8 +943,8 @@ TEST(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
     const std::uint32_t recordsBefore =
         engine->effectParamTargets.LiveRecordCount();
     const harken::EffectInstanceRef instanceBefore =
-        engine->busEffectInstanceRefs[busIndex][0];
-    const VnPackHandle ownerBefore = engine->busEffectOwnerCookies[busIndex][0];
+        engine->BusEffectRefs(busIndex)[0];
+    const VnPackHandle ownerBefore = engine->busEffects.Get(busIndex, 0).owner;
     const std::uint32_t demandBefore =
         engine->effectParamTargets.DemandCount();
     const std::uint32_t reservedBefore =
@@ -1003,13 +1003,13 @@ TEST(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
     EXPECT_EQ(retiringBefore,
               engine->effectParamTargets.RetiringRecordCountForTests());
     EXPECT_EQ(VN_EFFECT_FEEDBACK_DELAY,
-              engine->busEffectSlotTypes[busIndex][0]);
+              engine->busEffects.Get(busIndex, 0).type);
     const harken::EffectInstanceRef instanceAfter =
-        engine->busEffectInstanceRefs[busIndex][0];
+        engine->BusEffectRefs(busIndex)[0];
     EXPECT_EQ(instanceBefore.type, instanceAfter.type);
     EXPECT_EQ(instanceBefore.poolIndex, instanceAfter.poolIndex);
     EXPECT_EQ(instanceBefore.generation, instanceAfter.generation);
-    EXPECT_EQ(ownerBefore, engine->busEffectOwnerCookies[busIndex][0]);
+    EXPECT_EQ(ownerBefore, engine->busEffects.Get(busIndex, 0).owner);
     std::uint32_t observedRevision = 0;
     ASSERT_TRUE(engine->effectParamTargets.ExactTargetRevision(
         harken::EffectParamTargetStore::Scope::Bus,
@@ -1292,7 +1292,7 @@ TEST(BusSettings, ColdReconstructionPreservesSettingsAndFirstSound) {
             engine.effectBank.DrainRetire();
             ASSERT_TRUE(engine.effectBank.CommitPrepared(prepared.row.fxSlotEffectRef[0]));
             engine.effectBank.PublishInstalled(prepared.row.fxSlotEffectRef[0]);
-            engine.busEffectInstanceRefs[index][0] = prepared.row.fxSlotEffectRef[0];
+            engine.SetBusEffectRef(index, 0, prepared.row.fxSlotEffectRef[0]);
             *live = prepared.row;
             prepared.row = {};
         } else engine.CancelBusWorkState(prepared.row);

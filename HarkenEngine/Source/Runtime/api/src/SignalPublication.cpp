@@ -352,9 +352,10 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         for (const auto ref : preparedRows) {
             const auto& row = *engine.buses.PreparedWorkRow(ref);
             const BusSlotRef host{row.busIndex, row.generation};
-            if (engine.buses.RefAt(row.busIndex) == host) {
+            {
                 BusActivityPlan::PreparedEffects entry;
                 entry.bus = host;
+                entry.work = ref;
                 std::copy_n(row.fxSlotEffectRef, kMaxFxSlotsPerBus, entry.effects.begin());
                 // Transactions may commit their final logical mirrors before
                 // ConsumePreparedBatch. Publish the final batch ownership,
@@ -392,7 +393,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         activity->logicQueued = [](void* context, const BusActivityPlan& plan) noexcept {
             auto& owner = *static_cast<Engine*>(context);
             for (const auto& entry : plan.preparedEffects)
-                owner.busEffectInstanceRefs[entry.bus.index] = entry.effects;
+                owner.buses.SetLogicEffects(entry.work, entry.bus, entry.effects);
         };
         if ((conditionalSleep && !engine.buses.PrepareConditionalSleep(*activity, sleeping, engine.voices)) ||
             (!alreadyFrozen && !engine.commands.ProvePreparedBatch(&reservation, commands.data(),
@@ -412,18 +413,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
 }
 
 bool AcknowledgeBusSleep(Engine& engine) noexcept {
-    const auto* sleep = engine.buses.PendingSleep();
-    const auto* previous = sleep != nullptr ? sleep->sleepPrevious : nullptr;
-    if (!engine.buses.AcknowledgeSleep()) return false;
-    if (previous != nullptr) {
-        // ACK can release the last physical instance. Later queued W already
-        // committed its own mirror and must not be cleared by an older S.
-        for (const auto& binding : previous->working)
-            if (!engine.buses.AcceptedWorkRef(binding.bus).Valid() &&
-                engine.buses.RefAt(binding.bus.index) == binding.bus)
-                engine.busEffectInstanceRefs[binding.bus.index].fill({});
-    }
-    return true;
+    return engine.buses.AcknowledgeSleep();
 }
 
 static bool SelectBusActivityWake(Engine& engine, std::span<const CommandRecord> commands,
