@@ -602,11 +602,14 @@ BusTree::WorkRef BusTree::AcceptedWorkRef(BusSlotRef bus) const noexcept {
                 if (removed.expected.bus == bus) return removed.expected.work;
         return {};
     }
-    // Bootstrap rows have fixed physical slots. Do not read the audio-owned
-    // installed directory or mutable DSP identity from the logic thread.
-    const auto* row = m_workRows.TryAt(bus.index);
-    return row != nullptr && row->generation == 1 && row->host == bus
-        ? WorkRef{bus.index, 1} : WorkRef{};
+    // Before the first activity publication, inspect immutable bootstrap
+    // identities only. Never borrow the audio-owned installed directory.
+    for (const auto& row : m_workRows) {
+        if (row.host == bus && row.phase.load(std::memory_order_acquire) == WorkPhase::Published &&
+            row.references.load(std::memory_order_acquire) != 0)
+            return {row.slot, row.generation};
+    }
+    return {};
 }
 
 const SignalRenderPlan* BusTree::AcceptedActivitySignals() const noexcept {

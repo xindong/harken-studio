@@ -711,6 +711,8 @@ void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
     harken::Engine* engine = session.Engine();
 
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSendBus, VN_BUS_MASTER));
+    // Hold the same working Bus planes in both tap-allocation measurements.
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(kSendBus, 0, 0));
 
     // The stream source: long enough that a dry ring is always starvation
     // (source still active), never end-of-source (which would drain to Done).

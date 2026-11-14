@@ -75,17 +75,17 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
                              config.blockFrames),
       m_outputScratch(config.mixChannelCount),
       m_biquadTrig(biquadTrig) {
-    if (!m_workRows.ConstructThrough(config.maxBuses)) throw std::bad_alloc{};
-    m_freeWorkRows.reserve(config.maxBuses);
-    for (std::uint32_t i = 0; i < config.maxBuses; ++i) {
-        auto& row = m_workRows[i];
-        row.slot = i;
-        row.generation = 1;
-        row.references.store(1, std::memory_order_relaxed);
-        row.phase.store(WorkPhase::Published, std::memory_order_relaxed);
-        m_workSlots[i] = {i, 1};
-    }
-    m_workRowsInUse = config.maxBuses;
+    // Only Master owns an initial work row. Definitions acquire private rows
+    // through activity preparation when actual work requires them.
+    if (!m_workRows.ConstructThrough(1)) throw std::bad_alloc{};
+    m_freeWorkRows.reserve(1);
+    auto& master = m_workRows[0];
+    master.slot = 0;
+    master.generation = 1;
+    master.references.store(1, std::memory_order_relaxed);
+    master.phase.store(WorkPhase::Published, std::memory_order_relaxed);
+    m_workSlots[0] = {0, 1};
+    m_workRowsInUse = 1;
     // The master bus pre-exists at index 0 and is its own parent (the fold
     // never dereferences the master's parent). Its chain defaults to all
     // pre-fader, like every created bus.
@@ -108,7 +108,6 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
     DefaultDownmixMatrix(m_mixLayout, m_deviceLayout, WorkState(0).downmixCoeffs);
     m_count = 1;
     m_activeCount = 1;
-    m_materializedCount = 1;
     // The master is audible from the first block; every later bus becomes
     // audible only when its plan swap applies (see ApplyTopologyPlan).
     m_audioCount = 1;
@@ -120,13 +119,6 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
             m_outputScratchStorage.data() +
             static_cast<std::size_t>(ch) * config.blockFrames;
     }
-}
-
-bool BusTree::CanMaterializePreparedBusSlots(
-    std::uint32_t firstIndex, std::uint32_t slotCount) const noexcept {
-    return slotCount != 0 && m_materializedCount == m_count &&
-           firstIndex == m_count && firstIndex <= m_capacity &&
-           slotCount <= m_capacity - firstIndex;
 }
 
 void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
@@ -157,50 +149,6 @@ void BusTree::RetireBusSlotEffects(Bus& bus) noexcept {
     }
 }
 
-void BusTree::MaterializePreparedBusSlots(
-    std::uint32_t firstIndex, const PreparedBusSlot* slots,
-    std::uint32_t slotCount) noexcept {
-    const bool valid =
-        slots != nullptr &&
-        CanMaterializePreparedBusSlots(firstIndex, slotCount);
-    assert(valid && "prepared Bus slots must be one validated append batch");
-    if (!valid) {
-        return;
-    }
-    for (std::uint32_t offset = 0; offset < slotCount; ++offset) {
-        const std::uint32_t busIndex = firstIndex + offset;
-        assert(!IsNull(slots[offset].id));
-        assert(slots[offset].parentIndex < busIndex);
-        const std::uint32_t generation =
-            slots[offset].generation != 0 ? slots[offset].generation : 1u;
-        InitializeBusSlot(busIndex, slots[offset].id,
-                          slots[offset].parentIndex, generation);
-        BindInitialWorkIdentity(busIndex);
-    }
-    m_materializedCount = firstIndex + slotCount;
-}
-
-void BusTree::CommitPreparedBusVisibility(std::uint32_t firstIndex,
-                                          std::uint32_t slotCount) noexcept {
-    const bool valid =
-        slotCount != 0 && firstIndex == m_count &&
-        firstIndex <= m_capacity && slotCount <= m_capacity - firstIndex &&
-        m_materializedCount == firstIndex + slotCount;
-    assert(valid && "visibility commit must match the materialized Bus batch");
-    if (!valid) {
-        return;
-    }
-    for (std::uint32_t busIndex = firstIndex;
-         busIndex < firstIndex + slotCount; ++busIndex) {
-        m_logicParent[busIndex] = WorkState(busIndex).parentIndex;
-        m_logicAlive[busIndex] = 1;
-        m_logicId[busIndex] = WorkState(busIndex).id;
-        m_logicGeneration[busIndex] = WorkState(busIndex).generation;
-        ++m_activeCount;
-    }
-    m_count = firstIndex + slotCount;
-}
-
 void BusTree::CommitLogicSlot(std::uint32_t busIndex, VnBusId id,
                               std::uint32_t parentIndex,
                               std::uint32_t generation) noexcept {
@@ -215,16 +163,6 @@ void BusTree::CommitLogicSlot(std::uint32_t busIndex, VnBusId id,
     }
     const bool reused =
         busIndex < m_count && m_logicGeneration[busIndex] != 0;
-    if (busIndex >= m_count) {
-        // Initial rows are reserved by physical index until their first
-        // topology publication. Pack/project commits need not initialize DSP
-        // on logic, but must bind this immutable identity before publication.
-        auto& initial = m_workRows[busIndex];
-        if (!initial.host.Valid()) {
-            initial.host = {busIndex, generation};
-            initial.hostId = id;
-        }
-    }
     m_logicId[busIndex] = id;
     m_logicParent[busIndex] = parentIndex;
     m_logicGeneration[busIndex] = generation;
@@ -236,7 +174,6 @@ void BusTree::CommitLogicSlot(std::uint32_t busIndex, VnBusId id,
     }
     if (busIndex >= m_count) {
         m_count = busIndex + 1;
-        m_materializedCount = m_count;
     }
 }
 
@@ -252,15 +189,6 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
     const std::uint32_t parentIndex = FindIndex(parentId);
     if (parentIndex == kInvalidBusIndex) {
         return VN_UNKNOWN_ID;
-    }
-    // Appending into preallocated storage: no heap traffic, and existing
-    // indices stay stable. Creation is a logic-side structural operation;
-    // the audio side observes the new bus only through the plan a create
-    // publishes, swapped at a block boundary.
-    assert(m_materializedCount == m_count &&
-           "ordinary creation cannot overlap a prepared Bus batch");
-    if (m_materializedCount != m_count) {
-        return VN_NO_BUS;
     }
     std::uint32_t busIndex = kInvalidBusIndex;
     std::uint32_t generation = 0;
@@ -282,10 +210,12 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
         }
         busIndex = m_count;
         generation = 1;
-        // An appended slot is not audio-visible yet, so initializing its
-        // render state on the logic thread is race-free.
+        // The direct construction seam prepares only the requested hidden row.
+        const auto work = PrepareWorkRow();
+        if (!work.Valid()) return VN_DEVICE_ERROR;
+        m_workSlots[busIndex] = work;
         InitializeBusSlot(busIndex, id, parentIndex, generation);
-        BindInitialWorkIdentity(busIndex);
+        if (!PublishWorkRow(work)) std::terminate();
     }
     CommitLogicSlot(busIndex, id, parentIndex, generation);
     return VN_OK;
@@ -1402,7 +1332,7 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
         if (mapping.Node(i) >= nodeOffset) return UINT32_MAX;
         // A prepared world can retain empty definition slots beyond the
         // installed topology. They have no routing state to sample.
-        if (bus >= m_audioCount) continue;
+        if (bus >= m_audioCount || !HasWorkRow(bus)) continue;
         if (plan.valid && plan.alive != nullptr && plan.alive[bus] == 0) continue;
         info[i] = SignalBusBounds(bus, frames, schedules.subspan(i * perBus, perBus));
         info[i].inputNode = inputNode(i);
@@ -1489,6 +1419,7 @@ bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles,
     for (std::uint32_t k = count; k != 0; --k) {
         const auto from = plan.valid ? plan.order[k - 1] : count - k;
         if (from >= m_audioCount) return false;
+        if (!HasWorkRow(from)) continue;
         const auto parent = WorkState(from).parentIndex;
         if (from != 0 && parent < m_audioCount) roles[from] |= roles[parent] & 1u;
         if (plan.valid) {

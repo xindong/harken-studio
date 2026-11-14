@@ -17,6 +17,7 @@
 #include "Common/TestUtil.h"
 
 #include "harken/render/BuiltinEffects.h"
+#include "harken/render/BusActivityPlan.h"
 
 #include <algorithm>
 #include <array>
@@ -808,8 +809,9 @@ TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
         harken::CommandQueue::BatchReservation reservation;
         harken::CommandQueue::PreparedBatchProof proof;
         ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        const harken::BusActivitySelection selected{{index, 0}, {}};
         ASSERT_TRUE(harken::PrepareTopologyActivity(engine, engine.topologyPlans.View(plan),
-            reservation, {&command, 1}, proof));
+            reservation, {&command, 1}, proof, &selected));
         ASSERT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
         const auto hits = harken::memguard::HitCount();
         engine.mixer.DrainQueuedCommands(1);
@@ -1389,6 +1391,7 @@ TEST(BusSettings, DormantFiltersPreserveFrozenSeedsAndSettledRetargeting) {
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
         ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(kBusA, 0, 0));
         engine.nullBackend.Pump(1);
         auto* bus = engine.buses.BusState(engine.buses.FindIndex(kBusA));
         ASSERT_NE(nullptr, bus);

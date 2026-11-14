@@ -185,6 +185,9 @@ TEST(BusSend, CompactSignalRoutingPreservesVoiceSendsAndSegmentedFeedback) {
         auto& engine = *session.Engine();
         for (auto id : {kBusA, kBusB, kBusC, kBusD})
             ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+        // This low-level render comparison supplies all five physical planes.
+        for (auto id : {kBusA, kBusB, kBusC, kBusD})
+            ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
         engine.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusD, -6));
@@ -1655,6 +1658,7 @@ TEST_F(BusSendSlotReconcile, ExternalDetectorInjectionCannotInfluenceAnEarlierTa
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusB, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusD, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusC, kBusD));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(kBusC, 0, 0));
     VnCompressorDesc compressor{};
     compressor.structSize = sizeof(compressor);
     compressor.thresholdDb = -24;

@@ -172,18 +172,6 @@ public:
     void PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t frameEnd,
         std::uint32_t frames, bool rendered) noexcept;
 
-    // Prepared Pack activation seam. Capacity and append-position validation
-    // happens before the non-failing materialization/commit tail. Hidden slots
-    // are fully initialized in preallocated storage but remain outside every
-    // logic-visible range until one visibility commit publishes the batch.
-    bool CanMaterializePreparedBusSlots(std::uint32_t firstIndex,
-                                        std::uint32_t slotCount) const noexcept;
-    void MaterializePreparedBusSlots(std::uint32_t firstIndex,
-                                     const PreparedBusSlot* slots,
-                                     std::uint32_t slotCount) noexcept;
-    void CommitPreparedBusVisibility(std::uint32_t firstIndex,
-                                     std::uint32_t slotCount) noexcept;
-
     // Creates a bus under an existing parent. Logic thread. Refusals:
     // id 0 -> VN_INVALID_ARG, id already present (including the master id)
     // -> VN_IN_USE, unknown parent -> VN_UNKNOWN_ID, table full ->
@@ -672,7 +660,6 @@ private:
     std::uint32_t m_currentPlanIndex = kInvalidTopologyPlanIndex;
 
     // Resized to capacity at Init. [0, m_count) is logic-visible;
-    // [m_count, m_materializedCount) may hold one hidden prepared append batch.
     enum class WorkPhase : std::uint8_t { Free, Preparing, Published, Retired };
     struct WorkRow {
         Bus bus;
@@ -744,9 +731,6 @@ private:
     std::uint32_t m_quarantinedCount = 0;
     std::uint64_t m_slotReuseCount = 0;
     std::atomic<std::uint64_t> m_installedGraphRevision{0};
-    // Physical append bound. It may temporarily lead m_count while a prepared
-    // Pack batch owns hidden, fully initialized Bus slots.
-    std::uint32_t m_materializedCount = 0;
     std::uint32_t m_capacity = 0;
     std::uint32_t m_blockFrames = 0;
     std::uint32_t m_sampleRate = 0;

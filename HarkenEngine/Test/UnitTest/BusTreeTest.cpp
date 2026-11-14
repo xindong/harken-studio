@@ -251,147 +251,32 @@ TEST(BusTree, CreateBusValidationAndCapacity) {
     EXPECT_EQ(3u, session.Engine()->buses.BusCount());
 }
 
-TEST(BusTree, PreparedBusStaysHiddenUntilVisibilityCommit) {
+TEST(BusTree, UnusedDefinitionCapacityDoesNotCreateWorkingRows) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
-    config.maxBuses = 3;
-    config.fxSlotsPerBus = 2;
+    config.maxBuses = 128;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
-
-    harken::BusTree& buses = session.Engine()->buses;
-    const harken::BusTree::PreparedBusSlot prepared{harkentest::ObjectId(10), 0};
-    ASSERT_TRUE(buses.CanMaterializePreparedBusSlots(1, 1));
-
-    buses.MaterializePreparedBusSlots(1, &prepared, 1);
-
-    EXPECT_EQ(1u, buses.BusCount());
-    EXPECT_EQ(harken::kInvalidBusIndex, buses.FindIndex(harkentest::ObjectId(10)));
-    EXPECT_EQ(nullptr, buses.BusState(1));
-
-    buses.CommitPreparedBusVisibility(1, 1);
-
-    EXPECT_EQ(2u, buses.BusCount());
-    EXPECT_EQ(1u, buses.FindIndex(harkentest::ObjectId(10)));
-    EXPECT_TRUE(buses.AliveAt(1));
-    EXPECT_EQ(0u, buses.ParentOf(1));
-    ASSERT_NE(nullptr, buses.BusState(1));
-    EXPECT_EQ(harkentest::ObjectId(10u), buses.BusState(1)->id);
-    EXPECT_EQ(0u, buses.BusState(1)->parentIndex);
-}
-
-TEST(BusTree, PreparedBusBatchMatchesOrdinaryCreationAndSupportsPlanApply) {
-    VnConfig config = MakeNullConfig(2, kBlockFrames);
-    config.maxBuses = 5;
-    config.fxSlotsPerBus = 3;
-    config.busSendSlotsPerBus = 2;
-    config.topologyPlanPoolCapacity = 2;
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-
-    harken::Engine* engine = session.Engine();
-    harken::BusTree& buses = engine->buses;
-    EXPECT_FALSE(buses.CanMaterializePreparedBusSlots(2, 2));
-    EXPECT_FALSE(buses.CanMaterializePreparedBusSlots(1, 0));
-    EXPECT_FALSE(buses.CanMaterializePreparedBusSlots(1, 5));
-
-    const harken::BusTree::PreparedBusSlot prepared[] = {
-        {harkentest::ObjectId(10), 0},
-        {harkentest::ObjectId(11), 1},
-    };
-    ASSERT_TRUE(buses.CanMaterializePreparedBusSlots(1, 2));
-    buses.MaterializePreparedBusSlots(1, prepared, 2);
-
-    EXPECT_EQ(1u, buses.BusCount());
-    EXPECT_EQ(1u, buses.AudioBusCount());
-    EXPECT_EQ(harken::kInvalidBusIndex, buses.FindIndex(harkentest::ObjectId(10)));
-    EXPECT_EQ(harken::kInvalidBusIndex, buses.FindIndex(harkentest::ObjectId(11)));
-    EXPECT_FALSE(buses.CanMaterializePreparedBusSlots(1, 1));
-
-    // Effect commands may precede the final plan swap in one published batch.
-    // The hidden slot must therefore already carry a valid id and full chain
-    // state even though logic lookup still cannot reach it.
-    buses.ApplySetBusEffectBypass(2, 0, 1);
-
-    const std::uint32_t plan = engine->topologyPlans.Acquire();
-    ASSERT_NE(harken::kInvalidTopologyPlanIndex, plan);
-    std::uint32_t* order = engine->topologyPlans.OrderData(plan);
-    order[0] = 2;
-    order[1] = 1;
-    order[2] = 0;
-    engine->topologyPlans.SetOrderCount(plan, 3);
-    engine->topologyPlans.SetSlotCount(plan, 3);
-    std::uint32_t* parents = engine->topologyPlans.ParentsData(plan);
-    parents[0] = 0;
-    parents[1] = 0;
-    parents[2] = 1;
-    std::uint32_t* outputLayouts =
-        engine->topologyPlans.OutputLayoutData(plan);
-    const std::uint32_t defaultLayout = buses.BusOutputLayout(0);
-    const float* defaultDownmix = buses.BusDownmixCoeffs(0);
-    ASSERT_NE(nullptr, defaultDownmix);
-    for (std::uint32_t bus = 0; bus < 3; ++bus) {
-        outputLayouts[bus] = defaultLayout;
-        auto matrix = std::make_shared<harken::BusDownmixMatrix>();
-        std::copy_n(defaultDownmix, 64, matrix->data());
-        engine->topologyPlans.SetCustomDownmix(plan, bus, std::move(matrix));
+    auto& buses = session.Engine()->buses;
+    EXPECT_EQ(1u, buses.WorkRowsInUse());
+    for (std::uint32_t i = 1; i < config.maxBuses; ++i) {
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(1000 + i), VN_BUS_MASTER));
+        session.Engine()->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(1u, buses.WorkRowsInUse());
     }
-
-    buses.ApplyTopologyPlan(plan, harken::kInvalidBusIndex,
-                            harken::kInvalidBusIndex, 0.0f);
-
-    EXPECT_EQ(3u, buses.AudioBusCount());
-    EXPECT_EQ(1u, buses.BusCount());
-    EXPECT_EQ(config.fxSlotsPerBus, buses.BusState(0)->faderAfterSlot);
-    EXPECT_EQ(buses.BusState(0)->outputLayout, buses.BusOutputLayout(1));
-    ASSERT_NE(nullptr, buses.BusDownmixCoeffs(1));
-
-    buses.CommitPreparedBusVisibility(1, 2);
-
-    EXPECT_EQ(3u, buses.BusCount());
-    EXPECT_EQ(1u, buses.FindIndex(harkentest::ObjectId(10)));
-    EXPECT_EQ(2u, buses.FindIndex(harkentest::ObjectId(11)));
-    EXPECT_EQ(0u, buses.ParentOf(1));
-    EXPECT_EQ(1u, buses.ParentOf(2));
-    EXPECT_TRUE(buses.AliveAt(1));
-    EXPECT_TRUE(buses.AliveAt(2));
-    ASSERT_NE(nullptr, buses.BusState(2));
-    EXPECT_EQ(1.0f, buses.BusState(2)->fxBypassMix[0]);
-    EXPECT_EQ(1.0f, buses.BusState(2)->fxBypassTarget[0]);
-    EXPECT_FALSE(buses.BusState(2)->fxBypassRamping[0]);
-
-    ASSERT_EQ(VN_OK, buses.CreateBus(harkentest::ObjectId(12), VN_BUS_MASTER));
-    const harken::BusTree::Bus* materialized = buses.BusState(1);
-    const harken::BusTree::Bus* ordinary = buses.BusState(3);
-    ASSERT_NE(nullptr, materialized);
-    ASSERT_NE(nullptr, ordinary);
-    EXPECT_EQ(ordinary->gain.current, materialized->gain.current);
-    EXPECT_EQ(ordinary->gain.target, materialized->gain.target);
-    EXPECT_EQ(ordinary->gain.remainingFrames, materialized->gain.remainingFrames);
-    EXPECT_EQ(ordinary->gainStarted, materialized->gainStarted);
-    EXPECT_EQ(ordinary->preFaderPeak, materialized->preFaderPeak);
-    EXPECT_EQ(ordinary->postFaderPeak, materialized->postFaderPeak);
-    EXPECT_EQ(ordinary->outputPeak, materialized->outputPeak);
-    EXPECT_EQ(ordinary->faderAfterSlot, materialized->faderAfterSlot);
-    EXPECT_EQ(ordinary->outputLayout, materialized->outputLayout);
-    for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerBus; ++slot) {
-        EXPECT_EQ(nullptr, materialized->fxSlots[slot].process);
-        EXPECT_EQ(nullptr, materialized->fxSlots[slot].processDynamic);
-        EXPECT_EQ(nullptr, materialized->fxSlots[slot].tailFrames);
-        EXPECT_EQ(nullptr, materialized->fxSlots[slot].setParam);
-        EXPECT_EQ(nullptr, materialized->fxSlots[slot].reset);
-        EXPECT_EQ(nullptr, materialized->fxSlots[slot].state);
-        EXPECT_EQ(0.0f, materialized->fxBypassMix[slot]);
-        EXPECT_EQ(0.0f, materialized->fxBypassTarget[slot]);
-        EXPECT_FALSE(materialized->fxBypassRamping[slot]);
-        EXPECT_EQ(harken::kEffectTypeNone,
-                  materialized->fxSlotEffectRef[slot].type);
-        EXPECT_EQ(0u, materialized->fxSlotEffectRef[slot].poolIndex);
-        EXPECT_EQ(0u, materialized->fxSlotEffectRef[slot].generation);
-    }
-    for (std::uint32_t coefficient = 0; coefficient < 64; ++coefficient) {
-        EXPECT_EQ(ordinary->downmixCoeffs[coefficient],
-                  materialized->downmixCoeffs[coefficient]);
-    }
+    EXPECT_EQ(config.maxBuses, buses.BusCount());
+    const auto pcm = harkentest::MakeDC(48000, 0.1f);
+    const auto desc = MonoDesc(pcm, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = harkentest::ObjectId(1000 + config.maxBuses - 1);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    EXPECT_EQ(2u, buses.WorkRowsInUse());
+    Capture capture;
+    harkentest::PumpAndCapture(session.Engine(), 2, capture);
+    EXPECT_GT(buses.OutputPeak(config.maxBuses - 1), 0.0f);
+    EXPECT_EQ(2u, buses.WorkRowsInUse());
 }
 
 TEST(BusTree, SetBusVolumeValidatesArguments) {
@@ -787,6 +672,7 @@ TEST(BusActivity, WorkObservationIsFreshAndRetainsSilentPhysicalVoicesAndTransit
     auto& buses = engine.buses;
     const auto id = harkentest::ObjectId(301);
     ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
     const auto bus = buses.FindRef(id);
     const auto work = buses.AcceptedWorkRef(bus);
     BusTree::WorkObservation observed;
@@ -843,6 +729,7 @@ TEST(BusActivity, PendingVoiceDetectorSurvivesProducerWithdrawalUntilNextBank) {
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(301), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(301), 0, 0));
     engine.nullBackend.Pump(1);
     const auto bus = engine.buses.FindRef(harkentest::ObjectId(301));
     const auto work = engine.buses.AcceptedWorkRef(bus);
@@ -965,6 +852,7 @@ TEST(BusActivity, RealMixerUsesCompactPlanesAndReconstructedWorkRows) {
     auto& buses = engine.buses;
     const auto activeId = harkentest::ObjectId(10), idleId = harkentest::ObjectId(11);
     ASSERT_EQ(VN_OK, Vn_CreateBus(activeId, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(activeId, 0, 0));
     ASSERT_EQ(VN_OK, Vn_CreateBus(idleId, VN_BUS_MASTER));
     VnGainDesc gain{};
     gain.structSize = sizeof(gain);
@@ -1125,6 +1013,7 @@ TEST(BusActivity, PendingSleepAllowsExplicitContentReplacementOnEitherBranch) {
         auto& buses = engine.buses;
         const auto id = harkentest::ObjectId(621);
         ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
         engine.nullBackend.Pump(1);
         const std::array working{BusTree::WorkBinding{buses.RefAt(0), buses.AcceptedWorkRef(buses.RefAt(0))},
             BusTree::WorkBinding{buses.RefAt(1), buses.AcceptedWorkRef(buses.RefAt(1))}};
@@ -1187,6 +1076,7 @@ TEST(BusActivity, SignalOnlySleepWaitsForFreshHoldAndRejectsLateMembersOrMutatio
         auto& engine = *session.Engine();
         auto& buses = engine.buses;
         ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(630), VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(630), 0, 0));
         engine.nullBackend.Pump(1);
         const std::array working{BusTree::WorkBinding{buses.RefAt(0), buses.AcceptedWorkRef(buses.RefAt(0))},
             BusTree::WorkBinding{buses.RefAt(1), buses.AcceptedWorkRef(buses.RefAt(1))}};
@@ -1350,6 +1240,7 @@ TEST(BusActivity, DeletedBusDoesNotReturnToDormantRegistryAtSleepAcknowledgement
     auto& buses = engine.buses;
     const auto id = harkentest::ObjectId(615);
     ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
     engine.nullBackend.Pump(400);
     const auto bus = buses.FindRef(id);
     BusTree::WorkObservation fact;
@@ -1457,6 +1348,7 @@ TEST(BusActivity, ReusedLogicalSlotRequiresANewWorkIncarnation) {
     auto& buses = engine.buses;
     const auto firstId = harkentest::ObjectId(10), nextId = harkentest::ObjectId(11);
     ASSERT_EQ(VN_OK, Vn_CreateBus(firstId, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(firstId, 0, 0));
     engine.nullBackend.Pump(1);
     const auto first = buses.FindRef(firstId);
     const auto oldWork = buses.AudioWorkRef(first.index);
@@ -1494,6 +1386,7 @@ TEST(BusActivity, SignalReplacementIsExplicitAndFencedToItsPreparedPredecessor) 
     auto& engine = *session.Engine();
     auto& buses = engine.buses;
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0, 0));
     engine.nullBackend.Pump(1);
     const std::array working{
         harken::BusTree::WorkBinding{buses.RefAt(0), buses.AudioWorkRef(0)},
@@ -1555,7 +1448,7 @@ TEST(BusActivity, SignalReplacementIsExplicitAndFencedToItsPreparedPredecessor) 
     EXPECT_EQ(0u, buses.ActivityFallbackCount());
 }
 
-TEST(BusActivity, InitialTransactionalSlotBindsItsWorkIdentity) {
+TEST(BusActivity, LogicalSlotUsesIndependentlyPreparedWorkIdentity) {
     auto config = MakeNullConfig(2, kBlockFrames);
     config.maxBuses = 2;
     EngineSession session(config);
@@ -1563,16 +1456,28 @@ TEST(BusActivity, InitialTransactionalSlotBindsItsWorkIdentity) {
     auto& engine = *session.Engine();
     auto& buses = engine.buses;
     buses.CommitLogicSlot(1, harkentest::ObjectId(10), 0, 1);
+    EXPECT_EQ(1u, buses.WorkRowsInUse());
+    EXPECT_FALSE(buses.AcceptedWorkRef(buses.RefAt(1)).Valid());
+    const auto spare = buses.PrepareWorkRow();
+    const auto work = buses.PrepareWorkRow();
+    ASSERT_TRUE(spare.Valid());
+    ASSERT_TRUE(work.Valid());
+    ASSERT_NE(1u, work.slot);
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(1, *buses.PreparedWorkRow(work)));
+    ASSERT_TRUE(buses.PublishWorkRow(work));
     const auto index = engine.topologyPlans.AcquireSparse(0);
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, index);
     harken::FillLiveSignalTopology(engine, index);
     buses.ApplyTopologyPlan(index, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
     const std::array working{
         harken::BusTree::WorkBinding{buses.RefAt(0), buses.AudioWorkRef(0)},
-        harken::BusTree::WorkBinding{buses.RefAt(1), buses.AudioWorkRef(1)}};
+        harken::BusTree::WorkBinding{buses.RefAt(1), work}};
     auto* plan = buses.PrepareActivity(buses.InstalledTopology(), working);
     ASSERT_NE(nullptr, plan);
     buses.CancelActivity(plan);
+    buses.ReleaseWorkRow(work);
+    buses.ReleaseWorkRow(spare);
+    buses.ServiceWorkRowRetirements();
     buses.DrainActivities();
 }
 
