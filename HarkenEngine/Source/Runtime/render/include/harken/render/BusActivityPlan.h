@@ -29,11 +29,13 @@ struct BusDormantCapture {
     std::array<std::uint32_t, kMaxFxSlotsPerBus> revisions{};
     std::array<EffectInstanceRef, kMaxFxSlotsPerBus> expectedEffects{};
     std::array<ToneDormantState, kMaxFxSlotsPerBus> tones;
+    std::array<double, 3 + 4 * kMaxFxSlotsPerBus> signalHistory{};
 };
 
 struct BusDormantWork {
     BusSlotRef bus;
     std::vector<std::byte> payload;
+    std::uint64_t signalHistoryMask = 0;
     std::uint8_t filterMask = 0;
 };
 

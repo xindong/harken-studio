@@ -8,6 +8,18 @@
 namespace harken {
 
 namespace {
+template<class Bus, class Visit>
+void VisitSignalHistory(Bus& bus, Visit&& visit) noexcept {
+    visit(0, bus.signalGainHistory);
+    visit(1, bus.signalOutputHistory);
+    visit(2, bus.signalLayoutHistory);
+    for (std::uint32_t slot = 0; slot < kMaxFxSlotsPerBus; ++slot) {
+        visit(3 + slot * 4, bus.signalSlotHistory[slot]);
+        for (std::uint32_t band = 0; band < 3; ++band)
+            visit(4 + slot * 4 + band, bus.signalToneHistory[slot][band]);
+    }
+}
+
 bool DefaultDormantFilter(const BusTree::DormantToneSection& value) noexcept {
     const BusTree::DormantToneSection initial;
     const auto same = [](float a, float b) { return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b); };
@@ -32,6 +44,11 @@ std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture
             result->filterMask |= 1u << i;
             size += sizeof(saved.filters[i]);
         }
+    for (std::uint32_t i = 0; i < saved.signalHistory.size(); ++i)
+        if (saved.signalHistory[i] > 1) {
+            result->signalHistoryMask |= UINT64_C(1) << i;
+            size += sizeof(double);
+        }
     result->payload.resize(size);
     auto* cursor = result->payload.data();
     const auto append = [&](const void* value, std::size_t bytes) {
@@ -39,6 +56,9 @@ std::shared_ptr<const BusDormantWork> CompactDormantWork(const BusDormantCapture
     };
     for (std::uint32_t i = 0; i < saved.filters.size(); ++i)
         if ((result->filterMask & (1u << i)) != 0) append(&saved.filters[i], sizeof(saved.filters[i]));
+    for (std::uint32_t i = 0; i < saved.signalHistory.size(); ++i)
+        if ((result->signalHistoryMask & (UINT64_C(1) << i)) != 0)
+            append(&saved.signalHistory[i], sizeof(double));
     return result;
 }
 }
@@ -403,7 +423,9 @@ bool BusTree::AcknowledgeSleep() noexcept {
                 std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });
                 // Exact defaults reconstruct without history. Disabled filters
                 // with frozen input or non-default certificates remain owned.
-                if (!std::all_of(row.saved->filters.begin(), row.saved->filters.end(), DefaultDormantFilter))
+                if (!std::all_of(row.saved->filters.begin(), row.saved->filters.end(), DefaultDormantFilter) ||
+                    std::any_of(row.saved->signalHistory.begin(), row.saved->signalHistory.end(),
+                        [](double value) { return value > 1; }))
                     next->buses.push_back(CompactDormantWork(*row.saved));
                 effects.push_back(row.saved.get());
             }
@@ -454,6 +476,9 @@ bool BusTree::RestoreDormantWork(Bus& row) const noexcept {
             read(&state, sizeof(state));
             RestoreDormantToneSection(*sections[i], state);
         }
+        VisitSignalHistory(row, [&](std::uint32_t index, double& value) {
+            if ((saved.signalHistoryMask & (UINT64_C(1) << index)) != 0) read(&value, sizeof(value));
+        });
         break;
     }
     return true;
@@ -537,6 +562,12 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
                 !current.localRecoveryReady || current.quietFrames < m_sampleRate / 2 || !LocalRecoveryReady(row->bus))
                 return reject();
             auto& saved = *entry.saved;
+            // These high-water bounds affect feedback receiver gain even after
+            // the original gain/effect is changed. Zero and one are equivalent
+            // before the next max(1, history, value); larger values must survive.
+            VisitSignalHistory(row->bus, [&](std::uint32_t index, double value) {
+                saved.signalHistory[index] = std::max(1.0, value);
+            });
             const std::array sections{&row->bus.busLpf, &row->bus.busHpf, &row->bus.outputLpf, &row->bus.outputHpf};
             for (std::size_t i = 0; i < sections.size(); ++i)
                 if (!CaptureDormantToneSection(*sections[i], m_mixChannels, saved.filters[i])) return reject();
