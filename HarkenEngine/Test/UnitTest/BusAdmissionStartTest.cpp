@@ -3088,6 +3088,9 @@ TEST(BusAdmissionStart, LiveBusV5DeletionRetainsRetirementAndReusesNewGeneration
     while (lane.TryPush({})) {}
     engine.nullBackend.Pump(1);
     EXPECT_FALSE(engine.buses.FindRef(child).Valid());
+    // Release the previous receipt, then let the sole audio producer retire.
+    engine.buses.DrainActivities();
+    engine.nullBackend.Pump(1);
     EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->update.phase.load());
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     ASSERT_EQ(VN_OK, Vn_Update());

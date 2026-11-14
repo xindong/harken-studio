@@ -213,6 +213,90 @@ TEST(MonitorMeasure, BusStatesPublishFreshPeaksAndCompletedSleepWakeMembership) 
     EXPECT_FLOAT_EQ(.125f, row.peakPostEffects);
 }
 
+TEST(MonitorMeasure, BusStatesKeepCompletedReceiptUntilReplacementAndRejectReusedGeneration) {
+    harkentest::EngineSession session(MeasurementRegistryConfig(2, 256));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto id = harkentest::ObjectId(22001);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    VnGainDesc gain{}; gain.structSize = sizeof(gain);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    const auto samples = harkentest::MakeDC(256, .25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    const auto sound = harkentest::ObjectId(22002);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound); play.busId = id;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto old = engine.buses.FindRef(id);
+    harken::SnapshotPayload receipt{};
+    ASSERT_TRUE(engine.mixer.Snapshots().Capture(receipt));
+    ASSERT_EQ(VN_OK, Vn_DestroyBus(id));
+    engine.mixer.DrainQueuedCommands(1);
+    engine.buses.DrainActivities();
+    const auto* retained = engine.buses.ObservedActivity(receipt.busActivityPublication);
+    ASSERT_NE(nullptr, retained);
+    VnBusState state{};
+    engine.buses.CaptureObservedBusState(old, receipt, retained, state);
+    ASSERT_EQ(VN_BUS_STATE_VALID | VN_BUS_STATE_WORKING | VN_BUS_STATE_RENDERED, state.flags);
+    EXPECT_EQ(receipt.blocksRendered, state.blockSequence);
+    EXPECT_FLOAT_EQ(.25f, state.peakPostEffects);
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(nullptr, engine.buses.ObservedActivity(receipt.busActivityPublication));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    const auto replacement = harkentest::ObjectId(22003);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(replacement, VN_BUS_MASTER));
+    const auto current = engine.buses.FindRef(replacement);
+    ASSERT_EQ(old.index, current.index);
+    ASSERT_GT(current.generation, old.generation);
+    std::uint32_t count = 0, next = 0;
+    ASSERT_EQ(VN_OK, Vn_CaptureBusStates(current.index, &state, 1, &count, &next));
+    EXPECT_EQ(0u, state.flags);
+    EXPECT_EQ(replacement, state.busId);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_CaptureBusStates(current.index, &state, 1, &count, &next));
+    EXPECT_EQ(VN_BUS_STATE_VALID, state.flags);
+    EXPECT_GT(state.blockSequence, receipt.blocksRendered);
+    EXPECT_EQ(0, state.peakPostEffects);
+}
+
+TEST(MonitorMeasure, BusStatesDegradedBlockReplacesPositivePeaksWithFreshUnavailableRender) {
+    harkentest::EngineSession session(MeasurementRegistryConfig(2, 256));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto id = harkentest::ObjectId(23001);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    const auto index = engine.buses.FindRef(id).index;
+    const auto samples = harkentest::MakeDC(2048, .25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    const auto sound = harkentest::ObjectId(23002);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound); play.busId = id;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    engine.nullBackend.Pump(1);
+    VnBusState state{};
+    std::uint32_t count = 0, next = 0;
+    ASSERT_EQ(VN_OK, Vn_CaptureBusStates(index, &state, 1, &count, &next));
+    ASSERT_FLOAT_EQ(.25f, state.peakPostEffects);
+    const auto before = state.blockSequence;
+    engine.mixer.ArenaForTests().SetCapacityForTests(64);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_CaptureBusStates(index, &state, 1, &count, &next));
+    EXPECT_GT(state.blockSequence, before);
+    EXPECT_EQ(VN_BUS_STATE_VALID | VN_BUS_STATE_WORKING, state.flags);
+    EXPECT_EQ(0, state.peakPreFader);
+    EXPECT_EQ(0, state.peakPostFader);
+    EXPECT_EQ(0, state.peakPostEffects);
+}
+
 TEST(MonitorMeasure, RegistryListsFirstBatchKinds) {
     harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());

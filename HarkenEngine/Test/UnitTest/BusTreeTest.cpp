@@ -901,6 +901,10 @@ TEST(BusActivity, RealMixerUsesCompactPlanesAndReconstructedWorkRows) {
     EXPECT_FLOAT_EQ(0, buses.OutputPeak(idle.index));
     for (auto sample : first.left) EXPECT_FLOAT_EQ(.5f, sample);
     buses.DrainActivities();
+    // Dropping the completed receipt's last lease requests audio-owned retirement.
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    engine.nullBackend.Pump(1);
+    buses.DrainActivities();
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     // A cancelled real candidate must return its private effects without
     // changing the installed projection or manufacturing a queued predecessor.

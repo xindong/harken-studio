@@ -400,9 +400,12 @@ TEST(BusDestroy, InstalledEffectInstancesRetireToTheirPools) {
     };
     EXPECT_EQ(1u, gainRowActive(Snap()));
 
-    // The destroy swap retires the installed instance; the next Vn_Update
-    // drains the retire queue back into the pool.
+    // The completed receipt releases its work lease on Update. The next
+    // audio pass retires its effects, which the logic owner then reclaims.
     ASSERT_EQ(VN_OK, Vn_DestroyBus(kBusA));
+    warm = PumpBlock(session.Engine());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(1u, gainRowActive(Snap()));
     warm = PumpBlock(session.Engine());
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, gainRowActive(Snap()));

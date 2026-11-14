@@ -4426,6 +4426,8 @@ TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacem
     EXPECT_NEAR(limited, SettledLevel(engine), 2e-3f);
     ASSERT_EQ(VN_OK, UnloadSet(beforeUnload->initHandle, beforeUnload->ledger.setRevision));
     EXPECT_NEAR(dry, SettledLevel(engine), 2e-3f);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(busId));
 }

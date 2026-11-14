@@ -816,6 +816,10 @@ TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
         EXPECT_EQ(generation, engine.buses.BusState(index)->generation);
         EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     }
+    // Command adoption alone cannot invalidate the last completed receipt.
+    engine.nullBackend.Pump(1);
+    engine.buses.DrainActivities();
+    engine.nullBackend.Pump(1);
     EXPECT_EQ(1u, engine.effectBank.DrainRetire());
     EXPECT_EQ(0u, engine.effectBank.DrainRetire());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));

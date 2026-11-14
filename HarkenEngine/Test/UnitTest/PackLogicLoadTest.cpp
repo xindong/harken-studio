@@ -4229,6 +4229,8 @@ TEST(PackLogicUnload,
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(13002), 0.0f, 0));
     EXPECT_EQ(harken::kEffectTypeNone,
               engine->BusEffectRefs(target)[0].type);
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine->effectBank.InUseOf(VN_EFFECT_COMPRESSOR));
     EXPECT_EQ(nullptr, engine->logicPacks.RecordFor(pack));
     EXPECT_EQ(0u, engine->packs.LoadedCount());

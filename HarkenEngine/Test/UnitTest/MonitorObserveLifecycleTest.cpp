@@ -741,6 +741,8 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     ASSERT_EQ(VN_OK, Vn_UnloadPack(handle));
     engine.Engine()->nullBackend.Pump(4);
     ASSERT_EQ(VN_OK, Vn_Update());
+    engine.Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
     harken::monitor::DrainOnceForTests();
     ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
     std::uint32_t released = 0;
