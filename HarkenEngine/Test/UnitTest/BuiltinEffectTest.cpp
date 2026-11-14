@@ -378,6 +378,44 @@ TEST(BuiltinEffectPool, AutomaticGrowthPreservesPublishedRowsProofsAndUndrainedR
     EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_GAIN));
 }
 
+TEST(BuiltinEffectPool, DelayReuseStartsCleanAfterCancellationAndAudioRetirement) {
+    harken::EffectPoolBank bank(harken::EngineConfig{});
+    for (const bool publish : {false, true}) {
+        SCOPED_TRACE(publish);
+        const auto ref = bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY);
+        ASSERT_EQ(VN_EFFECT_FEEDBACK_DELAY, ref.type);
+        auto* state = static_cast<harken::DelayEffectState*>(bank.StateFor(ref.type, ref.poolIndex));
+        ASSERT_NE(nullptr, state);
+        const auto samples = static_cast<std::size_t>(state->lineFrames) * harken::kMaxChannels;
+        ASSERT_NE(0u, samples);
+        std::fill_n(state->lineBase, samples, 0.5f);
+        state->writeIndex = 17;
+        state->feedback = 0.75f;
+        state->hasRendered = true;
+        if (publish) {
+            ASSERT_TRUE(bank.CommitPrepared(ref));
+            {
+                harken::memguard::AudioThreadScope audio;
+                ASSERT_TRUE(bank.Retire(ref));
+            }
+            // Retirement only transfers ownership; audio must not clear it.
+            EXPECT_EQ(0.5f, state->lineBase[0]);
+            ASSERT_EQ(1u, bank.DrainRetire());
+        } else {
+            ASSERT_TRUE(bank.CancelPrepared(ref));
+        }
+        const auto next = bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY);
+        ASSERT_EQ(ref.poolIndex, next.poolIndex);
+        EXPECT_GT(next.generation, ref.generation);
+        EXPECT_TRUE(std::all_of(state->lineBase, state->lineBase + samples,
+            [](float value) { return value == 0.0f; }));
+        EXPECT_EQ(0u, state->writeIndex);
+        EXPECT_EQ(0.0f, state->feedback);
+        EXPECT_FALSE(state->hasRendered);
+        ASSERT_TRUE(bank.CancelPrepared(next));
+    }
+}
+
 TEST(BuiltinEffectPool, RetiredGenerationSurvivesConcurrentLogicReuse) {
     harken::EngineConfig config;
     config.gainEffectPoolCapacity = 1;

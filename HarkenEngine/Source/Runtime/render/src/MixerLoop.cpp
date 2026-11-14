@@ -244,6 +244,10 @@ bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
 }
 
 std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const noexcept {
+    // Consult every retained owner, including queued and retiring activities,
+    // before scanning voice paths and topology Sends that only signals need.
+    if (m_buses.RetainedSignalScratchBytes(m_dynamicRouteCapacity, 0, m_blockFrames) == 0)
+        return 0;
     const auto edges = m_buses.RetainedSendCount() +
         m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();

@@ -74512,7 +74512,9 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
                 limiter.sampleRate = sampleRate;
             }
             auto effect = BuildEffect(type, state);
-            if (effect.reset) effect.reset(state);
+            // Free Delay instances have a zero line and default state. Their
+            // previous owner was reset on logic disposal, outside this start.
+            if (effect.reset && type != VN_EFFECT_FEEDBACK_DELAY) effect.reset(state);
             if (effect.setParam)
                 for (std::uint32_t param = 0; param < EffectParamCount(type); ++param)
                     effect.setParam(state, param, effectParamTargets.LastCommitted(

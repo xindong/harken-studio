@@ -16,7 +16,10 @@ BusTree::WorkRef BusTree::PrepareWorkRow() noexcept {
             slot = m_workRows.ConstructedCount();
             if (slot == UINT32_MAX) return {};
             // Every issued row can return without allocating in a destructor.
-            m_freeWorkRows.reserve(static_cast<std::size_t>(slot) + 1);
+            const auto required = static_cast<std::uint64_t>(slot) + 1;
+            if (required > m_freeWorkRows.capacity())
+                m_freeWorkRows.reserve(static_cast<std::size_t>(std::max(required,
+                    std::min<std::uint64_t>(UINT32_MAX, m_freeWorkRows.capacity() * 2ull))));
             if (!m_workRows.ConstructThrough(slot + 1)) return {};
         } else {
             slot = m_freeWorkRows.back();
@@ -26,7 +29,8 @@ BusTree::WorkRef BusTree::PrepareWorkRow() noexcept {
         assert(row.generation != UINT64_MAX);
         ++row.generation;
         row.slot = slot;
-        row.bus = {};
+        // Construction and RecycleWorkRow both leave a default Bus. Do not
+        // clear the same DSP state again on the latency-sensitive acquire path.
         row.host = {};
         row.hostId = {};
         row.logicEffects = {};
