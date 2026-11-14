@@ -18,7 +18,7 @@ bool BusTree::CaptureWorkObservation(BusSlotRef bus, WorkRef work, WorkObservati
 
 void BusTree::BeginWorkObservations() noexcept {
     const auto reset = [&](std::uint32_t index) {
-        auto& row = m_workRows[m_workSlots[index].slot];
+        auto& row = *m_workSlots[index];
         row.observed.physicalVoice = false;
         row.bus.activityInput = row.bus.activityDetector = false;
     };
@@ -29,7 +29,7 @@ void BusTree::BeginWorkObservations() noexcept {
 
 void BusTree::NoteAudioBusUser(BusSlotRef bus) noexcept {
     if (!HasWorkRow(bus.index) || !AudioRefMatches(bus)) return;
-    m_workRows[m_workSlots[bus.index].slot].observed.physicalVoice = true;
+    m_workSlots[bus.index]->observed.physicalVoice = true;
 }
 
 bool BusTree::LocalRecoveryReady(const Bus& bus) const noexcept {
@@ -64,13 +64,13 @@ void BusTree::PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t
             WorkState(route.targetBusIndex).activityDetector = true;
     }
     const auto publish = [&](std::uint32_t index) {
-        auto& row = m_workRows[m_workSlots[index].slot];
+        auto& row = *m_workSlots[index];
         auto& fact = row.observed;
         const auto& bus = row.bus;
         const bool changed = fact.stateRevision != bus.activityRevision ||
             fact.graphRevision != InstalledGraphRevision();
         fact.bus = row.host;
-        fact.work = m_workSlots[index];
+        fact.work = WorkReference(&row);
         fact.blockSequence = blockSequence;
         fact.activityPublication = AudioActivityPublication();
         fact.peakPreFader = rendered ? bus.preFaderPeak : 0;

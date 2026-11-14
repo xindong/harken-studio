@@ -705,11 +705,15 @@ private:
     // Offline direct-construction seam; normal publication uses activity planes.
     std::vector<float*> m_directPlanes;
     GrowingRowStorage<WorkRow> m_workRows;
-    GrowingRowStorage<WorkRef> m_workSlots;
+    // Each audio slot retains its stable row until it clears this pointer.
+    GrowingRowStorage<WorkRow*> m_workSlots;
     std::vector<std::uint32_t> m_freeWorkRows;
     std::atomic<WorkRow*> m_workRetireRequests{nullptr};
     std::atomic<WorkRow*> m_workRetired{nullptr};
     std::uint32_t m_workRowsInUse = 0;
+    static WorkRef WorkReference(const WorkRow* row) noexcept {
+        return row != nullptr ? WorkRef{row->slot, row->generation} : WorkRef{};
+    }
     WorkRow* ResolveWorkRow(WorkRef ref) noexcept;
     WorkRef LogicEffectWorkRef(BusSlotRef bus) const noexcept;
     void AudioReleaseWorkRow(WorkRef ref) noexcept;
@@ -725,13 +729,13 @@ private:
     bool m_automaticSleepForTest = true;
 #endif
     bool HasWorkRow(std::uint32_t index) const noexcept {
-        return index < m_audioCount && m_workSlots[index].Valid();
+        return index < m_audioCount && m_workSlots[index] != nullptr;
     }
     Bus& WorkState(std::uint32_t busIndex) noexcept {
-        return m_workRows[m_workSlots[busIndex].slot].bus;
+        return m_workSlots[busIndex]->bus;
     }
     const Bus& WorkState(std::uint32_t busIndex) const noexcept {
-        return m_workRows[m_workSlots[busIndex].slot].bus;
+        return m_workSlots[busIndex]->bus;
     }
     GrowingRowStorage<std::atomic<BusEffectChainState*>> m_previewEffectStates;
     std::atomic<std::uint32_t> m_pendingPreviewEffects{0};

@@ -3047,9 +3047,6 @@ TEST(CompressorDynamicRoute,
         VnConfig config = harkentest::MakeNullConfig(2, kBlock, kRate);
         config.fxSlotsPerBus = 1;
         config.compressorEffectPoolCapacity = 1;
-        if (degradeTarget) {
-            config.arenaBytes = 64;
-        }
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -3083,6 +3080,7 @@ TEST(CompressorDynamicRoute,
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&sourcePlay, &sourceVoice));
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&targetPlay, &targetVoice));
 
+        if (degradeTarget) session.Engine()->mixer.ArenaForTests().SetCapacityForTests(64);
         Capture rendered;
         harkentest::PumpAndCapture(session.Engine(), 1, rendered);
         std::uint32_t required = 0;

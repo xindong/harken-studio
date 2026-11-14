@@ -137,6 +137,7 @@ public:
         assert(!HasPreparedBacking() && !other.HasPreparedBacking());
         segments_.swap(other.segments_);
         std::swap(baseRows_, other.baseRows_);
+        std::swap(baseShift_, other.baseShift_);
         std::swap(pageBytes_, other.pageBytes_);
         std::swap(capacity_, other.capacity_);
         // The caller excludes all readers before swapping stable directories.
@@ -149,7 +150,7 @@ public:
 private:
     std::uint32_t SegmentFor(std::uint32_t slot) const noexcept {
         return static_cast<std::uint32_t>(std::bit_width(
-            static_cast<std::uint64_t>(slot / baseRows_) + 1u) - 1u);
+            static_cast<std::uint64_t>(slot >> baseShift_) + 1u) - 1u);
     }
     std::uint32_t SegmentBegin(std::uint32_t segment) const noexcept {
         return static_cast<std::uint32_t>(static_cast<std::uint64_t>(baseRows_) *
@@ -165,6 +166,7 @@ private:
             if (pageBytes_ == 0) return false;
             baseRows_ = std::bit_floor(static_cast<std::uint32_t>(
                 std::max<std::size_t>(1u, std::min<std::size_t>(UINT32_MAX, pageBytes_ / sizeof(T)))));
+            baseShift_ = std::countr_zero(baseRows_);
         }
         auto cursor = ConstructedCount();
         while (cursor < count) {
@@ -199,6 +201,7 @@ private:
     std::array<std::unique_ptr<StableRowStorage<T>>, std::numeric_limits<std::uint32_t>::digits> segments_{};
     StableStorageGrowthState growth_;
     std::uint32_t baseRows_ = 0;
+    std::uint32_t baseShift_ = 0;
     std::uint32_t capacity_ = 0;
     std::atomic<std::uint32_t> constructed_{0};
     std::size_t pageBytes_ = 0;

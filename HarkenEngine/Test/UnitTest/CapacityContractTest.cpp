@@ -2027,10 +2027,10 @@ TEST(CapacityContract, QuantumBudgetCountersArePublishedAndStartAtZero) {
 // would report a produced high-water of two.
 TEST(CapacityContract, QuantumBudgetResetsAcrossIndependentRenderBlocks) {
     VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
-    config.arenaBytes = 64;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    engine->mixer.ArenaForTests().SetCapacityForTests(64);
 
     for (std::uint32_t block = 0; block < 2; ++block) {
         engine->nullBackend.Pump(1);

@@ -95,7 +95,7 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
     master.generation = 1;
     master.references.store(1, std::memory_order_relaxed);
     master.phase.store(WorkPhase::Published, std::memory_order_relaxed);
-    m_workSlots[0] = {0, 1};
+    m_workSlots[0] = &master;
     m_workRowsInUse = 1;
     // The master bus pre-exists at index 0 and is its own parent (the fold
     // never dereferences the master's parent). Its chain defaults to all
@@ -238,7 +238,7 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
         // The direct construction seam prepares only the requested hidden row.
         const auto work = PrepareWorkRow();
         if (!work.Valid()) return VN_DEVICE_ERROR;
-        m_workSlots[busIndex] = work;
+        m_workSlots[busIndex] = ResolveWorkRow(work);
         InitializeBusSlot(busIndex, id, parentIndex, generation);
         if (!PublishWorkRow(work)) std::terminate();
     }
@@ -247,7 +247,7 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
 }
 
 BusTree::Bus* BusTree::BusState(std::uint32_t busIndex) {
-    return busIndex < m_count && m_workSlots[busIndex].Valid() ? &WorkState(busIndex) : nullptr;
+    return busIndex < m_count && m_workSlots[busIndex] != nullptr ? &WorkState(busIndex) : nullptr;
 }
 
 std::uint32_t BusTree::FindIndex(VnBusId id) const {
@@ -1039,7 +1039,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
             auto* transition = bus.fxChainTransition;
             auto next = slot + 1;
             if (transition == nullptr || (transition->changedMask & (1u << slot)) == 0) {
-                processSlot(slot);
+                if (bus.fxSlots[slot].process != nullptr) processSlot(slot);
                 continue;
             }
             next = end;
@@ -1234,6 +1234,8 @@ SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t
     double input = bus.signalGainHistory;
     for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
         const auto& effect = bus.fxSlots[slot];
+        // Empty slots with identity history cannot enlarge the path bound.
+        if (effect.process == nullptr && bus.signalSlotHistory[slot] == 1.0) continue;
         double value = 1;
         if (effect.process != nullptr && effect.state != nullptr) {
             switch (bus.fxSlotEffectRef[slot].type) {
@@ -1607,7 +1609,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         effectType, poolIndex, poolGeneration};
     void* incomingState = m_effectBank.LiveStateFor(incoming);
     if (incomingState == nullptr) { return; }
-    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || m_workSlots[busIndex] == nullptr || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1647,7 +1649,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
 
 void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
                                   std::uint32_t busGeneration) {
-    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || m_workSlots[busIndex] == nullptr || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1688,7 +1690,7 @@ void BusTree::ApplySetBusEffectParam(std::uint32_t busIndex, std::uint32_t slot,
                                      std::uint32_t tailFrames,
                                      std::uint32_t transitionFrames,
                                      std::uint32_t busGeneration) {
-    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || m_workSlots[busIndex] == nullptr || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1732,7 +1734,7 @@ void BusTree::ApplySetBusCompressorParameters(
     std::uint32_t transitionFrames,
     std::uint32_t busGeneration) {
     if (effectType != VN_EFFECT_COMPRESSOR ||
-        busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+        busIndex >= m_workSlots.ConstructedCount() || m_workSlots[busIndex] == nullptr || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1757,7 +1759,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
                                       std::uint32_t action,
                                       std::uint32_t expectedEffectType,
                                       std::uint32_t busGeneration) {
-    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || m_workSlots[busIndex] == nullptr || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1804,7 +1806,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
 void BusTree::ApplySetBusFaderPoint(std::uint32_t busIndex,
                                     std::uint32_t faderAfterSlot,
                                     std::uint32_t busGeneration) {
-    if (busIndex >= m_workSlots.ConstructedCount() || !m_workSlots[busIndex].Valid() || WorkState(busIndex).id == VnObjectId{} ||
+    if (busIndex >= m_workSlots.ConstructedCount() || m_workSlots[busIndex] == nullptr || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration}))) {
         return;

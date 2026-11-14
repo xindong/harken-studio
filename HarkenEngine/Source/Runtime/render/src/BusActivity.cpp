@@ -543,17 +543,17 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
     for (const auto& binding : plan.working) {
         const auto bus = binding.bus.index;
         NoteWorkMutation(ResolveWorkRow(binding.work)->bus);
-        if (m_workSlots[bus] == binding.work) continue;
+        if (WorkReference(m_workSlots[bus]) == binding.work) continue;
         const bool retained = RetainWorkRow(binding.work);
         assert(retained);
         if (!retained) std::terminate();
-        const auto old = m_workSlots[bus];
-        m_workSlots[bus] = binding.work;
+        const auto old = WorkReference(m_workSlots[bus]);
+        m_workSlots[bus] = ResolveWorkRow(binding.work);
         AudioReleaseWorkRow(old);
     }
     const auto remove = [&](std::uint32_t bus) {
         if (bus < plan.directory.size() && plan.directory[bus].plane != UINT32_MAX) return;
-        const auto old = m_workSlots[bus];
+        const auto old = WorkReference(m_workSlots[bus]);
         m_workSlots[bus] = {};
         AudioReleaseWorkRow(old);
     };

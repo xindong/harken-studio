@@ -108,14 +108,14 @@ bool BusTree::PublishWorkRow(WorkRef ref) noexcept {
 }
 
 void BusTree::BindInitialWorkIdentity(std::uint32_t index) noexcept {
-    auto& row = m_workRows[m_workSlots[index].slot];
+    auto& row = *m_workSlots[index];
     assert(!row.host.Valid());
     row.host = {row.bus.busIndex, row.bus.generation};
     row.hostId = row.bus.id;
 }
 
 BusTree::WorkRef BusTree::AudioWorkRef(std::uint32_t index) const noexcept {
-    return index < m_audioCount ? m_workSlots[index] : WorkRef{};
+    return index < m_audioCount ? WorkReference(m_workSlots[index]) : WorkRef{};
 }
 
 bool BusTree::AudioAdoptWorkRow(BusSlotRef bus, WorkRef ref) noexcept {
@@ -123,17 +123,17 @@ bool BusTree::AudioAdoptWorkRow(BusSlotRef bus, WorkRef ref) noexcept {
     if (row == nullptr || row->phase.load(std::memory_order_acquire) != WorkPhase::Published ||
         !AudioRefMatches(bus) || row->bus.busIndex != bus.index ||
         row->bus.generation != bus.generation) return false;
-    if (m_workSlots[bus.index] == ref) return true;
+    if (m_workSlots[bus.index] == row) return true;
     if (!RetainWorkRow(ref)) return false;
-    const auto old = m_workSlots[bus.index];
-    m_workSlots[bus.index] = ref;
+    const auto old = WorkReference(m_workSlots[bus.index]);
+    m_workSlots[bus.index] = row;
     AudioReleaseWorkRow(old);
     return true;
 }
 
 bool BusTree::AudioDetachWorkRow(BusSlotRef bus) noexcept {
     if (bus.index == 0 || !AudioRefMatches(bus)) return false;
-    const auto old = m_workSlots[bus.index];
+    const auto old = WorkReference(m_workSlots[bus.index]);
     m_workSlots[bus.index] = {};
     AudioReleaseWorkRow(old);
     return true;

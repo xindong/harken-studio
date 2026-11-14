@@ -2397,7 +2397,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot)
                 if (update.targets[slot].effectType != kEffectTypeNone)
                     effectWrites.push_back({chain.host.index, slot, {update.targets[slot].effectType,
-                        engine.effectBank.ObjectIdentity(update.targetRefs[slot]), chain.state->owner}});
+                        engine.effectBank.ObjectIdentity(update.targetRefs[slot]), chain.state->preparedOwner}});
         }
         targetStorageReady &= engine.busEffects.Prepare(effectWrites);
     } catch (...) { targetStorageReady = false; }
