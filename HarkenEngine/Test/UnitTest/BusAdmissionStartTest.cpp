@@ -3064,6 +3064,7 @@ TEST(BusAdmissionStart, PreviewRetirementReusesCompletedMiddleWhileOtherChainsRe
     const std::array ids{harkentest::ObjectId(650), harkentest::ObjectId(651),
                          harkentest::ObjectId(652)};
     for (const auto id : ids) ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    for (const auto id : ids) ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
     engine.nullBackend.Pump(1);
     const std::array hosts{buses.FindRef(ids[0]), buses.FindRef(ids[1]), buses.FindRef(ids[2])};
     std::array<BusEffectChainState*, 3> states{};
