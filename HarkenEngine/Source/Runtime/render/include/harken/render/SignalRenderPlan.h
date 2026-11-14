@@ -328,6 +328,7 @@ public:
     // Run before retiring the old topology slot. Swapping transfers storage to
     // the retired owner, so neither allocation nor destruction occurs on audio.
     bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept;
+    std::uint32_t BusNodeCount() const noexcept { return static_cast<std::uint32_t>(busNodes_.size()); }
     std::uint32_t NodeCount() const noexcept { return static_cast<std::uint32_t>(nodes_.size()); }
     // A candidate graph is borrowed only for this quantum. Its slab must not
     // alias a live prior graph; failed compilation is never a usable fallback.

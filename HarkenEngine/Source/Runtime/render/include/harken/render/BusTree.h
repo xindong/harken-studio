@@ -125,6 +125,7 @@ public:
     TopologyPlanView AcceptedTopology() const noexcept { return m_acceptedTopology; }
     std::uint64_t NextActivitySignalPublication(const SignalRenderPlan* previous) noexcept;
     std::uint32_t WorkingPlaneCount() const noexcept;
+    std::span<float*> AudioPlanes() noexcept;
     BusRenderView RenderView(float* const* planes) noexcept;
     std::uint64_t ActivityFallbackCount() const noexcept { return m_activityFallbacks; }
     // Logic owns candidate leases; the audio directory owns a separate lease.
@@ -326,7 +327,7 @@ public:
                            std::uint32_t connectTo, float connectLevelDb,
                            std::uint64_t acceptedGraphRevision = 0);
     // Logic thread: include every plan that can still be consumed on audio.
-    std::uint64_t RetainedSignalScratchBytes(std::uint64_t extraNodes,
+    std::uint64_t RetainedSignalScratchBytes(std::uint32_t dynamicCapacity,
         std::uint64_t extraEdges, std::uint32_t frames) const noexcept;
     std::uint32_t RetainedSendCount() const noexcept;
     std::uint64_t InstalledGraphRevision() const noexcept {
@@ -687,6 +688,8 @@ private:
         std::uint64_t nextRecoveryProbeFrame = 0;
         std::uint32_t recoveryProbeDelay = 0;
     };
+    // Offline direct-construction seam; normal publication uses activity planes.
+    std::vector<float*> m_directPlanes;
     GrowingRowStorage<WorkRow> m_workRows;
     std::vector<WorkRef> m_workSlots;
     std::vector<std::uint32_t> m_freeWorkRows;

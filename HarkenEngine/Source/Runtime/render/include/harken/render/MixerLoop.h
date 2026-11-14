@@ -237,7 +237,6 @@ private:
     void PublishSourceCursors(std::uint64_t blockIndex,
                               std::uint64_t outputFrame);
 
-    const std::uint32_t m_maxBuses;
     const std::uint32_t m_blockFrames;
     // The per-quantum command ceiling. Read by two threads -- the audio thread
     // each block in DrainCommands, and the logic thread on every command
@@ -342,16 +341,14 @@ private:
     BlockArena m_arena;
     std::uint64_t m_arenaLowBytes = 0;
     std::uint32_t m_busFxSlots = 0, m_dynamicRouteCapacity = 0;
-    std::uint64_t SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
+    std::uint64_t SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes, std::uint32_t buses,
                                     std::size_t relations) const noexcept;
     std::uint64_t RetainedSignalScratchBytes(std::uint32_t slots) const noexcept;
     std::uint64_t m_arenaBytesPerSlot = 0;
     std::uint32_t m_arenaBatchAllowance = 1;
     VoicePool::SlotStorageRegistration m_arenaStorageRegistration;
-    // Per-bus accumulator plane pointers, bus-major (m_mixChannels per bus).
-    // Sized once at init; the audio thread only rewrites the pointers each
-    // block — the planes themselves come from the arena.
-    std::vector<float*> m_busPlanes;
+    // Audio borrows the active activity's prepared pointer array through its ACK.
+    std::span<float*> m_busPlanes;
     // Mix and device layouts (resolved config). The bus tree renders at the mix
     // width; after the fold, RenderBlock lays the master's mix-width output into
     // the device buffer — direct interleave when the device layout matches the

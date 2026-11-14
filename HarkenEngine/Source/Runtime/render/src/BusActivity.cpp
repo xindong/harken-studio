@@ -185,6 +185,7 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
             const auto* alternate = AcceptedActivityAlternate();
             if (alternate != nullptr) plan->replacedSignalAlternate = alternate->PublicationIdentity();
         }
+        plan->planes.resize(working.size() * m_mixChannels);
         plan->working.reserve(working.size());
         plan->directory.resize(topology.slotCount);
         plan->order.reserve(working.size());

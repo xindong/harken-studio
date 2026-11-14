@@ -95,8 +95,7 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                      std::uint32_t ackSideTableCapacity,
                      ProjectGenerationInstallAckRingV1* installAckRing,
                      OriginalSourceSubmissionRegistry* originalSources)
-    : m_maxBuses(config.maxBuses),
-      m_blockFrames(config.blockFrames),
+    : m_blockFrames(config.blockFrames),
       m_maxCommandsPerQuantum(config.maxControlCommandsPerQuantum),
       m_voices(voices),
       m_buses(buses),
@@ -131,9 +130,6 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
               std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
           config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
       m_arenaBatchAllowance(config.renderWorkerCount == 0 ? 1u : 2u),
-      m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
-                      config.mixChannelCount,
-                  nullptr),
       m_mixChannels(config.mixChannelCount),
       m_deviceChannels(config.deviceChannelCount),
       m_mixLayout(config.mixChannelLayout),
@@ -222,24 +218,24 @@ bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
     return m_arena.PrepareBacking(m_arenaLowBytes + signalBytes, highBytes);
 }
 
-std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes,
+std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t nodes, std::uint32_t buses,
                                            std::size_t relations) const noexcept {
     if (nodes == 0) return 0;
     const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
+        static_cast<std::uint64_t>(buses) * (m_busFxSlots + 2ull);
     const auto graphNodes = nodes + extra;
     if (graphNodes > UINT32_MAX) return UINT64_MAX;
     const std::uint64_t edges = extra + m_dynamicRouteCapacity +
-        static_cast<std::uint64_t>(m_maxBuses) + m_buses.RetainedSendCount() +
+        static_cast<std::uint64_t>(buses) + m_buses.RetainedSendCount() +
         relations + m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();
-    return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), m_maxBuses, edges, m_blockFrames);
+    return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), buses, edges, m_blockFrames);
 }
 
 bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
     const auto slots = m_voices.ConstructedSlotCount();
     const auto scratch = std::max(RetainedSignalScratchBytes(slots),
-        SignalScratchBytes(slots, plan.NodeCount(), plan.RelationCount()));
+        SignalScratchBytes(slots, plan.NodeCount(), plan.BusNodeCount(), plan.RelationCount()));
     const auto high = m_voices.PreparedCascadeChannelRows(m_mixChannels, slots) *
         m_voices.BlockFrames() * sizeof(float) * m_arenaBatchAllowance + alignof(float) - 1u;
     if (scratch > m_arena.CapacityBytes() || m_arenaLowBytes + scratch + high > m_arena.CapacityBytes()) return false;
@@ -247,13 +243,10 @@ bool MixerLoop::PrepareSignalBacking(const SignalRenderPlan& plan) noexcept {
 }
 
 std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const noexcept {
-    const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
-    const auto edges = extra + m_dynamicRouteCapacity +
-        static_cast<std::uint64_t>(m_maxBuses) + m_buses.RetainedSendCount() +
+    const auto edges = m_buses.RetainedSendCount() +
         m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();
-    return m_buses.RetainedSignalScratchBytes(extra, edges, m_blockFrames);
+    return m_buses.RetainedSignalScratchBytes(m_dynamicRouteCapacity, edges, m_blockFrames);
 }
 
 bool MixerLoop::PreparePreparedChannelBacking(std::uint32_t count) noexcept {
@@ -1798,7 +1791,9 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         // routing command necessarily drains after that swap.
         const std::uint32_t busCount = m_buses.WorkingPlaneCount();
 
-        for (std::uint32_t i = 0; i < busCount * m_mixChannels; ++i) {
+        m_busPlanes = m_buses.AudioPlanes();
+        planesOk = m_busPlanes.size() >= static_cast<std::size_t>(busCount) * m_mixChannels;
+        for (std::uint32_t i = 0; planesOk && i < busCount * m_mixChannels; ++i) {
             m_busPlanes[i] = m_arena.AllocFloats(frames);
             if (m_busPlanes[i] == nullptr) {
                 planesOk = false;

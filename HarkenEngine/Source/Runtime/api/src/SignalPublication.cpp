@@ -42,7 +42,7 @@ WorldInstallStatus PrepareSignalPublication(Engine& engine,
             // Match the ordinary live gain-setter's ten millisecond transition.
             const auto rampFrames = (static_cast<std::uint64_t>(format.sampleRate) * 10 + 999) / 1000;
             if (!owner->ConfigurePublication(next.predecessor + 1, contentIdentity,
-                    engine.acceptedSignalPlan.get(), rampFrames) || !engine.mixer.PrepareSignalBacking(*owner))
+                    engine.acceptedSignalPlan.get(), rampFrames))
                 return WorldInstallStatus::Capacity;
             next.owner = std::move(owner);
         }
@@ -336,8 +336,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                     (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 10 + 999) / 1000,
                     continuous ? engine.buses.AcceptedActivityAlternate() : nullptr) ||
                 (continuous && (!engine.buses.PrepareDormantSignalContinuity(*signals, *previous) ||
-                    !engine.buses.PreparePendingSleepContinuity(*signals))) ||
-                !engine.mixer.PrepareSignalBacking(*signals)) return false;
+                    !engine.buses.PreparePendingSleepContinuity(*signals)))) return false;
         }
         const bool replace = previous != nullptr &&
             (signals == nullptr || !signals->SameContinuityDomain(*previous));

@@ -27,21 +27,31 @@ std::uint32_t BusTree::RetainedSendCount() const noexcept {
     return result;
 }
 
-std::uint64_t BusTree::RetainedSignalScratchBytes(std::uint64_t extraNodes,
+std::uint64_t BusTree::RetainedSignalScratchBytes(std::uint32_t dynamicCapacity,
     std::uint64_t extraEdges, std::uint32_t frames) const noexcept {
     std::uint64_t result = 0;
-    for (std::uint32_t i = 0; i < m_plans.Capacity(); ++i) {
-        if (!m_plans.IsAcquired(i)) continue;
-        const auto* signals = m_plans.View(i).signals;
-        if (signals == nullptr || signals->NodeCount() == 0) continue;
-        const auto nodes = extraNodes + signals->NodeCount();
-        if (nodes > UINT32_MAX || extraEdges > UINT32_MAX ||
-            signals->RelationCount() > UINT32_MAX - extraEdges) return UINT64_MAX;
+    const auto include = [&](const SignalRenderPlan* signals) {
+        if (signals == nullptr || signals->NodeCount() == 0) return;
+        const auto buses = signals->BusNodeCount();
+        const auto extra = dynamicCapacity == 0 ? 0ull :
+            static_cast<std::uint64_t>(buses) * (m_fxSlots + 2ull);
+        const auto nodes = extra + signals->NodeCount();
+        const auto edges = extra + buses + dynamicCapacity + extraEdges + signals->RelationCount();
+        if (nodes > UINT32_MAX || edges > UINT32_MAX) { result = UINT64_MAX; return; }
         result = std::max(result, SignalRenderPlan::RoutingScratchBytes(
-            static_cast<std::uint32_t>(nodes), m_capacity,
-            extraEdges + signals->RelationCount(), frames));
-    }
+            static_cast<std::uint32_t>(nodes), buses, edges, frames));
+    };
+    for (const auto& activity : m_activities) include(activity->signals.get());
+    // Direct offline fixtures can render installed topology without activities.
+    if (m_activities.empty() && !HasAcceptedActivity())
+        for (std::uint32_t i = 0; i < m_plans.Capacity(); ++i)
+            if (m_plans.IsAcquired(i)) include(m_plans.View(i).signals);
     return result;
+}
+
+std::span<float*> BusTree::AudioPlanes() noexcept {
+    return m_activeActivity != nullptr ? std::span<float*>(m_activeActivity->planes)
+                                       : std::span<float*>(m_directPlanes);
 }
 
 BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
@@ -75,6 +85,7 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
                              config.blockFrames),
       m_outputScratch(config.mixChannelCount),
       m_biquadTrig(biquadTrig) {
+    m_directPlanes.resize(m_mixChannels);
     // Only Master owns an initial work row. Definitions acquire private rows
     // through activity preparation when actual work requires them.
     if (!m_workRows.ConstructThrough(1)) throw std::bad_alloc{};
@@ -208,6 +219,7 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
         if (m_count >= m_capacity) {
             return VN_NO_BUS;
         }
+        m_directPlanes.resize(static_cast<std::size_t>(m_count + 1) * m_mixChannels);
         busIndex = m_count;
         generation = 1;
         // The direct construction seam prepares only the requested hidden row.
