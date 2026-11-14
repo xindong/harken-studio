@@ -1261,6 +1261,41 @@ TEST(BusActivity, AcceptedSleepKeepsColdHistoryUntilAckThenReturnsEffects) {
     EXPECT_EQ(buses.ActivityFallbackCount(), 0u);
 }
 
+TEST(BusActivity, DeletedBusDoesNotReturnToDormantRegistryAtSleepAcknowledgement) {
+    using namespace harken;
+    EngineSession session(MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto id = harkentest::ObjectId(615);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    engine.nullBackend.Pump(400);
+    const auto bus = buses.FindRef(id);
+    BusTree::WorkObservation fact;
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, buses.AcceptedWorkRef(bus), fact));
+    const BusTree::WorkBinding compact[]{{buses.RefAt(0), buses.AcceptedWorkRef(buses.RefAt(0))}};
+    auto* sleep = buses.PrepareActivity(buses.AcceptedTopology(), compact);
+    ASSERT_NE(sleep, nullptr);
+    ASSERT_TRUE(buses.PrepareConditionalSleep(*sleep, {&fact, 1}, engine.voices));
+    std::weak_ptr<const BusDormantWork> residual = sleep->sleeping[0].saved;
+    CommandRecord command{};
+    command.opcode = kOpcodeSetBusActivity;
+    CommandQueue::BatchReservation reservation;
+    CommandQueue::PreparedBatchProof proof;
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof));
+    ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *buses.ActivityAttachment(sleep)));
+    ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(sleep->sleepDecision.load(), BusActivityPlan::SleepDecision::Accepted);
+    ASSERT_EQ(VN_OK, Vn_DestroyBus(id));
+    ASSERT_FALSE(buses.LogicRefMatches(bus));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_TRUE(residual.expired());
+}
+
 TEST(BusActivity, WakeCannotCountOrdinaryBusBindingsAsMissingContentNodes) {
     using namespace harken;
     for (bool extraDormantBus : {false, true}) {

@@ -74479,6 +74479,10 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
         row.generation = buses.GenerationAt(busIndex);
         row.parentIndex = buses.ParentOf(busIndex);
         row.faderAfterSlot = busFaderAfterSlots[busIndex];
+        if (const auto* preview = buses.PreviewEffectState(buses.RefAt(busIndex))) {
+            row.previewEffectOwner = preview->owner;
+            row.previewEffectRevision = preview->revision;
+        }
         row.outputLayout = busOutputLayout[busIndex];
         std::copy_n(busDownmixCoeffs.data() + static_cast<std::size_t>(busIndex) * 64,
                     64, row.downmixCoeffs);

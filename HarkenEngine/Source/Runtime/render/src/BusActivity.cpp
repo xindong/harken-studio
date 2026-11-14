@@ -208,7 +208,16 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
             if (!host.Valid() || (host.index < topology.slotCount &&
                 topology.alive[host.index] != 0 && topology.generations[host.index] == host.generation)) continue;
             const auto work = AcceptedWorkRef(host);
-            if (!RetainWorkRow(work)) return nullptr;
+            if (work.Valid()) {
+                if (!RetainWorkRow(work)) return nullptr;
+            } else {
+                if (adoption.state == nullptr) return nullptr;
+                const auto& update = adoption.state->update;
+                if (!adoption.releaseOwner && (update.ownedTargets != 0 || update.ownedOld != 0 ||
+                    std::any_of(update.oldRefs.begin(), update.oldRefs.end(), [](auto ref) { return ref.type != kEffectTypeNone; }) ||
+                    std::any_of(update.targetRefs.begin(), update.targetRefs.end(), [](auto ref) { return ref.type != kEffectTypeNone; })))
+                    return nullptr;
+            }
             plan->beforeDetach.push_back({adoption, work});
         }
         if (m_dormant != nullptr) {
@@ -311,7 +320,7 @@ bool BusTree::AcknowledgeSleep() noexcept {
             if (latest == nullptr) return false;
             for (const auto& row : plan.sleeping) {
                 const auto bus = row.saved->bus;
-                if (bus.index >= latest->directory.size() ||
+                if (!LogicRefMatches(bus) || bus.index >= latest->directory.size() ||
                     latest->directory[bus.index].generation != bus.generation ||
                     latest->directory[bus.index].plane != UINT32_MAX) continue;
                 std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });

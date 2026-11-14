@@ -6,6 +6,7 @@
 #include "Engine.h"
 #include "PackLogicStore.h"
 #include "ProjectGenerationTransaction.h"
+#include "harken/render/BusActivityPlan.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"
 #include "MonitorIdentityCodec.h"
@@ -4427,6 +4428,81 @@ TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacem
     EXPECT_NEAR(dry, SettledLevel(engine), 2e-3f);
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(busId));
+}
+
+TEST(CanonicalPackSetActivate, SleepingBusEffectDiffUsesLogicalIdentityAndFinalBatchReferences) {
+    using namespace buseffectfixture;
+    using namespace harken;
+    for (unsigned change = 0; change != 3; ++change) {
+        SCOPED_TRACE(change);
+        auto config = CanonicalActivationConfig(2, 256, 48000);
+        config.gainEffectPoolCapacity = config.limiterEffectPoolCapacity = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-cold-bus-effect";
+        const auto initial = harkentest::ActivateInitBytesV1(directory,
+            Build(VN_EFFECT_GAIN, {-6.0f}), harkentest::packfoundation::kInitPackStableId);
+        ASSERT_EQ(VN_OK, initial.result);
+        engine.nullBackend.Pump(110);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto bus = engine.buses.FindRef(busId);
+        BusTree::WorkObservation fact;
+        ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, engine.buses.AcceptedWorkRef(bus), fact));
+        ASSERT_GE(fact.quietFrames, 24000u);
+        const BusTree::WorkBinding master[]{ {engine.buses.RefAt(0), engine.buses.AcceptedWorkRef(engine.buses.RefAt(0))} };
+        auto* sleep = engine.buses.PrepareActivity(engine.buses.AcceptedTopology(), master);
+        ASSERT_NE(sleep, nullptr);
+        ASSERT_TRUE(engine.buses.PrepareConditionalSleep(*sleep, {&fact, 1}, engine.voices));
+        CommandRecord command{};
+        command.opcode = kOpcodeSetBusActivity;
+        CommandQueue::BatchReservation reservation;
+        CommandQueue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof));
+        ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(sleep)));
+        ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(engine.busEffectInstanceRefs[bus.index][0].type, kEffectTypeNone);
+        ASSERT_EQ(engine.busEffectSlotTypes[bus.index][0], VN_EFFECT_GAIN);
+        ASSERT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 0u);
+        const auto bytes = change == 0 ? Build(VN_EFFECT_GAIN, {-12.0f}) :
+            change == 1 ? Build(VN_EFFECT_LIMITER, {-18.0f, 50.0f}) : Build(kEffectTypeNone, {});
+        ASSERT_TRUE(harkentest::WriteBytes(initial.initPath, bytes));
+        const auto* published = engine.packComposition.Published();
+        VnCanonicalPackSetMemberV1 member{};
+        member.structSize = sizeof(member);
+        member.packStableId = harkentest::packfoundation::kInitPackStableId;
+        member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+        member.expectedHandle = published->initHandle;
+        member.utf8Path = initial.initPath.c_str();
+        VnCanonicalPackSetMemberResultV1 result{};
+        result.structSize = sizeof(result);
+        VnCanonicalPackSetActivationReportV1 report{};
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &result, report,
+            published->initHandle, published->ledger.setRevision));
+        const auto expectedType = change == 0 ? VN_EFFECT_GAIN : change == 1 ? VN_EFFECT_LIMITER : kEffectTypeNone;
+        EXPECT_EQ(engine.busEffectSlotTypes[bus.index][0], expectedType);
+        EXPECT_EQ(engine.busEffectInstanceRefs[bus.index][0].type, expectedType);
+        engine.nullBackend.Pump(20);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto* work = engine.buses.BusState(bus.index);
+        ASSERT_NE(work, nullptr);
+        EXPECT_EQ(work->fxSlotEffectRef[0].type, expectedType);
+        EXPECT_EQ(work->fxSlotEffectRef[0].poolIndex, engine.busEffectInstanceRefs[bus.index][0].poolIndex);
+        EXPECT_EQ(work->fxSlotEffectRef[0].generation, engine.busEffectInstanceRefs[bus.index][0].generation);
+        if (change == 0) {
+            const auto* gain = static_cast<const GainState*>(work->fxSlots[0].state);
+            EXPECT_TRUE(gain->hasRendered);
+            EXPECT_NEAR(gain->gainLinear, std::pow(10.f, -12.f / 20), 1e-6f);
+        }
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), change == 0 ? 1u : 0u);
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), change == 1 ? 1u : 0u);
+        EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+    }
 }
 
 TEST(CanonicalPackSetActivate, RetainedBusEffectAppliesCompleteParameterRevisionToAudio) {

@@ -8,6 +8,8 @@
 #include "Engine.h"
 #include "PlayableRuntime.h"
 #include "ProjectGenerationTransaction.h"
+#include "SignalPublication.h"
+#include "harken/render/BusActivityPlan.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"
 #include "harken/core/ChannelLayout.h"
@@ -2711,6 +2713,158 @@ void SetLiveBusLimiter(LiveBusPublication& publication, VnBusId bus, unsigned id
     publication.parameters = {{0, -18}, {1, 100}};
     publication.view.effects = publication.effects;
     publication.view.effectParameters = publication.parameters;
+}
+
+void SleepLiveBus(harken::Engine& engine, harken::BusSlotRef bus) {
+    using namespace harken;
+    engine.nullBackend.Pump(600);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    BusTree::WorkObservation fact;
+    ASSERT_TRUE(engine.buses.CaptureWorkObservation(bus, engine.buses.AcceptedWorkRef(bus), fact));
+    ASSERT_GE(fact.quietFrames, 24000u);
+    const BusTree::WorkBinding master[]{
+        {engine.buses.RefAt(0), engine.buses.AcceptedWorkRef(engine.buses.RefAt(0))}};
+    auto* sleep = engine.buses.PrepareActivity(engine.buses.AcceptedTopology(), master);
+    ASSERT_NE(sleep, nullptr);
+    ASSERT_TRUE(engine.buses.PrepareConditionalSleep(*sleep, {&fact, 1}, engine.voices));
+    CommandRecord command{};
+    command.opcode = kOpcodeSetBusActivity;
+    CommandQueue::BatchReservation reservation;
+    CommandQueue::PreparedBatchProof proof;
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &command, 1, &proof));
+    ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(sleep)));
+    ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(sleep->sleepDecision.load(), BusActivityPlan::SleepDecision::Accepted);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
+}
+
+TEST(BusAdmissionStart, DormantPreviewEffectUpdateCancelAndDeletionPreserveOwnership) {
+    using namespace harken;
+    // Parameter update, identical publication, deletion, and a stale preparation
+    // exercise the same accepted logical chain after its physical row retires.
+    for (unsigned change = 0; change != 4; ++change) {
+        SCOPED_TRACE(change);
+        AdmissionSession fixture;
+        auto& engine = *fixture.session.Engine();
+        LiveBusPublication publication(engine, fixture.image, 5);
+        const auto child = harkentest::ObjectId(600);
+        publication.ids[1] = child;
+        publication.alive[1] = 1;
+        publication.generations[1] = 1;
+        publication.topology.busCount = publication.view.authoredBusCount = 2;
+        publication.view.busFaderPositions = publication.faders;
+        SetLiveBusLimiter(publication, child);
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        const auto host = engine.buses.FindRef(child);
+        SleepLiveBus(engine, host);
+        ASSERT_FALSE(HasFatalFailure());
+        ASSERT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), 0u);
+        const auto* state = engine.buses.PreviewEffectState(host);
+        ASSERT_NE(state, nullptr);
+        const auto oldRevision = state->revision;
+        publication.Next(0);
+        if (change == 0 || change == 3) publication.parameters[0].value = -12;
+        if (change == 2) {
+            publication.topology.busCount = publication.view.authoredBusCount = 1;
+            publication.view.busFaderPositions = {publication.faders.data(), 1};
+            publication.view.effects = {};
+            publication.view.effectParameters = {};
+        }
+        PreparedProjectGenerationV1 prepared;
+        ASSERT_EQ(PrepareProjectGenerationV1(engine, publication.view, prepared).status,
+            ProjectGenerationPrepareStatusV1::Ok);
+        CancelPreparedProjectGenerationV1(engine, std::move(prepared));
+        ASSERT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), 0u);
+        ASSERT_FALSE(engine.buses.AcceptedWorkRef(host).Valid());
+        ASSERT_EQ(PrepareProjectGenerationV1(engine, publication.view, prepared).status,
+            ProjectGenerationPrepareStatusV1::Ok);
+        if (change == 3) {
+            CommandRecord command{};
+            command.opcode = kOpcodeSetBusActivity;
+            CommandQueue::BatchReservation reservation;
+            CommandQueue::PreparedBatchProof proof;
+            ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+            ASSERT_TRUE(PrepareTopologyActivity(engine, engine.buses.AcceptedTopology(),
+                reservation, {&command, 1}, proof, nullptr, false));
+            ASSERT_EQ(engine.commands.ConsumePreparedBatch(std::move(proof)).Count(), 1u);
+            const auto head = engine.commands.PublishedHead();
+            EXPECT_EQ(CommitPreparedProjectGenerationV1(engine, prepared).status,
+                ProjectGenerationCommitStatusV1::InvalidPrepared);
+            EXPECT_EQ(engine.commands.PublishedHead(), head);
+            CancelPreparedProjectGenerationV1(engine, std::move(prepared));
+        } else {
+            ASSERT_EQ(CommitPreparedProjectGenerationV1(engine, prepared).status,
+                ProjectGenerationCommitStatusV1::Ok);
+        }
+        engine.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(state->update.phase.load(), EffectChainUpdate::Phase::Free);
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_LIMITER), change == 2 ? 0u : 1u);
+        if (change == 2) {
+            EXPECT_FALSE(engine.buses.FindRef(child).Valid());
+        } else {
+            const auto* work = engine.buses.BusState(host.index);
+            ASSERT_NE(work, nullptr);
+            EXPECT_EQ(work->previewEffectOwner, publication.view.ownerId);
+            EXPECT_EQ(work->previewEffectRevision, state->revision);
+            EXPECT_EQ(state->revision, oldRevision + (change == 0 ? 1 : 0));
+            EXPECT_EQ(work->fxSlotEffectRef[0].generation, engine.busEffectInstanceRefs[host.index][0].generation);
+            const auto* dsp = static_cast<const LimiterState*>(work->fxSlots[0].state);
+            ASSERT_NE(dsp, nullptr);
+            EXPECT_NEAR(dsp->ceilingLinear, std::pow(10.f, (change == 0 ? -12.f : -18.f) / 20), 1e-6f);
+        }
+        EXPECT_EQ(engine.buses.ActivityFallbackCount(), 0u);
+    }
+}
+
+TEST(BusAdmissionStart, DormantPreviewGainCanBeClearedOrDeleted) {
+    using namespace harken;
+    for (bool removeBus : {false, true}) {
+        AdmissionSession fixture;
+        auto& engine = *fixture.session.Engine();
+        LiveBusPublication publication(engine, fixture.image, 5);
+        const auto child = harkentest::ObjectId(600);
+        publication.ids[1] = child;
+        publication.alive[1] = 1;
+        publication.generations[1] = 1;
+        publication.topology.busCount = publication.view.authoredBusCount = 2;
+        publication.view.busFaderPositions = publication.faders;
+        publication.effects = {{child, harkentest::ObjectId(402), 0, VN_EFFECT_GAIN, 2, 0, 0, 1}};
+        publication.parameters = {{0, -6}};
+        publication.view.effects = publication.effects;
+        publication.view.effectParameters = publication.parameters;
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        const auto host = engine.buses.FindRef(child);
+        SleepLiveBus(engine, host);
+        ASSERT_FALSE(HasFatalFailure());
+        ASSERT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 0u);
+        ASSERT_EQ(engine.busEffectSlotTypes[host.index][0], VN_EFFECT_GAIN);
+        publication.Next(0);
+        publication.view.effects = {};
+        publication.view.effectParameters = {};
+        if (removeBus) {
+            publication.topology.busCount = publication.view.authoredBusCount = 1;
+            publication.view.busFaderPositions = {publication.faders.data(), 1};
+        }
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        engine.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 0u);
+        if (removeBus) EXPECT_FALSE(engine.buses.FindRef(child).Valid());
+        else {
+            EXPECT_EQ(engine.busEffectSlotTypes[host.index][0], kEffectTypeNone);
+            ASSERT_NE(engine.buses.BusState(host.index), nullptr);
+            EXPECT_EQ(engine.buses.BusState(host.index)->fxSlotEffectRef[0].type, kEffectTypeNone);
+        }
+    }
 }
 
 TEST(BusAdmissionStart, LiveBusLimiterColdEffectHandoffKeepsOneWriterAndCanReturn) {

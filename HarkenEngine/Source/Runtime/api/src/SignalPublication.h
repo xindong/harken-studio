@@ -4,6 +4,7 @@
 #include "harken/render/SignalWorldPlan.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/PackComposition.h"
+#include "harken/render/BusTree.h"
 
 namespace harken {
 struct Engine;
@@ -39,7 +40,7 @@ struct BusActivitySelection;
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
     CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected = nullptr,
-    bool adoptsTopology = true) noexcept;
+    bool adoptsTopology = true, std::span<const BusTree::WorkBinding> providedWork = {}) noexcept;
 bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
     std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept;
 bool AcknowledgeBusSleep(Engine& engine) noexcept;

@@ -32,6 +32,7 @@ struct PreparedBusEffectsV1::State {
         std::uint32_t generation = 0;
         std::uint32_t slot = 0;
         EffectInstanceRef before{};
+        std::uint32_t beforeType = kEffectTypeNone, afterType = kEffectTypeNone;
         EffectObjectIdentity beforeIdentity{};
         EffectObjectIdentity afterIdentity{};
         EffectInstanceRef after{};
@@ -111,13 +112,14 @@ VnResult PreparedBusEffectsV1::Prepare(Engine& engine, const SlotPlanV1& plan,
     for (const auto& removed : plan.removed) {
         for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot) {
             const auto before = engine.busEffectInstanceRefs[removed.slot][slot];
+            const auto beforeType = engine.busEffectSlotTypes[removed.slot][slot];
             const auto owner = engine.busEffectOwnerCookies[removed.slot][slot];
             if ((owner != 0 && owner != allowedOwner) ||
-                (before.type != kEffectTypeNone && (allowedOwner == 0 || owner != allowedOwner)) ||
+                (beforeType != kEffectTypeNone && (allowedOwner == 0 || owner != allowedOwner)) ||
                 engine.effectParamTargets.ClaimedInSlot(EffectParamTargetStore::Scope::Bus,
                     removed.slot, removed.generation, slot) ||
                 engine.dynamicRoutes.HasTargetRoutes(removed.slot, slot)) return VN_IN_USE;
-            if (before.type == kEffectTypeNone) continue;
+            if (beforeType == kEffectTypeNone) continue;
             if (!allowStructure) return VN_BACKPRESSURE;
             state->structureChanged = true;
             state->rows.emplace_back();
@@ -126,6 +128,7 @@ VnResult PreparedBusEffectsV1::Prepare(Engine& engine, const SlotPlanV1& plan,
             row.generation = removed.generation;
             row.slot = slot;
             row.before = before;
+            row.beforeType = beforeType;
             row.beforeIdentity = engine.busEffectIdentities[row.bus][slot];
             row.owner = owner;
             row.bypassBefore = engine.busEffectSlotBypass[removed.slot][slot];
@@ -149,25 +152,28 @@ VnResult PreparedBusEffectsV1::Prepare(Engine& engine, const SlotPlanV1& plan,
             const auto found = incoming.find({assignment.id, slot});
             const auto* effect = found == incoming.end() ? nullptr : found->second;
             const auto before = retained ? engine.busEffectInstanceRefs[bus][slot] : EffectInstanceRef{};
+            const auto beforeType = retained ? engine.busEffectSlotTypes[bus][slot] : kEffectTypeNone;
             const auto owner = retained ? engine.busEffectOwnerCookies[bus][slot] : 0;
             if ((owner != 0 && owner != allowedOwner) ||
-                (before.type != kEffectTypeNone && (allowedOwner == 0 || owner != allowedOwner)) ||
+                (beforeType != kEffectTypeNone && (allowedOwner == 0 || owner != allowedOwner)) ||
                 engine.effectParamTargets.ClaimedInSlot(EffectParamTargetStore::Scope::Bus,
                     bus, assignment.generation, slot) || engine.dynamicRoutes.HasTargetRoutes(bus, slot))
                 return VN_IN_USE;
-            if (!effect && before.type == kEffectTypeNone) continue;
+            if (!effect && beforeType == kEffectTypeNone) continue;
             state->rows.emplace_back();
             auto& row = state->rows.back();
             row.bus = bus;
             row.generation = assignment.generation;
             row.slot = slot;
             row.before = before;
+            row.beforeType = beforeType;
             row.beforeIdentity = engine.busEffectIdentities[row.bus][slot];
             row.owner = owner;
             row.bypassBefore = retained ? engine.busEffectSlotBypass[bus][slot] : 0;
             row.bypassAfter = effect ? effect->flags & 1u : 0;
-            if (before.type != kEffectTypeNone)
-                for (std::uint32_t p = 0; p < EffectParamCount(before.type); ++p) {
+            row.afterType = effect ? effect->effectType : kEffectTypeNone;
+            if (beforeType != kEffectTypeNone)
+                for (std::uint32_t p = 0; p < EffectParamCount(beforeType); ++p) {
                     row.originalParameters.push_back(engine.effectParamTargets.Reduce(
                         EffectParamTargetStore::Scope::Bus, bus, slot, p));
                     row.originalAuthoredParameters.push_back(engine.effectParamTargets.AuthoredBase(
@@ -176,7 +182,7 @@ VnResult PreparedBusEffectsV1::Prepare(Engine& engine, const SlotPlanV1& plan,
             if (effect)
                 for (std::uint32_t p = 0; p < effect->parameterCount; ++p)
                     row.parameters.push_back(parameters[effect->parameterFirst + p].value);
-            const bool same = effect && before.type == effect->effectType &&
+            const bool same = effect && beforeType == effect->effectType &&
                 engine.busEffectIdentities[bus][slot].effectId == effect->effectId;
             row.replace = !same;
             state->structureChanged |= !same;
@@ -259,6 +265,9 @@ bool PreparedBusEffectsV1::CanCommit() const noexcept {
         const auto& live = engine.busEffectInstanceRefs[row.bus][row.slot];
         if (live.type != row.before.type || live.poolIndex != row.before.poolIndex ||
             live.generation != row.before.generation ||
+            engine.busEffectSlotTypes[row.bus][row.slot] != row.beforeType ||
+            engine.busEffectIdentities[row.bus][row.slot].effectId != row.beforeIdentity.effectId ||
+            engine.busEffectIdentities[row.bus][row.slot].projectId != row.beforeIdentity.projectId ||
             engine.busEffectOwnerCookies[row.bus][row.slot] != row.owner ||
             engine.busEffectSlotBypass[row.bus][row.slot] != row.bypassBefore)
             return false;
@@ -296,18 +305,18 @@ void PreparedBusEffectsV1::Commit() noexcept {
                 // A binding removed in this transaction also needs a fold:
                 // preparation deliberately emitted no direct command for it.
                 if (row.boundParameters[p] || engine.bindings.HasEffectParamBinding(
-                        EffectParamTargetStore::Scope::Bus, row.bus, row.slot, p, row.after.type))
+                        EffectParamTargetStore::Scope::Bus, row.bus, row.slot, p, row.afterType))
                     engine.effectParamTargets.NoteDirectBound(EffectParamTargetStore::Scope::Bus,
                         row.bus, row.slot, p, row.parameters[p]);
                 else engine.effectParamTargets.NoteDirect(EffectParamTargetStore::Scope::Bus,
                     row.bus, row.slot, p, row.parameters[p], row.parameters[p]);
             }
         }
-        engine.busEffectSlotTypes[row.bus][row.slot] = row.after.type;
+        engine.busEffectSlotTypes[row.bus][row.slot] = row.afterType;
         engine.busEffectInstanceRefs[row.bus][row.slot] = row.after;
         engine.busEffectIdentities[row.bus][row.slot] = row.afterIdentity;
         engine.busEffectOwnerCookies[row.bus][row.slot] =
-            row.after.type == kEffectTypeNone ? 0 : state_->nextOwner;
+            row.afterType == kEffectTypeNone ? 0 : state_->nextOwner;
         engine.busEffectSlotBypass[row.bus][row.slot] = static_cast<std::uint8_t>(row.bypassAfter);
         if (row.after.type != kEffectTypeNone) {
             MonitorEffectFacts facts{};
@@ -1541,6 +1550,9 @@ bool PreparedProjectGenerationV1::Valid() const noexcept {
 }
 
 void PreparedProjectGenerationV1::Reset() noexcept {
+    const auto domain = domain_.lock();
+    if (domain && domain->live && domain->liveEngine == engine_)
+        for (const auto& row : preparedWork_) engine_->buses.ReleaseWorkRow(row.work);
     if (Valid()) {
         for (auto& seed : effectSeeds_) engine_->effectParamTargets.CancelPreparedInstalledEffectSeed(&seed);
         for (auto& row : effectChains_) engine_->buses.CancelPreviewEffectChain(row);
@@ -1727,8 +1739,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         coldSlots.assign(engine.config.maxBuses, 0);
         const auto isCold = [&](const SlotAssignmentV1& assignment) {
             if (engine.buses.LogicRefMatches({assignment.slot, assignment.generation}))
-                for (const auto& ref : engine.busEffectInstanceRefs[assignment.slot])
-                    if (ref.type != kEffectTypeNone && ref.type != VN_EFFECT_LIMITER) return true;
+                for (const auto type : engine.busEffectSlotTypes[assignment.slot])
+                    if (type != kEffectTypeNone && type != VN_EFFECT_LIMITER) return true;
             return std::any_of(view.effects.begin(), view.effects.end(), [&](const auto& effect) {
                 return effect.busId == assignment.id && effect.effectType != VN_EFFECT_LIMITER;
             });
@@ -1978,13 +1990,32 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
             for (auto& token : tokens) engine.effectParamTargets.CancelPreparedInstalledEffectSeed(&token);
         }
     } seeds{engine};
+    struct PreparedWork {
+        Engine& engine;
+        std::vector<BusTree::WorkBinding> rows;
+        ~PreparedWork() { for (const auto& row : rows) engine.buses.ReleaseWorkRow(row.work); }
+    } preparedWork{engine};
     try {
         effects.reserve(slotPlan.assignments.size() + slotPlan.removed.size());
+        preparedWork.rows.reserve(slotPlan.assignments.size());
         const auto prepareChain = [&](BusSlotRef host,
             const std::array<PreviewEffectChainEntry, kMaxFxSlotsPerBus>& targets) -> VnResult {
             effects.emplace_back();
             std::array<EffectInstanceRef, kMaxFxSlotsPerBus> refs{};
-            if (engine.buses.LogicRefMatches(host)) refs = engine.busEffectInstanceRefs[host.index];
+            if (engine.buses.LogicRefMatches(host)) {
+                refs = engine.busEffectInstanceRefs[host.index];
+                if (!engine.buses.AcceptedWorkRef(host).Valid() && host.index < slotPlan.alive.size() &&
+                    slotPlan.alive[host.index] && slotPlan.generations[host.index] == host.generation) {
+                    const auto work = engine.buses.PrepareWorkRow();
+                    if (!work.Valid()) return VN_DEVICE_ERROR;
+                    preparedWork.rows.push_back({host, work});
+                    auto& row = *engine.buses.PreparedWorkRow(work);
+                    const auto status = engine.PrepareBusWorkState(host.index, row);
+                    if (status != VN_OK) return status;
+                    if (!engine.buses.RestoreDormantWork(row)) return VN_DEVICE_ERROR;
+                    std::copy_n(row.fxSlotEffectRef, kMaxFxSlotsPerBus, refs.begin());
+                }
+            }
             const auto result = engine.buses.PreparePreviewEffectChain(host, view.ownerId, targets, refs,
                 engine.CurrentProjectId(), effects.back());
             if (result != VN_OK || !effects.back().changes) return result;
@@ -2050,6 +2081,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     }
     out.effectChains_ = std::move(effects);
     out.effectSeeds_ = std::move(seeds.tokens);
+    out.preparedWork_ = std::move(preparedWork.rows);
     out.domain_ = engine.projectGenerationReservationDomain;
     out.domainEpoch_ = engine.projectGenerationReservationDomain->epoch;
     out.engine_ = &engine;
@@ -2134,6 +2166,9 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
             (prepared.slotPlan_.neutralSlots[0] != 0) == PreviewOwnsSoleMasterV1(engine, prepared.slotPlan_.ownerId);
     };
     const auto effectSourceReady = [&]() noexcept {
+        for (const auto& row : prepared.preparedWork_)
+            if (!engine.buses.LogicRefMatches(row.bus) || engine.buses.AcceptedWorkRef(row.bus).Valid())
+                return false;
         for (const auto& row : prepared.effectChains_) {
             if (!engine.buses.CanCommitPreviewEffectChain(row) ||
                 HasPreviewEffectAttachment(engine, row.host) ||
@@ -2323,7 +2358,8 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         acceptedRevision;
     command.payload.setBusTopologyPlan.batchCommandCount = static_cast<std::uint32_t>(commands.size());
     CommandQueue::PreparedBatchProof proof;
-    if (!PrepareTopologyActivity(engine, engine.topologyPlans.View(liveIndex), reservation, commands, proof)) {
+    if (!PrepareTopologyActivity(engine, engine.topologyPlans.View(liveIndex), reservation, commands, proof,
+            nullptr, true, prepared.preparedWork_)) {
         engine.commands.CancelReservedBatch(&reservation);
         engine.topologyPlans.Recycle(liveIndex);
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
@@ -2441,6 +2477,8 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     assert(publishedBatch.Count() == commands.size());
     (void)publishedBatch;
     for (const auto& published : commands) engine.NoteBusSettingCommand(published);
+    for (const auto& row : prepared.preparedWork_) engine.buses.ReleaseWorkRow(row.work);
+    prepared.preparedWork_.clear();
 
     ReleasePreparedSlot(engine, prepared.preparedPlanIndex_,
                         prepared.preparedOwnerSlot_);

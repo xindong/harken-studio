@@ -205,7 +205,16 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
     if (adoption.host != update.host || adoption.owner != state.preparedOwner ||
         adoption.revision != update.targetRevision) return;
     const auto host = BusSlotRef::FromPacked(update.host);
-    if (!host.Valid() || !HasWorkRow(host.index)) return;
+    if (!host.Valid()) return;
+    if (!HasWorkRow(host.index)) {
+        // A deleted sleeping host has no physical chain left to transition.
+        // Its accepted owner metadata still needs the normal completion ACK.
+        const bool empty = update.ownedTargets == 0 && update.ownedOld == 0 &&
+            std::all_of(update.oldRefs.begin(), update.oldRefs.end(), [](auto ref) { return ref.type == kEffectTypeNone; }) &&
+            std::all_of(update.targetRefs.begin(), update.targetRefs.end(), [](auto ref) { return ref.type == kEffectTypeNone; });
+        if (adoption.releaseOwner || empty) update.phase.store(Phase::Complete, std::memory_order_release);
+        return;
+    }
     auto& bus = WorkState(host.index);
     if (adoption.releaseOwner) {
         // The following cold Set/Clear commands retain sole ownership of refs.

@@ -171,7 +171,7 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
 bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
     CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected,
-    bool adoptsTopology) noexcept {
+    bool adoptsTopology, std::span<const BusTree::WorkBinding> providedWork) noexcept {
     if (!topology.valid || commands.empty() || commands.size() > UINT32_MAX) return false;
     const bool alreadyFrozen = proof.Valid();
     if (alreadyFrozen && !engine.commands.PreparedBatchMatches(proof, &reservation,
@@ -198,19 +198,30 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
         if (!PrepareBusActivitySelection(topology, topology.signals, roots, signalRoots, {}, {}, selection)) return false;
         }
         std::vector<BusTree::WorkBinding> working;
+        std::vector<BusTree::WorkRef> preparedRows;
         std::vector<SignalRenderNodeInput> busBindings;
         working.reserve(topology.orderCount);
         busBindings.reserve(topology.orderCount);
         privateRows.rows.reserve(topology.orderCount);
+        preparedRows.reserve(topology.orderCount);
         for (const auto bus : selection.buses) {
             const BusSlotRef host{bus, topology.generations[bus]};
             auto work = engine.buses.AcceptedWorkRef(host);
             if (!work.Valid()) {
-                work = engine.buses.PrepareWorkRow();
-                if (!work.Valid()) return false;
-                privateRows.rows.push_back(work);
+                const auto supplied = std::find_if(providedWork.begin(), providedWork.end(),
+                    [&](const auto& binding) { return binding.bus == host; });
+                if (supplied != providedWork.end()) work = supplied->work;
+                else {
+                    work = engine.buses.PrepareWorkRow();
+                    if (!work.Valid()) return false;
+                    privateRows.rows.push_back(work);
+                }
+                if (engine.buses.PreparedWorkRow(work) == nullptr) return false;
                 auto& row = *engine.buses.PreparedWorkRow(work);
-                if (engine.buses.RefAt(bus) == host && engine.buses.IdAt(bus) == topology.busIds[bus]) {
+                if (supplied != providedWork.end()) {
+                    if (row.busIndex != bus || row.generation != host.generation || row.id != topology.busIds[bus])
+                        return false;
+                } else if (engine.buses.RefAt(bus) == host && engine.buses.IdAt(bus) == topology.busIds[bus]) {
                     if (engine.PrepareBusWorkState(bus, row) != VN_OK ||
                         !engine.buses.RestoreDormantWork(row)) return false;
                 } else {
@@ -224,6 +235,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
                 row.parentIndex = topology.parents[bus];
                 row.outputLayout = topology.outputLayouts[bus];
                 std::copy_n(topology.downmixCoeffs + static_cast<std::size_t>(bus) * 64, 64, row.downmixCoeffs);
+                preparedRows.push_back(work);
             }
             working.push_back({host, work});
             SignalRenderNodeInput node;
@@ -253,14 +265,43 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             replace ? BusTree::SignalTransition::ReplaceContent : BusTree::SignalTransition::Preserve,
             replace ? previous : nullptr, adoptsTopology);
         if (activity == nullptr) return false;
-        activity->preparedEffects.reserve(privateRows.rows.size());
-        for (const auto ref : privateRows.rows) {
+        activity->preparedEffects.reserve(preparedRows.size());
+        for (const auto ref : preparedRows) {
             const auto& row = *engine.buses.PreparedWorkRow(ref);
             const BusSlotRef host{row.busIndex, row.generation};
             if (engine.buses.RefAt(row.busIndex) == host) {
                 BusActivityPlan::PreparedEffects entry;
                 entry.bus = host;
                 std::copy_n(row.fxSlotEffectRef, kMaxFxSlotsPerBus, entry.effects.begin());
+                // Transactions may commit their final logical mirrors before
+                // ConsumePreparedBatch. Publish the final batch ownership,
+                // not the old cold chain used to reconstruct this work row.
+                const auto applyTopology = [&](std::uint32_t index) {
+                    if (index == kInvalidTopologyPlanIndex) return;
+                    const auto view = engine.topologyPlans.View(index);
+                    for (std::uint32_t i = 0; view.valid && i < view.effectUpdateCount; ++i) {
+                        const auto& update = view.effectUpdates[i];
+                        if (update.host == host.Packed() && !update.releaseOwner && update.state != nullptr)
+                            entry.effects = update.state->update.targetRefs;
+                    }
+                };
+                for (const auto& command : commands) {
+                    if (command.opcode == kOpcodeSetBusTopologyPlan)
+                        applyTopology(command.payload.setBusTopologyPlan.planIndex);
+                    else if (command.opcode == kOpcodeSetBusEffect) {
+                        const auto& effect = command.payload.setBusEffect;
+                        applyTopology(effect.topologyPlanIndex);
+                        if (effect.busIndex == host.index && effect.slot < kMaxFxSlotsPerBus &&
+                            (effect.busGeneration == 0 || effect.busGeneration == host.generation))
+                            entry.effects[effect.slot] = {effect.effectType, effect.poolIndex, effect.poolGeneration};
+                    } else if (command.opcode == kOpcodeClearBusEffect) {
+                        const auto& effect = command.payload.clearBusEffect;
+                        applyTopology(effect.topologyPlanIndex);
+                        if (effect.busIndex == host.index && effect.slot < kMaxFxSlotsPerBus &&
+                            (effect.busGeneration == 0 || effect.busGeneration == host.generation))
+                            entry.effects[effect.slot] = {};
+                    }
+                }
                 activity->preparedEffects.push_back(entry);
             }
         }
