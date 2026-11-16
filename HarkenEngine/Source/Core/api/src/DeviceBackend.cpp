@@ -5,6 +5,7 @@
 #include "PlatformBackend.h"
 #include "RenderSlicer.h"
 #include "harken/core/AllocGuard.h"
+#include "harken/core/FloatMode.h"
 #include "harken/render/MixerLoop.h"
 
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK) || \
@@ -296,6 +297,7 @@ void ApplyHostOutputMute(DeviceBackend::RenderState& state,
     if (state.hostOutputRampFrames == 0 && state.hostOutputGain == 1.0f) {
         return;
     }
+    floatmode::ScopedFlushDenormals floatModeScope;
     const std::uint32_t channels = state.channels;
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         if (state.hostOutputRampFrames != 0) {
@@ -406,11 +408,11 @@ void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
                         static_cast<std::size_t>(frames) * channels *
                             sizeof(float));
                 });
+            ApplyHostOutputMute(
+                renderState,
+                impl->hostOutputMute->load(std::memory_order_relaxed), out,
+                frameCount);
         }
-        ApplyHostOutputMute(
-            renderState,
-            impl->hostOutputMute->load(std::memory_order_relaxed), out,
-            frameCount);
     }
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK)
     const std::uint64_t probeEndTicks = CpuClockTicks();
