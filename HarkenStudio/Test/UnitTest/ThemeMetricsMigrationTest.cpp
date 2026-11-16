@@ -16,6 +16,9 @@
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/Shared/TreeExpansionWidget.h"
+#include "Widgets/TitleBar/DialogTitleBar.h"
+#include "Widgets/TitleBar/FloatingTitleBar.h"
+#include "Widgets/TitleBar/TitleBarWidget.h"
 
 #include <gtest/gtest.h>
 
@@ -24,6 +27,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QEventLoop>
 #include <QFile>
@@ -1262,6 +1266,95 @@ TEST(ThemeMetricsMigration, InvalidTokenMetricsCannotReplaceTheActiveTheme)
         EXPECT_EQ(manager->snapshot(), original);
         EXPECT_EQ(manager->appearance(), appearance);
     }
+}
+
+TEST(ThemeMetricsMigration, WindowChromePreservesControlBoundsAndSurfaceAcrossPresentationChanges)
+{
+    ensureApp();
+    auto& theme = VNX::ThemeManager::instance();
+    const qreal originalScale = theme.snapshot()->uiScale * 100;
+    const auto restore = qScopeGuard([&] {
+        theme.cancelAppearancePreview();
+        theme.setUIScale(originalScale);
+    });
+    ASSERT_TRUE(theme.reloadTheme().ok());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), &theme);
+    QMainWindow main;
+    QWidget floating;
+    QDialog dialog;
+    auto* mainBar = new VNX::TitleBarWidget(&main);
+    main.menuBar()->addMenu(QStringLiteral("File"));
+    mainBar->embedMenuBar(main.menuBar());
+    main.setMenuWidget(mainBar);
+    auto* floatingLayout = new QVBoxLayout(&floating);
+    floatingLayout->setContentsMargins(0, 0, 0, 0);
+    auto* floatingBar = new VNX::FloatingTitleBar(&floating);
+    floatingLayout->addWidget(floatingBar);
+    floatingLayout->addStretch();
+    auto* dialogLayout = new QVBoxLayout(&dialog);
+    auto* dialogBar = new VNX::DialogTitleBar(&dialog);
+    dialogBar->setTitle(QStringLiteral("Dialog"));
+    dialogLayout->setMenuBar(dialogBar);
+    dialogLayout->addStretch();
+
+    const QList<QWidget*> windows{&main, &floating, &dialog};
+    const QList<VNX::TitleBarBase*> bars{mainBar, floatingBar, dialogBar};
+    for (auto* window : windows) {
+        window->setAttribute(Qt::WA_DontShowOnScreen);
+        window->setStyle(&style);
+        for (auto* widget : window->findChildren<QWidget*>())
+            widget->setStyle(&style);
+        window->resize(900, 240);
+        window->show();
+    }
+    floating.setObjectName(QStringLiteral("chromeHost"));
+    floating.setStyleSheet(theme.widgetAppearance().updateWidgetStyle(&floating,
+        QStringLiteral("#chromeHost { background-color: #ff00ff; }")));
+
+    const auto check = [&] {
+        QEventLoop events;
+        QTimer::singleShot(20, &events, &QEventLoop::quit);
+        events.exec();
+        for (auto* bar : bars) {
+            SCOPED_TRACE(bar->metaObject()->className());
+            EXPECT_GE(bar->height(), bar->fontMetrics().height());
+            const auto buttons = bar->findChildren<QAbstractButton*>(QString(), Qt::FindDirectChildrenOnly);
+            ASSERT_FALSE(buttons.isEmpty());
+            for (auto* button : buttons) {
+                EXPECT_TRUE(bar->rect().contains(button->geometry()));
+                EXPECT_EQ(button->height(), bar->height());
+                EXPECT_EQ(button->width(), mainBar->closeButton()->width());
+                EXPECT_TRUE(button->visibleRegion().contains(button->rect()));
+            }
+            const auto image = renderWidget(*bar);
+            EXPECT_EQ(image.pixelColor(image.width() / 2, image.height() - 2),
+                      theme.snapshot()->qtPalette.window);
+        }
+    };
+
+    for (const auto& palette : theme.availablePalettes()) {
+        SCOPED_TRACE(palette.id.toStdString());
+        auto appearance = theme.appearance();
+        appearance.paletteId = palette.id;
+        ASSERT_TRUE(theme.previewAppearance(appearance).ok());
+        for (const qreal scale : {50.0, 125.0, 200.0, 300.0, 100.0}) {
+            SCOPED_TRACE(scale);
+            theme.setUIScale(scale);
+            check();
+            for (auto* window : windows) {
+                window->hide();
+                window->resize(720, 240);
+                window->show();
+            }
+            check();
+        }
+    }
+    for (auto* bar : bars) {
+        QFont font = bar->font();
+        font.setPointSizeF(font.pointSizeF() * 3);
+        bar->setFont(font);
+    }
+    check();
 }
 
 TEST(ThemeMetricsMigration, TimeHandlePaintAndHitGeometryShareThemeDimensions)

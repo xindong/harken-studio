@@ -1,5 +1,4 @@
 #include "TitleBarWidget.h"
-#include "Core/ThemeLayout.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include <QAction>
@@ -10,15 +9,11 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
-#include <QMetaObject>
 #include <QPixmap>
 #include <QResizeEvent>
-#include <QScreen>
-#include <QShowEvent>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QStyleOptionMenuItem>
-#include <QWindow>
 
 namespace VNX {
 
@@ -77,13 +72,8 @@ QSize menuBarContentSize(const QMenuBar* menuBar)
 
 }
 
-TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
-    setObjectName("TitleBarWidget");
-
-    layout_ = new QHBoxLayout(this);
-    layout_->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(layout_, ThemeLayout::Space::Section);
-
+TitleBarWidget::TitleBarWidget(QWidget* parent)
+    : TitleBarBase(Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint, parent) {
     menuLayout_ = new QHBoxLayout;
     menuLayout_->setContentsMargins(0, 0, 0, 0);
     menuLayout_->setSpacing(0);
@@ -94,23 +84,7 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
     logoLabel_->setAlignment(Qt::AlignCenter);
 
     menuLayout_->addWidget(logoLabel_);
-    layout_->addLayout(menuLayout_);
-    layout_->addStretch();
-
-    auto makeWinBtn = [this](const QString& name, TitleBarButtonKind kind, const QString& tip) {
-        auto* btn = new TitleBarButton(kind, this);
-        btn->setObjectName(name);
-        btn->setToolTip(tip);
-        return btn;
-    };
-
-    btnMin_   = makeWinBtn("titleBarMin", TitleBarButtonKind::Minimize, tr("Minimize"));
-    btnMax_   = makeWinBtn("titleBarMax", TitleBarButtonKind::Maximize, tr("Maximize"));
-    btnClose_ = makeWinBtn("titleBarClose", TitleBarButtonKind::Close, tr("Close"));
-
-    layout_->addWidget(btnMin_);
-    layout_->addWidget(btnMax_);
-    layout_->addWidget(btnClose_);
+    layout_->insertLayout(0, menuLayout_);
 
     versionLabel_ = new QLabel(this);
     versionLabel_->setObjectName("titleBarVersion");
@@ -119,9 +93,6 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
     versionLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
     setProjectTitle({}, false);
 
-    trackWindow(parentWidget());
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
-            this, &TitleBarWidget::requestChromeMetricsSync);
     syncChromeMetrics();
 }
 
@@ -144,12 +115,7 @@ void TitleBarWidget::embedMenuBar(QMenuBar* menuBar) {
 void TitleBarWidget::insertControlWidget(QWidget* widget) {
     if (!widget) return;
     widget->setParent(this);
-    layout_->insertWidget(layout_->indexOf(btnMin_), widget, 0, Qt::AlignVCenter);
-}
-
-void TitleBarWidget::updateMaxButton(bool maximized) {
-    btnMax_->setButtonKind(maximized ? TitleBarButtonKind::Restore : TitleBarButtonKind::Maximize);
-    btnMax_->setToolTip(maximized ? tr("Restore Down") : tr("Maximize"));
+    layout_->insertWidget(layout_->indexOf(minButton()), widget, 0, Qt::AlignVCenter);
 }
 
 void TitleBarWidget::setProjectTitle(const QString& name, bool modified) {
@@ -159,17 +125,13 @@ void TitleBarWidget::setProjectTitle(const QString& name, bool modified) {
 }
 
 bool TitleBarWidget::event(QEvent* event) {
-    const bool handled = QWidget::event(event);
+    const bool handled = TitleBarBase::event(event);
     if (event->type() == QEvent::LayoutRequest)
         layoutVersionLabel();
     return handled;
 }
 
 bool TitleBarWidget::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == trackedWindow_.data() &&
-        (event->type() == QEvent::WindowStateChange || event->type() == QEvent::Show)) {
-        syncMaxButton();
-    }
     if (watched == menuBar_ &&
         (event->type() == QEvent::ActionAdded ||
          event->type() == QEvent::ActionRemoved ||
@@ -181,27 +143,11 @@ bool TitleBarWidget::eventFilter(QObject* watched, QEvent* event) {
          event->type() == QEvent::StyleChange)) {
         requestChromeMetricsSync();
     }
-    return QWidget::eventFilter(watched, event);
-}
-
-void TitleBarWidget::changeEvent(QEvent* event) {
-    QWidget::changeEvent(event);
-    if (event->type() == QEvent::FontChange ||
-        event->type() == QEvent::ApplicationFontChange ||
-        event->type() == QEvent::StyleChange) {
-        requestChromeMetricsSync();
-    }
-}
-
-void TitleBarWidget::showEvent(QShowEvent* event) {
-    QWidget::showEvent(event);
-    trackWindow(window());
-    syncMaxButton();
-    syncChromeMetrics();
+    return TitleBarBase::eventFilter(watched, event);
 }
 
 void TitleBarWidget::resizeEvent(QResizeEvent* event) {
-    QWidget::resizeEvent(event);
+    TitleBarBase::resizeEvent(event);
     layoutVersionLabel();
 }
 
@@ -256,53 +202,7 @@ void TitleBarWidget::layoutVersionLabel() {
     versionLabel_->setVisible(titleWidth > 0);
 }
 
-void TitleBarWidget::trackWindow(QWidget* window) {
-    QWidget* topLevel = window ? window->window() : nullptr;
-    if (!topLevel)
-        return;
-    if (trackedWindow_ != topLevel) {
-        if (trackedWindow_)
-            trackedWindow_->removeEventFilter(this);
-        trackedWindow_ = topLevel;
-        trackedWindow_->installEventFilter(this);
-    }
-    if (QWindow* handle = trackedWindow_->windowHandle()) {
-        connect(handle, &QWindow::screenChanged, this, &TitleBarWidget::trackScreen,
-                Qt::UniqueConnection);
-        trackScreen(handle->screen());
-    }
-    syncMaxButton();
-}
-
-void TitleBarWidget::trackScreen(QScreen* screen) {
-    if (trackedScreen_ == screen)
-        return;
-    if (trackedScreen_)
-        trackedScreen_->disconnect(this);
-    trackedScreen_ = screen;
-    if (screen) {
-        connect(screen, &QScreen::logicalDotsPerInchChanged, this,
-                &TitleBarWidget::syncChromeMetrics, Qt::UniqueConnection);
-    }
-    syncChromeMetrics();
-}
-
-void TitleBarWidget::syncMaxButton() {
-    if (trackedWindow_)
-        updateMaxButton(trackedWindow_->isMaximized());
-}
-
-void TitleBarWidget::requestChromeMetricsSync()
-{
-    if (metricsSyncQueued_)
-        return;
-    metricsSyncQueued_ = true;
-    QMetaObject::invokeMethod(this, &TitleBarWidget::syncChromeMetrics,
-                              Qt::QueuedConnection);
-}
-
-void TitleBarWidget::syncChromeMetrics() {
-    metricsSyncQueued_ = false;
+int TitleBarWidget::syncContentMetrics() {
     const int textHeight = menuBar_ ? menuBar_->fontMetrics().height()
                                     : fontMetrics().height();
     int itemHeight = textHeight;
@@ -329,29 +229,27 @@ void TitleBarWidget::syncChromeMetrics() {
         itemHeight = qMax(textHeight, content.height());
         contentWidth = content.width();
     }
-    const int barHeight = qMax(ThemeManager::instance().metrics().chrome.titleBarHeight, itemHeight);
-    setFixedHeight(barHeight);
-    logoLabel_->setFixedSize(barHeight, barHeight);
-    const int extent = ThemeManager::instance().metrics().iconExtent;
-    const QSize logoSize(extent, extent);
+    if (menuBar_)
+        menuBar_->setMinimumWidth(contentWidth);
+    return itemHeight;
+}
+
+void TitleBarWidget::updateContentGeometry() {
+    const int barHeight = height();
+    const int logoHeight = qRound(12 * ThemeManager::instance().snapshot()->uiScale);
     const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppIcon));
+        QString::fromLatin1(ThemeAssetIds::AppLogo));
     if (logo.resource) {
-        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaled(
-            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaledToHeight(
+            qRound(logoHeight * devicePixelRatioF()), Qt::SmoothTransformation);
         pixmap.setDevicePixelRatio(devicePixelRatioF());
+        logoLabel_->setFixedSize(qRound(pixmap.deviceIndependentSize().width()) + barHeight - logoHeight,
+                                barHeight);
         logoLabel_->setPixmap(pixmap);
     }
     if (menuBar_) {
-        menuBar_->setMinimumWidth(contentWidth);
         menuBar_->setFixedHeight(barHeight);
     }
-    if (btnMin_)
-        btnMin_->setFixedSize(ThemeManager::instance().metrics().chrome.windowButtonWidth, barHeight);
-    if (btnMax_)
-        btnMax_->setFixedSize(ThemeManager::instance().metrics().chrome.windowButtonWidth, barHeight);
-    if (btnClose_)
-        btnClose_->setFixedSize(ThemeManager::instance().metrics().chrome.windowButtonWidth, barHeight);
     layoutVersionLabel();
 }
 

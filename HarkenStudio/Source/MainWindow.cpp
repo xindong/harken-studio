@@ -215,12 +215,12 @@ void applyFramelessFloatingChrome(ads::CFloatingDockContainer* fw)
     agent->setSystemButton(QWK::WindowAgentBase::Maximize, bar->maxButton());
     agent->setSystemButton(QWK::WindowAgentBase::Close,    bar->closeButton());
 
-    QObject::connect(bar->minButton(), &QPushButton::clicked, fw,
+    QObject::connect(bar->minButton(), &QAbstractButton::clicked, fw,
                      &QWidget::showMinimized, Qt::QueuedConnection);
-    QObject::connect(bar->maxButton(), &QPushButton::clicked, fw, [fw]() {
+    QObject::connect(bar->maxButton(), &QAbstractButton::clicked, fw, [fw]() {
         fw->isMaximized() ? fw->showNormal() : fw->showMaximized();
     }, Qt::QueuedConnection);
-    QObject::connect(bar->closeButton(), &QPushButton::clicked, fw,
+    QObject::connect(bar->closeButton(), &QAbstractButton::clicked, fw,
                      &QWidget::close, Qt::QueuedConnection);
 }
 }
@@ -914,12 +914,12 @@ void MainWindow::initializeFinalState()
     m_windowAgent->setSystemButton(QWK::WindowAgentBase::Maximize, m_titleBar->maxButton());
     m_windowAgent->setSystemButton(QWK::WindowAgentBase::Close,    m_titleBar->closeButton());
 
-    connect(m_titleBar->minButton(),   &QPushButton::clicked, this,
+    connect(m_titleBar->minButton(),   &QAbstractButton::clicked, this,
             &QMainWindow::showMinimized, Qt::QueuedConnection);
-    connect(m_titleBar->maxButton(),   &QPushButton::clicked, this, [this]() {
+    connect(m_titleBar->maxButton(),   &QAbstractButton::clicked, this, [this]() {
         isMaximized() ? showNormal() : showMaximized();
     }, Qt::QueuedConnection);
-    connect(m_titleBar->closeButton(), &QPushButton::clicked, this,
+    connect(m_titleBar->closeButton(), &QAbstractButton::clicked, this,
             &QMainWindow::close, Qt::QueuedConnection);
 
     m_titleBar->embedMenuBar(this->menuBar());
