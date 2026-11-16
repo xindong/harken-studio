@@ -40,7 +40,6 @@ struct AuditionInfo
     uint32_t stopAttempts = 0;
     bool     previewStartPending = false;
     bool     revisionPending = false;
-    bool     actionInstallPending = false;
     uint32_t previewPlayableKind = 0;
     harkenstudio::ObjectId runtimeStableId = {};
     uint64_t requiredRevision = 0;
@@ -232,17 +231,18 @@ private:
                           const VNX::ProjectItem* item,
                           uint64_t gameObjectId);
     bool ensurePreviewOutput();
-    uint32_t playTypedPreview(const QString& objectName,
-                              const VNX::ProjectItem& item,
-                              uint64_t gameObjectId,
-                              uint32_t playableKind);
+    uint32_t playAuthoredPreview(const QString& objectName,
+                                const VNX::ProjectItem& item,
+                                uint64_t gameObjectId);
     void requestTypedPreviewStop(AuditionInfo& info);
     void startLatchedTypedPreview(AuditionInfo& info);
-    bool startTypedPreviewNow(AuditionInfo& info);
+    bool startPreviewNow(AuditionInfo& info);
+    bool queuePreviewStart(AuditionInfo& info, bool awaitingRevision,
+                           const QString& reason);
     void failImmediatePlay(const QString& reason,
                            HarkenEditor::Bridge::EngineResult result);
     void failNotPlayable(const QString& reason);
-    void removePreviewSlot(uint32_t playingId, const QString& objectName,
+    void removePreviewSlot(uint32_t playingId, QString objectName,
                            int32_t engineResult, bool emitStartFailed);
     void markPreviewStopStuck(AuditionInfo& info);
     void tryStopAudition(uint32_t playingId);

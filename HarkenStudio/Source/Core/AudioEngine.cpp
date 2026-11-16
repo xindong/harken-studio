@@ -187,10 +187,12 @@ int runtimeServiceIntervalMs(const Bridge::EngineSession& session)
 }
 
 Bridge::EngineResult currentWorldPlaybackGate(
-    const RuntimeSyncCoordinator& coordinator)
+    const RuntimeSyncCoordinator::RevisionBarrierSnapshot& barrier)
 {
-    if (coordinator.hasInstalledWorld())
+    if (barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Ready)
         return Bridge::kEngineOk;
+    if (barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending)
+        return Bridge::kEngineBackpressure;
     return Bridge::kEngineNotInit;
 }
 
@@ -762,7 +764,7 @@ AudioEngine::PlaybackStartResult AudioEngine::playByNameInternal(
     }
 
     const Bridge::EngineResult gate = currentWorldPlaybackGate(
-        runtimeSyncCoordinator());
+        currentWorldPlaybackBarrier());
     if (gate != Bridge::kEngineOk)
     {
         result.engineResult = gate;
@@ -820,7 +822,7 @@ AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
         emit playbackStarted(0, name);
         return result;
     }
-    result.engineResult = currentWorldPlaybackGate(runtimeSyncCoordinator());
+    result.engineResult = currentWorldPlaybackGate(currentWorldPlaybackBarrier());
     if (result.engineResult != Bridge::kEngineOk)
     {
         result.failure = Bridge::PlaybackFailure::RuntimeRefused;
@@ -857,6 +859,12 @@ bool AudioEngine::stopAll(float fadeMs)
 bool AudioEngine::hasInstalledCurrentWorld() const
 {
     return runtimeSyncCoordinator().hasInstalledWorld();
+}
+
+RuntimeSyncCoordinator::RevisionBarrierSnapshot AudioEngine::currentWorldPlaybackBarrier() const noexcept
+{
+    const auto& coordinator = runtimeSyncCoordinator();
+    return coordinator.barrier(coordinator.currentAuthoringRevision());
 }
 
 bool AudioEngine::hasActionProgram(harkenstudio::ObjectId actionId) const

@@ -552,25 +552,29 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 
     if (!context.expectedProjectSession.isEmpty()
         && (!projectManager_ || !projectManager_->isProjectOpen() || !engine_
-            || QString::number(engine_->runtimeSyncCoordinator().barrier(
-                engine_->runtimeSyncCoordinator().currentAuthoringRevision()).projectSessionId)
+            || QString::number(engine_->currentWorldPlaybackBarrier().projectSessionId)
                 != context.expectedProjectSession))
         return withRequestId(errorResponse("PROJECT_CHANGED", "The project changed while preparing playback."));
 
     if ((cmd == QLatin1String("post_action") || cmd == QLatin1String("post_action_3d")
-         || cmd == QLatin1String("audition_play"))
+         || cmd == QLatin1String("audition_play") || cmd == QLatin1String("audition_reset"))
         && projectManager_ && projectManager_->isProjectOpen()
         && engine_ && engine_->isInitialized() && !engine_->isSimulationMode()) {
         if (cmd == QLatin1String("audition_play") && !engine_->isPlaying() && !engine_->startOutput())
             return withRequestId(errorResponse("START_OUTPUT_FAILED", "Failed to start audio output."));
         auto& coordinator = engine_->runtimeSyncCoordinator();
         coordinator.flushPendingMutationNow();
-        const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+        const auto barrier = engine_->currentWorldPlaybackBarrier();
         using Barrier = RuntimeSyncCoordinator::RevisionBarrierState;
         if (barrier.state != Barrier::Ready) {
+            const bool reset = cmd == QLatin1String("audition_reset");
             auto response = barrier.state == Barrier::Pending
-                ? errorResponse("RUNTIME_SYNC_PENDING", "The current project is still being prepared for playback. Playback has not started.")
-                : errorResponse("RUNTIME_SYNC_FAILED", "The current project could not be prepared for playback.");
+                ? errorResponse("RUNTIME_SYNC_PENDING", reset
+                    ? "The current project is still being prepared for reset. The reset has not been applied."
+                    : "The current project is still being prepared for playback. Playback has not started.")
+                : errorResponse("RUNTIME_SYNC_FAILED", reset
+                    ? "The current project could not be prepared for reset."
+                    : "The current project could not be prepared for playback.");
             response.insert("result", QJsonObject{
                 {"runtime_sync_status", static_cast<int>(barrier.failure)},
                 {"project_session_id", QString::number(barrier.projectSessionId)},
