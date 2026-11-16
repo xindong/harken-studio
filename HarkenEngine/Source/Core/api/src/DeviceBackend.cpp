@@ -103,8 +103,9 @@ struct DeviceBackend::RenderState {
     BlockStagingCursor cursor;
     float hostOutputGain = 1.0f;
     float hostOutputTarget = 1.0f;
-    float hostOutputStep = 0.0f;
+    float hostOutputStartGain = 1.0f;
     std::uint64_t hostOutputRampFrames = 0;
+    std::uint64_t hostOutputRampTotalFrames = 0;
 };
 
 // All miniaudio state lives here, behind the header's opaque pointer.
@@ -286,12 +287,10 @@ void ApplyHostOutputMute(DeviceBackend::RenderState& state,
         const std::uint64_t fadeMs = command & 0xFFFFFFFFu;
         state.hostOutputTarget = target;
         state.hostOutputRampFrames = (fadeMs * state.sampleRate + 999u) / 1000u;
+        state.hostOutputRampTotalFrames = state.hostOutputRampFrames;
+        state.hostOutputStartGain = state.hostOutputGain;
         if (state.hostOutputRampFrames == 0) {
             state.hostOutputGain = target;
-        } else {
-            state.hostOutputStep =
-                (target - state.hostOutputGain) /
-                static_cast<float>(state.hostOutputRampFrames);
         }
     }
     if (state.hostOutputRampFrames == 0 && state.hostOutputGain == 1.0f) {
@@ -301,9 +300,15 @@ void ApplyHostOutputMute(DeviceBackend::RenderState& state,
     for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
         if (state.hostOutputRampFrames != 0) {
             --state.hostOutputRampFrames;
+            const double progress =
+                static_cast<double>(state.hostOutputRampTotalFrames -
+                                    state.hostOutputRampFrames) /
+                static_cast<double>(state.hostOutputRampTotalFrames);
             state.hostOutputGain = state.hostOutputRampFrames == 0
                 ? state.hostOutputTarget
-                : state.hostOutputGain + state.hostOutputStep;
+                : static_cast<float>(
+                      (1.0 - progress) * state.hostOutputStartGain +
+                      progress * state.hostOutputTarget);
         }
         float* samples = out + static_cast<std::size_t>(frame) * channels;
         for (std::uint32_t channel = 0; channel < channels; ++channel) {
