@@ -148,6 +148,7 @@ target_link_libraries(harken_editor_inspector PUBLIC
 target_link_libraries(harken_editor_inspector PRIVATE
     harken_editor_source_editor
     harken_editor_curve_editor
+    harken_editor_effect_editor
 )
 
 if(MSVC)

@@ -17,11 +17,16 @@
 #include <DockAreaTitleBar.h>
 #include <DockAreaWidget.h>
 #include <DockSplitter.h>
+#include <FloatingDockContainer.h>
 
 #include <QAction>
+#include <QApplication>
 #include <QPointer>
+#include <QScreen>
 #include <QTimer>
 #include <QWidget>
+
+#include <algorithm>
 
 namespace VNX {
 
@@ -236,6 +241,12 @@ ads::CDockWidget* WorkspaceDockFactory::createDock(ads::CDockManager* dockManage
     if (!dockManager)
         return nullptr;
 
+    QWidget* sourceWindow = QApplication::activeWindow();
+    if (!sourceWindow)
+        sourceWindow = dockManager->window();
+    QScreen* targetScreen = sourceWindow->screen();
+    const QRect sourceGeometry = sourceWindow->frameGeometry();
+
     ads::CDockWidget* dock = createDetachedDock(spec);
     if (!dock)
         return nullptr;
@@ -281,6 +292,59 @@ ads::CDockWidget* WorkspaceDockFactory::createDock(ads::CDockManager* dockManage
         originalSplitter->restoreState(originalSplitterState);
 
     dock->toggleView(spec.initiallyVisible);
+    if (spec.area == ads::NoDockWidgetArea && spec.initiallyVisible) {
+        auto* floating = dock->floatingDockContainer();
+        if (spec.initialFloatingSize.isValid())
+            floating->resize(spec.initialFloatingSize);
+        const QRect available = targetScreen->availableGeometry();
+        const QSize frame = floating->frameGeometry().size() - floating->size();
+        floating->resize(floating->size().boundedTo(available.size() - frame));
+        const QSize size = floating->frameGeometry().size();
+        const int spanX = qMax(0, available.width() - size.width());
+        const int spanY = qMax(0, available.height() - size.height());
+        const int step = qMax(1, ThemeManager::instance().metrics().chrome.titleBarHeight);
+        const int stepX = qMin(step, spanX);
+        const int stepY = qMin(step, spanY);
+        QList<QPoint> occupied;
+        for (auto* other : dockManager->floatingWidgets()) {
+            if (other != floating && other->isVisible() && !other->isMinimized()
+                && other->screen() == targetScreen)
+                occupied.append(other->frameGeometry().topLeft());
+        }
+        QPoint position = sourceGeometry.center() - QPoint(size.width() / 2, size.height() / 2);
+        if (!occupied.isEmpty()) {
+            position = occupied.back() + QPoint(stepX, stepY);
+            if (position.x() > available.left() + spanX)
+                position.setX(available.left());
+            if (position.y() > available.top() + spanY)
+                position.setY(available.top());
+        }
+        position.setX(qBound(available.left(), position.x(), available.left() + spanX));
+        position.setY(qBound(available.top(), position.y(), available.top() + spanY));
+        const auto overlaps = [&](const QPoint& candidate) {
+            return std::any_of(occupied.cbegin(), occupied.cend(), [&](const QPoint& existing) {
+                return qAbs(candidate.x() - existing.x()) < qMax(1, stepX / 2)
+                    && qAbs(candidate.y() - existing.y()) < qMax(1, stepY / 2);
+            });
+        };
+        if (overlaps(position)) {
+            const int columns = spanX / qMax(1, stepX) + 1;
+            const int rows = spanY / qMax(1, stepY) + 1;
+            const int start = ((position.y() - available.top()) / qMax(1, stepY)) * columns
+                + (position.x() - available.left()) / qMax(1, stepX);
+            const int attempts = qMin(qsizetype(columns * rows), occupied.size() + 1);
+            for (int attempt = 0; attempt < attempts; ++attempt) {
+                const int slot = (start + attempt) % (columns * rows);
+                const QPoint candidate = available.topLeft()
+                    + QPoint((slot % columns) * stepX, (slot / columns) * stepY);
+                if (!overlaps(candidate)) {
+                    position = candidate;
+                    break;
+                }
+            }
+        }
+        floating->move(position);
+    }
     if (preserveLayout) {
         QPointer<QWidget> anchor = target;
         QPointer<ads::CDockSplitter> splitter = dock->dockAreaWidget()->parentSplitter();

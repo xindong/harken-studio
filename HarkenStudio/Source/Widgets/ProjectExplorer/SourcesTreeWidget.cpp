@@ -88,13 +88,6 @@ SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
     });
     ShortcutManager::instance().bindWidgetAction(Shortcuts::Delete, this,
         [this]() { deleteCurrentFolder(); }, Qt::WidgetWithChildrenShortcut);
-    expandTimer_ = new QTimer(this);
-    expandTimer_->setSingleShot(true);
-    expandTimer_->setInterval(600);
-    connect(expandTimer_, &QTimer::timeout, this, [this]() {
-        if (dropFolder_.isValid())
-            expand(dropFolder_);
-    });
 }
 
 bool SourcesTreeWidget::edit(const QModelIndex& index, EditTrigger trigger, QEvent* event)
@@ -195,6 +188,8 @@ void SourcesTreeWidget::startDrag(Qt::DropActions)
     drag.setMimeData(mimeData(items));
     drag.setPixmap(items.first()->icon(0).pixmap(iconSize()));
     drag.exec(Qt::CopyAction | Qt::MoveAction, Qt::CopyAction);
+    stopDragNavigation();
+    clearDropHighlight();
 }
 
 QString SourcesTreeWidget::folderForItem(QTreeWidgetItem* item) const
@@ -433,7 +428,6 @@ bool SourcesTreeWidget::eventFilter(QObject* watched, QEvent* event)
 void SourcesTreeWidget::clearDropHighlight()
 {
     dropFolder_ = QPersistentModelIndex();
-    expandTimer_->stop();
     if (rootDropTarget_)
         QtControlSkin::setSemanticProperty(rootDropTarget_, "sourceDropTarget", false);
     viewport()->update();
@@ -465,7 +459,6 @@ void SourcesTreeWidget::dragMoveEvent(QDragMoveEvent* event)
     const QPersistentModelIndex index(indexFromItem(target));
     if (index != dropFolder_) {
         dropFolder_ = index;
-        expandTimer_->start();
         viewport()->update();
     }
     if (rootDropTarget_)

@@ -58,7 +58,7 @@ private:
         const QString text = name_->fontMetrics().elidedText(item->name, Qt::ElideRight, name_->width());
         if (name_->text() != text)
             name_->setText(text);
-        name_->setToolTip(item->name);
+        name_->setToolTip(toolTip());
     }
 
     QLabel* name_ = nullptr;

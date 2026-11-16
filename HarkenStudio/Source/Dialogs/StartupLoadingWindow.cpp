@@ -85,7 +85,10 @@ StartupLoadingWindow::StartupLoadingWindow()
     layout->addWidget(content);
 
     auto* contentLayout = new QVBoxLayout(content);
-    ThemeLayout::margins(contentLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+    ThemeManager::instance().bindMetrics(contentLayout, [contentLayout](const ThemeMetrics& metrics) {
+        contentLayout->setContentsMargins(metrics.startup.contentPaddingX, metrics.layout.panelPadding,
+                                         metrics.startup.contentPaddingX, metrics.layout.panelPadding);
+    });
     contentLayout->setSpacing(0);
 
     auto* projectRow = new QHBoxLayout();

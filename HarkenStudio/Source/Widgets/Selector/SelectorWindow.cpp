@@ -10,6 +10,7 @@
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
 #include "Widgets/Common/SwitchIndicator.h"
+#include "Widgets/Common/TreeExpansion.h"
 #include "Widgets/Shared/TreeRowStyle.h"
 #include "Widgets/Shared/TreeExpansionWidget.h"
 
@@ -221,6 +222,13 @@ void SelectorWindow::showEvent(QShowEvent* event)
     positionAtAnchor();
 }
 
+void SelectorWindow::hideEvent(QHideEvent* event)
+{
+    changeSubscription_.reset();
+    refreshTimer_.stop();
+    BaseDialog::hideEvent(event);
+}
+
 void SelectorWindow::positionAtAnchor()
 {
     layout()->activate();
@@ -250,20 +258,20 @@ void SelectorWindow::dismiss(QWidget* anchor)
 
 void SelectorWindow::refresh(QWidget* anchor)
 {
-    if (!s_instance || !s_instance->isVisible() || s_instance->refreshPending_
+    if (!s_instance || !s_instance->isVisible() || s_instance->refreshTimer_.isActive()
         || (anchor && s_instance->anchor_ != anchor))
         return;
-    s_instance->refreshPending_ = true;
-    QTimer::singleShot(0, s_instance, [] {
-        s_instance->refreshPending_ = false;
-        if (s_instance->isVisible())
-            s_instance->rebuildTree(true);
-    });
+    s_instance->refreshTimer_.start(0);
 }
 
 SelectorWindow::SelectorWindow()
     : BaseDialog(nullptr)
 {
+    refreshTimer_.setSingleShot(true);
+    connect(&refreshTimer_, &QTimer::timeout, this, [this] {
+        if (isVisible())
+            rebuildTree(true);
+    });
     setWindowTitle(tr("Select"));
     const auto& metrics = ThemeManager::instance().metrics().panel;
     resize(metrics.preferredWidth, metrics.preferredHeight);
@@ -346,21 +354,21 @@ SelectorWindow::SelectorWindow()
     connect(&manager, &ProjectManager::itemDeleted, this, &SelectorWindow::refreshCreationValidation,
             Qt::QueuedConnection);
     connect(&manager, &ProjectManager::projectClosed, this, [this] {
-        if (request_.creation) dismiss();
+        dismiss();
     });
 
     connect(searchBox_, &QLineEdit::textChanged,
             this, &SelectorWindow::applySearchFilter);
     const auto toggleBucket = [this](QTreeWidgetItem* item, int) {
         if (!request_.creation && item && item->data(0, TreeRowStyle::kBucketRole).toBool())
-            item->setExpanded(!item->isExpanded());
+            TreeExpansion::toggle(item, QApplication::keyboardModifiers());
     };
     connect(tree_, &QTreeWidget::itemClicked, this, toggleBucket);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, toggleBucket);
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem* item, int) {
                 if (request_.creation) {
-                    if (item) item->setExpanded(!item->isExpanded());
+                    TreeExpansion::toggle(item, QApplication::keyboardModifiers());
                     nameEdit_->setFocus();
                     nameEdit_->selectAll();
                     return;
@@ -388,6 +396,8 @@ SelectorWindow::SelectorWindow()
 
 void SelectorWindow::applyRequest(const SelectorRequest& request)
 {
+    changeSubscription_.reset();
+    refreshTimer_.stop();
     request_ = request;
     const auto* project = ProjectManager::instance().currentProject();
     creationProjectId_ = request.creation && project ? project->projectId : QString{};
@@ -405,6 +415,8 @@ void SelectorWindow::applyRequest(const SelectorRequest& request)
     }
     searchBox_->clear();
     rebuildTree();
+    if (!request.creation)
+        changeSubscription_ = refDomainAdapter(request.domain).connectChanged(this, [] { refresh(); });
 }
 
 void SelectorWindow::rebuildTree(bool preserveState)
@@ -415,7 +427,7 @@ void SelectorWindow::rebuildTree(bool preserveState)
     }
     locationFolders_.clear();
     QSet<uint32_t> collapsedObjects;
-    QSet<QString> collapsedBuckets;
+    QSet<QString> collapsedFolders;
     uint32_t currentID = request_.currentObjectID;
     const int scrollPosition = tree_->verticalScrollBar()->value();
     if (preserveState) {
@@ -425,10 +437,10 @@ void SelectorWindow::rebuildTree(bool preserveState)
             const auto* item = *it;
             if (item->childCount() == 0 || item->isExpanded())
                 continue;
-            if (item->data(0, TreeRowStyle::kBucketRole).toBool())
-                collapsedBuckets.insert(item->text(0));
-            else
+            if (item->data(0, kRoleObjectID).isValid())
                 collapsedObjects.insert(item->data(0, kRoleObjectID).toUInt());
+            else
+                collapsedFolders.insert(item->data(0, kRoleFolderPath).toString());
         }
     }
     const QSignalBlocker blocker(tree_);
@@ -436,16 +448,16 @@ void SelectorWindow::rebuildTree(bool preserveState)
     refDomainAdapter(request_.domain).populate(tree_, request_);
     tree_->expandAll();
     refreshSwitches();
+    applySearchFilter(searchBox_->text());
     if (preserveState) {
         for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
             auto* item = *it;
-            if (item->data(0, TreeRowStyle::kBucketRole).toBool()
-                    ? collapsedBuckets.contains(item->text(0))
-                    : collapsedObjects.contains(item->data(0, kRoleObjectID).toUInt()))
+            if (item->data(0, kRoleObjectID).isValid()
+                    ? collapsedObjects.contains(item->data(0, kRoleObjectID).toUInt())
+                    : collapsedFolders.contains(item->data(0, kRoleFolderPath).toString()))
                 item->setExpanded(false);
         }
     }
-    applySearchFilter(searchBox_->text());
     if (QTreeWidgetItem* currentRow = findSelectableRow(tree_, currentID)) {
         tree_->setCurrentItem(currentRow);
         if (!preserveState)

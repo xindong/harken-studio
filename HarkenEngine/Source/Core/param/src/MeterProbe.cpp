@@ -842,6 +842,8 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
             engine.meterDetectors.NoteRefusal();
             return VN_STALE_HANDLE;
         }
+        if (targetScope == VN_TARGET_SCOPE_BUS_EFFECT_PARAM &&
+            engine.buses.PreviewEffectOwned({busIndex, targetGeneration})) return VN_IN_USE;
     } else {
         const VnVoiceHandle render = engine.ledger.ToRender(targetInstanceHandle);
         if (render == 0 ||

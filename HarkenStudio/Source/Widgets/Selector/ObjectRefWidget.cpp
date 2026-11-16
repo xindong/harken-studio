@@ -33,6 +33,8 @@ namespace VNX {
 ObjectRefWidget::ObjectRefWidget(QWidget* parent)
     : QWidget(parent)
 {
+    refreshTimer_.setSingleShot(true);
+    connect(&refreshTimer_, &QTimer::timeout, this, &ObjectRefWidget::refreshDisplay);
     auto& theme = ThemeManager::instance();
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setAcceptDrops(true);
@@ -88,12 +90,14 @@ ObjectRefWidget::~ObjectRefWidget()
 
 void ObjectRefWidget::bindChanged()
 {
-    for (const QMetaObject::Connection& conn : changedConns_)
-        QObject::disconnect(conn);
-    changedConns_ = refDomainAdapter(domain_).connectChanged(this, [this](uint32_t id) {
-        if (id == 0 || id == objectID_)
-            refreshDisplay();
-    });
+    refreshTimer_.stop();
+    changeSubscription_.reset();
+    if (objectID_ == 0)
+        return;
+    changeSubscription_ = refDomainAdapter(domain_).connectChanged(this, [this] {
+        if (!refreshTimer_.isActive())
+            refreshTimer_.start(0);
+    }, objectID_);
 }
 
 void ObjectRefWidget::setRefDomain(RefDomain domain)
@@ -293,7 +297,10 @@ void ObjectRefWidget::setCurrentObjectID(uint32_t objectID)
     mixedValue_ = false;
     unresolvedReference_.clear();
     validationError_.clear();
-    objectID_ = objectID;
+    if (objectID_ != objectID) {
+        objectID_ = objectID;
+        bindChanged();
+    }
     refreshDisplay();
 }
 
@@ -305,6 +312,7 @@ void ObjectRefWidget::setUnresolvedReference(QString stableId)
     objectID_ = 0;
     validationError_.clear();
     unresolvedReference_ = std::move(stableId);
+    bindChanged();
     refreshDisplay();
 }
 
@@ -316,6 +324,7 @@ void ObjectRefWidget::setMixedValue()
     unresolvedReference_.clear();
     validationError_.clear();
     mixedValue_ = true;
+    bindChanged();
     refreshDisplay();
 }
 

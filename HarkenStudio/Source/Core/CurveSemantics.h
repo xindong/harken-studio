@@ -2,6 +2,7 @@
 
 #include <QVector>
 
+#include <array>
 #include <cstdint>
 
 namespace VNX {
@@ -53,6 +54,26 @@ enum class CurveAxisScale : uint8_t
     AmplitudeDb,
     MirroredAmplitudeDb,
 };
+
+enum class CurvePreset : uint8_t
+{
+    Log3,
+    Convex,
+    SCurve,
+    Linear,
+    InverseSCurve,
+    Concave,
+    Exp3,
+};
+
+inline constexpr std::array<CurvePreset, 7> kCurvePresets{
+    CurvePreset::SCurve, CurvePreset::Log3, CurvePreset::Convex, CurvePreset::Linear,
+    CurvePreset::Concave, CurvePreset::Exp3, CurvePreset::InverseSCurve,
+};
+
+CurveHandlePairDef curvePresetHandles(CurvePreset preset,
+                                     const CurvePointDef& a, const CurvePointDef& b,
+                                     CurveAxisScale scale = CurveAxisScale::LinearValue);
 
 double curveAxisCoordinate(CurveAxisScale scale, float value);
 float curveAxisValueFromCoordinate(CurveAxisScale scale, double coordinate);

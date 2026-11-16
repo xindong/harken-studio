@@ -4,12 +4,15 @@
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
 #include "SignalPublication.h"
+#include "harken/core/CommandQueue.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/param/VariableService.h"
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -17,6 +20,7 @@ namespace harken {
 
 struct Engine;
 struct ProjectGenerationReservationDomainV1;
+struct BusSlotRef;
 
 struct BusTopologyOwnerRecord {
     bool live = false;
@@ -41,16 +45,23 @@ TopologyOwnerRevisionDispositionV1 ClassifyTopologyOwnerRevisionV1(
 bool MasterHasAuthoredClaimV1(const Engine& engine) noexcept;
 bool PreviewOwnsSoleMasterV1(const Engine& engine, std::uint64_t ownerId) noexcept;
 std::uint64_t NeutralMasterFingerprintV1(const Engine& engine) noexcept;
-bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint) noexcept;
+bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint,
+    std::uint64_t ownerId = 0) noexcept;
+bool HasPreviewEffectAttachment(const Engine& engine, BusSlotRef host) noexcept;
 std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t ownerId) noexcept;
 inline constexpr std::uint64_t kCanonicalPackSetMasterOwnerId = 0x5053434E00000001ull;
-bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot) noexcept;
+bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot,
+    std::uint64_t allowedEffectOwner = 0) noexcept;
 void ResetNeutralBusPropertiesV1(Engine& engine, std::uint32_t slot) noexcept;
 bool CanResetVolumeOnlyNonVolumePropertiesV2(
     const Engine& engine, std::uint32_t slot,
-    std::uint64_t allowedOwnerCookie = 0) noexcept;
+    std::uint64_t allowedOwnerCookie = 0,
+    std::uint64_t allowedEffectOwner = 0) noexcept;
 void ResetVolumeOnlyNonVolumePropertiesV2(Engine& engine,
-                                          std::uint32_t slot) noexcept;
+    std::uint32_t slot, bool preserveEffects = false) noexcept;
+bool BuildBusEffectParameterCommandV1(Engine& engine, std::uint32_t busIndex,
+    std::uint32_t slot, std::uint32_t paramIndex, std::span<const float> parameters,
+    std::uint32_t type, CommandRecord* out) noexcept;
 struct TopologyPlanView;
 bool ValidateTopologyPlanVolumesV1(const TopologyPlanView& plan) noexcept;
 struct BusSlotRef;
@@ -132,6 +143,26 @@ void ApplySlotPlanToProspective(SlotPlanV1& plan, ProspectiveTopologyView& view)
 bool SlotPlanMatchesLive(const Engine& engine, const SlotPlanV1& plan) noexcept;
 void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept;
 std::uint32_t FindAssignedSlot(const SlotPlanV1& plan, VnBusId id) noexcept;
+
+class PreparedBusEffectsV1 {
+public:
+    PreparedBusEffectsV1();
+    ~PreparedBusEffectsV1();
+    PreparedBusEffectsV1(const PreparedBusEffectsV1&) = delete;
+    PreparedBusEffectsV1& operator=(const PreparedBusEffectsV1&) = delete;
+    VnResult Prepare(Engine& engine, const SlotPlanV1& plan,
+        std::span<const PackBusDefinitionEffect> effects,
+        std::span<const PackBusDefinitionEffectParameter> parameters,
+        std::uint64_t allowedOwner, std::uint64_t nextOwner,
+        bool deferStructureWhilePlaying = false);
+    bool CanCommit() const noexcept;
+    void Commit() noexcept;
+    std::span<const CommandRecord> Commands() const noexcept;
+private:
+    struct State;
+    std::unique_ptr<State> state_;
+};
+
 
 #if HARKEN_ENGINE_DEV
 std::uint32_t DrainProjectGenerationInstallAcksV1(Engine& engine) noexcept;

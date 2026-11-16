@@ -62,6 +62,7 @@ public:
     void applyDefaultLayout();
     bool selectBuiltinLayout(const QString& builtinId);
     void revealDock(ads::CDockWidget* dock);
+    void detachDock(ads::CDockWidget* dock);
     bool revealPanel(const QString& objectName, bool visible);
     bool isDockLocked(ads::CDockWidget* dock) const;
     ads::CDockWidget* createEditorDock(WorkspaceDockCreateSpec spec, ads::DockWidgetArea edge);
@@ -111,6 +112,7 @@ private:
     PreferredOpenArea openPlacementFor(const QString& objectName) const;
     ads::CDockAreaWidget* centralTabArea() const;
     void dockIntoCentralTab(ads::CDockWidget* dock);
+    void updateFloatingDockGeometry(ads::CDockWidget* dock, bool initialize);
     bool isFixedSubtree(QWidget* w) const;
     int fixedZoneExtent(QWidget* child, bool horizontal, int total) const;
     ads::CDockAreaWidget* placeDock(ads::CDockWidget* dock, ads::DockWidgetArea zone,

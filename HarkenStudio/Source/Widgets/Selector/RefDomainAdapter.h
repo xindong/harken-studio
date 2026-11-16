@@ -6,12 +6,12 @@
 
 #include <QColor>
 #include <QIcon>
-#include <QList>
-#include <QMetaObject>
 #include <QString>
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <vector>
 
 class QObject;
@@ -39,8 +39,9 @@ public:
     virtual QString tooltip(uint32_t id) const = 0;
     virtual QIcon icon(uint32_t id, const QColor& tint) const = 0;
     virtual bool matchesFilter(uint32_t id, const RefFilter& filter) const = 0;
-    virtual QList<QMetaObject::Connection> connectChanged(
-        QObject* ctx, std::function<void(uint32_t)> onChanged) const = 0;
+    virtual std::unique_ptr<QObject> connectChanged(
+        QObject* ctx, std::function<void()> onChanged,
+        std::optional<uint32_t> objectID = std::nullopt) const = 0;
     virtual void populate(QTreeWidget* tree, const SelectorRequest& request) const = 0;
 };
 

@@ -857,6 +857,13 @@ float EffectParamTargetStore::Reduce(Scope scope, std::uint64_t objectId,
     return r == nullptr ? 0.0f : ReduceRecord(*r);
 }
 
+float EffectParamTargetStore::AuthoredBase(Scope scope, std::uint64_t objectId,
+                                          std::uint32_t slot,
+                                          std::uint32_t paramIndex) const {
+    const Record* r = Find(scope, objectId, slot, paramIndex);
+    return r == nullptr ? 0.0f : r->base;
+}
+
 bool EffectParamTargetStore::PendingPublication(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
     std::uint32_t paramIndex) const {

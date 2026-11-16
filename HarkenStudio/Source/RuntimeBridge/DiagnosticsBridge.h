@@ -310,6 +310,7 @@ struct PlaybackPathSend {
 
 struct PlaybackPathObservation {
     uint64_t voiceInstance = 0;
+    uint64_t worldGeneration = 0;
     harkenstudio::ObjectId soundId = {};
     harkenstudio::ObjectId outputBusId = {};
     std::vector<PlaybackPathRow> rows;

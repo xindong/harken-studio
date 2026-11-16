@@ -60,18 +60,31 @@ public:
     bool HasPreparedBacking() const noexcept { return growth_.heldRows != 0 || PreparedUseActive(); }
     std::uint64_t HeldRows() const noexcept { return growth_.heldRows; }
     std::uint32_t Capacity() const noexcept { return capacity_; }
-    std::uint32_t ConstructedCount() const noexcept { return constructed_; }
-    std::uint32_t size() const noexcept { return constructed_; }
+    std::uint32_t ConstructedCount() const noexcept { return constructed_.load(std::memory_order_acquire); }
+    std::uint32_t size() const noexcept { return ConstructedCount(); }
+
+    // Acquire the published prefix before reading immutable directory entries.
+    // Capacity, byte accounting, growth and Swap remain control-side only.
+    T* TryAt(std::uint32_t slot) noexcept {
+        if (slot >= ConstructedCount()) return nullptr;
+        const auto segment = SegmentFor(slot);
+        return &(*segments_[segment])[slot - SegmentBegin(segment)];
+    }
+    const T* TryAt(std::uint32_t slot) const noexcept {
+        if (slot >= ConstructedCount()) return nullptr;
+        const auto segment = SegmentFor(slot);
+        return &(*segments_[segment])[slot - SegmentBegin(segment)];
+    }
 
     T& operator[](std::uint32_t slot) noexcept {
-        assert(slot < constructed_);
-        const auto segment = SegmentFor(slot);
-        return (*segments_[segment])[slot - SegmentBegin(segment)];
+        auto* row = TryAt(slot);
+        assert(row != nullptr);
+        return *row;
     }
     const T& operator[](std::uint32_t slot) const noexcept {
-        assert(slot < constructed_);
-        const auto segment = SegmentFor(slot);
-        return (*segments_[segment])[slot - SegmentBegin(segment)];
+        const auto* row = TryAt(slot);
+        assert(row != nullptr);
+        return *row;
     }
 
     template<bool Const>
@@ -97,9 +110,9 @@ public:
         std::uint32_t slot_ = 0;
     };
     Iterator<false> begin() noexcept { return {this, 0}; }
-    Iterator<false> end() noexcept { return {this, constructed_}; }
+    Iterator<false> end() noexcept { return {this, ConstructedCount()}; }
     Iterator<true> begin() const noexcept { return {this, 0}; }
-    Iterator<true> end() const noexcept { return {this, constructed_}; }
+    Iterator<true> end() const noexcept { return {this, ConstructedCount()}; }
 
     std::size_t RequestedBytes() const noexcept {
         std::size_t bytes = 0;
@@ -126,7 +139,10 @@ public:
         std::swap(baseRows_, other.baseRows_);
         std::swap(pageBytes_, other.pageBytes_);
         std::swap(capacity_, other.capacity_);
-        std::swap(constructed_, other.constructed_);
+        // The caller excludes all readers before swapping stable directories.
+        const auto previous = constructed_.load(std::memory_order_relaxed);
+        constructed_.store(other.constructed_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        other.constructed_.store(previous, std::memory_order_relaxed);
         std::swap(remainingPagesForTests_, other.remainingPagesForTests_);
     }
 
@@ -150,7 +166,7 @@ private:
             baseRows_ = std::bit_floor(static_cast<std::uint32_t>(
                 std::max<std::size_t>(1u, std::min<std::size_t>(UINT32_MAX, pageBytes_ / sizeof(T)))));
         }
-        auto cursor = constructed_;
+        auto cursor = ConstructedCount();
         while (cursor < count) {
             const auto index = SegmentFor(cursor);
             const auto first = SegmentBegin(index);
@@ -176,7 +192,7 @@ private:
             cursor = first + localCount;
         }
         // Dependencies and every requested segment are ready before exposing the prefix.
-        constructed_ = count;
+        constructed_.store(count, std::memory_order_release);
         return true;
     }
 
@@ -184,7 +200,7 @@ private:
     StableStorageGrowthState growth_;
     std::uint32_t baseRows_ = 0;
     std::uint32_t capacity_ = 0;
-    std::uint32_t constructed_ = 0;
+    std::atomic<std::uint32_t> constructed_{0};
     std::size_t pageBytes_ = 0;
     std::size_t remainingPagesForTests_ = SIZE_MAX;
 };

@@ -7,12 +7,21 @@
 #include "AssetPipeline/MediaPool.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Components/VAction.h"
+#include "Components/VTrack.h"
+#include "Components/VEffect.h"
+#include "Components/VMixNode.h"
+#include "PlatformContextService.h"
+#include "Widgets/EffectEditor/EffectEditorPanel.h"
+#include "Widgets/Common/ParameterSlider.h"
+#include "Widgets/Common/ParameterBinding.h"
+#include "Components/VAudio.h"
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "PropertyEditSession.h"
 #include "UndoCommands.h"
 #include "RuntimeSyncCoordinator.h"
+#include "RuntimeCapabilityMatrix.h"
 #include "AuditionManager.h"
 #include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
@@ -572,6 +581,290 @@ protected:
     }
 };
 
+TEST_F(AudioPlaybackRegression, EffectEditorDragPreviewsBeforeCommitAndCancelsWithoutUndo)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    VNX::EffectEntry entry;
+    entry.guid = QUuid::createUuid();
+    entry.mode = VNX::EffectMode::Custom;
+    entry.custom.parameters = {0.0f, 20.0f};
+    VNX::EffectFieldGroup group;
+    ASSERT_TRUE(group.effects.replace({entry}));
+    sounds[0]->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, group};
+    projects.itemPropertyChanged(sounds[0], QStringLiteral("fieldGroups"), nullptr);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+        HarkenEditor::Bridge::kEngineOk);
+    const auto dry = settledPeak();
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(sounds[0]->guid, entry.guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    EXPECT_LT(settledPeak(), dry * 0.6f);
+    EXPECT_EQ(0, undo->count());
+    slider->binding()->cancelEdit();
+    settledPeak();
+    settledPeak();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    EXPECT_EQ(0, undo->count());
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-21);
+    slider->binding()->previewEdit(-24);
+    EXPECT_LT(settledPeak(), dry * 0.6f);
+    slider->binding()->commitEdit();
+    EXPECT_EQ(1, undo->count());
+    EXPECT_LT(settledPeak(), dry * 0.6f);
+    undo->undo();
+    settledPeak();
+    settledPeak();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditorPresetDragRestoresOnSelectionChange)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("DragPreset"), VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    auto* effect = preset->comp<VNX::VEffect>();
+    ASSERT_NE(effect, nullptr);
+    const auto original = effect->definition.parameters[0];
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(preset->guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    EXPECT_FLOAT_EQ(-24, effect->definition.parameters[0]);
+    EXPECT_EQ(0, undo->count());
+    panel.clearEditor();
+    EXPECT_FLOAT_EQ(original, effect->definition.parameters[0]);
+    EXPECT_EQ(0, undo->count());
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditorExternalPresetEditEndsDragBeforeTakingUndoSnapshot)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("ExternalPreset"), VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    auto* effect = preset->comp<VNX::VEffect>();
+    const auto original = effect->definition.parameters[0];
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(preset->guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), -12.0}}, VNX::ActionSource::IPC).success);
+    QCoreApplication::processEvents();
+    EXPECT_FLOAT_EQ(-12, effect->definition.parameters[0]);
+    slider->binding()->previewEdit(-30);
+    slider->binding()->commitEdit();
+    EXPECT_FLOAT_EQ(-12, effect->definition.parameters[0]);
+    EXPECT_EQ(1, undo->count());
+    undo->undo();
+    EXPECT_FLOAT_EQ(original, effect->definition.parameters[0]);
+    QCoreApplication::processEvents();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-18);
+    projects.itemCreated(preset);
+    EXPECT_FLOAT_EQ(original, effect->definition.parameters[0]);
+    EXPECT_DOUBLE_EQ(original, slider->value());
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetReference)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    VNX::PlatformContextService::instance().setAll(true);
+    for (const bool overlay : {false, true}) {
+    SCOPED_TRACE(overlay);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("DeletedPreset"), VNX::ProjectItem::Type::Effect);
+    auto* bus = projects.createItem(projects.getMasterBusItem(), QStringLiteral("DragBus"), VNX::ProjectItem::Type::Bus);
+    ASSERT_NE(preset, nullptr);
+    ASSERT_NE(bus, nullptr);
+    VNX::EffectEntry custom;
+    custom.guid = QUuid::createUuid();
+    custom.mode = VNX::EffectMode::Custom;
+    custom.custom.parameters = {0.0f, 20.0f};
+    VNX::EffectEntry reference;
+    reference.guid = QUuid::createUuid();
+    reference.effectGuid = preset->guid;
+    auto* mix = bus->comp<VNX::VMixNode>();
+    const auto platform = projects.currentProject()->platforms.front().id;
+    ASSERT_TRUE(mix->effects.replace(overlay ? std::vector<VNX::EffectEntry>{custom}
+        : std::vector<VNX::EffectEntry>{custom, reference}));
+    if (overlay) ASSERT_TRUE(mix->effectPlatforms[platform].replace({custom, reference}));
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(bus->guid, custom.guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    EXPECT_FLOAT_EQ(-24, mix->effects.entries()[0].custom.parameters[0]);
+    ASSERT_TRUE(projects.deleteItem(preset));
+    QCoreApplication::processEvents();
+    ASSERT_EQ(1u, mix->effects.entries().size());
+    if (overlay) {
+        ASSERT_TRUE(mix->effectPlatforms.contains(platform));
+        EXPECT_EQ(1u, mix->effectPlatforms.at(platform).entries().size());
+    }
+    EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
+    EXPECT_EQ(1, undo->count());
+    undo->undo();
+    const auto& restored = overlay ? mix->effectPlatforms.at(platform) : mix->effects;
+    ASSERT_EQ(2u, restored.entries().size());
+    EXPECT_FLOAT_EQ(0, restored.entries()[0].custom.parameters[0]);
+    EXPECT_EQ(reference.effectGuid, restored.entries()[1].effectGuid);
+    }
+}
+
+class AuditionLifecycleTest : public AudioPlaybackRegression {
+protected:
+    HarkenEditor::AuditionManager audition{&engine};
+
+    void makeLooping()
+    {
+        for (auto* sound : sounds)
+            sound->comp<VNX::VAudio>()->loopCount = 0;
+        VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+        ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    }
+
+    void poll()
+    {
+        ASSERT_TRUE(QMetaObject::invokeMethod(
+            &audition, "pollAuditionStates", Qt::DirectConnection));
+    }
+
+    float pump(uint32_t blocks)
+    {
+        if (VnPreview_EnableChannelPeakMetering() != VN_OK)
+            return 0.0f;
+        takeMasterPeak();
+        float peak = 0.0f;
+        for (uint32_t block = 0; block < blocks; ++block) {
+            engine.serviceRuntime();
+            VnPreview_PumpNullMixer(1);
+            peak = std::max(peak, takeMasterPeak());
+            engine.serviceRuntime();
+            poll();
+        }
+        return peak;
+    }
+};
+
+TEST_F(AuditionLifecycleTest, SilentScheduledTreesRemainControllableUntilTheyReallyEnd)
+{
+    makeLooping();
+    action->comp<VNX::VAction>()->steps.front().delay = 2000;
+    auto* parent = projects.createActionTargeting(
+        action, VNX::VActionStep::Type::PostAction, QStringLiteral("Parent"));
+    ASSERT_NE(parent, nullptr);
+    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+
+    const auto first = audition.playItem(*action);
+    const auto second = audition.playItem(*parent);
+    ASSERT_NE(first, 0u);
+    ASSERT_NE(second, 0u);
+    EXPECT_FLOAT_EQ(pump(400), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 2);
+    EXPECT_TRUE(audition.hasActiveNonRawAudition());
+
+    audition.stopAll(100);
+    EXPECT_FLOAT_EQ(pump(2000), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    audition.stopAll(100);
+    EXPECT_FLOAT_EQ(pump(2000), 0.0f);
+}
+
+TEST_F(AuditionLifecycleTest, CompletionAndToolbarScopeAreIndependentOfOtherAudio)
+{
+    const auto rawSound = engine.mintRawPcmSoundId();
+    const auto registered = engine.registerRawPcmSlice(
+        rawSound, std::vector<float>(48000, 0.25f), 1, 48000, 0, 48000, true);
+    ASSERT_EQ(registered.result, HarkenEditor::Bridge::kEngineOk);
+    const auto rawHandle = engine.playRawPcm(rawSound, true);
+    ASSERT_NE(rawHandle, 0u);
+    const auto raw = audition.registerRawFilePlayback(QStringLiteral("Raw"), rawHandle);
+    ASSERT_NE(audition.playItem(*action), 0u);
+    EXPECT_GT(pump(1800), 0.05f);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_EQ(audition.getAudition(raw).playbackHandle, rawHandle);
+    EXPECT_FALSE(audition.hasActiveNonRawAudition());
+
+    ASSERT_NE(audition.playItem(*action), 0u);
+    pump(32);
+    audition.stopAll(100);
+    pump(160);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_GT(pump(100), 0.05f);
+    audition.stop(raw);
+    pump(32);
+    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_EQ(engine.unregisterRawPcm(rawSound), HarkenEditor::Bridge::kEngineOk);
+}
+
+TEST_F(AuditionLifecycleTest, StopCompletionFollowsAudioAndRepeatedRequestsDoNotExtendFades)
+{
+    makeLooping();
+    const auto first = audition.playItem(*action);
+    const auto second = audition.playItem(*action);
+    const auto preview = audition.playItem(*sounds[1]);
+    ASSERT_NE(first, 0u);
+    ASSERT_NE(second, 0u);
+    ASSERT_NE(preview, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    EXPECT_EQ(audition.getActiveAuditions().size(), 3);
+    int completed = 0;
+    QObject::connect(&audition, &HarkenEditor::AuditionManager::allAuditionsStopped,
+                     &audition, [&] { ++completed; });
+
+    audition.stopAll(100);
+    EXPECT_EQ(completed, 0);
+    EXPECT_EQ(audition.activeAuditionCount(), 3);
+    EXPECT_EQ(audition.stopIpcSnapshot().value("state").toString(), "stopping");
+    EXPECT_GT(pump(16), 0.01f);
+    EXPECT_EQ(audition.activeAuditionCount(), 3);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        audition.stopAll(100);
+        pump(10);
+    }
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_EQ(completed, 1);
+    EXPECT_FLOAT_EQ(pump(1500), 0.0f);
+}
+
+TEST_F(AuditionLifecycleTest, ReplacingAStoppingPreviewKeepsTheNewPlaybackControllable)
+{
+    makeLooping();
+    const auto id = audition.playItem(*sounds[1]);
+    ASSERT_NE(id, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stop(id, 100);
+    ASSERT_NE(audition.playItem(*sounds[1]), 0u);
+    pump(160);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stopAll(100);
+    pump(160);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+}
+
 TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentForCurrentAndFuturePlayback)
 {
     VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
@@ -619,6 +912,212 @@ TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentFo
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
               HarkenEditor::Bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), baseline, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, LimiterEditsPreserveRunningInstancesAndApplyStructureLive)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    effect.bypass = true;
+    const auto replace = [&](const QJsonArray& effects) {
+        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("effects"), effects}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace({effect.toJson()}));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto started = engine.playByNameDetailed(QStringLiteral("Play_Good"));
+    ASSERT_EQ(started.engineResult, HarkenEditor::Bridge::kEngineOk);
+    const float dry = settledPeak();
+    ASSERT_GT(dry, 0.05f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> before;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(before));
+    ASSERT_EQ(before.size(), 1u);
+
+    effect.bypass = false;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    const float limited = settledPeak();
+    EXPECT_GT(limited, 0.0f);
+    EXPECT_LT(limited, dry * 0.7f);
+    effect.custom.parameters[0] = 0.0f;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    ASSERT_TRUE(undo->canUndo());
+    undo->undo();
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> after;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(after));
+    ASSERT_EQ(after.size(), 1u);
+    EXPECT_EQ(after.front().voiceInstance, before.front().voiceInstance);
+
+    auto* preset = projects.createItem(nullptr, QStringLiteral("ReplacementLimiter"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_GT(settledPeak(), dry * 0.9f);
+    effect.bypass = true;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    ASSERT_TRUE(replace({}));
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, LimiterSourceReplacementBeforeFirstLiveTickAdoptsLatestSource)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("FirstTickReplacement"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    const auto replace = [&] {
+        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    ASSERT_GT(pumpUntilPreviewAudible(), 0.0f);
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace());
+    const float limited = settledPeak();
+    ASSERT_GT(limited, 0.0f);
+    effect.bypass = true;
+    ASSERT_TRUE(replace());
+    const float dry = settledPeak();
+    EXPECT_GT(limited, dry * 0.9f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, BusLimiterSourceReplacementAppliesDuringPlayback)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* bus = projects.getMasterBusItem();
+    ASSERT_NE(bus, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("BusReplacementLimiter"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("releaseMs")},
+         {QStringLiteral("value"), 1.0}}, VNX::ActionSource::GUI).success);
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    effect.bypass = true;
+    VNX::EffectEntry added;
+    added.guid = QUuid::createUuid();
+    added.mode = VNX::EffectMode::Custom;
+    bool includeAdded = false;
+    const auto replace = [&] {
+        QJsonArray effects{effect.toJson()};
+        if (includeAdded) effects.append(added.toJson());
+        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            {{QStringLiteral("authoring_handle"), static_cast<qint64>(bus->objectID)},
+             {QStringLiteral("property"), QStringLiteral("effects")},
+             {QStringLiteral("value"), effects}},
+            VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    const float dry = settledPeak();
+    ASSERT_GT(dry, 0.05f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const float limited = settledPeak();
+    EXPECT_GT(limited, 0.0f);
+    EXPECT_LT(limited, dry * 0.7f);
+
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace());
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    QElapsedTimer wait;
+    wait.start();
+    while (wait.elapsed() < 100) {
+        QCoreApplication::processEvents();
+        QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+        QThread::msleep(1);
+    }
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    effect.bypass = true;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    includeAdded = true;
+    ASSERT_TRUE(replace());
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), 0.0}}, VNX::ActionSource::GUI).success);
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
 }
 
 TEST_F(AudioPlaybackRegression, ScalarPublicationRechecksSourceFilesAndLostRuntimeRegistration)

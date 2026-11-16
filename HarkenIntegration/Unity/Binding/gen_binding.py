@@ -454,6 +454,9 @@ def validate_params(table):
             elif wire == "f32":
                 if ctype != "float":
                     bad("f32 wants float")
+            elif wire == "f32array":
+                if ctype != "const float*":
+                    bad("f32array wants const float*")
             elif wire == "f64":
                 if ctype != "double":
                     bad("f64 wants double")
@@ -523,6 +526,8 @@ def cs_param(param):
         return "VnObjectId %s" % name
     if wire == "u32":
         return "uint %s" % name
+    if wire == "f32array":
+        return "float* %s" % name
     if wire == "f32":
         return "float %s" % name
     if wire == "f64":

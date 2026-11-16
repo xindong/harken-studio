@@ -1,6 +1,7 @@
 #include "UnitTest/ProjectSchemaFixtures.h"
 
 #include "harken_project_schema/FrontEnd.h"
+#include "harken_project_schema/FixedSlotLowerer.h"
 #include "harken_project_schema/Model.h"
 #include "harken_project_schema/Serialize.h"
 
@@ -89,6 +90,29 @@ TEST(ProjectSchemaSignalGraph, DiamondDagIsAccepted) {
     EXPECT_TRUE(result.ok()) << RenderDiagnostics(result.diagnostics);
     EXPECT_TRUE(result.project.has_value());
     EXPECT_TRUE(result.facts.has_value());
+}
+
+TEST(ProjectSchemaSignalGraph, EveryObjectKindEnforcesHostCapacityWithoutClipPlacements) {
+    for (const auto kind : {ContentKind::Sound, ContentKind::Container,
+                           ContentKind::Track, ContentKind::Segment, ContentKind::Layer}) {
+        SCOPED_TRACE(static_cast<int>(kind));
+        auto input = SingleNodeProject(kind);
+        auto& graph = DeclareGraph(input);
+        for (GraphNodeId id = 1; id <= kFixedVoiceFxSlotCount; ++id) {
+            graph.nodes.push_back(Effect(id, 10));
+            if (id > 1) graph.edges.push_back(GraphEdge{id - 1, id});
+        }
+        const auto accepted = CompileFrontEnd(input);
+        ASSERT_TRUE(accepted.ok()) << RenderDiagnostics(accepted.diagnostics);
+        graph.nodes.push_back(Effect(kFixedVoiceFxSlotCount + 1, 10));
+        graph.edges.push_back(GraphEdge{kFixedVoiceFxSlotCount, kFixedVoiceFxSlotCount + 1});
+        const auto rejected = CompileFrontEnd(input);
+        EXPECT_FALSE(rejected.ok());
+        EXPECT_FALSE(rejected.project.has_value());
+        ASSERT_EQ(rejected.diagnostics.size(), 1u);
+        EXPECT_EQ(rejected.diagnostics.front().code, DiagnosticCode::EffectChainExceedsSlotLimit);
+        EXPECT_EQ(rejected.diagnostics.front().primary, input.nodes.front().guid);
+    }
 }
 
 }

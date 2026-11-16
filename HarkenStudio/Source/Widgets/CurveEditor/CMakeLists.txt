@@ -1,6 +1,8 @@
 add_library(harken_editor_curve_editor STATIC
     CurveCanvas.cpp
     CurveCanvas.h
+    CurvePresetMenu.cpp
+    CurvePresetMenu.h
     CurvePlotGeometry.cpp
     CurvePlotGeometry.h
     ../FilterEditor/FilterResponseCanvas.cpp

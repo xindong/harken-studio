@@ -15,10 +15,12 @@
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
+#include "Widgets/Common/TreeExpansion.h"
 #include "Widgets/Shared/AudioAssetLabels.h"
 #include "Widgets/Shared/TreeRowPing.h"
 #include "Widgets/Shared/TreeRowStyle.h"
 
+#include <QApplication>
 #include <QDirIterator>
 #include <QPainter>
 #include <QPixmap>
@@ -182,7 +184,7 @@ void ProjectExplorer::setupPanelChrome()
                     return;
                 const uint32_t sourceId = item->data(0, kSourceIdRole).toUInt();
                 if (sourceId == 0) {
-                    item->setExpanded(!item->isExpanded());
+                    TreeExpansion::toggle(item, QApplication::keyboardModifiers());
                     return;
                 }
                 emit sourceEditorRequested(sourceId);

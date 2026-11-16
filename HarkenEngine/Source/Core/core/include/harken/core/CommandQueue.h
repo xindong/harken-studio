@@ -83,7 +83,8 @@ inline constexpr std::uint16_t kOpcodeSeekVoice = 26;
 // above this. The command queue records which opcodes it has ever admitted (a
 // bit per opcode), so a composed scene can prove it stayed within the vocabulary
 // — the acceptance command-vocabulary check.
-inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeSeekVoice;
+inline constexpr std::uint16_t kOpcodeApplyPreviewEffectChain = 27;
+inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeApplyPreviewEffectChain;
 
 // SetVoiceFilter selects which tone-stage section it retunes. One opcode
 // covers both sections so the audio-thread vocabulary stays minimal.
@@ -99,7 +100,7 @@ inline constexpr std::uint32_t kEffectActionReset = 1;
 inline constexpr std::uint32_t kStopModeOrdinary = 0;
 inline constexpr std::uint32_t kStopModeStreamPark = 1;
 
-inline constexpr std::uint8_t kCommandVersion = 7;
+inline constexpr std::uint8_t kCommandVersion = 8;
 inline constexpr std::uint8_t kPlayLedBatchVersion = 1;
 
 enum class PlayLedBatchKind : std::uint8_t {
@@ -128,10 +129,11 @@ static_assert(std::is_trivial_v<PlayLedBatchHeader> &&
 
 inline constexpr std::uint8_t kCommandFlagPreparedCompressor = 1u << 0;
 inline constexpr std::uint8_t kCommandFlagVariableWeightSegment = 1u << 1;
+inline constexpr std::uint8_t kCommandFlagPreviewBusEffect = 1u << 2;
 inline constexpr std::uint8_t kCommandKnownFlagsMask =
-    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment;
-static_assert(kCommandKnownFlagsMask == 0x03u,
-              "command flag bits 0 and 1 are assigned internal flags");
+    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment | kCommandFlagPreviewBusEffect;
+static_assert(kCommandKnownFlagsMask == 0x07u,
+              "command flag bits 0 through 2 are assigned internal flags");
 
 struct PreparedBiquadCoeffs {
     float b0;
@@ -299,17 +301,24 @@ struct CommandRecord {
             std::uint32_t action; // kEffectAction*
             std::uint32_t expectedEffectType;
         } setVoiceEffectBypass;
+        struct ApplyPreviewEffectChain {
+            VnVoiceHandle handle;
+            std::uint64_t revision;
+        } applyPreviewEffectChain;
         struct SetVoiceEffect {
             // The instance was acquired and configured on the logic side; the
             // audio thread resolves (effectType, poolIndex) to the pooled
             // state through the effect bank and installs it into the slot,
-            // retiring whatever the slot held. Only ids and indices cross the
-            // boundary — no pointer into logic-owned mutable memory.
+            // retiring whatever the slot held. Ids, indices and authored values
+            // cross the boundary, never a pointer into logic-owned mutable memory.
             VnVoiceHandle handle;
+            std::uint64_t poolGeneration;
             std::uint32_t slot;
             std::uint32_t effectType; // VnEffectType
             std::uint32_t poolIndex;  // instance index within the type's pool
-            std::uint64_t poolGeneration;
+            // Canonical authored values for the Timeline final-publication mirror.
+            // Audio installs the already configured state; other producers keep zero.
+            float initialParams[7];
         } setVoiceEffect;
         struct ClearVoiceEffect {
             VnVoiceHandle handle;
@@ -449,10 +458,23 @@ struct CommandRecord {
             std::uint32_t tailFrames;
             std::uint32_t transitionFrames;
         } setBusFilter;
+        struct PreviewBusEffectControl {
+            std::uint64_t host;
+            std::uint64_t owner;
+            std::uint64_t revision;
+            std::uint32_t slot;
+            std::uint32_t parameter;
+            float value;
+            float prepared;
+            std::uint32_t transitionFrames;
+            std::uint32_t effectType;
+        } previewBusEffectControl;
         unsigned char raw[56];
     } payload;
 };
 
+static_assert(sizeof(CommandRecord::Payload::PreviewBusEffectControl) == 48);
+static_assert(std::is_trivially_copyable_v<CommandRecord::Payload::PreviewBusEffectControl>);
 static_assert(sizeof(CommandRecord) == 64,
               "command records are fixed 64-byte POD");
 static_assert(sizeof(CommandRecord::Payload::SetBusTopologyPlan) <= 56,
@@ -1031,6 +1053,17 @@ public:
         return true;
     }
 
+    // Logic-thread resource rollback follows the frozen batch, including
+    // cancellation through an original child or disposition receipt.
+    bool SetPreparedBatchCancellationHandler(const PreparedBatchProof& proof,
+        void* context, void (*handler)(void*) noexcept) noexcept {
+        if (!FrozenProofMatches(proof) || handler == nullptr ||
+            m_frozenCancellationHandler != nullptr) return false;
+        m_frozenCancellationContext = context;
+        m_frozenCancellationHandler = handler;
+        return true;
+    }
+
     PublishedBatchView ConsumePreparedBatch(PreparedBatchProof&& proof) noexcept {
         assert(FrozenProofMatches(proof));
         if (!FrozenProofMatches(proof)) return {};
@@ -1071,6 +1104,8 @@ public:
         if (m_frozenInitialSource)
             m_initialSources[static_cast<std::uint32_t>(head & m_mask)].publishSequence =
                 m_nextSourcePublication;
+        m_frozenCancellationHandler = nullptr;
+        m_frozenCancellationContext = nullptr;
         m_lastPublishedFrozenOrigin = proof.origin_;
         if (m_frozenDispositionReceipt != nullptr) {
             assert(DispositionReceiptMatches(*m_frozenDispositionReceipt, proof));
@@ -1799,6 +1834,9 @@ private:
         m_frozenCount = 0;
         m_frozenInitialSource = false;
         ClearReservation(proof.reservation_);
+        auto* context = std::exchange(m_frozenCancellationContext, nullptr);
+        auto handler = std::exchange(m_frozenCancellationHandler, nullptr);
+        if (handler != nullptr) handler(context);
     }
 
     bool ReservationMatches(const BatchReservation* reservation) const noexcept {
@@ -1839,6 +1877,8 @@ private:
     std::uint64_t m_lastPublishedFrozenOrigin = 0;
     BatchReservation* m_frozenReservation = nullptr;
     PreparedBatchDispositionReceipt* m_frozenDispositionReceipt = nullptr;
+    void* m_frozenCancellationContext = nullptr;
+    void (*m_frozenCancellationHandler)(void*) noexcept = nullptr;
     std::uint64_t m_frozenReservationId = 0;
     std::uint64_t m_frozenHead = 0;
     std::uint32_t m_frozenCount = 0;

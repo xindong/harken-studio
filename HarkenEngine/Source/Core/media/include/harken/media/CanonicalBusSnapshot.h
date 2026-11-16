@@ -106,6 +106,10 @@ struct PackBusDefinitionSnapshotWriter {
     const auto& Buses(std::uint64_t i) noexcept { return image.busDefinitionBusesV2[static_cast<std::size_t>(i)]; }
     bool PrepareSends(std::uint64_t count) noexcept { return count == image.busDefinitionSendsV2.size(); }
     const auto& Sends(std::uint64_t i) noexcept { return image.busDefinitionSendsV2[static_cast<std::size_t>(i)]; }
+    bool PrepareEffects(std::uint64_t count) noexcept { return count == image.busDefinitionEffects.size(); }
+    const auto& Effects(std::uint64_t i) noexcept { return image.busDefinitionEffects[static_cast<std::size_t>(i)]; }
+    bool PrepareEffectParameters(std::uint64_t count) noexcept { return count == image.busDefinitionEffectParameters.size(); }
+    const auto& EffectParameters(std::uint64_t i) noexcept { return image.busDefinitionEffectParameters[static_cast<std::size_t>(i)]; }
     bool PrepareDownmixes(std::uint64_t count) noexcept { return count == image.busDefinitionDownmixesV2.size(); }
     const auto& Downmixes(std::uint64_t i) noexcept { return image.busDefinitionDownmixesV2[static_cast<std::size_t>(i)]; }
     bool PrepareCoefficients(std::uint64_t count) noexcept { return count == image.busDefinitionCoefficients.size(); }

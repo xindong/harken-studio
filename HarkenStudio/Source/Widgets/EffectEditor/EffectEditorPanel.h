@@ -4,16 +4,27 @@
 #include <QVariantMap>
 #include <QWidget>
 
+#include <array>
+#include <memory>
+
+class QToolButton;
+
 namespace VNX {
 
 struct ProjectItem;
+class ParameterSlider;
+class PropertyEditSession;
 
 class EffectEditorPanel final : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit EffectEditorPanel(QWidget* parent = nullptr);
+    enum class Presentation { Standalone, Embedded };
+
+    explicit EffectEditorPanel(QWidget* parent = nullptr,
+                               Presentation presentation = Presentation::Standalone);
+    ~EffectEditorPanel() override;
 
     int panelId() const { return panelId_; }
     void setPanelId(int id) { panelId_ = id; }
@@ -32,19 +43,35 @@ public:
 signals:
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
+    void detachRequested(const QUuid& ownerGuid, const QUuid& rowGuid);
 
 protected:
+    bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
 
 private:
+    struct Selection;
+    static std::unique_ptr<Selection> resolveSelection(const ProjectItem* item, const QUuid& rowGuid);
     void installFocusFilterRecursively(QObject* root);
     void refreshEffect();
+    void cancelPendingEdits();
+    void previewParameter(size_t index, double value);
+    void finishParameter(size_t index, double value, bool committed);
+    void clearParameterPreview();
+    void commitParameter(size_t index, double value);
 
     int panelId_ = 0;
     bool pinned_ = false;
     QUuid ownerGuid_;
     QUuid rowGuid_;
+    QToolButton* detachButton_ = nullptr;
+    QWidget* fields_ = nullptr;
+    std::array<ParameterSlider*, 2> parameters_{};
+    std::unique_ptr<Selection> selection_;
+    std::unique_ptr<PropertyEditSession> editSession_;
+    bool groupPreviewActive_ = false;
+    bool updating_ = false;
 };
 
 }

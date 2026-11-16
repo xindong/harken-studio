@@ -3845,6 +3845,73 @@ static_assert(offsetof(VnPreviewProjectDescV3, busSendLevelCount) == 168,
 static_assert(offsetof(VnPreviewProjectDescV3, reserved1) == 172,
               "wire table offset drift: VnPreviewProjectDescV3.reserved1");
 
+static_assert(sizeof(VnPreviewBusEffectV1) == 56,
+              "wire table size drift: VnPreviewBusEffectV1");
+static_assert(offsetof(VnPreviewBusEffectV1, busId) == 0,
+              "wire table offset drift: VnPreviewBusEffectV1.busId");
+static_assert(offsetof(VnPreviewBusEffectV1, effectId) == 16,
+              "wire table offset drift: VnPreviewBusEffectV1.effectId");
+static_assert(offsetof(VnPreviewBusEffectV1, slot) == 32,
+              "wire table offset drift: VnPreviewBusEffectV1.slot");
+static_assert(offsetof(VnPreviewBusEffectV1, effectType) == 36,
+              "wire table offset drift: VnPreviewBusEffectV1.effectType");
+static_assert(offsetof(VnPreviewBusEffectV1, descriptorVintage) == 40,
+              "wire table offset drift: VnPreviewBusEffectV1.descriptorVintage");
+static_assert(offsetof(VnPreviewBusEffectV1, flags) == 44,
+              "wire table offset drift: VnPreviewBusEffectV1.flags");
+static_assert(offsetof(VnPreviewBusEffectV1, parameterFirst) == 48,
+              "wire table offset drift: VnPreviewBusEffectV1.parameterFirst");
+static_assert(offsetof(VnPreviewBusEffectV1, parameterCount) == 52,
+              "wire table offset drift: VnPreviewBusEffectV1.parameterCount");
+
+static_assert(sizeof(VnPreviewBusEffectParameterV1) == 8,
+              "wire table size drift: VnPreviewBusEffectParameterV1");
+static_assert(offsetof(VnPreviewBusEffectParameterV1, index) == 0,
+              "wire table offset drift: VnPreviewBusEffectParameterV1.index");
+static_assert(offsetof(VnPreviewBusEffectParameterV1, value) == 4,
+              "wire table offset drift: VnPreviewBusEffectParameterV1.value");
+
+static_assert(sizeof(VnPreviewProjectDescV4) == 216,
+              "wire table size drift: VnPreviewProjectDescV4");
+static_assert(offsetof(VnPreviewProjectDescV4, base) == 0,
+              "wire table offset drift: VnPreviewProjectDescV4.base");
+static_assert(offsetof(VnPreviewProjectDescV4, busEffects) == 176,
+              "wire table offset drift: VnPreviewProjectDescV4.busEffects");
+static_assert(offsetof(VnPreviewProjectDescV4, busEffectCount) == 184,
+              "wire table offset drift: VnPreviewProjectDescV4.busEffectCount");
+static_assert(offsetof(VnPreviewProjectDescV4, busEffectParameterCount) == 188,
+              "wire table offset drift: VnPreviewProjectDescV4.busEffectParameterCount");
+static_assert(offsetof(VnPreviewProjectDescV4, busEffectParameters) == 192,
+              "wire table offset drift: VnPreviewProjectDescV4.busEffectParameters");
+static_assert(offsetof(VnPreviewProjectDescV4, busFaderAfterSlots) == 200,
+              "wire table offset drift: VnPreviewProjectDescV4.busFaderAfterSlots");
+static_assert(offsetof(VnPreviewProjectDescV4, busFaderCount) == 208,
+              "wire table offset drift: VnPreviewProjectDescV4.busFaderCount");
+static_assert(offsetof(VnPreviewProjectDescV4, forceWorldReplacement) == 212,
+              "wire table offset drift: VnPreviewProjectDescV4.forceWorldReplacement");
+
+static_assert(sizeof(VnPreviewVoiceEffectEntryV1) == 32,
+              "wire table size drift: VnPreviewVoiceEffectEntryV1");
+static_assert(offsetof(VnPreviewVoiceEffectEntryV1, effectId) == 0,
+              "wire table offset drift: VnPreviewVoiceEffectEntryV1.effectId");
+static_assert(offsetof(VnPreviewVoiceEffectEntryV1, effectType) == 16,
+              "wire table offset drift: VnPreviewVoiceEffectEntryV1.effectType");
+static_assert(offsetof(VnPreviewVoiceEffectEntryV1, bypass) == 20,
+              "wire table offset drift: VnPreviewVoiceEffectEntryV1.bypass");
+static_assert(offsetof(VnPreviewVoiceEffectEntryV1, ceilingDb) == 24,
+              "wire table offset drift: VnPreviewVoiceEffectEntryV1.ceilingDb");
+static_assert(offsetof(VnPreviewVoiceEffectEntryV1, releaseMs) == 28,
+              "wire table offset drift: VnPreviewVoiceEffectEntryV1.releaseMs");
+
+static_assert(sizeof(VnPreviewVoiceEffectChainV1) == 264,
+              "wire table size drift: VnPreviewVoiceEffectChainV1");
+static_assert(offsetof(VnPreviewVoiceEffectChainV1, structSize) == 0,
+              "wire table offset drift: VnPreviewVoiceEffectChainV1.structSize");
+static_assert(offsetof(VnPreviewVoiceEffectChainV1, entryCount) == 4,
+              "wire table offset drift: VnPreviewVoiceEffectChainV1.entryCount");
+static_assert(offsetof(VnPreviewVoiceEffectChainV1, entries) == 8,
+              "wire table offset drift: VnPreviewVoiceEffectChainV1.entries");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

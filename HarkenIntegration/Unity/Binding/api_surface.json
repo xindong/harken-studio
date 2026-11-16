@@ -625,20 +625,27 @@
         "native:VnPreview_PrepareProject",
         "native:VnPreview_PrepareProjectV2",
         "native:VnPreview_PrepareProjectV3",
+        "native:VnPreview_PrepareProjectV4",
         "native:VnPreview_CommitProject",
         "native:VnPreview_CancelProject",
         "native:VnPreview_DrainProjectAcks",
         "native:VnPreview_ProjectIsOpen",
         "native:VnPreview_QueryOwnerRevision",
         "native:VnPreview_HasPlayableConsumers",
+        "native:VnPreview_HasEffectChainConsumers",
+        "native:VnPreview_QueryVoiceWorldGeneration",
+        "native:VnPreview_HasWorldGeneration",
         "native:VnPreview_HasAction",
         "native:VnPreview_PumpNullMixer",
         "native:VnPreview_EnableChannelPeakMetering",
         "native:VnPreview_TakeChannelPeaks",
         "native:VnPreview_RegisterPcm",
         "native:VnPreview_PlayVoiceRaw",
+        "native:VnPreview_SetVoiceEffectChain",
         "native:VnPreview_RefreshVoiceBindings",
-        "native:VnPreview_SetVoiceProperty"
+        "native:VnPreview_SetVoiceProperty",
+        "native:VnPreview_SetVoiceEffect",
+        "native:VnPreview_SetBusEffect"
       ]
     },
     "native-binding": {

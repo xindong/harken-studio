@@ -65,7 +65,7 @@ GAMEPLAY_FILES = [
                  "HarkenAbi.g.cs"),
 ]
 
-DECL_RE = re.compile(r"^(?:VnPreview\w+|VnResult|uint32_t|void)\s+(VnPreview_[A-Za-z0-9_]+)\s*\(",
+DECL_RE = re.compile(r"^(?:VnPreview\w+|VnResult|uint32_t|uint64_t|void)\s+(VnPreview_[A-Za-z0-9_]+)\s*\(",
                      re.MULTILINE)
 
 

@@ -810,7 +810,7 @@ public:
         BusTargetStore& busTargets) noexcept;
     WorldInstallStatus PrepareCurrentWorldImageV1(
         const ContainerWorldInstallViewV1& install,
-        PreparedCurrentWorldImageV1& out);
+        PreparedCurrentWorldImageV1& out, bool forceReplacement = false);
     WorldGeneration CommitPreparedCurrentWorldImageV1(
         PreparedCurrentWorldImageV1& prepared) noexcept;
     bool CanCommitPreparedCurrentWorldImageV1(

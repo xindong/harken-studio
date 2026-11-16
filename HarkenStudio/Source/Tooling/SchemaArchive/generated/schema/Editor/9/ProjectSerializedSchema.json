@@ -526,11 +526,6 @@
             "mode": {
               "const": "custom",
               "type": "string"
-            },
-            "wetDry": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
             }
           },
           "propertyNames": {
@@ -558,11 +553,6 @@
             "mode": {
               "const": "preset",
               "type": "string"
-            },
-            "wetDry": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
             }
           },
           "propertyNames": {

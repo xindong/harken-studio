@@ -38,6 +38,9 @@ signals:
     void groupCheckStateRequested(QTreeWidgetItem* group, Qt::CheckState state);
 
 protected:
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
                  const QModelIndex& index) const override;

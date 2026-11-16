@@ -300,7 +300,8 @@
           "VN_PREVIEW_REASON_START_REFUSED",
           "VN_PREVIEW_REASON_DEADLINE",
           "VN_PREVIEW_PATH_ROW_CAPACITY",
-          "VN_PREVIEW_PATH_SEND_CAPACITY"
+          "VN_PREVIEW_PATH_SEND_CAPACITY",
+          "VN_PREVIEW_EFFECT_CHAIN_CAPACITY"
         ],
         "enumValues": {
           "VnActionFiringOutcome": [
@@ -1418,7 +1419,12 @@
           "VnPreviewBusSendV1",
           "VnPreviewProjectDescV1",
           "VnPreviewProjectDescV2",
-          "VnPreviewProjectDescV3"
+          "VnPreviewProjectDescV3",
+          "VnPreviewBusEffectV1",
+          "VnPreviewBusEffectParameterV1",
+          "VnPreviewProjectDescV4",
+          "VnPreviewVoiceEffectEntryV1",
+          "VnPreviewVoiceEffectChainV1"
         ]
       },
       "defines": {
@@ -1814,6 +1820,11 @@
           "edition": "development",
           "type": "i32",
           "value": 12
+        },
+        "VN_PREVIEW_EFFECT_CHAIN_CAPACITY": {
+          "edition": "development",
+          "type": "u32",
+          "value": 8
         },
         "VN_PREVIEW_HOST_ERROR": {
           "edition": "development",
@@ -5904,6 +5915,22 @@
         {
           "callingConvention": "cdecl",
           "edition": "development",
+          "name": "VnPreview_PrepareProjectV4",
+          "parameters": [
+            {
+              "ctype": "const VnPreviewProjectDescV4*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnPreviewProjectHandle*",
+              "name": "outHandle"
+            }
+          ],
+          "returnType": "VnPreviewPrepareStatus"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
           "name": "VnPreview_CommitProject",
           "parameters": [
             {
@@ -5969,6 +5996,37 @@
           "edition": "development",
           "name": "VnPreview_HasPlayableConsumers",
           "parameters": [],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_HasEffectChainConsumers",
+          "parameters": [],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_QueryVoiceWorldGeneration",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "voiceInstance"
+            }
+          ],
+          "returnType": "uint64_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_HasWorldGeneration",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "generation"
+            }
+          ],
           "returnType": "uint32_t"
         },
         {
@@ -6061,6 +6119,22 @@
         {
           "callingConvention": "cdecl",
           "edition": "development",
+          "name": "VnPreview_SetVoiceEffectChain",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "voiceInstance"
+            },
+            {
+              "ctype": "const VnPreviewVoiceEffectChainV1*",
+              "name": "chain"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
           "name": "VnPreview_RefreshVoiceBindings",
           "parameters": [
             {
@@ -6090,6 +6164,74 @@
             {
               "ctype": "VnBusId",
               "name": "sendBusId"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_SetVoiceEffect",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "voiceInstance"
+            },
+            {
+              "ctype": "VnObjectId",
+              "name": "effectId"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "effectType"
+            },
+            {
+              "ctype": "const float*",
+              "name": "parameters"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "parameterCount"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "bypass"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_SetBusEffect",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "ownerId"
+            },
+            {
+              "ctype": "VnBusId",
+              "name": "busId"
+            },
+            {
+              "ctype": "VnObjectId",
+              "name": "effectId"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "effectType"
+            },
+            {
+              "ctype": "const float*",
+              "name": "parameters"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "parameterCount"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "bypass"
             }
           ],
           "returnType": "VnResult"
@@ -6285,19 +6427,26 @@
         "VnPreview_DrainProjectAcks",
         "VnPreview_EnableChannelPeakMetering",
         "VnPreview_HasAction",
+        "VnPreview_HasEffectChainConsumers",
         "VnPreview_HasPlayableConsumers",
+        "VnPreview_HasWorldGeneration",
         "VnPreview_PlayPlayable",
         "VnPreview_PlayVoiceRaw",
         "VnPreview_PrepareProject",
         "VnPreview_PrepareProjectV2",
         "VnPreview_PrepareProjectV3",
+        "VnPreview_PrepareProjectV4",
         "VnPreview_ProjectIsOpen",
         "VnPreview_PumpNullMixer",
         "VnPreview_QueryOwnerRevision",
         "VnPreview_QueryPlayable",
+        "VnPreview_QueryVoiceWorldGeneration",
         "VnPreview_RefreshVoiceBindings",
         "VnPreview_RegisterPcm",
         "VnPreview_ResetPlayable",
+        "VnPreview_SetBusEffect",
+        "VnPreview_SetVoiceEffect",
+        "VnPreview_SetVoiceEffectChain",
         "VnPreview_SetVoiceProperty",
         "VnPreview_StopPlayable",
         "VnPreview_TakeChannelPeaks",
@@ -19810,6 +19959,120 @@
           ],
           "size": 48
         },
+        "VnPreviewBusEffectParameterV1": {
+          "alignment": 4,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "index",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "value",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 8
+        },
+        "VnPreviewBusEffectV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "busId",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "effectId",
+              "offset": 16,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "slot",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "effectType",
+              "offset": 36,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "descriptorVintage",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 44,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "parameterFirst",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "parameterCount",
+              "offset": 52,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 56
+        },
         "VnPreviewBusSendV1": {
           "alignment": 8,
           "edition": "development",
@@ -20673,6 +20936,96 @@
           ],
           "size": 176
         },
+        "VnPreviewProjectDescV4": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "base",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnPreviewProjectDescV3"
+              },
+              "size": 176
+            },
+            {
+              "alignment": 8,
+              "name": "busEffects",
+              "offset": 176,
+              "shape": {
+                "ctype": "const VnPreviewBusEffectV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busEffectCount",
+              "offset": 184,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "busEffectParameterCount",
+              "offset": 188,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "busEffectParameters",
+              "offset": 192,
+              "shape": {
+                "ctype": "const VnPreviewBusEffectParameterV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "busFaderAfterSlots",
+              "offset": 200,
+              "shape": {
+                "ctype": "const uint32_t*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busFaderCount",
+              "offset": 208,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "forceWorldReplacement",
+              "offset": 212,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 216
+        },
         "VnPreviewResetPlayableDescV2": {
           "alignment": 8,
           "edition": "development",
@@ -20739,6 +21092,101 @@
             }
           ],
           "size": 40
+        },
+        "VnPreviewVoiceEffectChainV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "entryCount",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "entries",
+              "offset": 8,
+              "shape": {
+                "count": 8,
+                "element": "VnPreviewVoiceEffectEntryV1",
+                "kind": "array"
+              },
+              "size": 256
+            }
+          ],
+          "size": 264
+        },
+        "VnPreviewVoiceEffectEntryV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "effectId",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "effectType",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "bypass",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "ceilingDb",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "releaseMs",
+              "offset": 28,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 32
         },
         "VnPropertyBindingInfo": {
           "alignment": 8,
@@ -25719,6 +26167,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnPreviewVoiceEffectChainV1": {
+            "acceptedSizes": [
+              264
+            ],
+            "currentSize": 264,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnPropertyBindingInfo": {
             "acceptedSizes": [
               88
@@ -25977,7 +26434,7 @@
       }
     }
   },
-  "contractSha256": "33d1405ca89ab3de284d521b59cebc3ecfdf9aa020f462fafc52eab1b36abb22",
+  "contractSha256": "8f8160cf39c7cb5720095814652952bb9880d1f727090566fe9e01f242c09601",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

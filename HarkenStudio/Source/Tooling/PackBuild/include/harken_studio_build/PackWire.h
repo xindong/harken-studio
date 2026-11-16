@@ -254,6 +254,7 @@ inline void ToWire(const EffectNodeV1& row, HkPackBodyPayloadEffectNodeHeader& w
     wire.effectId = ToPackId(row.effectId);
     wire.effectType = static_cast<std::uint32_t>(row.effectType);
     wire.paramCount = static_cast<std::uint32_t>(row.paramCount);
+    wire.flags = static_cast<std::uint32_t>(row.flags);
 }
 
 [[nodiscard]] inline bool FromWire(const HkPackBodyPayloadEffectNodeHeader& wire, EffectNodeV1& out) noexcept {
@@ -261,7 +262,16 @@ inline void ToWire(const EffectNodeV1& row, HkPackBodyPayloadEffectNodeHeader& w
     AssignPack(out.effectId, FromPackId(wire.effectId));
     AssignPack(out.effectType, wire.effectType);
     AssignPack(out.paramCount, wire.paramCount);
-    if (wire.reserved != 0) return false;
+    AssignPack(out.flags, wire.flags);
+    return true;
+}
+
+inline void ToWire(const EffectNodeV1& row, HkPackBodyPayloadEffectPresetReference& wire) noexcept {
+    wire.presetId = ToPackId(row.presetId);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackBodyPayloadEffectPresetReference& wire, EffectNodeV1& out) noexcept {
+    AssignPack(out.presetId, FromPackId(wire.presetId));
     return true;
 }
 
@@ -1334,6 +1344,40 @@ inline void ToWire(const float& row, HkPackBusDefinitionCoefficient& wire) noexc
     return true;
 }
 
+inline void ToWire(const PackBusDefinitionEffect& row, HkPackBusDefinitionEffect& wire) noexcept {
+    wire.busId = ToPackId(row.busId);
+    wire.effectId = ToPackId(row.effectId);
+    wire.slot = static_cast<std::uint32_t>(row.slot);
+    wire.effectType = static_cast<std::uint32_t>(row.effectType);
+    wire.descriptorVintage = static_cast<std::uint32_t>(row.descriptorVintage);
+    wire.flags = static_cast<std::uint32_t>(row.flags);
+    wire.parameterFirst = static_cast<std::uint32_t>(row.parameterFirst);
+    wire.parameterCount = static_cast<std::uint32_t>(row.parameterCount);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackBusDefinitionEffect& wire, PackBusDefinitionEffect& out) noexcept {
+    AssignPack(out.busId, FromPackId(wire.busId));
+    AssignPack(out.effectId, FromPackId(wire.effectId));
+    AssignPack(out.slot, wire.slot);
+    AssignPack(out.effectType, wire.effectType);
+    AssignPack(out.descriptorVintage, wire.descriptorVintage);
+    AssignPack(out.flags, wire.flags);
+    AssignPack(out.parameterFirst, wire.parameterFirst);
+    AssignPack(out.parameterCount, wire.parameterCount);
+    return true;
+}
+
+inline void ToWire(const PackBusDefinitionEffectParameter& row, HkPackBusDefinitionEffectParameter& wire) noexcept {
+    wire.index = static_cast<std::uint32_t>(row.index);
+    wire.value = static_cast<float>(row.value);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackBusDefinitionEffectParameter& wire, PackBusDefinitionEffectParameter& out) noexcept {
+    AssignPack(out.index, wire.index);
+    AssignPack(out.value, wire.value);
+    return true;
+}
+
 inline void ToWire(const PackBusDefinitionDownmix& row, HkPackBusDefinitionDownmix& wire) noexcept {
     wire.busId = ToPackId(row.busId);
     wire.sourceLayout = static_cast<std::uint32_t>(row.sourceLayout);
@@ -1626,6 +1670,32 @@ inline void ToWire(const PackEffectDynamicRouteEntry& row, HkPackEffectDynamicRo
     AssignPack(out.levelDb, wire.levelDb);
     if (wire.reserved60 != 0) return false;
     if (wire.reserved64 != 0) return false;
+    return true;
+}
+
+inline void ToWire(const PackEffectPresetHeader& row, HkPackEffectPresetHeader& wire) noexcept {
+    wire.presetId = ToPackId(row.presetId);
+    wire.effectType = static_cast<std::uint32_t>(row.effectType);
+    wire.descriptorVintage = static_cast<std::uint32_t>(row.descriptorVintage);
+    wire.paramCount = static_cast<std::uint32_t>(row.paramCount);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackEffectPresetHeader& wire, PackEffectPresetHeader& out) noexcept {
+    AssignPack(out.presetId, FromPackId(wire.presetId));
+    AssignPack(out.effectType, wire.effectType);
+    AssignPack(out.descriptorVintage, wire.descriptorVintage);
+    AssignPack(out.paramCount, wire.paramCount);
+    return true;
+}
+
+inline void ToWire(const PackEffectPresetParameter& row, HkPackEffectPresetParameter& wire) noexcept {
+    wire.paramId = static_cast<std::uint32_t>(row.paramId);
+    wire.valueBits = static_cast<std::uint32_t>(row.valueBits);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackEffectPresetParameter& wire, PackEffectPresetParameter& out) noexcept {
+    AssignPack(out.paramId, wire.paramId);
+    AssignPack(out.valueBits, wire.valueBits);
     return true;
 }
 
@@ -2015,6 +2085,7 @@ template <class Wire, class Row>
     case HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT:
     case HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY:
     case HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS:
+    case HK_PACK_ENTRY_KIND_EFFECT_PRESET:
         return true;
     default:
         return false;
@@ -2039,6 +2110,7 @@ template <class Wire, class Row>
     case HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT: return HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
     case HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY: return HK_PACK_VARIABLE_POLICY_OVERLAY_VINTAGE;
     case HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS: return HK_PACK_VARIABLE_REQUIREMENTS_VINTAGE;
+    case HK_PACK_ENTRY_KIND_EFFECT_PRESET: return HK_PACK_EFFECT_PRESET_VINTAGE;
     default: return 0;
     }
 }
@@ -2071,6 +2143,11 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Header();
         if (!AppendPackRow<HkPackBodyPayloadEffectNodeHeader>(buffer, row)) return false;
     }
+    if (static_cast<std::uint64_t>(value.effectType) == HK_PACK_EFFECT_PRESET_REFERENCE_TYPE) {
+        static_assert(noexcept(visitor.PresetReference()));
+        auto&& row = visitor.PresetReference();
+        if (!AppendPackRow<HkPackBodyPayloadEffectPresetReference>(buffer, row)) return false;
+    }
     const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
     static_assert(noexcept(visitor.PrepareParams(paramsCount)));
     if (!visitor.PrepareParams(paramsCount)) return false;
@@ -2093,6 +2170,11 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Header();
         if (!ReadPackRow<HkPackBodyPayloadEffectNodeHeader>(buffer, row)) return false;
     }
+    if (static_cast<std::uint64_t>(value.effectType) == HK_PACK_EFFECT_PRESET_REFERENCE_TYPE) {
+        static_assert(noexcept(visitor.PresetReference()));
+        auto&& row = visitor.PresetReference();
+        if (!ReadPackRow<HkPackBodyPayloadEffectPresetReference>(buffer, row)) return false;
+    }
     const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
     static_assert(noexcept(buffer.Remaining()));
     if (paramsCount > buffer.Remaining() / kPackBytes<HkPackBodyPayloadEffectParam>) return false;
@@ -2114,6 +2196,10 @@ template <class Visitor>
     static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, EffectNodeV1>);
     if (size > UINT64_MAX - kPackBytes<HkPackBodyPayloadEffectNodeHeader>) return false;
     size += kPackBytes<HkPackBodyPayloadEffectNodeHeader>;
+    if (static_cast<std::uint64_t>(value.effectType) == HK_PACK_EFFECT_PRESET_REFERENCE_TYPE) {
+        if (size > UINT64_MAX - kPackBytes<HkPackBodyPayloadEffectPresetReference>) return false;
+        size += kPackBytes<HkPackBodyPayloadEffectPresetReference>;
+    }
     const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
     if (paramsCount > (UINT64_MAX - size) / kPackBytes<HkPackBodyPayloadEffectParam>) return false;
     size += paramsCount * kPackBytes<HkPackBodyPayloadEffectParam>;
@@ -3545,8 +3631,14 @@ template <class Visitor>
     size += sendsCount * kPackBytes<HkPackBusDefinitionSend>;
     if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.effectOffset)>>::max()) return false;
     AssignPack(value.effectOffset, size);
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    if (effectsCount > (UINT64_MAX - size) / kPackBytes<HkPackBusDefinitionEffect>) return false;
+    size += effectsCount * kPackBytes<HkPackBusDefinitionEffect>;
     if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.effectParameterOffset)>>::max()) return false;
     AssignPack(value.effectParameterOffset, size);
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    if (effectParametersCount > (UINT64_MAX - size) / kPackBytes<HkPackBusDefinitionEffectParameter>) return false;
+    size += effectParametersCount * kPackBytes<HkPackBusDefinitionEffectParameter>;
     if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.downmixOffset)>>::max()) return false;
     AssignPack(value.downmixOffset, size);
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
@@ -3602,6 +3694,22 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Sends(i);
         if (!AppendPackRow<HkPackBusDefinitionSend>(buffer, row)) return false;
     }
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    static_assert(noexcept(visitor.PrepareEffects(effectsCount)));
+    if (!visitor.PrepareEffects(effectsCount)) return false;
+    for (std::uint64_t i = 0; i < effectsCount; ++i) {
+        static_assert(noexcept(visitor.Effects(i)));
+        auto&& row = visitor.Effects(i);
+        if (!AppendPackRow<HkPackBusDefinitionEffect>(buffer, row)) return false;
+    }
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    static_assert(noexcept(visitor.PrepareEffectParameters(effectParametersCount)));
+    if (!visitor.PrepareEffectParameters(effectParametersCount)) return false;
+    for (std::uint64_t i = 0; i < effectParametersCount; ++i) {
+        static_assert(noexcept(visitor.EffectParameters(i)));
+        auto&& row = visitor.EffectParameters(i);
+        if (!AppendPackRow<HkPackBusDefinitionEffectParameter>(buffer, row)) return false;
+    }
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
     static_assert(noexcept(visitor.PrepareDownmixes(downmixesCount)));
     if (!visitor.PrepareDownmixes(downmixesCount)) return false;
@@ -3654,6 +3762,26 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Sends(i);
         if (!ReadPackRow<HkPackBusDefinitionSend>(buffer, row)) return false;
     }
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (effectsCount > buffer.Remaining() / kPackBytes<HkPackBusDefinitionEffect>) return false;
+    static_assert(noexcept(visitor.PrepareEffects(effectsCount)));
+    if (!visitor.PrepareEffects(effectsCount)) return false;
+    for (std::uint64_t i = 0; i < effectsCount; ++i) {
+        static_assert(noexcept(visitor.Effects(i)));
+        auto&& row = visitor.Effects(i);
+        if (!ReadPackRow<HkPackBusDefinitionEffect>(buffer, row)) return false;
+    }
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (effectParametersCount > buffer.Remaining() / kPackBytes<HkPackBusDefinitionEffectParameter>) return false;
+    static_assert(noexcept(visitor.PrepareEffectParameters(effectParametersCount)));
+    if (!visitor.PrepareEffectParameters(effectParametersCount)) return false;
+    for (std::uint64_t i = 0; i < effectParametersCount; ++i) {
+        static_assert(noexcept(visitor.EffectParameters(i)));
+        auto&& row = visitor.EffectParameters(i);
+        if (!ReadPackRow<HkPackBusDefinitionEffectParameter>(buffer, row)) return false;
+    }
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
     static_assert(noexcept(buffer.Remaining()));
     if (downmixesCount > buffer.Remaining() / kPackBytes<HkPackBusDefinitionDownmix>) return false;
@@ -3677,6 +3805,65 @@ template <class Buffer, class Visitor>
     if (!ValidatePackBusDefinitionSnapshotLayout(value, initialRemaining - buffer.Remaining())) return false;
     static_assert(noexcept(visitor.Finish()));
     return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackEffectPreset(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackEffectPresetHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackRow<HkPackEffectPresetHeader>(buffer, row)) return false;
+    }
+    const std::uint64_t parametersCount = static_cast<std::uint64_t>(value.paramCount);
+    static_assert(noexcept(visitor.PrepareParameters(parametersCount)));
+    if (!visitor.PrepareParameters(parametersCount)) return false;
+    for (std::uint64_t i = 0; i < parametersCount; ++i) {
+        static_assert(noexcept(visitor.Parameters(i)));
+        auto&& row = visitor.Parameters(i);
+        if (!AppendPackRow<HkPackEffectPresetParameter>(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackEffectPreset(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackEffectPresetHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackRow<HkPackEffectPresetHeader>(buffer, row)) return false;
+    }
+    const std::uint64_t parametersCount = static_cast<std::uint64_t>(value.paramCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (parametersCount > buffer.Remaining() / kPackBytes<HkPackEffectPresetParameter>) return false;
+    static_assert(noexcept(visitor.PrepareParameters(parametersCount)));
+    if (!visitor.PrepareParameters(parametersCount)) return false;
+    for (std::uint64_t i = 0; i < parametersCount; ++i) {
+        static_assert(noexcept(visitor.Parameters(i)));
+        auto&& row = visitor.Parameters(i);
+        if (!ReadPackRow<HkPackEffectPresetParameter>(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackEffectPreset(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackEffectPresetHeader>);
+    if (size > UINT64_MAX - kPackBytes<HkPackEffectPresetHeader>) return false;
+    size += kPackBytes<HkPackEffectPresetHeader>;
+    const std::uint64_t parametersCount = static_cast<std::uint64_t>(value.paramCount);
+    if (parametersCount > (UINT64_MAX - size) / kPackBytes<HkPackEffectPresetParameter>) return false;
+    size += parametersCount * kPackBytes<HkPackEffectPresetParameter>;
+    return true;
 }
 
 template <class Buffer, class Visitor>

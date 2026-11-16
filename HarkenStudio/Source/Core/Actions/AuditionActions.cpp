@@ -168,10 +168,17 @@ void registerAuditionActions(ActionManager& mgr,
             float fadeMs = static_cast<float>(args["fade_ms"].toDouble(0));
             if (tid == 0) {
                 auditionManager->stopAll(fadeMs);
-                return {true, QJsonObject{{"action", "stop_all"}, {"fade_ms", static_cast<double>(fadeMs)}}};
+            } else {
+                auditionManager->stop(tid, fadeMs);
             }
-            auditionManager->stop(tid, fadeMs);
-            return {true, QJsonObject{{"auditionID", static_cast<int>(tid)}, {"action", "stopped"}}};
+            QJsonObject data = auditionManager->stopIpcSnapshot(tid);
+            data.insert("auditionID", static_cast<qint64>(tid));
+            data.insert("action", tid == 0 ? "stop_all" : "stop");
+            data.insert("fade_ms", static_cast<double>(fadeMs));
+            if (data.value("failed_count").toInt() != 0)
+                return {false, data, "STOP_AUDITION_FAILED",
+                        "The audition could not be stopped. It remains available for another stop request."};
+            return {true, data};
         };
         mgr.registerAction(def);
     }

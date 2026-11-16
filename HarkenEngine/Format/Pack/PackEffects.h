@@ -108,4 +108,29 @@ HK_PACK_TABLE HkPackEffectParam hkPackCompressorParams[HK_PACK_COMPRESSOR_PARAM_
     {HK_PACK_EFFECT_UNIT_DB, HK_PACK_EFFECT_COMBINE_ADD_DB, 0.0f, -24.0f, 24.0f, HK_PACK_RANGE_HAS_MINIMUM | HK_PACK_RANGE_HAS_MAXIMUM | HK_PACK_RANGE_MINIMUM_INCLUSIVE | HK_PACK_RANGE_MAXIMUM_INCLUSIVE, HK_PACK_EFFECT_PARAM_TRANSITION | HK_PACK_EFFECT_PARAM_DYNAMIC_CONTROL},
 };
 
+typedef struct HkPackEffectPresetHeader {
+    HkPackObjectId presetId;
+    uint32_t effectType;
+    uint32_t descriptorVintage;
+    uint32_t paramCount;
+} HkPackEffectPresetHeader;
+HK_PACK_SIZE(HkPackEffectPresetHeader, 28);
+HK_PACK_OFFSET(HkPackEffectPresetHeader, presetId, 0);
+HK_PACK_OFFSET(HkPackEffectPresetHeader, effectType, 16);
+HK_PACK_OFFSET(HkPackEffectPresetHeader, descriptorVintage, 20);
+HK_PACK_OFFSET(HkPackEffectPresetHeader, paramCount, 24);
+
+typedef struct HkPackEffectPresetParameter {
+    uint32_t paramId;
+    uint32_t valueBits;
+} HkPackEffectPresetParameter;
+HK_PACK_SIZE(HkPackEffectPresetParameter, 8);
+HK_PACK_OFFSET(HkPackEffectPresetParameter, paramId, 0);
+HK_PACK_OFFSET(HkPackEffectPresetParameter, valueBits, 4);
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamEffectPreset[] = {
+    HK_PACK_STREAM_RECORD(HkPackEffectPresetHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackEffectPresetParameter, HkPackEffectPresetHeader, paramCount),
+};
+
 #endif

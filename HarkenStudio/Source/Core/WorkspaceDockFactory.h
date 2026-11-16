@@ -4,6 +4,7 @@
 #include <DockWidget.h>
 
 #include <QString>
+#include <QSize>
 
 class QWidget;
 
@@ -21,6 +22,7 @@ struct WorkspaceDockCreateSpec
     QWidget* anchor = nullptr;
     double initialShare = 0.0;
     QWidget* lastAnchor = nullptr;
+    QSize initialFloatingSize = {};
 };
 
 class WorkspaceDockFactory

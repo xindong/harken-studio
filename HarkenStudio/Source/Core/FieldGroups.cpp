@@ -302,6 +302,8 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
         }
         std::set<harkenstudio::ObjectId> identities;
         const auto& rows = effects->effects.entries();
+        if (rows.size() > EffectChainLedger::kCapacity)
+            AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "effects");
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
             if (!EffectChainSemantics::validate(row)

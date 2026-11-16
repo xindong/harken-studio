@@ -3,8 +3,11 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QDialog>
+#include <QMenu>
 #include <QMouseEvent>
+#include <QTimer>
 
 #include <memory>
 #include <limits>
@@ -64,6 +67,97 @@ TEST(AttenuationCurvePointCoordinate, AcceptingUnchangedRoundedValuesPreservesPr
     dialog->accept();
     EXPECT_FLOAT_EQ(canvas->curve()[1].x, before.x);
     EXPECT_FLOAT_EQ(canvas->curve()[1].value, before.value);
+}
+
+TEST(CurveCanvasSelection, PresetsOnlyChangeThePrimaryPointsRightSegment)
+{
+    ensureApp();
+    for (const auto preset : VNX::kCurvePresets) {
+        SCOPED_TRACE(static_cast<int>(preset));
+        VNX::CurveCanvas canvas;
+        canvas.setXDomain(0.0f, 100.0f);
+        canvas.setCurve({{0.0f, 0.0f}, {25.0f, -40.0f}, {60.0f, -10.0f}, {100.0f, -96.0f}});
+        canvas.setSelectedPointIndices({0, 1, 3}, 1);
+        const auto points = canvas.curve();
+        const auto handles = canvas.curveHandles();
+        const auto selection = canvas.selectedPointIndices();
+        int edits = 0;
+        QObject::connect(&canvas, &VNX::CurveCanvas::curveEdited, &canvas,
+            [&edits] { ++edits; });
+        ASSERT_TRUE(canvas.applySelectedCurvePreset(preset));
+        EXPECT_EQ(canvas.curve(), points);
+        EXPECT_EQ(canvas.curveHandles()[0], handles[0]);
+        EXPECT_EQ(canvas.curveHandles()[2], handles[2]);
+        EXPECT_NE(canvas.curveHandles()[1], handles[1]);
+        EXPECT_EQ(canvas.selectedPointIndices(), selection);
+        EXPECT_EQ(canvas.selectedPointIndex(), 1);
+        EXPECT_EQ(edits, 1);
+        EXPECT_FALSE(canvas.applySelectedCurvePreset(preset));
+        EXPECT_EQ(edits, 1);
+        const auto applied = canvas.curveHandles();
+        for (const int index : {3, -1}) {
+            canvas.setSelectedPointIndex(index);
+            EXPECT_FALSE(canvas.applySelectedCurvePreset(preset));
+            EXPECT_EQ(canvas.curve(), points);
+            EXPECT_EQ(canvas.curveHandles(), applied);
+            EXPECT_EQ(edits, 1);
+        }
+    }
+}
+
+TEST(CurveCanvasSelection, ContextMenuTargetsTheClickedAnchorAndItsRightSegment)
+{
+    ensureApp();
+    VNX::CurveCanvas canvas;
+    canvas.setXDomain(0.0f, 100.0f);
+    canvas.resize(600, 400);
+    canvas.show();
+    for (const int index : {1, 2, 3}) {
+        canvas.setCurve({{0.0f, 0.0f}, {25.0f, -40.0f}, {60.0f, -10.0f}, {100.0f, -96.0f}});
+        canvas.setSelectedPointIndex(0);
+        const auto points = canvas.curve();
+        const auto handles = canvas.curveHandles();
+        bool inspected = false;
+        QTimer closeMenu;
+        QObject::connect(&closeMenu, &QTimer::timeout, &canvas, [] {
+            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget()))
+                menu->close();
+        });
+        closeMenu.start(1000);
+        QTimer::singleShot(0, &canvas, [&] {
+            auto* menu = canvas.findChild<QMenu*>(QString(), Qt::FindDirectChildrenOnly);
+            ASSERT_NE(menu, nullptr);
+            auto* presets = menu->findChild<QMenu*>(QStringLiteral("curvePresetMenu"));
+            EXPECT_EQ(canvas.selectedPointIndex(), index);
+            if (index < handles.size()) {
+                EXPECT_NE(presets, nullptr);
+                if (presets) {
+                    for (auto* action : presets->actions()) {
+                        if (action->data().toInt() == static_cast<int>(VNX::CurvePreset::Convex)) {
+                            action->trigger();
+                            inspected = true;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                EXPECT_TRUE(!presets || !presets->menuAction()->isEnabled());
+                inspected = true;
+            }
+            menu->close();
+        });
+        const QPoint position = canvas.renderData().points.at(index).position.toPoint();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, position, canvas.mapToGlobal(position));
+        QApplication::sendEvent(&canvas, &event);
+        EXPECT_TRUE(inspected);
+        EXPECT_EQ(canvas.curve(), points);
+        for (int segment = 0; segment < handles.size(); ++segment) {
+            if (segment == index)
+                EXPECT_NE(canvas.curveHandles()[segment], handles[segment]);
+            else
+                EXPECT_EQ(canvas.curveHandles()[segment], handles[segment]);
+        }
+    }
 }
 
 TEST(CurveCanvasDomain, CoordinateEditingPreservesOrderingAtDifferentScales)

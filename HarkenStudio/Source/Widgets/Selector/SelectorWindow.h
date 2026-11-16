@@ -10,8 +10,10 @@
 #include <QPointer>
 #include <QRect>
 #include <QStringList>
+#include <QTimer>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -26,6 +28,7 @@ namespace VNX {
 constexpr int kRoleObjectID   = Qt::UserRole;
 constexpr int kRoleSelectable = Qt::UserRole + 2;
 constexpr int kRoleSearchPath = Qt::UserRole + 3;
+constexpr int kRoleFolderPath = Qt::UserRole + 4;
 
 struct SelectorCreationRequest
 {
@@ -67,6 +70,7 @@ public:
 protected:
     bool event(QEvent* e) override;
     void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     SelectorWindow();
@@ -84,7 +88,8 @@ private:
     QPointer<QWidget> anchor_;
     QRect globalAnchorRect_;
     QMetaObject::Connection anchorDestroyed_;
-    bool refreshPending_ = false;
+    std::unique_ptr<QObject> changeSubscription_;
+    QTimer refreshTimer_;
     uint32_t lastNotifiedID_ = 0;
     QLineEdit* searchBox_ = nullptr;
     QTreeWidget* tree_ = nullptr;

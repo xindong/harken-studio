@@ -8154,6 +8154,152 @@
           "u32"
         ]
       ]
+    },
+    "VnPreviewBusEffectV1": {
+      "fields": [
+        [
+          "busId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "effectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "slot",
+          "u32"
+        ],
+        [
+          "effectType",
+          "u32"
+        ],
+        [
+          "descriptorVintage",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "parameterFirst",
+          "u32"
+        ],
+        [
+          "parameterCount",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewBusEffectParameterV1": {
+      "fields": [
+        [
+          "index",
+          "u32"
+        ],
+        [
+          "value",
+          "f32"
+        ]
+      ]
+    },
+    "VnPreviewProjectDescV4": {
+      "fields": [
+        [
+          "base",
+          {
+            "struct": "VnPreviewProjectDescV3"
+          }
+        ],
+        [
+          "busEffects",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPreviewBusEffectV1*"
+          }
+        ],
+        [
+          "busEffectCount",
+          "u32"
+        ],
+        [
+          "busEffectParameterCount",
+          "u32"
+        ],
+        [
+          "busEffectParameters",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPreviewBusEffectParameterV1*"
+          }
+        ],
+        [
+          "busFaderAfterSlots",
+          {
+            "ptr": "opaque",
+            "ctype": "const uint32_t*"
+          }
+        ],
+        [
+          "busFaderCount",
+          "u32"
+        ],
+        [
+          "forceWorldReplacement",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewVoiceEffectEntryV1": {
+      "fields": [
+        [
+          "effectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "effectType",
+          "u32"
+        ],
+        [
+          "bypass",
+          "u32"
+        ],
+        [
+          "ceilingDb",
+          "f32"
+        ],
+        [
+          "releaseMs",
+          "f32"
+        ]
+      ]
+    },
+    "VnPreviewVoiceEffectChainV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "entryCount",
+          "u32"
+        ],
+        [
+          "entries",
+          {
+            "array": [
+              "VnPreviewVoiceEffectEntryV1",
+              8
+            ]
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -11285,6 +11431,24 @@
       ]
     },
     {
+      "name": "VnPreview_PrepareProjectV4",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewPrepareStatus",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPreviewProjectDescV4*",
+          "wire": "desc",
+          "type": "VnPreviewProjectDescV4"
+        },
+        {
+          "name": "outHandle",
+          "ctype": "VnPreviewProjectHandle*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
       "name": "VnPreview_CommitProject",
       "note": "Development preview; process-local, no remote opcode.",
       "returnType": "VnPreviewCommitStatus",
@@ -11353,6 +11517,36 @@
       "note": "Development preview; process-local, no remote opcode.",
       "returnType": "uint32_t",
       "params": []
+    },
+    {
+      "name": "VnPreview_HasEffectChainConsumers",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": []
+    },
+    {
+      "name": "VnPreview_QueryVoiceWorldGeneration",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint64_t",
+      "params": [
+        {
+          "name": "voiceInstance",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_HasWorldGeneration",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": [
+        {
+          "name": "generation",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
     },
     {
       "name": "VnPreview_HasAction",
@@ -11445,6 +11639,23 @@
       ]
     },
     {
+      "name": "VnPreview_SetVoiceEffectChain",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "voiceInstance",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "chain",
+          "ctype": "const VnPreviewVoiceEffectChainV1*",
+          "wire": "desc",
+          "type": "VnPreviewVoiceEffectChainV1"
+        }
+      ]
+    },
+    {
       "name": "VnPreview_RefreshVoiceBindings",
       "note": "Development preview; process-local, no remote opcode.",
       "params": [
@@ -11478,6 +11689,83 @@
           "name": "sendBusId",
           "ctype": "VnBusId",
           "wire": "objectid"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_SetVoiceEffect",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "voiceInstance",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "effectId",
+          "ctype": "VnObjectId",
+          "wire": "objectid"
+        },
+        {
+          "name": "effectType",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "parameters",
+          "ctype": "const float*",
+          "wire": "f32array"
+        },
+        {
+          "name": "parameterCount",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "bypass",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_SetBusEffect",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "ownerId",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "busId",
+          "ctype": "VnBusId",
+          "wire": "objectid"
+        },
+        {
+          "name": "effectId",
+          "ctype": "VnObjectId",
+          "wire": "objectid"
+        },
+        {
+          "name": "effectType",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "parameters",
+          "ctype": "const float*",
+          "wire": "f32array"
+        },
+        {
+          "name": "parameterCount",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "bypass",
+          "ctype": "uint32_t",
+          "wire": "u32"
         }
       ]
     }
@@ -13288,6 +13576,10 @@
         "value": 64
       },
       "VN_PREVIEW_PATH_SEND_CAPACITY": {
+        "type": "u32",
+        "value": 8
+      },
+      "VN_PREVIEW_EFFECT_CHAIN_CAPACITY": {
         "type": "u32",
         "value": 8
       }

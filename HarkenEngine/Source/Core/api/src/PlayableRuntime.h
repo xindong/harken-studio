@@ -9,10 +9,14 @@
 #include "harken/core/MonitorRequest.h"
 
 #include <cstdint>
+#include <span>
 
 namespace harken {
 
 struct Engine;
+struct PreviewEffectChainEntry;
+VnResult SetPreviewVoiceEffectChain(std::uint64_t voiceInstance,
+    std::span<const PreviewEffectChainEntry> chain) noexcept;
 
 struct PlaybackPathObservation {
     std::uint64_t voiceInstance = 0;
@@ -30,6 +34,12 @@ VnResult SetPreviewVoiceProperty(std::uint64_t voiceInstance,
     playableproperties::PlayablePropertyIdV1 property, float value,
     VnObjectId sendBusId = {}) noexcept;
 VnResult RefreshPreviewVoiceBindings(std::uint64_t voiceInstance) noexcept;
+VnResult SetPreviewVoiceEffect(std::uint64_t voiceInstance, VnObjectId effectId,
+    std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
+    std::uint32_t bypass) noexcept;
+VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId effectId,
+    std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
+    std::uint32_t bypass) noexcept;
 
 enum class PlayableStartStatus : std::uint8_t {
     Accepted = 0,
@@ -162,6 +172,7 @@ PlayableControlStatus QueryPlayable(
     PlayableControlState* out) noexcept;
 bool HasCurrentWorldPlayableConsumers(const Engine& engine) noexcept;
 bool HasCurrentWorldPublicationConsumers(const Engine& engine) noexcept;
+bool HasEffectChainPublicationConsumers(const Engine& engine) noexcept;
 void ReclaimRetiredSelectionMemory(Engine& engine) noexcept;
 void AdvanceCurrentWorldReplacementDrain(Engine& engine) noexcept;
 bool CancelActionDeferredForWorldReplacement(

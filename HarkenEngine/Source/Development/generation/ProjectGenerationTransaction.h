@@ -5,12 +5,18 @@
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
 #include "SignalPublication.h"
+#include "harken/core/PreviewBusEffects.h"
+#include "harken/render/BusEffectChainUpdate.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/param/VariableService.h"
+#include "harken/param/EffectParamTargetStore.h"
+#include "harken/media/PackFormatV2.h"
+#include "harken/core/CommandQueue.h"
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -35,6 +41,10 @@ struct ProjectGenerationInstallViewV1 {
     const float* authoredBusMakeUpGainDb = nullptr;
     const float* authoredBusOutputVolumeDb = nullptr;
     std::uint32_t authoredBusCount = 0;
+    std::span<const PackBusDefinitionEffect> effects;
+    std::span<const PackBusDefinitionEffectParameter> effectParameters;
+    bool forceWorldReplacement = false;
+    std::span<const std::uint32_t> busFaderPositions{};
 };
 
 enum class ProjectGenerationPrepareStatusV1 : std::uint8_t {
@@ -46,6 +56,11 @@ enum class ProjectGenerationPrepareStatusV1 : std::uint8_t {
     DeviceError = 5,
     InvalidWorld = 6,
 };
+
+ProjectGenerationPrepareStatusV1 ValidatePreviewBusEffects(
+    std::span<const VnBusId> buses, std::span<const std::uint32_t> faders,
+    std::span<const PreviewBusEffect> effects, std::span<const PreviewEffectParameter> parameters,
+    std::uint32_t slots, std::uint32_t sampleRate) noexcept;
 
 enum class ProjectGenerationCommitStatusV1 : std::uint8_t {
     Ok = 0,
@@ -140,6 +155,9 @@ private:
         sourceOutputDb_.clear();
         projectedVolumeApply_.clear();
         bindingSourceStamp_ = 0;
+        effects_.reset();
+        effectChains_.clear();
+        effectSeeds_.clear();
     }
 
     void MoveFrom(PreparedProjectGenerationV1& other) noexcept {
@@ -175,6 +193,9 @@ private:
         sourceOutputDb_ = std::move(other.sourceOutputDb_);
         projectedVolumeApply_ = std::move(other.projectedVolumeApply_);
         bindingSourceStamp_ = other.bindingSourceStamp_;
+        effects_ = std::move(other.effects_);
+        effectChains_ = std::move(other.effectChains_);
+        effectSeeds_ = std::move(other.effectSeeds_);
         other.ClearFields();
     }
 
@@ -197,6 +218,7 @@ private:
     std::uint64_t publishedBusFingerprint_ = 0;
     std::uint64_t compileTargetProfileFingerprint_ = 0;
     std::uint32_t publicationVintage_ = 0;
+    std::unique_ptr<PreparedBusEffectsV1> effects_;
     ContainerWorldInstallViewV1 compiledWorld_{};
     VariableServiceV1::PreparedCurrentWorldImageV1 worldImage_{};
     PreparedSignalPublication signals_{};
@@ -210,6 +232,8 @@ private:
     std::vector<float> sourceOutputDb_;
     std::vector<std::uint8_t> projectedVolumeApply_;
     std::uint64_t bindingSourceStamp_ = 0;
+    std::vector<PreparedBusEffectChain> effectChains_;
+    std::vector<EffectParamTargetStore::PreparedSeedToken> effectSeeds_;
 };
 
 ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(

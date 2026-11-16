@@ -165,8 +165,11 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
             << error.toStdString();
         EXPECT_EQ(node.outputBusRef, project.busses.front().rootItem->runtimeId());
         EXPECT_EQ(node.signalGraph.nodes.size(), scope == HarkenTest::PlatformIds::Android ? 0u : 1u);
-        if (!node.signalGraph.nodes.empty())
+        if (!node.signalGraph.nodes.empty()) {
             EXPECT_EQ(node.signalGraph.nodes.front().effectId, shared.runtimeId());
+            EXPECT_EQ(node.signalGraph.nodes.front().flags,
+                      scope == HarkenTest::PlatformIds::Windows ? 1u : 0u);
+        }
         const auto runtime = canonicalRuntimeProjectContext(project, 0, {}, scope, source);
         ASSERT_TRUE(runtime.ok()) << (runtime.diagnostics.empty() ? "No runtime context"
             : runtime.diagnostics.front().message.toStdString());
@@ -181,7 +184,6 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
         context.deferCurrentWorldCompilation = true;
         const auto capability = RuntimeCapabilityMatrix::evaluateForContext(*sound, project,
             RuntimeCapabilityOperation::PackBuild, RuntimeCapabilityFeature::TypedEffect, {}, context);
-        EXPECT_EQ(capability.state, scope == HarkenTest::PlatformIds::Windows
-            ? RuntimeCapabilityState::UnavailableEngineContract : RuntimeCapabilityState::Ready);
+        EXPECT_EQ(capability.state, RuntimeCapabilityState::Ready);
     }
 }

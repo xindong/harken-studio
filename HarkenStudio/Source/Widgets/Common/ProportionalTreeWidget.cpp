@@ -7,6 +7,7 @@
 #include "HeaderResizeHighlight.h"
 #include "TableGroupHeader.h"
 #include "TableItemDelegate.h"
+#include "TreeExpansion.h"
 
 #include <QEvent>
 #include <QKeyEvent>
@@ -97,6 +98,27 @@ QRect ProportionalTreeWidget::rowProgressRect(const QRect& rowRect, int percent)
     const int right = std::max(0, header()->sectionViewportPosition(progressEndColumn_));
     return QRect(0, rowRect.top(), qRound(right * std::clamp(percent, 0, 100) / 100.0),
                  rowRect.height()).intersected(viewport()->rect());
+}
+
+void ProportionalTreeWidget::mousePressEvent(QMouseEvent* event)
+{
+    TreeExpansion::handleNativeMouseEvent(*this, event, [this, event] {
+        QTreeWidget::mousePressEvent(event);
+    });
+}
+
+void ProportionalTreeWidget::mouseReleaseEvent(QMouseEvent* event)
+{
+    TreeExpansion::handleNativeMouseEvent(*this, event, [this, event] {
+        QTreeWidget::mouseReleaseEvent(event);
+    });
+}
+
+void ProportionalTreeWidget::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    TreeExpansion::handleNativeMouseEvent(*this, event, [this, event] {
+        QTreeWidget::mouseDoubleClickEvent(event);
+    });
 }
 
 void ProportionalTreeWidget::paintEvent(QPaintEvent* event)
@@ -312,7 +334,7 @@ bool ProportionalTreeWidget::eventFilter(QObject* watched, QEvent* event)
                     if (pressed == index && control != GroupControl::None
                         && control == groupControlAt(index, mouse->position().toPoint())) {
                         if (control == GroupControl::CheckBox) requestGroupCheckState(itemFromIndex(index));
-                        else setExpanded(index, !isExpanded(index));
+                        else TreeExpansion::toggle(itemFromIndex(index), mouse->modifiers());
                     }
                     return true;
                 }

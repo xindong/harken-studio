@@ -1,6 +1,7 @@
 #include "IPCServerInternal.h"
 #include "ComponentCatalog.h"
 #include "ItemTypeCatalog.h"
+#include "../FieldGroupJson.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "../PackGenerationRecord.h"
 #include "../ProjectLanguageSemantics.h"
@@ -9,6 +10,7 @@
 #include "../RuntimeCapabilityMatrix.h"
 
 #include <QDir>
+#include <QJsonDocument>
 
 namespace VNX {
 
@@ -842,6 +844,15 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
     });
     if (!components.isEmpty())
         info.insert("components", components);
+
+    if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
+        std::string fieldGroups;
+        std::string error;
+        if (!WriteFieldGroupsJson(item->fieldGroups, fieldGroups, error))
+            return errorResponse("INVALID_FIELD_GROUPS", QString::fromStdString(error));
+        info.insert("fieldGroups", QJsonDocument::fromJson(
+            QByteArray::fromStdString(fieldGroups)).object());
+    }
 
     return successResponse(info);
 }

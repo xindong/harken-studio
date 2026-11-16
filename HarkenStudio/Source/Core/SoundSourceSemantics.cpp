@@ -3,6 +3,8 @@
 #include "ProjectPlatform.h"
 #include "ProjectLanguageSemantics.h"
 
+#include <harken_studio_build/Curve.h>
+
 #include <QCoreApplication>
 #include <QHash>
 #include <QJsonObject>
@@ -486,6 +488,58 @@ SoundSourceDef canonicalized(const SoundSourceDef& source, uint64_t totalFrames)
             result.loopRegion.reset();
     }
     return result;
+}
+
+double fadeGainAtFrame(const SoundSourceDef& canonicalSource, double absoluteFrame)
+{
+    const double start = double(canonicalSource.trimStartFrame);
+    const double end = double(*canonicalSource.trimEndFrame);
+    if (absoluteFrame < start || absoluteFrame > end)
+        return 1.0;
+    const auto& fadeIn = canonicalSource.fadeIn;
+    if (fadeIn.durationFrames > 0 && absoluteFrame < start + double(fadeIn.durationFrames))
+        return curveBezierValueAt(fadeIn.curve, fadeIn.handles,
+            float((absoluteFrame - start) / double(fadeIn.durationFrames)));
+    const auto& fadeOut = canonicalSource.fadeOut;
+    const double outStart = end - double(fadeOut.durationFrames);
+    if (fadeOut.durationFrames > 0 && absoluteFrame > outStart)
+        return curveBezierValueAt(fadeOut.curve, fadeOut.handles,
+            float((absoluteFrame - outStart) / double(fadeOut.durationFrames)));
+    return 1.0;
+}
+
+void applyFadeEnvelope(std::span<float> samples, uint32_t channels,
+                       const SoundSourceDef& source, uint64_t totalFrames,
+                       uint64_t startFrame)
+{
+    Q_ASSERT(channels > 0 && samples.size() % channels == 0);
+    const auto canonicalSource = canonicalized(source, totalFrames);
+    const uint64_t endFrame = startFrame + samples.size() / channels;
+    const auto apply = [&](const SoundSourceFadeDef& fade, uint64_t origin,
+                           uint64_t first, uint64_t last) {
+        if (fade.durationFrames == 0) return;
+        first = std::max(first, startFrame);
+        last = std::min(last, endFrame);
+        if (first >= last) return;
+        harkenstudiobuild::Curve curve;
+        curve.pointCount = 2;
+        for (int i = 0; i < 2; ++i)
+            curve.points[i] = {fade.curve[i].x, fade.curve[i].value};
+        const auto& h = fade.handles.first();
+        curve.handles[0] = {h.h1x, h.h1y, h.h2x, h.h2y};
+        for (uint64_t frame = first; frame < last; ++frame) {
+            const float gain = curve.Eval(float(double(frame - origin) / fade.durationFrames));
+            if (gain == 1.0f) continue;
+            const size_t offset = (frame - startFrame) * channels;
+            for (uint32_t channel = 0; channel < channels; ++channel)
+                samples[offset + channel] *= gain;
+        }
+    };
+    const uint64_t start = canonicalSource.trimStartFrame;
+    const uint64_t end = *canonicalSource.trimEndFrame;
+    apply(canonicalSource.fadeIn, start, start, start + canonicalSource.fadeIn.durationFrames);
+    const uint64_t outStart = end - canonicalSource.fadeOut.durationFrames;
+    apply(canonicalSource.fadeOut, outStart, outStart + 1, end + 1);
 }
 
 void stampAuthoringAnchors(std::vector<SoundSourceDef>& sources,

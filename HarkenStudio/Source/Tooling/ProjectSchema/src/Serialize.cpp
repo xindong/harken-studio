@@ -89,8 +89,10 @@ void AppendSignalGraph(std::string* s, bool declared, const SignalGraph& g) {
         *s += "  fxchain declared=1\n";
     }
     for (const EffectNode& node : g.nodes) {
-        *s += "  fxnode id=" + U(node.nodeId) + " object=" + U(node.effectId) + " type=" + U(node.effectType) +
-              "\n";
+        *s += "  fxnode id=" + U(node.nodeId) + " object=" + U(node.effectId) + " type=" + U(node.effectType);
+        if (node.flags != 0) *s += " flags=" + U(node.flags);
+        if (!harkenstudio::IsNull(node.presetId)) *s += " preset=" + U(node.presetId);
+        *s += "\n";
         for (const EffectParam& param : node.params) {
             *s += "    param id=" + U(param.paramId) +
                   " bits=" + U(param.valueBits) + "\n";
@@ -247,6 +249,8 @@ const char* DiagnosticCodeName(DiagnosticCode code) {
             return "OccurrenceOrdinalOverflow";
         case DiagnosticCode::ContainerChildOccurrencesOnNonContainer:
             return "ContainerChildOccurrencesOnNonContainer";
+        case DiagnosticCode::UnknownEffectFlags:
+            return "UnknownEffectFlags";
         case DiagnosticCode::DuplicateGuid:
             return "DuplicateGuid";
         case DiagnosticCode::DuplicateStableId:

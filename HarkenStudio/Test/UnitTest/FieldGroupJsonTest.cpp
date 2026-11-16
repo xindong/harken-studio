@@ -125,7 +125,6 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     custom.guid = QUuid(QStringLiteral("a0b1c2d3-e4f5-4638-9876-123456789abc"));
     custom.mode = EffectMode::Custom;
     custom.custom.parameters = {-0.1f, 3.333333f};
-    custom.wetDry = 0.1234567f;
     custom.extensions.insert(QStringLiteral("extension"), QJsonObject{
         {QStringLiteral("values"), QJsonArray{QJsonValue::Null, true,
             QJsonValue(qint64{9007199254740993}), QString::fromLatin1("a\0b", 3)}}});
@@ -136,7 +135,6 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     EffectFieldGroup effects;
     ASSERT_TRUE(effects.effects.replace({custom, preset}));
     groups.effects.shared = {FieldGroupMode::Local, effects};
-    preset.wetDry = 0.5f;
     ASSERT_TRUE(effects.effects.replace({preset, custom}));
     groups.effects.platforms[{0, 101}] = {FieldGroupMode::UseShared, effects};
     std::string text;

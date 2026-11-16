@@ -564,7 +564,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
 
 WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
     const ContainerWorldInstallViewV1& installInput,
-    PreparedCurrentWorldImageV1& out) {
+    PreparedCurrentWorldImageV1& out, bool forceReplacement) {
     out.Clear();
     const WorldInstallStatus worldStatus = ValidateCurrentWorldV1(installInput);
     if (worldStatus != WorldInstallStatus::Ok) {
@@ -587,7 +587,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
             return WorldInstallStatus::InvalidWorld;
         }
     }
-    if (SemanticIdentical(install)) {
+    if (!forceReplacement && SemanticIdentical(install)) {
         out.source_ = this;
         out.sourceWorld_ = worldGeneration_;
         out.sourceFingerprint_ = identity_.runtimeSemanticFingerprint;
@@ -597,7 +597,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         return WorldInstallStatus::Ok;
     }
 
-    if (SignalOnlyWorld(install)) {
+    if (!forceReplacement && SignalOnlyWorld(install)) {
         if (DrainingTransport() || DrainingWorld()) return WorldInstallStatus::Backpressure;
         out.source_ = this;
         out.sourceWorld_ = worldGeneration_;

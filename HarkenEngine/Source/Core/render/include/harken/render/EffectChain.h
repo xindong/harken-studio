@@ -9,6 +9,7 @@
 #include "harken/render/InsertEffect.h"
 #include "harken/render/BuiltinEffects.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
@@ -91,6 +92,52 @@ inline void ProcessChainSlot(InsertEffect& fx, bool& bypassRamping,
     if (bypassRamping) {
         bypassMix = endMix;
         bypassRamping = false;
+    }
+}
+
+// A structural edit's suffix must feed each detector from its own branch.
+// Blending between every slot teaches downstream dynamics the temporary dry
+// signal and can multiply their release histories into a near-silent dip.
+// Retained downstream Limiters use adoption-time private state on the old
+// branch and their installed instances on the new branch. Only an explicit
+// host signal-flow boundary terminates the range; an unchanged slot does not.
+template <class BeforeNext, class AfterNext>
+inline void ProcessTransitionChainRange(InsertEffect* oldEffects, const float* oldBypass,
+    InsertEffect* nextEffects, const float* nextBypass, const float* nextStarts,
+    std::uint32_t first, std::uint32_t end, float* const* planes,
+    float* const* dry, float* const* alternate, std::uint32_t channels,
+    std::uint32_t offset, std::uint32_t frames, std::uint32_t done,
+    std::uint32_t total, BeforeNext&& beforeNext, AfterNext&& afterNext) {
+    if (frames == 0) return;
+    const auto prefix = std::min(frames, total > done ? total - done : 0u);
+    for (std::uint32_t ch = 0; ch < channels; ++ch)
+        std::memcpy(alternate[ch], planes[ch] + offset, frames * sizeof(float));
+    for (std::uint32_t slot = first; slot < end; ++slot) {
+        bool ramping = false;
+        float mix = oldBypass[slot];
+        ProcessChainSlot(oldEffects[slot], ramping, mix, mix,
+            planes, dry, channels, offset, prefix);
+    }
+    for (std::uint32_t slot = first; slot < end; ++slot) {
+        bool ramping = nextStarts != nullptr && nextStarts[slot] >= 0.0f
+            && nextStarts[slot] != nextBypass[slot];
+        float mix = ramping ? nextStarts[slot] : nextBypass[slot];
+        beforeNext(slot, alternate);
+        ProcessChainSlot(nextEffects[slot], ramping, mix, nextBypass[slot],
+            alternate, dry, channels, 0, frames);
+        afterNext(slot, alternate);
+    }
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        float* output = planes[ch] + offset;
+        for (std::uint32_t i = 0; i < prefix; ++i) {
+            if (done + i + 1u == total) output[i] = alternate[ch][i];
+            else {
+                const float alpha = static_cast<float>(done + i + 1u) / total;
+                output[i] = output[i] * (1.0f - alpha) + alternate[ch][i] * alpha;
+            }
+        }
+        std::memcpy(output + prefix, alternate[ch] + prefix,
+            (frames - prefix) * sizeof(float));
     }
 }
 

@@ -358,6 +358,7 @@ bool capturePlaybackPaths(std::vector<PlaybackPathObservation>& out)
             const auto& source = paths[index];
             PlaybackPathObservation path;
             path.voiceInstance = source.voiceInstance;
+            path.worldGeneration = Detail::runtimePreviewVoiceWorldGeneration(source.voiceInstance);
             path.soundId = fromNative(source.soundId);
             path.outputBusId = fromNative(source.outputBusId);
             for (uint32_t row = 0; row < source.rowCount; ++row)

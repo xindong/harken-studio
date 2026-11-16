@@ -8,11 +8,31 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <map>
 #include <optional>
 #include <unordered_map>
 #include <vector>
 
 namespace HarkenEditor::Bridge {
+
+struct PreviewEffectSource {
+    harkenstudio::ObjectId id{};
+    harkenstudio::ObjectId presetId{};
+    std::uint32_t type = 0;
+    std::vector<float> parameters;
+    bool bypass = false;
+
+    bool operator==(const PreviewEffectSource&) const = default;
+};
+
+using PreviewEffectDefinitions =
+    std::map<harkenstudio::ObjectId, std::vector<PreviewEffectSource>>;
+
+bool captureInstalledPreviewEffects(std::uint64_t generation,
+    harkenstudio::ObjectId soundId, std::vector<PreviewEffectSource>& effects);
+bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t authoringRevision,
+    harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId definitionId, const PreviewEffectSource& effect);
 
 enum class CurrentWorldSyncStatus : std::uint32_t {
     Ok = 0,
@@ -89,6 +109,22 @@ struct CurrentWorldArtifact {
         harkenstudio::ObjectId parentId = {};
         float faderDb = 0.0f;
         float outputBusVolumeDb = 0.0f;
+        std::uint32_t faderAfterSlot = 0;
+    };
+    struct Effect {
+        harkenstudio::ObjectId busId = {};
+        harkenstudio::ObjectId effectId = {};
+        harkenstudio::ObjectId definitionId = {};
+        std::uint32_t slot = 0;
+        std::uint32_t effectType = 0;
+        std::uint32_t descriptorVintage = 0;
+        std::uint32_t flags = 0;
+        std::uint32_t parameterFirst = 0;
+        std::uint32_t parameterCount = 0;
+    };
+    struct EffectParameter {
+        std::uint32_t index = 0;
+        float value = 0.0f;
     };
     struct Send {
         harkenstudio::ObjectId sourceId = {};
@@ -107,6 +143,9 @@ struct CurrentWorldArtifact {
     std::uint32_t bodyVintage = 0;
     std::vector<Bus> buses;
     std::vector<Send> sends;
+    std::vector<Effect> effects;
+    std::vector<EffectParameter> effectParameters;
+    PreviewEffectDefinitions voiceEffects;
     std::uint64_t publishedBusFingerprint = 0;
     std::uint64_t compileTargetProfileFingerprint = 0;
     std::optional<Profile> profile;

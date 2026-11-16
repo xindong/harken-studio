@@ -54,6 +54,34 @@ typedef struct HkPackBusDefinitionCoefficient {
 HK_PACK_SIZE(HkPackBusDefinitionCoefficient, 4);
 HK_PACK_OFFSET(HkPackBusDefinitionCoefficient, value, 0);
 
+typedef struct HkPackBusDefinitionEffect {
+    HkPackObjectId busId;
+    HkPackObjectId effectId;
+    uint32_t slot;
+    uint32_t effectType;
+    uint32_t descriptorVintage;
+    uint32_t flags;
+    uint32_t parameterFirst;
+    uint32_t parameterCount;
+} HkPackBusDefinitionEffect;
+HK_PACK_SIZE(HkPackBusDefinitionEffect, 56);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, busId, 0);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, effectId, 16);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, slot, 32);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, effectType, 36);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, descriptorVintage, 40);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, flags, 44);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, parameterFirst, 48);
+HK_PACK_OFFSET(HkPackBusDefinitionEffect, parameterCount, 52);
+
+typedef struct HkPackBusDefinitionEffectParameter {
+    uint32_t index;
+    float value;
+} HkPackBusDefinitionEffectParameter;
+HK_PACK_SIZE(HkPackBusDefinitionEffectParameter, 8);
+HK_PACK_OFFSET(HkPackBusDefinitionEffectParameter, index, 0);
+HK_PACK_OFFSET(HkPackBusDefinitionEffectParameter, value, 4);
+
 typedef struct HkPackBusDefinitionDownmix {
     HkPackObjectId busId;
     uint32_t sourceLayout;
@@ -220,6 +248,8 @@ HK_PACK_TABLE HkPackStreamStep hkPackStreamBusDefinitionSnapshot[] = {
     HK_PACK_STREAM_RECORD(HkPackBusDefinitionSnapshotHeader),
     HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionBus, HkPackBusDefinitionSnapshotHeader, busCount),
     HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionSend, HkPackBusDefinitionSnapshotHeader, sendCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionEffect, HkPackBusDefinitionSnapshotHeader, effectCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionEffectParameter, HkPackBusDefinitionSnapshotHeader, effectParameterCount),
     HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionDownmix, HkPackBusDefinitionSnapshotHeader, downmixCount),
     HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionCoefficient, HkPackBusDefinitionSnapshotHeader, coefficientCount),
 };

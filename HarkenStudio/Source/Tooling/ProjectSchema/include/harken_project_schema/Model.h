@@ -302,11 +302,14 @@ struct EffectNode {
     EffectTypeId effectType = kReservedEffectType;
     std::vector<EffectParam> params;
     harkenstudio::ObjectId effectId{};
+    std::uint32_t flags = 0;
+    harkenstudio::ObjectId presetId{};
 };
 
 inline bool operator==(const EffectNode& a, const EffectNode& b) {
     return a.nodeId == b.nodeId && a.effectType == b.effectType &&
-           a.params == b.params && a.effectId == b.effectId;
+           a.params == b.params && a.effectId == b.effectId && a.flags == b.flags
+           && a.presetId == b.presetId;
 }
 inline bool operator!=(const EffectNode& a, const EffectNode& b) {
     return !(a == b);

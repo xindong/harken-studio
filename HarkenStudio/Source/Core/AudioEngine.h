@@ -85,6 +85,10 @@ public:
     HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration registerRawPcmSlice(
         harkenstudio::ObjectId soundId, const QString& absolutePath,
         uint64_t startFrame, uint64_t frameCount, bool loops = false);
+    HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration registerRawPcmSlice(
+        harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+        int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount,
+        bool loops = false);
     HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration relocateRawPcmSlice(
         harkenstudio::ObjectId soundId, uint64_t startFrame);
     HarkenEditor::Bridge::EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);
@@ -93,7 +97,7 @@ public:
 
     quintptr playByName(const QString& name);
     quintptr playByName3D(const QString& name, const HarkenEditor::Vec3& position);
-    bool stopPlayback(quintptr playbackHandle, float fadeMs = 0);
+    HarkenEditor::Bridge::EngineResult stopPlayback(quintptr playbackHandle, float fadeMs = 0);
     bool stopAll(float fadeMs = 0);
 
     struct PlaybackStartResult {

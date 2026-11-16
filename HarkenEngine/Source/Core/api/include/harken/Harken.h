@@ -203,7 +203,7 @@ typedef struct VnConfig {
     uint32_t blockFrames;    /* frames per render block; 0 = 256 */
     uint32_t maxVoices;      /* legacy field name: Render Voice capacity;
                               * 0 = 256 */
-    uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 1 */
+    uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
     uint32_t arenaBytes;     /* per-block bump arena size; 0 = 2097152 */
     uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
     uint32_t reserved0;      /* keeps 8-byte alignment for future fields */
@@ -220,9 +220,9 @@ typedef struct VnConfig {
     VnLogFn logCallback;     /* log-record sink, or NULL for none */
     void* logUserData;       /* passed through to logCallback verbatim */
     uint32_t delayEffectPoolCapacity; /* feedback-delay instances shared across
-                                       * all voice chains; 0 = 8 */
+                                       * all voice and bus chains; 0 = grow on demand */
     uint32_t toneEffectPoolCapacity;  /* three-band-tone instances shared across
-                                       * all voice chains; 0 = 16 */
+                                       * all voice and bus chains; 0 = grow on demand */
     uint32_t streamRingFrames;   /* per-stream ring capacity in frames;
                                   * 0 = 16384; rounded up to a power of two */
     uint32_t maxStreams;         /* stream slot capacity; 0 = 16. A streamed
@@ -361,17 +361,17 @@ typedef struct VnConfig {
      * config that leaves it zero behaves exactly as one built against an older
      * header vintage. */
     uint32_t gainEffectPoolCapacity; /* Gain insert-effect instances shared
-                                      * across all voice and bus chains; 0 = 16 */
+                                      * across all voice and bus chains; 0 = grow on demand */
     uint32_t reserved7;              /* keeps 8-byte alignment for future fields */
     /* Limiter insert-effect pool capacity (one struct-size vintage,
      * zero-means-default). A shorter struct omitting it reads the default. */
     uint32_t limiterEffectPoolCapacity; /* Limiter instances shared across all
-                                         * voice and bus chains; 0 = 16 */
+                                         * voice and bus chains; 0 = grow on demand */
     uint32_t reserved8;                 /* keeps 8-byte alignment for future fields */
     /* Compressor and Dynamic Modulation / Sidechain capacities. A shorter
      * struct omitting this vintage reads every field as its default. */
     uint32_t compressorEffectPoolCapacity; /* Compressor instances shared across
-                                            * voice and bus chains; 0 = 16 */
+                                            * voice and bus chains; 0 = grow on demand */
     uint32_t dynamicRouteCapacity;         /* effect-private dynamic routes;
                                             * 0 = 64 */
     uint32_t dynamicRoutePlanPoolCapacity; /* immutable route plans; 0 = 4 */
@@ -434,8 +434,9 @@ typedef struct VnConfig {
     uint32_t reserved12;                    /* must be 0 */
 } VnConfig;
 
-/* Create the engine and preallocate every pool. All capacity is fixed here;
- * nothing allocates on the audio thread afterwards. */
+/* Create the engine and initialize configured resources. Effect pool capacities
+ * are logical quotas when nonzero; their backing is prepared on demand on the
+ * logic thread. The audio thread never allocates. */
 VnResult Vn_Init(const VnConfig* config);
 
 /* Release the platform audio device while preserving the engine, mixer,

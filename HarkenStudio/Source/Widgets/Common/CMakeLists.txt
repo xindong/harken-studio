@@ -78,6 +78,7 @@ add_library(harken_editor_common STATIC
     HeaderResizeHighlight.h
     ProportionalTreeWidget.cpp
     ProportionalTreeWidget.h
+    TreeExpansion.h
     SearchField.cpp
     SearchField.h
     SegmentedControl.cpp

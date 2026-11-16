@@ -104,12 +104,15 @@ struct PackCanonicalImage {
     std::vector<PackBusEffectEntry> busEffects;
     std::vector<PackEffectDynamicRouteEntry> dynamicRoutes;
     std::vector<PackLogicImage::Attenuation> attenuations;
+    std::vector<PackEffectPreset> effectPresets;
     std::vector<PackLogicImage::BindingDefinition> bindingDefinitions;
     std::vector<PackBindingAttachmentEntry> bindingAttachments;
     bool hasBusDefinitionSnapshot = false;
     PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
     std::vector<PackBusDefinitionBus> busDefinitionBusesV2;
     std::vector<PackBusDefinitionSend> busDefinitionSendsV2;
+    std::vector<PackBusDefinitionEffect> busDefinitionEffects;
+    std::vector<PackBusDefinitionEffectParameter> busDefinitionEffectParameters;
     std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
@@ -174,8 +177,14 @@ inline CanonicalBusTriple DependencyBusTriple(const PackDependencyEdge& edge) no
             edge.expectedCompileTargetProfileFingerprint};
 }
 
-inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
+inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image,
+    std::span<const PackBusDefinitionEffect> effects,
+    std::span<const PackBusDefinitionEffectParameter> parameters) noexcept {
     const auto& header = image.busDefinitionSnapshotHeader;
+    if (header.effectCount != effects.size() ||
+        header.effectParameterCount != parameters.size() ||
+        (header.publicationCapabilityVintage != 5 &&
+         (header.effectCount != 0 || header.effectParameterCount != 0))) return 0;
     std::uint64_t hash = busfingerprint::kOffsetBasis;
     const auto byte = [&](std::uint8_t value) { hash = busfingerprint::Step(hash, value); };
     const auto u32 = [&](std::uint32_t value) { busfingerprint::AppendU32(byte, value); };
@@ -222,6 +231,20 @@ inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& ima
         f32(row.levelDb);
         u32(0);
     }
+    for (const auto& row : effects) {
+        id(row.busId);
+        id(row.effectId);
+        u32(row.slot);
+        u32(row.effectType);
+        u32(row.descriptorVintage);
+        u32(row.flags);
+        u32(row.parameterFirst);
+        u32(row.parameterCount);
+    }
+    for (const auto& row : parameters) {
+        u32(row.index);
+        f32(row.value);
+    }
     for (const auto& row : image.busDefinitionDownmixesV2) {
         id(row.busId);
         u32(row.sourceLayout);
@@ -231,6 +254,9 @@ inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& ima
     }
     for (float value : image.busDefinitionCoefficients) f32(value);
     return busfingerprint::Finalize(hash);
+}
+inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
+    return CanonicalVolumeBusFingerprint(image, {}, {});
 }
 harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                                  std::uint64_t fileBytes,

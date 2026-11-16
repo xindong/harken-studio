@@ -951,6 +951,8 @@ add_executable(harken_runtime_capacity_benchmark
     UnitTest/AllocationProbe.cpp
 )
 target_link_libraries(harken_runtime_capacity_benchmark PRIVATE harken_core harken_buildinfo)
+target_compile_definitions(harken_runtime_capacity_benchmark PRIVATE
+    HARKEN_BENCHMARK_CONFIGURATION="$<CONFIG>")
 if(WIN32)
     target_link_libraries(harken_runtime_capacity_benchmark PRIVATE Psapi)
 endif()

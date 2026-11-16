@@ -63,7 +63,14 @@ struct PackClosureOwnerSnapshot {
     std::shared_ptr<const std::vector<PackVoiceBinding>> voiceBindings;
 };
 
+struct PackEffectPresetSnapshot {
+    VnObjectId presetId{};
+    std::uint32_t effectType = 0;
+    std::vector<EffectParamV1> parameters;
+};
+
 struct PackPlaybackOwnerStore {
+    detail::PackDecodeCharge effectPresetStaging;
     struct Owner {
         PackClosureOwnerSnapshot snapshot{};
         std::vector<std::uint32_t> closureOwnerSlots;
@@ -74,6 +81,7 @@ struct PackPlaybackOwnerStore {
     std::vector<ProgramCapabilitySummaryV1> programCapabilities;
     std::uint64_t worldSemanticFingerprint = 0;
     PackAttenuationBindingMapV1 attenuationBindings;
+    std::vector<PackEffectPresetSnapshot> effectPresets;
 };
 
 struct PackFrozenClosure {
@@ -93,6 +101,7 @@ public:
     std::uint64_t RootPackStableId() const noexcept;
     std::uint32_t OwnerCount() const noexcept;
     std::uint64_t AttenuationGeneration(VnAttenuationId id) const noexcept;
+    const PackEffectPresetSnapshot* ResolveEffectPreset(VnObjectId id) const noexcept;
 
     const PlayablePropertyProgramViewV1* ResolveProperty(
         playableproperties::ContentPropertyKindV1 kind,

@@ -195,7 +195,7 @@ struct GainState {
 // Convert a copied numeric value to dB off the render thread if needed.
 // No Monitor, managed API, or cross-thread publication contract is implied.
 enum class LimiterGainReductionStatus : std::uint8_t {
-    Unavailable, Numeric, Bypassed, BypassTransition, NonFinite, OutputClipped
+    Unavailable, Numeric, Bypassed, BypassTransition, NonFinite, OutputClipped, ChainTransition
 };
 struct LimiterGainReduction {
     EffectInstanceRef instance{};

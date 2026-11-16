@@ -290,14 +290,25 @@ QJsonObject IPCServer::handleClickWidget(const QJsonObject& args)
         button = Qt::MiddleButton;
 
     bool doubleClick = args["double_click"].toBool(false);
-
-    return queueDesktopOperation(target, [button, doubleClick](QWidget* widget) {
-        const QPointer<QWidget> safe = widget;
-        const QPoint center = widget->rect().center();
-        const QPointF local(center);
-        const QPointF global = widget->mapToGlobal(center);
+    QWidget* receiver = target;
+    if (auto* area = qobject_cast<QAbstractScrollArea*>(target)) receiver = area->viewport();
+    const QPoint position = args.contains("x") && args.contains("y")
+        ? QPoint(args.value("x").toInt(), args.value("y").toInt()) : receiver->rect().center();
+    if (!receiver->rect().contains(position))
+        return errorResponse("INVALID_ARGS", "Click coordinates must be inside the widget or scroll area viewport.");
+    const QPointer<QWidget> safeReceiver = receiver;
+    return queueDesktopOperation(target, [button, doubleClick, position, safeReceiver](QWidget*) {
+        const QPointer<QWidget> safe = safeReceiver;
+        if (!safe)
+            return QJsonObject{{"status", "error"}, {"code", "STALE_WIDGET"},
+                {"message", "The click receiver no longer exists."}};
+        if (!safe->rect().contains(position))
+            return QJsonObject{{"status", "error"}, {"code", "INVALID_ARGS"},
+                {"message", "Click coordinates are outside the current widget or scroll area viewport."}};
+        const QPointF local(position);
+        const QPointF global = safe->mapToGlobal(position);
         QMouseEvent press(QEvent::MouseButtonPress, local, global, button, button, Qt::NoModifier);
-        QCoreApplication::sendEvent(widget, &press);
+        QCoreApplication::sendEvent(safe, &press);
         if (!safe) return QJsonObject{{"status", "error"}, {"code", "STALE_WIDGET"},
             {"message", "The widget was destroyed before mouse release."}};
         QMouseEvent release(QEvent::MouseButtonRelease, local, global, button, Qt::NoButton, Qt::NoModifier);
@@ -313,7 +324,8 @@ QJsonObject IPCServer::handleClickWidget(const QJsonObject& args)
             }
         }
         return QJsonObject{};
-    }, {{"widget_name", name}, {"button", buttonStr}, {"double_click", doubleClick}});
+    }, {{"widget_name", name}, {"button", buttonStr}, {"double_click", doubleClick},
+        {"x", position.x()}, {"y", position.y()}});
 }
 
 QJsonObject IPCServer::handleKeyPress(const QJsonObject& args)
@@ -841,6 +853,12 @@ static QJsonObject serializeTreeItem(QTreeWidgetItem* item, int treeColumnCount,
 
     obj["expanded"] = item->isExpanded();
     obj["selected"] = item->isSelected();
+    const auto* tree = item->treeWidget();
+    const QRect rect = tree->visualItemRect(item).intersected(tree->viewport()->rect());
+    obj["visible"] = tree->isVisible() && !rect.isEmpty();
+    if (obj["visible"].toBool())
+        obj["rect"] = QJsonObject{{"x", rect.x()}, {"y", rect.y()},
+            {"width", rect.width()}, {"height", rect.height()}};
 
     if (item->checkState(0) != Qt::Unchecked)
         obj["checked"] = (item->checkState(0) == Qt::Checked);

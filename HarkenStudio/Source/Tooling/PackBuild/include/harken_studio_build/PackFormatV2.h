@@ -272,6 +272,39 @@ struct PackBusDefinitionSend {
     float levelDb = 0.0f;
 };
 
+struct PackEffectPresetHeader {
+    harkenstudio::ObjectId presetId{};
+    std::uint32_t effectType = 0;
+    std::uint32_t descriptorVintage = 0;
+    std::uint32_t paramCount = 0;
+};
+
+struct PackEffectPresetParameter {
+    std::uint32_t paramId = 0;
+    std::uint32_t valueBits = 0;
+};
+
+struct PackEffectPreset {
+    PackEffectPresetHeader header{};
+    std::vector<PackEffectPresetParameter> parameters;
+};
+
+struct PackBusDefinitionEffect {
+    harkenstudio::ObjectId busId{};
+    harkenstudio::ObjectId effectId{};
+    std::uint32_t slot = 0;
+    std::uint32_t effectType = 0;
+    std::uint32_t descriptorVintage = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t parameterFirst = 0;
+    std::uint32_t parameterCount = 0;
+};
+
+struct PackBusDefinitionEffectParameter {
+    std::uint32_t index = 0;
+    float value = 0.0f;
+};
+
 struct PackBusDefinitionDownmix {
     harkenstudio::ObjectId busId{};
     std::uint32_t sourceLayout = 0;
@@ -647,7 +680,8 @@ inline bool PackIsCanonicalEntryKind(std::uint32_t entryKind) {
            entryKind == HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE ||
            entryKind == HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT ||
            entryKind == HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY ||
-           entryKind == HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS;
+           entryKind == HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS ||
+           entryKind == HK_PACK_ENTRY_KIND_EFFECT_PRESET;
 }
 inline bool ReadPackBusDefinitionSnapshotHeader(
     const std::uint8_t* in, std::uint64_t size,
@@ -660,7 +694,8 @@ inline bool ReadPackBusDefinitionSnapshotHeader(
     if (out->schemaVersion != HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE ||
         out->storageModelVersion != HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE ||
         out->headerBytes != kPackBytes<HkPackBusDefinitionSnapshotHeader> ||
-        (out->publicationCapabilityVintage != 3u && out->publicationCapabilityVintage != 4u) ||
+        (out->publicationCapabilityVintage != 3u && out->publicationCapabilityVintage != 4u &&
+         out->publicationCapabilityVintage != 5u) ||
         out->profileVintage != 1 || out->reserved0 != 0 || out->reserved1 != 0 ||
         out->busRowBytes != kPackBytes<HkPackBusDefinitionBus> ||
         out->sendRowBytes != kPackBytes<HkPackBusDefinitionSend> ||

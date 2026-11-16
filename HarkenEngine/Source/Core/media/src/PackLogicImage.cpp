@@ -838,10 +838,48 @@ VnResult ParseVariableRequirementsPayload(
 
 
 
+struct PackEffectPresetReader {
+    PackEffectPreset& preset;
+    auto& Value() noexcept { return preset.header; }
+    auto& Header() noexcept { return preset.header; }
+    bool PrepareParameters(std::uint64_t count) noexcept { return count == preset.parameters.size(); }
+    auto& Parameters(std::uint64_t i) noexcept { return preset.parameters[static_cast<std::size_t>(i)]; }
+    bool Finish() noexcept { return true; }
+};
+
+VnResult ParseEffectPresetPayload(const std::uint8_t* payload, std::uint64_t size,
+    PackEffectPreset& preset, detail::PackDecodeCharge& staging) {
+    if (size < kPackBytes<HkPackEffectPresetHeader> ||
+        !ParsePackRow<HkPackEffectPresetHeader>(payload, kPackBytes<HkPackEffectPresetHeader>, &preset.header))
+        return VN_BAD_PACK;
+    const auto& header = preset.header;
+    const auto* schema = FindPackEffectSchemaByType(header.effectType);
+    if (header.presetId == VnObjectId{} || !schema ||
+        header.descriptorVintage != schema->descriptorVintage ||
+        header.paramCount != schema->paramCount ||
+        size != kPackBytes<HkPackEffectPresetHeader> +
+            static_cast<std::uint64_t>(header.paramCount) * kPackBytes<HkPackEffectPresetParameter>)
+        return VN_BAD_PACK;
+    detail::DecodeResize(preset.parameters, header.paramCount, staging);
+    PackWireBuffer<const std::uint8_t> input{payload, size};
+    PackEffectPresetReader visitor{preset};
+    if (!ReadPackEffectPreset(input, visitor) || input.offset != size) return VN_BAD_PACK;
+    for (std::uint32_t i = 0; i < header.paramCount; ++i) {
+        const auto& parameter = preset.parameters[i];
+        float value = 0.0f;
+        std::memcpy(&value, &parameter.valueBits, sizeof(value));
+        if (parameter.paramId != i || !PackEffectParamInAuthoredRange(header.effectType, i, value))
+            return VN_BAD_PACK;
+    }
+    return VN_OK;
+}
+
 struct PackBusDefinitionSnapshotReader {
     PackBusDefinitionSnapshotHeader& header;
     std::vector<PackBusDefinitionBus>& buses;
     std::vector<PackBusDefinitionSend>& sends;
+    std::vector<PackBusDefinitionEffect>& effects;
+    std::vector<PackBusDefinitionEffectParameter>& parameters;
     std::vector<PackBusDefinitionDownmix>& downmixes;
     std::vector<float>& coefficients;
     auto& Value() noexcept { return header; }
@@ -850,6 +888,10 @@ struct PackBusDefinitionSnapshotReader {
     auto& Buses(std::uint64_t i) noexcept { return buses[static_cast<std::size_t>(i)]; }
     bool PrepareSends(std::uint64_t count) noexcept { return count == sends.size(); }
     auto& Sends(std::uint64_t i) noexcept { return sends[static_cast<std::size_t>(i)]; }
+    bool PrepareEffects(std::uint64_t count) noexcept { return count == effects.size(); }
+    auto& Effects(std::uint64_t i) noexcept { return effects[static_cast<std::size_t>(i)]; }
+    bool PrepareEffectParameters(std::uint64_t count) noexcept { return count == parameters.size(); }
+    auto& EffectParameters(std::uint64_t i) noexcept { return parameters[static_cast<std::size_t>(i)]; }
     bool PrepareDownmixes(std::uint64_t count) noexcept { return count == downmixes.size(); }
     auto& Downmixes(std::uint64_t i) noexcept { return downmixes[static_cast<std::size_t>(i)]; }
     bool PrepareCoefficients(std::uint64_t count) noexcept { return count == coefficients.size(); }
@@ -864,7 +906,10 @@ VnResult ParseBusDefinitionSnapshotPayload(
     PackBusDefinitionSnapshotHeader header;
     if (!ReadPackBusDefinitionSnapshotHeader(payload, size, &header) ||
         header.busCount == 0 || header.busCount > 4096 ||
-        header.effectCount != 0 || header.effectParameterCount != 0 ||
+        (header.publicationCapabilityVintage != 5 &&
+         (header.effectCount != 0 || header.effectParameterCount != 0)) ||
+        header.effectCount > static_cast<std::uint64_t>(header.busCount) * kMaxFxSlotsPerBus ||
+        header.effectParameterCount > static_cast<std::uint64_t>(header.effectCount) * HK_PACK_VOICE_RECIPE_MAX_PARAMS ||
         header.downmixCount != header.busCount ||
         header.coefficientCount != static_cast<std::uint64_t>(header.busCount) * 64) {
         return VN_BAD_PACK;
@@ -872,14 +917,18 @@ VnResult ParseBusDefinitionSnapshotPayload(
     if (!ValidatePackBusDefinitionSnapshotLayout(header, size)) return VN_BAD_PACK;
     std::vector<PackBusDefinitionBus> buses;
     std::vector<PackBusDefinitionSend> sends;
+    std::vector<PackBusDefinitionEffect> effects;
+    std::vector<PackBusDefinitionEffectParameter> parameters;
     std::vector<PackBusDefinitionDownmix> downmixes;
     std::vector<float> coefficients;
     detail::DecodeResize(buses, header.busCount, staging);
     detail::DecodeResize(sends, header.sendCount, staging);
+    detail::DecodeResize(effects, header.effectCount, staging);
+    detail::DecodeResize(parameters, header.effectParameterCount, staging);
     detail::DecodeResize(downmixes, header.downmixCount, staging);
     detail::DecodeResize(coefficients, static_cast<std::size_t>(header.coefficientCount), staging);
     PackWireBuffer<const std::uint8_t> input{payload, size};
-    PackBusDefinitionSnapshotReader visitor{header, buses, sends, downmixes, coefficients};
+    PackBusDefinitionSnapshotReader visitor{header, buses, sends, effects, parameters, downmixes, coefficients};
     if (!ReadPackBusDefinitionSnapshot(input, visitor) || input.offset != size) return VN_BAD_PACK;
     scratch.AddRows<VnObjectId>(header.busCount);
     std::set<VnObjectId> ids;
@@ -890,7 +939,9 @@ VnResult ParseBusDefinitionSnapshotPayload(
             row.faderDb > HK_PACK_BUS_VOLUME_MAX ||
             !std::isfinite(row.outputBusVolumeDb) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
-            row.effectFirst != 0 || row.effectCount != 0 ||
+            (header.publicationCapabilityVintage != 5 && (row.effectFirst != 0 || row.effectCount != 0)) ||
+            (header.publicationCapabilityVintage == 5 && row.faderAfterSlot != 8) ||
+            static_cast<std::uint64_t>(row.effectFirst) + row.effectCount > effects.size() ||
             row.downmixCount != 1 || row.downmixFirst != i) {
             return VN_BAD_PACK;
         }
@@ -902,7 +953,7 @@ VnResult ParseBusDefinitionSnapshotPayload(
         const auto& row = sends[i];
         if (!ids.contains(row.source) || !ids.contains(row.target) ||
             row.source == row.target ||
-            (header.publicationCapabilityVintage == 4 &&
+            (header.publicationCapabilityVintage >= 4 &&
              row.target == VN_BUS_MASTER) ||
             (header.publicationCapabilityVintage == 3 ? row.levelDb != 0.0f :
                 (!std::isfinite(row.levelDb) || row.levelDb < HK_PACK_BUS_SEND_LEVEL_MIN ||
@@ -912,8 +963,46 @@ VnResult ParseBusDefinitionSnapshotPayload(
             return VN_BAD_PACK;
         }
     }
-    if (header.publicationCapabilityVintage == 4 &&
+    if (header.publicationCapabilityVintage >= 4 &&
         !ValidateCanonicalBusSendGraphV2(buses, sends, staging.Budget())) return VN_BAD_PACK;
+    scratch.AddRows<VnObjectId>(header.effectCount);
+    std::set<VnObjectId> effectIds;
+    std::uint64_t parameterEnd = 0;
+    for (std::size_t i = 0; i < effects.size(); ++i) {
+        const auto& row = effects[i];
+        const auto* schema = FindPackEffectSchemaByType(row.effectType);
+        if (!ids.contains(row.busId) || row.busId == VN_BUS_MASTER ||
+            IsNull(row.effectId) || !effectIds.insert(row.effectId).second ||
+            !schema || row.descriptorVintage != schema->descriptorVintage ||
+            row.parameterCount != schema->paramCount || row.parameterFirst != parameterEnd ||
+            parameterEnd + row.parameterCount > parameters.size() ||
+            (row.flags & ~1u) != 0 || row.slot >= kMaxFxSlotsPerBus ||
+            (header.runtimeCapabilityMask & (UINT64_C(1) << 19)) == 0 ||
+            (header.runtimeCapabilityMask & (UINT64_C(1) << (32 + row.effectType))) == 0)
+            return VN_BAD_PACK;
+        for (std::uint32_t p = 0; p < row.parameterCount; ++p) {
+            const auto& parameter = parameters[row.parameterFirst + p];
+            if (parameter.index != p || !PackEffectParamInAuthoredRange(row.effectType, p, parameter.value))
+                return VN_BAD_PACK;
+        }
+        parameterEnd += row.parameterCount;
+    }
+    if (parameterEnd != parameters.size()) return VN_BAD_PACK;
+    std::uint32_t effectEnd = 0;
+    for (const auto& bus : buses) {
+        if (bus.busId == VN_BUS_MASTER) {
+            if (bus.effectFirst != 0 || bus.effectCount != 0) return VN_BAD_PACK;
+            continue;
+        }
+        if (bus.effectFirst != effectEnd) return VN_BAD_PACK;
+        for (std::uint32_t slot = 0; slot < bus.effectCount; ++slot) {
+            const auto index = effectEnd + slot;
+            if (effects[index].busId != bus.busId ||
+                (slot != 0 && effects[index - 1].slot >= effects[index].slot)) return VN_BAD_PACK;
+        }
+        effectEnd += bus.effectCount;
+    }
+    if (effectEnd != effects.size()) return VN_BAD_PACK;
     for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
         const auto& row = downmixes[i];
         if (row.busId != buses[i].busId || row.coefficientCount != 64 ||
@@ -928,9 +1017,12 @@ VnResult ParseBusDefinitionSnapshotPayload(
     image->busDefinitionSnapshotHeader = header;
     image->busDefinitionBusesV2 = std::move(buses);
     image->busDefinitionSendsV2 = std::move(sends);
+    image->busDefinitionEffects = std::move(effects);
+    image->busDefinitionEffectParameters = std::move(parameters);
     image->busDefinitionDownmixesV2 = std::move(downmixes);
     image->busDefinitionCoefficients = std::move(coefficients);
-    return CanonicalVolumeBusFingerprint(*image) == header.publishedBusFingerprint &&
+    return CanonicalVolumeBusFingerprint(*image, image->busDefinitionEffects,
+        image->busDefinitionEffectParameters) == header.publishedBusFingerprint &&
         header.contentGeneration == header.publishedBusFingerprint
         ? VN_OK : VN_BAD_PACK;
 }
@@ -954,6 +1046,8 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
     case HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK:
     case HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE:
         return PackIsCanonicalKind(packKind);
+    case HK_PACK_ENTRY_KIND_EFFECT_PRESET:
+        return packKind == HK_PACK_KIND_INIT;
     case HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT:
         return packKind == HK_PACK_KIND_INIT;
     case HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY:
@@ -1446,7 +1540,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
 
     PackCanonicalImage image;
     image.staging = detail::PackDecodeCharge(budget);
-    std::array<std::size_t, 9> requestedSlots{};
+    std::array<std::size_t, 10> requestedSlots{};
     image.packKind = header.packKind;
 
     std::uint64_t attachmentOrdinal = 0;
@@ -1690,6 +1784,17 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
             }
             ++sendOrdinal;
             detail::DecodeAppend(image.busSends, send, image.staging, requestedSlots[5]);
+            break;
+        }
+        case HK_PACK_ENTRY_KIND_EFFECT_PRESET: {
+            PackEffectPreset preset;
+            if (header.packKind != HK_PACK_KIND_INIT ||
+                ParseEffectPresetPayload(payload, entry.size, preset, image.staging) != VN_OK ||
+                preset.header.presetId != entry.id || entry.relationOrdinal != 0 ||
+                std::any_of(image.effectPresets.begin(), image.effectPresets.end(),
+                    [&](const auto& existing) { return existing.header.presetId == entry.id; }))
+                return VN_BAD_PACK;
+            detail::DecodeAppend(image.effectPresets, std::move(preset), image.staging, requestedSlots[9]);
             break;
         }
         case HK_PACK_ENTRY_KIND_ATTENUATION: {

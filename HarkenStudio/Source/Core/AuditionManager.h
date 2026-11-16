@@ -17,6 +17,7 @@ namespace VNX { class AudioEngine; struct ProjectItem; }
 namespace HarkenEditor {
 
 enum class AuditionMode { NamedPlayback, Preview, RawFile };
+enum class AuditionStopState { None, Pending, Stopping, Failed };
 
 struct AuditionInfo
 {
@@ -33,6 +34,10 @@ struct AuditionInfo
     bool     bIsPlaying     = false;
     bool     bIsDelayed     = false;
     bool     bIsFading      = false;
+    AuditionStopState stopState = AuditionStopState::None;
+    HarkenEditor::Bridge::EngineResult stopResult = HarkenEditor::Bridge::kEngineOk;
+    uint32_t stopFadeMs = 0;
+    uint32_t stopAttempts = 0;
     bool     previewStartPending = false;
     bool     revisionPending = false;
     bool     actionInstallPending = false;
@@ -114,6 +119,7 @@ public:
     QString lastPlayReason() const { return lastPlayReason_; }
     bool lastPlayPending() const { return lastPlayPending_; }
     QJsonObject previewIpcSnapshot(uint32_t playingId = 0) const;
+    QJsonObject stopIpcSnapshot(uint32_t playingId = 0) const;
     void stop(uint32_t playingId, float fadeMs = 0);
     void stopAll(float fadeMs = 0);
 
@@ -160,6 +166,8 @@ signals:
     void auditionStarted(uint32_t playingId, const QString& objectName);
     void auditionStartFailed(uint32_t playingId, const QString& objectName,
                               int32_t engineResult);
+    void auditionStopFailed(uint32_t playingId, const QString& objectName,
+                            int32_t engineResult);
     void auditionStateChanged(uint32_t playingId, int newState);
     void auditionPositionChanged(uint32_t playingId, double timeSeconds);
     void auditionSeekFinished(uint32_t playingId, quint64 requestId,
@@ -200,8 +208,6 @@ private:
     QMap<uint64_t, PendingActionSeek> pendingActionSeeks_;
     QMap<uint64_t, AuditionSeekStatus> completedActionSeeks_;
 
-    int idleZeroPolls_ = 0;
-
     QMap<uint32_t, AuditionInfo> auditions_;
     QMap<QString, QString> simulatedStates_;
 
@@ -239,6 +245,8 @@ private:
     void removePreviewSlot(uint32_t playingId, const QString& objectName,
                            int32_t engineResult, bool emitStartFailed);
     void markPreviewStopStuck(AuditionInfo& info);
+    void tryStopAudition(uint32_t playingId);
+    void finishAudition(uint32_t playingId);
     void emitIfAllStopped();
 };
 

@@ -145,6 +145,7 @@ public:
         return nullptr;
     }
     std::uint32_t BindingCount(VnObjectId) const noexcept { return liveBindingCapacity_; }
+    std::uint32_t EffectType(const EffectNodeV1& node) const noexcept { return node.effectType; }
     const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
         if (view_.containers == nullptr) return nullptr;
         for (std::uint32_t i = 0; i < view_.containerCount; ++i) {
@@ -188,6 +189,11 @@ public:
     }
     std::uint32_t BindingCount(VnObjectId object) const noexcept {
         return view_.ResolveVoiceBindings(object, nullptr, 0);
+    }
+    std::uint32_t EffectType(const EffectNodeV1& node) const noexcept {
+        if (node.presetId == VnObjectId{}) return node.effectType;
+        const auto* preset = view_.ResolveEffectPreset(node.presetId);
+        return preset != nullptr ? preset->effectType : UINT32_MAX;
     }
     const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
         return view_.ResolveContainer(ref.stableId, ref.expectedProgramSemanticFingerprint).programView;
@@ -567,9 +573,10 @@ private:
                     return Failure(Status::InvalidInput);
                 for (std::uint32_t index = 0; index < std::min(property->payload.effectNodeCount,
                         kTimelineMaxVoiceEffects); ++index) {
-                    for (std::uint32_t type = 0; type < kEffectRegistryRowCount; ++type)
-                        if (kEffectRegistry[type].effectType == property->payload.effectNodes[index].effectType)
-                            ++result.profile.voice.effectInstances[type];
+                    const auto effectType = content_.EffectType(property->payload.effectNodes[index]);
+                    const auto* effect = FindEffectRow(effectType);
+                    if (effect == nullptr) return Failure(Status::MissingContent);
+                    ++result.profile.voice.effectInstances[effect - kEffectRegistry];
                 }
             }
             return result;

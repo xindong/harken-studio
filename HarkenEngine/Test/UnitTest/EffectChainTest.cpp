@@ -9,11 +9,14 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "harken/render/Voice.h"
 #include "harken/render/EffectChain.h"
+#include "harken/render/EffectChainUpdate.h"
 
 #include "Common/TestUtil.h"
 
 #include <cstdint>
+#include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace {
@@ -149,13 +152,13 @@ struct ChainHarness {
                             Tables());
     }
 
-    StageResult RenderBlock() {
+    StageResult RenderBlock(std::uint32_t frames = kBlock) {
         arena.Reset();
-        masterL.assign(kBlock, 0.0f);
-        masterR.assign(kBlock, 0.0f);
+        masterL.assign(frames, 0.0f);
+        masterR.assign(frames, 0.0f);
         float* master[harken::kOutputChannels] = {masterL.data(),
                                                  masterR.data()};
-        return RenderVoiceBlock(ctx, arena, master, kBlock, 1,
+        return RenderVoiceBlock(ctx, arena, master, frames, 1,
                                 VN_CHANNEL_LAYOUT_MONO);
     }
 
@@ -371,24 +374,27 @@ TEST(EffectChain, ReplacingTailDuringDrainRecomputesAggregate) {
 
 TEST(EffectChain, ConfigFxSlotsPlumbToVoiceChainLength) {
     // The resolved fxSlotsPerVoice becomes the voice's active chain length.
-    VnConfig config = harkentest::MakeNullConfig(0, kBlock, 48000);
-    config.fxSlotsPerVoice = 8;
-    harkentest::EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
+    for (const std::uint32_t requested : {0u, 1u, 4u, 8u}) {
+        SCOPED_TRACE(requested);
+        VnConfig config = harkentest::MakeNullConfig(0, kBlock, 48000);
+        config.fxSlotsPerVoice = requested;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
 
-    const std::vector<float> sine =
-        harkentest::MakeSine(200, 1000.0, 48000.0, 0.5f);
-    const VnPCMDesc desc = harkentest::MonoDesc(sine, 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+        const std::vector<float> sine =
+            harkentest::MakeSine(200, 1000.0, 48000.0, 0.5f);
+        const VnPCMDesc desc = harkentest::MonoDesc(sine, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
 
-    const VnPlayDesc play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
-    VnVoiceHandle handle = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    harken::VoiceRenderContext* voice =
-        session.Engine()->voices.Resolve(harkentest::RenderHandle(session.Engine(
-            ), handle));
-    ASSERT_NE(nullptr, voice);
-    EXPECT_EQ(8u, voice->fxSlotCount);
+        const VnPlayDesc play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
+        VnVoiceHandle handle = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        harken::VoiceRenderContext* voice =
+            session.Engine()->voices.Resolve(harkentest::RenderHandle(session.Engine(
+                ), handle));
+        ASSERT_NE(nullptr, voice);
+        EXPECT_EQ(requested == 0 ? 8u : requested, voice->fxSlotCount);
+    }
 }
 
 TEST(EffectChain, ConfigFxSlotsOverCapacityRefused) {
@@ -722,3 +728,240 @@ TEST(EffectChain, FadeStopEndsInfiniteTailVoice) {
 }
 
 } // namespace
+
+TEST(EffectChain, StructuralTransitionUsesOneSampleClockAcrossPartitionsAndExactEndpoint) {
+    constexpr std::uint32_t total = 240;
+    for (const float oldAmount : {2.0f, std::numeric_limits<float>::infinity()})
+    for (const auto channelCount : {1u, 2u, 8u})
+    for (const auto block : {1u, 17u, 64u, 256u}) {
+        SCOPED_TRACE(block);
+        SCOPED_TRACE(channelCount);
+        SCOPED_TRACE(oldAmount);
+        std::array<std::array<float, 270>, 8> data{}, dry{}, alternate{};
+        std::array<float*, 8> planes{}, dries{}, alternatives{};
+        for (unsigned ch = 0; ch < channelCount; ++ch) {
+            planes[ch] = data[ch].data(); dries[ch] = dry[ch].data();
+            alternatives[ch] = alternate[ch].data();
+        }
+        std::uint64_t oldFrames = 0, newFrames = 0;
+        AddProbe prior{oldAmount, nullptr, &oldFrames};
+        AddProbe next{6.0f, nullptr, &newFrames};
+        harken::InsertEffect oldEffect{}, nextEffect{};
+        oldEffect.state = &prior; oldEffect.process = AddProbeProcess;
+        nextEffect.state = &next; nextEffect.process = AddProbeProcess;
+        std::uint32_t done = 0;
+        for (std::uint32_t start = 0; start < 257;) {
+            const auto frames = std::min(block, 257u - start);
+            for (unsigned ch = 0; ch < channelCount; ++ch) data[ch].fill(1.0f + ch);
+            const float bypass[]{0};
+            harken::ProcessTransitionChainRange(&oldEffect, bypass, &nextEffect, bypass, nullptr,
+                0, 1, planes.data(), dries.data(), alternatives.data(), channelCount,
+                7, frames, done, total, [](auto, auto) {}, [](auto, auto) {});
+            for (unsigned ch = 0; ch < channelCount; ++ch) {
+                EXPECT_FLOAT_EQ(1.0f + ch, data[ch][6]);
+                for (std::uint32_t i = 0; i < frames; ++i) {
+                    const auto progress = std::min(total, start + i + 1);
+                    const float alpha = static_cast<float>(progress) / total;
+                    const float expected = progress == total ? 7.0f + ch :
+                        (1.0f + ch + oldAmount) * (1.0f - alpha) + (7.0f + ch) * alpha;
+                    EXPECT_FLOAT_EQ(expected, data[ch][7 + i]);
+                }
+            }
+            done += std::min(frames, total - done);
+            start += frames;
+        }
+        EXPECT_EQ(total, oldFrames);
+        EXPECT_EQ(257u, newFrames);
+    }
+}
+
+TEST(EffectChain, DirectBypassDuringStructuralTransitionUsesWholeCallRampAcrossSuffix) {
+    std::array<float, 256> data{}, dry{}, alternate{};
+    data.fill(1);
+    float* planes[]{data.data()}; float* dries[]{dry.data()}; float* alternatives[]{alternate.data()};
+    AddProbe prior{2.0f, nullptr, nullptr}, next{6.0f, nullptr, nullptr};
+    harken::InsertEffect oldEffect{}, nextEffect{};
+    oldEffect.state = &prior; oldEffect.process = AddProbeProcess;
+    nextEffect.state = &next; nextEffect.process = AddProbeProcess;
+    const float oldBypass[]{0}, nextBypass[]{1}, nextStarts[]{0};
+    harken::ProcessTransitionChainRange(&oldEffect, oldBypass, &nextEffect, nextBypass,
+        nextStarts, 0, 1, planes, dries, alternatives, 1, 0, 256, 200, 240,
+        [](auto, auto) {}, [](auto, auto) {});
+    for (unsigned i = 0; i < 256; ++i) {
+        const float nextValue = 7 - 6 * (i + 1) / 256.0f;
+        const float alpha = std::min(1.0f, (201 + i) / 240.0f);
+        EXPECT_NEAR(3 * (1 - alpha) + nextValue * alpha, data[i], 1e-6f) << i;
+    }
+}
+
+TEST(EffectChain, StructuralRangeReportsLimiterFramesAtVoiceStartOffset) {
+    const auto input = harkentest::MakeDC(512, 0.5f);
+    ChainHarness harness(input, 2);
+    harness.ctx.startOffsetFrames = 19;
+    std::array<harken::LimiterState, 2> states{};
+    harken::EffectChainUpdate update;
+    update.changedMask = 3; update.totalFrames = 240;
+    std::array<float, 256> dry{}, alternate{};
+    update.dry[0] = dry.data(); update.alternate[0] = alternate.data();
+    harness.ctx.fxChainTransition = &update;
+    for (unsigned slot = 0; slot < 2; ++slot) {
+        auto effect = harken::BuildEffect(VN_EFFECT_LIMITER, &states[slot]);
+        effect.setParam(effect.state, 0, -18);
+        effect.setParam(effect.state, 1, 100);
+        harness.ctx.fxSlots[slot] = effect;
+        harness.ctx.fxSlotEffectRef[slot].type = VN_EFFECT_LIMITER;
+    }
+    const auto result = harness.RenderBlock();
+    ASSERT_EQ(237u, result.framesProduced);
+    for (const auto& state : states) {
+        EXPECT_EQ(19u, state.gainReduction.frameOffset);
+        EXPECT_EQ(237u, state.gainReduction.frameCount);
+    }
+    EXPECT_EQ(237u, update.done);
+}
+
+TEST(EffectChain, StructuralSplitLimiterTransitionHasNoExtraDetectorDip) {
+    // A dense, legal chain can retain a bypassed Limiter between two edits.
+    // Its target state sees only target-branch input; a private old state keeps
+    // the fading branch independent across short blocks.
+    for (const auto blockFrames : {1u, 64u, 256u}) {
+        SCOPED_TRACE(blockFrames);
+        constexpr unsigned framesToCheck = 768;
+        constexpr unsigned transitionFrames = 240;
+        const auto input = harkentest::MakeDC(framesToCheck + kBlock, 0.5f);
+        ChainHarness harness(input, 3);
+        std::array<harken::LimiterState, 3> states{};
+        std::array<harken::LimiterState, 2> oldStates{};
+        harken::EffectChainUpdate update;
+        update.changedMask = 0b101;
+        update.totalFrames = transitionFrames;
+        std::array<float, kBlock> dry{}, alternate{};
+        update.dry[0] = dry.data(); update.alternate[0] = alternate.data();
+        harness.ctx.fxChainTransition = &update;
+        for (unsigned slot = 0; slot < 3; ++slot) {
+            states[slot].sampleRate = 48000;
+            auto effect = harken::BuildEffect(VN_EFFECT_LIMITER, &states[slot]);
+            effect.setParam(effect.state, 0, -18);
+            effect.setParam(effect.state, 1, 100);
+            harness.ctx.fxSlots[slot] = effect;
+            harness.ctx.fxSlotEffectRef[slot].type = VN_EFFECT_LIMITER;
+        }
+        harness.ctx.fxBypassMix[1] = harness.ctx.fxBypassTarget[1] = 1;
+        update.oldLimiterStates[1] = states[1];
+        update.oldEffects[1] = harken::BuildEffect(VN_EFFECT_LIMITER, &update.oldLimiterStates[1]);
+        update.oldBypass[1] = 1;
+        for (unsigned index = 0; index < 2; ++index) {
+            const unsigned slot = index * 2;
+            oldStates[index].sampleRate = 48000;
+            auto effect = harken::BuildEffect(VN_EFFECT_LIMITER, &oldStates[index]);
+            effect.setParam(effect.state, 0, -18);
+            effect.setParam(effect.state, 1, 100);
+            update.oldEffects[slot] = effect;
+            update.oldBypass[slot] = 1;
+        }
+
+        const float ceiling = states[0].ceilingLinear;
+        for (unsigned begin = 0; begin < framesToCheck; begin += blockFrames) {
+            ASSERT_EQ(blockFrames, harness.RenderBlock(blockFrames).framesProduced);
+            if (update.done == transitionFrames) {
+                harness.ctx.fxChainTransition = nullptr;
+            }
+            for (unsigned i = 0; i < blockFrames; ++i) {
+                const unsigned frame = begin + i;
+                const float sample = harness.masterL[i];
+                const float alpha = std::min(1.0f, (frame + 1) / static_cast<float>(transitionFrames));
+                EXPECT_NEAR(0.5f * (1 - alpha) + ceiling * alpha, sample, 2e-6f) << frame;
+            }
+        }
+    }
+}
+
+TEST(EffectChain, StructuralSuffixPreservesActiveStateAndProcessesPrefixOnce) {
+    for (const auto blockFrames : {1u, 64u, 256u}) {
+        SCOPED_TRACE(blockFrames);
+        constexpr unsigned totalFrames = 768;
+        const auto input = harkentest::MakeDC(totalFrames + kBlock, 0.5f);
+        ChainHarness harness(input, 3);
+        std::uint64_t prefixFrames = 0;
+        AddProbe prefix{0, nullptr, &prefixFrames};
+        harness.ctx.fxSlots[0].state = &prefix;
+        harness.ctx.fxSlots[0].process = AddProbeProcess;
+        std::array<harken::LimiterState, 3> states{}, reference{};
+        std::array<harken::InsertEffect, 3> referenceEffects{};
+        for (unsigned slot = 1; slot < 3; ++slot) {
+            states[slot].sampleRate = 48000;
+            auto effect = harken::BuildEffect(VN_EFFECT_LIMITER, &states[slot]);
+            effect.setParam(effect.state, 0, -18);
+            effect.setParam(effect.state, 1, 100);
+            // A retained active downstream Limiter already has real history.
+            // The edit must preserve it, not reset gain to disguise recovery.
+            if (slot == 2) states[slot].currentGain = 0.25;
+            harness.ctx.fxSlots[slot] = effect;
+            harness.ctx.fxSlotEffectRef[slot].type = VN_EFFECT_LIMITER;
+            reference[slot] = states[slot];
+            referenceEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &reference[slot]);
+        }
+        harken::EffectChainUpdate update;
+        update.changedMask = 1u << 1; update.totalFrames = 240;
+        update.oldLimiterStates[2] = states[2];
+        update.oldEffects[2] = harken::BuildEffect(VN_EFFECT_LIMITER, &update.oldLimiterStates[2]);
+        std::array<float, kBlock> dry{}, alternate{}, target{}, referenceDry{};
+        update.dry[0] = dry.data(); update.alternate[0] = alternate.data();
+        harness.ctx.fxChainTransition = &update;
+        float* targetPlanes[]{target.data()}; float* targetDry[]{referenceDry.data()};
+        for (unsigned begin = 0; begin < totalFrames; begin += blockFrames) {
+            target.fill(0.5f);
+            for (unsigned slot = 1; slot < 3; ++slot) {
+                bool ramping = false; float mix = 0;
+                harken::ProcessChainSlot(referenceEffects[slot], ramping, mix, 0,
+                    targetPlanes, targetDry, 1, 0, blockFrames);
+            }
+            ASSERT_EQ(blockFrames, harness.RenderBlock(blockFrames).framesProduced);
+            EXPECT_EQ(begin + blockFrames, prefixFrames);
+            EXPECT_DOUBLE_EQ(reference[2].currentGain, states[2].currentGain);
+            EXPECT_DOUBLE_EQ(reference[1].currentGain, states[1].currentGain);
+            for (unsigned i = 0; i < blockFrames; ++i)
+                if (begin + i >= 239)
+                    EXPECT_NEAR(target[i], harness.masterL[i], 1e-7f) << begin + i;
+            if (update.done == 240) harness.ctx.fxChainTransition = nullptr;
+        }
+        // Only the old branch saw the pre-edit input; it did not share the
+        // installed target instance or advance beyond the 240-frame handoff.
+        EXPECT_LT(update.oldLimiterStates[2].currentGain, states[2].currentGain);
+    }
+}
+
+TEST(EffectChain, StructuralSuffixRetainedBypassUsesWholeVoiceCallRamp) {
+    const auto input = harkentest::MakeDC(512, 0.5f);
+    ChainHarness harness(input, 2);
+    std::array<harken::LimiterState, 2> states{};
+    for (unsigned slot = 0; slot < 2; ++slot) {
+        states[slot].sampleRate = 48000;
+        auto effect = harken::BuildEffect(VN_EFFECT_LIMITER, &states[slot]);
+        effect.setParam(effect.state, 0, slot == 0 ? -18 : -24);
+        effect.setParam(effect.state, 1, 100);
+        harness.ctx.fxSlots[slot] = effect;
+        harness.ctx.fxSlotEffectRef[slot].type = VN_EFFECT_LIMITER;
+    }
+    harken::EffectChainUpdate update;
+    update.changedMask = 1; update.totalFrames = 240;
+    update.oldLimiterStates[1] = states[1];
+    update.oldEffects[1] = harken::BuildEffect(VN_EFFECT_LIMITER, &update.oldLimiterStates[1]);
+    std::array<float, kBlock> dry{}, alternate{};
+    update.dry[0] = dry.data(); update.alternate[0] = alternate.data();
+    harness.ctx.fxChainTransition = &update;
+    harness.ctx.fxBypassRamping[1] = true;
+    harness.ctx.fxBypassTarget[1] = 1;
+    ASSERT_EQ(kBlock, harness.RenderBlock().framesProduced);
+    const float firstCeiling = states[0].ceilingLinear;
+    const float retainedCeiling = states[1].ceilingLinear;
+    for (unsigned i = 0; i < kBlock; ++i) {
+        const float bypass = (i + 1) / static_cast<float>(kBlock);
+        const float target = retainedCeiling * (1 - bypass) + firstCeiling * bypass;
+        const float alpha = std::min(1.0f, (i + 1) / 240.0f);
+        EXPECT_NEAR(retainedCeiling * (1 - alpha) + target * alpha,
+                    harness.masterL[i], 2e-6f) << i;
+    }
+    EXPECT_FLOAT_EQ(1, harness.ctx.fxBypassMix[1]);
+    EXPECT_FALSE(harness.ctx.fxBypassRamping[1]);
+}

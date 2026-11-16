@@ -3,6 +3,7 @@
 #include "ProjectManager.h"
 #include "ActionManager.h"
 #include "Components/VBus.h"
+#include "Components/VEffect.h"
 #include "Components/VMixNode.h"
 #include "Components/VVariable.h"
 #include "FilterAuthoring.h"
@@ -56,6 +57,7 @@ PropertyEditSession::PropertyEditSession(ProjectItem* item, QString propertyName
     , platforms_(std::move(platforms))
 {
     currentValue_ = startValue_;
+    if (item_ && propertyName_ == QLatin1String("effects")) captureEffectStart();
     if (item_ && FilterAuthoring::isField(propertyName_)) captureFilterStart();
     if (item_) {
         const auto* field = PlayablePropertyAuthoringV1::fieldByName(propertyName_);
@@ -149,11 +151,15 @@ void PropertyEditSession::cancelActiveFor(
 
 void PropertyEditSession::cancelActiveFor(ProjectItem* owner, const QString& field)
 {
+    emit ProjectManager::instance().propertyEditsCancelling(owner, field);
     const auto sessions = sessionRegistry();
     for (auto* session : sessions) {
-        if (session->isActive() && session->item_ == owner && session->filterStartState_
-            && (session->propertyName_ == field || field == QLatin1String("filter")
-                || session->propertyName_ == QLatin1String("filter"))) session->cancel();
+        if (!session->isActive() || session->item_ != owner) continue;
+        const bool effects = (session->effectStartState_ && field == QLatin1String("effects"))
+            || (owner && owner->type == ProjectItem::Type::Effect);
+        const bool filter = session->filterStartState_ && (session->propertyName_ == field
+            || field == QLatin1String("filter") || session->propertyName_ == QLatin1String("filter"));
+        if (effects || filter) session->cancel();
     }
 }
 
@@ -205,6 +211,58 @@ bool PropertyEditSession::filterStateChanged() const
     return false;
 }
 
+void PropertyEditSession::captureEffectStart()
+{
+    const auto* mix = item_->comp<VMixNode>();
+    if (!mix) return;
+    PlayableStartSnapshot snapshot;
+    snapshot.writesSharedBase = !platforms_;
+    snapshot.base = {true, mix->effects.toJson()};
+    if (platforms_) {
+        for (const auto& platform : *platforms_) {
+            const auto found = mix->effectPlatforms.find(platform);
+            snapshot.overlays.append({platform, found == mix->effectPlatforms.end()
+                ? PlayablePropertyStateV1{false, {}}
+                : PlayablePropertyStateV1{true, found->second.toJson()}});
+        }
+    } else {
+        for (const auto& [platform, chain] : mix->effectPlatforms)
+            snapshot.overlays.append({platform, {true, chain.toJson()}});
+    }
+    effectStartState_ = std::move(snapshot);
+}
+
+void PropertyEditSession::restoreEffectStart()
+{
+    auto* mix = item_->comp<VMixNode>();
+    if (effectStartState_->writesSharedBase) {
+        mix->effects = EffectChainLedger::fromJson(effectStartState_->base.value.toArray());
+        mix->effectPlatforms.clear();
+    }
+    for (const auto& [platform, value] : effectStartState_->overlays) {
+        if (value.present) mix->effectPlatforms[platform] = EffectChainLedger::fromJson(value.value.toArray());
+        else mix->effectPlatforms.erase(platform);
+    }
+}
+
+bool PropertyEditSession::previewEffects(const QVariant& value)
+{
+    const auto json = QJsonValue::fromVariant(value);
+    if (!json.isArray()) return false;
+    const auto chain = EffectChainLedger::fromJson(json.toArray());
+    auto* mix = item_->comp<VMixNode>();
+    if (effectStartState_->writesSharedBase) {
+        mix->effects = chain;
+        mix->effectPlatforms.clear();
+    } else {
+        for (const auto& [platform, unused] : effectStartState_->overlays) {
+            if (chain == mix->effects) mix->effectPlatforms.erase(platform);
+            else mix->effectPlatforms[platform] = chain;
+        }
+    }
+    return true;
+}
+
 bool PropertyEditSession::isBusEdit() const
 {
     if (!item_ || item_->comp<VBus>() == nullptr)
@@ -217,6 +275,10 @@ bool PropertyEditSession::isBusEdit() const
 
 bool PropertyEditSession::applyValue(const QVariant& value, bool live)
 {
+    if (item_->type == ProjectItem::Type::Effect) {
+        auto* effect = item_->comp<VEffect>();
+        return effect && effect->setField(propertyName_, value);
+    }
     if (item_->type == ProjectItem::Type::Variable
         && propertyName_ == QLatin1String("defaultValue")) {
         auto* variable = item_->comp<VVariable>();
@@ -324,6 +386,13 @@ bool PropertyEditSession::playableStateChanged() const
 void PropertyEditSession::preview(const QVariant& newValue)
 {
     if (state_ != State::Active || !item_) return;
+    if (effectStartState_) {
+        if (previewEffects(newValue)) {
+            currentValue_ = newValue;
+            emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
+        }
+        return;
+    }
     if (filterStartState_) {
         if (previewFilter(QJsonValue::fromVariant(newValue))) {
             currentValue_ = newValue;
@@ -359,6 +428,13 @@ void PropertyEditSession::commit()
     if (state_ != State::Active) return;
     state_ = State::Committed;
     if (!item_) return;
+    if (effectStartState_) {
+        restoreEffectStart();
+        ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            playableActionArgs(QStringLiteral("set_override"), QJsonValue::fromVariant(currentValue_)),
+            ActionSource::Internal, originator_);
+        return;
+    }
 
     if (filterStartState_) {
         if (!filterStateChanged()) return;
@@ -405,6 +481,12 @@ void PropertyEditSession::cancel()
     if (state_ != State::Active) return;
     state_ = State::Cancelled;
     if (!item_) return;
+    if (effectStartState_) {
+        restoreEffectStart();
+        currentValue_ = startValue_;
+        emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
+        return;
+    }
     if (filterStartState_) {
         if (!filterStateChanged()) return;
         restoreFilterStart();

@@ -7,6 +7,11 @@
 namespace harken::detail {
 
 struct VoicePoolReleaseTestAccess {
+    static EffectChainUpdate* EffectUpdate(VoicePool& pool, std::uint32_t slot) {
+        return pool.m_slots[slot].effectChainUpdate.load(std::memory_order_acquire);
+    }
+    static std::size_t SlotBytes() { return sizeof(VoicePool::Slot); }
+
     // Pause a logic-side post before its token publication, between audio blocks.
     static void WriteResyncRequestMetadata(VoicePool& pool, VnVoiceHandle voice,
         std::uint64_t serial, std::uint64_t ticket, std::uint64_t frame) {

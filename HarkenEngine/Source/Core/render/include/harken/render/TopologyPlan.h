@@ -1,22 +1,21 @@
 // Bus-topology plan pool and the audio->logic retirement channel realizing the
-// structural half of the unified bus model. A topology plan is STRUCTURE ONLY:
-// it carries the feeds-first bus evaluation order and the bus->bus send-edge
-// membership (per-bus target lists). Send levels, level ramps, and per-bus
-// state (fader point, effect slots, bypass) are NOT plan state — they are
-// ordinary audio-thread state driven by their own commands, so changing a level
-// republishes nothing.
+// structural half of the unified bus model. Plans carry feeds-first evaluation
+// order, send membership and prepared transaction property payloads. Preview
+// effect-chain tokens adopt at the same topology boundary; ordinary direct
+// parameter and bypass commands still update audio state without a new plan.
 //
 // Ownership mirrors the effect-instance pattern exactly: the logic thread
 // constructs a plan into a free pool slot, hands the slot index to the audio
 // thread by command, and never touches it again. The audio thread consumes the
 // plan and NEVER frees it; a superseded plan is named on the retire queue by
 // the audio thread and returned to the freelist by the logic thread in
-// DrainRetire. All storage is preallocated at Init (a flat vector indexed by
-// plan slot), so publishing a plan and installing one both touch no heap.
+// DrainRetire. Structural arrays are preallocated at Init; transaction token
+// lists are prepared on logic. Installing a plan never allocates.
 #ifndef HARKEN_RENDER_TOPOLOGY_PLAN_H
 #define HARKEN_RENDER_TOPOLOGY_PLAN_H
 
 #include "harken/core/EngineConfig.h"
+#include "harken/render/BusEffectChainUpdate.h"
 
 #include <atomic>
 #include <cstdint>
@@ -26,11 +25,13 @@
 namespace harken {
 
 class SignalRenderPlan;
+struct BusEffectChainAdoption;
 
 inline constexpr std::uint32_t kInvalidTopologyPlanIndex = 0xFFFFFFFFu;
 inline constexpr std::uint8_t kApplyBusVolume = 1;
 inline constexpr std::uint8_t kApplyBusOutputVolume = 2;
 inline constexpr std::uint8_t kApplyBusNeutralProperties = 4;
+inline constexpr std::uint8_t kApplyBusPreserveEffects = 8;
 
 // Empty send-target sentinel inside a plan's membership row. Numerically equal
 // to kInvalidBusIndex (BusTree.h); duplicated here so this header stays free of
@@ -93,6 +94,8 @@ struct TopologyPlanView {
     const std::uint8_t* busVolumeApply = nullptr;
     std::uint32_t slotCount = 0;
     SignalRenderPlan* signals = nullptr;
+    const BusEffectChainAdoption* effectUpdates = nullptr;
+    std::uint32_t effectUpdateCount = 0;
     bool valid = false;
 };
 
@@ -114,6 +117,7 @@ public:
     std::uint32_t Acquire();
     // Logic-owned references keep mutable audio state alive through ordinary
     // topology swaps. No shared_ptr operation runs on the audio coordinator.
+    void SetEffectUpdates(std::uint32_t plan, std::vector<BusEffectChainAdoption> updates);
     void SetSignals(std::uint32_t plan, std::shared_ptr<SignalRenderPlan> signals);
     std::shared_ptr<SignalRenderPlan> Signals(std::uint32_t plan) const;
 
@@ -225,6 +229,7 @@ private:
     std::vector<std::uint32_t> m_slotCount;     // capacity
 
     std::vector<std::shared_ptr<SignalRenderPlan>> m_signals;
+    std::vector<std::vector<BusEffectChainAdoption>> m_effectUpdates;
     std::vector<std::uint8_t> m_acquired;
     std::vector<std::uint32_t> m_free; // freelist stack of plan indices
     std::uint32_t m_inUse = 0;

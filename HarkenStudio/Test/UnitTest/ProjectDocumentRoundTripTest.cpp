@@ -138,7 +138,6 @@ TEST(ProjectDocumentModuleData, KnownBindingAndEffectEditsPreserveRawModuleField
     };
     EffectEntry effect = EffectEntry::fromJson(effectJson);
     ASSERT_TRUE(effect.typed);
-    effect.wetDry = 0.5f;
     effect.bypass = false;
     const QJsonObject savedEffect = effect.toJson().toObject();
     EXPECT_EQ(savedEffect.value(QStringLiteral("futureEffectData")), futureData);

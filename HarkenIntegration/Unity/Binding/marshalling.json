@@ -1502,6 +1502,15 @@
         "wire": "out"
       }
     ],
+    "VnPreview_PrepareProjectV4": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV4"
+      },
+      {
+        "wire": "out"
+      }
+    ],
     "VnPreview_CommitProject": [
       {
         "wire": "u64"
@@ -1530,6 +1539,17 @@
       }
     ],
     "VnPreview_HasPlayableConsumers": [],
+    "VnPreview_HasEffectChainConsumers": [],
+    "VnPreview_QueryVoiceWorldGeneration": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_HasWorldGeneration": [
+      {
+        "wire": "u64"
+      }
+    ],
     "VnPreview_HasAction": [
       {
         "wire": "objectid"
@@ -1574,6 +1594,15 @@
         "wire": "out"
       }
     ],
+    "VnPreview_SetVoiceEffectChain": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnPreviewVoiceEffectChainV1"
+      }
+    ],
     "VnPreview_RefreshVoiceBindings": [
       {
         "wire": "u64"
@@ -1591,6 +1620,49 @@
       },
       {
         "wire": "objectid"
+      }
+    ],
+    "VnPreview_SetVoiceEffect": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "f32array"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "VnPreview_SetBusEffect": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "f32array"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
       }
     ]
   },

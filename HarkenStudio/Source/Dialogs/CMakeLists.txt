@@ -58,6 +58,7 @@ target_include_directories(harken_editor_dialogs PUBLIC ${CMAKE_CURRENT_SOURCE_D
 
 target_link_libraries(harken_editor_dialogs
     PUBLIC harken_editor_foundation harken_editor_common
+    PRIVATE harken_editor_shared
     PRIVATE Qt6::Network Qt6::OpenGLWidgets
 )
 

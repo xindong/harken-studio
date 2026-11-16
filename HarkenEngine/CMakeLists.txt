@@ -146,6 +146,8 @@ set(HARKEN_CORE_SOURCES
     ${HARKEN_CORE_DIR}/render/src/RenderWorkerPool.cpp
     ${HARKEN_CORE_DIR}/render/src/TopologyPlan.cpp
     ${HARKEN_CORE_DIR}/render/src/VoiceCascade.cpp
+    ${HARKEN_CORE_DIR}/render/src/VoiceEffectChain.cpp
+    ${HARKEN_CORE_DIR}/render/src/BusEffectChain.cpp
     ${HARKEN_CORE_DIR}/render/src/VoicePool.cpp
     ${HARKEN_CORE_DIR}/render/src/SignalRouting.cpp
     ${HARKEN_CORE_DIR}/render/src/FrontierTimelineFinalizer.cpp

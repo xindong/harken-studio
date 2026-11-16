@@ -293,7 +293,10 @@ void HashPayloadBody(Fnv64& hash,
         hash.ObjectId(node.effectId);
         hash.U32(node.effectType);
         hash.U32(node.paramCount);
-        hash.U32(0);
+        hash.U32(node.flags);
+        if (node.effectType == HK_PACK_EFFECT_PRESET_REFERENCE_TYPE) {
+            hash.ObjectId(node.presetId);
+        }
         for (std::uint32_t p = 0; p < node.paramCount; ++p) {
             hash.U32(node.params[p].paramId);
             hash.U32(node.params[p].valueBits);
@@ -458,9 +461,13 @@ bool ValidPayload(const PlayablePropertyPayloadViewV1& payload, const detail::Pa
     for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i) {
         const EffectNodeV1& node = payload.effectNodes[i];
         const EffectRegistryRow* effect = FindEffectRow(node.effectType);
-        if (node.nodeId == 0 || effect == nullptr ||
+        const bool preset = node.effectType == HK_PACK_EFFECT_PRESET_REFERENCE_TYPE;
+        if (node.nodeId == 0 || (node.flags & ~1u) != 0 ||
             !PointerMatches(node.paramCount, node.params) ||
-            node.paramCount > effect->paramCount ||
+            (preset ? node.presetId == VnObjectId{} || node.effectId == VnObjectId{} ||
+                          node.paramCount != 0
+                    : node.presetId != VnObjectId{} || effect == nullptr ||
+                          node.paramCount > effect->paramCount) ||
             (i != 0 && payload.effectNodes[i - 1].nodeId >= node.nodeId)) {
             return false;
         }

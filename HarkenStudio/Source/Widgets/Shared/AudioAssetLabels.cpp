@@ -14,6 +14,12 @@ QString assetDisplayName(const AssetInfo& asset)
     return slash < 0 ? normalized : normalized.mid(slash + 1);
 }
 
+QString assetDisplayPath(const AssetInfo& asset)
+{
+    return PathUtils::normalizeToUnix(QString::fromLatin1(PathUtils::AUDIO_SOURCES_DIR)
+        + QLatin1Char('/') + asset.relativePath);
+}
+
 QStringList assetFolderSegments(const AssetInfo& asset)
 {
     const QString normalized = PathUtils::normalizeToUnix(asset.relativePath);
@@ -27,7 +33,7 @@ QStringList assetFolderSegments(const AssetInfo& asset)
 QString assetTooltip(const AssetInfo& asset)
 {
     QString tooltip = QCoreApplication::translate("VNX::ProjectExplorer", "Source: %1")
-                          .arg(asset.relativePath);
+                          .arg(assetDisplayPath(asset));
     tooltip += QStringLiteral("\nFormat: ") + asset.metadata.originalFormat;
     tooltip += QStringLiteral("\nDuration: ")
         + QString::number(asset.metadata.durationSec, 'f', 2) + QStringLiteral("s");

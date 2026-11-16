@@ -55,14 +55,20 @@ typedef struct HkPackBodyPayloadEffectNodeHeader {
     HkPackObjectId effectId;
     uint32_t effectType;
     uint32_t paramCount;
-    uint32_t reserved;
+    uint32_t flags;
 } HkPackBodyPayloadEffectNodeHeader;
 HK_PACK_SIZE(HkPackBodyPayloadEffectNodeHeader, 32);
 HK_PACK_OFFSET(HkPackBodyPayloadEffectNodeHeader, nodeId, 0);
 HK_PACK_OFFSET(HkPackBodyPayloadEffectNodeHeader, effectId, 4);
 HK_PACK_OFFSET(HkPackBodyPayloadEffectNodeHeader, effectType, 20);
 HK_PACK_OFFSET(HkPackBodyPayloadEffectNodeHeader, paramCount, 24);
-HK_PACK_OFFSET(HkPackBodyPayloadEffectNodeHeader, reserved, 28);
+HK_PACK_OFFSET(HkPackBodyPayloadEffectNodeHeader, flags, 28);
+
+typedef struct HkPackBodyPayloadEffectPresetReference {
+    HkPackObjectId presetId;
+} HkPackBodyPayloadEffectPresetReference;
+HK_PACK_SIZE(HkPackBodyPayloadEffectPresetReference, 16);
+HK_PACK_OFFSET(HkPackBodyPayloadEffectPresetReference, presetId, 0);
 
 typedef struct HkPackBodyPayloadEffectParam {
     uint32_t paramId;
@@ -968,6 +974,7 @@ HK_PACK_OFFSET(HkPackBodyWorldVariableHeader, reserved, 36);
 
 HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyPayloadEffectNode[] = {
     HK_PACK_STREAM_RECORD(HkPackBodyPayloadEffectNodeHeader),
+    HK_PACK_STREAM_RECORD_WHEN(HkPackBodyPayloadEffectPresetReference, HkPackBodyPayloadEffectNodeHeader, effectType, HK_PACK_EFFECT_PRESET_REFERENCE_TYPE),
     HK_PACK_STREAM_RECORD_EACH(HkPackBodyPayloadEffectParam, HkPackBodyPayloadEffectNodeHeader, paramCount),
 };
 
