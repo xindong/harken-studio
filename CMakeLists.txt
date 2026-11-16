@@ -360,9 +360,9 @@ endif()
 if(TARGET harken_runtime_tests)
     set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                  PROPERTY VS_STARTUP_PROJECT harken_runtime_tests)
-elseif(TARGET harken_editor_tests)
+elseif(TARGET harken_studio_tests)
     set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-                 PROPERTY VS_STARTUP_PROJECT harken_editor_tests)
+                 PROPERTY VS_STARTUP_PROJECT harken_studio_tests)
 elseif(TARGET harken_benchmarks)
     set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                  PROPERTY VS_STARTUP_PROJECT harken_benchmarks)

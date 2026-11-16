@@ -154,7 +154,7 @@ protected:
     {
         if (!qApp) {
             static int argc = 1;
-            static char executable[] = "harken_editor_tests";
+            static char executable[] = "harken_studio_tests";
             static char* argv[] = {executable, nullptr};
             static QApplication app(argc, argv);
         }

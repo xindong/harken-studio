@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in harken_runtime_ci_tests harken_editor_ci_tests; do
+          for target in harken_runtime_ci_tests harken_studio_ci_tests; do
             cmake --build build-daily --config Release --target "$target"
           done
 

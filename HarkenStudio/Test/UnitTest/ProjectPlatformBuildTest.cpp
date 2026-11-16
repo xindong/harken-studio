@@ -275,7 +275,7 @@ protected:
     {
         if (!qApp) {
             static int argc = 1;
-            static char name[] = "harken_editor_tests";
+            static char name[] = "harken_studio_tests";
             static char* argv[] = {name, nullptr};
             static QApplication app(argc, argv);
         }

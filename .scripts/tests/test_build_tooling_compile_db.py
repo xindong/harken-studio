@@ -66,7 +66,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
             ),
             self._entry(
                 "HarkenStudio/Test/UnitTest/StableIdTest.cpp",
-                "harken_editor_tests",
+                "harken_studio_tests",
             ),
         ]
 
@@ -133,7 +133,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         )
         self.assertIn("harken_core.dir", runtime_entry["output"])
         self.assertIn("harken_host.dir", host_entry["output"])
-        self.assertIn("harken_editor_tests.dir", editor_entry["output"])
+        self.assertIn("harken_studio_tests.dir", editor_entry["output"])
 
         for relative, target in (
             ("Harkenizer/ResourceCompiler/ResourceCompiler.cpp", "harkenizer_resource_compiler"),
@@ -146,7 +146,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
             with self.subTest(source=relative):
                 source = "HarkenStudio/Source/Tooling/" + relative
                 owned = self._entry(source, target)
-                alternate = self._entry(source, "harken_editor_tests", extra="-DTEST_VARIANT=1")
+                alternate = self._entry(source, "harken_studio_tests", extra="-DTEST_VARIANT=1")
                 selected = MODULE._choose_entry(
                     Path(owned["file"]), [alternate, owned], "tooling", self.root)
                 self.assertEqual(selected, owned)

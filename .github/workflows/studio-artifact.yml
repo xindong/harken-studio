@@ -125,7 +125,7 @@ jobs:
 
       - name: Build HarkenEditor and HarkenStudioCLI
         shell: bash
-        run: cmake --build build --config Release --target harken_editor harken_studio_cli --parallel
+        run: cmake --build build --config Release --target harken_studio harken_studio_cli --parallel
 
       - name: Cross-product verification
         shell: bash
@@ -395,7 +395,7 @@ jobs:
           PY
 
       - name: Build HarkenEditor
-        run: cmake --build build --config Release --target harken_editor --parallel
+        run: cmake --build build --config Release --target harken_studio --parallel
 
       - name: Deploy Qt runtime into the bundle
         shell: bash

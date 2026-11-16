@@ -187,7 +187,7 @@ endif()
 
 # ==============================================================================
 # harken_editor_lib — OBJECT library containing all Editor code except Main.cpp
-# Reusable by harken_editor (production) and harken_editor_tests (testing).
+# Reusable by harken_studio (production) and harken_studio_tests (testing).
 # ==============================================================================
 # Source Files — explicit list (no GLOB_RECURSE)
 # When adding new files, add them here and re-run cmake configure.
@@ -502,7 +502,7 @@ if(MSVC)
 endif()
 
 # ==============================================================================
-# harken_editor — Thin executable wrapper (binary name kept as HarkenStudio.exe via OUTPUT_NAME)
+# harken_studio — Thin executable wrapper (binary name kept as HarkenStudio.exe via OUTPUT_NAME)
 # ==============================================================================
 if(WIN32)
     # Windows PE VERSIONINFO — filled from cmake/BuildInfo.cmake so the identity
@@ -511,26 +511,26 @@ if(WIN32)
     # Comments (which carries the full BuildInfo Label + commit + timestamp).
     set_source_files_properties("HarkenStudio.rc" PROPERTIES
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icons/HarkenStudio.ico")
-    add_executable(harken_editor WIN32 Source/Main.cpp "resources.qrc" "HarkenStudio.rc")
+    add_executable(harken_studio WIN32 Source/Main.cpp "resources.qrc" "HarkenStudio.rc")
 else()
     set_source_files_properties("Resources/icons/HarkenStudio.icns"
         PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    add_executable(harken_editor Source/Main.cpp "resources.qrc"
+    add_executable(harken_studio Source/Main.cpp "resources.qrc"
         "Resources/icons/HarkenStudio.icns")
 endif()
 
 harken_attach_version_resource(
-    harken_editor
+    harken_studio
     "Harken Studio"
     "HarkenStudio.exe")
 
-set_target_properties(harken_editor PROPERTIES
+set_target_properties(harken_studio PROPERTIES
     OUTPUT_NAME "HarkenStudio"
     AUTORCC ON
 )
 
 if(APPLE)
-    set_target_properties(harken_editor PROPERTIES
+    set_target_properties(harken_studio PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "HarkenStudio"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.harkensound.harkenstudio"
@@ -542,18 +542,18 @@ if(APPLE)
 endif()
 
 if(WIN32)
-    set_target_properties(harken_editor PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:harken_editor>"
+    set_target_properties(harken_studio PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:harken_studio>"
         VS_DEBUGGER_ENVIRONMENT "QT_QPA_PLATFORM=windows"
     )
 
     file(GENERATE
-        OUTPUT "$<TARGET_FILE_DIR:harken_editor>/qt.conf"
+        OUTPUT "$<TARGET_FILE_DIR:harken_studio>/qt.conf"
         CONTENT "[Paths]\nPlugins = .\n"
     )
 endif()
 
-target_link_libraries(harken_editor PRIVATE harken_editor_lib)
+target_link_libraries(harken_studio PRIVATE harken_editor_lib)
 
 endif()
 
@@ -568,7 +568,7 @@ set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI"
 target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
 harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")
 if(HARKEN_BUILD_EDITOR)
-    add_dependencies(harken_editor harken_studio_cli)
+    add_dependencies(harken_studio harken_studio_cli)
 endif()
 if(WIN32)
     target_link_libraries(harken_studio_cli PRIVATE ole32 shell32)
@@ -578,18 +578,18 @@ harken_publish_studio_schema(harken_studio_cli)
 endif()
 
 if(HARKEN_BUILD_EDITOR)
-harken_publish_studio_schema(harken_editor)
+harken_publish_studio_schema(harken_studio)
 
 endif()
 
 if(HARKEN_BUILD_EDITOR AND _harken_macos_agl_framework_missing)
-    harken_remove_missing_agl_framework(harken_editor)
+    harken_remove_missing_agl_framework(harken_studio)
     harken_remove_missing_agl_framework(harken_studio_cli)
 endif()
 
 if(WIN32 AND HARKEN_BUILD_EDITOR)
     target_link_libraries(harken_editor_lib PUBLIC user32 advapi32)
-    target_link_libraries(harken_editor PRIVATE opengl32 ole32 shell32)
+    target_link_libraries(harken_studio PRIVATE opengl32 ole32 shell32)
 endif()
 
 # Qt runtime deployment via windeployqt (Windows)
@@ -611,7 +611,7 @@ if(WIN32)
     endif()
 
     if(HARKEN_BUILD_EDITOR)
-    add_custom_command(TARGET harken_editor POST_BUILD
+    add_custom_command(TARGET harken_studio POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
             $<$<CONFIG:Debug>:--debug>
             $<$<NOT:$<CONFIG:Debug>>:--release>
@@ -621,14 +621,14 @@ if(WIN32)
             --no-system-dxc-compiler
             --no-opengl-sw
             --no-quick-import
-            $<TARGET_FILE:harken_editor>
+            $<TARGET_FILE:harken_studio>
         # windeployqt only ships the "windows" platform plugin; deploy the
         # offscreen plugin too so headless runs (tests under CI/agents) can
         # request QT_QPA_PLATFORM=offscreen instead of dying on a missing
         # platform.
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
-            "$<TARGET_FILE_DIR:harken_editor>/platforms/"
+            "$<TARGET_FILE_DIR:harken_studio>/platforms/"
         COMMENT "Deploying Qt runtime via windeployqt"
     )
 
@@ -639,10 +639,10 @@ if(WIN32)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
         file(GLOB HARKEN_BUILTIN_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
         foreach(_tpl IN LISTS HARKEN_BUILTIN_TEMPLATES)
-            add_custom_command(TARGET harken_editor POST_BUILD
+            add_custom_command(TARGET harken_studio POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_tpl}"
-                    $<TARGET_FILE_DIR:harken_editor>
+                    $<TARGET_FILE_DIR:harken_studio>
                 COMMENT "Copying built-in project template ${_tpl}"
             )
         endforeach()
@@ -654,22 +654,22 @@ if(APPLE AND HARKEN_BUILD_EDITOR)
     if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
         message(FATAL_ERROR "Qt offscreen platform plugin is required for Studio Schema verification")
     endif()
-    add_custom_command(TARGET harken_editor POST_BUILD
+    add_custom_command(TARGET harken_studio POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
+            "$<TARGET_BUNDLE_DIR:harken_studio>/Contents/PlugIns/platforms"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
-            "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"
+            "$<TARGET_BUNDLE_DIR:harken_studio>/Contents/PlugIns/platforms/"
         COMMENT "Copying the Qt offscreen platform plugin into the bundle"
     )
 
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
         file(GLOB HARKEN_BUILTIN_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
         foreach(_tpl IN LISTS HARKEN_BUILTIN_TEMPLATES)
-            add_custom_command(TARGET harken_editor POST_BUILD
+            add_custom_command(TARGET harken_studio POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_tpl}"
-                    $<TARGET_FILE_DIR:harken_editor>
+                    $<TARGET_FILE_DIR:harken_studio>
                 COMMENT "Copying built-in project template ${_tpl}"
             )
         endforeach()

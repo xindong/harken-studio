@@ -172,7 +172,7 @@ Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时
 
 本轮范围为分割线、border 与刻度线，不将控制柄、十字参考线、播放头、连接线、定位网点和其他辅助图形重新收纳到三类边界职责。十字参考线退出原先共用的 `border.view` 绑定，保留其 Dark / Light 预设色及独立渲染位置，不新增编辑职责。2026-11-01 曾按用户决定保留 clip 完整描边；2026-11-03 按新的 Timeline 绘制要求取消。`timeline.clipBorder` 与 `timeline.clipSelectedBorder` 因不参与绘制，已于 2026-11-07 连同可编辑职责删除。
 
-补正后 `harken_editor` 与 `harken_editor_tests` 构建通过，64 项主题、设置、控件、表格和时间刻度相关测试通过。新增通用回归检查：已有不透明子控件在连续纯颜色预览和取消时收到重绘，保持布局、编辑内容、选区与原生样式不变。Dark / Light 的实际 Preferences 调色器、三种表格和 Dock 离屏核对共 166 项通过；直接读取窗口绘制缓冲区检查点击 OK 前的边界像素，没有调用强制重绘来掩盖刷新遗漏。较早的 112 项静态核对未覆盖这类连续预览问题，也沿用了错误的表格外框分类。此次核对未改写用户配色，不覆盖完整工程和原生输入。QSS 归属检查与 `git diff --check` 通过，记录和样张位于 `.temp/border-preview-fix/`。
+补正后 `harken_studio` 与 `harken_studio_tests` 构建通过，64 项主题、设置、控件、表格和时间刻度相关测试通过。新增通用回归检查：已有不透明子控件在连续纯颜色预览和取消时收到重绘，保持布局、编辑内容、选区与原生样式不变。Dark / Light 的实际 Preferences 调色器、三种表格和 Dock 离屏核对共 166 项通过；直接读取窗口绘制缓冲区检查点击 OK 前的边界像素，没有调用强制重绘来掩盖刷新遗漏。较早的 112 项静态核对未覆盖这类连续预览问题，也沿用了错误的表格外框分类。此次核对未改写用户配色，不覆盖完整工程和原生输入。QSS 归属检查与 `git diff --check` 通过，记录和样张位于 `.temp/border-preview-fix/`。
 
 Timeline clip 当前无描边，与轨道上下边缘各留 1px；标题使用独立背景的 title tab。主体和普通标题优先使用对象颜色，否则使用 `timeline.clip`；选中或拖动标题无对象颜色时使用 `timeline.clipSelected`，该职责同时保留名义范围背景的用途。标题先填充画布基础表面，再按状态叠加颜色，保留源 RGBA 的 Alpha；波形位于标题下方。普通 clip 按开始时间由早到晚绘制，同起点保留存储顺序；鼠标按相反顺序命中，拖动预览保持置顶。重叠标题仅在左端连续可见区域内对名称做右侧省略，左端被遮挡时不绘制名称，不向右侧空白段避让；Blend 保留原有名称避让。画布轨道分界与左侧标题区对齐，使用 `border.primary`，不借用时间刻度的 `border.tick`。
 
@@ -198,7 +198,7 @@ Track 与 Segment 的拖动、拉伸吸附对齐线统一使用现有 Track 样�
 
 业务绘制与样式层同样保留源 RGBA，再乘透明度系数；最终 Alpha 为职责 Alpha × 绑定系数 × 业务系数。2026-10-31 的叠乘修正保留了既有系数，后续视觉取舍以各领域记录为准。颜色插值保留 Alpha，多频段波形按频段权重混合源 Alpha 后再乘波形系数。Dock 和样式颜色字符串传递完整 RGBA；SVG 的着色 Alpha 与图形自身透明度相乘，并保持栅格图像与导出的 SVG 一致。
 
-2026-10-31 Alpha 修正后，`harken_editor` 与 `harken_editor_tests` 构建通过，56 项主题、资产、样式及相关测试通过，QSS 归属检查与 `git diff --check` 通过。本地对照图 `.temp/palette-alpha-review/palette-alpha-comparison.png` 使用当前保存的 Studio Default / Dark 配色，17 组实际组件及生产 Renderer 配合静态示例数据绘制，列出源职责 RGBA、现有业务系数与实际效果；未强制修改职责 Alpha，也未改写用户设置。图中包含收起与展开的 Meter、曲线、Timeline、Inspector、Dock、SVG、蓝图及音源范围等样本，不代表完整工程或所有动态状态的截图。渲染记录与测试结果同存于 `.temp/palette-alpha-review/`。
+2026-10-31 Alpha 修正后，`harken_studio` 与 `harken_studio_tests` 构建通过，56 项主题、资产、样式及相关测试通过，QSS 归属检查与 `git diff --check` 通过。本地对照图 `.temp/palette-alpha-review/palette-alpha-comparison.png` 使用当前保存的 Studio Default / Dark 配色，17 组实际组件及生产 Renderer 配合静态示例数据绘制，列出源职责 RGBA、现有业务系数与实际效果；未强制修改职责 Alpha，也未改写用户设置。图中包含收起与展开的 Meter、曲线、Timeline、Inspector、Dock、SVG、蓝图及音源范围等样本，不代表完整工程或所有动态状态的截图。渲染记录与测试结果同存于 `.temp/palette-alpha-review/`。
 
 Studio Default 将 Qt 原生窗口、输入框、提示框和按钮背景绑定到对应表面职责，并同步原生文字与辅助颜色；色卡默认值、用户预览和取消恢复共用这些绑定。其他主题可以定义自己的对应关系。
 
@@ -210,7 +210,7 @@ Studio Default 将 Qt 原生窗口、输入框、提示框和按钮背景绑定�
 
 启动画面底部的项目名、进度百分比和状态文字统一使用首要文字，包括失败与取消状态；版本号使用次要文字。失败进度条仍使用错误色。
 
-2026-10-31 文字职责调整后，`harken_editor` 与 `harken_editor_tests` 编译通过，58 项主题、设置、表格及蓝图控件合同测试通过。隔离设置下的 Dark / Light 高对比离屏渲染共 86 项检查通过，覆盖真实折叠标题、Explorer、设置分节、顶部项目名、表格内部的分组条目与普通列头，以及字段、禁用、输入框与下拉框占位提示；蓝图对象名称的首要色与常规字重、重命名输入框，以及同一下拉框从占位到选值再回空的颜色恢复也已核对，预览未改变已提交设置。该检查使用代表性组件，不代表完整工程与原生输入操作验收。记录位于 `.temp/text-role-review/followup/`。
+2026-10-31 文字职责调整后，`harken_studio` 与 `harken_studio_tests` 编译通过，58 项主题、设置、表格及蓝图控件合同测试通过。隔离设置下的 Dark / Light 高对比离屏渲染共 86 项检查通过，覆盖真实折叠标题、Explorer、设置分节、顶部项目名、表格内部的分组条目与普通列头，以及字段、禁用、输入框与下拉框占位提示；蓝图对象名称的首要色与常规字重、重命名输入框，以及同一下拉框从占位到选值再回空的颜色恢复也已核对，预览未改变已提交设置。该检查使用代表性组件，不代表完整工程与原生输入操作验收。记录位于 `.temp/text-role-review/followup/`。
 
 `ThemeSnapshot` 中保留领域 Renderer 所需的已解析颜色槽位。主题职责可以绑定这些槽位，Renderer 只依赖自身样式，不需要读取任意主题职责名或全局主题管理器。快照发布后保持不可变，重新加载产生新快照。
 
@@ -276,7 +276,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 选色器立即更新自身颜色，Appearance 页面在连续输入期间以 16 ms 周期合并输入，只发布最新颜色；没有待发值时停止定时器。已有定时器不因新输入反复延后，也不在每次绘制完成后重新等待完整周期。确认直接保存选色器的最后值，不依赖待发定时器；取消、隐藏、销毁或外部提交会清除待发输入，避免结束编辑后重新出现预览。颜色表的预览、确认与取消共用完整刷新：更新所有行的当前值与默认值色块、色卡缩略图及关联展示。移除预览只更新当前行的分支，避免边框和透明棋盘底色变化时漏掉其他色块。
 
-2026-11-01 的一致性修复后，`harken_editor` 与 `harken_editor_tests` 构建通过，65 项主题、设置、控件、表格和时间刻度相关测试通过。通用回归逐一编辑 Dark / Light 的全部 72 项职责，核对预览与确认的完整主题快照、所有当前/默认色块和色卡缩略图一致，以及重复预览、取消恢复和预览不持久化。参数 Slider 的六种方向/样式/禁用组合另有 36 项窗口绘制缓冲区检查通过，覆盖两张色卡下的 border 独立性、轨道颜色、预览/确认一致和取消恢复。检查使用隔离设置与 offscreen 平台，不代表完整工程和原生输入验收；记录分别位于 `.temp/theme-preview-contract/` 与 `.temp/parameter-slider-review/`。
+2026-11-01 的一致性修复后，`harken_studio` 与 `harken_studio_tests` 构建通过，65 项主题、设置、控件、表格和时间刻度相关测试通过。通用回归逐一编辑 Dark / Light 的全部 72 项职责，核对预览与确认的完整主题快照、所有当前/默认色块和色卡缩略图一致，以及重复预览、取消恢复和预览不持久化。参数 Slider 的六种方向/样式/禁用组合另有 36 项窗口绘制缓冲区检查通过，覆盖两张色卡下的 border 独立性、轨道颜色、预览/确认一致和取消恢复。检查使用隔离设置与 offscreen 平台，不代表完整工程和原生输入验收；记录分别位于 `.temp/theme-preview-contract/` 与 `.temp/parameter-slider-review/`。
 
 每次外观发布都发送 `appearanceChanged`；`themeChanged` 只用于主题、资源及非颜色结构变化。字体按实际排版值比较，纯色发布不发送 `fontChanged`。颜色消费者更新绘图、图标或失效缓存，保留树模型、参数 presenter、组件布局和正在进行的编辑。Blueprint 将 Qt `PaletteChange` 与外观通知合并为绘图缓存刷新，保留隐藏的节点编辑器；渲染器内数值未变时复用尺寸，增益节点列宽仅在渲染编辑器创建时测量，颜色变化重新记录绘图。数据变化仍更新值与尺寸，字体、样式及完整主题变化仍走结构刷新并重新测量。资源版本与快照版本分离，同一套资源跨调色快照复用；显式重新加载主题仍更新资源版本，旧快照的资源句柄保持有效。相同应用调色板、字体和 QSS 不重复安装，不再全局清空 QPixmapCache。
 
@@ -300,17 +300,17 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 性能及渲染原始数据位于本地 `.temp/theme-preview-profile/`，最终实际窗口使用 `main-window-visual-fix7-` 前缀，菜单工具栏汇总为 `menu-toolbar-fix7-summary.json`，通用表单为 `render-menu-toolbar-fix7*`。下拉框尺寸与命中范围记录位于 `.temp/combo-size-contract/fix6-size-contract-summary.json`；fix7 仅调整共享边框绘制，没有改变该几何实现。
 
-上一轮预览性能与绘制修复的 `harken_editor` 和 `harken_editor_tests` 编译通过，相关 78 项测试、QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。这些历史记录覆盖全部可编辑颜色不触发结构/字体重建、完整主题仍应用字体与结构、资源缓存跨配色快照复用、局部样式层级、编辑状态保持，以及预览停手、确认和取消的生命周期；不作为本次主题色卡合同变更的验收结果。
+上一轮预览性能与绘制修复的 `harken_studio` 和 `harken_studio_tests` 编译通过，相关 78 项测试、QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。这些历史记录覆盖全部可编辑颜色不触发结构/字体重建、完整主题仍应用字体与结构、资源缓存跨配色快照复用、局部样式层级、编辑状态保持，以及预览停手、确认和取消的生命周期；不作为本次主题色卡合同变更的验收结果。
 
 实现入口为 `ColorPalette.*`、`BuiltinTheme.*`、`ThemeColorCatalog.*`、`ThemeColorResolver.*`、`ThemeManager.*`、`ThemePackageParser.*`、`ThemePackageLoader.*`、`Dialogs/ColorEditorDialog.*` 和 `Dialogs/Settings/Pages/AppearancePage.*`。主题色卡契约覆盖不同职责目录、同名色卡跨主题隔离、主题切换默认色卡、非颜色属性保持、预览取消、重置、重载、重启及旧设置迁移。
 
-本次主题色卡模型在 Windows x64、Qt 6.8.3、RelWithDebInfo 下完成 `harken_editor` 与 `harken_editor_tests` 构建，相关 65 项测试通过，QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。隔离设置的真实 Qt 验收窗口检查了 Dark / Light 切换、颜色编辑器、复选框和 Light 启动画面；未覆盖所有业务面板或实际多屏 DPI。新增浅色验收发现的勾号固定白色与栅格着色缩半问题已修复，通用测试验证启用／禁用勾号可见性及 1x／2x 着色后的像素覆盖和 DPR 保持。记录位于 `.temp/theme-palettes-final-tests.xml` 与 `.temp/theme-palette-validation/`。
+本次主题色卡模型在 Windows x64、Qt 6.8.3、RelWithDebInfo 下完成 `harken_studio` 与 `harken_studio_tests` 构建，相关 65 项测试通过，QSS 归属检查及其 6 项脚本测试通过，Studio `--self-test` 返回 `ok: true`。隔离设置的真实 Qt 验收窗口检查了 Dark / Light 切换、颜色编辑器、复选框和 Light 启动画面；未覆盖所有业务面板或实际多屏 DPI。新增浅色验收发现的勾号固定白色与栅格着色缩半问题已修复，通用测试验证启用／禁用勾号可见性及 1x／2x 着色后的像素覆盖和 DPR 保持。记录位于 `.temp/theme-palettes-final-tests.xml` 与 `.temp/theme-palette-validation/`。
 
 以下为全局色板模型调整前的历史验收记录，不代表当前模型的验收结果。
 
 颜色定制的实际窗口验收复用完整 Studio 与隔离用户设置。历史对话框阶段的截图与响应记录位于本地 `.temp/color-customization-qa/`，不作为同步可停靠面板后即时保存行为的验收依据；不覆盖操作系统原生输入链路与多屏 DPI。
 
-当前主干基线为 `049e8af`。Windows x64、Qt 6.11.0、`windows-ninja-clang-dev` / `RelWithDebInfo` 下的 `harken_editor` 与 `harken_editor_ci_tests` 构建通过。Studio PR 分组检查共 136 组，352 项通过，1 项符号链接环境测试跳过，无失败或未运行项；记录位于本地 `.temp/studio-color-review-tests/`。新增契约覆盖连续预览的基础候选隔离、移除覆盖以及取消、提交、主题切换和重新加载时的缓存生命周期。QSS 归属检查及其 6 项脚本测试、帮助 JSON 和差异检查通过。
+当前主干基线为 `049e8af`。Windows x64、Qt 6.11.0、`windows-ninja-clang-dev` / `RelWithDebInfo` 下的 `harken_studio` 与 `harken_studio_ci_tests` 构建通过。Studio PR 分组检查共 136 组，352 项通过，1 项符号链接环境测试跳过，无失败或未运行项；记录位于本地 `.temp/studio-color-review-tests/`。新增契约覆盖连续预览的基础候选隔离、移除覆盖以及取消、提交、主题切换和重新加载时的缓存生命周期。QSS 归属检查及其 6 项脚本测试、帮助 JSON 和差异检查通过。
 
 实际可停靠 Preferences 已核对两套十色色板、即时 HEX 保存、无效输入拦截、预设覆盖隔离、三种 Reset、选色器预览/取消/确认，以及切页和真实 dock 关闭重开。关闭时只取消仍打开的选色器预览，已提交配色保留。800×550 与 640×480 浮动窗口的色板及滚动区域可用；800×550 滚动到底部后可完整操作颜色编辑与 Reset。当前截图使用 `immediate-` 前缀，行为记录为 `.temp/color-customization-qa/immediate-qa-report.json`；均为隔离设置下的实际 Qt 控件渲染，不覆盖原生鼠标键盘链路和多屏 DPI。
 
@@ -336,7 +336,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 **QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮改用 `@success@ / @warning@ / @error@` 及其 `Hover` 状态层令牌；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
 
-2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_editor` 与 `harken_editor_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
+2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_studio` 与 `harken_studio_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
 
 Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，两侧各一条首要边界线，与面板之间的缝隙观感一致；整条缝隙都可拖动调节：轨道区由调节条绘制并接收鼠标；标尺段由标尺在 cursor 手柄之前绘制缝隙，上方覆盖透明命中层，落在 cursor 手柄上的按下与拖动原样交给标尺，其余位置进入宽度调节；悬停与拖动时整条缝隙显示强调色。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
 
@@ -384,7 +384,7 @@ Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻
 
 VU 已退出产品入口。按用户要求删除遗留 `VUMeterRenderer`、专属渲染帧、`MeterStyle::VU`、默认值、色卡复制、职责绑定和全部 `meter.vu.*` 颜色及指标配置入口，并移除构建清单中的对应文件。
 
-此前 `.temp/palette-alpha-review/palette-alpha-comparison.png` 的 03 使用了该旧绘制器，02 的浮动读数使用了旧渲染帧入口，不能代表当前前端的对应画面。本轮改用当前 `MeterPanel` 和 `CurveCanvas` 的实际渲染入口与示例数据核对，更新图为 `.temp/meter-color-review/meter-color-comparison.png`，沿用当前保存的 Dark 配色。`harken_editor` 与 `harken_editor_tests` 构建通过，58 项主题、资产、样式、仪表数据及历史图像测试通过；Dark / Light Alpha、交错虚线像素及当前组件样本共 44 项临时检查通过。QSS 归属检查与 `git diff --check` 通过，未改写用户设置。
+此前 `.temp/palette-alpha-review/palette-alpha-comparison.png` 的 03 使用了该旧绘制器，02 的浮动读数使用了旧渲染帧入口，不能代表当前前端的对应画面。本轮改用当前 `MeterPanel` 和 `CurveCanvas` 的实际渲染入口与示例数据核对，更新图为 `.temp/meter-color-review/meter-color-comparison.png`，沿用当前保存的 Dark 配色。`harken_studio` 与 `harken_studio_tests` 构建通过，58 项主题、资产、样式、仪表数据及历史图像测试通过；Dark / Light Alpha、交错虚线像素及当前组件样本共 44 项临时检查通过。QSS 归属检查与 `git diff --check` 通过，未改写用户设置。
 
 | 节点绘制位置 | Studio Default 来源 |
 |---|---|

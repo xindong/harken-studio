@@ -118,7 +118,7 @@ jobs:
       - name: Build Studio and all registered editor test targets
         shell: bash
         run: |
-          for target in harken_editor harken_editor_ci_tests; do
+          for target in harken_studio harken_studio_ci_tests; do
             cmake --build build-studio --config Release --target "$target"
           done
 
@@ -286,5 +286,5 @@ jobs:
               print(item)
           PY
 
-      - name: Build (harken_editor)
-        run: cmake --build --preset macos-release --target harken_editor --parallel
+      - name: Build (harken_studio)
+        run: cmake --build --preset macos-release --target harken_studio --parallel

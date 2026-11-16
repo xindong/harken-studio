@@ -359,7 +359,7 @@ if(WIN32)
         hub)
     add_dependencies(harken_hub harken_hub_legacy_launcher)
 
-    if(NOT TARGET harken_editor)
+    if(NOT TARGET harken_studio)
         file(GENERATE
             OUTPUT "$<TARGET_FILE_DIR:harken_hub>/qt.conf"
             CONTENT "[Paths]\nPlugins = .\n"
