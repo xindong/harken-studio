@@ -1,4 +1,4 @@
-add_executable(harken_editor_tests
+add_executable(harken_studio_tests
     ${CMAKE_SOURCE_DIR}/HarkenStudio/resources.qrc
     UnitTest/TestMain.cpp
     UnitTest/ThemePackageParserTest.cpp
@@ -122,34 +122,34 @@ add_executable(harken_editor_tests
     UnitTest/OpenAICompatibleLLMProviderTest.cpp
     UnitTest/AIAssistantServiceTest.cpp
 )
-set_target_properties(harken_editor_tests PROPERTIES
+set_target_properties(harken_studio_tests PROPERTIES
     AUTOMOC ON
     AUTORCC ON
 )
 
 if(MSVC)
-    target_compile_options(harken_editor_tests PRIVATE /FS)
+    target_compile_options(harken_studio_tests PRIVATE /FS)
 endif()
 
 if(WIN32)
-    set_target_properties(harken_editor_tests PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:harken_editor_tests>"
+    set_target_properties(harken_studio_tests PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:harken_studio_tests>"
         VS_DEBUGGER_ENVIRONMENT "QT_QPA_PLATFORM=windows"
     )
 endif()
-target_link_libraries(harken_editor_tests PRIVATE
+target_link_libraries(harken_studio_tests PRIVATE
     harken_editor_lib
     harken_current_world_compiler
     Harken::EngineDev
     GTest::gtest
 )
-target_include_directories(harken_editor_tests PRIVATE
+target_include_directories(harken_studio_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Core
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/ProjectSchema/include
 )
-target_compile_definitions(harken_editor_tests PRIVATE
+target_compile_definitions(harken_studio_tests PRIVATE
     HARKEN_TEMP_DIR="${PROJECT_SOURCE_DIR}/.temp"
     HARKEN_STUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}/HarkenStudio"
     HARKEN_MONITOR_EDITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/Monitor/fixtures")
@@ -168,25 +168,25 @@ if(WIN32)
 elseif(APPLE)
     target_link_libraries(harken_project_instance_process PRIVATE "-framework CoreFoundation")
 endif()
-target_compile_definitions(harken_editor_tests PRIVATE
+target_compile_definitions(harken_studio_tests PRIVATE
     HARKEN_PROJECT_INSTANCE_PROCESS_PATH="$<TARGET_FILE:harken_project_instance_process>")
-add_dependencies(harken_editor_tests harken_project_instance_process)
+add_dependencies(harken_studio_tests harken_project_instance_process)
 add_executable(harken_resource_compiler_process UnitTest/ResourceCompilerProcess.cpp)
 target_link_libraries(harken_resource_compiler_process PRIVATE harkenizer_compiler_client Qt6::Core)
-target_link_libraries(harken_editor_tests PRIVATE harkenizer_compiler_client)
-target_compile_definitions(harken_editor_tests PRIVATE
+target_link_libraries(harken_studio_tests PRIVATE harkenizer_compiler_client)
+target_compile_definitions(harken_studio_tests PRIVATE
     HARKEN_RESOURCE_COMPILER_PROCESS_PATH="$<TARGET_FILE:harken_resource_compiler_process>")
-add_dependencies(harken_editor_tests harken_resource_compiler_process)
+add_dependencies(harken_studio_tests harken_resource_compiler_process)
 if(WIN32)
     add_custom_command(TARGET harken_resource_compiler_process POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::Core>" "$<TARGET_FILE_DIR:harken_resource_compiler_process>")
 endif()
-harken_publish_studio_schema(harken_editor_tests)
+harken_publish_studio_schema(harken_studio_tests)
 
-target_compile_definitions(harken_editor_tests PRIVATE
+target_compile_definitions(harken_studio_tests PRIVATE
     HARKEN_STUDIO_CLI_PATH="$<TARGET_FILE:harken_studio_cli>")
-add_dependencies(harken_editor_tests harken_studio_cli)
+add_dependencies(harken_studio_tests harken_studio_cli)
 add_test(NAME studio_cli_contract
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/.scripts/verify_studio_cli.py"
         --cli "$<TARGET_FILE:harken_studio_cli>"
@@ -201,7 +201,7 @@ set_target_properties(harken_timeline_benchmark PROPERTIES AUTORCC ON)
 target_link_libraries(harken_timeline_benchmark PRIVATE harken_editor_lib)
 target_compile_definitions(harken_timeline_benchmark PRIVATE
     HARKEN_BENCHMARK_CONFIGURATION="$<CONFIG>")
-add_dependencies(harken_timeline_benchmark harken_editor)
+add_dependencies(harken_timeline_benchmark harken_studio)
 harken_publish_studio_schema(harken_timeline_benchmark)
 if(TARGET Qt6::QOffscreenIntegrationPlugin)
     add_custom_command(TARGET harken_timeline_benchmark POST_BUILD
@@ -228,7 +228,7 @@ if(WIN32)
         HINTS ${Qt6_DIR}/../../../bin
         REQUIRED)
 
-    add_custom_command(TARGET harken_editor_tests POST_BUILD
+    add_custom_command(TARGET harken_studio_tests POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
             $<$<CONFIG:Debug>:--debug>
             $<$<NOT:$<CONFIG:Debug>>:--release>
@@ -238,7 +238,7 @@ if(WIN32)
             --no-system-dxc-compiler
             --no-opengl-sw
             --no-quick-import
-            $<TARGET_FILE:harken_editor_tests>
+            $<TARGET_FILE:harken_studio_tests>
         COMMENT "Deploying Qt runtime for editor tests"
     )
 
@@ -257,10 +257,10 @@ if(WIN32)
     )
 
     if(TARGET Qt6::QOffscreenIntegrationPlugin)
-        add_custom_command(TARGET harken_editor_tests POST_BUILD
+        add_custom_command(TARGET harken_studio_tests POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
-                "$<TARGET_FILE_DIR:harken_editor_tests>/platforms/"
+                "$<TARGET_FILE_DIR:harken_studio_tests>/platforms/"
         )
     endif()
 endif()
@@ -288,17 +288,17 @@ set(_harken_editor_qualification_tests
     Historical/ProjectDocumentVersionRoundTripTest.*)
 list(JOIN _harken_editor_qualification_tests ":" _harken_editor_qualification_filter)
 
-gtest_discover_tests(harken_editor_tests
+gtest_discover_tests(harken_studio_tests
     DISCOVERY_MODE PRE_TEST
     TEST_FILTER "-${_harken_editor_daily_filter}:${_harken_editor_qualification_filter}"
     TEST_LIST harken_editor_pr_tests
     PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-gtest_discover_tests(harken_editor_tests
+gtest_discover_tests(harken_studio_tests
     DISCOVERY_MODE PRE_TEST
     TEST_FILTER "${_harken_editor_daily_filter}-${_harken_editor_qualification_filter}"
     TEST_LIST harken_editor_daily_tests
     PROPERTIES LABELS harken-daily ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-gtest_discover_tests(harken_editor_tests
+gtest_discover_tests(harken_studio_tests
     DISCOVERY_MODE PRE_TEST
     TEST_FILTER "${_harken_editor_qualification_filter}"
     TEST_LIST harken_editor_qualification_tests
@@ -328,7 +328,7 @@ target_link_libraries(harken_bus_compiler_tests PRIVATE
 target_include_directories(harken_bus_compiler_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 gtest_discover_tests(harken_bus_compiler_tests TEST_PREFIX "BusCompiler." PROPERTIES TIMEOUT 120)
 
-harken_add_ci_test_target(editor)
+harken_add_ci_test_target(studio)
 harken_add_python_check_test(studio_schema_archive_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py")
 harken_add_python_check_test(studio_schema_generated_check

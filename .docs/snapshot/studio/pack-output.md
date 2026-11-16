@@ -341,7 +341,7 @@ Bus 即时编辑独立读取当前创作值，只对已安装且来源兼容的�
 
 | 验证范围 | 实际结果 |
 |---|---|
-| 构建 | `harken_editor_tests`、`harkenizer`、`harken_host`、`harken_runtime_tests`、`harken_core` 及资格测试目标编译通过 |
+| 构建 | `harken_studio_tests`、`harkenizer`、`harken_host`、`harken_runtime_tests`、`harken_core` 及资格测试目标编译通过 |
 | Runtime | 执行 6457 项，6451 通过、6 跳过、0 失败；跳过集合与基线一致 |
 | Editor PR／daily 范围 | 执行 622 项，620 通过、1 跳过、1 失败；另有 1 项禁用。失败为 `EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem`，基线同样失败，基线单独重跑通过 |
 | 导出 | 22 个产物文件与基线逐字节一致，167 项打包回归通过 |

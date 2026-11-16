@@ -66,7 +66,7 @@ class CompliancePullRequestGovernanceTest(unittest.TestCase):
             "- Build preset: windows-ninja-clang-dev",
             "- Test targets:",
             "  - `compliance_audit.py` -> highest=none",
-            "  - `harken_editor_tests` -> 4 passed",
+            "  - `harken_studio_tests` -> 4 passed",
         ]
 
         items, fields = self.section_entries(lines)
@@ -78,7 +78,7 @@ class CompliancePullRequestGovernanceTest(unittest.TestCase):
             [
                 "Windows 11",
                 "windows-ninja-clang-dev",
-                "`compliance_audit.py` -> highest=none `harken_editor_tests` -> 4 passed",
+                "`compliance_audit.py` -> highest=none `harken_studio_tests` -> 4 passed",
             ],
         )
 

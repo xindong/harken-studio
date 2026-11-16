@@ -137,13 +137,13 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
 1. **`build-nc` + `Release|Debug|RelWithDebInfo`(首选)**:
 
     ```bash
-    cmake --build build-nc --config RelWithDebInfo [--target <harken_engine|harken_engine_dev|harken_editor|harken_hub>]
+    cmake --build build-nc --config RelWithDebInfo [--target <harken_engine|harken_studio|harken_hub>]
     ```
 
 2. **`build-vs` + `Release|Debug|RelWithDebInfo`(次选)**:
 
     ```bash
-    cmake --build build-vs --config Debug  [--target <harken_engine|harken_engine_dev|harken_editor|harken_hub>]
+    cmake --build build-vs --config Debug  [--target <harken_engine|harken_studio|harken_hub>]
     ```
 
 #### macOS
@@ -153,7 +153,7 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
 - **`build-nc` + `Release|Debug|RelWithDebInfo`**:
 
     ```bash
-    cmake --build build-nc --config RelWithDebInfo [--target <harken_engine|harken_engine_dev|harken_editor|harken_hub>]
+    cmake --build build-nc --config RelWithDebInfo [--target <harken_engine|harken_studio|harken_hub>]
     ```
 
 ## 项目结构

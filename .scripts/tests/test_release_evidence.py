@@ -497,7 +497,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.model["artifacts"] = [
             {"target": target, "type": kind, "name": path.name,
              "sha256": evidence.sha256(path), "path": path.relative_to(self.build).as_posix()}
-            for target, kind, path in (("harken_editor", "EXECUTABLE", binary),
+            for target, kind, path in (("harken_studio", "EXECUTABLE", binary),
                                       ("QWKCore", "SHARED_LIBRARY", library),
                                       ("harken_studio_cli", "EXECUTABLE", cli))]
         tool = self.root / "macdeployqt"

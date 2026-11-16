@@ -46,7 +46,7 @@ Windows 原生平台复核发现，问题不限于 Timeline：Qt 提示窗口在
 
 `Core/ToolTip` 统一管理一个应用生命周期内复用的提示窗口，在启动时创建原生句柄，隐藏后保留窗口。普通控件、模型单元格、表头、标签页、菜单及图形场景的 Qt 提示事件接入同一服务，各编辑器的显式提示调用也迁移至此。服务保留提示内容、富文本、主题颜色、显示时限、屏幕边界约束及所属控件隐藏或销毁后的清理；`RehearsalSlider` 对未改变的悬停锚点去重。
 
-独立修复分支以 `windows-ninja-clang-dev` / `RelWithDebInfo` 构建 `harken_editor` 和 `harken_editor_tests` 成功，Timeline、Source Editor、Transition Editor、试听检查器、表格及主题相关回归共 40 项通过，本地 QSS 归属检查通过。Qt 6.11.0 / Windows 原生服务验证的 18 项通用检查全部通过，持续使用同一原生窗口句柄。
+独立修复分支以 `windows-ninja-clang-dev` / `RelWithDebInfo` 构建 `harken_studio` 和 `harken_studio_tests` 成功，Timeline、Source Editor、Transition Editor、试听检查器、表格及主题相关回归共 40 项通过，本地 QSS 归属检查通过。Qt 6.11.0 / Windows 原生服务验证的 18 项通用检查全部通过，持续使用同一原生窗口句柄。
 
 构建结束后，10 轮隐藏、等待 800 ms、切换所属控件并重新显示的同步调用耗时为 2.05–9.04 ms，均值 3.81 ms；原生 surface 创建、销毁及窗口句柄变化均为零。初次修复的浅色与深色主题截图已核对背景、边框和文字。这些结果来自独立验证窗口，不代表完整 Studio 的屏幕帧率。独立 worktree 的原始数据位于 `.temp/service-tooltip-review/behavior.json` 和 `lifecycle.json`，不入仓。
 

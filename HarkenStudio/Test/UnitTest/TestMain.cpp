@@ -38,7 +38,7 @@ int main(int argc, char* argv[])
     // Route every user-scope INI store into one per-process root before any
     // test constructs a settings-backed singleton.
     QCoreApplication::setApplicationName(
-        QStringLiteral("harken_editor_tests-%1")
+        QStringLiteral("harken_studio_tests-%1")
             .arg(QCoreApplication::applicationPid()));
     settingsRoot() =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
