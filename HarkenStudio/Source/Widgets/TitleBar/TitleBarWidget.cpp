@@ -331,15 +331,15 @@ void TitleBarWidget::syncChromeMetrics() {
     }
     const int barHeight = qMax(ThemeManager::instance().metrics().chrome.titleBarHeight, itemHeight);
     setFixedHeight(barHeight);
-    logoLabel_->setFixedSize(barHeight, barHeight);
-    const int extent = ThemeManager::instance().metrics().iconExtent;
-    const QSize logoSize(extent, extent);
+    const int logoHeight = qRound(12 * ThemeManager::instance().snapshot()->uiScale);
     const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppIcon));
+        QString::fromLatin1(ThemeAssetIds::AppLogo));
     if (logo.resource) {
-        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaled(
-            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaledToHeight(
+            qRound(logoHeight * devicePixelRatioF()), Qt::SmoothTransformation);
         pixmap.setDevicePixelRatio(devicePixelRatioF());
+        logoLabel_->setFixedSize(qRound(pixmap.deviceIndependentSize().width()) + barHeight - logoHeight,
+                                barHeight);
         logoLabel_->setPixmap(pixmap);
     }
     if (menuBar_) {
