@@ -688,7 +688,7 @@ void registerMixerActions(ActionManager& mgr,
                 ActionManager::instance().executeOriginator());
             if (!r.success) return r;
             r.data = QJsonObject{{"bus", busItem->name}, {"bus_guid", busItem->guid.toString(QUuid::WithoutBraces)},
-                                 {"bus_volume_db", db}};
+                                 {"bus_volume_db", busItem->comp<VMixNode>()->volume}};
             return r;
         };
         mgr.registerAction(def);

@@ -137,13 +137,13 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
 1. **`build-nc` + `Release|Debug|RelWithDebInfo`(首选)**:
 
     ```bash
-    cmake --build build-nc --config RelWithDebInfo [--target <harken_core|harken_editor|harken_hub>]
+    cmake --build build-nc --config RelWithDebInfo [--target <harken_engine|harken_engine_dev|harken_editor|harken_hub>]
     ```
 
 2. **`build-vs` + `Release|Debug|RelWithDebInfo`(次选)**:
 
     ```bash
-    cmake --build build-vs --config Debug  [--target <harken_core|harken_editor|harken_hub>]
+    cmake --build build-vs --config Debug  [--target <harken_engine|harken_engine_dev|harken_editor|harken_hub>]
     ```
 
 #### macOS
@@ -153,7 +153,7 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
 - **`build-nc` + `Release|Debug|RelWithDebInfo`**:
 
     ```bash
-    cmake --build build-nc --config RelWithDebInfo [--target <harken_core|harken_editor|harken_hub>]
+    cmake --build build-nc --config RelWithDebInfo [--target <harken_engine|harken_engine_dev|harken_editor|harken_hub>]
     ```
 
 ## 项目结构
@@ -164,9 +164,8 @@ harken/
 ├── .github/                              # GitHub 工程伴随工作流配置
 ├── .scripts/                             # 开发所需自动化脚本，非源代码
 ├── cmake/                                # 项目构建身份注入
-├── HarkenEngine/                         # harken_core — 声音引擎运行核心
+├── HarkenEngine/                         # HarkenEngine — 声音引擎运行核心
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序
-├── HarkenSchema/                         # Editor 与 Pack 各自独立的 JSON 合同
 ├── HarkenIntegration/                    # HarkenIntegration — 共享引擎集成总目录（Unity/Harken）
 ├── HarkenStudio/                         # HarkenEditor — 前端编辑器
 ├── CLAUDE.md | AGENTS.md                 # AI 项目高层指令

@@ -11,7 +11,7 @@
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeAssetResolver.h"
 #include "Core/ThemeManager.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 
 #include <QFileInfo>
 #include <QGridLayout>

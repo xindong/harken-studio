@@ -3,7 +3,7 @@
 
 #include <harken/Harken.h>
 
-#include "ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -128,7 +128,7 @@ inline RecipePackArtifact BuildRecipePack(
             return artifact;
         }
     }
-    artifact.built = harkentest::CompileResources({manifest}) == 0;
+    artifact.built = harkentest::BuildTestPack({manifest}) == 0;
     return artifact;
 }
 
@@ -195,7 +195,7 @@ inline RecipePackArtifact BuildToneRecipePack(
             return artifact;
         }
     }
-    artifact.built = harkentest::CompileResources({manifest}) == 0;
+    artifact.built = harkentest::BuildTestPack({manifest}) == 0;
     return artifact;
 }
 

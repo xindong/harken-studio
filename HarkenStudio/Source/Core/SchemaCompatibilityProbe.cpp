@@ -81,7 +81,7 @@ QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request)
         {QStringLiteral("gitCommit"), buildString(Harken::BuildInfo::GitCommit)},
         {QStringLiteral("gitDirty"), Harken::BuildInfo::GitDirty},
         {QStringLiteral("editorSchemaVersion"), ProjectSchema::kProjectSchemaVersion},
-        {QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
+        {QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION},
         {QStringLiteral("schemaSnapshotHash"), QString::fromLatin1(SchemaBuild::kSnapshotHash)},
         {QStringLiteral("edits"), QJsonArray{}},
     };

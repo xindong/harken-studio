@@ -5,6 +5,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>Harken.Core</AssemblyName>
+    <DefineConstants>$(DefineConstants);HARKEN_NATIVE_DEVELOPMENT</DefineConstants>
     <HarkenIntegrationRoot Condition="'$(HarkenIntegrationRoot)' == ''">$(HarkenSdkRoot)</HarkenIntegrationRoot>
   </PropertyGroup>
   <ItemGroup>

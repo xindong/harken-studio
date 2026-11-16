@@ -13,5 +13,6 @@ target_include_directories(harken_studio_pack_build PUBLIC
 target_link_libraries(harken_studio_pack_build PUBLIC
     harken_studio_types
     harken_buildinfo
+    Harken::PackFormat
 )
 target_compile_features(harken_studio_pack_build PUBLIC cxx_std_20)

@@ -38,11 +38,11 @@ QStringList ProjectSchemaValidator::validateProjectDocument(
     return errors;
 }
 
-QStringList ProjectSchemaValidator::validatePackManifest(
+QStringList ProjectSchemaValidator::validatePackMetadata(
     int version, const QJsonValue& document, const QString& relativePath)
 {
     QStringList errors;
-    GeneratedSchemaRegistry::validatePackManifest(
+    GeneratedSchemaRegistry::validatePackMetadata(
         version, document, relativePath, errors);
     return errors;
 }

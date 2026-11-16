@@ -114,7 +114,7 @@ class RepositoryHistoryVerifierTests(unittest.TestCase):
         command = self.verifier.runtime_configure_command(
             REPO_ROOT, REPO_ROOT / ".temp" / "history-build"
         )
-        self.assertIn("-DHARKEN_BUILD_CORE=ON", command)
+        self.assertIn("-DHARKEN_BUILD_ENGINE=ON", command)
         self.assertIn("-DHARKEN_BUILD_EDITOR=OFF", command)
         self.assertIn("-DHARKEN_BUILD_HUB=OFF", command)
         self.assertIn("-DHARKEN_BUILD_TOOLS=OFF", command)

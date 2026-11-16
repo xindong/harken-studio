@@ -1,4 +1,4 @@
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 
 #include "JsonReader.h"
 
@@ -11,6 +11,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include <harken/HarkenDevelopment.h>
 
 #ifndef HARKEN_MONITOR_PLAN_FIXTURE_DIR
 #define HARKEN_MONITOR_PLAN_FIXTURE_DIR "."
@@ -189,10 +190,6 @@ TEST(MonitorFixture, PlanCapacityConstantsMatchContract) {
               VN_MONITOR_DEFAULT_DERIVED_WORK_ITEMS);
     EXPECT_EQ(RequireU64(*hard, "derivedWorkItems"),
               VN_MONITOR_HARD_DERIVED_WORK_ITEMS);
-    EXPECT_EQ(RequireU64(*defaults, "recorderQueueBytes"),
-              VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES);
-    EXPECT_EQ(RequireU64(*hard, "recorderQueueBytes"),
-              VN_MONITOR_HARD_RECORDER_QUEUE_BYTES);
     EXPECT_EQ(RequireU64(*defaults, "remoteQueueBytes"),
               VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES);
     EXPECT_EQ(RequireU64(*hard, "remoteQueueBytes"),
@@ -205,10 +202,6 @@ TEST(MonitorFixture, PlanCapacityConstantsMatchContract) {
               VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE);
     EXPECT_EQ(RequireU64(*hard, "rawAudioByteRate"),
               VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE);
-    EXPECT_EQ(RequireU64(*defaults, "sessionFileBytes"),
-              VN_MONITOR_DEFAULT_SESSION_FILE_BYTES);
-    EXPECT_EQ(RequireU64(*hard, "sessionFileBytes"),
-              VN_MONITOR_HARD_SESSION_FILE_BYTES);
 
     const harkenhost::JsonValue* resolved = expected.Find("resolvedSample");
     ASSERT_NE(resolved, nullptr);

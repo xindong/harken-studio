@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -383,9 +386,11 @@ namespace Harken.Unity.Editor
                     return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>");
                 }
                 OpenObservation();
+#if HARKEN_ENGINE_DEV
                 LastRemoteResult = HarkenProjectSettings.StartCommunication(session.ProjectId);
                 if (LastRemoteResult != VnResult.VN_OK)
                     UnityEngine.Debug.LogWarning("Harken remote Start: " + LastRemoteResult);
+#endif
             }
             return Observe(result, "<prepare>");
         }

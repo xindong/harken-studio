@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "Monitor/MonitorStateCut.h"
 #include "Monitor/MonitorStore.h"
 

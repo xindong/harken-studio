@@ -86,10 +86,11 @@ void registerSystemActions(ActionManager& mgr,
             config.bufferSize = args["buffer_size"].toInt(0);
             config.maxVoices = args["max_voices"].toInt(64);
             const QString deviceMode = args.value("device_mode").toString("real");
-            if (deviceMode != "real" && deviceMode != "null")
-                return {false, {}, "INVALID_ARGS", "device_mode must be real or null"};
+            if (deviceMode != "real" && deviceMode != "null" && deviceMode != "null_realtime")
+                return {false, {}, "INVALID_ARGS", "device_mode must be real, null or null_realtime"};
             config.deviceMode = deviceMode == "null" ? HarkenEditor::Bridge::EngineDeviceMode::Null
-                                                     : HarkenEditor::Bridge::EngineDeviceMode::Real;
+                : deviceMode == "null_realtime" ? HarkenEditor::Bridge::EngineDeviceMode::NullRealtime
+                                                : HarkenEditor::Bridge::EngineDeviceMode::Real;
             if (!engine->initialize(config))
                 return {false, {{"initialized", false}}, "INIT_FAILED", "Failed to initialize audio engine"};
             if (engine->isSimulationMode()) {
@@ -228,18 +229,23 @@ void registerSystemActions(ActionManager& mgr,
         def.category = "system";
         def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
-        def.handler = [engine, activePlaybacks](const QJsonObject& args) -> ActionResult {
+        def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
             qint64 handle = args["handle"].toInteger(0);
             float fadeMs = static_cast<float>(args["fade_ms"].toDouble(0.0));
             if (handle == 0)
                 return {false, {}, "INVALID_ARGS",
                         "handle is required"};
-            if (!engine->stopPlayback(static_cast<quintptr>(handle), fadeMs))
-                return {false, {}, "STOP_ACTION_FAILED", "The runtime rejected the playback stop"};
-            if (activePlaybacks)
-                activePlaybacks->remove(static_cast<quintptr>(handle));
-            return {true, QJsonObject{}};
+            const auto result = engine->stopPlayback(static_cast<quintptr>(handle), fadeMs);
+            QJsonObject data{{"engine_result", static_cast<int32_t>(result)}};
+            if (result != HarkenEditor::Bridge::kEngineOk
+                && result != HarkenEditor::Bridge::kEngineStaleHandle) {
+                data.insert("state", "rejected");
+                return {false, data, "STOP_ACTION_FAILED", "The runtime rejected the playback stop"};
+            }
+            data.insert("state", result == HarkenEditor::Bridge::kEngineStaleHandle
+                ? "stopped" : "stopping");
+            return {true, data};
         };
         mgr.registerAction(def);
     }

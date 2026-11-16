@@ -4,7 +4,7 @@
 #include "ProjectTypes.h"
 #include "PropertyDescriptor.h"
 
-#include "harken_playable_properties.g.h"
+#include "harken_playable_properties/PlayableProperties.h"
 
 #include <cstdint>
 #include <optional>

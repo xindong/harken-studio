@@ -19,6 +19,7 @@
 // honest (nonzero) busPeaks under signal, the section-11.7 observable.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "Common/RawVoiceTestSupport.h"

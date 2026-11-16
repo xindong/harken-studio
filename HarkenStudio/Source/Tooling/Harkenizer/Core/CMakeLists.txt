@@ -190,7 +190,6 @@ add_library(harkenizer_core STATIC
     ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
 )
 
-add_dependencies(harkenizer_core harken_schema_codegen)
 set_target_properties(harkenizer_core PROPERTIES
     AUTOMOC ON
     AUTOGEN_BUILD_DIR "${CMAKE_BINARY_DIR}/_autogen/harkenizer_core"
@@ -211,7 +210,7 @@ target_link_libraries(harkenizer_core PUBLIC
     Qt6::Core
     Qt6::Network
     Qt6::Concurrent
-    harken_runtime_bridge
+    harken_studio_build_pipeline
     harken_current_world_compiler
     harken_buildinfo
     vorbis

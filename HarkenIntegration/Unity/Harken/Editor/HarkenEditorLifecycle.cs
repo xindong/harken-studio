@@ -18,8 +18,8 @@ namespace Harken.Unity.Editor
             EditorApplication.quitting -= Shutdown;
             EditorApplication.quitting += Shutdown;
             hostOutputMuted = EditorUtility.audioMasterMute;
-            HarkenEngine.Initialized -= ApplyHostOutputMute;
-            HarkenEngine.Initialized += ApplyHostOutputMute;
+            HarkenEngine.Initialized -= InitializeHostOutputMute;
+            HarkenEngine.Initialized += InitializeHostOutputMute;
             EditorApplication.update -= SyncHostOutputMute;
             EditorApplication.update += SyncHostOutputMute;
         }
@@ -29,11 +29,21 @@ namespace Harken.Unity.Editor
             bool muted = EditorUtility.audioMasterMute;
             if (muted == hostOutputMuted) return;
             hostOutputMuted = muted;
-            ApplyHostOutputMute();
+            ApplyHostOutputMute(HostOutputMuteFadeMs);
         }
 
-        private static void ApplyHostOutputMute()
-            => HarkenEngine.SetHostOutputMute(hostOutputMuted ? 1u : 0u, HostOutputMuteFadeMs);
+        private static void InitializeHostOutputMute()
+        {
+            hostOutputMuted = EditorUtility.audioMasterMute;
+            ApplyHostOutputMute(0);
+        }
+
+        private static void ApplyHostOutputMute(uint fadeMs)
+        {
+            try { HarkenEngine.SetHostOutputMute(hostOutputMuted ? 1u : 0u, fadeMs); }
+            catch (System.DllNotFoundException) { }
+            catch (System.EntryPointNotFoundException) { }
+        }
 
         private static void HandlePlayModeState(PlayModeStateChange state)
         {

@@ -46,7 +46,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_repository_native_binary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            binary = integration / "Runtime/Plugins/x86_64/HarkenCore.dll"
+            binary = integration / "Runtime/Plugins/x86_64/HarkenEngine.dll"
             binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_bytes(b"runtime")
             with self.assertRaises(SystemExit):
@@ -71,7 +71,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_assembled_package_requires_every_native_binary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            missing = "Runtime/Plugins/iOS/libHarkenCore.a"
+            missing = "Runtime/Plugins/iOS/libHarkenEngineDev.a"
             for relative in MODULE.NATIVE_PLUGIN_PATHS - {missing}:
                 binary = integration / relative
                 binary.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +95,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
                 binary = integration / relative
                 binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.write_bytes(b"runtime")
-            binary = integration / "Runtime/Plugins/Android/armeabi-v7a/libHarkenCore.so"
+            binary = integration / "Runtime/Plugins/Android/armeabi-v7a/libHarkenEngine.so"
             binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_bytes(b"runtime")
             with self.assertRaises(SystemExit):

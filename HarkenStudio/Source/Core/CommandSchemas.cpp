@@ -178,6 +178,13 @@ const QMap<QString, Contract>& contracts()
              "list_packs", "list_project_languages", "search_status", "validate_pack", "validate_pack_build_readiness"},
             object(), true);
         put({"save_project", "close_project", "shutdown_engine", "start_output", "stop_output", "undo", "redo"}, object());
+        put({"remote_disconnect", "stop_remote_capture"}, object());
+        put({"start_remote_capture"}, object({{"output_path", text()}}));
+        put({"get_remote_status", "get_remote_catalog"}, object(), true);
+        put({"remote_discover"}, object({{"discovery_port", withDefault(integer(1, 65535), 37840)}}));
+        put({"remote_connect"}, object({{"address", text()}, {"port", integer(1, 65535)}}, {"address", "port"}));
+        put({"poll_remote_events"}, object({{"cursor", withDefault(integer(0, 9007199254740991.0), 0)},
+                                            {"max", withDefault(integer(1, 1000), 100)}}), true);
         put({"get_command_schema"}, object({{"command", text()}}, {"command"}), true);
         put({"open_project", "load_pack", "unload_pack"}, object({{"path", text()}}, {"path"}));
         put({"get_pack_info", "get_folder_info", "list_folders", "get_modulator_binding"}, object({{"path", text()}}, {"path"}), true);
@@ -342,7 +349,7 @@ const QMap<QString, Contract>& contracts()
 
         put({"init_engine"}, object({{"sample_rate", described(withDefault(integer(), 0), "Sample rate in Hz. Zero selects the engine/device default.")},
             {"buffer_size", described(withDefault(integer(), 0), "Buffer size in frames. Zero selects the engine/device default.")}, {"max_voices", withDefault(integer(1), 64)},
-            {"device_mode", described(withDefault(choice({"real", "null"}), "real"), "real uses an audio device; null runs the actual runtime silently without audio hardware.")}}));
+            {"device_mode", described(withDefault(choice({"real", "null", "null_realtime"}), "real"), "real uses an audio device; null runs the actual runtime silently without audio hardware and advances audio only when explicitly pumped; null_realtime also runs silently but advances audio in real time while output is started.")}}));
         put({"set_buffer_size"}, object({{"block_size", integer(1)}}, {"block_size"}));
         put({"post_action"}, object({{"name", text()}}, {"name"}));
         put({"post_action_3d"}, object({{"name", text()}, {"x", withDefault(number(), 0)}, {"y", withDefault(number(), 0)}, {"z", withDefault(number(), 0)}}, {"name"}));
@@ -421,6 +428,14 @@ const QMap<QString, Contract>& contracts()
             {"shutdown_engine", "Stop and release the audio runtime."},
             {"start_output", "Start audio output on the initialized runtime."},
             {"stop_output", "Stop audio output while retaining the initialized runtime."},
+            {"remote_discover", "Broadcast discovery for running games with the development runtime; poll get_remote_status for discovered targets."},
+            {"remote_connect", "Connect to a development runtime at address and port; poll get_remote_status until connected or failed."},
+            {"remote_disconnect", "Disconnect from the current remote runtime."},
+            {"get_remote_status", "Return the remote connection state, discovered targets and event capture state."},
+            {"get_remote_catalog", "Return the connected runtime's Action, Variable and Bus IDs, with names resolved from the open project."},
+            {"poll_remote_events", "Return captured remote events from cursor onward, the next cursor, and how many events were missed or dropped."},
+            {"start_remote_capture", "Start capturing events from the connected remote runtime; with output_path, received records are also written to a session file that only this Studio version opens."},
+            {"stop_remote_capture", "Stop capturing remote events; captured events remain pollable."},
             {"post_action", "Execute an authored Action and return its playback handle."},
             {"seek_action", "Request a seek in milliseconds. Poll query_seek_action with seek_operation_id to observe completion, then release_seek_action to release its record."},
             {"query_seek_action", "Read the state and results of a seek operation without changing it."},

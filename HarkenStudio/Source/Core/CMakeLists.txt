@@ -23,6 +23,8 @@ add_library(harken_studio_core STATIC
     AttenuationStore.cpp
     AttenuationStore.h
     AudioEngine.cpp
+    RemoteSession.cpp
+    RemoteSession.h
     AudioEngine.h
     AudioEngine_Bus.cpp
     AudioEngine_Debug.cpp
@@ -158,7 +160,6 @@ add_library(harken_studio_core STATIC
     ${HARKEN_STUDIO_COMMAND_SOURCES}
 )
 
-add_dependencies(harken_studio_core harken_schema_codegen)
 set_target_properties(harken_studio_core PROPERTIES AUTOMOC ON)
 target_precompile_headers(harken_studio_core PRIVATE
     <QString> <QJsonObject> <QJsonArray> <QTimer> <QDebug>
@@ -179,7 +180,7 @@ target_include_directories(harken_studio_core PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/Common)
 target_link_libraries(harken_studio_core PUBLIC
     harkenizer_build Qt6::Core Qt6::Network Qt6::Concurrent
-    harken_runtime_bridge harken_editor_monitor_data harken_bus_compiler
+    harken_runtime_bridge harken_studio_build_pipeline harken_editor_monitor_data harken_bus_compiler
     harken_buildinfo harken_playable_properties vorbis vorbisenc ogg r8brain)
 if(APPLE)
     find_library(IOKIT_FRAMEWORK IOKit REQUIRED)

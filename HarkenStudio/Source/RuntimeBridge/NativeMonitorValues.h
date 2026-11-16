@@ -3,6 +3,7 @@
 #include "NativeValues.h"
 #include "Monitor/MonitorTypes.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <algorithm>
 
 namespace HarkenEditor::Bridge {
@@ -25,47 +26,6 @@ inline VnMonitorPollDesc toNative(const VNX::Monitor::MonitorPollDesc& value)
     VnMonitorPollDesc out{};
     out.structSize = sizeof(out);
     out.bufferBytes = value.bufferBytes;
-    return out;
-}
-
-inline VnMonitorRecordingDesc toNative(const VNX::Monitor::MonitorRecordingDesc& value)
-{
-    VnMonitorRecordingDesc out{};
-    out.structSize = sizeof(out);
-    out.fileByteBudget = value.fileByteBudget;
-    return out;
-}
-
-inline VnMonitorSessionCompareView toNative(const VNX::Monitor::MonitorSessionCompareView& value)
-{
-    VnMonitorSessionCompareView out{};
-    out.structSize = sizeof(out);
-    out.status = value.status;
-    out.recoveryNeeded = value.recoveryNeeded;
-    out.droppedRequired = value.droppedRequired;
-    out.requiredUnknown = value.requiredUnknown;
-    out.crcFailedRequired = value.crcFailedRequired;
-    out.truncatedAfterCommit = value.truncatedAfterCommit;
-    out.hasCompleteFooter = value.hasCompleteFooter;
-    out.hasTraceCorrelation = value.hasTraceCorrelation;
-    out.hasOptionalSymbols = value.hasOptionalSymbols;
-    out.lastCompleteChunkSequence = value.lastCompleteChunkSequence;
-    out.fileBytes = value.fileBytes;
-    out.bytesConsumed = value.bytesConsumed;
-    out.capabilityFingerprint = value.capabilityFingerprint;
-    out.programSemanticFingerprint = value.programSemanticFingerprint;
-    out.runtimeLineageFingerprint = value.runtimeLineageFingerprint;
-    out.tapDescriptorId = value.tapDescriptorId;
-    out.measurementSegmentGeneration = value.measurementSegmentGeneration;
-    out.sampleRate = value.sampleRate;
-    out.algorithmId = value.algorithmId;
-    out.algorithmVersion = value.algorithmVersion;
-    out.unitId = value.unitId;
-    out.targetStreamKindMask = value.targetStreamKindMask;
-    out.presentStreamKindMask = value.presentStreamKindMask;
-    out.rangeBegin = value.rangeBegin;
-    out.rangeEnd = value.rangeEnd;
-    out.gapInvalidWarmup = value.gapInvalidWarmup;
     return out;
 }
 
@@ -186,8 +146,6 @@ inline VNX::Monitor::MonitorCapabilities fromNative(const VnMonitorCapabilities&
     out.hardConsumerQueueBytes = value.hardConsumerQueueBytes;
     out.resolvedDerivedWorkItems = value.resolvedDerivedWorkItems;
     out.hardDerivedWorkItems = value.hardDerivedWorkItems;
-    out.resolvedRecorderQueueBytes = value.resolvedRecorderQueueBytes;
-    out.hardRecorderQueueBytes = value.hardRecorderQueueBytes;
     out.resolvedRemoteQueueBytes = value.resolvedRemoteQueueBytes;
     out.hardRemoteQueueBytes = value.hardRemoteQueueBytes;
     out.resolvedCaptureByteRate = value.resolvedCaptureByteRate;
@@ -218,18 +176,6 @@ inline VNX::Monitor::MonitorPollResult fromNative(const VnMonitorPollResult& val
     out.recordsRemaining = value.recordsRemaining;
     out.firstDeliverySequence = value.firstDeliverySequence;
     out.lastDeliverySequence = value.lastDeliverySequence;
-    return out;
-}
-
-inline VNX::Monitor::MonitorRecordingStatus fromNative(const VnMonitorRecordingStatus& value)
-{
-    VNX::Monitor::MonitorRecordingStatus out{};
-    out.state = value.state;
-    out.fileBytes = value.fileBytes;
-    out.lastCommittedChunk = value.lastCommittedChunk;
-    out.queueBytes = value.queueBytes;
-    out.recoveryNeeded = value.recoveryNeeded;
-    out.errorReason = value.errorReason;
     return out;
 }
 
@@ -299,13 +245,6 @@ inline VNX::Monitor::MonitorEffectiveCapturePlan fromNative(const VnMonitorEffec
     out.previousGeneration = value.previousGeneration;
     out.effectiveFromExecuteFrame = value.effectiveFromExecuteFrame;
     out.accepted = fromNative(value.accepted);
-    return out;
-}
-
-inline VNX::Monitor::MonitorCompareResult fromNative(const VnMonitorCompareResult& value)
-{
-    VNX::Monitor::MonitorCompareResult out{};
-    out.result = value.result;
     return out;
 }
 

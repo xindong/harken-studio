@@ -668,7 +668,7 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
     const auto currentHeader = HarkenTest::projectHeader(document);
     auto previousHeader = currentHeader;
     previousHeader.insert(QStringLiteral("studioVersion"), QStringLiteral("0.0.0"));
-    previousHeader.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION + 1);
+    previousHeader.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION + 1);
     document.insert(QStringLiteral("harkenDocument"), previousHeader);
     writeObject(projectPath_, document);
     ASSERT_TRUE(manager.loadProject(projectPath_));

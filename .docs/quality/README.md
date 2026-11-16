@@ -13,7 +13,7 @@
 
 当前唯一报告类型是 `compliance`，用于合规、隐私、License、发布边界和供应链巡检。
 
-Studio 的工程与 Pack sidecar 合同在 [`HarkenSchema/`](../../HarkenSchema/) 分树维护。普通 PR 可修改各树的 `current/`，只检查合同与生成器有效性，不以 `VERSION` 或整树哈希冻结开发内容。
+Studio 的工程格式与 Pack 元数据合同在 [`HarkenStudio/Schema/`](../../HarkenStudio/Schema/) 分树维护。普通 PR 可修改各树的 `current/`，只检查合同与生成器有效性，不以 `VERSION` 或整树哈希冻结开发内容。
 
 正式发布会独立决定各树复用当前代际还是换代。相同代际的兼容发布可以更新数字目录；发布分支先提交正式档案，开发验证完成后再构建、打包正式制品，不保存独立的 schema 发布回执。发布流程只检查正式合同、源码、生成代码、二进制与安装快照的一致性，不构建测试目标或运行开发测试。Git tag 与已生成制品不得覆盖，安装包不携带 `current/`。回流 main 检查合同有效性与历史合同兼容性，不要求 main 等同发布分支。命令与流程见 [Schema 发布与归档回流](../snapshot/schema-release.md)。
 

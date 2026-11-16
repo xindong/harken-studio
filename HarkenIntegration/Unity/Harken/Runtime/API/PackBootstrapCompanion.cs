@@ -14,6 +14,8 @@ namespace Harken
         private VnCanonicalPackSetMemberV2[] companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
         private VnCanonicalPackSetMemberResultV1[] companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
         private Dictionary<string, SharedPack> companionNames = new Dictionary<string, SharedPack>(StringComparer.Ordinal);
+        private PackCompanion initNames;
+        private ulong nameRevision;
         private Dictionary<(ulong Id, ulong Handle), RawCompanionLease> rawCompanionLeases =
             new Dictionary<(ulong, ulong), RawCompanionLease>();
 
@@ -24,17 +26,38 @@ namespace Harken
             internal RawCompanionLease(SharedPack owner, int count) { Owner = owner; Count = count; }
         }
 
-        internal void BindCompanionSource(PackSource source, string project)
+        internal void BindCompanionSource(PackSource source, string project, PackCompanion names)
         {
             companionSource = source;
             ProjectId = project;
+            initNames = names;
         }
 
-        internal void CompleteCompanionStartup(VnCanonicalPackSetActivationReportV1 report)
+        internal void CompleteCompanionStartup(VnCanonicalPackSetActivationReportV1 report, GameplayNames.Table names)
         {
             InitPack = new Pack(report.initHandle);
             SetRevision = report.resultSetRevision;
             StartupResult = VnResult.VN_OK;
+            GameplayNames.Publish(names);
+        }
+
+        private GameplayNames.Table PrepareNames(Dictionary<string, SharedPack> names,
+            Dictionary<SharedPack, CompanionInput> changes, ulong revision)
+        {
+            var actions = new List<KeyValuePair<string, GameplayNames.Action>>(names.Count);
+            foreach (var row in names)
+            {
+                SharedPack owner = row.Value;
+                GameplayNames.Action action;
+                if (changes.TryGetValue(owner, out CompanionInput input))
+                    action = new GameplayNames.Action(input.Names.RootId, ++revision,
+                        input.Facts.executionFingerprint, owner);
+                else
+                    action = new GameplayNames.Action(owner.Names.RootId, owner.NameRevision,
+                        owner.CallableFingerprint, owner);
+                actions.Add(new KeyValuePair<string, GameplayNames.Action>(row.Key, action));
+            }
+            return GameplayNames.Prepare(VnObjectId.Parse(ProjectId), initNames, actions);
         }
 
         /// <summary>
@@ -205,7 +228,7 @@ namespace Harken
                 {
                     uint operation = expected.IsValid && owner.ContentHash == input.Facts.contentHash &&
                         owner.ByteCount == input.Bytes.Length
-                        ? VnConstants.VN_PACK_MEMBER_NAME_ONLY : VnConstants.VN_PACK_MEMBER_CONTENT;
+                        ? VnConstants.VN_PACK_MEMBER_KEEP : VnConstants.VN_PACK_MEMBER_CONTENT;
                     members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT,
                         expected, operation, input.Bytes, input.Names);
                 }
@@ -219,6 +242,7 @@ namespace Harken
                 companionKeepMembers = keepMembers;
                 companionKeepResults = keepResults;
             }
+            GameplayNames.Table names = PrepareNames(nextNames, changes, nameRevision);
             mutationPhase = MutationPhase.ApplyingNative;
             VnResult result = CompanionNative.Activate(members, InitPack, SetRevision, out var report, out var rows);
             if (result != VnResult.VN_OK) return result;
@@ -233,6 +257,14 @@ namespace Harken
                     owners[i].Names = input.Names;
                 }
             }
+            foreach (var action in names.Actions.Values)
+                if (changes.ContainsKey(action.Owner))
+                {
+                    action.Owner.NameRevision = action.Revision;
+                    action.Owner.CallableFingerprint = action.Fingerprint;
+                    nameRevision = Math.Max(nameRevision, action.Revision);
+                }
+            GameplayNames.Publish(names);
             companionOwners = owners;
             packs = nextPacks;
             companionNames = nextNames;
@@ -425,7 +457,9 @@ namespace Harken
                 var candidate = new PackBootstrapSession(default, startupIds ?? Array.Empty<ulong>(), inspection,
                     source.Root, source.Language, initBytes: init.Bytes);
                 candidate.companionLocators = locators;
-                candidate.BindCompanionSource(source, init.Facts.projectId.ToString());
+                candidate.BindCompanionSource(source, init.Facts.projectId.ToString(), init.Names);
+                GameplayNames.Table names = GameplayNames.Prepare(init.Facts.projectId, init.Names,
+                    Array.Empty<KeyValuePair<string, GameplayNames.Action>>());
                 var members = new[] { new CompanionMember(init.Facts.packStableId,
                     VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names) };
                 result = source.Validate(init);
@@ -439,7 +473,7 @@ namespace Harken
                     VnResult terminated = HarkenEngine.Term();
                     return terminated == VnResult.VN_OK ? result : terminated;
                 }
-                candidate.CompleteCompanionStartup(report);
+                candidate.CompleteCompanionStartup(report, names);
                 session = candidate;
                 return VnResult.VN_OK;
             }

@@ -8,7 +8,7 @@
 #include "PathUtils.h"
 #include "PlatformProfile.h"
 #include "WaveformCache.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "../ProjectManager.h"
 #include "../PlatformContextService.h"
 #include <QFutureWatcher>

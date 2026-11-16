@@ -14,6 +14,7 @@
 // on; the four snapshot counters and the per-outcome log-ring records; and
 // one all-or-nothing refusal per verb proving the old content stays fully in
 // force.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
@@ -96,15 +97,15 @@ struct PackEntrySpec {
 };
 
 std::uint64_t AlignUp64(std::uint64_t value) {
-    const std::uint64_t align = harken::kPackBlobAlign;
+    const std::uint64_t align = HK_PACK_BLOB_ALIGN;
     return (value + align - 1) / align * align;
 }
 
 std::vector<std::uint8_t> BuildPackBytes(
     const std::vector<PackEntrySpec>& specs) {
-    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
+    const std::uint64_t tocOffset = harken::kPackBytes<HkPackMediaFileHeader>;
     const std::uint64_t tocBytes =
-        static_cast<std::uint64_t>(specs.size()) * harken::kPackMediaBytes;
+        static_cast<std::uint64_t>(specs.size()) * harken::kPackBytes<HkPackMedia>;
     std::vector<std::uint64_t> blobOffsets(specs.size());
     std::uint64_t cursor = AlignUp64(tocOffset + tocBytes);
     std::uint64_t fileBytes = tocOffset + tocBytes;
@@ -127,7 +128,7 @@ std::vector<std::uint8_t> BuildPackBytes(
         entry.soundId = spec.id;
         entry.sampleRate = kRate;
         entry.channelCount = 1;
-        entry.sampleFormat = harken::kPackSampleFormatF32Planar;
+        entry.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
         entry.frameCount = spec.planar.size();
         entry.blobOffset = blobOffsets[i];
         entry.blobBytes = blobBytes;
@@ -137,18 +138,18 @@ std::vector<std::uint8_t> BuildPackBytes(
         entry.flags = 0;
         entry.loopStartFrame = 0;
         entry.loopEndFrame = 0;
-        harken::SerializePackMedia(
-            entry, toc.data() + i * harken::kPackMediaBytes);
+        harken::SerializePackRow<HkPackMedia>(
+            entry, toc.data() + i * harken::kPackBytes<HkPackMedia>);
     }
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
     harken::PackMediaFileHeader header;
-    header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackMediaFileHeaderBytes;
+    header.formatVersion = HK_PACK_FORMAT_VERSION;
+    header.headerBytes = harken::kPackBytes<HkPackMediaFileHeader>;
     header.fileBytes = fileBytes;
     header.entryCount = static_cast<std::uint32_t>(specs.size());
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackMediaFileHeader(header, bytes.data());
+    harken::SerializePackRow<HkPackMediaFileHeader>(header, bytes.data());
     return bytes;
 }
 

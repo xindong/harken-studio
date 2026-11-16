@@ -31,7 +31,8 @@ namespace Bridge {
 
 enum class EngineDeviceMode : uint8_t {
     Real,
-    Null
+    Null,
+    NullRealtime
 };
 
 //==============================================================================
@@ -241,7 +242,7 @@ public:
     uint64_t playByName(const QString& name);
     uint64_t playByName3D(const QString& name, float x, float y, float z);
     bool hasActionProgram(harkenstudio::ObjectId actionId) const;
-    bool stopPlayback(uint64_t handle, float fadeMs);
+    EngineResult stopPlayback(uint64_t handle, float fadeMs);
     bool stopAll(float fadeMs);
     bool hasCurrentWorldPlayableConsumers() const;
     void pumpNullMixer(std::uint32_t blockCount);
@@ -259,6 +260,9 @@ public:
 
     // -- packs / prepare --
     bool loadPack(const QString& path, EngineResult* outResult = nullptr);
+    bool loadCanonicalPack(const QString& path, const QByteArray& bytes,
+                           uint64_t packStableId, uint32_t packKind,
+                           EngineResult* outResult = nullptr);
     bool unloadPack(const QString& path, EngineResult* outResult = nullptr);
     uint32_t loadedPackCount() const;
     QStringList loadedPackPaths() const;

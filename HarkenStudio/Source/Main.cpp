@@ -156,8 +156,8 @@ int main(int argc, char* argv[])
         qputenv("QT_QPA_PLATFORM", "offscreen");
         QTemporaryDir settingsRoot;
         QApplication app(argc, argv);
-        app.setOrganizationName(QStringLiteral("HarkenSchemaCompatibilityProbe"));
-        app.setApplicationName(QStringLiteral("HarkenSchemaCompatibilityProbe"));
+        app.setOrganizationName(QStringLiteral("HarkenStudioSchemaCompatibilityProbe"));
+        app.setApplicationName(QStringLiteral("HarkenStudioSchemaCompatibilityProbe"));
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsRoot.path());
         qputenv("HARKEN_HUB_USER_ROOT", settingsRoot.filePath(QStringLiteral("hub")).toUtf8());
@@ -219,7 +219,7 @@ int main(int argc, char* argv[])
             report[QStringLiteral("schemaSnapshotHash")] =
                 QString::fromLatin1(VNX::SchemaBuild::kSnapshotHash);
             report[QStringLiteral("packSchemaVersion")] =
-                HARKEN_PACK_SCHEMA_VERSION;
+                HARKEN_PACK_METADATA_VERSION;
             if (!schemaError.isEmpty()) report[QStringLiteral("schemaError")] = schemaError;
             const QByteArray json =
                 QJsonDocument(report).toJson(QJsonDocument::Compact);

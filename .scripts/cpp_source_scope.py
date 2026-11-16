@@ -19,8 +19,8 @@ TRANSLATION_UNIT_SCOPES = frozenset(
     {"runtime", "tooling", "runtime_tests", "runtime_benchmarks", "editor_tests"}
 )
 INVENTORY_ROOTS = (
-    Path("HarkenEngine/Source/Runtime"),
-    Path("HarkenEngine/Source/Tooling"),
+    Path("HarkenEngine/Source/Core"),
+    Path("HarkenEngine/Source/Development"),
     Path("HarkenEngine/Tool"),
     Path("HarkenEngine/Test/UnitTest"),
     Path("HarkenEngine/Test/E2E"),
@@ -54,10 +54,10 @@ def translation_unit_scope(path: Path, repo_root: Path) -> str | None:
         return None
     if parts[:4] == ("harkenengine", "test", "e2e", "abihistoryclient"):
         return None
-    if parts[:3] == ("harkenengine", "source", "runtime"):
+    if parts[:3] == ("harkenengine", "source", "core"):
         return "runtime"
     if (
-        parts[:3] == ("harkenengine", "source", "tooling")
+        parts[:3] == ("harkenengine", "source", "development")
         or parts[:2] == ("harkenengine", "tool")
     ):
         return "tooling"

@@ -1,6 +1,6 @@
 #include "MonitorSessionCompareUi.h"
 #include "Monitor/MonitorTypes.h"
-#include "RuntimeBridge/MonitorBridge.h"
+#include "MonitorSessionCompare.h"
 
 namespace VNX {
 namespace Monitor {
@@ -79,19 +79,9 @@ MonitorCompareUiState projectCompareUi(const MonitorCompareUiInput& input)
 
     desc.left = &input.left;
     desc.right = &input.right;
-    MonitorCompareResult out {};
-
-    state.callResult = HarkenEditor::Bridge::Monitoring::compareSessions(&desc, &out);
-    if (state.callResult != kOk)
-    {
-        state.compareResult = kMonitorCompareMissingData;
-        state.summary.reason = "Compare call failed";
-    }
-    else
-    {
-        state.compareResult = out.result;
-        state.summary.capability = "Vn_MonitorCompareSessions";
-    }
+    state.callResult = kOk;
+    state.compareResult = compareSessions(desc).result;
+    state.summary.capability = "MonitorSessionCompare";
     state.summary.result = state.compareResult;
     state.summary.resultText = compareResultText(state.compareResult);
     if (state.summary.reason.empty())

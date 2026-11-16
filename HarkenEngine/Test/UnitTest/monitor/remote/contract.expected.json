@@ -9,7 +9,7 @@
   "spkiBytes": 32,
   "messageCounterStart": 1,
   "wireOpcodeCount": 116,
-  "monitorFunctionCount": 24,
+  "monitorFunctionCount": 20,
   "statuses": {
     "disabled": "VN_OK",
     "local_acl": "VN_OK",
@@ -62,16 +62,6 @@
       "grantGranted": 8,
       "grantStatus": "VN_OK",
       "denyRequested": 8,
-      "denyGranted": 0,
-      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
-    },
-    {
-      "name": "record",
-      "bit": 16,
-      "grantRequested": 16,
-      "grantGranted": 16,
-      "grantStatus": "VN_OK",
-      "denyRequested": 16,
       "denyGranted": 0,
       "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
     },

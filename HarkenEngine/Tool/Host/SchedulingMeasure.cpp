@@ -7,6 +7,7 @@
 #include "SchedulingMeasureOptions.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "RenderSlicer.h"

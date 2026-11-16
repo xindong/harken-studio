@@ -36,9 +36,8 @@ FIXED_CHILD_ENVIRONMENT = {
 }
 REQUIRED_SOURCE_CONTRACT_PATHS = (
     "CMakeLists.txt",
-    "HarkenEngine/Source/Tooling/Binding/gen_binding.py",
-    "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
-    "HarkenEngine/Source/Tooling/Effects/gen_effect_registry.py",
+    "HarkenIntegration/Unity/Binding/gen_binding.py",
+    "HarkenEngine/Tool/HostControl/wire/gen_wire.py",
     "HarkenIntegration/Test/ContractTest/AbiFidelity.csproj",
 )
 SOURCE_VOLATILE_PREFIXES = (".temp",)
@@ -72,9 +71,9 @@ M1_EVIDENCE_POLICY = {
                 "x64",
                 "v143,version=14.42.34433",
                 "-DCMAKE_SYSTEM_VERSION=10.0.26100.0",
-                "-DHARKEN_BUILD_CORE=ON",
+                "-DHARKEN_BUILD_ENGINE=ON",
                 "-DHARKEN_BUILD_TOOLS=ON",
-                "-DHARKEN_BUILD_SHARED=ON",
+                "-DHARKEN_BUILD_ENGINE_DEV=ON",
                 "-DHARKEN_BUILD_EDITOR=OFF",
                 "-DHARKEN_BUILD_EDITOR_UNIT_TESTS=OFF",
                 "-DHARKEN_BUILD_HUB=OFF",
@@ -99,8 +98,10 @@ M1_EVIDENCE_POLICY = {
                     "harken_render_worker_wake_fallback_tests.exe"
                 ),
                 "build/vs/bin/Debug/harken_shared_load_smoke.exe",
-                "build/vs/bin/Debug/HarkenCore.dll",
-                "build/vs/bin/Debug/HarkenCore.pdb",
+                "build/vs/bin/Debug/HarkenEngine.dll",
+                "build/vs/bin/Debug/HarkenEngineDev.dll",
+                "build/vs/bin/Debug/HarkenEngine.pdb",
+                "build/vs/bin/Debug/HarkenEngineDev.pdb",
             ],
         },
         {
@@ -114,7 +115,8 @@ M1_EVIDENCE_POLICY = {
                     "harken_render_worker_wake_fallback_tests.exe"
                 ),
                 "build/vs/bin/Release/harken_shared_load_smoke.exe",
-                "build/vs/bin/Release/HarkenCore.dll",
+                "build/vs/bin/Release/HarkenEngine.dll",
+                "build/vs/bin/Release/HarkenEngineDev.dll",
             ],
         },
         {
@@ -125,7 +127,6 @@ M1_EVIDENCE_POLICY = {
             "required_argv_contains": ["-N", "Debug"],
             "required_stdout_contains": [
                 "harken_shared_load_smoke",
-                "effect_registry_manifest_check",
             ],
         },
         {
@@ -167,16 +168,6 @@ M1_EVIDENCE_POLICY = {
             "count": 1,
             "executable": "python",
             "required_argv_contains": ["gen_wire.py", "--check"],
-        },
-        {
-            "kind": "generator-effects",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "python",
-            "required_argv_contains": [
-                "gen_effect_registry.py",
-                "--check",
-            ],
         },
         {
             "kind": "sdk-contract-managed",
@@ -944,9 +935,9 @@ def prepare(args: argparse.Namespace) -> int:
             "CMAKE_GENERATOR_TOOLSET": "v143,version=14.42.34433",
             "CMAKE_HOME_DIRECTORY": str(source_root).replace("\\", "/"),
             "CMAKE_SYSTEM_VERSION": "10.0.26100.0",
-            "HARKEN_BUILD_CORE": "ON",
+            "HARKEN_BUILD_ENGINE": "ON",
             "HARKEN_BUILD_TOOLS": "ON",
-            "HARKEN_BUILD_SHARED": "ON",
+            "HARKEN_BUILD_ENGINE_DEV": "ON",
             "HARKEN_BUILD_EDITOR": "OFF",
             "HARKEN_BUILD_EDITOR_UNIT_TESTS": "OFF",
             "HARKEN_BUILD_HUB": "OFF",
@@ -1092,7 +1083,7 @@ def command_environment(
                     "HARKEN_NATIVE_DIR must be the qualified Release "
                     f"directory: {expected_native_dir}"
                 )
-            native_dll = native_dir / "HarkenCore.dll"
+            native_dll = native_dir / "HarkenEngineDev.dll"
             if not native_dll.is_file():
                 raise FileNotFoundError(
                     f"native Runtime DLL is missing: {native_dll}"
@@ -1387,7 +1378,8 @@ def record_external(args: argparse.Namespace) -> int:
             run_root / "build" / "vs" / "bin" / configuration
         ).resolve()
         required_binary_paths = {
-            (config_dir / "HarkenCore.dll").resolve(),
+            (config_dir / "HarkenEngine.dll").resolve(),
+            (config_dir / "HarkenEngineDev.dll").resolve(),
             (config_dir / "harken_runtime_tests.exe").resolve(),
             (
                 config_dir
@@ -1410,7 +1402,7 @@ def record_external(args: argparse.Namespace) -> int:
                 f"{missing_binaries}"
             )
         if configuration == "Debug":
-            required_pdb = (config_dir / "HarkenCore.pdb").resolve()
+            required_pdb = (config_dir / "HarkenEngine.pdb").resolve()
             recorded_pdb_paths = {
                 (run_root / item["path"]).resolve()
                 for item in artifacts
@@ -2150,7 +2142,6 @@ def validate_record_scope(
         "ctest-release": "ctest",
         "generator-binding": "python",
         "generator-wire": "python",
-        "generator-effects": "python",
         "sdk-contract-managed": "dotnet",
         "sdk-contract-native": "dotnet",
         "perf-compressor-matrix": "python",
@@ -2225,28 +2216,18 @@ def validate_record_scope(
     generator_paths = {
         "generator-binding": (
             source_root
-            / "HarkenEngine"
-            / "Source"
-            / "Tooling"
+            / "HarkenIntegration"
+            / "Unity"
             / "Binding"
             / "gen_binding.py"
         ),
         "generator-wire": (
             source_root
             / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Remote"
+            / "Tool"
+            / "HostControl"
             / "wire"
             / "gen_wire.py"
-        ),
-        "generator-effects": (
-            source_root
-            / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Effects"
-            / "gen_effect_registry.py"
         ),
     }
     for kind, expected in generator_paths.items():
@@ -2438,9 +2419,9 @@ def validate_record_scope(
             "-T",
             "v143,version=14.42.34433",
             "-DCMAKE_SYSTEM_VERSION=10.0.26100.0",
-            "-DHARKEN_BUILD_CORE=ON",
+            "-DHARKEN_BUILD_ENGINE=ON",
             "-DHARKEN_BUILD_TOOLS=ON",
-            "-DHARKEN_BUILD_SHARED=ON",
+            "-DHARKEN_BUILD_ENGINE_DEV=ON",
             "-DHARKEN_BUILD_EDITOR=OFF",
             "-DHARKEN_BUILD_EDITOR_UNIT_TESTS=OFF",
             "-DHARKEN_BUILD_HUB=OFF",
@@ -2479,10 +2460,6 @@ def validate_record_scope(
         ],
         "generator-wire": [
             str(generator_paths["generator-wire"].resolve()),
-            "--check",
-        ],
-        "generator-effects": [
-            str(generator_paths["generator-effects"].resolve()),
             "--check",
         ],
         "sdk-contract-managed": [

@@ -3,7 +3,7 @@
 
 #include "BusTopologySync.h"
 #include "DiagnosticsBridge.h"
-#include "PackagingBridge.h"
+#include "MediaRegistry.h"
 #include "RuntimeLink.h"
 
 #include <harken/Harken.h>
@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -400,9 +401,12 @@ bool EngineSession::hasActionProgram(harkenstudio::ObjectId actionId) const
     return Detail::runtimeHasActionProgram(actionId);
 }
 
-bool EngineSession::stopPlayback(uint64_t handle, float fadeMs)
+EngineResult EngineSession::stopPlayback(uint64_t handle, float fadeMs)
 {
-    return Detail::runtimeStopPlayback(handle, fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
+    if (!std::isfinite(fadeMs) || fadeMs < 0.0f)
+        return kEngineInvalidArg;
+    return Detail::runtimeStopPlayback(handle, static_cast<uint32_t>(
+        std::min<double>(fadeMs, std::numeric_limits<uint32_t>::max())));
 }
 
 bool EngineSession::stopAll(float fadeMs)
@@ -434,6 +438,12 @@ bool EngineSession::setListenerTransform(float px, float py, float pz,
 }
 
 bool EngineSession::loadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeLoadPack(path, outResult); }
+bool EngineSession::loadCanonicalPack(const QString& path, const QByteArray& bytes,
+                                      uint64_t packStableId, uint32_t packKind,
+                                      EngineResult* outResult)
+{
+    return Detail::runtimeLoadCanonicalPack(path, bytes, packStableId, packKind, outResult);
+}
 bool EngineSession::unloadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeUnloadPack(path, outResult); }
 uint32_t EngineSession::loadedPackCount() const { return Detail::runtimeLoadedPackCount(); }
 QStringList EngineSession::loadedPackPaths() const { return Detail::runtimeLoadedPackPaths(); }

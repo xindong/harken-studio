@@ -5,7 +5,7 @@
 #include "MediaPool.h"
 #include "PathUtils.h"
 #include "WaveformCache.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "../ProjectDataPolicy.h"
 #include "../NameValidator.h"
 #include "../ProjectManager.h"

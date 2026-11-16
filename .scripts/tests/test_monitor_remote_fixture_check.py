@@ -12,8 +12,7 @@ REMOTE_SCRIPT = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Runtime"
-    / "api"
+    / "Development"
     / "monitor"
     / "fixtures"
     / "generate_remote_fixtures.py"
@@ -26,40 +25,15 @@ ABI_PATH = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Tooling"
-    / "Abi"
+    / "Core"
+    / "api"
+    / "abi"
     / "generated"
     / "harken_abi_manifest.g.json"
 )
 
 
 class MonitorRemoteFixtureCheckTest(unittest.TestCase):
-    def test_compare_sessions_is_required_independent_of_count(self) -> None:
-        names = MODULE.parse_monitor_functions(
-            {
-                "contract": {
-                    "nativeAbi": {
-                        "functions": [
-                            {"name": "Vn_MonitorPoll"},
-                            {"name": "Vn_MonitorCompareSessions"},
-                        ]
-                    }
-                }
-            }
-        )
-        self.assertEqual(
-            ["Vn_MonitorPoll", "Vn_MonitorCompareSessions"],
-            names,
-        )
-
-    def test_missing_compare_sessions_fails_even_when_count_matches_old_pin(self) -> None:
-        functions = [{"name": "Vn_Monitor%02d" % index} for index in range(19)]
-        with self.assertRaises(SystemExit) as raised:
-            MODULE.parse_monitor_functions(
-                {"contract": {"nativeAbi": {"functions": functions}}}
-            )
-        self.assertIn("Vn_MonitorCompareSessions", str(raised.exception))
-
     def test_event_session_apis_do_not_shift_monitor_capability_bits(self) -> None:
         names = MODULE.parse_monitor_functions(
             {
@@ -105,7 +79,7 @@ class MonitorRemoteFixtureCheckTest(unittest.TestCase):
                 }
             )
 
-    def test_checked_in_allowlist_matches_abi_and_keeps_compare(self) -> None:
+    def test_checked_in_allowlist_matches_abi(self) -> None:
         abi = json.loads(ABI_PATH.read_text(encoding="utf-8"))
         names = MODULE.parse_monitor_functions(abi)
         allowlist = json.loads(
@@ -116,7 +90,6 @@ class MonitorRemoteFixtureCheckTest(unittest.TestCase):
         )
         self.assertEqual(names, allowlist["names"])
         self.assertEqual(len(names), expected["monitorFunctionCount"])
-        self.assertIn("Vn_MonitorCompareSessions", names)
 
     def test_abi_growth_without_allowlist_update_fails_check(self) -> None:
         files = MODULE.artifacts()

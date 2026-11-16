@@ -1,9 +1,10 @@
 #ifndef HARKEN_TEST_MONITOR_EXECUTION_TEST_SUPPORT_H
 #define HARKEN_TEST_MONITOR_EXECUTION_TEST_SUPPORT_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorExecutionCodec.h"
-#include "../UnitTest/monitor_fixture_decode.h"
+#include "../UnitTest/MonitorFixtureDecode.h"
 #include <gtest/gtest.h>
 #include <array>
 #include <vector>

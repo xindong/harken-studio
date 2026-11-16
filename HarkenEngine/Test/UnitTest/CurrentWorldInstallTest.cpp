@@ -10,11 +10,12 @@
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
 #include "harken/param/ParamTargetTable.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <gtest/gtest.h>
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -278,9 +279,9 @@ TEST(CurrentWorldInstall, TruncatedNestedCountsDoNotAllocateClaimedRows) {
     harken::CurrentWorldBodyImage image;
     ASSERT_TRUE(image.Decode(bytes.data(), bytes.size(), 18,
                             harken::CurrentWorldDecodeMode::StrictArtifact));
-    constexpr std::size_t property = harken::kPackBodyWorldPrefixBytes +
-        harken::kPackBodyWorldActionCapacityBytes + 4 +
-        harken::kPackBodyWorldCapacityBytes + 16;
+    constexpr std::size_t property = harken::kPackBytes<HkPackBodyWorldPrefix> +
+        harken::kPackBytes<HkPackBodyWorldActionCapacity> + 4 +
+        harken::kPackBytes<HkPackBodyWorldCapacity> + 16;
     // First property's layer ancestors, sends, effect nodes/edges and structural ancestors.
     for (const std::size_t offset : {property + 64, property + 72 + 91,
                                     property + 72 + 103, property + 72 + 107,
@@ -347,8 +348,8 @@ TEST(CurrentWorldInstall, LargeActionUsesDeclaredCountsAndPreservesAcceptedDecod
     EXPECT_EQ(accepted, decoded.ProductionView());
     auto excessiveCount = bytes;
     const auto countOffset = bytes.size() -
-        static_cast<std::size_t>(stepCount) * harken::kPackBodyWorldActionStepBytes -
-        harken::kPackBodyWorldActionHeaderBytes + 24;
+        static_cast<std::size_t>(stepCount) * harken::kPackBytes<HkPackBodyWorldActionStep> -
+        harken::kPackBytes<HkPackBodyWorldActionHeader> + 24;
     for (std::uint32_t byte = 0; byte < 4; ++byte) excessiveCount[countOffset + byte] = 0xff;
     EXPECT_FALSE(decoded.Decode(excessiveCount.data(), excessiveCount.size(),
         harken::kCurrentWorldShippingBodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
@@ -452,6 +453,29 @@ TEST(CurrentWorldInstall, GroupSnapshotsValidateRangesAndRoutingAsAWhole) {
     sends[1].targetBusId = harkentest::ObjectId(3);
     sends[1].sendLevel = 24.01f;
     EXPECT_FALSE(harken::ValidateResolvedSectionGroupPayloadV1(payload));
+}
+
+TEST(CurrentWorldInstall, PlaybackPropertiesRefuseValuesOutsideThePublishedRange) {
+    const auto accepts = [](std::uint32_t slot, std::uint32_t bits) {
+        RunnableWorld image;
+        image.properties[0].payload.presentMask |= UINT64_C(1) << slot;
+        image.properties[0].payload.values[slot].bits = bits;
+        image.RefreshSemanticRows();
+        return harken::ValidateCurrentWorldV1(image.world) == harken::WorldInstallStatus::Ok;
+    };
+    const auto f32 = [](float value) { return std::bit_cast<std::uint32_t>(value); };
+    const struct { std::uint32_t slot; float minimum; float maximum; } floats[] = {
+        {HK_PACK_PROPERTY_VOLUME - 1, HK_PACK_PROPERTY_VOLUME_MIN, HK_PACK_PROPERTY_VOLUME_MAX},
+        {HK_PACK_PROPERTY_PITCH - 1, HK_PACK_PROPERTY_PITCH_MIN, HK_PACK_PROPERTY_PITCH_MAX},
+    };
+    for (const auto& range : floats) {
+        EXPECT_TRUE(accepts(range.slot, f32(range.minimum))) << range.slot;
+        EXPECT_TRUE(accepts(range.slot, f32(range.maximum))) << range.slot;
+        EXPECT_FALSE(accepts(range.slot, f32(std::nextafter(range.minimum, -INFINITY)))) << range.slot;
+        EXPECT_FALSE(accepts(range.slot, f32(std::nextafter(range.maximum, INFINITY)))) << range.slot;
+    }
+    EXPECT_TRUE(accepts(HK_PACK_PROPERTY_LOOP_COUNT - 1, HK_PACK_PROPERTY_LOOP_COUNT_MAX));
+    EXPECT_FALSE(accepts(HK_PACK_PROPERTY_LOOP_COUNT - 1, HK_PACK_PROPERTY_LOOP_COUNT_MAX + 1u));
 }
 
 TEST(CurrentWorldInstall, StructuralContributionsExcludeGroupsStreamingAndEffects) {

@@ -1,7 +1,7 @@
 # Harken Studio — the Qt front end. Everything under this directory is
-# editor-side: it is never linked into harken_core and carries its own
-# third-party closure. Engine contact is isolated in Source/RuntimeBridge and
-# uses the harken_core in-process C API.
+# editor-side and carries its own third-party closure. Engine contact is
+# isolated in Source/RuntimeBridge, which links only the published
+# Harken::EngineDev.
 
 # Editor tree opts into C++ exceptions. Runtime stays exception-disabled
 # (Audio Thread no-throw discipline); Editor is Qt6 GUI and uses try/catch
@@ -13,6 +13,56 @@ if(MSVC)
     add_compile_options(/EHsc /permissive- /FS)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
+
+if(NOT TARGET Harken::EngineDev)
+    message(FATAL_ERROR "Harken Studio requires the Harken::EngineDev target")
+endif()
+
+set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Schema")
+foreach(_format_tree Project PackMetadata)
+    set(_format_manifest "${HARKEN_SCHEMA_SOURCE_DIR}/${_format_tree}/manifest.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_format_manifest}")
+    file(READ "${_format_manifest}" _format_json)
+    string(JSON _format_count LENGTH "${_format_json}" published)
+    math(EXPR _format_last "${_format_count} - 1")
+    string(JSON _format_version GET "${_format_json}" published ${_format_last})
+    if(NOT _format_version MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "${_format_manifest}: the last published version must be a positive integer")
+    endif()
+    set(_format_version_${_format_tree} ${_format_version})
+endforeach()
+add_compile_definitions(
+    HARKEN_PROJECT_SCHEMA_VERSION=${_format_version_Project}
+    HARKEN_PACK_METADATA_VERSION=${_format_version_PackMetadata})
+
+set(HARKEN_SCHEMA_TOOL "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/SchemaArchive/schema_archive.py")
+set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/SchemaArchive/generated")
+set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
+set(HARKEN_SCHEMA_PUBLISHED_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/schema")
+set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaGenerated.h")
+set(HARKEN_SCHEMA_GENERATED_BUILD_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/SchemaBuildGenerated.h")
+set(HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.h")
+set(HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.cpp")
+harken_add_python_regen_target(
+    harken_schema_regen
+    "${HARKEN_SCHEMA_TOOL}"
+    "Regenerating the Studio Schema code and published snapshot"
+    --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+    --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+    --publish "${HARKEN_SCHEMA_PUBLISHED_DIR}")
+
+function(harken_publish_studio_schema target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:${target}>/schema"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${HARKEN_SCHEMA_PUBLISHED_DIR}"
+            "$<TARGET_FILE_DIR:${target}>/schema"
+        COMMENT "Publishing the Studio Schema snapshot"
+        VERBATIM)
+endfunction()
 
 # Binary output directories are set globally at the top level (bin/ for
 # runtime,  lib/ for archives); the editor exe, the engine DLL, the deployed
@@ -196,6 +246,7 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/EditorActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AuditionActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SystemActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/RemoteActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ContainerActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SpatialActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActions.cpp
@@ -305,8 +356,10 @@ endif()
 # Runtime bridge -- the only sanctioned editor target that may talk to the
 # engine. Must precede Source/Core: harken_editor_foundation links it; all
 # editor runtime access goes through it.
+add_subdirectory(Source/Tooling)
 include(Source/Tooling/Harkenizer/CompilerClient.cmake)
 add_subdirectory(Source/RuntimeBridge)
+add_subdirectory(Source/Core/Build)
 add_subdirectory(Source/Tooling/Harkenizer/Core)
 include(Source/Tooling/Harkenizer/BuildIdentity.cmake)
 add_subdirectory(Source/Monitor)
@@ -521,28 +574,11 @@ if(WIN32)
     target_link_libraries(harken_studio_cli PRIVATE ole32 shell32)
 endif()
 
-add_custom_command(TARGET harken_studio_cli POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
-)
-endif()
-
-if(NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "Python 3 is required to publish the Studio Schema snapshot")
+harken_publish_studio_schema(harken_studio_cli)
 endif()
 
 if(HARKEN_BUILD_EDITOR)
-add_custom_command(TARGET harken_editor POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_editor>/schema"
-    COMMENT "Publishing the Studio Schema build snapshot"
-)
+harken_publish_studio_schema(harken_editor)
 
 endif()
 
@@ -618,23 +654,13 @@ if(APPLE AND HARKEN_BUILD_EDITOR)
     if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
         message(FATAL_ERROR "Qt offscreen platform plugin is required for Studio Schema verification")
     endif()
-    find_program(MACDEPLOYQT_EXE macdeployqt
-        HINTS ${Qt6_DIR}/../../../bin
-        REQUIRED)
-
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"
-        COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_SOURCE_DIR}/.scripts/release/deploy_macos_bundle.py"
-            --build-dir "${CMAKE_BINARY_DIR}"
-            --bundle "$<TARGET_BUNDLE_DIR:harken_editor>"
-            --tool "${MACDEPLOYQT_EXE}"
-            --configuration "$<CONFIG>"
-        COMMENT "Deploying Qt runtime via macdeployqt"
+        COMMENT "Copying the Qt offscreen platform plugin into the bundle"
     )
 
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
@@ -705,3 +731,7 @@ foreach(_harken_headless_target harken_studio_core harken_studio_cli)
         harken_verify_headless_dependencies(${_harken_headless_target})
     endif()
 endforeach()
+
+if(HARKEN_BUILD_EDITOR_UNIT_TESTS)
+    add_subdirectory(Test)
+endif()

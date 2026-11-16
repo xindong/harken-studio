@@ -60,7 +60,7 @@ namespace Harken.Unity.Tests
 #if HARKEN_SDK_TEST_NULL_PUMP
         [System.Runtime.InteropServices.DllImport(HarkenNative.LibraryName,
             CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
-        private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
+        private static extern void VnPreview_PumpNullMixer(uint blockCount);
 
         [UnityTest]
         public IEnumerator VariableComponentRejectsStaleCatalogAndPreservesMatchingNameBinding()
@@ -116,7 +116,7 @@ namespace Harken.Unity.Tests
             for (int i = 0; i < 32; ++i)
             {
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
             }
             Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
             var query = new VnVariableQueryDescV1
@@ -185,7 +185,7 @@ namespace Harken.Unity.Tests
             for (int i = 0; i < 32; ++i)
             {
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
             }
             Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
             Assert.That(Values.QueryVariable(in query, ref value), Is.EqualTo(VnResult.VN_OK));

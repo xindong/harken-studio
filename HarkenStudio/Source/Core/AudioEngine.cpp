@@ -11,10 +11,12 @@
 #include "RuntimeSyncCoordinator.h"
 #include "HarkenMath.h"
 #include "RuntimeBridge/CurrentWorldSyncBridge.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
 #include "RuntimeBridge/PreviewBridge.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
+#include <harken_studio_build/PackImage.h>
 #include "VariableRehearsal.h"
 
 
@@ -24,6 +26,8 @@
 #include <mutex>
 #include <thread>
 #include <QDateTime>
+#include <QFile>
+#include <QFileInfo>
 #include <QDebug>
 #include <QCoreApplication>
 #include <QThread>
@@ -32,17 +36,18 @@
 namespace VNX {
 
 namespace Bridge = HarkenEditor::Bridge;
+namespace Build = HarkenEditor::Build;
 
 struct CurrentWorldCompilation {
     struct Job {
         Bridge::CurrentWorldSyncToken token;
-        Bridge::CurrentWorldSyncRequestPtr request;
-        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+        Build::CurrentWorldSyncRequestPtr request;
+        std::vector<Build::CurrentWorldScalarUpdate> updates;
     };
     struct Result {
         Bridge::CurrentWorldSyncToken token;
-        Bridge::CurrentWorldSyncRequestPtr request;
-        Bridge::CurrentWorldCompileResult compiled;
+        Build::CurrentWorldSyncRequestPtr request;
+        Build::CurrentWorldCompileResult compiled;
     };
 
     CurrentWorldCompilation() : worker([this] { run(); }) {}
@@ -91,7 +96,7 @@ struct CurrentWorldCompilation {
     }
 
     void run() {
-        Bridge::CurrentWorldRequestCache cache;
+        Build::CurrentWorldRequestCache cache;
         for (;;) {
             Job job;
             {
@@ -125,7 +130,7 @@ struct CurrentWorldCompilation {
             try {
                 result.request = cache.update(std::move(job.request), job.updates, job.token);
                 if (result.request)
-                    result.compiled = Bridge::compileCurrentWorldRequest(*result.request, true);
+                    result.compiled = Build::compileCurrentWorldRequest(*result.request, true);
             } catch (...) {
                 result.compiled.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
             }
@@ -154,7 +159,7 @@ static_assert(static_cast<uint8_t>(AudioEngine::ExecErrorDomain::Unclassified)
 
 namespace {
 
-bool preparedSoundsAreCurrent(const Bridge::CurrentWorldSyncRequestPtr& request)
+bool preparedSoundsAreCurrent(const Build::CurrentWorldSyncRequestPtr& request)
 {
     if (!request || !request->soundPreparation) return true;
     const auto& preparation = *request->soundPreparation;
@@ -224,6 +229,7 @@ AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
     instance_ = this;
+    Bridge::setMediaServices(Bridge::makeBuildMediaServices());
     currentWorldCompilation_ = std::make_unique<CurrentWorldCompilation>();
     runtimeSyncCoordinator_ = std::make_unique<RuntimeSyncCoordinator>(
         [this](Bridge::CurrentWorldSyncToken token) {
@@ -242,7 +248,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 currentWorldPreviewMutations_.clear();
                 currentWorldRequestSession_ = 0;
                 currentWorldRequestEpoch_ = 0;
-                return Bridge::clearCurrentWorld(token);
+                return Build::clearCurrentWorld(token);
             }
             bindCurrentWorldPlatformContext();
             QString error;
@@ -264,7 +270,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 }
                 for (const auto& [stableId, propertyId] : properties) {
                     auto* item = ProjectManager::instance().findItemByRuntimeStableId(stableId);
-                    Bridge::CurrentWorldScalarUpdate update;
+                    Build::CurrentWorldScalarUpdate update;
                     if (!item || !readCurrentWorldScalarUpdate(
                             *item, scope, propertyId, &update)) {
                         incremental = false;
@@ -546,6 +552,7 @@ void AudioEngine::shutdown()
     if (session_)
         stopRuntimeSynchronization();
     session_.reset();
+    consumeRuntimeNotifications();
     runtimeProjectRestoreRequired_ = false;
 
     initialized_ = false;
@@ -605,6 +612,7 @@ void AudioEngine::stopOutput()
     }
 
     playing_ = false;
+    consumeRuntimeNotifications();
     masterMeterPeakL_ = 0.0f;
     masterMeterPeakR_ = 0.0f;
     emit meterLevelsUpdated();
@@ -831,14 +839,11 @@ AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
     return result;
 }
 
-bool AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+Bridge::EngineResult AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
 {
-    if (!playbackHandle || !session_
-        || !session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs))
-        return false;
-
-    emit playbackStopped(playbackHandle);
-    return true;
+    if (!session_)
+        return Bridge::kEngineNotInit;
+    return session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs);
 }
 
 bool AudioEngine::stopAll(float fadeMs)
@@ -923,6 +928,27 @@ bool AudioEngine::loadPack(const QString& path, Bridge::EngineResult* result)
         return false;
     }
 
+    QFile file(QFileInfo(path).absoluteFilePath());
+    if (file.open(QIODevice::ReadOnly)) {
+        const QByteArray bytes = file.readAll();
+        harkenstudiobuild::PackFileHeader header{};
+        if (file.error() == QFileDevice::NoError
+            && bytes.size() >= harkenstudiobuild::kPackBytes<HkPackFileHeader>
+            && harkenstudiobuild::ReadPackFileHeader(
+                reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
+            && header.headerBytes == harkenstudiobuild::kPackBytes<HkPackFileHeader>
+            && (header.packKind == HK_PACK_KIND_INIT
+                || header.packKind == HK_PACK_KIND_CANONICAL_CONTENT)) {
+            harkenstudiobuild::PackCanonicalImage image;
+            if (harkenstudiobuild::ParsePackCanonicalImage(
+                    reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
+                != harkenstudiobuild::kPackOk) {
+                if (result) *result = Bridge::kEngineInvalidArg;
+                return false;
+            }
+            return session_->loadCanonicalPack(path, bytes, image.packStableId, image.packKind, result);
+        }
+    }
     return session_->loadPack(path, result);
 }
 
@@ -1036,7 +1062,7 @@ void AudioEngine::syncRuntimeBindings()
     if (lowering.failed)
         return;
 
-    auto fillDesc = [](const BindingRuntimeProgram& program, harkenstudiobuild::BindingDefinition* desc) {
+    auto fillDesc = [](const BindingRuntimeProgram& program, HarkenEditor::Bridge::PreviewBindingDefinition* desc) {
         *desc = {};
         desc->variableId = program.variableId;
         desc->targetScopeKind = program.targetScopeKind;
@@ -1045,19 +1071,19 @@ void AudioEngine::syncRuntimeBindings()
         const uint32_t count = std::min(
             static_cast<uint32_t>(program.points.size()),
             static_cast<uint32_t>(harkenstudio::kCurveMaxPoints));
-        desc->curve.pointCount = count;
+        desc->pointCount = count;
         for (uint32_t i = 0; i < count; ++i) {
-            desc->curve.points[i].x = program.points[static_cast<int>(i)].x;
-            desc->curve.points[i].y = program.points[static_cast<int>(i)].value;
+            desc->points[i].x = program.points[static_cast<int>(i)].x;
+            desc->points[i].y = program.points[static_cast<int>(i)].value;
         }
         const uint32_t handleCount = count > 0 ? count - 1 : 0;
         for (uint32_t i = 0; i < handleCount
              && i < static_cast<uint32_t>(program.handles.size()); ++i) {
             const CurveHandlePairDef& handle = program.handles[static_cast<int>(i)];
-            desc->curve.handles[i].h1x = handle.h1x;
-            desc->curve.handles[i].h1y = handle.h1y;
-            desc->curve.handles[i].h2x = handle.h2x;
-            desc->curve.handles[i].h2y = handle.h2y;
+            desc->handles[i].h1x = handle.h1x;
+            desc->handles[i].h1y = handle.h1y;
+            desc->handles[i].h2x = handle.h2x;
+            desc->handles[i].h2y = handle.h2y;
         }
     };
 
@@ -1072,7 +1098,7 @@ void AudioEngine::syncRuntimeBindings()
             registeredOk.push_back(program.bindingId);
             continue;
         }
-        harkenstudiobuild::BindingDefinition desc{};
+        HarkenEditor::Bridge::PreviewBindingDefinition desc{};
         fillDesc(program, &desc);
         const auto result = HarkenEditor::Bridge::setPreviewBinding(program.bindingId, desc);
         if (result == HarkenEditor::Bridge::kEngineOk) {
@@ -1155,7 +1181,7 @@ void AudioEngine::onRuntimeServiceTimer()
                     currentWorldRequestSession_ = 0;
                     currentWorldRequestEpoch_ = 0;
                 }
-                result = Bridge::installCompiledCurrentWorld(
+                result = Build::installCompiledCurrentWorld(
                     std::move(compiled->request), std::move(compiled->compiled), compiled->token);
             }
             if (result.ok())

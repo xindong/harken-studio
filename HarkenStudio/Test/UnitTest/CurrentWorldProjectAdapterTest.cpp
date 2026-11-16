@@ -1,13 +1,11 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include <harken_project_schema/FrontEnd.h>
-#include <harken/core/CurrentWorldArtifact.h>
-#include <harken/core/CurrentWorldCodec.h>
 #include <harken_studio_build/WorldCodec.h>
-#include <harken/param/VariableService.h>
 
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriter.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriterInternal.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"
@@ -156,75 +154,6 @@ struct ArtifactFileFactoryReset
 
 }
 
-TEST(CurrentWorldProjectAdapter, PreviewDuckingResolvesInheritanceAndKeepsShippingV18)
-{
-    std::shared_ptr<ProjectItem> container, sound;
-    auto project = makeRandomProject(&container, &sound);
-    auto target = makeItem(QStringLiteral("Ducked"), ProjectItem::Type::Bus,
-                           71, harkentest::StudioObjectId(71));
-    appendChild(project.busses.front().rootItem, target);
-    container->fieldGroups.send.shared = {FieldGroupMode::Local,
-        SendFieldGroup{{{toFieldGroupGuid(target->guid), -6.0f,
-                         harkenprojectschema::SendMode::Ducking}}}};
-    container->children[1]->fieldGroups.send.shared = {
-        FieldGroupMode::Local, SendFieldGroup{}};
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> revisions;
-    for (const auto& child : container->children) revisions.emplace(child->runtimeId(), 100 + child->objectID);
-    CurrentWorldBuildOptions options;
-    options.soundContentRevisions = &revisions;
-    QString error;
-    auto shipping = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
-    ASSERT_NE(nullptr, shipping) << error.toStdString();
-    EXPECT_TRUE(shipping->duckingSends.empty());
-    auto shipped = HarkenEditor::Bridge::compileCurrentWorldRequest(*shipping);
-    ASSERT_TRUE(shipped.ok());
-    EXPECT_EQ(18u, shipped.world->View().sourceBodyVintage);
-    std::vector<std::uint8_t> bytes;
-    ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(shipped.world->View(), bytes));
-
-    options.includePreviewDucking = true;
-    auto preview = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
-    ASSERT_NE(nullptr, preview) << error.toStdString();
-    ASSERT_EQ(1u, preview->duckingSends.size());
-    EXPECT_EQ(sound->runtimeId(), preview->duckingSends[0].sourceId);
-    EXPECT_EQ(harkenstudiobuild::SignalEndpointKindV1::Sound, preview->duckingSends[0].sourceKind);
-    EXPECT_EQ(target->runtimeId(), preview->duckingSends[0].targetBusId);
-    EXPECT_FLOAT_EQ(-6.0f, preview->duckingSends[0].sendGainDb);
-    const auto stableId = preview->duckingSends[0].stableId;
-    auto compiled = HarkenEditor::Bridge::compileCurrentWorldRequest(*preview);
-    ASSERT_TRUE(compiled.ok());
-    const auto& world = compiled.world->View();
-    EXPECT_EQ(20u, world.sourceBodyVintage);
-    ASSERT_EQ(1u, world.signalRelationCount);
-    ASSERT_EQ(1u, world.signalReceiverCount);
-    EXPECT_FALSE(harkenstudiobuild::EncodeCurrentWorldShippingBody(world, bytes));
-    ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldPreviewBody(world, bytes));
-    harken::CurrentWorldBodyImage native;
-    ASSERT_TRUE(native.Decode(bytes.data(), bytes.size(), 20, harken::CurrentWorldDecodeMode::StrictArtifact));
-    ASSERT_NE(nullptr, native.ProductionView());
-    EXPECT_EQ(harken::WorldInstallStatus::Ok, harken::ValidateCurrentWorldV1(*native.ProductionView()));
-    EXPECT_EQ(world.identity.runtimeSemanticFingerprint,
-              harken::ComputeCurrentWorldFingerprintV7(*native.ProductionView()));
-    std::vector<std::uint8_t> nativeBytes;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV20(*native.ProductionView(), nativeBytes));
-    EXPECT_EQ(bytes, nativeBytes);
-    harkenstudiobuild::CurrentWorldBodyImage studio;
-    ASSERT_TRUE(studio.Decode(bytes.data(), bytes.size(), 20));
-    EXPECT_FALSE(studio.Decode(bytes.data(), bytes.size() - 1, 20));
-    EXPECT_FALSE(native.Decode(bytes.data(), bytes.size() - 1, 20, harken::CurrentWorldDecodeMode::StrictArtifact));
-
-    container->fieldGroups.send.shared.localHistory->sends[0].sendLevel = 0.0f;
-    auto edited = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 2);
-    ASSERT_NE(nullptr, edited) << error.toStdString();
-    ASSERT_EQ(1u, edited->duckingSends.size());
-    EXPECT_EQ(stableId, edited->duckingSends[0].stableId);
-    EXPECT_FLOAT_EQ(0.0f, edited->duckingSends[0].sendGainDb);
-    container->fieldGroups.send.shared.localHistory->sends[0].mode = harkenprojectschema::SendMode::Sidechain;
-    auto pluginInput = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 3);
-    ASSERT_NE(nullptr, pluginInput) << error.toStdString();
-    EXPECT_TRUE(pluginInput->duckingSends.empty());
-}
-
 TEST(CurrentWorldProjectAdapter, PreviewBusDuckingUsesSelectedPlatformAndFullWidthHandles)
 {
     std::shared_ptr<ProjectItem> container, sound;
@@ -338,7 +267,7 @@ TEST(CurrentWorldProjectAdapter, SelectionHistoryAndOccurrencesSurviveAuthoringB
     ASSERT_EQ(1u, request->containers.size());
     EXPECT_EQ(65u, request->containers[0].children.size());
     EXPECT_EQ(64u, request->containers[0].avoidLastN);
-    EXPECT_TRUE(HarkenEditor::Bridge::compileCurrentWorldRequest(*request, true).ok());
+    EXPECT_TRUE(HarkenEditor::Build::compileCurrentWorldRequest(*request, true).ok());
 }
 
 TEST(CurrentWorldProjectAdapter, UnsupportedTransitionTimingIsNeverSilentlyDiscarded)
@@ -369,6 +298,7 @@ TEST(CurrentWorldProjectAdapter, UnsupportedTransitionTimingIsNeverSilentlyDisca
 TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatformsAndRestoration)
 {
     namespace Bridge = HarkenEditor::Bridge;
+    namespace Build = HarkenEditor::Build;
     using Authoring = PlayablePropertyAuthoringV1;
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     std::shared_ptr<ProjectItem> container;
@@ -403,10 +333,10 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     preparedSound.sampleRate = 48000;
     preparation->sounds.push_back(preparedSound);
     baseline->soundPreparation = preparation;
-    Bridge::CurrentWorldRequestCache cache;
+    Build::CurrentWorldRequestCache cache;
     auto cached = cache.update(baseline, {}, token);
     ASSERT_NE(cached, nullptr);
-    auto first = Bridge::compileCurrentWorldRequest(*cached, true);
+    auto first = Build::compileCurrentWorldRequest(*cached, true);
     ASSERT_TRUE(first.ok()) << static_cast<int>(first.status);
     const auto originalBody = first.body;
     auto wrongReceipt = token;
@@ -431,9 +361,9 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     EXPECT_EQ(baseline->soundPreparation->sounds.front().samples, preparedSound.samples);
 
     const auto verify = [&](std::vector<std::pair<ProjectItem*, std::uint8_t>> fields) {
-        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+        std::vector<Build::CurrentWorldScalarUpdate> updates;
         for (const auto& [item, property] : fields) {
-            Bridge::CurrentWorldScalarUpdate update;
+            Build::CurrentWorldScalarUpdate update;
             ASSERT_TRUE(readCurrentWorldScalarUpdate(*item, scope, property, &update));
             updates.push_back(update);
         }
@@ -444,8 +374,8 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
         auto fresh = buildCurrentWorldSyncRequest(project, scope, &error, nullptr,
                                                   &options, token.authoringRevision);
         ASSERT_NE(fresh, nullptr) << error.toStdString();
-        auto actual = Bridge::compileCurrentWorldRequest(*cached, true);
-        auto expected = Bridge::compileCurrentWorldRequest(*fresh, true);
+        auto actual = Build::compileCurrentWorldRequest(*cached, true);
+        auto expected = Build::compileCurrentWorldRequest(*fresh, true);
         ASSERT_TRUE(actual.ok()) << static_cast<int>(actual.status);
         ASSERT_TRUE(expected.ok()) << static_cast<int>(expected.status);
         EXPECT_EQ(actual.body, expected.body);
@@ -470,10 +400,10 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, volume, std::nullopt));
     ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, pitch, scope));
     verify({{sound.get(), volume}, {container.get(), volume}, {container.get(), pitch}});
-    const auto restored = Bridge::compileCurrentWorldRequest(*cached, true);
+    const auto restored = Build::compileCurrentWorldRequest(*cached, true);
     EXPECT_EQ(restored.body, originalBody);
     EXPECT_EQ(baseline->busResult->projectGeneration, 1u);
-    EXPECT_EQ(Bridge::compileCurrentWorldRequest(*baseline, true).body, originalBody);
+    EXPECT_EQ(Build::compileCurrentWorldRequest(*baseline, true).body, originalBody);
     const auto replacement = cache.update(baseline, {}, token);
     ASSERT_NE(replacement, nullptr);
     auto oldReceipt = token;
@@ -488,15 +418,16 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
 TEST(CurrentWorldProjectAdapter, CachedInputsRejectForeignIdentityAndRequireReplacementAfterRestart)
 {
     namespace Bridge = HarkenEditor::Bridge;
+    namespace Build = HarkenEditor::Build;
     std::shared_ptr<ProjectItem> container;
     std::shared_ptr<ProjectItem> sound;
     auto project = makeRandomProject(&container, &sound);
     auto request = buildCurrentWorldSyncRequest(project, std::nullopt);
     ASSERT_NE(request, nullptr);
-    Bridge::CurrentWorldRequestCache cache;
+    Build::CurrentWorldRequestCache cache;
     const Bridge::CurrentWorldSyncToken initial{1, 1, 1, 1};
     ASSERT_NE(cache.update(request, {}, initial), nullptr);
-    Bridge::CurrentWorldScalarUpdate update;
+    Build::CurrentWorldScalarUpdate update;
     ASSERT_TRUE(readCurrentWorldScalarUpdate(*sound, std::nullopt, 1, &update));
     update.guid = {987, 654};
     EXPECT_EQ(cache.update({}, {update}, {1, 2, 1, 2}), nullptr);
@@ -539,71 +470,6 @@ TEST(CurrentWorldArtifactWriter,
         ASSERT_TRUE(preserved.open(QIODevice::ReadOnly));
         EXPECT_EQ(preserved.readAll(), original);
     }
-}
-
-TEST(CurrentWorldArtifactWriter,
-     CompilesStudioProjectIntoDecodableActionArtifact)
-{
-    ProjectData project = HarkenTest::projectWithPlatforms(
-        {QStringLiteral("Windows"), QStringLiteral("Android")});
-    project.nextObjectID = 5;
-    auto master = makeItem(QStringLiteral("Master"), ProjectItem::Type::Bus,
-                           4, harkentest::StudioObjectId(0x4d4153544552));
-    ProjectFileBinding busBinding;
-    busBinding.rootItem = master;
-    project.busses.push_back(std::move(busBinding));
-    auto layer = makeItem(QStringLiteral("Layer"), ProjectItem::Type::Layer,
-                          1, harkentest::StudioObjectId(2));
-    layer->fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(master->guid));
-    auto variable = makeItem(QStringLiteral("State"),
-                             ProjectItem::Type::Variable, 2, harkentest::StudioObjectId(3));
-    appendChild(layer, variable);
-    auto action = makeItem(QStringLiteral("SetState"),
-                           ProjectItem::Type::Action, 3, harkentest::StudioObjectId(4));
-    VActionStep setValue;
-    setValue.type = VActionStep::Type::SetVariable;
-    setValue.targetObjectID = variable->objectID;
-    setValue.value = 42.0f;
-    action->comp<VAction>()->steps.push_back(setValue);
-    appendChild(layer, action);
-    ProjectFileBinding binding;
-    binding.rootItem = layer;
-    project.layers.push_back(std::move(binding));
-
-    QTemporaryDir directory;
-    ASSERT_TRUE(directory.isValid());
-    const QString requestedPath = qEnvironmentVariable(
-        "HARKEN_TEST_CURRENT_WORLD_ARTIFACT_OUTPUT");
-    const QString path = requestedPath.isEmpty()
-        ? directory.filePath(QStringLiteral("project.vnworld"))
-        : requestedPath;
-    QString error;
-    ASSERT_TRUE(WriteCurrentWorldArtifactV1(project, std::nullopt, path, &error))
-        << error.toStdString();
-
-    QFile file(path);
-    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
-    const QByteArray bytes = file.readAll();
-    harken::CurrentWorldArtifactHeaderV1 header;
-    ASSERT_EQ(harken::InspectCurrentWorldArtifactHeaderV1(
-                  reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                  static_cast<std::size_t>(bytes.size()),
-                  static_cast<std::uint64_t>(bytes.size()), header),
-              harken::CurrentWorldLoadStatusV1::Ok);
-    harken::CurrentWorldBodyImage image;
-    ASSERT_EQ(harken::DecodeCurrentWorldArtifactBodyV1(
-                  header,
-                  reinterpret_cast<const std::uint8_t*>(bytes.constData())
-                      + harken::kCurrentWorldArtifactHeaderBytes,
-                  static_cast<std::size_t>(bytes.size())
-                      - harken::kCurrentWorldArtifactHeaderBytes,
-                  image),
-              harken::CurrentWorldLoadStatusV1::Ok);
-    const auto& world = *image.ProductionView();
-    ASSERT_EQ(world.variableCount, 1u);
-    EXPECT_EQ(world.variables[0].variableId, variable->runtimeId());
-    ASSERT_EQ(world.actionCount, 1u);
-    ASSERT_EQ(world.actions[0].stepCount, 1u);
 }
 
 }

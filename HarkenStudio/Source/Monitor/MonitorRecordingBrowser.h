@@ -59,7 +59,6 @@ struct MonitorRecordingBrowserInput
 {
     MonitorRecordingMode mode = MonitorRecordingMode::Local;
     bool contractPresent = false;
-    bool hasRecordPermission = false;
     MonitorCaptureControlState captureControl {};
     MonitorResult statusQuery = kNotInitialized;
     MonitorRecordingStatus status {};

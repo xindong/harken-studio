@@ -77,12 +77,12 @@ namespace Harken.Test
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine("[Remote] SKIP: native HarkenCore is unavailable.");
+                Console.WriteLine("[Remote] SKIP: native Harken Engine library is unavailable.");
                 return 2;
             }
             catch (BadImageFormatException)
             {
-                Console.WriteLine("[Remote] SKIP: native HarkenCore architecture mismatch.");
+                Console.WriteLine("[Remote] SKIP: native Harken Engine library architecture mismatch.");
                 return 2;
             }
             catch (SocketException error)

@@ -1,4 +1,3 @@
-#include "Engine.h"
 #include "Core/AssetPipeline/AssetConverter.h"
 #include "Core/AssetPipeline/AssetImporter.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
@@ -8,6 +7,7 @@
 #include "RuntimeBridge/PlaybackBridge.h"
 #include "Widgets/SourceEditor/SourceEditorWidget.h"
 #include "harken/Harken.h"
+#include "harken/HarkenDevelopment.h"
 
 #include <gtest/gtest.h>
 
@@ -23,6 +23,22 @@
 using namespace HarkenEditor::Bridge;
 
 namespace {
+
+std::vector<float> takeMasterChannelPeaks()
+{
+    VnPreviewChannelPeaksV1 peaks{};
+    peaks.structSize = sizeof(peaks);
+    std::vector<float> values;
+    if (VnPreview_TakeChannelPeaks(&peaks) != VN_OK)
+        return values;
+    for (uint32_t bus = 0; bus < peaks.busCount; ++bus) {
+        if (peaks.busIds[bus] != VN_BUS_MASTER)
+            continue;
+        values.assign(peaks.channelPeaks + bus * VN_MAX_CHANNELS,
+            peaks.channelPeaks + bus * VN_MAX_CHANNELS + peaks.mixChannelCount);
+    }
+    return values;
+}
 
 bool ensureFreshNullEngine()
 {
@@ -101,14 +117,13 @@ TEST_F(SourceEditorPcmSliceTest, MemoryAndFilePcmRenderIdenticallyAfterRelocatio
         ASSERT_EQ(engine_->relocateRawPcmSlice(soundId, 512).result, kEngineOk);
         ASSERT_EQ(engine_->relocateRawPcmSlice(soundId, 1024).result, kEngineOk);
         ASSERT_NE(engine_->playRawPcm(soundId, loops), 0u);
-        auto* runtime = harken::detail::ActiveEngine();
-        ASSERT_NE(runtime, nullptr);
+        ASSERT_EQ(VnPreview_EnableChannelPeakMetering(), VN_OK);
+        takeMasterChannelPeaks();
         for (int block = 0; block < 8; ++block) {
             ASSERT_EQ(Vn_Update(), VN_OK);
-            runtime->nullBackend.Pump(1);
-            const auto* begin = runtime->nullBackend.LastBlock();
-            output.insert(output.end(), begin,
-                begin + runtime->nullBackend.BlockFrames() * runtime->nullBackend.Channels());
+            VnPreview_PumpNullMixer(1);
+            const auto peaks = takeMasterChannelPeaks();
+            output.insert(output.end(), peaks.begin(), peaks.end());
         }
     };
 

@@ -4,8 +4,8 @@
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/CacheArtifactWriter.h"
+#include "Core/Build/PackagingBridge.h"
 #include "Core/SoundSourceSemantics.h"
-#include "RuntimeBridge/PackagingBridge.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>

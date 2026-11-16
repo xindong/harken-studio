@@ -24,6 +24,7 @@ struct VoicePoolReleaseTestAccess {
     static void SetRingCommitPageLimit(VoicePool& pool, std::uint32_t channel, std::size_t pages) {
         pool.m_ringStorage[channel].SetCommitPageLimitForTests(pages);
     }
+#if HARKEN_ENGINE_DEV
     static void SetMonitorPreChainCommitPageLimit(VoicePool& pool, std::size_t pages) {
         for (auto& channel : pool.m_monitorPreChainStorage)
             channel.SetCommitPageLimitForTests(pages);
@@ -34,6 +35,7 @@ struct VoicePoolReleaseTestAccess {
             bytes += channel.RequestedBytes();
         return bytes;
     }
+#endif
     struct OriginalCallbackObservation {
         bool reader = false;
         bool storageHeld = false;

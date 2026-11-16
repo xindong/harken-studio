@@ -1,7 +1,7 @@
 
 #include "PublisherPanel.h"
 #include "Core/ThemeLayout.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "../../Core/ActionManager.h"
 #include "../../Core/AppSettings.h"
 #include "../../Core/AssetPipeline/PathUtils.h"

@@ -137,7 +137,7 @@ QJsonObject ProjectDocument::createHeader(const QString& type,
         header.insert(QStringLiteral("studioVersion"), QString::fromUtf8(
             Harken::BuildInfo::Version.data(),
             static_cast<int>(Harken::BuildInfo::Version.size())));
-        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
+        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION);
     } else {
         header.remove(QStringLiteral("studioVersion"));
         header.remove(QStringLiteral("packSchemaVersion"));

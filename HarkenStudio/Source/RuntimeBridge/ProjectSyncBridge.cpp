@@ -6,9 +6,9 @@
 #include "ProjectSyncBridge.h"
 #include "NativeValues.h"
 #include "RuntimeLink.h"
+#include "MediaServices.h"
 
 #include <harken/Harken.h>
-#include <harken_studio_build/MediaContentRevision.h>
 
 #include <QDebug>
 
@@ -50,18 +50,10 @@ uint64_t soundPcmContentRevision(const std::vector<float>& samples,
                                  uint32_t channels, uint32_t sampleRate,
                                  uint64_t loopStartFrame, uint64_t loopEndFrame)
 {
-    if (channels == 0 || channels > 8 || sampleRate == 0
-        || samples.empty() || samples.size() % channels != 0)
-        return 0;
-    const float* planes[8]{};
-    for (uint32_t channel = 0; channel < channels; ++channel)
-        planes[channel] = samples.data() + channel;
-    uint64_t revision = 0;
-    if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
-            sampleRate, channels, samples.size() / channels, planes, channels,
-            &revision, loopStartFrame, loopEndFrame))
-        return 0;
-    return revision;
+    const auto services = mediaServices();
+    return services ? services->pcmContentRevision(samples, channels, sampleRate,
+                                                   loopStartFrame, loopEndFrame)
+                    : 0;
 }
 
 bool syncLayer(const LayerDesc& desc)

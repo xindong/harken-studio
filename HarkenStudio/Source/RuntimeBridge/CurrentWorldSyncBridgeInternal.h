@@ -1,119 +1,18 @@
 #pragma once
 
-#include "Utils/ObjectId.h"
-
 #include "CurrentWorldSyncBridge.h"
-#include "ProjectSyncBridge.h"
 
-#include "harken_current_world_compiler/CurrentWorldCompiler.h"
-#include "harken_project_schema/ProjectInput.h"
-
-#include <unordered_map>
-#include <map>
-#include <set>
-#include <vector>
+#include <cstdint>
 
 namespace HarkenEditor::Bridge {
 
-struct CurrentWorldSoundPreparation {
-    struct SourceState {
-        std::uint32_t sourceId = 0;
-        QString path;
-        QString contentHash;
-        bool assetAvailable = false;
-        bool fileExists = false;
-        qint64 size = 0;
-        qint64 lastModifiedMs = 0;
-    };
-    struct Sound {
-        SoundDesc binding;
-        QString sourcePath;
-        std::vector<float> samples;
-        std::uint32_t channels = 0;
-        std::uint32_t sampleRate = 0;
-        std::uint64_t loopStartFrame = 0;
-        std::uint64_t loopEndFrame = 0;
-    };
-
-    std::vector<Sound> sounds;
-    std::vector<SourceState> sources;
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> contentRevisions;
+struct CurrentWorldTestInstallResult {
+    enum class Status : std::uint8_t { Ok, Backpressure, Failed };
+    Status status = Status::Ok;
+    std::uint64_t resultGeneration = 0;
 };
 
-class CurrentWorldSyncRequest {
-public:
-    struct SoundSource {
-        harkenstudio::ObjectId stableId = {};
-        std::uint32_t sourceId = 0;
-    };
-
-    harkenprojectschema::ProjectInput project;
-    PreviewEffectDefinitions previewEffects;
-    std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
-        identityIndex;
-    std::shared_ptr<const harkenprojectschema::CompileTargetProfileV1>
-        compileTargetProfile;
-    std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> busResult;
-    std::vector<harkenstudiobuild::VariableDefinitionV1> variables;
-    std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1>
-        materializations;
-    std::map<harkenstudio::ObjectId, std::uint32_t> propertyAuthoredOrders;
-    std::set<std::uint32_t> reservedPropertyAuthoredOrders;
-    std::vector<harkencurrentworldcompiler::ContainerAuthoringV1> containers;
-    std::vector<harkencurrentworldcompiler::TransitionProgramAuthoringV1>
-        transitions;
-    std::vector<harkencurrentworldcompiler::ActionProgramAuthoringV1> actions;
-    std::vector<harkencurrentworldcompiler::DuckingSendAuthoringV1> duckingSends;
-    bool includePreviewDucking = false;
-    std::vector<SoundSource> soundSources;
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> soundContentRevisions;
-    std::shared_ptr<const CurrentWorldSoundPreparation> soundPreparation;
-    std::uint64_t ownerBaseRevision = 0;
-};
-
-struct CurrentWorldScalarUpdate {
-    harkenprojectschema::AuthoringGuid guid{};
-    harkenstudio::ObjectId stableId{};
-    std::uint8_t propertyId = 0;
-    bool present = false;
-    float value = 0.0f;
-};
-
-class CurrentWorldRequestCache {
-public:
-    CurrentWorldSyncRequestPtr update(
-        CurrentWorldSyncRequestPtr replacement,
-        const std::vector<CurrentWorldScalarUpdate>& updates,
-        CurrentWorldSyncToken token);
-    void acknowledgePublication(CurrentWorldSyncToken token);
-
-private:
-    CurrentWorldSyncRequestPtr request_;
-    CurrentWorldSyncToken token_;
-    std::map<harkenprojectschema::AuthoringGuid, std::size_t> nodes_;
-};
-
-struct CurrentWorldCompileResult {
-    CurrentWorldSyncStatus status = CurrentWorldSyncStatus::InvalidProject;
-    bool requiresFullRefresh = false;
-    harkenstudio::ObjectId relatedStableId = {};
-    std::unique_ptr<harkencurrentworldcompiler::OwningCurrentWorldV1> world;
-    std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
-        identityIndex;
-    std::shared_ptr<const harkenprojectschema::CompileTargetProfileV1>
-        compileTargetProfile;
-    std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> busResult;
-    std::uint64_t compileTargetProfileFingerprint = 0;
-    std::vector<std::uint8_t> body;
-    harkenbuscompiler::PublishedBusProjectionV1 projection;
-
-    bool ok() const noexcept {
-        return status == CurrentWorldSyncStatus::Ok && world != nullptr;
-    }
-};
-
-using CurrentWorldInstallBackend = harkenstudiobuild::WorldInstallResult (*)(
-    const harkenstudiobuild::ContainerWorldInstallViewV1&) noexcept;
+using CurrentWorldInstallBackend = CurrentWorldTestInstallResult (*)() noexcept;
 using CurrentWorldDiscardObserver = void (*)(CurrentWorldSyncToken,
                                              bool runtimeActive) noexcept;
 
@@ -154,12 +53,7 @@ void setCurrentWorldDiscardObserverForTesting(
     CurrentWorldDiscardObserver observer) noexcept;
 void resetCurrentWorldSyncStateForTesting() noexcept;
 void servicePendingCurrentWorld() noexcept;
-CurrentWorldCompileResult compileCurrentWorldRequest(
-    CurrentWorldSyncRequest& request, bool prepareForInstall = false);
-CurrentWorldSyncResult installCompiledCurrentWorld(
-    CurrentWorldSyncRequestPtr request, CurrentWorldCompileResult compiled,
-    CurrentWorldSyncToken token);
 bool queryRuntimeLiveOwnerRevision(std::uint64_t ownerId,
                                    std::uint64_t* outRevision) noexcept;
 
-} // namespace HarkenEditor::Bridge
+}
