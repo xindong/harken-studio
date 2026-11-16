@@ -141,7 +141,9 @@ harken> help exit
 
 `init_engine` 返回实际的设备模式。运行时不可用时返回 `ENGINE_UNAVAILABLE`，不会把编辑器模拟模式当作初始化成功。已初始化后，无参数调用复用当前运行时；带配置再次调用会提示先 `shutdown_engine`，避免把未生效的设置当作已应用。
 
-独立 CLI、实例 CLI 与 Studio `--shell` 的播放均在共享分发器检查当前创作版本，再执行 `post_action/post_action_3d/audition_play`。只有明确尚未提交播放的 `RUNTIME_SYNC_PENDING` 会等待后重试；超时、中断、同步失败或等待期间切换工程都返回失败。不会因已有旧世界就跳过最新修改，也不会自动重试结果不确定的网络请求。
+Studio 的对象试听、Action 播放与容器重置统一使用 AudioEngine 的当前创作版本就绪检查。GUI 对象与 Action 试听在同步期间排队，完成后重新校验项目、运行时和目标身份再播放；取消、目标删除、同步失败或等待超时会结束请求。GUI 重置在未就绪时明确拒绝执行。
+
+独立 CLI、实例 CLI 与 Studio `--shell` 在共享分发器复用同一检查，再执行 `post_action/post_action_3d/audition_play/audition_reset`。只有明确尚未提交操作的 `RUNTIME_SYNC_PENDING` 会等待后重试；超时、中断、同步失败或等待期间切换工程都返回失败。已有旧世界不能放行新操作。已有播放实例的停止、定位和 Source Editor 原始音频试听不等待当前创作版本。
 
 试听定位复用共享异步作业协议，成功接收与实际应用区分。完成查询保留全部进行中的请求及最近 128 条完成记录；已过期的身份返回 `NOT_FOUND`，引擎关闭或原生定位失败返回可查询的失败终态。附加会话超时/中断只停止等待，应按返回的 `operation.status_command/status_args` 查询结果后再决定下一步。
 

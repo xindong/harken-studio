@@ -13,6 +13,7 @@ active `HarkenAudioSystem`.
 | `VnResult HarkenEngine.Init(in VnConfig config)` | Initialize one native engine session; successful init resets Variable gameplay session tracking. |
 | `VnResult HarkenEngine.Update()` | Pump notifications/callbacks and flush commits on the host's externally synchronized calling thread. Call regularly, outside the audio callback. |
 | `VnResult HarkenEngine.Suspend()` / `Resume()` | Release and rebuild the platform device while preserving engine state. The host synchronizes lifecycle calls; a failed resume leaves the engine suspended for an explicit retry. |
+| `VnResult HarkenEngine.SetHostOutputMute(uint mute01, uint fadeMs)` | Silence (`1`) or restore (`0`) the platform device output on behalf of the host, with a linear `fadeMs` ramp (`0` snaps). Mixing, Bus state, metering, capture and audio time are unaffected. The state survives Suspend/Resume and starts unmuted at each Init. Values above `1` return `VN_INVALID_ARG`; no engine returns `VN_NOT_INITIALIZED`. |
 | `VnResult HarkenEngine.Term()` | Terminate after stopping/releasing dependent resources. Successful termination resets Variable session tracking. Check failures before dropping ownership. |
 
 For a published game, use `PackBootstrap.StartDirectory` for a selected platform

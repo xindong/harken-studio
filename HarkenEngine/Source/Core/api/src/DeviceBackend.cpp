@@ -5,6 +5,7 @@
 #include "PlatformBackend.h"
 #include "RenderSlicer.h"
 #include "harken/core/AllocGuard.h"
+#include "harken/core/FloatMode.h"
 #include "harken/render/MixerLoop.h"
 
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK) || \
@@ -98,8 +99,14 @@ void SetDeviceBackendTestState(DeviceBackendTestState* state) noexcept {
 struct DeviceBackend::RenderState {
     std::uint32_t blockFrames = 0;
     std::uint32_t channels = 0;
+    std::uint32_t sampleRate = 0;
     std::vector<float> staging;
     BlockStagingCursor cursor;
+    float hostOutputGain = 1.0f;
+    float hostOutputTarget = 1.0f;
+    float hostOutputStartGain = 1.0f;
+    std::uint64_t hostOutputRampFrames = 0;
+    std::uint64_t hostOutputRampTotalFrames = 0;
 };
 
 // All miniaudio state lives here, behind the header's opaque pointer.
@@ -110,6 +117,7 @@ struct DeviceBackend::Impl {
     ma_device device{};
     MixerLoop* mixer = nullptr;
     RenderState* renderState = nullptr;
+    const std::atomic<std::uint64_t>* hostOutputMute = nullptr;
     bool contextReady = false;
     bool deviceReady = false;
     bool started = false;
@@ -155,6 +163,8 @@ struct DeviceBackend::Impl {
 
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
               "render admission must remain lock-free");
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+              "host output mute must remain lock-free");
 
 RealtimeWorkerJoinResult DeviceBackend::Impl::JoinWorkerDomain(
     void* context, std::uint32_t workerId,
@@ -268,6 +278,49 @@ bool DeviceBackend::Impl::LeaveWorkerDomain(
 #endif
 }
 
+namespace {
+
+void ApplyHostOutputMute(DeviceBackend::RenderState& state,
+                         std::uint64_t command, float* out,
+                         std::uint32_t frameCount) noexcept {
+    const float target = (command >> 32) != 0 ? 0.0f : 1.0f;
+    if (target != state.hostOutputTarget) {
+        const std::uint64_t fadeMs = command & 0xFFFFFFFFu;
+        state.hostOutputTarget = target;
+        state.hostOutputRampFrames = (fadeMs * state.sampleRate + 999u) / 1000u;
+        state.hostOutputRampTotalFrames = state.hostOutputRampFrames;
+        state.hostOutputStartGain = state.hostOutputGain;
+        if (state.hostOutputRampFrames == 0) {
+            state.hostOutputGain = target;
+        }
+    }
+    if (state.hostOutputRampFrames == 0 && state.hostOutputGain == 1.0f) {
+        return;
+    }
+    floatmode::ScopedFlushDenormals floatModeScope;
+    const std::uint32_t channels = state.channels;
+    for (std::uint32_t frame = 0; frame < frameCount; ++frame) {
+        if (state.hostOutputRampFrames != 0) {
+            --state.hostOutputRampFrames;
+            const double progress =
+                static_cast<double>(state.hostOutputRampTotalFrames -
+                                    state.hostOutputRampFrames) /
+                static_cast<double>(state.hostOutputRampTotalFrames);
+            state.hostOutputGain = state.hostOutputRampFrames == 0
+                ? state.hostOutputTarget
+                : static_cast<float>(
+                      (1.0 - progress) * state.hostOutputStartGain +
+                      progress * state.hostOutputTarget);
+        }
+        float* samples = out + static_cast<std::size_t>(frame) * channels;
+        for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            samples[channel] *= state.hostOutputGain;
+        }
+    }
+}
+
+} // namespace
+
 void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
                                        const void* /*input*/,
                                        ma_uint32 frameCount) {
@@ -355,6 +408,10 @@ void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
                         static_cast<std::size_t>(frames) * channels *
                             sizeof(float));
                 });
+            ApplyHostOutputMute(
+                renderState,
+                impl->hostOutputMute->load(std::memory_order_relaxed), out,
+                frameCount);
         }
     }
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK)
@@ -621,6 +678,7 @@ VnResult DeviceBackend::Prepare(
         std::unique_ptr<RenderState> renderState(new RenderState());
         renderState->blockFrames = config.blockFrames;
         renderState->channels = config.deviceChannelCount;
+        renderState->sampleRate = config.mixRate.SampleRate();
         renderState->staging.resize(
             static_cast<std::size_t>(config.blockFrames) *
                 config.deviceChannelCount,
@@ -633,6 +691,7 @@ VnResult DeviceBackend::Prepare(
     std::unique_ptr<Impl, ImplDeleter> impl(new Impl());
     impl->mixer = &mixer;
     impl->renderState = m_renderState;
+    impl->hostOutputMute = &m_hostOutputMute;
     impl->workerCount = config.renderWorkerCount;
     ++m_nextDomainGeneration;
     if (m_nextDomainGeneration == 0) {
@@ -968,6 +1027,15 @@ void DeviceBackend::RevokeRenderAdmission() noexcept {
 
 bool DeviceBackend::RenderAdmissionCommitted() const noexcept {
     return m_impl != nullptr && m_impl->RenderAdmitted();
+}
+
+void DeviceBackend::SetHostOutputMute(bool muted,
+                                      std::uint32_t fadeMs) noexcept {
+    if ((m_hostOutputMute.load(std::memory_order_relaxed) >> 32) ==
+        static_cast<std::uint64_t>(muted)) return;
+    m_hostOutputMute.store(
+        (static_cast<std::uint64_t>(muted) << 32) | fadeMs,
+        std::memory_order_relaxed);
 }
 
 RealtimeWorkerDomain DeviceBackend::WorkerDomain() const noexcept {

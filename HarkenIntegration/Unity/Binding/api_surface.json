@@ -324,7 +324,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Suspend ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Term ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Update ( )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static class HarkenEngine [ordered-members:372e8dbeb323e03574784e816654892ccf1c8e1d6c67cfd590db0ee863eb1d5e]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static class HarkenEngine [ordered-members:34fbd9b8c3332a7798661a293d45edb8953bb450d09526d087bfa6b81fbfd83b]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.ActionPreparation::public async Task < VnResult > PrepareAsync ( CancellationToken cancellation = default )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult ApplyRecommendations ( ref VnConfig config , in InitPackInspection inspection , int startupPackCount )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult Start ( string initPackPath , string containmentRoot , ulong [ ] startupPackStableIds , ref VnConfig config , out PackBootstrapSession session )",
@@ -456,7 +456,9 @@
         "native:Vn_UnregisterStreamFile",
         "native:Vn_Update",
         "native:Vn_QueryActionPlaybackReadiness",
-        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs::preprocessor-order:b2b2e1fdf6751bcfbaea3be6f69e92a1f978b9bffb34cca71a788b892df0dc8d"
+        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs::preprocessor-order:d308dc0acafb85378ff1692a93a3396f9c8b462d1d6fa17c8eb7348d456dd0b0",
+        "native:Vn_SetHostOutputMute",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult SetHostOutputMute ( uint mute01 , uint fadeMs )"
       ]
     },
     "runtime-mix": {

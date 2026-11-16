@@ -73,26 +73,6 @@ bool actionHasAuthoredPlayableStep(const VNX::ProjectItem& item)
     return false;
 }
 
-bool actionInstallFailedOrUnavailable(
-    const VNX::RuntimeSyncCoordinator& coordinator)
-{
-    using State = VNX::RuntimeSyncCoordinator::RevisionBarrierState;
-    const auto barrier = coordinator.barrier(
-        coordinator.currentAuthoringRevision());
-    return barrier.state == State::Failed
-        || barrier.state == State::RuntimeUnavailable;
-}
-
-bool actionInstallInFlight(const VNX::RuntimeSyncCoordinator& coordinator)
-{
-    if (coordinator.hasOutstandingSubmission())
-        return true;
-    const auto installed = coordinator.installedWorld();
-    if (!installed)
-        return false;
-    return installed->authoringRevision < coordinator.currentAuthoringRevision();
-}
-
 bool previewQueryRetired(
     int32_t queryResult, const VNX::AudioEngine::PreviewPlayableState& state,
     bool stopOccupancy)
@@ -239,7 +219,7 @@ void AuditionManager::failNotPlayable(const QString& reason)
 }
 
 void AuditionManager::removePreviewSlot(
-    uint32_t playingId, const QString& objectName, int32_t engineResult,
+    uint32_t playingId, QString objectName, int32_t engineResult,
     bool emitStartFailed)
 {
     auditions_.remove(playingId);
@@ -277,13 +257,101 @@ void AuditionManager::markPreviewStopStuck(AuditionInfo& info)
         static_cast<int32_t>(HarkenEditor::Bridge::kEngineBackpressure));
 }
 
-bool AuditionManager::startTypedPreviewNow(AuditionInfo& info)
+bool AuditionManager::queuePreviewStart(AuditionInfo& info, bool awaitingRevision,
+                                         const QString& reason)
+{
+    info.revisionPending = awaitingRevision;
+    info.previewStartPending = !awaitingRevision;
+    info.playbackHandle = 0;
+    info.previewReason = reason;
+    info.previewEngineResult = Bridge::kEngineBackpressure;
+    info.state = 0;
+    info.bIsPlaying = false;
+    info.bIsDelayed = true;
+    lastPlayFailure_ = Bridge::PlaybackFailure::None;
+    lastPlayEngineResult_ = Bridge::kEngineBackpressure;
+    lastPlayReason_ = reason;
+    lastPlayPending_ = true;
+    if (awaitingRevision) {
+        info.previewStartAttempts = 0;
+        if (!previewRevisionTimeoutTimer_.isActive())
+            previewRevisionTimeoutTimer_.start();
+    } else if (!previewStartRetryTimer_.isActive()) {
+        previewStartRetryTimer_.start();
+    }
+    return true;
+}
+
+bool AuditionManager::startPreviewNow(AuditionInfo& info)
 {
     const uint32_t playingId = info.playingId;
-    const QString objectName = info.objectName;
-    auto& coordinator = engine_->runtimeSyncCoordinator();
-    info.requiredRevision = coordinator.currentAuthoringRevision();
-    const auto installed = coordinator.installedWorld();
+    const bool reportFailure = info.mode == AuditionMode::Preview
+        || info.revisionPending || info.previewStartPending;
+    const auto fail = [&](const QString& reason, Bridge::EngineResult result) {
+        failImmediatePlay(reason, result);
+        removePreviewSlot(playingId, info.objectName, result, reportFailure);
+        return false;
+    };
+    if (!engine_ || !engine_->isInitialized())
+        return fail(QStringLiteral("runtime"), Bridge::kEngineNotInit);
+
+    const auto barrier = engine_->currentWorldPlaybackBarrier();
+    if (barrier.projectSessionId != info.projectSessionId
+        || barrier.runtimeEpoch != info.runtimeEpoch)
+        return fail(QStringLiteral("runtime"), Bridge::kEngineNotInit);
+    if (info.revisionPending && monotonicMilliseconds() >= info.revisionDeadlineMs)
+        return fail(QStringLiteral("revision"), Bridge::kEngineBackpressure);
+
+    const auto* item = VNX::ProjectManager::instance()
+        .findItemByRuntimeStableId(info.runtimeStableId);
+    const bool named = info.mode == AuditionMode::NamedPlayback;
+    if (!item || (named ? item->type != VNX::ProjectItem::Type::Action
+                       : previewKind(item->type) != info.previewPlayableKind))
+        return fail(QStringLiteral("unavailable"), Bridge::kEngineUnknownId);
+    info.requiredRevision = barrier.requiredRevision;
+    using State = VNX::RuntimeSyncCoordinator::RevisionBarrierState;
+    if (barrier.state == State::Pending)
+        return queuePreviewStart(info, true, QStringLiteral("revision"));
+    if (barrier.state != State::Ready)
+        return fail(QStringLiteral("synchronization"), Bridge::kEngineNotInit);
+
+    quint64 handle = 0;
+    if (named) {
+        const bool hasPlayableStep = actionHasAuthoredPlayableStep(*item);
+        if (!hasPlayableStep || !engine_->hasActionProgram(info.runtimeStableId)) {
+            failNotPlayable(hasPlayableStep
+                ? QStringLiteral("unavailable") : QStringLiteral("empty"));
+            removePreviewSlot(playingId, info.objectName, 0, reportFailure);
+            return false;
+        }
+        const auto result = engine_->playByNameWithPreviewContext(item->name);
+        if (result.previewVariablesPending
+            || result.engineResult == Bridge::kEngineBackpressure)
+            return queuePreviewStart(info, false, result.previewVariablesPending
+                ? QStringLiteral("variables") : QStringLiteral("admission"));
+        if (result.engineResult != Bridge::kEngineOk || result.playbackHandle == 0) {
+            lastPlayFailure_ = result.failure;
+            lastPlayEngineResult_ = result.engineResult;
+            lastPlayTopologyFailure_ = result.topologyFailure;
+            lastPlayReason_ = QStringLiteral("unknown");
+            lastPlayPending_ = false;
+            removePreviewSlot(playingId, info.objectName, result.engineResult, reportFailure);
+            return false;
+        }
+        handle = result.playbackHandle;
+    } else {
+        const auto result = engine_->playPreviewPlayable(
+            info.previewPlayableKind, info.runtimeStableId);
+        if (result.status == Bridge::kPreviewBackpressure)
+            return queuePreviewStart(info, false, QStringLiteral("admission"));
+        if (result.status != Bridge::kPreviewOk || result.handle == 0)
+            return fail(QStringLiteral("unknown"), previewEngineResult(result.status));
+        handle = result.handle;
+    }
+
+    info.playbackHandle = handle;
+    info.previewStartPending = false;
+    info.revisionPending = false;
     info.previewReplacePending = false;
     info.previewStopPending = false;
     info.previewCancelling = false;
@@ -292,58 +360,17 @@ bool AuditionManager::startTypedPreviewNow(AuditionInfo& info)
     info.stopState = AuditionStopState::None;
     info.stopResult = Bridge::kEngineOk;
     info.stopAttempts = 0;
-
-    if (!coordinator.hasInstalledWorld() || !installed) {
-        failImmediatePlay(QStringLiteral("unknown"),
-                          HarkenEditor::Bridge::kEngineNotInit);
-        removePreviewSlot(
-            playingId, objectName,
-            static_cast<int32_t>(HarkenEditor::Bridge::kEngineNotInit), true);
-        return false;
-    }
-    info.projectSessionId = installed->projectSessionId;
-    info.runtimeEpoch = installed->runtimeEpoch;
-
-    const auto preview = engine_->playPreviewPlayable(
-        info.previewPlayableKind, info.runtimeStableId);
-    if (preview.status == HarkenEditor::Bridge::kPreviewBackpressure) {
-        info.previewStartPending = true;
-        info.revisionPending = false;
-        info.playbackHandle = 0;
-        info.previewReason = QStringLiteral("admission");
-        info.previewEngineResult =
-            static_cast<int32_t>(HarkenEditor::Bridge::kEngineBackpressure);
-        info.state = 0;
-        info.bIsPlaying = false;
-        info.bIsDelayed = true;
-        lastPlayFailure_ = HarkenEditor::Bridge::PlaybackFailure::None;
-        lastPlayEngineResult_ = HarkenEditor::Bridge::kEngineBackpressure;
-        lastPlayReason_ = QStringLiteral("admission");
-        lastPlayPending_ = true;
-        if (!previewStartRetryTimer_.isActive())
-            previewStartRetryTimer_.start();
-        return true;
-    }
-    if (preview.status != HarkenEditor::Bridge::kPreviewOk || preview.handle == 0) {
-        const auto result = previewEngineResult(preview.status);
-        failImmediatePlay(QStringLiteral("unknown"), result);
-        removePreviewSlot(
-            playingId, objectName, static_cast<int32_t>(result), true);
-        return false;
-    }
-
-    info.playbackHandle = preview.handle;
-    info.previewStartPending = false;
-    info.revisionPending = false;
     info.previewReason.clear();
     info.previewEngineResult = 0;
     info.state = 1;
     info.bIsPlaying = true;
     info.bIsDelayed = false;
-    lastPlayFailure_ = HarkenEditor::Bridge::PlaybackFailure::None;
-    lastPlayEngineResult_ = HarkenEditor::Bridge::kEngineOk;
+    lastPlayFailure_ = Bridge::PlaybackFailure::None;
+    lastPlayEngineResult_ = Bridge::kEngineOk;
+    lastPlayTopologyFailure_ = {};
     lastPlayReason_.clear();
     lastPlayPending_ = false;
+    const QString objectName = info.objectName;
     emit auditionStarted(playingId, objectName);
     emit auditionStateChanged(playingId, 1);
     return true;
@@ -359,7 +386,8 @@ void AuditionManager::startLatchedTypedPreview(AuditionInfo& info)
     info.previewReplacePending = false;
     info.previewStopDeadlineMs = 0;
     info.previewStartAttempts = 0;
-    startTypedPreviewNow(info);
+    info.revisionDeadlineMs = monotonicMilliseconds() + kPreviewRevisionTimeoutMs;
+    startPreviewNow(info);
 }
 
 void AuditionManager::requestTypedPreviewStop(AuditionInfo& info)
@@ -418,62 +446,59 @@ void AuditionManager::requestTypedPreviewStop(AuditionInfo& info)
     lastPlayEngineResult_ = HarkenEditor::Bridge::kEngineOk;
 }
 
-uint32_t AuditionManager::playTypedPreview(
+uint32_t AuditionManager::playAuthoredPreview(
     const QString& objectName, const VNX::ProjectItem& item,
-    uint64_t gameObjectId, uint32_t playableKind)
+    uint64_t gameObjectId)
 {
     if (auditions_.size() >= MAX_AUDITIONS) {
-        failImmediatePlay(QStringLiteral("capacity"),
-                          HarkenEditor::Bridge::kEngineInUse);
+        failImmediatePlay(QStringLiteral("capacity"), Bridge::kEngineInUse);
         qWarning("[AuditionManager] Max auditions (%d) reached, cannot play '%s'",
                  MAX_AUDITIONS, qPrintable(objectName));
         return 0;
     }
 
+    const auto barrier = engine_->currentWorldPlaybackBarrier();
+    const auto kind = previewKind(item.type);
     AuditionInfo info;
     info.playingId = nextPlayingId_++;
     info.objectName = objectName;
-    info.mode = AuditionMode::Preview;
-    info.previewPlayableKind = playableKind;
+    info.mode = kind ? AuditionMode::Preview : AuditionMode::NamedPlayback;
+    info.previewPlayableKind = kind.value_or(0);
     info.runtimeStableId = item.runtimeId();
     info.gameObjId = gameObjectId;
+    info.projectSessionId = barrier.projectSessionId;
+    info.runtimeEpoch = barrier.runtimeEpoch;
+    info.requiredRevision = barrier.requiredRevision;
+    info.revisionDeadlineMs = monotonicMilliseconds() + kPreviewRevisionTimeoutMs;
     info.previewIntentGeneration = nextPreviewIntentGeneration_++;
-    info.state = 0;
-    info.bIsPlaying = false;
     info.bIsDelayed = true;
-    auditions_[info.playingId] = info;
-    auto it = auditions_.find(info.playingId);
-    if (!startTypedPreviewNow(*it))
-        return 0;
-    return it->playingId;
+    const auto playingId = info.playingId;
+    auditions_[playingId] = info;
+    auto it = auditions_.find(playingId);
+    return startPreviewNow(*it) ? playingId : 0;
 }
 
 uint32_t AuditionManager::playResolved(const QString& objectName,
                                         const VNX::ProjectItem* item,
                                         uint64_t gameObjectId)
 {
-    lastPlayFailure_ = HarkenEditor::Bridge::PlaybackFailure::None;
-    lastPlayEngineResult_ = HarkenEditor::Bridge::kEngineOk;
+    lastPlayFailure_ = Bridge::PlaybackFailure::None;
+    lastPlayEngineResult_ = Bridge::kEngineOk;
     lastPlayTopologyFailure_ = {};
     lastPlayReason_.clear();
     lastPlayPending_ = false;
-    if (!engine_ || !engine_->isInitialized())
-    {
-        failImmediatePlay(QStringLiteral("unknown"),
-                          HarkenEditor::Bridge::kEngineNotInit);
+    if (!engine_ || !engine_->isInitialized()) {
+        failImmediatePlay(QStringLiteral("unknown"), Bridge::kEngineNotInit);
         return 0;
     }
     if (!ensurePreviewOutput())
         return 0;
 
-    const auto playableKind = item != nullptr
-        ? previewKind(item->type) : std::nullopt;
-    if (playableKind)
-        return playTypedPreview(objectName, *item, gameObjectId, *playableKind);
+    if (item && (previewKind(item->type) || item->type == VNX::ProjectItem::Type::Action))
+        return playAuthoredPreview(objectName, *item, gameObjectId);
 
     if (auditions_.size() >= MAX_AUDITIONS) {
-        failImmediatePlay(QStringLiteral("capacity"),
-                          HarkenEditor::Bridge::kEngineInUse);
+        failImmediatePlay(QStringLiteral("capacity"), Bridge::kEngineInUse);
         qWarning("[AuditionManager] Max auditions (%d) reached, cannot play '%s'",
                  MAX_AUDITIONS, qPrintable(objectName));
         return 0;
@@ -482,122 +507,28 @@ uint32_t AuditionManager::playResolved(const QString& objectName,
     QString dispatchName = item != nullptr ? item->name : objectName;
     if (item == nullptr) {
         const int leafStart = objectName.lastIndexOf('/') + 1;
-        if (leafStart > 0 && leafStart < objectName.size()) {
+        if (leafStart > 0 && leafStart < objectName.size())
             dispatchName = objectName.mid(leafStart);
-        }
     }
-    quintptr handle = 0;
-    AuditionMode mode = AuditionMode::NamedPlayback;
-    bool previewStartPending = false;
-    bool revisionPending = false;
-    bool actionInstallPending = false;
-    uint32_t previewPlayableKind = 0;
-    harkenstudio::ObjectId runtimeStableId = {};
-    uint64_t requiredRevision = 0;
-    uint64_t projectSessionId = 0;
-    uint64_t runtimeEpoch = 0;
-    const bool actionItem = item != nullptr
-        && item->type == VNX::ProjectItem::Type::Action;
-    if (actionItem) {
-        runtimeStableId = item->runtimeId();
-        auto& coordinator = engine_->runtimeSyncCoordinator();
-        requiredRevision = coordinator.currentAuthoringRevision();
-        const auto installed = coordinator.installedWorld();
-        if (installed) {
-            projectSessionId = installed->projectSessionId;
-            runtimeEpoch = installed->runtimeEpoch;
-        }
-        if (!coordinator.hasInstalledWorld()) {
-            failImmediatePlay(QStringLiteral("unknown"),
-                              HarkenEditor::Bridge::kEngineNotInit);
-        } else if (!actionHasAuthoredPlayableStep(*item)) {
-            failNotPlayable(QStringLiteral("empty"));
-        } else if (engine_->hasActionProgram(runtimeStableId)) {
-            const VNX::AudioEngine::PlaybackStartResult postResult =
-                engine_->playByNameWithPreviewContext(dispatchName);
-            if (postResult.previewVariablesPending) {
-                previewStartPending = true;
-                lastPlayReason_ = QStringLiteral("variables");
-                lastPlayPending_ = true;
-            } else if (postResult.playbackHandle == 0
-                && postResult.engineResult
-                    == HarkenEditor::Bridge::kEngineBackpressure
-                && actionInstallInFlight(coordinator)) {
-                actionInstallPending = true;
-                lastPlayFailure_ = HarkenEditor::Bridge::PlaybackFailure::None;
-                lastPlayEngineResult_ = HarkenEditor::Bridge::kEngineOk;
-                lastPlayTopologyFailure_ = {};
-                lastPlayReason_ = QStringLiteral("install");
-                lastPlayPending_ = true;
-            } else {
-                handle = postResult.playbackHandle;
-                lastPlayFailure_ = postResult.failure;
-                lastPlayEngineResult_ = postResult.engineResult;
-                lastPlayTopologyFailure_ = postResult.topologyFailure;
-            }
-        } else if (actionInstallFailedOrUnavailable(coordinator)) {
-            failImmediatePlay(QStringLiteral("unknown"),
-                              HarkenEditor::Bridge::kEngineNotInit);
-        } else if (actionInstallInFlight(coordinator)) {
-            actionInstallPending = true;
-            lastPlayReason_ = QStringLiteral("install");
-            lastPlayPending_ = true;
-        } else {
-            failNotPlayable(QStringLiteral("unavailable"));
-        }
-    } else {
-        const VNX::AudioEngine::PlaybackStartResult postResult =
-            engine_->playByNameDetailed(dispatchName);
-        handle = postResult.playbackHandle;
-        lastPlayFailure_ = postResult.failure;
-        lastPlayEngineResult_ = postResult.engineResult;
-        lastPlayTopologyFailure_ = postResult.topologyFailure;
-    }
-    if (handle == 0 && !previewStartPending && !revisionPending
-        && !actionInstallPending)
-    {
-        if (lastPlayReason_.isEmpty())
-            lastPlayReason_ = QStringLiteral("unknown");
+    const auto result = engine_->playByNameDetailed(dispatchName);
+    lastPlayFailure_ = result.failure;
+    lastPlayEngineResult_ = result.engineResult;
+    lastPlayTopologyFailure_ = result.topologyFailure;
+    if (result.playbackHandle == 0) {
+        lastPlayReason_ = QStringLiteral("unknown");
         return 0;
     }
-
     AuditionInfo info;
     info.playingId = nextPlayingId_++;
     info.objectName = objectName;
-    info.playbackHandle = handle;
-    info.mode = mode;
-    info.previewStartPending = previewStartPending;
-    info.revisionPending = revisionPending;
-    info.actionInstallPending = actionInstallPending;
-    info.previewPlayableKind = previewPlayableKind;
-    info.runtimeStableId = runtimeStableId;
-    info.requiredRevision = requiredRevision;
-    info.projectSessionId = projectSessionId;
-    info.runtimeEpoch = runtimeEpoch;
-    info.previewIntentGeneration = nextPreviewIntentGeneration_++;
-    if (!actionInstallPending) {
-        info.revisionDeadlineMs = monotonicMilliseconds()
-            + kPreviewRevisionTimeoutMs;
-    }
+    info.playbackHandle = result.playbackHandle;
     info.gameObjId = gameObjectId;
-    info.state = (previewStartPending || revisionPending
-                  || actionInstallPending) ? 0 : 1;
-    info.bIsPlaying = info.state == 1;
-    info.bIsDelayed = previewStartPending || revisionPending
-        || actionInstallPending;
-    info.previewReason = lastPlayReason_;
-    info.previewEngineResult = static_cast<int32_t>(lastPlayEngineResult_);
+    info.previewIntentGeneration = nextPreviewIntentGeneration_++;
+    info.revisionDeadlineMs = monotonicMilliseconds() + kPreviewRevisionTimeoutMs;
+    info.state = 1;
+    info.bIsPlaying = true;
     auditions_[info.playingId] = info;
-
-    if (previewStartPending) {
-        if (!previewStartRetryTimer_.isActive())
-            previewStartRetryTimer_.start();
-    } else if (revisionPending) {
-        if (!previewRevisionTimeoutTimer_.isActive())
-            previewRevisionTimeoutTimer_.start();
-    } else if (!actionInstallPending) {
-        emit auditionStarted(info.playingId, objectName);
-    }
+    emit auditionStarted(info.playingId, objectName);
     return info.playingId;
 }
 
@@ -645,8 +576,7 @@ void AuditionManager::stop(uint32_t playingId, float fadeMs)
     auto it = auditions_.find(playingId);
     if (it == auditions_.end()) return;
 
-    if ((it->previewStartPending || it->revisionPending
-         || it->actionInstallPending)
+    if ((it->previewStartPending || it->revisionPending)
         && it->playbackHandle == 0
         && !it->previewStopPending
         && !it->previewCancelling) {
@@ -989,339 +919,41 @@ void AuditionManager::onEnginePlaybackStopped(quintptr handle)
 
 void AuditionManager::retryPendingPreviewStarts()
 {
-    if (!engine_ || !engine_->isInitialized()) {
-        QList<QPair<uint32_t, QString>> failed;
-        for (auto it = auditions_.cbegin(); it != auditions_.cend(); ++it) {
-            if (it->previewStartPending)
-                failed.push_back({it.key(), it->objectName});
-        }
-        for (const auto& failure : failed) {
-            auditions_.remove(failure.first);
-            emit auditionStartFailed(
-                failure.first, failure.second,
-                static_cast<int32_t>(HarkenEditor::Bridge::kEngineNotInit));
-            emit auditionStateChanged(failure.first, 0);
-        }
-        previewStartRetryTimer_.stop();
-        if (!failed.isEmpty())
-            emitIfAllStopped();
-        return;
-    }
-
-    struct FailedStart {
-        uint32_t playingId = 0;
-        QString objectName;
-        int32_t engineResult = 0;
-    };
-    QList<FailedStart> failed;
-    QList<QPair<uint32_t, QString>> started;
-    bool hasPending = false;
-
-    for (auto it = auditions_.begin(); it != auditions_.end(); ++it) {
-        if (!it->previewStartPending)
+    const auto ids = auditions_.keys();
+    for (uint32_t id : ids) {
+        auto it = auditions_.find(id);
+        if (it == auditions_.end() || !it->previewStartPending)
             continue;
-
         if (++it->previewStartAttempts > kPreviewStartRetryLimit) {
-            failed.push_back({it.key(), it->objectName,
-                              static_cast<int32_t>(
-                                  HarkenEditor::Bridge::kEngineBackpressure)});
+            removePreviewSlot(id, it->objectName, Bridge::kEngineBackpressure, true);
             continue;
         }
-
-        quint64 handle = 0;
-        bool pending = false;
-        auto result = HarkenEditor::Bridge::kEngineOk;
-        if (it->mode == AuditionMode::NamedPlayback) {
-            const auto installed = engine_->runtimeSyncCoordinator().installedWorld();
-            if (!installed || installed->projectSessionId != it->projectSessionId
-                || installed->runtimeEpoch != it->runtimeEpoch) {
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(HarkenEditor::Bridge::kEngineNotInit)});
-                continue;
-            }
-            const auto* action = VNX::ProjectManager::instance()
-                .findItemByRuntimeStableId(it->runtimeStableId);
-            if (action == nullptr || action->type != VNX::ProjectItem::Type::Action) {
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(HarkenEditor::Bridge::kEngineUnknownId)});
-                continue;
-            }
-            const auto post = engine_->playByNameWithPreviewContext(action->name);
-            if (!post.previewVariablesPending && post.playbackHandle == 0
-                && post.engineResult == HarkenEditor::Bridge::kEngineBackpressure
-                && actionInstallInFlight(engine_->runtimeSyncCoordinator())) {
-                it->previewStartPending = false;
-                it->actionInstallPending = true;
-                it->requiredRevision = engine_->runtimeSyncCoordinator()
-                    .currentAuthoringRevision();
-                it->previewReason = QStringLiteral("install");
-                continue;
-            }
-            handle = post.playbackHandle;
-            pending = post.previewVariablesPending;
-            result = post.engineResult;
-        } else {
-            const auto preview = engine_->playPreviewPlayable(
-                it->previewPlayableKind, it->runtimeStableId);
-            handle = preview.handle;
-            pending = preview.status == HarkenEditor::Bridge::kPreviewBackpressure;
-            result = previewEngineResult(preview.status);
-        }
-        if (pending) {
-            it->previewReason = it->mode == AuditionMode::NamedPlayback
-                ? QStringLiteral("variables") : QStringLiteral("admission");
-            it->previewEngineResult =
-                static_cast<int32_t>(HarkenEditor::Bridge::kEngineBackpressure);
-            it->state = 0;
-            it->bIsPlaying = false;
-            it->bIsDelayed = true;
-            hasPending = true;
-            continue;
-        }
-        if (result != HarkenEditor::Bridge::kEngineOk || handle == 0) {
-            failed.push_back({
-                it.key(), it->objectName,
-                static_cast<int32_t>(result)});
-            continue;
-        }
-
-        it->playbackHandle = handle;
-        it->previewStartPending = false;
-        it->previewReason.clear();
-        it->previewEngineResult = 0;
-        it->bIsDelayed = false;
-        it->bIsPlaying = true;
-        it->state = 1;
-        started.push_back({it.key(), it->objectName});
+        startPreviewNow(*it);
     }
-
-    for (const FailedStart& failure : failed) {
-        auditions_.remove(failure.playingId);
-        emit auditionStartFailed(failure.playingId, failure.objectName,
-                                  failure.engineResult);
-        emit auditionStateChanged(failure.playingId, 0);
-    }
-    for (const auto& start : started) {
-        emit auditionStarted(start.first, start.second);
-        emit auditionStateChanged(start.first, 1);
-    }
-
+    const bool hasPending = std::any_of(auditions_.cbegin(), auditions_.cend(),
+        [](const auto& info) { return info.previewStartPending; });
     if (!hasPending)
         previewStartRetryTimer_.stop();
-    if (!failed.isEmpty())
-        emitIfAllStopped();
 }
 
 void AuditionManager::onRuntimeSyncBarrierChanged()
 {
     if (!engine_)
         return;
-
-    struct FailedStart {
-        uint32_t playingId;
-        QString objectName;
-        int32_t engineResult;
-    };
-    QList<FailedStart> failed;
-    QList<QPair<uint32_t, QString>> started;
-    bool hasRevisionPending = false;
-    bool hasBackpressurePending = false;
-    auto& coordinator = engine_->runtimeSyncCoordinator();
-    for (auto it = auditions_.begin(); it != auditions_.end(); ++it) {
-        if (it->previewStartPending) {
-            const auto installed = coordinator.installedWorld();
-            if (!coordinator.hasInstalledWorld() || !installed
-                || installed->projectSessionId != it->projectSessionId
-                || installed->runtimeEpoch != it->runtimeEpoch) {
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(
-                                      HarkenEditor::Bridge::kEngineNotInit)});
-                continue;
-            }
-            hasBackpressurePending = true;
-            continue;
-        }
-        if (it->actionInstallPending) {
-            const auto installed = coordinator.installedWorld();
-            if (!coordinator.hasInstalledWorld() || !installed
-                || installed->projectSessionId != it->projectSessionId
-                || installed->runtimeEpoch != it->runtimeEpoch) {
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(
-                                      HarkenEditor::Bridge::kEngineNotInit)});
-                continue;
-            }
-            if (actionInstallFailedOrUnavailable(coordinator)) {
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(
-                                      HarkenEditor::Bridge::kEngineNotInit)});
-                continue;
-            }
-            if (actionInstallInFlight(coordinator)) {
-                it->requiredRevision =
-                    coordinator.currentAuthoringRevision();
-                continue;
-            }
-            it->actionInstallPending = false;
-            if (!engine_->hasActionProgram(it->runtimeStableId)) {
-                failed.push_back({it.key(), it->objectName, 0});
-                continue;
-            }
-            VNX::ProjectItem* action = VNX::ProjectManager::instance()
-                .findItemByRuntimeStableId(it->runtimeStableId);
-            if (action == nullptr
-                || action->type != VNX::ProjectItem::Type::Action) {
-                failed.push_back({it.key(), it->objectName, 0});
-                continue;
-            }
-            const VNX::AudioEngine::PlaybackStartResult postResult =
-                engine_->playByNameWithPreviewContext(action->name);
-            if (postResult.previewVariablesPending) {
-                it->previewStartPending = true;
-                it->previewReason = QStringLiteral("variables");
-                hasBackpressurePending = true;
-                continue;
-            }
-            if (postResult.playbackHandle == 0) {
-                const int32_t reported =
-                    postResult.engineResult
-                        == HarkenEditor::Bridge::kEngineUnknownId
-                    ? 0
-                    : static_cast<int32_t>(postResult.engineResult);
-                failed.push_back({it.key(), it->objectName, reported});
-                continue;
-            }
-            it->playbackHandle = postResult.playbackHandle;
-            it->projectSessionId = installed->projectSessionId;
-            it->runtimeEpoch = installed->runtimeEpoch;
-            it->bIsDelayed = false;
-            it->bIsPlaying = true;
-            it->state = 1;
-            it->previewReason.clear();
-            it->previewEngineResult = 0;
-            started.push_back({it.key(), it->objectName});
-            continue;
-        }
-        if (!it->revisionPending)
-            continue;
-        const auto barrier = coordinator.barrier(it->requiredRevision);
-        if (barrier.projectSessionId != it->projectSessionId
-            || barrier.runtimeEpoch != it->runtimeEpoch) {
-            failed.push_back({it.key(), it->objectName,
-                              static_cast<int32_t>(
-                                  HarkenEditor::Bridge::kEngineNotInit)});
-            continue;
-        }
-        if (barrier.state
-            == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Pending) {
-            it->requiredRevision =
-                coordinator.currentAuthoringRevision();
-            hasRevisionPending = true;
-            continue;
-        }
-        if (barrier.state
-            == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Superseded) {
-            hasRevisionPending = true;
-            continue;
-        }
-        if (barrier.state
-            != VNX::RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
-            failed.push_back({it.key(), it->objectName,
-                              static_cast<int32_t>(
-                                  HarkenEditor::Bridge::kEngineNotInit)});
-            continue;
-        }
-
-        if (it->mode == AuditionMode::NamedPlayback) {
-            VNX::ProjectItem* action = VNX::ProjectManager::instance()
-                .findItemByRuntimeStableId(it->runtimeStableId);
-            if (action == nullptr
-                || action->type != VNX::ProjectItem::Type::Action) {
-                it->revisionPending = false;
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(
-                                      HarkenEditor::Bridge::kEngineUnknownId)});
-                continue;
-            }
-            const VNX::AudioEngine::PlaybackStartResult postResult =
-                engine_->playByNameWithPreviewContext(action->name);
-            it->revisionPending = false;
-            if (postResult.previewVariablesPending) {
-                it->previewStartPending = true;
-                it->previewReason = QStringLiteral("variables");
-                hasBackpressurePending = true;
-                continue;
-            }
-            if (postResult.playbackHandle == 0) {
-                failed.push_back({it.key(), it->objectName,
-                                  static_cast<int32_t>(
-                                      postResult.engineResult)});
-                continue;
-            }
-            it->playbackHandle = postResult.playbackHandle;
-            it->revisionPending = false;
-            it->bIsDelayed = false;
-            it->bIsPlaying = true;
-            it->state = 1;
-            it->previewReason.clear();
-            started.push_back({it.key(), it->objectName});
-            continue;
-        }
-
-        const auto preview = engine_->playPreviewPlayable(
-            it->previewPlayableKind, it->runtimeStableId);
-        it->revisionPending = false;
-        if (preview.status == HarkenEditor::Bridge::kPreviewBackpressure) {
-            it->previewStartPending = true;
-            it->previewReason = QStringLiteral("admission");
-            it->previewEngineResult =
-                static_cast<int32_t>(HarkenEditor::Bridge::kEngineBackpressure);
-            it->state = 0;
-            it->bIsPlaying = false;
-            it->bIsDelayed = true;
-            ++it->previewStartAttempts;
-            hasBackpressurePending = true;
-            continue;
-        }
-        if (preview.status != HarkenEditor::Bridge::kPreviewOk || preview.handle == 0) {
-            failed.push_back({
-                it.key(), it->objectName,
-                static_cast<int32_t>(previewEngineResult(preview.status))});
-            continue;
-        }
-        it->playbackHandle = preview.handle;
-        it->previewReason.clear();
-        it->previewEngineResult = 0;
-        it->bIsDelayed = false;
-        it->bIsPlaying = true;
-        it->state = 1;
-        started.push_back({it.key(), it->objectName});
+    const auto ids = auditions_.keys();
+    for (uint32_t id : ids) {
+        auto it = auditions_.find(id);
+        if (it != auditions_.end() && (it->revisionPending || it->previewStartPending))
+            startPreviewNow(*it);
     }
-
-    for (const FailedStart& failure : failed) {
-        auditions_.remove(failure.playingId);
-        emit auditionStartFailed(failure.playingId, failure.objectName,
-                                  failure.engineResult);
-        emit auditionStateChanged(failure.playingId, 0);
-    }
-    for (const auto& start : started) {
-        emit auditionStarted(start.first, start.second);
-        emit auditionStateChanged(start.first, 1);
-    }
-    if (hasBackpressurePending) {
-        if (!previewStartRetryTimer_.isActive())
-            previewStartRetryTimer_.start();
-    } else {
-        previewStartRetryTimer_.stop();
-    }
-    if (hasRevisionPending) {
-        if (!previewRevisionTimeoutTimer_.isActive())
-            previewRevisionTimeoutTimer_.start();
-    } else {
+    const bool hasRevisionPending = std::any_of(auditions_.cbegin(), auditions_.cend(),
+        [](const auto& info) { return info.revisionPending; });
+    const bool hasBackpressurePending = std::any_of(auditions_.cbegin(), auditions_.cend(),
+        [](const auto& info) { return info.previewStartPending; });
+    if (!hasRevisionPending)
         previewRevisionTimeoutTimer_.stop();
-    }
-    if (!failed.isEmpty())
-        emitIfAllStopped();
+    if (!hasBackpressurePending)
+        previewStartRetryTimer_.stop();
 }
 
 void AuditionManager::expirePendingRevisionStarts()
@@ -1481,7 +1113,7 @@ QJsonObject AuditionManager::previewIpcSnapshot(uint32_t playingId) const
     const bool have = playingId != 0 && info.playingId != 0;
     const bool pending = have
         ? (info.previewStartPending || info.revisionPending
-           || info.actionInstallPending || info.previewReplacePending)
+           || info.previewReplacePending)
         : lastPlayPending_;
     const QString reason = have && !info.previewReason.isEmpty()
         ? info.previewReason : lastPlayReason_;
