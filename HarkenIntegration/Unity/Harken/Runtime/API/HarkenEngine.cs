@@ -41,6 +41,15 @@ namespace Harken
 
         public static VnResult Init(in VnConfig config)
         {
+            VnAbiVersionInfo abi = default;
+            abi.structSize = (uint)Marshal.SizeOf<VnAbiVersionInfo>();
+            try
+            {
+                if (HarkenNative.Vn_QueryAbiVersion(ref abi) != VnResult.VN_OK ||
+                    abi.major != VnConstants.VN_ABI_VERSION_MAJOR)
+                    return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            }
+            catch (EntryPointNotFoundException) { return VnResult.VN_CAPABILITY_UNAVAILABLE; }
             VnResult support = Emitter.CheckStateOnlySupport();
             if (support != VnResult.VN_OK) return support;
             VnResult result = HarkenNative.Vn_Init(config);

@@ -34,6 +34,7 @@ bool RemoteSession::startRecording(const QString& path)
     source.remoteProtocolMajor = target.protocolMajor;
     source.engineMonitorInstanceId = target.instanceId.toULongLong(nullptr, 16);
     closeRecorderWhenStopped_ = false;
+    recordedCaptureStarted_ = false;
     return recorder_.open(path.toStdString(), source, 0);
 }
 
@@ -45,10 +46,20 @@ void RemoteSession::stopRecording()
 
 void RemoteSession::closeRecorderIfStopped()
 {
-    if (!closeRecorderWhenStopped_ || (capture_ && capture_->state() == Monitor::EventCaptureState::Stopping))
+    if (!recorder_.isOpen())
+        return;
+    using State = Monitor::EventCaptureState;
+    const State state = capture_ ? capture_->state() : State::Unavailable;
+    if (state == State::Starting || state == State::Capturing) {
+        recordedCaptureStarted_ = true;
+        return;
+    }
+    const bool failed = state == State::Failed || state == State::Unavailable;
+    if (state == State::Stopping || (!closeRecorderWhenStopped_ && !recordedCaptureStarted_ && !failed))
         return;
     recorder_.close();
     closeRecorderWhenStopped_ = false;
+    recordedCaptureStarted_ = false;
 }
 
 void RemoteSession::shutdown()

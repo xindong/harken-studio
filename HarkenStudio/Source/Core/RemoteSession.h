@@ -34,6 +34,7 @@ private:
     Monitor::EventCaptureController* capture_ = nullptr;
     Monitor::MonitorSessionWriter recorder_;
     bool closeRecorderWhenStopped_ = false;
+    bool recordedCaptureStarted_ = false;
 };
 
 }
