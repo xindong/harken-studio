@@ -5,6 +5,8 @@
 # QPushButton, QMenuBar, QHBoxLayout).
 
 add_library(harken_editor_titlebar STATIC
+    TitleBarBase.cpp
+    TitleBarBase.h
     TitleBarButton.cpp
     TitleBarButton.h
     TitleBarWidget.cpp
