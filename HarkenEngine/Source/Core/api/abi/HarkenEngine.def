@@ -83,6 +83,7 @@ EXPORTS
     Vn_SetEmitterPosition
     Vn_SetEmitterValue
     Vn_SetEmitterValues
+    Vn_SetHostOutputMute
     Vn_SetListener
     Vn_SetListenerDistanceReference
     Vn_SetValue

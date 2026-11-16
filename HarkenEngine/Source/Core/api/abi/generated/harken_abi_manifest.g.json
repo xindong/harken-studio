@@ -4424,6 +4424,22 @@
         },
         {
           "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_SetHostOutputMute",
+          "parameters": [
+            {
+              "ctype": "uint32_t",
+              "name": "mute01"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "fadeMs"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
           "edition": "development",
           "name": "Vn_CaptureEffectCapabilities",
           "parameters": [
@@ -6569,6 +6585,7 @@
         "Vn_SetEmitterPosition",
         "Vn_SetEmitterValue",
         "Vn_SetEmitterValues",
+        "Vn_SetHostOutputMute",
         "Vn_SetListener",
         "Vn_SetListenerDistanceReference",
         "Vn_SetValue",
@@ -26434,7 +26451,7 @@
       }
     }
   },
-  "contractSha256": "8f8160cf39c7cb5720095814652952bb9880d1f727090566fe9e01f242c09601",
+  "contractSha256": "efd650ca37c871bf82c7d79809bc1217a27db0d838e3e114bf2286044b7119ba",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

@@ -1664,6 +1664,14 @@
       {
         "wire": "u32"
       }
+    ],
+    "Vn_SetHostOutputMute": [
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      }
     ]
   },
   "bindingOverloads": [

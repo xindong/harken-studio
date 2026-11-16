@@ -122,6 +122,13 @@ wait for a successful resume. Later resumes raise only `BecameReady`. Applicatio
 pause callbacks are ignored in the Editor. Explicit `SetSuspended` calls still
 require an active session and report native failures normally.
 
+In the Editor, the Game view **Mute Audio** toggle also silences Harken. The
+Editor applies the current toggle immediately to every newly initialized
+session through `HarkenEngine.SetHostOutputMute`, then uses a 10 ms fade for
+later toggle changes. Playback time, metering and Studio capture continue while
+the device output is muted. If the native library or mute export is unavailable,
+the Editor skips mute synchronization without interrupting session startup.
+
 For retained legacy startup-ID sources, missing startup Content
 (`VN_CONTENT_NOT_LOADED`) can leave an active session
 and raise Ready/BecameReady. Check the startup return value and
