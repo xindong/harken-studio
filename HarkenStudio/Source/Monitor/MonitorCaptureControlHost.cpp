@@ -63,8 +63,7 @@ MonitorCaptureControlState MonitorCaptureControlHost::openLayout()
 
         desc.requestedPermissionMask =
             kMonitorPermObserveState | kMonitorPermObserveEvents
-            | kMonitorPermObserveMeasurements | kMonitorPermCaptureControl
-            | kMonitorPermRecord;
+            | kMonitorPermObserveMeasurements | kMonitorPermCaptureControl;
         const MonitorOpenResult opened = adapter_->open(&desc);
         if (opened.result != kOk || opened.handle == 0)
         {

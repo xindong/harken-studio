@@ -18,6 +18,7 @@
 //
 // When tap measurement is compiled out the same fields must read exactly
 // 0 — the layout is build-invariant, only the measurement is gated.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

@@ -3,6 +3,7 @@
 // thread's floating-point mode. Results are reported without a threshold.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "Common/RawVoiceTestSupport.h"

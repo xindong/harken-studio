@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
-    "api_surface", ROOT / "HarkenEngine/Source/Tooling/Binding/api_surface.py")
+    "api_surface", ROOT / "HarkenIntegration/Unity/Binding/api_surface.py")
 surface = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(surface)
 
@@ -159,8 +159,9 @@ class InventoryTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.write("HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json",
-                   json.dumps({"functions": []}))
+        self.manifest = self.root / "harken_abi_manifest.json"
+        self.manifest.write_text(json.dumps({"contract": {"nativeAbi": {"functions": []}}}),
+                                 encoding="utf-8")
         self.write("HarkenIntegration/Unity/Harken/Runtime/Core.asmdef", '{"name":"Core"}')
 
     def write(self, path, content):
@@ -174,9 +175,9 @@ class InventoryTest(unittest.TestCase):
     def test_partial_access_across_files_is_observed(self):
         self.source("A.cs", "namespace N { public partial class C {} }")
         self.source("B.cs", "namespace N { partial class C {} }")
-        before = surface.inventory(self.root)
+        before = surface.inventory(self.root, self.manifest)
         self.source("B.cs", "namespace N { partial class C { public void CreateBus() {} } }")
-        after = surface.inventory(self.root)
+        after = surface.inventory(self.root, self.manifest)
         self.assertTrue(any("CreateBus" in error for error in surface.validate(policy(before), after)))
 
     def test_partial_access_does_not_cross_assemblies_or_private_containers(self):
@@ -184,27 +185,27 @@ class InventoryTest(unittest.TestCase):
         self.source("Other/Other.asmdef", '{"name":"Other"}')
         self.source("Other/B.cs", "namespace N { partial class C { public int Hidden; } }")
         self.source("C.cs", "class Outer { public partial class C { public int Hidden2; } }")
-        self.assertFalse(any("Hidden" in key for key in surface.inventory(self.root)))
+        self.assertFalse(any("Hidden" in key for key in surface.inventory(self.root, self.manifest)))
 
     def test_nested_partial_access_reaches_fixed_point(self):
         self.source("A.cs", "partial class C { partial class D { public int Value; } }")
         self.source("B.cs", "public partial class C { public partial class D {} }")
-        self.assertTrue(any("Value" in key for key in surface.inventory(self.root)))
+        self.assertTrue(any("Value" in key for key in surface.inventory(self.root, self.manifest)))
 
     def test_moving_declaration_between_alias_contexts_is_detected(self):
         declaration = "public class C { public Id Value; }"
         self.source("A.cs", "using Id = System.Int32; " + declaration)
         self.source("B.cs", "using Id = System.String;")
-        before = surface.inventory(self.root)
+        before = surface.inventory(self.root, self.manifest)
         self.source("A.cs", "using Id = System.Int32;")
         self.source("B.cs", "using Id = System.String; " + declaration)
-        self.assertTrue(surface.validate(policy(before), surface.inventory(self.root)))
+        self.assertTrue(surface.validate(policy(before), surface.inventory(self.root, self.manifest)))
 
     def test_moving_alias_between_namespaces_is_detected(self):
         self.source("A.cs", "namespace A { using Id = System.Int32; } namespace B {}")
-        before = surface.inventory(self.root)
+        before = surface.inventory(self.root, self.manifest)
         self.source("A.cs", "namespace A {} namespace B { using Id = System.Int32; }")
-        self.assertTrue(surface.validate(policy(before), surface.inventory(self.root)))
+        self.assertTrue(surface.validate(policy(before), surface.inventory(self.root, self.manifest)))
 
 
 class PolicyTest(unittest.TestCase):
@@ -213,12 +214,6 @@ class PolicyTest(unittest.TestCase):
         new = {"native:Vn_New": {"native_public": True}}
         errors = surface.validate(policy(old), new)
         self.assertEqual(2, len(errors))
-
-    def test_resurrected_native_tombstone_is_rejected(self):
-        retired = {"native:Vn_Retired": {"native_public": False}}
-        p = policy(retired, audience="internal", disposition="tombstone")
-        self.assertEqual([], surface.validate(p, retired))
-        self.assertTrue(surface.validate(p, {"native:Vn_Retired": {"native_public": True}}))
 
     def test_unexplained_compatibility_is_rejected(self):
         p = policy({}, disposition="compatibility")

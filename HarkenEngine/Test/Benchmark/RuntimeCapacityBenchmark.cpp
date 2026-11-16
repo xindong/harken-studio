@@ -7,6 +7,7 @@
 #include "ProjectGenerationTransaction.h"
 #include "UnitTest/VoicePoolReleaseTestAccess.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "Common/RawVoiceTestSupport.h"
@@ -14,7 +15,7 @@
 #include "harken/core/VoiceLedger.h"
 #include "harken/core/CpuClock.h"
 #include "harken/media/StreamFormat.h"
-#include "harken/media/generated/harken_pack_effect_schema.g.h"
+#include "harken/media/PackEffectSchema.h"
 
 #include <algorithm>
 #include <array>

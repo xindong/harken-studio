@@ -127,6 +127,8 @@ namespace Harken
             internal ulong ContentHash;
             internal int ByteCount;
             internal PackCompanion Names;
+            internal ulong NameRevision;
+            internal ulong CallableFingerprint;
             public Pack Handle;
             public int Requests;
             public byte[] Bytes;

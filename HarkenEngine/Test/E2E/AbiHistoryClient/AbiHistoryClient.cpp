@@ -1,5 +1,7 @@
 #include <harken/Harken.h>
-#include "harken_binding_abi_pin.g.h"
+#if __has_include(<harken/HarkenDevelopment.h>)
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include <windows.h>
 
@@ -215,7 +217,7 @@ int main(int argc, char** argv) {
     if (argc != 3) {
         std::fprintf(
             stderr,
-            "usage: harken_abi_history_client <profile> <HarkenCore.dll>\n");
+            "usage: harken_abi_history_client <profile> <HarkenEngine.dll>\n");
         return 2;
     }
     std::error_code ec;

@@ -1,5 +1,5 @@
 #include "RuntimeSyncCoordinator.h"
-#include <harken_playable_properties.g.h>
+#include <harken_playable_properties/PlayableProperties.h>
 
 #include <gtest/gtest.h>
 

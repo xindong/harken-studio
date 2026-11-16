@@ -445,7 +445,7 @@ TEST(ProjectContract, SnapshotDiskAndIncrementalValidationRemainEquivalentAcross
         compare(false);
     }
     header = HarkenTest::projectHeader(originalRoot);
-    header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION + 1);
+    header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION + 1);
     root.insert(QStringLiteral("harkenDocument"), header);
     compare(true);
     root = originalRoot;

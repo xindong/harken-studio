@@ -4,6 +4,7 @@
 #include "../Component.h"
 #include "../PropertyDescriptor.h"
 #include "../ProjectTypes.h"
+#include <harken_pack/PackProperties.h>
 
 #include <cstdint>
 #include <cmath>
@@ -65,7 +66,8 @@ inline const PropertySchema& VSpatial::schema()
               return true;
           } },
         { .field="panning", .type=PropType::Float, .label="Panning", .section=PropertySection::Rating,
-          .min=-1.0, .max=1.0, .def=0.0, .decimals=2, .flags={.serialize=false},
+          .min=HK_PACK_PROPERTY_SPATIAL_PANNING_MIN, .max=HK_PACK_PROPERTY_SPATIAL_PANNING_MAX, .def=0.0,
+          .decimals=2, .flags={.serialize=false},
           .get=VNX_PROP_GET(VSpatial, panning), .set=[](IComponent* c, const QVariant& v) {
               auto* s = static_cast<VSpatial*>(c);
               if (s->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(s->hostItem()->type)) return false;
@@ -73,7 +75,8 @@ inline const PropertySchema& VSpatial::schema()
               return true;
           } },
         { .field="spatializationMix", .type=PropType::Float, .label="Spatialization Mix", .section=PropertySection::Rating,
-          .min=0.0, .max=1.0, .def=1.0, .decimals=2,
+          .min=HK_PACK_PROPERTY_SPATIALIZATION_MIX_MIN, .max=HK_PACK_PROPERTY_SPATIALIZATION_MIX_MAX, .def=1.0,
+          .decimals=2,
           .get=VNX_PROP_GET(VSpatial, spatializationMix), .set=[](IComponent* c, const QVariant& v) {
               bool ok = false;
               const double value = v.toDouble(&ok);
@@ -87,7 +90,9 @@ inline const PropertySchema& VSpatial::schema()
               return static_cast<const VSpatial*>(c)->spatializationMixPresent;
           } },
         { .field="attenuationDistanceScaling", .type=PropType::Float, .label="Distance Scale", .section=PropertySection::Rating,
-          .unit="%", .min=0.1, .max=10.0, .def=1.0, .decimals=0, .displayScale=100.0,
+          .unit="%", .min=HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MIN,
+          .max=HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MAX, .def=1.0, .decimals=0,
+          .displayScale=100.0,
           .get=VNX_PROP_GET(VSpatial, attenuationDistanceScaling), .set=[](IComponent* c, const QVariant& v) {
               auto* s = static_cast<VSpatial*>(c);
               if (s->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(s->hostItem()->type)) return false;

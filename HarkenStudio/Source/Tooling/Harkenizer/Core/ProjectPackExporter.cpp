@@ -31,7 +31,7 @@
 #include "ProjectPlatformActivity.h"
 #include <harken_studio_build/PackFormat.h>
 #include "Components/VBus.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "ActionStepUtils.h"
 #include <QFile>
 #include <QFileInfo>

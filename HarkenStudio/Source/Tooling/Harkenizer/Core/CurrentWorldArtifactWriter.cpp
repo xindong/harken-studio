@@ -1,6 +1,7 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriter.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriterInternal.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
 #include <harken_studio_build/WorldArtifact.h>

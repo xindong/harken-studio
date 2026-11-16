@@ -6,6 +6,7 @@
 // bound that moved, fails here and nowhere else.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "AllocationProbe.h"
@@ -1275,6 +1276,7 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
         std::bad_alloc);
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1692,6 +1694,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     newConsumer.Discard();
     finishLaneWork();
 }
+#endif
 
 TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {
     VnConfig config = MakeNullConfig();

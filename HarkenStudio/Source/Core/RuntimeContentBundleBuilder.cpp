@@ -7,7 +7,7 @@
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "ProjectTypes.h"
 #include "Components/VAction.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include <harken_studio_build/PackFormat.h>
 
 #include <QCryptographicHash>

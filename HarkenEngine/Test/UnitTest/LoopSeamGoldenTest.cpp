@@ -12,7 +12,7 @@
 // golden precedent): tests never include host code, and float32 wav keeps
 // the whole chain lossless so exact equality is the honest expectation.
 #include "Common/ObjectIdTestSupport.h"
-#include "Common/ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 #include "Common/TestUtil.h"
 
 #include <cstdint>
@@ -49,7 +49,7 @@ void WriteTextFile(const std::string& path, const std::string& text) {
 }
 
 int CompilePack(const std::string& manifestPath) {
-    return harkentest::CompileResources({manifestPath});
+    return harkentest::BuildTestPack({manifestPath});
 }
 
 // Minimal IEEE float32 (format tag 3) mono/stereo RIFF writer (round-trip

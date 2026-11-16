@@ -16,8 +16,8 @@ inline constexpr std::uint32_t kStreamTocEntryBytes = 80;
 inline constexpr std::uint32_t kStreamEntryCount = 1;
 inline constexpr std::uint64_t kStreamPayloadAlign = 64;
 inline constexpr std::uint16_t kStreamSampleFormatF32Planar =
-    kPackSampleFormatF32Planar;
-inline constexpr std::uint32_t kStreamFlagLoopable = kPackFlagLoopable;
+    HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
+inline constexpr std::uint32_t kStreamFlagLoopable = HK_PACK_MEDIA_FLAG_LOOPABLE;
 inline constexpr std::uint32_t kStreamKnownFlagsMask =
     kStreamFlagLoopable;
 inline constexpr std::uint32_t kStreamChunkChecksumBytes = 8;

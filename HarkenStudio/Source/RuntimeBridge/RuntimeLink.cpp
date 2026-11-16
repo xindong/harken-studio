@@ -4,13 +4,12 @@
 #include "RuntimeLinkInternal.h"
 
 #include "DiagnosticsBridge.h"
-#include "PackagingBridge.h"
+#include "MediaRegistry.h"
+#include "MediaServices.h"
 #include "CurrentWorldSyncBridgeInternal.h"
 
 #include <harken/Harken.h>
-#include <harken_studio_build/PackImage.h>
-#include <harken_preview/PreviewAbi.h>
-#include <harken_preview/PreviewProject.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -23,6 +22,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <tuple>
@@ -103,6 +103,9 @@ struct RuntimeState {
     EngineSessionConfig requestedConfig;
     int sampleRate = 48000;
     int blockFrames = 256;
+    bool realtimeAnchorValid = false;
+    std::chrono::steady_clock::time_point realtimeAnchor{};
+    uint64_t realtimeBlocksPumped = 0;
     VnSnapshot snapshot{};
     bool snapshotValid = false;
     VnPreviewChannelPeaksV1 meterPeaks{};
@@ -517,9 +520,9 @@ VnConfig makeConfig(const EngineSessionConfig& config)
     c.maxActions = 65536;
     c.voiceSendSlots = 8;
     c.fxSlotsPerVoice = 8;
-    c.deviceMode = config.deviceMode == EngineDeviceMode::Null
-        ? VN_DEVICE_NULL
-        : VN_DEVICE_REAL;
+    c.deviceMode = config.deviceMode == EngineDeviceMode::Real
+        ? VN_DEVICE_REAL
+        : VN_DEVICE_NULL;
     c.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
     c.deviceChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
     c.onNotification = &notificationCallback;
@@ -531,6 +534,15 @@ bool ensureRuntimeStarted()
 {
     if (g_runtime.initialized)
         return true;
+
+    VnAbiVersionInfo abi{};
+    abi.structSize = sizeof(abi);
+    if (Vn_QueryAbiVersion(&abi) != VN_OK || abi.major != VN_ABI_VERSION_MAJOR)
+    {
+        qWarning() << "RuntimeLink: Engine ABI major" << abi.major
+                   << "does not match" << VN_ABI_VERSION_MAJOR;
+        return false;
+    }
 
     VnConfig c = makeConfig(g_runtime.requestedConfig);
     qInfo() << "RuntimeLink: before Vn_Init"
@@ -566,6 +578,7 @@ bool ensureRuntimeStarted()
     g_runtime.monitorHostSequence = 0;
     g_runtime.sampleRate = static_cast<int>(c.sampleRate);
     g_runtime.blockFrames = static_cast<int>(c.blockFrames);
+    g_runtime.realtimeAnchorValid = false;
     g_runtime.snapshot = VnSnapshot{};
     g_runtime.snapshot.structSize = sizeof(VnSnapshot);
     g_runtime.snapshotValid = false;
@@ -587,6 +600,13 @@ bool ensureRuntimeStarted()
     g_runtime.initPackHandle = 0;
     g_runtime.packSetRevision = 0;
     return true;
+}
+
+bool decodeMedia(const QString& path, std::vector<float>& outInterleaved,
+                 int& outChannels, int& outSampleRate)
+{
+    const auto services = mediaServices();
+    return services && services->decodeInterleaved(path, outInterleaved, outChannels, outSampleRate);
 }
 
 VnResult registerDecodedSound(harkenstudio::ObjectId soundId, const std::vector<float>& samples,
@@ -643,7 +663,7 @@ bool registerPcmForBinding(const SoundBinding& binding)
     std::vector<float> interleaved;
     int channels = 0;
     int sampleRate = 0;
-    if (!decodeAudioFileInterleaved(path, interleaved, channels, sampleRate))
+    if (!decodeMedia(path, interleaved, channels, sampleRate))
     {
         qWarning() << "[PlaybackRoute] runtime pcm register failed:"
                    << "sourceId=" << binding.sourceId
@@ -920,10 +940,34 @@ void runtimeStopOutput()
     runtimeTerm();
 }
 
+static void pumpNullRealtime()
+{
+    if (g_runtime.requestedConfig.deviceMode != EngineDeviceMode::NullRealtime)
+        return;
+    if (!g_runtime.outputRunning) {
+        g_runtime.realtimeAnchorValid = false;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!g_runtime.realtimeAnchorValid) {
+        g_runtime.realtimeAnchorValid = true;
+        g_runtime.realtimeAnchor = now;
+        g_runtime.realtimeBlocksPumped = 0;
+        return;
+    }
+    const double elapsed = std::chrono::duration<double>(now - g_runtime.realtimeAnchor).count();
+    const auto due = static_cast<uint64_t>(elapsed * g_runtime.sampleRate / g_runtime.blockFrames);
+    if (due > g_runtime.realtimeBlocksPumped) {
+        VnPreview_PumpNullMixer(static_cast<uint32_t>(due - g_runtime.realtimeBlocksPumped));
+        g_runtime.realtimeBlocksPumped = due;
+    }
+}
+
 void runtimeUpdate()
 {
     if (!g_runtime.initialized)
         return;
+    pumpNullRealtime();
     if (g_runtime.requestedConfig.deviceMode == EngineDeviceMode::Null
         && hasAcceptedActionSeek()) {
         VnPreview_PumpNullMixer(1);
@@ -1238,7 +1282,7 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
         channels = cachedIt->second.channels;
         sampleRate = cachedIt->second.sampleRate;
     } else {
-        if (!decodeAudioFileInterleaved(normalized, decoded, channels, sampleRate))
+        if (!decodeMedia(normalized, decoded, channels, sampleRate))
             return kEngineInvalidArg;
         interleaved = &decoded;
     }
@@ -1492,33 +1536,6 @@ bool runtimeLoadPack(const QString& path, EngineResult* outResult)
     }
 
     if (outResult) *outResult = VN_INVALID_ARG;
-    QFile file(normalized);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = file.readAll();
-    if (file.error() != QFileDevice::NoError) return false;
-    harkenstudiobuild::PackFileHeader header{};
-    if (bytes.size() >= harkenstudiobuild::kPackFileHeaderBytes
-        && harkenstudiobuild::ReadPackFileHeader(
-            reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
-        && header.headerBytes == harkenstudiobuild::kPackFileHeaderBytes
-        && (header.packKind == harkenstudiobuild::kPackKindInit
-            || header.packKind == harkenstudiobuild::kPackKindCanonicalContent)) {
-        harkenstudiobuild::PackCanonicalImage image;
-        if (harkenstudiobuild::ParsePackCanonicalImage(
-                reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
-            != harkenstudiobuild::kPackOk)
-            return false;
-        for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
-            Q_UNUSED(loadedPath);
-            if (loaded.stableId == image.packStableId
-                || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
-                    && image.packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
-                return false;
-        }
-        auto desired = g_runtime.loadedPacksByPath;
-        desired.emplace(normalized, LoadedPack{0, image.packStableId, image.packKind, bytes});
-        return activatePackSet(std::move(desired), outResult);
-    }
     const QByteArray utf8 = normalized.toUtf8();
     VnPackDesc desc{};
     desc.structSize = sizeof(VnPackDesc);
@@ -1534,6 +1551,36 @@ bool runtimeLoadPack(const QString& path, EngineResult* outResult)
     }
     g_runtime.loadedPacksByPath[normalized] = LoadedPack{handle};
     return true;
+}
+
+bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
+                              uint64_t packStableId, uint32_t packKind,
+                              EngineResult* outResult)
+{
+    if (outResult) *outResult = VN_INVALID_ARG;
+    if (path.isEmpty() || packStableId == 0
+        || (packKind != VN_CANONICAL_PACK_SET_MEMBER_INIT
+            && packKind != VN_CANONICAL_PACK_SET_MEMBER_CONTENT))
+        return false;
+    if (outResult) *outResult = VN_DEVICE_ERROR;
+    if (!ensureRuntimeStarted())
+        return false;
+    const QString normalized = QFileInfo(path).absoluteFilePath();
+    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end()) {
+        if (outResult) *outResult = VN_OK;
+        return true;
+    }
+    if (outResult) *outResult = VN_INVALID_ARG;
+    for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
+        Q_UNUSED(loadedPath);
+        if (loaded.stableId == packStableId
+            || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
+                && packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
+            return false;
+    }
+    auto desired = g_runtime.loadedPacksByPath;
+    desired.emplace(normalized, LoadedPack{0, packStableId, packKind, bytes});
+    return activatePackSet(std::move(desired), outResult);
 }
 
 bool runtimeUnloadPack(const QString& path, EngineResult* outResult)

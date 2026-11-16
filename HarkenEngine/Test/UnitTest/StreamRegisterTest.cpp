@@ -4,6 +4,7 @@
 // observable synchronously and must leave no trace behind. Also covers
 // the cross-namespace exclusivity with Vn_RegisterPCM — one VnSoundId
 // names one asset, resident or streamed, never both.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"

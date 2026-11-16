@@ -132,7 +132,7 @@ harken> help exit
 | 字段组 | `definition_guid` 加 `scope:"Shared"` 或 `platform_ids`；根定义直接编辑字段，继承模式使用共享字段组命令 |
 | 总线 | `set_bus_volume_db/get_bus_volume_db` 使用创作 dB；`set_output_bus_gain/get_output_bus_gain` 只读写 Bus 输出增益；路由目的地使用 Bus 层级或可播放定义字段组 |
 | Send | `set_send/set_send_level` 的 `level` 是非负线性增益，1 为单位增益；对象查询中的 `sendLevel` 使用 dB |
-| 播放 | 在同一会话调用 `init_engine`、所需输出启动及 `post_action/audition_play`；播放前等待当前工程运行时同步。`device_mode` 默认为 `real`；无物理设备的自动化会话可使用 `null` |
+| 播放 | 在同一会话调用 `init_engine`、所需输出启动及 `post_action/audition_play`；播放前等待当前工程运行时同步。`device_mode` 默认为 `real`；无物理设备的自动化会话可使用 `null`（只在显式推进时前进）或 `null_realtime`（输出启动后按真实时间推进，电平与预览可观测） |
 | 试听定位 | `audition_set_position` 等待所返回请求的实际 `applied/failed` 结果；`audition_get_seek_status` 使用 `audition_seek_request_id` 查询相同请求 |
 | Voice 查询 | `get_active_voices.count` 是原生活跃 Voice 数，`reported_count` 是公开明细行数，二者可能不同 |
 | 电平 | `get_performance.master_peak_l/r` 是线性幅度；mixer/metering 快照使用 dB，测量位于主输出增益之前 |

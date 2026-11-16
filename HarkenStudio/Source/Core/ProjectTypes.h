@@ -33,7 +33,7 @@
 #include "ProjectFormatVersion.h"
 #include "Timeline/TimelineTypes.h"
 #include "TransitionSemantics.h"
-#include "harken_playable_properties.g.h"
+#include "harken_playable_properties/PlayableProperties.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "FieldGroups.h"
 #include "Utils/ObjectId.h"

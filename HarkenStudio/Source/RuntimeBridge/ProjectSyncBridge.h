@@ -24,7 +24,6 @@
 // Public bridge headers expose editor-owned types only (Qt/std/editor
 // structs); the legacy engine surface never appears here.
 
-#include "RuntimeBridge/PackagingBridge.h"
 
 #include <QString>
 #include <cstdint>
@@ -36,6 +35,35 @@ namespace Bridge {
 //==============================================================================
 // Playable-object sync.
 //==============================================================================
+
+struct PackCurveHandle
+{
+    float h1x = 0.0f;
+    float h1y = 0.0f;
+    float h2x = 0.0f;
+    float h2y = 0.0f;
+};
+
+struct PackAttenuation
+{
+    harkenstudio::ObjectId id{};
+    float maxDistance = 100.0f;
+
+    struct CurvePoint
+    {
+        float distance = 0.0f;
+        float value = 0.0f;
+    };
+    struct Slot
+    {
+        uint8_t slot = 0;    // runtime curve slot (0 volume)
+        std::vector<CurvePoint> points;
+        std::vector<PackCurveHandle> handles;
+    };
+    // Named curveSlots (not "slots") because Qt's keyword macros are in
+    // effect wherever QObject-based editor code includes this header.
+    std::vector<Slot> curveSlots;
+};
 
 struct SoundDesc {
     harkenstudio::ObjectId objectId = {};        // stable editor-minted object id

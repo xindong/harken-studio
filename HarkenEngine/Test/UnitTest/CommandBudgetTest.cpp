@@ -12,6 +12,7 @@
 //
 // Indivisible topology and play-led batches wait until one quantum can apply
 // them whole; malformed batches are skipped without applying a prefix.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Engine.h"
 #include "AllocationProbe.h"

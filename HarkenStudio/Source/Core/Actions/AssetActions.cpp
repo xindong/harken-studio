@@ -16,7 +16,7 @@
 #include "../AssetPipeline/MediaPool.h"
 #include "AssetPipeline/AudioImportTarget.h"
 #include "ActionSelectors.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include <QJsonArray>
 #include <cmath>
 #include <limits>

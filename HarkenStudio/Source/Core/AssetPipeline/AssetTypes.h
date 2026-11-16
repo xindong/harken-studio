@@ -12,7 +12,7 @@
 
 #include "AuthoringPlatform.h"
 
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 
 namespace VNX {
 

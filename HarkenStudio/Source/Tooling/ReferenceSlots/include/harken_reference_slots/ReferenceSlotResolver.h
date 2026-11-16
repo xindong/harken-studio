@@ -30,11 +30,7 @@
 #ifndef HARKEN_REFERENCE_SLOTS_REFERENCE_SLOT_RESOLVER_H
 #define HARKEN_REFERENCE_SLOTS_REFERENCE_SLOT_RESOLVER_H
 
-// The slot and level vocabulary, plus the slot meta table, are generated from
-// harken_reference_slot_table.json. The runtime's own slot enumeration comes out
-// of that same table, so the two numberings cannot disagree by being edited
-// apart.
-#include "harken_reference_slots.g.h"
+#include "harken_reference_slots/ReferenceSlots.h"
 #include <harken_studio/ObjectId.h>
 
 #include <cstdint>

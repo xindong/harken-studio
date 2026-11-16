@@ -1,5 +1,6 @@
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 
 #include <gtest/gtest.h>
 

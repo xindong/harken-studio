@@ -5,6 +5,7 @@
 // no performance threshold.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "Common/RawVoiceTestSupport.h"

@@ -40,14 +40,14 @@ jobs:
 
       - name: Validate development Schema inputs
         if: inputs.build-channel != 'stable' && inputs.build-channel != 'beta'
-        run: python .scripts/studio_schema_release_audit.py --head HEAD
+        run: python .scripts/schema_release_audit.py --head HEAD
 
       - name: Verify formal Studio Schema inputs
         if: inputs.build-channel == 'stable' || inputs.build-channel == 'beta'
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          python .scripts/studio_schema_release_audit.py
+          python .scripts/schema_release_audit.py
           --verify-current
           --head HEAD
           --json-out .temp/studio-schema-release/audit.json
@@ -118,13 +118,33 @@ jobs:
         run: >-
           cmake --fresh --preset windows-release
           -DHARKEN_VS_DIR:PATH="$env:VSINSTALLDIR"
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 
       - name: Build HarkenEditor and HarkenStudioCLI
         shell: bash
         run: cmake --build build --config Release --target harken_editor harken_studio_cli --parallel
+
+      - name: Cross-product verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release --target harken_engine --parallel
+          cmake --install build --config Release --prefix .temp/engine-install
+          python .scripts/crossproduct-test/run.py --engine-install .temp/engine-install \
+            --studio-cli build/bin/Release/HarkenStudioCLI.exe --work-dir .temp/crossproduct-test \
+            --require studio-cli --require engine-release --require engine-development
+
+      - name: Upload cross-product report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: crossproduct-test-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .temp/crossproduct-test/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Download Integration bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -155,22 +175,24 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for required in HarkenStudio.exe HarkenStudioCLI.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
+          for required in HarkenStudio.exe HarkenStudioCLI.exe HarkenEngineDev.dll qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
             if [ ! -e "build/bin/Release/$required" ]; then
               echo "::error::missing deployed content: build/bin/Release/$required"
               status=1
             fi
           done
-          for runtime in \
-            HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll \
-            HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so \
-            HarkenIntegration/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib \
-            HarkenIntegration/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a \
-            HarkenIntegration/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so; do
-            if [ ! -s "build/bin/Release/$runtime" ]; then
-              echo "::error::missing or empty Unity runtime: build/bin/Release/$runtime"
-              status=1
-            fi
+          for edition in HarkenEngine HarkenEngineDev; do
+            for runtime in \
+              HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/$edition.dll \
+              HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/lib$edition.so \
+              HarkenIntegration/Unity/Harken/Runtime/Plugins/macOS/lib$edition.dylib \
+              HarkenIntegration/Unity/Harken/Runtime/Plugins/iOS/lib$edition.a \
+              HarkenIntegration/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/lib$edition.so; do
+              if [ ! -s "build/bin/Release/$runtime" ]; then
+                echo "::error::missing or empty Unity runtime: build/bin/Release/$runtime"
+                status=1
+              fi
+            done
           done
           if [ "$status" -eq 0 ]; then
             build/bin/Release/HarkenStudioCLI.exe --help
@@ -320,7 +342,7 @@ jobs:
         run: >-
           cmake --fresh --preset macos-release
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 
@@ -374,6 +396,16 @@ jobs:
 
       - name: Build HarkenEditor
         run: cmake --build build --config Release --target harken_editor --parallel
+
+      - name: Deploy Qt runtime into the bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .scripts/release/deploy_macos_bundle.py \
+            --build-dir build \
+            --bundle build/bin/Release/HarkenStudio.app \
+            --tool "$(command -v macdeployqt)" \
+            --configuration Release
 
       - name: Download Integration bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -454,28 +486,30 @@ jobs:
             fi
           done
           integration_plugins="$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken/Runtime/Plugins"
-          for runtime in \
-            "$integration_plugins/x86_64/HarkenCore.dll" \
-            "$integration_plugins/x86_64/libHarkenCore.so" \
-            "$integration_plugins/macOS/libHarkenCore.dylib" \
-            "$integration_plugins/iOS/libHarkenCore.a" \
-            "$integration_plugins/Android/arm64-v8a/libHarkenCore.so"; do
-            if [ ! -s "$runtime" ]; then
-              echo "::error::missing or empty Unity runtime: $runtime"
-              status=1
+          for edition in HarkenEngine HarkenEngineDev; do
+            for runtime in \
+              "$integration_plugins/x86_64/$edition.dll" \
+              "$integration_plugins/x86_64/lib$edition.so" \
+              "$integration_plugins/macOS/lib$edition.dylib" \
+              "$integration_plugins/iOS/lib$edition.a" \
+              "$integration_plugins/Android/arm64-v8a/lib$edition.so"; do
+              if [ ! -s "$runtime" ]; then
+                echo "::error::missing or empty Unity runtime: $runtime"
+                status=1
+              fi
+            done
+            integration_dylib="$integration_plugins/macOS/lib$edition.dylib"
+            if [ -f "$integration_dylib" ]; then
+              integration_archs=$(lipo -archs "$integration_dylib")
+              echo "Bundled Unity macOS $edition architectures: $integration_archs"
+              for want in arm64 x86_64; do
+                case " $integration_archs " in
+                  *" $want "*) ;;
+                  *) echo "::error file=$integration_dylib::missing $want slice, got: $integration_archs"; status=1 ;;
+                esac
+              done
             fi
           done
-          integration_dylib="$integration_plugins/macOS/libHarkenCore.dylib"
-          if [ -f "$integration_dylib" ]; then
-            integration_archs=$(lipo -archs "$integration_dylib")
-            echo "Bundled Unity macOS runtime architectures: $integration_archs"
-            for want in arm64 x86_64; do
-              case " $integration_archs " in
-                *" $want "*) ;;
-                *) echo "::error file=$integration_dylib::missing $want slice, got: $integration_archs"; status=1 ;;
-              esac
-            done
-          fi
           exit $status
 
       - name: Zip bundle preserving symlinks

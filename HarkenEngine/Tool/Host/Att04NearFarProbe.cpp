@@ -1,9 +1,10 @@
 #include "Att04NearFarProbe.h"
-#include "PackCompanion.h"
+#include "HostPacks.h"
 
 #include "Engine.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <harken/ObjectId.h>
 
 #include <algorithm>
@@ -22,9 +23,9 @@ constexpr std::uint32_t kBlockFrames = 256;
 constexpr float kSilenceFloor = 1.0e-4f;
 
 struct Options {
-    std::string root;
-    std::string actionName;
-    std::string language;
+    std::string initPack;
+    std::string contentPack;
+    VnObjectId actionId{};
     double seconds = 0.4;
     double distance = 0.0;
 };
@@ -48,14 +49,12 @@ bool ParseOptions(int argc, char** argv, Options* out) {
         const char* arg = argv[i];
         if (std::strcmp(arg, "--null") == 0) {
             sawNull = true;
-        } else if (std::strcmp(arg, "--root") == 0 && i + 1 < argc) {
-            out->root = argv[++i];
-        } else if (std::strcmp(arg, "--language") == 0 && i + 1 < argc) {
-            out->language = argv[++i];
-            if (!PackCompanionLanguage(out->language)) return false;
-        } else if (std::strcmp(arg, "--action-name") == 0 && i + 1 < argc) {
-            out->actionName = argv[++i];
-            if (!PackCompanionName(out->actionName) || out->actionName == "Init") return false;
+        } else if (std::strcmp(arg, "--init-pack") == 0 && i + 1 < argc) {
+            out->initPack = argv[++i];
+        } else if (std::strcmp(arg, "--content-pack") == 0 && i + 1 < argc) {
+            out->contentPack = argv[++i];
+        } else if (std::strcmp(arg, "--action-id") == 0 && i + 1 < argc) {
+            if (!harken::ParseObjectId(argv[++i], &out->actionId)) return false;
         } else if (std::strcmp(arg, "--seconds") == 0 && i + 1 < argc) {
             if (!ParsePositiveFinite(argv[++i], &out->seconds) ||
                 out->seconds > 60.0) {
@@ -70,13 +69,13 @@ bool ParseOptions(int argc, char** argv, Options* out) {
             return false;
         }
     }
-    return sawNull && !out->root.empty() && !out->actionName.empty() &&
-           out->distance > 0.0;
+    return sawNull && !out->initPack.empty() && !out->contentPack.empty() &&
+           !harken::IsNull(out->actionId) && out->distance > 0.0;
 }
 
-std::string Utf8Path(const std::filesystem::path& path) {
-    const auto text = path.generic_u8string();
-    return {reinterpret_cast<const char*>(text.data()), text.size()};
+std::filesystem::path PathFromUtf8(const std::string& text) {
+    return std::filesystem::path(std::u8string_view(
+        reinterpret_cast<const char8_t*>(text.data()), text.size()));
 }
 
 float CaptureNullPeak(harken::Engine* engine, double seconds) {
@@ -107,11 +106,10 @@ float CaptureNullPeak(harken::Engine* engine, double seconds) {
 void PrintAtt04NearFarProbeUsage() {
     std::fprintf(
         stderr,
-        "\natt04-nearfar activates an official exported pack set in a new "
+        "\natt04-nearfar activates an Init and a content Pack in a new "
         "process and posts one Action at --distance meters.\n"
-        "  harken_host att04-nearfar --root <platform-dir> --action-name <name> "
-        "--distance <meters> [--language NAME] [--seconds N] --null\n"
-        "  Legacy manifest/index exports are unsupported; re-export with the matching Studio release.\n"
+        "  harken_host att04-nearfar --init-pack <file> --content-pack <file> --action-id <guid> "
+        "--distance <meters> [--seconds N] --null\n"
         "  Null backend only. One process, one distance. Position is set "
         "before Post; peak is read after Post plus at least one more "
         "Vn_Update.\n");
@@ -124,44 +122,24 @@ int RunAtt04NearFarProbe(int argc, char** argv) {
         return 1;
     }
 
-    std::error_code ec;
-    const std::filesystem::path requestedRoot = std::filesystem::weakly_canonical(
-        std::filesystem::path(std::u8string_view(
-            reinterpret_cast<const char8_t*>(options.root.data()),
-            options.root.size())),
-        ec);
-    if (ec) {
-        std::fprintf(stderr, "error: cannot resolve --root '%s'\n",
-                     options.root.c_str());
-        return 1;
-    }
-    PackCompanion companionInit, companionContent;
-    PackCompanionDiagnostic diagnostic;
-    VnResult captured = CapturePackCompanion(requestedRoot, {}, {}, nullptr, &companionInit, &diagnostic);
+    HostPack packInit, packContent;
+    VnResult captured = CaptureHostPack(PathFromUtf8(options.initPack), nullptr, {}, &packInit);
     if (captured == VN_OK)
-        captured = CapturePackCompanion(requestedRoot, options.actionName, options.language,
-            &companionInit, &companionContent, &diagnostic);
+        captured = CaptureHostPack(PathFromUtf8(options.contentPack), &packInit, options.actionId,
+                                   &packContent);
     if (captured != VN_OK) {
-        auto binaryPath = diagnostic.jsonPath;
-        binaryPath.replace_extension(".bytes");
-        std::fprintf(stderr, "error: %s companion '%s' (bytes '%s'): %s failed (%d)\n",
-            diagnostic.kind, Utf8Path(diagnostic.jsonPath).c_str(), Utf8Path(binaryPath).c_str(),
-            diagnostic.stage, captured);
-        std::fprintf(stderr, "Re-export with the matching Studio release (required schemaVersion: %u); "
-            "select its platform directory. Legacy manifest/index exports are unsupported.\n",
-            static_cast<unsigned>(HARKEN_PACK_SCHEMA_VERSION));
+        std::fprintf(stderr, "error: att04-nearfar cannot read or inspect the packs (%d)\n",
+                     captured);
         return 3;
     }
-    auto actionPath = diagnostic.jsonPath;
-    actionPath.replace_extension(".bytes");
 
     VnPackLoadDesc inspectDesc{};
     inspectDesc.structSize = sizeof(inspectDesc);
     inspectDesc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
-    inspectDesc.packStableId = companionInit.facts.packStableId;
-    inspectDesc.providerUserData = &companionInit;
-    inspectDesc.provide = PackCompanion::Provide;
-    inspectDesc.release = PackCompanion::Release;
+    inspectDesc.packStableId = packInit.facts.packStableId;
+    inspectDesc.providerUserData = &packInit;
+    inspectDesc.provide = HostPack::Provide;
+    inspectDesc.release = HostPack::Release;
     VnInitPackInspectReport inspection{};
     inspection.structSize = sizeof(inspection);
     const VnResult inspected = Vn_InspectInitPack(&inspectDesc, &inspection);
@@ -196,7 +174,7 @@ int RunAtt04NearFarProbe(int argc, char** argv) {
     }
 
     VnCanonicalPackSetActivationReportV1 activationReport{};
-    const VnResult activated = ActivatePackCompanions(companionInit, companionContent, &activationReport);
+    const VnResult activated = ActivateHostPacks(packInit, packContent, &activationReport);
     if (activated != VN_OK) {
         std::fprintf(stderr,
                      "error: att04-nearfar activate failed VnResult=%d "
@@ -208,11 +186,11 @@ int RunAtt04NearFarProbe(int argc, char** argv) {
         return 3;
     }
     std::fprintf(stderr, "att04-nearfar opened 0 %llu %s\n",
-        static_cast<unsigned long long>(companionInit.facts.packStableId),
-        Utf8Path(requestedRoot / "Init.bytes").c_str());
+        static_cast<unsigned long long>(packInit.facts.packStableId),
+        options.initPack.c_str());
     std::fprintf(stderr, "att04-nearfar opened 1 %llu %s\n",
-        static_cast<unsigned long long>(companionContent.facts.packStableId),
-        Utf8Path(actionPath).c_str());
+        static_cast<unsigned long long>(packContent.facts.packStableId),
+        options.contentPack.c_str());
     std::fprintf(stderr,
                  "att04-nearfar identity activationGeneration=%llu "
                  "busContentGeneration=%llu publishedBusFingerprint=%llu "
@@ -224,10 +202,9 @@ int RunAtt04NearFarProbe(int argc, char** argv) {
                      activationReport.compileTargetProfileFingerprint),
                  static_cast<unsigned long long>(inspection.packStableId));
 
-    VnPostActionByNameDesc post{};
+    VnPostActionDesc post{};
     post.structSize = sizeof(post);
-    post.utf8Name = options.actionName.c_str();
-    harken::StoreObjectId(post.projectGuid, companionInit.facts.projectId);
+    post.actionId = options.actionId;
     if (Vn_CreateEmitter(&post.emitter) != VN_OK) {
         std::fprintf(stderr, "error: att04-nearfar Vn_CreateEmitter failed\n");
         Vn_Term();
@@ -253,7 +230,7 @@ int RunAtt04NearFarProbe(int argc, char** argv) {
     }
 
     VnActionFiringHandle firing = 0;
-    const VnResult posted = Vn_PostActionByName(&post, &firing);
+    const VnResult posted = Vn_PostAction(&post, &firing);
     if (posted != VN_OK || firing == 0) {
         std::fprintf(stderr,
                      "error: att04-nearfar post failed VnResult=%d firing=%llu\n",

@@ -15,8 +15,7 @@ RECORD_SCRIPT = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Runtime"
-    / "api"
+    / "Development"
     / "monitor"
     / "fixtures"
     / "generate_record_fixtures.py"

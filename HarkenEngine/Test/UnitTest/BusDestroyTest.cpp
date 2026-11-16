@@ -10,6 +10,7 @@
 // within 1e-6 of the closed form; 1e-5 leaves headroom while failing on any
 // wrong audibility or migration (each shifts the sum by a whole
 // contribution).
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Engine.h"
 #include "Common/TestUtil.h"

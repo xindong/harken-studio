@@ -15,6 +15,7 @@
 // aggregate-tail relations are structural, independent of that residual.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "harken/render/BuiltinEffects.h"

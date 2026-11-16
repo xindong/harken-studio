@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "Common/TestUtil.h"
 
 #include <algorithm>

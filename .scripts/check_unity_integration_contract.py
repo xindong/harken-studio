@@ -13,20 +13,30 @@ DEFAULT_INTEGRATION = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken"
 FORBIDDEN_UNITY_ROOT_SUFFIXES = {".cpp", ".h", ".uplugin"}
 NATIVE_SUFFIXES = {".a", ".dll", ".dylib", ".lib", ".so"}
 NATIVE_PLUGIN_PATHS = {
-    "Runtime/Plugins/x86_64/HarkenCore.dll",
-    "Runtime/Plugins/x86_64/libHarkenCore.so",
-    "Runtime/Plugins/macOS/libHarkenCore.dylib",
-    "Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so",
-    "Runtime/Plugins/iOS/libHarkenCore.a",
+    "Runtime/Plugins/x86_64/HarkenEngine.dll",
+    "Runtime/Plugins/x86_64/HarkenEngineDev.dll",
+    "Runtime/Plugins/x86_64/libHarkenEngine.so",
+    "Runtime/Plugins/x86_64/libHarkenEngineDev.so",
+    "Runtime/Plugins/macOS/libHarkenEngine.dylib",
+    "Runtime/Plugins/macOS/libHarkenEngineDev.dylib",
+    "Runtime/Plugins/Android/arm64-v8a/libHarkenEngine.so",
+    "Runtime/Plugins/Android/arm64-v8a/libHarkenEngineDev.so",
+    "Runtime/Plugins/iOS/libHarkenEngine.a",
+    "Runtime/Plugins/iOS/libHarkenEngineDev.a",
 }
 NATIVE_SOURCE_CONTRACT = {
-    "target": "harken_core_shared",
+    "targets": ["harken_engine_release", "harken_engine_dev"],
     "workflow": ".github/workflows/core-artifact.yml",
-    "windows_x86_64": "Runtime/Plugins/x86_64/HarkenCore.dll",
-    "linux_x86_64": "Runtime/Plugins/x86_64/libHarkenCore.so",
-    "macos_universal": "Runtime/Plugins/macOS/libHarkenCore.dylib",
-    "android_arm64": "Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so",
-    "ios_arm64": "Runtime/Plugins/iOS/libHarkenCore.a",
+    "windows_x86_64": ["Runtime/Plugins/x86_64/HarkenEngine.dll",
+                       "Runtime/Plugins/x86_64/HarkenEngineDev.dll"],
+    "linux_x86_64": ["Runtime/Plugins/x86_64/libHarkenEngine.so",
+                     "Runtime/Plugins/x86_64/libHarkenEngineDev.so"],
+    "macos_universal": ["Runtime/Plugins/macOS/libHarkenEngine.dylib",
+                        "Runtime/Plugins/macOS/libHarkenEngineDev.dylib"],
+    "android_arm64": ["Runtime/Plugins/Android/arm64-v8a/libHarkenEngine.so",
+                      "Runtime/Plugins/Android/arm64-v8a/libHarkenEngineDev.so"],
+    "ios_arm64": ["Runtime/Plugins/iOS/libHarkenEngine.a",
+                  "Runtime/Plugins/iOS/libHarkenEngineDev.a"],
 }
 VOICE_WRAPPER_CONTRACT = {
     "SetVolume": (

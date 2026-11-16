@@ -6,6 +6,7 @@
 // start's block latency, pending-start snapshot exclusion and counting,
 // cancelling a pending start with Vn_Stop, staged per-voice state applied at
 // the deferred start, and the old-PlayDesc-vintage default priority.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"

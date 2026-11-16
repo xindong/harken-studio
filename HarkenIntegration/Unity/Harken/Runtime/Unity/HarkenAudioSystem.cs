@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -197,6 +200,7 @@ namespace Harken.Unity
             return ObserveResult("HarkenAudioSystem.ConfigureLifecycleBeforeStartup", VnResult.VN_OK);
         }
 
+#if HARKEN_ENGINE_DEV
         public VnResult RetryRemoteCommunication()
         {
             if (!IsGameplayThread())
@@ -217,6 +221,7 @@ namespace Harken.Unity
             if (result != VnResult.VN_OK) Debug.LogWarning(LastRemoteError, this);
             return result;
         }
+#endif
 
         public VnResult SetMasterVolume(float volume)
         {
@@ -654,7 +659,9 @@ namespace Harken.Unity
                 startupReadyPending = true;
                 LastRemoteResult = VnResult.VN_OK;
                 LastRemoteError = string.Empty;
+#if HARKEN_ENGINE_DEV
                 if (HarkenProjectSettings.CommunicationEnabled) RetryRemoteCommunication();
+#endif
             }
             else
             {

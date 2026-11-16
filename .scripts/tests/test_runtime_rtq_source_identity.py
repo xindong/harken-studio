@@ -12,8 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = (
     ROOT
     / "HarkenEngine"
-    / "Source"
-    / "Tooling"
+    / "Tool"
     / "Qualification"
     / "GenerateSourceIdentity.cmake"
 )

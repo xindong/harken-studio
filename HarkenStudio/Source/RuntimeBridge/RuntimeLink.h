@@ -11,6 +11,7 @@
 #include "PlaybackBridge.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <QString>
 #include <cstdint>
@@ -72,6 +73,9 @@ void runtimeUnregisterActionName(harkenstudio::ObjectId actionId);
 void runtimeClearActionNames();
 
 bool runtimeLoadPack(const QString& path, EngineResult* outResult = nullptr);
+bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
+                              uint64_t packStableId, uint32_t packKind,
+                              EngineResult* outResult = nullptr);
 bool runtimeUnloadPack(const QString& path, EngineResult* outResult = nullptr);
 uint32_t runtimeLoadedPackCount();
 QStringList runtimeLoadedPackPaths();

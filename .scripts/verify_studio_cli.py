@@ -194,7 +194,7 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
     assert not reader.is_alive()
 
 
-def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) -> None:
+def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
     environment = {**os.environ, "QT_QPA_PLATFORM": "harken-cli-must-not-load-a-display"}
 
     def call(*arguments, data=None, exit_code=0):
@@ -536,25 +536,17 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
             assert authored_contents() == saved
             assert not recovery_output.exists()
         journal.unlink()
-        if host:
-            platform_dir = next(pack.parent for pack in packs if pack.stem == "PlayTone")
-            playback = run(host, ["pack-play", "--root", str(platform_dir), "--action-name", "PlayTone",
-                                  "--seconds", "1", "--null"], environment)
-            assert playback.returncode == 0, (
-                playback.stdout.decode("utf-8", "replace"), playback.stderr.decode("utf-8", "replace"))
     print("CLI protocol, desktop isolation, persistence, conversion, read-only builds and pack equivalence passed.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify the native Studio CLI against real project and pack services.")
     parser.add_argument("--cli", type=Path, required=True)
-    parser.add_argument("--host", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path(".temp"))
     parser.add_argument("--skip-audio-output", action="store_true",
                         help="Skip hardware audio output checks for runners without an audio device.")
     args = parser.parse_args()
-    verify(args.cli.resolve(), args.host.resolve() if args.host else None,
-           args.work_dir.resolve(), not args.skip_audio_output)
+    verify(args.cli.resolve(), args.work_dir.resolve(), not args.skip_audio_output)
 
 
 if __name__ == "__main__":

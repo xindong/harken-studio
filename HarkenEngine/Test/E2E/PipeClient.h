@@ -7,7 +7,7 @@
 #ifndef HARKEN_TESTS_TESTSUPPORT_PIPE_CLIENT_H
 #define HARKEN_TESTS_TESTSUPPORT_PIPE_CLIENT_H
 
-#include "harken_remote/WireFormat.h"
+#include "harken_host_control/WireFormat.h"
 
 #include <cstdint>
 #include <string>

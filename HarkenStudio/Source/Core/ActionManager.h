@@ -176,6 +176,7 @@ void registerAdvancedActions(ActionManager& mgr,
 void registerAssetActions(ActionManager& mgr,
                           AudioEngine* engine,
                           ProjectManager* projectManager);
+void registerRemoteActions(ActionManager& mgr);
 void registerSystemActions(ActionManager& mgr,
                            AudioEngine* engine,
                            HarkenEditor::AuditionManager* audition,

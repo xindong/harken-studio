@@ -5,6 +5,7 @@
 #include "MainWindow.h"
 #include "Dialogs/RemoteConnectPanel.h"
 #include "RuntimeBridge/RemoteConnection.h"
+#include "Core/RemoteSession.h"
 #include "Monitor/EventCaptureController.h"
 #include <QWindow>
 #include <QLocale>
@@ -772,8 +773,8 @@ void MainWindow::initializeStructure(
     }
     applyDarkPalette();
     
-    remoteConnection_ = new HarkenEditor::Bridge::RemoteConnection(this);
-    eventCaptureController_ = new Monitor::EventCaptureController(remoteConnection_, this);
+    remoteConnection_ = &RemoteSession::instance().connection();
+    eventCaptureController_ = &RemoteSession::instance().capture();
     setupMenuBar();
     setupStatusBar();
     setupMainToolBar();
@@ -961,8 +962,9 @@ MainWindow::~MainWindow()
     PackGenerationRecordStore::instance().cancelExport();
     for (const auto& thread : packExportThreads_)
         if (thread) thread->wait();
-    delete eventCaptureController_;
+    RemoteSession::instance().shutdown();
     eventCaptureController_ = nullptr;
+    remoteConnection_ = nullptr;
     closeMonitorSession();
     if (auto* panel = qobject_cast<MonitorPerformancePanel*>(
             monitorPerformanceChartSource_.panel()))
@@ -994,30 +996,6 @@ void MainWindow::setupAudioEngine()
 {
     startupTrace(QStringLiteral("MainWindow: setupAudioEngine begin"));
     AudioEngine& engine = AudioEngine::instance();
-    const auto refreshEventProject = [this] {
-        eventCaptureController_->setProjectObjects(
-            ProjectObjectIndex::fromProject(ProjectManager::instance().currentProject()));
-    };
-    connect(&ProjectManager::instance(), &ProjectManager::projectOpened, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::projectClosed, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemRenamed, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemCreated, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemDeleted, eventCaptureController_,
-            [this](ProjectItem* item) {
-        eventCaptureController_->setProjectObjects(ProjectObjectIndex::fromProject(
-            ProjectManager::instance().currentProject(), item));
-    });
-    connect(&ProjectManager::instance(), &ProjectManager::itemMoved, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::externalFilesModified, eventCaptureController_, refreshEventProject);
-    connect(&engine, &AudioEngine::initializedChanged, eventCaptureController_, [this](bool initialized) {
-        eventCaptureController_->setLocalRuntimeAvailable(initialized && !AudioEngine::instance().isSimulationMode());
-    });
-    connect(&ProjectManager::instance(), &ProjectManager::projectClosed, eventCaptureController_, [this] {
-        if (eventCaptureController_->target() == Monitor::EventCaptureTarget::Local)
-            eventCaptureController_->stop();
-    });
-    
     connect(&engine, &AudioEngine::errorOccurred, this, &MainWindow::onAudioError, Qt::QueuedConnection);
     connect(&engine, &AudioEngine::logMessage, this, [this](int level, const QString& msg) {
         LogPanel::logEngineMessage(level, msg);
@@ -1025,8 +1003,6 @@ void MainWindow::setupAudioEngine()
     
     startupTrace(QStringLiteral("MainWindow: before AudioEngine::initialize"));
     const bool engineInitialized = engine.initialize();
-    eventCaptureController_->setLocalRuntimeAvailable(engineInitialized && !engine.isSimulationMode());
-    refreshEventProject();
     startupTrace(QStringLiteral("MainWindow: after AudioEngine::initialize"));
 
     if (engineInitialized)
@@ -2024,6 +2000,7 @@ void MainWindow::refreshMonitorCaptureControlStrip()
         };
         monitorPerformanceLiveAdapter_ =
             std::make_unique<Monitor::MonitorAdapter>(std::move(liveHost));
+        monitorPerformanceLiveAdapter_->recordInto(*monitorAdapter_);
         monitorPerformanceLiveHost_ =
             std::make_unique<Monitor::MonitorPerformanceLiveHost>(
                 monitorPerformanceLiveAdapter_.get());
@@ -2123,9 +2100,6 @@ void MainWindow::refreshMonitorRecordingPanel()
     input.mode = Monitor::MonitorRecordingMode::Local;
     input.captureControl = monitorCaptureControlHost_->lastState();
     input.contractPresent = true;
-    input.hasRecordPermission =
-        (input.captureControl.permissions & VNX::Monitor::kMonitorPermRecord)
-        == VNX::Monitor::kMonitorPermRecord;
     if (monitorAdapter_ && monitorAdapter_->hasOpenSession())
     {
         VNX::Monitor::MonitorRecordingStatus status {};
