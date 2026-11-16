@@ -166,15 +166,8 @@ def verify_header_prefixes(
     current_root: Path,
     abi_module: Any,
 ) -> dict[str, Any]:
-    relative = Path(
-        "HarkenEngine/Source/Core/api/include/harken/Harken.h"
-    )
-    old = abi_module.parse_header_contract(
-        (old_root / relative).read_text(encoding="utf-8")
-    )
-    current = abi_module.parse_header_contract(
-        (current_root / relative).read_text(encoding="utf-8")
-    )
+    old = abi_module.parse_header_contract(public_header_text(old_root))
+    current = abi_module.parse_header_contract(public_header_text(current_root))
     old_functions = index_functions("old", old["functions"])
     current_functions = index_functions(
         "current", current["functions"]
@@ -494,18 +487,36 @@ def declares_engine_editions(root: Path) -> bool:
     return re.search(r"\boption\s*\(\s*HARKEN_BUILD_ENGINE\b", cmake_source) is not None
 
 
-def shipping_library_name(root: Path) -> str:
-    return "HarkenEngine.dll" if declares_engine_editions(root) else "HarkenCore.dll"
+def verified_library_name(root: Path) -> str:
+    return "HarkenEngineDev.dll" if declares_engine_editions(root) else "HarkenCore.dll"
 
 
-def shipping_target(root: Path) -> str:
-    return "harken_engine" if declares_engine_editions(root) else "harken_core_shared"
+def verified_target(root: Path) -> str:
+    return "harken_engine_dev" if declares_engine_editions(root) else "harken_core_shared"
+
+
+def public_header_text(root: Path) -> str:
+    return "\n".join(
+        header.read_text(encoding="utf-8")
+        for directory in public_include_dirs(root)
+        for header in (directory / "harken/ObjectId.h", directory / "harken/Harken.h",
+                       directory / "harken/HarkenDevelopment.h")
+        if header.is_file()
+    )
+
+
+def public_include_dirs(root: Path) -> list[Path]:
+    if declares_engine_editions(root):
+        return [root / "HarkenEngine/Source/Core/api/include",
+                root / "HarkenEngine/Source/Development/include"]
+    return [root / "HarkenEngine/Source/Runtime/api/include"]
 
 
 def runtime_build_options(root: Path) -> dict[str, str]:
     if declares_engine_editions(root):
         return {
             "HARKEN_BUILD_ENGINE": "ON",
+            "HARKEN_BUILD_ENGINE_DEV": "ON",
             "HARKEN_BUILD_EDITOR": "OFF",
             "HARKEN_BUILD_TOOLS": "OFF",
             "HARKEN_BUILD_HUB": "OFF",
@@ -565,7 +576,7 @@ def rebuild_runtime(
         "--config",
         configuration,
         "--target",
-        shipping_target(root),
+        verified_target(root),
         "--clean-first",
         "--parallel",
     ]
@@ -586,14 +597,14 @@ def rebuild_runtime(
         ),
         "compile": command_record(build_command, root, compiled),
         "cache": cache,
-        "toolchain": toolchain_record(build, shipping_target(root)),
+        "toolchain": toolchain_record(build, verified_target(root)),
     }
 
 
 def rebuild_client(
     source: Path,
     build: Path,
-    include: Path,
+    include: list[Path],
     executable: Path,
     configuration: str,
 ) -> dict[str, Any]:
@@ -615,7 +626,7 @@ def rebuild_client(
         "Visual Studio 17 2022",
         "-A",
         "x64",
-        "-DHARKEN_PUBLIC_INCLUDE_DIR=%s" % include,
+        "-DHARKEN_PUBLIC_INCLUDE_DIR=%s" % ";".join(str(path) for path in include),
     ]
     configure = run(configure_command, cwd=source)
     build_command = [
@@ -636,7 +647,7 @@ def rebuild_client(
             "CMAKE_HOME_DIRECTORY": str(source),
             "CMAKE_GENERATOR": "Visual Studio 17 2022",
             "CMAKE_GENERATOR_PLATFORM": "x64",
-            "HARKEN_PUBLIC_INCLUDE_DIR": str(include),
+            "HARKEN_PUBLIC_INCLUDE_DIR": [str(path) for path in include],
         },
         {
             "CMAKE_HOME_DIRECTORY",
@@ -808,23 +819,23 @@ def main() -> int:
     old_client_build_evidence = rebuild_client(
         client_source,
         old_client_build,
-        old_root / "HarkenEngine/Source/Core/api/include",
+        public_include_dirs(old_root),
         old_client,
         config,
     )
     current_client_build_evidence = rebuild_client(
         client_source,
         current_client_build,
-        current_root / "HarkenEngine/Source/Core/api/include",
+        public_include_dirs(current_root),
         current_client,
         config,
     )
 
     old_dll = (
-        old_build / "bin" / config / shipping_library_name(old_root)
+        old_build / "bin" / config / verified_library_name(old_root)
     ).resolve()
     current_dll = (
-        current_build / "bin" / config / shipping_library_name(current_root)
+        current_build / "bin" / config / verified_library_name(current_root)
     ).resolve()
     dumpbin = find_dumpbin()
     old_exports, old_export_hash = public_exports(

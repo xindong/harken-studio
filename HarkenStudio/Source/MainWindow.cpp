@@ -2000,6 +2000,7 @@ void MainWindow::refreshMonitorCaptureControlStrip()
         };
         monitorPerformanceLiveAdapter_ =
             std::make_unique<Monitor::MonitorAdapter>(std::move(liveHost));
+        monitorPerformanceLiveAdapter_->recordInto(*monitorAdapter_);
         monitorPerformanceLiveHost_ =
             std::make_unique<Monitor::MonitorPerformanceLiveHost>(
                 monitorPerformanceLiveAdapter_.get());

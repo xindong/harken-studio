@@ -77,6 +77,7 @@ QJsonObject statusJson()
             {"capture", QJsonObject{{"state", captureStateName(capture.state())},
                                     {"status", capture.statusText()},
                                     {"retained_events", capture.rowCount()},
+                                    {"recording", RemoteSession::instance().isRecording()},
                                     {"recording_bytes", static_cast<qint64>(RemoteSession::instance().recordingStatus().fileBytes)},
                                     {"next_cursor", static_cast<qint64>(capture.trimmedRecords() + capture.rowCount())}}}};
 }

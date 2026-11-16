@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections;
 using System.IO;
@@ -474,6 +477,7 @@ namespace Harken.Unity.Tests
             }
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator PreviewStopsIndependentFiringsAndClosesAfterNewAudioBlocks()
         {
@@ -518,11 +522,13 @@ namespace Harken.Unity.Tests
                 Assert.That(session.IsActive, Is.False);
             }
         }
+#endif
 
 #if HARKEN_SDK_TEST_NULL_PUMP
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern void VnPreview_PumpNullMixer(uint blockCount);
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void FirstExplicitPreviewPlayAfterEditorGapKeepsThePriorFiringPlaying()
         {
@@ -572,7 +578,9 @@ namespace Harken.Unity.Tests
                     "Admitting the next request must not stop the prior firing.");
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void NullPreviewStopKeepsOtherFiringsAndClosesOnlyAfterTheLastStop()
         {
@@ -617,7 +625,9 @@ namespace Harken.Unity.Tests
                 Assert.That(refused.IsValid, Is.False);
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void PreviewPlayAfterTheLastIndividualStopKeepsTheSessionAndReleasesTheOldFiring()
         {
@@ -642,7 +652,9 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.FiringCount, Is.EqualTo(1));
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void FailedPreviewPlayAfterTheLastIndividualStopStillClosesOnTheNextTick()
         {
@@ -668,7 +680,9 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.IsPrepared, Is.False);
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void PreviewGlobalStopStillRefusesPlayBeforeIdleShutdown()
         {
@@ -694,6 +708,7 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.FiringCount, Is.Zero);
             }
         }
+#endif
 
         [Test]
         public void SecondScopePrepareReusesTheSessionWithoutPublicCanPrepare()
@@ -1096,6 +1111,7 @@ namespace Harken.Unity.Tests
             return firing;
         }
 
+#if HARKEN_ENGINE_DEV
         private static void PumpUntilPreviewFiringTerminal(HarkenEditorPreview preview, PackBootstrapSession session,
             ActionFiring firing, ulong baseline)
         {
@@ -1120,6 +1136,7 @@ namespace Harken.Unity.Tests
             Assert.That(info.terminalReason, Is.EqualTo((uint)VnActionTerminalReason.VN_ACTION_TERMINAL_STOP_REQUESTED));
             Assert.That(preview.FiringCount, Is.EqualTo(1));
         }
+#endif
 
         private static HarkenCallbacks.Registration PrepareNotificationPreview(HarkenEditorPreview preview,
             HarkenEditorCatalog catalog, ulong[] ids, HarkenCallbacks.NotificationHandler handler)
@@ -1148,13 +1165,16 @@ namespace Harken.Unity.Tests
         }
 #endif
 
+#if HARKEN_ENGINE_DEV
         private static ulong CaptureBlock()
         {
             VnSnapshot snapshot = HarkenEngine.DefaultSnapshot();
             Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
             return snapshot.blockIndex;
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator NewBlock(PackBootstrapSession session, ulong baseline)
         {
             float deadline = Time.realtimeSinceStartup + 3;
@@ -1166,6 +1186,7 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("No fresh audio block was published by the same preview session.");
         }
+#endif
 
         private static T Get<T>(object target, string name)
             => (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);

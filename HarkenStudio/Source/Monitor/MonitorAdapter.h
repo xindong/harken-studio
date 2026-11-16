@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -37,6 +38,7 @@ public:
     MonitorAdapter(const MonitorAdapter&) = delete;
     MonitorAdapter& operator=(const MonitorAdapter&) = delete;
 
+    void recordInto(MonitorAdapter& owner);
     MonitorOpenResult open(const MonitorSessionDesc* desc);
     MonitorResult close(MonitorSessionHandle handle);
     MonitorResult poll(MonitorSessionHandle handle,
@@ -120,7 +122,13 @@ private:
     MonitorHostContext host_;
     mutable std::mutex mutex_;
     std::optional<Session> session_;
-    MonitorSessionWriter recorder_;
+    struct SharedRecorder
+    {
+        std::mutex mutex;
+        MonitorSessionWriter writer;
+    };
+    std::shared_ptr<SharedRecorder> recorder_ = std::make_shared<SharedRecorder>();
+    bool ownsRecorder_ = true;
     std::vector<MonitorCallTrace> traces_;
     uint64_t nextEpoch_ = 1;
     uint64_t nextGeneration_ = 1;

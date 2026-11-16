@@ -216,10 +216,12 @@ class Client {
         unsigned char ttl = LocalOnly() ? 0 : 1;
         setsockopt(discovery_, IPPROTO_IP, IP_MULTICAST_LOOP, reinterpret_cast<const char*>(&loop), sizeof(loop));
         setsockopt(discovery_, IPPROTO_IP, IP_MULTICAST_TTL, reinterpret_cast<const char*>(&ttl), sizeof(ttl));
-        in_addr loopback{};
-        loopback.s_addr = htonl(INADDR_LOOPBACK);
-        setsockopt(discovery_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&loopback),
-                   sizeof(loopback));
+        if (LocalOnly()) {
+            in_addr loopback{};
+            loopback.s_addr = htonl(INADDR_LOOPBACK);
+            setsockopt(discovery_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&loopback),
+                       sizeof(loopback));
+        }
         sockaddr_in target{};
         target.sin_family = AF_INET;
         target.sin_port = htons(static_cast<std::uint16_t>(port));

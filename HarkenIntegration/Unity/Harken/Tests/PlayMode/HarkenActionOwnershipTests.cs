@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -14,6 +17,7 @@ namespace Harken.Unity.Tests
 {
     public sealed class HarkenActionOwnershipTests
     {
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator SessionPackReplacementRefreshesWithoutAutomaticReplay()
         {
@@ -56,6 +60,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         [UnityTest]
         public IEnumerator DisabledEmitterDuringSuspensionDoesNotDestroyItsReplacement()
@@ -102,6 +107,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator DestroyedActionReleasesAfterANewBlockInTheSameSession()
         {
@@ -122,7 +128,9 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator DisableThenEnableSeparatesOldCleanupFromTheNewFiring()
         {
@@ -151,6 +159,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         [UnityTest]
         public IEnumerator StoppedSessionRetiresCleanupBeforeANewSessionCanReuseSlots()
@@ -178,6 +187,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator CleanupResultListenerCanRestartTheSessionWithoutProcessingOldIndices()
         {
@@ -241,6 +251,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         [UnityTest]
         public IEnumerator DeferredCleanupRemainsBoundedByNativeFiringSlots()
@@ -284,6 +295,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator RejectedStopRetainsCleanupUntilTheDeviceConsumesCommands()
         {
@@ -293,7 +305,9 @@ namespace Harken.Unity.Tests
 #endif
             yield return AssertSuspendedStopCleanup(false);
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator AssertSuspendedStopCleanup(bool nullDevice)
         {
             using (var fixture = new Fixture())
@@ -338,6 +352,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         [UnityTest]
         public IEnumerator ReentrantResultListenerPreservesEachCompletedOperation()
@@ -362,6 +377,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator WarmSuccessfulPlayAllocatesNothingAndStillDeliversBothEvents()
         {
@@ -423,6 +439,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         private static void AssertAllocationControl(Recorder recorder)
         {
@@ -434,6 +451,7 @@ namespace Harken.Unity.Tests
             Assert.That(allocations, Is.GreaterThan(0), "GC.Alloc must detect the positive control.");
         }
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator WaitForRelease(Fixture fixture, ActionFiring firing, ulong baseline)
         {
             PackBootstrapSession session = fixture.Runtime.Session;
@@ -451,7 +469,9 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("The same session must publish a newer block and release the firing before the deadline.");
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator WaitForNewBlock(Fixture fixture, ulong baseline)
         {
             PackBootstrapSession session = fixture.Runtime.Session;
@@ -465,13 +485,16 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("The real device did not publish a new block in the same session.");
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static ulong CaptureBlock()
         {
             var snapshot = HarkenEngine.DefaultSnapshot();
             Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
             return snapshot.blockIndex;
         }
+#endif
 
 #if HARKEN_SDK_TEST_NULL_PUMP
         [System.Runtime.InteropServices.DllImport(HarkenNative.LibraryName,

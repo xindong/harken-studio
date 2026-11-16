@@ -4,6 +4,7 @@ set(build_identity_targets
     harkenizer_resource_compiler
     harkenizer_compiler_client
     harken_runtime_bridge
+    harken_studio_build_pipeline
     harken_current_world_compiler
     harken_project_schema
     harken_bus_compiler

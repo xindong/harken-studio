@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -504,6 +507,7 @@ namespace Harken.Unity.Tests
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern void VnPreview_PumpNullMixer(uint blockCount);
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator NaturalCompletionReclaimsSlotsWithoutStoppingOrReplayingRefusedPosts()
         {
@@ -534,6 +538,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         [UnityTest]
         public IEnumerator CleanupObserverRestartCannotTransferAnOldTriggerToTheNewSession()
@@ -587,6 +592,7 @@ namespace Harken.Unity.Tests
             Assert.Fail("The posted firings did not naturally finish in the same null-device session.");
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator NaturalCompletionReleasesDemandBytesAndColdPlaybackFetchesAgain()
         {
@@ -612,6 +618,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         [UnityTest]
         public IEnumerator NaturalFiringCleanupPreservesPreloadUntilItsOwnRelease()
@@ -739,12 +746,14 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_ENGINE_DEV
         private static ulong CaptureBlock()
         {
             VnSnapshot snapshot = HarkenEngine.DefaultSnapshot();
             Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
             return snapshot.blockIndex;
         }
+#endif
 #endif
 
         private static int Pending(HarkenAudioSystem runtime)

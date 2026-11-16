@@ -73,8 +73,14 @@ def run(ctx) -> None:
             events = wait(action_event, EVENT_SECONDS, "a captured PlayTone event")
             ctx.details["first_event"] = events[0]
             ctx.details["events_seen"] = len(seen)
-            recorded = session.call("get_remote_status")["capture"]["recording_bytes"]
             session.call("stop_remote_capture")
+
+            def finished_recording():
+                capture = session.call("get_remote_status")["capture"]
+                return None if capture["recording"] else capture
+
+            final = wait(finished_recording, EVENT_SECONDS, "the remote recording to finish")
+            recorded = final["recording_bytes"]
             session.call("remote_disconnect")
             ctx.details["recording_bytes"] = recorded
             if not recording.is_file() or recording.stat().st_size != recorded or recorded <= initial:

@@ -33,12 +33,22 @@ bool RemoteSession::startRecording(const QString& path)
     source.engineVersion = target.engineVersion.toStdString();
     source.remoteProtocolMajor = target.protocolMajor;
     source.engineMonitorInstanceId = target.instanceId.toULongLong(nullptr, 16);
+    closeRecorderWhenStopped_ = false;
     return recorder_.open(path.toStdString(), source, 0);
 }
 
 void RemoteSession::stopRecording()
 {
+    closeRecorderWhenStopped_ = true;
+    closeRecorderIfStopped();
+}
+
+void RemoteSession::closeRecorderIfStopped()
+{
+    if (!closeRecorderWhenStopped_ || (capture_ && capture_->state() == Monitor::EventCaptureState::Stopping))
+        return;
     recorder_.close();
+    closeRecorderWhenStopped_ = false;
 }
 
 void RemoteSession::shutdown()
@@ -61,6 +71,8 @@ void RemoteSession::ensure()
             recorder_.append(reinterpret_cast<const uint8_t*>(records.constData()),
                              static_cast<uint64_t>(records.size()));
     });
+    connect(capture_, &Monitor::EventCaptureController::stateChanged, this,
+            [this] { closeRecorderIfStopped(); });
     auto& project = ProjectManager::instance();
     auto& engine = AudioEngine::instance();
     const auto refreshProject = [this] {

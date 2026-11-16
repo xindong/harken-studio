@@ -366,6 +366,7 @@ function(harken_add_engine_edition target output_name export_name)
     add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_CORE_SOURCES} ${ARGN})
     add_library(Harken::${export_name} ALIAS ${target})
     target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:harken_buildinfo>)
+    target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}
         PUBLIC
             $<BUILD_INTERFACE:${HARKEN_ENGINE_PUBLIC_INCLUDE_DIR}>

@@ -97,10 +97,10 @@ class GenerationPolicyTests(unittest.TestCase):
             with self.subTest(dependency=dependency):
                 table = copy.deepcopy(self.table)
                 if dependency == "field":
-                    table["types"]["VnConfig"]["fields"].append(["monitor", {"struct": "VnMonitorRecordingDesc"}])
+                    table["types"]["VnConfig"]["fields"].append(["monitor", {"struct": "VnMonitorCapabilities"}])
                 else:
                     table["functions"].append({"name": "Vn_SdkBoundaryProbe", "params": [
-                        {"name": "desc", "wire": "desc", "type": "VnMonitorRecordingDesc", "ctype": "const VnMonitorRecordingDesc*"}]})
+                        {"name": "desc", "wire": "desc", "type": "VnMonitorCapabilities", "ctype": "const VnMonitorCapabilities*"}]})
                 with self.assertRaisesRegex(ValueError, "managed projection crosses excluded native type"):
                     self.validate(self.policy, table)
 

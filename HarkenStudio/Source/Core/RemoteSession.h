@@ -22,15 +22,18 @@ public:
     bool startRecording(const QString& path);
     void stopRecording();
     Monitor::MonitorRecordingStatus recordingStatus() const { return recorder_.status(); }
+    bool isRecording() const { return recorder_.isOpen(); }
     void shutdown();
 
 private:
     RemoteSession() = default;
     void ensure();
+    void closeRecorderIfStopped();
 
     HarkenEditor::Bridge::RemoteConnection* connection_ = nullptr;
     Monitor::EventCaptureController* capture_ = nullptr;
     Monitor::MonitorSessionWriter recorder_;
+    bool closeRecorderWhenStopped_ = false;
 };
 
 }

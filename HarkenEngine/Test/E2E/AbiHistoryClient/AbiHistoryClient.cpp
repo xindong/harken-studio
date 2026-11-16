@@ -1,5 +1,7 @@
 #include <harken/Harken.h>
+#if __has_include(<harken/HarkenDevelopment.h>)
 #include <harken/HarkenDevelopment.h>
+#endif
 
 #include <windows.h>
 
