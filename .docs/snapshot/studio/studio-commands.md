@@ -102,7 +102,7 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | 总线静音与独奏 | `set_bus_mute(bus_name, mute)`、`set_bus_solo(bus_name, solo)`；布尔参数须显式提供 |
 | 可播放定义输出 | 使用字段组 `outputBusRef`、`outputBusVolume`；Bus 层级使用 `move_bus` 与层级查询 |
 | 引擎与播放 | `init_engine`、`shutdown_engine`、`start_output`、`stop_output`、`post_action`；与 CLI 顶层创建工程的 `init` 区分 |
-| 播放就绪 | `post_action/post_action_3d/audition_play` 在共享分发器检查当前创作版本；未就绪返回 `RUNTIME_SYNC_PENDING`，尚未提交播放。三种 CLI 会话统一等待，工程改变时拒绝继续原请求 |
+| 播放与重置就绪 | AudioEngine 对对象试听、Action 播放和容器重置统一检查当前创作版本；GUI 试听在同步期间排队，完成后校验项目、运行时与目标身份。`post_action/post_action_3d/audition_play/audition_reset` 在共享分发器复用检查，未就绪返回 `RUNTIME_SYNC_PENDING` 且不提交操作；三种 CLI 会话等待，工程改变时拒绝继续原请求。GUI 重置未就绪时明确拒绝；已有实例的停止、定位与原始音频试听不受该等待限制 |
 | 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
 | 试听停止 | `audition_stop` 停止指定实例，省略 ID 时停止所有非 RawFile 试听。返回 `state: stopping/stopped/stop_failed`，请求被接受不代表淡出完成；`audition_get_state` 逐实例返回 `stop_state: none/pending/stopping/failed` 和 `stop_result`，真正结束后移除实例。同名 Action 的实例分别列出。背压会有限重试，失败保留实例供再次停止；重复请求不重启淡出 |
 | 音频转码 | `transcode_asset`、`batch_convert_media` 共享转码作业、结果查询和取消协议；不以入队冒充完成 |
