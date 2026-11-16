@@ -57,6 +57,8 @@
 
 Explorer 的 Assets / Sources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
+主窗口、浮动窗口与对话框标题栏共用 `TitleBarBase`，由它负责背景绘制、标题栏与窗口按钮尺寸，以及主题、字体、屏幕和最大化状态变化。窗口按钮基于 `QAbstractButton`，尺寸只由标题栏根据主题壳层尺寸和内容高度设置，不继承表单 `QPushButton` 的字段高度限制；QSS 只声明其视觉状态。各类标题栏仅保留菜单、项目名、对话框名称等内容差异。
+
 `ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距；主工具栏高度为行高加上下行内留白（32），内容容器固定为一行高度，按钮上下各 4px 对称，HarkenStyle 不再给 `QToolBar` 追加条目边距和框架宽度。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 
 组件层字段（如 `timeAxis.labelPadding`、`table.footerHeight`）保留各自语义名称，值由档位推导，不再是主题键。跨组件语义相同的字段已合并：分节标题高度、Inspector 行高和表头高度统一使用 `controlHeight`；表格按钮与 Inspector 槽位高度使用紧凑控件高度；复选框尺寸使用小图标；对象图标与导航 chevron 合并为 `iconExtent`；弹出项文字边距与控件文字边距合并；Inspector 与表单的列比例合并为 `form` 的 3 : 7；参数与通用 Slider 槽厚合并；Timeline 与时间轴的刻度长度（4 / 8）和标记手柄带高合并。Qt-ADS 不再有独立尺寸结构，适配器直接读取档位，Dock 分隔条与通用分隔条同宽。

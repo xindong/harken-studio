@@ -5,26 +5,14 @@
 
 namespace VNX {
 
-DialogTitleBar::DialogTitleBar(QWidget* parent) : QWidget(parent) {
-    setObjectName("TitleBarWidget");
-    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setFixedHeight(qMax(metrics.chrome.titleBarHeight, fontMetrics().height() + metrics.spacingSmall));
-    });
-
-    layout_ = new QHBoxLayout(this);
+DialogTitleBar::DialogTitleBar(QWidget* parent)
+    : TitleBarBase(Qt::WindowCloseButtonHint, parent) {
     ThemeLayout::margins(layout_, ThemeLayout::Space::Panel, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None);
-    ThemeLayout::spacing(layout_, ThemeLayout::Space::Section);
 
     titleLabel_ = new QLabel(this);
     titleLabel_->setObjectName("titleBarLabel");
 
-    layout_->addWidget(titleLabel_);
-    layout_->addStretch();
-
-    btnClose_ = new TitleBarButton(TitleBarButtonKind::Close, this);
-    btnClose_->setObjectName("titleBarClose");
-    btnClose_->setToolTip(tr("Close"));
-    layout_->addWidget(btnClose_);
+    layout_->insertWidget(0, titleLabel_);
 }
 
 void DialogTitleBar::setTitle(const QString& title) {
