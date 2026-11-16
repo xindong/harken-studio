@@ -217,11 +217,11 @@ namespace Harken
             if (resolved.ActionId.IsNull) return VnResult.VN_INVALID_ARG;
             VnResult result = GameplayNames.FindAction(resolved.ActionId, out GameplayNames.Action action);
             if (result != VnResult.VN_OK) return result;
+            if (resolved.PublicationGeneration != GameplayNames.Generation)
+                return VnResult.VN_STALE_HANDLE;
             if (action.Revision != resolved.NameBindingRevision ||
                 action.Fingerprint != resolved.CallableFingerprint)
                 return VnResult.VN_GAMEPLAY_CONTRACT_MISMATCH;
-            if (resolved.PublicationGeneration != GameplayNames.Generation)
-                return VnResult.VN_STALE_HANDLE;
             return Post(action.Id, emitter, callerSeed, out firing);
         }
 
