@@ -760,7 +760,7 @@ gtest_discover_tests(harken_render_worker_deadline_tests
 #
 # The control is target-private and the top-level HARKEN_RT_PROBE_* options stay
 # off, so the configure-time check that refuses probe definitions outside a
-# qualification build keeps doing its job: harken_core and harken_engine are
+# qualification build keeps doing its job: harken_core and harken_engine_release are
 # still built without any probe control, and this executable links neither.
 #
 # The qualification presets are Visual Studio and MSVC only, so this is also the
@@ -783,22 +783,22 @@ add_test(NAME harken_rt_probe_worker
          COMMAND "$<TARGET_FILE:harken_rt_probe_worker_tests>")
 set_tests_properties(harken_rt_probe_worker PROPERTIES TIMEOUT 120)
 
-if(TARGET harken_engine)
+if(TARGET harken_engine_release)
     add_executable(harken_native_variable_api_smoke UnitTest/NativeVariableApiSmoke.cpp)
-    target_link_libraries(harken_native_variable_api_smoke PRIVATE harken_engine)
+    target_link_libraries(harken_native_variable_api_smoke PRIVATE harken_engine_release)
     target_include_directories(harken_native_variable_api_smoke PRIVATE
         ${HARKEN_CORE_DIR}/api/include
         ${CMAKE_CURRENT_SOURCE_DIR}/Common/VariableCatalog)
     add_test(NAME harken_native_variable_api_smoke COMMAND harken_native_variable_api_smoke)
 endif()
 
-if(WIN32 AND TARGET harken_engine)
+if(WIN32 AND TARGET harken_engine_release)
     add_executable(harken_shared_load_smoke
         UnitTest/SharedLibraryLoadSmoke.cpp)
-    add_dependencies(harken_shared_load_smoke harken_engine)
+    add_dependencies(harken_shared_load_smoke harken_engine_release)
     add_test(NAME harken_shared_load_smoke
              COMMAND "$<TARGET_FILE:harken_shared_load_smoke>"
-                     "$<TARGET_FILE:harken_engine>")
+                     "$<TARGET_FILE:harken_engine_release>")
 endif()
 
 # Generated-artifact and export-surface contract checks. Each re-derives a
@@ -867,10 +867,10 @@ harken_add_python_check_test(preview_surface_isolation_check
 # specification for something the build does not do.
 harken_add_python_check_test(preview_allocation_table_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/preview/abi/check_preview_allocation.py")
-if(WIN32 AND TARGET harken_engine)
+if(WIN32 AND TARGET harken_engine_release)
     harken_add_python_check_test(abi_export_surface_check
         "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
-        --verify-dll "$<TARGET_FILE:harken_engine>")
+        --verify-dll "$<TARGET_FILE:harken_engine_release>")
     set_tests_properties(abi_export_surface_check PROPERTIES LABELS harken-artifact-contract)
 endif()
 if(WIN32 AND TARGET harken_engine_dev)

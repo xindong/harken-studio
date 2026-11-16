@@ -302,12 +302,7 @@ namespace Harken.Unity.Tests
             public Dictionary<string, byte[]> CompanionBytes()
             {
                 byte[] init = File.ReadAllBytes(Path.Combine(root, "Init.bytes"));
-                string version;
-                using (var reader = new BinaryReader(new MemoryStream(init)))
-                {
-                    reader.BaseStream.Position = 4;
-                    version = reader.ReadUInt32().ToString(CultureInfo.InvariantCulture);
-                }
+                string version = PackCompanion.SupportedPackMetadataVersion.ToString(CultureInfo.InvariantCulture);
                 Assert.That(CompanionTestPublication.Read(root, null, out CompanionTestPublication publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(publication.TryFindAction(Action.ActionName, out CompanionTestAction action), Is.True);
@@ -315,9 +310,9 @@ namespace Harken.Unity.Tests
                 return new Dictionary<string, byte[]>
                 {
                     ["Init.bytes"] = init,
-                    ["Init.json"] = Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version + ",\"variables\":[]}"),
+                    ["Init.json"] = Encoding.UTF8.GetBytes("{\"packMetadataVersion\":" + version + ",\"variables\":[]}"),
                     ["Play_U4_A.bytes"] = File.ReadAllBytes(Path.Combine(root, pack.Path)),
-                    ["Play_U4_A.json"] = Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version +
+                    ["Play_U4_A.json"] = Encoding.UTF8.GetBytes("{\"packMetadataVersion\":" + version +
                         ",\"name\":\"" + action.Name + "\",\"guid\":\"" + action.ActionStableId + "\"}")
                 };
             }

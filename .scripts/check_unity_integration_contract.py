@@ -25,7 +25,7 @@ NATIVE_PLUGIN_PATHS = {
     "Runtime/Plugins/iOS/libHarkenEngineDev.a",
 }
 NATIVE_SOURCE_CONTRACT = {
-    "targets": ["harken_engine", "harken_engine_dev"],
+    "targets": ["harken_engine_release", "harken_engine_dev"],
     "workflow": ".github/workflows/core-artifact.yml",
     "windows_x86_64": ["Runtime/Plugins/x86_64/HarkenEngine.dll",
                        "Runtime/Plugins/x86_64/HarkenEngineDev.dll"],

@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "PackVersion.h"
+
 #ifdef __cplusplus
 #define HK_PACK_STATIC_ASSERT(condition, message) static_assert(condition, message)
 #define HK_PACK_TABLE inline constexpr
@@ -53,8 +55,6 @@ typedef struct HkPackObjectId {
     uint8_t bytes[16];
 } HkPackObjectId;
 HK_PACK_SIZE(HkPackObjectId, 16);
-
-#define HK_PACK_FORMAT_VERSION 4u
 
 #define HK_PACK_BLOB_ALIGN UINT64_C(64)
 #define HK_PACK_BUS_DEFINITION_DOWNMIX_COEFFICIENT_COUNT UINT64_C(64)

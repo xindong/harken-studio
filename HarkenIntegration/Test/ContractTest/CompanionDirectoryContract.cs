@@ -68,13 +68,13 @@ namespace Harken.Test
                 Require(Actions.Resolve(action.Names.Name, session.ProjectId, out ActionResolved beforeRename), "prepared resolve");
                 Require(HarkenEngine.Update(), "update");
                 Require(Actions.Post(in beforeRename, Emitter.None, 3, out ActionFiring firing), "prepared post");
-                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes, BinaryVersion(actionBytes) + ".0000000000000001");
+                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes, Supported + ".0000000000000001");
                 Assert(session.RefreshAction(action.Names.Name, session.ProjectId, out _) == VnResult.VN_BAD_PACK,
                     "refresh rejects rounded version");
                 Require(Actions.Resolve(action.Names.Name, out _), "version failure preserves name");
                 Require(Actions.Post(in beforeRename, Emitter.None, 4, out _), "version failure preserves resolved token");
                 Require(firing.Query(out _), "version failure preserves firing");
-                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes, BinaryVersion(actionBytes) + "e0");
+                WriteAction(directory, action.Names.Name, action.Names.RootId, actionBytes, Supported + "e0");
                 Require(session.RefreshAction(action.Names.Name, session.ProjectId, out ActionPreparation corrected), "corrected version retries");
                 Require(corrected.Release(), "corrected scope release leaves original leases");
                 const string renamed = "Play_Renamed";
@@ -100,7 +100,7 @@ namespace Harken.Test
                 Assert(session.RefreshAction(renamedAgain, session.ProjectId, out _) == VnResult.VN_PACK_STALE_REVISION, "marker refuses refresh");
                 Require(Actions.Resolve(renamedAgain, out _), "failed refresh preserves name");
                 File.Delete(Path.Combine(directory, ".harken-pack-publishing"));
-                File.WriteAllText(Path.Combine(directory, renamedAgain + ".json"), "{\"schemaVersion\":" + BinaryVersion(actionBytes) + ",\"name\":\"Wrong\",\"guid\":\"" + action.Names.RootId + "\"}");
+                File.WriteAllText(Path.Combine(directory, renamedAgain + ".json"), "{\"packMetadataVersion\":" + Supported + ",\"name\":\"Wrong\",\"guid\":\"" + action.Names.RootId + "\"}");
                 Assert(session.RefreshAction(renamedAgain, session.ProjectId, out _) == VnResult.VN_BAD_PACK, "JSON name must match basename");
                 Require(Actions.Resolve(renamedAgain, out _), "bad JSON preserves owner");
                 Require(revived.Release(), "revived scope release");
@@ -193,51 +193,48 @@ namespace Harken.Test
             foreach (bool init in new[] { true, false })
             {
                 string fields = init ? "\"variables\":[]" : action;
-                foreach (string version in new[] { "3", "3.0", "3e0", "30e-1", "0.03E+2", "300e-2", "3e-0000" })
-                    Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version + "," + fields +
+                foreach (string version in new[] { "4", "4.0", "4e0", "40e-1", "0.04E+2", "400e-2", "4e-0000" })
+                    Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"packMetadataVersion\":" + version + "," + fields +
                         ",\"metadata\":false,\"waveforms\":42}"), pack, init ? null : "Play_Head", "", default, out _),
                         "exact companion version " + version);
-                foreach (string version in new[] { null, "999", "\"3\"", "true", "null", "[]", "{}", "3.5", "-3",
-                    "0", "3.0000000000000001", "2.9999999999999999", "3e999999999999999999999", "3e-999999999999999999999" })
+                foreach (string version in new[] { null, "3", "999", "\"4\"", "true", "null", "[]", "{}", "4.5", "-4",
+                    "0", "4.0000000000000001", "3.9999999999999999", "4e999999999999999999999", "4e-999999999999999999999" })
                 {
-                    string field = version == null ? "" : "\"schemaVersion\":" + version + ",";
+                    string field = version == null ? "" : "\"packMetadataVersion\":" + version + ",";
                     Assert(PackCompanion.Parse(Encoding.UTF8.GetBytes("{" + field + fields +
-                        ",\"schema_version\":3,\"metadata\":{\"schemaVersion\":3}}"), pack, init ? null : "Play_Head", "", default, out _) ==
+                        ",\"schema_version\":4,\"schemaVersion\":4,\"metadata\":{\"packMetadataVersion\":4}}"), pack, init ? null : "Play_Head", "", default, out _) ==
                         VnResult.VN_BAD_PACK, "reject companion version " + (version ?? "missing"));
                 }
             }
-            Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"schemaVersion\":3,\"variables\":[{\"name\":\"Choice\"," +
+            Require(PackCompanion.Parse(Encoding.UTF8.GetBytes("{\"packMetadataVersion\":4,\"variables\":[{\"name\":\"Choice\"," +
                 "\"guid\":\"11111111-2222-3333-4444-555555555555\",\"labels\":[]}]}"), pack, null, "", default, out _), "empty labels");
-            byte[] json = Encoding.UTF8.GetBytes("{\"schemaVersion\":3,\"variables\":[]}");
+            byte[] json = Encoding.UTF8.GetBytes("{\"packMetadataVersion\":4,\"variables\":[]}");
             foreach (byte[] invalid in new[] { null, Array.Empty<byte>(), new byte[7], new byte[8] })
                 Assert(PackCompanion.Parse(json, invalid, null, "", default, out _) == VnResult.VN_BAD_PACK,
-                    "missing or invalid Pack version prefix");
-            foreach (uint version in new[] { 10u, 0x01020304u, uint.MaxValue })
+                    "missing or invalid Pack header");
+            foreach (uint version in new[] { 4u, 10u, uint.MaxValue })
             {
                 for (int i = 0; i < 4; ++i) pack[4 + i] = (byte)(version >> (i * 8));
-                json = Encoding.UTF8.GetBytes("{\"schemaVersion\":" + version.ToString(CultureInfo.InvariantCulture) +
-                    ",\"variables\":[]}");
                 Require(PackCompanion.Parse(json, pack, null, "", default, out _),
-                    "pair comparison is independent of the supported schema");
+                    "companion version is independent of the binary format version");
             }
         }
 
         private static void WriteInit(string directory, byte[] bytes, string version = "")
         {
-            if (version == "") version = BinaryVersion(bytes);
+            if (version == "") version = Supported;
             File.WriteAllBytes(Path.Combine(directory, "Init.bytes"), bytes);
             File.WriteAllText(Path.Combine(directory, "Init.json"), "{" +
-                (version == null ? "" : "\"schemaVersion\":" + version + ",") + "\"variables\":[],\"waveforms\":false}", new UTF8Encoding(false));
+                (version == null ? "" : "\"packMetadataVersion\":" + version + ",") + "\"variables\":[],\"waveforms\":false}", new UTF8Encoding(false));
         }
         private static void WriteAction(string directory, string name, VnObjectId id, byte[] bytes, string version = "")
         {
-            if (version == "") version = BinaryVersion(bytes);
+            if (version == "") version = Supported;
             File.WriteAllBytes(Path.Combine(directory, name + ".bytes"), bytes);
-            File.WriteAllText(Path.Combine(directory, name + ".json"), "{\"schemaVersion\":" + version +
+            File.WriteAllText(Path.Combine(directory, name + ".json"), "{\"packMetadataVersion\":" + version +
                 ",\"name\":\"" + name + "\",\"guid\":\"" + id + "\",\"waveforms\":42}", new UTF8Encoding(false));
         }
-        private static string BinaryVersion(byte[] bytes)
-            => ((uint)bytes[4] | (uint)bytes[5] << 8 | (uint)bytes[6] << 16 | (uint)bytes[7] << 24).ToString(CultureInfo.InvariantCulture);
+        private static readonly string Supported = PackCompanion.SupportedPackMetadataVersion.ToString(CultureInfo.InvariantCulture);
 
         private static void Require(VnResult result, string operation)
         { if (result != VnResult.VN_OK) throw new InvalidOperationException(operation + ": " + result); }

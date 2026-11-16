@@ -140,7 +140,7 @@
   ],
   "native_binary_source": {
     "targets": [
-      "harken_engine",
+      "harken_engine_release",
       "harken_engine_dev"
     ],
     "workflow": ".github/workflows/core-artifact.yml",

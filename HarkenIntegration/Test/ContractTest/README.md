@@ -31,7 +31,7 @@ dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release
 This focused mode requires `Init.bytes` with `Init.json` and Action pairs,
 including any language directories. It starts the native Runtime, prepares and
 posts each Action, releases preparation and shuts down. Its version marker comes
-from the validated binary. `.scripts/studio_schema_release_audit.py` uses this
+from the validated binary. `.scripts/schema_release_audit.py` uses this
 entry point for development validation; shipping builds do not depend on it.
 
 For the attenuation descriptor boundary, run `--attenuation-only` with

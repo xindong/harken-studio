@@ -15,7 +15,7 @@ IS the public contract, so the DLL exports exactly the documented C API:
         scope inside its extern "C" block as `VnResult Vn_<Name>(...)`.
 
   <repo>/HarkenEngine/Source/Core/api/abi/HarkenEngine.def
-        The emitted module-definition file. Listed in the harken_engine
+        The emitted module-definition file. Listed in the harken_engine_release
         target's sources on Windows, where CMake forwards it to the linker as
         /DEF: -- making it both the linker's instruction and the reviewable
         allowlist. Names are emitted sorted so adding an entry point produces a
@@ -369,7 +369,7 @@ def main(argv=None):
 
     if verify_dll:
         if not os.path.isfile(verify_dll):
-            print("MISMATCH: %s does not exist; build harken_engine before "
+            print("MISMATCH: %s does not exist; build harken_engine_release before "
                   "verifying its export table" % verify_dll)
             return 1
         if not os.path.isfile(OUT_PATH):

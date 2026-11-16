@@ -13,7 +13,6 @@ namespace Harken.Test
             {
                 string root = publicationRoot ?? Path.Combine(AppContext.BaseDirectory,
                     "NativePublications", "UnityFixture", "CompanionPacks");
-                byte[] init = File.ReadAllBytes(Path.Combine(root, "Init.bytes"));
                 string[] directories = new[] { root }.Concat(Directory.GetDirectories(root)
                     .OrderBy(path => path, StringComparer.Ordinal)).ToArray();
                 int count = 0;
@@ -51,8 +50,7 @@ namespace Harken.Test
                     finally { session?.Dispose(); }
                 }
                 if (count == 0) throw new InvalidOperationException("Publication has no Action companion pairs.");
-                uint version = (uint)init[4] | (uint)init[5] << 8 | (uint)init[6] << 16 | (uint)init[7] << 24;
-                Console.WriteLine("[PackCompanion] schemaVersion " + version);
+                Console.WriteLine("[PackCompanion] packMetadataVersion " + PackCompanion.SupportedPackMetadataVersion);
                 Console.WriteLine("[PackCompanion] native publication PASS.");
                 return true;
             }

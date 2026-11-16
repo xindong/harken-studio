@@ -156,7 +156,7 @@ def validate(off_build: Path, all_build: Path) -> dict:
     for source in instruction_sources:
         require_probe_absent(
             f"all-On shipping {source} object",
-            run_dumpbin(dumpbin, "/symbols", object_path(all_build, "harken_engine", source)),
+            run_dumpbin(dumpbin, "/symbols", object_path(all_build, "harken_engine_release", source)),
         )
     require_probe_absent(
         "all-On shipping shared exports",
@@ -164,7 +164,7 @@ def validate(off_build: Path, all_build: Path) -> dict:
     )
 
     all_development_project = project_text(all_build, "harken_core")
-    all_shared_project = project_text(all_build, "harken_engine")
+    all_shared_project = project_text(all_build, "harken_engine_release")
     all_qualification_project = project_text(
         all_build, "harken_core_rt_qualification"
     )
@@ -191,8 +191,8 @@ def validate(off_build: Path, all_build: Path) -> dict:
             raise CompileoutError(
                 f"{source} all-Off qualification code differs from the development edition"
             )
-        if disassembly(off_build, "harken_engine", source) != disassembly(
-                all_build, "harken_engine", source):
+        if disassembly(off_build, "harken_engine_release", source) != disassembly(
+                all_build, "harken_engine_release", source):
             raise CompileoutError(
                 f"{source} shipping code changes in the all-On build tree"
             )

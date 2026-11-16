@@ -10,7 +10,7 @@ on:
   pull_request:
     paths:
       - 'HarkenStudio/**'
-      - 'HarkenEngine/Format/**'
+      - 'HarkenEngine/Schema/**'
       - 'HarkenEngine/Source/Core/api/include/harken/**'
       - 'HarkenEngine/Source/Development/include/harken/**'
       - '.scripts/**'

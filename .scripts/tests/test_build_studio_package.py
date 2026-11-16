@@ -402,7 +402,7 @@ class BuildStudioPackageTest(unittest.TestCase):
 
     def test_development_tip_changes_do_not_require_a_numbered_snapshot_update(self):
         self.make_input()
-        source = self.root / "Format"
+        source = self.root / "Schema"
         shutil.copytree(self.module.SCHEMA_SOURCE, source)
         self.module.SCHEMA_SOURCE = source
         path = source / "Project/current/ProjectSerializedSchema.json"
@@ -468,7 +468,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             "Published Pack generation cannot be removed",
         ):
             with self.subTest(error=error), mock.patch.object(
-                self.module.studio_schema_release_audit,
+                self.module.schema_release_audit,
                 "verify_current_release",
                 return_value={"errors": [error]},
             ):
@@ -479,7 +479,7 @@ class BuildStudioPackageTest(unittest.TestCase):
     def test_formal_packages_require_clean_binary_from_head(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
-        audit = self.module.studio_schema_release_audit
+        audit = self.module.schema_release_audit
         self_test = self.module.run_studio_self_test
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
@@ -499,7 +499,7 @@ class BuildStudioPackageTest(unittest.TestCase):
     def test_formal_packages_reject_source_changes_after_build(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
-        audit = self.module.studio_schema_release_audit
+        audit = self.module.schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
             mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=1)),
@@ -511,7 +511,7 @@ class BuildStudioPackageTest(unittest.TestCase):
     def test_development_packages_do_not_run_formal_release_checks(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
-        audit = self.module.studio_schema_release_audit
+        audit = self.module.schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", side_effect=AssertionError("formal contracts required")),
             mock.patch.object(audit, "require_current_reader", side_effect=AssertionError("formal reader required")),
@@ -526,7 +526,7 @@ class BuildStudioPackageTest(unittest.TestCase):
     def test_formal_packages_verify_contracts_and_identity_without_a_receipt(self):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
-        audit = self.module.studio_schema_release_audit
+        audit = self.module.schema_release_audit
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
             mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=0)),

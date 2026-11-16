@@ -3,9 +3,9 @@
   "trees": {
     "Editor": [
       "HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py",
-      ".scripts/studio-schema-release-scopes.json",
-      ".scripts/studio_schema_lock.py",
-      ".scripts/studio_schema_release_audit.py",
+      ".scripts/schema-release-scopes.json",
+      ".scripts/schema_lock.py",
+      ".scripts/schema_release_audit.py",
       "HarkenStudio/Source/Core/BindingSemantics.*",
       "HarkenStudio/Source/Core/BucketFolderStore.*",
       "HarkenStudio/Source/Core/Component.*",
@@ -57,11 +57,11 @@
       "HarkenStudio/Test/UnitTest/ProjectMigrationTest.cpp"
     ],
     "Pack": [
-      "HarkenEngine/Format/Pack/**",
+      "HarkenEngine/Schema/Pack/**",
       "HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py",
-      ".scripts/studio-schema-release-scopes.json",
-      ".scripts/studio_schema_lock.py",
-      ".scripts/studio_schema_release_audit.py",
+      ".scripts/schema-release-scopes.json",
+      ".scripts/schema_lock.py",
+      ".scripts/schema_release_audit.py",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackDirectorySource.cs",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs",

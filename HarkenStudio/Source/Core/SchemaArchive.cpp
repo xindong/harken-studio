@@ -97,7 +97,7 @@ bool SchemaArchive::verifyBuildSnapshot(QString* error) const
     const QRegularExpression editorPath(
         QStringLiteral("^Editor/[1-9][0-9]*/ProjectSerializedSchema\\.json$"));
     const QRegularExpression packPath(
-        QStringLiteral("^Pack/[1-9][0-9]*/PackManifestSchema\\.json$"));
+        QStringLiteral("^Pack/[1-9][0-9]*/PackMetadataSchema\\.json$"));
     const QRegularExpression sha256(QStringLiteral("^[0-9a-f]{64}$"));
     QSet<QString> expectedFiles{QStringLiteral("build.json")};
     QSet<QString> expectedDirectories;
@@ -155,7 +155,7 @@ QJsonObject SchemaArchive::packSchema(int version, QString* error) const
         return {};
     }
     return readObject(QDir(rootPath()).filePath(
-        QStringLiteral("Pack/%1/PackManifestSchema.json").arg(version)), error);
+        QStringLiteral("Pack/%1/PackMetadataSchema.json").arg(version)), error);
 }
 
 }

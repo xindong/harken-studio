@@ -8,6 +8,8 @@ namespace Harken
 {
     internal sealed class PackCompanion
     {
+        internal const uint SupportedPackMetadataVersion = 4;
+
         internal readonly struct Variable
         {
             internal readonly VnObjectId Id;
@@ -49,11 +51,10 @@ namespace Harken
                 return VnResult.VN_BAD_PACK;
             try
             {
-                uint packVersion = (uint)pack[4] | (uint)pack[5] << 8 | (uint)pack[6] << 16 | (uint)pack[7] << 24;
-                var parser = new JsonParser(new UTF8Encoding(false, true).GetString(json), "schemaVersion");
+                var parser = new JsonParser(new UTF8Encoding(false, true).GetString(json), "packMetadataVersion");
                 if (!(parser.Read(0) is Dictionary<string, object> root) || !parser.End ||
-                    !root.TryGetValue("schemaVersion", out object version) ||
-                    !(version is JsonParser.NumberToken token) || !MatchesPackVersion(token.Text, packVersion))
+                    !root.TryGetValue("packMetadataVersion", out object version) ||
+                    !(version is JsonParser.NumberToken token) || !MatchesVersion(token.Text, SupportedPackMetadataVersion))
                     return VnResult.VN_BAD_PACK;
                 var candidate = new PackCompanion { ProjectId = project, Language = language ?? string.Empty };
                 if (name != null)
@@ -94,12 +95,10 @@ namespace Harken
             catch (FormatException) { return VnResult.VN_BAD_PACK; }
         }
 
-        private static bool MatchesPackVersion(string token, uint packVersion)
+        private static bool MatchesVersion(string token, uint expectedVersion)
         {
-            // Matching the pair does not establish support. Native inspection admits the
-            // binary against the Pack format versions the Engine can read.
             // Compare decimal digits and scale without floating-point rounding.
-            if (packVersion == 0 || token[0] == '-') return false;
+            if (token[0] == '-') return false;
             int exponentAt = token.IndexOfAny(new[] { 'e', 'E' });
             string coefficient = exponentAt < 0 ? token : token.Substring(0, exponentAt);
             long exponent = 0;
@@ -109,7 +108,7 @@ namespace Harken
             int fraction = dot < 0 ? 0 : coefficient.Length - dot - 1;
             string digits = coefficient.Replace(".", "").TrimStart('0');
             string significant = digits.TrimEnd('0');
-            string expected = packVersion.ToString(CultureInfo.InvariantCulture);
+            string expected = expectedVersion.ToString(CultureInfo.InvariantCulture);
             string expectedSignificant = expected.TrimEnd('0');
             return significant == expectedSignificant && exponent ==
                 (long)fraction - (digits.Length - significant.Length) + (expected.Length - expectedSignificant.Length);

@@ -16,7 +16,7 @@ public:
                                                const QString& documentType,
                                                const QJsonValue& document,
                                                const QString& relativePath);
-    static QStringList validatePackManifest(int version,
+    static QStringList validatePackMetadata(int version,
                                             const QJsonValue& document,
                                             const QString& relativePath);
 };

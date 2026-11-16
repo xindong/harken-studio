@@ -108,7 +108,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
             [
                 self._entry(
                     "HarkenEngine/Source/Core/core/src/Core.cpp",
-                    "harken_engine",
+                    "harken_engine_release",
                     extra="-DSHARED_VARIANT=1",
                 ),
                 self._entry(

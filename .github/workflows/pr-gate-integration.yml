@@ -70,7 +70,7 @@ jobs:
       # .env sets so three concurrent jobs share the machine instead of each
       # claiming all of it.
       - name: Build Engine editions and Pack tests
-        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine harken_engine_dev harken_pack_schema_tests
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine harken_pack_schema_tests
 
       - name: Install Engine
         run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install
@@ -148,7 +148,7 @@ jobs:
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
       - name: Build Engine editions and Pack tests
-        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine harken_engine_dev harken_pack_schema_tests
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine harken_pack_schema_tests
 
       - name: Install Engine
         run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install

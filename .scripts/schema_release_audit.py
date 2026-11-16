@@ -27,10 +27,12 @@ if str(SCHEMA_TOOL_DIR) not in sys.path:
 import schema_archive
 
 REPO_ROOT = SCRIPT_DIR.parent
-SCHEMA_ROOT_PATH = "HarkenStudio/Format"
-RELEASE_SCOPE_CONFIG_PATH = ".scripts/studio-schema-release-scopes.json"
+SCHEMA_ROOT_PATH = "HarkenStudio/Schema"
+PACK_BINARY_ROOT_PATH = "HarkenEngine/Schema/Pack"
+PACK_BINARY = "PackBinary"
+RELEASE_SCOPE_CONFIG_PATH = ".scripts/schema-release-scopes.json"
 TREE_NAMES = ("Editor", "Pack")
-SCHEMA_NAMES = {"Editor": "ProjectSerializedSchema.json", "Pack": "PackManifestSchema.json"}
+SCHEMA_NAMES = {"Editor": "ProjectSerializedSchema.json", "Pack": "PackMetadataSchema.json"}
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
 EDIT_PATHS = {"/content/metadata/name", "/content/name"}
 
@@ -108,30 +110,65 @@ def changed_files(base: str, head: str) -> list[str]:
 
 
 @contextmanager
-def schema_root_at(revision: str) -> Iterator[Path]:
+def schema_root_at(revision: str, root_path: str = SCHEMA_ROOT_PATH) -> Iterator[Path]:
     if revision == "WORKTREE":
-        yield REPO_ROOT / SCHEMA_ROOT_PATH
+        yield REPO_ROOT / root_path
         return
     temp_root = REPO_ROOT / ".temp"
     temp_root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="schema-audit-", dir=temp_root) as directory:
         root = Path(directory)
         for path in revision_paths(revision):
-            if path.startswith(SCHEMA_ROOT_PATH + "/"):
+            if path.startswith(root_path + "/"):
                 data = revision_bytes(revision, path)
                 if data is not None:
-                    destination = root / path.removeprefix(SCHEMA_ROOT_PATH + "/")
+                    destination = root / path.removeprefix(root_path + "/")
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_bytes(data)
         yield root
 
 
-def tree_summary(root: Path) -> dict[str, Any]:
+def load_pack_binary(root: Path) -> dict[str, Any] | None:
+    if not (root / "manifest.json").is_file():
+        return None
+    manifest = read_object(root / "manifest.json")
+    published = manifest.get("published")
+    if set(manifest) != {"manifestVersion", "tip", "published", "supportedHistorical"} \
+            or manifest["manifestVersion"] != 1 or manifest["tip"] != "current" \
+            or not isinstance(published, list) or not published \
+            or any(type(version) is not int or version < 1 for version in published) \
+            or published != sorted(set(published)) \
+            or not isinstance(manifest["supportedHistorical"], list) \
+            or not set(manifest["supportedHistorical"]).issubset(published[:-1]):
+        raise ValueError(f"{PACK_BINARY} manifest is invalid")
+    folders = ["current", *map(str, published)]
+    unexpected = {path.name for path in root.iterdir()} - {"manifest.json", *folders}
+    if unexpected:
+        raise ValueError(f"{PACK_BINARY} contains unexpected paths: {sorted(unexpected)}")
+    files: dict[str, dict[str, bytes]] = {}
+    for folder in folders:
+        directory = root / folder
+        entries = sorted(directory.iterdir()) if directory.is_dir() else []
+        if not entries or any(not path.is_file() for path in entries):
+            raise ValueError(f"{PACK_BINARY}/{folder} must be a non-empty directory of files")
+        files[folder] = {path.name: path.read_bytes().replace(b"\r\n", b"\n") for path in entries}
+    return {"manifest": manifest, "current": files["current"], "currentVersion": published[-1],
+            "published": {version: files[str(version)] for version in published}}
+
+
+def files_digest(files: dict[str, bytes]) -> str:
+    return digest(canonical_bytes({name: digest(data) for name, data in files.items()}))
+
+
+def tree_summary(root: Path, pack_binary_root: Path | None = None) -> dict[str, Any]:
     result = {}
     for tree in TREE_NAMES:
         data = schema_archive.load_tree(tree, root)
         result[tree] = {"generation": data["currentVersion"],
                         "sha256": digest(canonical_bytes(data["current"]))}
+    pack = load_pack_binary(pack_binary_root) if pack_binary_root else None
+    if pack:
+        result[PACK_BINARY] = {"generation": pack["currentVersion"], "sha256": files_digest(pack["current"])}
     return result
 
 
@@ -265,10 +302,10 @@ def published_releases() -> dict[str, dict[str, Any]]:
         version = revision_bytes(tag, "VERSION")
         if version is None or not re.fullmatch(rb"\d+\.\d+\.\d+", version.strip()):
             raise ValueError(f"Published Studio version is missing or invalid: {tag}")
-        with schema_root_at(tag) as root:
+        with schema_root_at(tag) as root, schema_root_at(tag, PACK_BINARY_ROOT_PATH) as pack_root:
             releases[tag] = {"product": "HarkenStudio", "version": version.decode("utf-8").strip(),
                              "gitCommit": run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip(),
-                             "trees": tree_summary(root)}
+                             "trees": tree_summary(root, pack_root)}
     return releases
 
 
@@ -300,6 +337,23 @@ def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[st
     return errors
 
 
+def pack_binary_release_errors(root: Path) -> list[str]:
+    current = load_pack_binary(root)
+    if current is None:
+        return [f"{PACK_BINARY} tree is missing"]
+    errors = []
+    for tag in published_releases():
+        with schema_root_at(tag, PACK_BINARY_ROOT_PATH) as previous_root:
+            previous = load_pack_binary(previous_root)
+        for version, files in (previous or {"published": {}})["published"].items():
+            if version not in current["published"]:
+                errors.append(f"{tag}: Published {PACK_BINARY} generation {version} cannot be removed")
+            elif files != current["published"][version]:
+                errors.append(f"{tag} {PACK_BINARY}/{version}: Pack binary contracts have no compatible change; "
+                              "any change requires a new generation")
+    return errors
+
+
 def verify_current_release(head_revision: str = "WORKTREE") -> dict[str, Any]:
     errors = []
     with schema_root_at(head_revision) as root:
@@ -309,6 +363,11 @@ def verify_current_release(head_revision: str = "WORKTREE") -> dict[str, Any]:
             if data["published"][data["currentVersion"]] != data["current"]:
                 errors.append(f"{tree} current has not been synchronized to its release generation")
         errors.extend(release_schema_errors(root))
+    with schema_root_at(head_revision, PACK_BINARY_ROOT_PATH) as root:
+        pack = load_pack_binary(root)
+        if pack and pack["published"][pack["currentVersion"]] != pack["current"]:
+            errors.append(f"{PACK_BINARY} current has not been synchronized to its release generation")
+        errors.extend(pack_binary_release_errors(root))
     return {"auditVersion": 4, "decision": "release-source", "headRevision": head_revision,
             "status": "failed" if errors else "passed", "errors": errors}
 
@@ -318,11 +377,13 @@ def audit(base_revision: str | None, head_revision: str = "WORKTREE") -> dict[st
         schema_archive.build_bundle(root)
     scopes = review_scopes(base_revision, head_revision) if base_revision else []
     errors = []
-    if base_revision and any(
-            re.match(r"HarkenStudio/Format/(Project|PackMetadata)/(\d+/|manifest\.json$)", path)
-            for path in changed_files(base_revision, head_revision)):
+    changed = changed_files(base_revision, head_revision) if base_revision else []
+    if any(re.match(r"HarkenStudio/Schema/(Project|PackMetadata)/(\d+/|manifest\.json$)", path) for path in changed):
         with schema_root_at(head_revision) as root:
             errors.extend(release_schema_errors(root))
+    if any(re.match(r"HarkenEngine/Schema/Pack/(\d+/|manifest\.json$)", path) for path in changed):
+        with schema_root_at(head_revision, PACK_BINARY_ROOT_PATH) as root:
+            errors.extend(pack_binary_release_errors(root))
     return {"auditVersion": 4, "decision": "development", "headRevision": head_revision,
             "reviewScopes": scopes, "status": "failed" if errors else "passed", "errors": errors}
 
@@ -708,9 +769,9 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                                  encoding="utf-8", timeout=180, check=False)
     pack_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
     if pack_result.returncode != 0 or "[PackCompanion] native publication PASS." not in pack_result.stdout.splitlines() \
-            or f"[PackCompanion] schemaVersion {pack_version}" not in pack_result.stdout.splitlines():
+            or f"[PackCompanion] packMetadataVersion {pack_version}" not in pack_result.stdout.splitlines():
         raise ValueError(f"Native Pack gate failed: {pack_result.stdout} {pack_result.stderr}")
-    result["pack"] = {"status": "passed", "schemaVersion": pack_version,
+    result["pack"] = {"status": "passed", "packMetadataVersion": pack_version,
                       "readerSha256": digest(pack_reader.read_bytes()),
                       "fixtureSha256": {path.relative_to(pack_root).as_posix(): digest(path.read_bytes())
                                         for path in pack_files}}

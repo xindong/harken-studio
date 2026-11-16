@@ -40,14 +40,14 @@ jobs:
 
       - name: Validate development Schema inputs
         if: inputs.build-channel != 'stable' && inputs.build-channel != 'beta'
-        run: python .scripts/studio_schema_release_audit.py --head HEAD
+        run: python .scripts/schema_release_audit.py --head HEAD
 
       - name: Verify formal Studio Schema inputs
         if: inputs.build-channel == 'stable' || inputs.build-channel == 'beta'
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          python .scripts/studio_schema_release_audit.py
+          python .scripts/schema_release_audit.py
           --verify-current
           --head HEAD
           --json-out .temp/studio-schema-release/audit.json
@@ -131,7 +131,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build --config Release --target harken_engine harken_engine_dev --parallel
+          cmake --build build --config Release --target harken_engine --parallel
           cmake --install build --config Release --prefix .temp/engine-install
           python .scripts/crossproduct-test/run.py --engine-install .temp/engine-install \
             --studio-cli build/bin/Release/HarkenStudioCLI.exe --work-dir .temp/crossproduct-test \

@@ -13,7 +13,7 @@ v7/v8 工程升级时同步转换历史输出路由字段及效果条目结构�
 | Publish Directory | 工程目录下 BuildPacks | 以工程目录为相对路径基准，无法相对化时保留绝对路径 |
 | Waveform File Directory | BuildPacks/Waveforms | 与发布目录采用相同路径保存方式 |
 | Pack 包体 | 平台目录下的 Init.bytes、Action 包等 | Init 始终包含，未变化时可复用 |
-| 包伴随 JSON | 每个 .bytes 同目录、同名 .json | 必含 schemaVersion 和名称映射；可附加 metadata、waveforms |
+| 包伴随 JSON | 每个 .bytes 同目录、同名 .json | 必含 packMetadataVersion 和名称映射；可附加 metadata、waveforms |
 | Export Project Information | 默认关闭 | 开启后在发布根目录输出 Project.json，与平台目录并列 |
 | Export Pack MetaData | 默认关闭 | 在本次构建包的伴随 JSON 中写入 metadata |
 | Export Wave Buffer | 独立开关 | 在波形目录输出按内容 SHA-256 命名的 `<hash>.vkd`，并在伴随 JSON 写入 waveforms |
@@ -260,15 +260,15 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 
 ## Pack 二进制合同（2026-11-12）
 
-Pack 的 `.bytes` 布局由 Engine 定义，唯一来源是 `HarkenEngine/Format/Pack` 下的手写纯 C 头文件（总入口 `HarkenPack.h`，按段族拆分为 `PackFile.h`、`PackMedia.h`、`PackBus.h`、`PackCurve.h`、`PackBinding.h`、`PackVoiceRecipe.h`、`PackContainer.h`、`PackVariable.h`、`PackWorldBody.h`、`PackEffects.h`、`PackProperties.h`、`PackSlots.h`、`PackChecksum.h`），经只含头文件的 `Harken::PackFormat` 目标发布，消费方以 `harken_pack/` 前缀引用。
+Pack 的 `.bytes` 布局由 Engine 定义，唯一来源是 `HarkenEngine/Schema/Pack/current` 下的手写纯 C 头文件（总入口 `HarkenPack.h`，按段族拆分为 `PackFile.h`、`PackMedia.h`、`PackBus.h`、`PackCurve.h`、`PackBinding.h`、`PackVoiceRecipe.h`、`PackContainer.h`、`PackVariable.h`、`PackWorldBody.h`、`PackEffects.h`、`PackProperties.h`、`PackSlots.h`、`PackChecksum.h`），经只含头文件的 `Harken::PackFormat` 目标发布，消费方以 `harken_pack/` 前缀引用。
 
 | 方面 | 当前做法 |
 |---|---|
 | 记录与取值域 | 固定宽度、小端、显式填充的 `HkPack*` 结构体；枚举、单位、可接受范围、世界能力位和硬上限与布局写在同一处 |
-| 布局锁 | 每条记录以 `HK_PACK_SIZE`／`HK_PACK_OFFSET` 静态断言锁定；`.scripts/pack_layout_lock_check.py` 在 PR 中要求布局锁变动同时提升 `HK_PACK_FORMAT_VERSION` |
+| 布局锁 | 每条记录以 `HK_PACK_SIZE`／`HK_PACK_OFFSET` 静态断言锁定，编译期保证两侧读写布局一致 |
 | 读写映射 | Engine 读取端 `harken/media/PackWire.h` 与 Studio 写入端 `harken_studio_build/PackWire.h` 各自手写映射，不使用代码生成器；构建路径不运行 Python |
-| 版本 | Pack 格式版本当前为 4，独立于 ABI 与产品版本；Engine 经 `Vn_QueryPackFormatVersion` 声明可读范围 |
-| 伴随 JSON | 由 Studio 定义，Schema 位于 `HarkenStudio/Format/PackMetadata`；Engine 不读取伴随文件，Pack 激活只接收二进制 |
+| 版本 | 与 Studio 的两棵 Schema 树同一机制：`manifest.json` + `current/` + 冻结版本号目录（3、4 为旧 `HarkenSchema` 原文留档）。`HK_PACK_FORMAT_VERSION` 由构建按 manifest 最后一个已发布版本生成到 `harken_pack/PackVersion.h`，当前为 4；是否换代由发布者经 `.scripts/schema_lock.py stage --pack same|next` 决定，`--pack` 同时冻结 PackMetadata 与 Pack 二进制。Engine 经 `Vn_QueryPackFormatVersion` 声明可读范围 |
+| 伴随 JSON | 由 Studio 定义，Schema 位于 `HarkenStudio/Schema/PackMetadata`；Engine 不读取伴随文件，Pack 激活只接收二进制 |
 
 有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 已退役，读取端不再接纳；Action 的当前生产数据位于分区 body。Engine 只以 ID 识别创作内容，名称与 ID 的换算由 Studio 与 Integration 依据伴随 JSON 完成。
 

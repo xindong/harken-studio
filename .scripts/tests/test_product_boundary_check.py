@@ -56,7 +56,7 @@ class ProductBoundaryCheckTest(unittest.TestCase):
             "HarkenEngine/Source/api/include/harken/Ids.h": "",
             "HarkenStudio/Source/Bridge/C.cpp": '#include "harken/Ids.h"\n',
             "HarkenEngine/Source/core/include/harken/core/Private.h": "",
-            "HarkenEngine/Format/Pack/include/harken/pack/Layout.h": "",
+            "HarkenEngine/Schema/Pack/include/harken/pack/Layout.h": "",
             "HarkenStudio/Source/Bridge/A.cpp":
                 '#include "harken/Harken.h"\n#include "harken/pack/Layout.h"\n',
             "HarkenStudio/Source/Bridge/B.cpp": '#include "harken/core/Private.h"\n',

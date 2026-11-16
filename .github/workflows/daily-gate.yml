@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build-daily --config Release --target harken_engine harken_engine_dev harken_studio_cli
+          cmake --build build-daily --config Release --target harken_engine harken_studio_cli
           cmake --install build-daily --config Release --prefix .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install
           python .scripts/crossproduct-test/run.py \
             --engine-install .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install \

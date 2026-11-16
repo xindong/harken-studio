@@ -15,9 +15,9 @@ from typing import Any, Iterator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Format"
+SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Schema"
 PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
-PACK_SCHEMA_NAME = "PackManifestSchema.json"
+PACK_SCHEMA_NAME = "PackMetadataSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
 TREE_DIRECTORIES = {"Editor": "Project", "Pack": "PackMetadata"}
 GENERATED_PROJECT_HEADER = "ProjectSchemaGenerated.h"
@@ -398,9 +398,12 @@ def validate_pack_source(source: dict[str, Any]) -> None:
         raise ValueError("Pack contract needs a positive formatVersion")
     if metadata.get("validationMode") != "generated-json":
         raise ValueError("Pack contract must use generated-json validation")
-    expected_locator = "json:$.schemaVersion" if companion else "json:$.schema_version"
-    if metadata.get("versionLocator") != expected_locator:
-        raise ValueError(f"Pack contract must use {expected_locator}")
+    locator = metadata.get("versionLocator")
+    version_key = locator.removeprefix("json:$.") if isinstance(locator, str) else None
+    if companion and version_key not in ("schemaVersion", "packMetadataVersion"):
+        raise ValueError("Pack companion contract must use json:$.packMetadataVersion")
+    if not companion and locator != "json:$.schema_version":
+        raise ValueError("Pack contract must use json:$.schema_version")
     if metadata.get("rebuildPolicy") != "rebuild":
         raise ValueError("Pack contract must be rebuildable")
     for field in ("pathPatterns", "readers", "writers", "validators"):
@@ -419,8 +422,8 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     definitions = schema.get("$defs", {})
     if not isinstance(definitions, dict):
         raise ValueError("Pack definitions must be an object")
-    if companion and definitions.get("schemaVersion", {}).get("const") != version:
-        raise ValueError("Pack schemaVersion does not match formatVersion")
+    if companion and definitions.get(version_key, {}).get("const") != version:
+        raise ValueError(f"Pack {version_key} does not match formatVersion")
     for name, definition in definitions.items():
         validate_schema_language(definition, f"Pack.$defs.{name}")
     validate_schema_language({key: value for key, value in schema.items() if key != "$defs"}, "Pack")
@@ -498,9 +501,11 @@ def materialize_source(tree: str, source: dict[str, Any], version: int) -> dict[
             raise ValueError("Pack current must omit the formatVersion product integer")
         metadata["formatVersion"] = version
         if metadata.get("formatId") == "generated.pack-companion":
-            slot = result.get("$defs", {}).get("schemaVersion")
+            if metadata.get("versionLocator") != "json:$.packMetadataVersion":
+                raise ValueError("Pack current must locate its version at json:$.packMetadataVersion")
+            slot = result.get("$defs", {}).get("packMetadataVersion")
             if slot != {"type": "integer"}:
-                raise ValueError("Pack current schemaVersion must be an integer without a fixed value")
+                raise ValueError("Pack current packMetadataVersion must be an integer without a fixed value")
             slot["const"] = version
         else:
             slot = result.get("properties", {}).get("schema_version")
@@ -850,7 +855,7 @@ bool validateProjectDocument(int version, QStringView documentType,
                              const QJsonValue& document,
                              const QString& relativePath,
                              QStringList& errors);
-bool validatePackManifest(int version,
+bool validatePackMetadata(int version,
                           const QJsonValue& document,
                           const QString& relativePath,
                           QStringList& errors);
@@ -1170,7 +1175,7 @@ bool validateProjectDocument(int version, QStringView documentType,
     }}
 }}
 
-bool validatePackManifest(int version,
+bool validatePackMetadata(int version,
                           const QJsonValue& document,
                           const QString& relativePath,
                           QStringList& errors)

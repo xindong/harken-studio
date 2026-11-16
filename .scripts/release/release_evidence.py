@@ -70,7 +70,7 @@ COMPONENT_INPUTS = (
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )
 ROOT_TARGETS = {"studio": ("harken_editor", "harken_studio_cli"), "hub": ("harken_hub",),
-                "runtime": ("harken_engine", "harken_engine_dev")}
+                "runtime": ("harken_engine_release", "harken_engine_dev")}
 
 
 def read_json(path: Path) -> dict:

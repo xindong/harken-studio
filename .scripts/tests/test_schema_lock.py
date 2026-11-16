@@ -9,23 +9,28 @@ from pathlib import Path
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("studio_schema_lock", REPO_ROOT / ".scripts/studio_schema_lock.py")
+SPEC = importlib.util.spec_from_file_location("schema_lock", REPO_ROOT / ".scripts/schema_lock.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
 
-class StudioSchemaLockTest(unittest.TestCase):
+class SchemaLockTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        self.source = self.root / "HarkenStudio" / "Format"
+        self.source = self.root / "HarkenStudio" / "Schema"
+        self.pack_binary = self.root / "HarkenEngine" / "Schema" / "Pack"
         self.candidate = self.root / "candidate"
+        self.staged = self.candidate / "HarkenStudio" / "Schema"
+        self.staged_pack_binary = self.candidate / "HarkenEngine" / "Schema" / "Pack"
         self.editor_version = MODULE.schema_archive.load_tree("Editor")["currentVersion"]
         self.editor_history = MODULE.schema_archive.load_tree("Editor")["manifest"]["supportedHistorical"]
-        shutil.copytree(REPO_ROOT / "HarkenStudio" / "Format", self.source)
-        for name, value in (("SCHEMA_ROOT", self.source), ("REPO_ROOT", self.root)):
+        shutil.copytree(REPO_ROOT / "HarkenStudio" / "Schema", self.source)
+        shutil.copytree(REPO_ROOT / "HarkenEngine" / "Schema" / "Pack", self.pack_binary)
+        for name, value in (("SCHEMA_ROOT", self.source), ("PACK_BINARY_ROOT", self.pack_binary),
+                            ("REPO_ROOT", self.root)):
             active = patch.object(MODULE, name, value)
             active.start()
             self.addCleanup(active.stop)
@@ -50,7 +55,7 @@ class StudioSchemaLockTest(unittest.TestCase):
         result = self.stage()
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version)
-        staged = MODULE.schema_archive.load_tree("Editor", self.candidate)
+        staged = MODULE.schema_archive.load_tree("Editor", self.staged)
         self.assertEqual(staged["currentSource"], source)
         self.assertEqual(staged["published"][self.editor_version], staged["current"])
         self.assertNotEqual(MODULE.schema_archive.load_tree("Editor", self.source)["published"][self.editor_version], staged["current"])
@@ -60,17 +65,21 @@ class StudioSchemaLockTest(unittest.TestCase):
         result = self.stage(pack="next")
         self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version)
         self.assertEqual(result["trees"]["Pack"]["generation"], current + 1)
-        pack = MODULE.schema_archive.load_tree("Pack", self.candidate)
+        pack = MODULE.schema_archive.load_tree("Pack", self.staged)
         self.assertNotIn("formatVersion", pack["currentSource"]["x-harken-format"])
-        self.assertEqual(pack["current"]["$defs"]["schemaVersion"]["const"], current + 1)
+        self.assertEqual(pack["current"]["$defs"]["packMetadataVersion"]["const"], current + 1)
         self.assertFalse((self.source / "PackMetadata" / str(current + 1)).exists())
+        binary = MODULE.audit.load_pack_binary(self.staged_pack_binary)
+        self.assertEqual(result["trees"]["PackBinary"]["generation"], binary["currentVersion"])
+        self.assertEqual(binary["published"][binary["currentVersion"]], binary["current"])
+        self.assertEqual(binary["currentVersion"], MODULE.audit.load_pack_binary(self.pack_binary)["currentVersion"] + 1)
 
     def test_next_editor_generation_preserves_latest_previous_snapshot(self) -> None:
         source = self.add_metadata()
         latest = MODULE.schema_archive.materialize_source("Editor", source, self.editor_version)
         (self.source / f"Project/{self.editor_version}/ProjectSerializedSchema.json").write_text(json.dumps(latest), encoding="utf-8")
         result = self.stage(editor="next")
-        tree = MODULE.schema_archive.load_tree("Editor", self.candidate)
+        tree = MODULE.schema_archive.load_tree("Editor", self.staged)
         self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version + 1)
         self.assertEqual(tree["published"][self.editor_version], latest)
         self.assertEqual(tree["manifest"]["supportedHistorical"], sorted(set(self.editor_history) | {self.editor_version}))
@@ -81,7 +90,7 @@ class StudioSchemaLockTest(unittest.TestCase):
 
     def test_candidate_is_buildable_before_repository_generation_changes(self) -> None:
         self.stage(editor="next")
-        bundle = MODULE.schema_archive.build_bundle(self.candidate)
+        bundle = MODULE.schema_archive.build_bundle(self.staged)
         self.assertIn(f"Editor/{self.editor_version + 1}/ProjectSerializedSchema.json", bundle["installed"])
         self.assertEqual(bundle["manifest"]["trees"]["Editor"]["currentVersion"], self.editor_version + 1)
         self.assertEqual(MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"], self.editor_version)
@@ -101,7 +110,7 @@ class StudioSchemaLockTest(unittest.TestCase):
 
     def test_candidate_cannot_rewrite_historical_snapshot(self) -> None:
         self.stage(editor="next")
-        path = self.candidate / f"Project/{self.editor_version}/ProjectSerializedSchema.json"
+        path = self.staged / f"Project/{self.editor_version}/ProjectSerializedSchema.json"
         contract = json.loads(path.read_text(encoding="utf-8"))
         contract["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["rewritten"] = {}
         path.write_text(json.dumps(contract), encoding="utf-8")
@@ -134,10 +143,14 @@ class StudioSchemaLockTest(unittest.TestCase):
         after = self.snapshot()
         changed = {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}
         expected = set()
+        binary = result["trees"].pop("PackBinary")
+        expected.add("HarkenEngine/Schema/Pack/manifest.json")
+        expected.update(f"HarkenEngine/Schema/Pack/{binary['generation']}/{path.name}"
+                        for path in (self.pack_binary / "current").iterdir())
         for tree, summary in result["trees"].items():
             directory = MODULE.schema_archive.TREE_DIRECTORIES[tree]
-            expected.add(f"HarkenStudio/Format/{directory}/manifest.json")
-            expected.add(f"HarkenStudio/Format/{directory}/{summary['generation']}/{MODULE.audit.SCHEMA_NAMES[tree]}")
+            expected.add(f"HarkenStudio/Schema/{directory}/manifest.json")
+            expected.add(f"HarkenStudio/Schema/{directory}/{summary['generation']}/{MODULE.audit.SCHEMA_NAMES[tree]}")
         self.assertEqual(changed, expected)
         self.assertEqual(result["schemaSnapshotHash"], MODULE.schema_archive.build_bundle(self.source)["manifest"]["snapshotHash"])
 

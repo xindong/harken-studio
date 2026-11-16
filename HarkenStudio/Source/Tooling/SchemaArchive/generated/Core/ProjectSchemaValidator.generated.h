@@ -15,7 +15,7 @@ bool validateProjectDocument(int version, QStringView documentType,
                              const QJsonValue& document,
                              const QString& relativePath,
                              QStringList& errors);
-bool validatePackManifest(int version,
+bool validatePackMetadata(int version,
                           const QJsonValue& document,
                           const QString& relativePath,
                           QStringList& errors);

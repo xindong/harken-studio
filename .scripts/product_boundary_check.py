@@ -36,7 +36,7 @@ ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h")
 ALLOWED_EDGES = {
     ("HarkenStudio", "HarkenEngine"): {
         "targets": {"Harken::EngineDev", "Harken::PackFormat"},
-        "paths": ("HarkenEngine/Format/Pack/",),
+        "paths": ("HarkenEngine/Schema/Pack/",),
         "public_headers": True,
     },
     ("HarkenIntegration", "HarkenEngine"): {
@@ -46,7 +46,7 @@ ALLOWED_EDGES = {
     },
     ("HarkenIntegration", "HarkenStudio"): {
         "targets": set(),
-        "paths": ("HarkenStudio/Format/PackMetadata/",),
+        "paths": ("HarkenStudio/Schema/PackMetadata/",),
         "public_headers": False,
     },
 }
@@ -110,7 +110,7 @@ def path_allowed(source: str, target_path: str,
 def is_engine_public_root(path: str) -> bool:
     if not path.startswith("HarkenEngine/"):
         return False
-    if path.startswith("HarkenEngine/Format/Pack/"):
+    if path.startswith("HarkenEngine/Schema/Pack/"):
         return True
     return PurePosixPath(path).name in ENGINE_PUBLIC_HEADER_NAMES and "/include/" in path
 
@@ -310,7 +310,7 @@ class Checker:
         if local in self.file_set:
             return [local]
         if include.startswith(PACK_FORMAT_INCLUDE_PREFIX):
-            staged = "HarkenEngine/Format/Pack/" + include[len(PACK_FORMAT_INCLUDE_PREFIX):]
+            staged = "HarkenEngine/Schema/Pack/current/" + include[len(PACK_FORMAT_INCLUDE_PREFIX):]
             return [staged] if staged in self.file_set else []
         suffix = "/" + include.lstrip("./")
         candidates = self.header_index.get(PurePosixPath(include).name, [])

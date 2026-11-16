@@ -11,12 +11,25 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 set(HARKEN_PACK_FORMAT_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include-pack)
+set(_pack_manifest "${CMAKE_CURRENT_SOURCE_DIR}/Schema/Pack/manifest.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_pack_manifest}")
+file(READ "${_pack_manifest}" _pack_manifest_json)
+string(JSON _pack_published_count LENGTH "${_pack_manifest_json}" published)
+math(EXPR _pack_published_last "${_pack_published_count} - 1")
+string(JSON HARKEN_PACK_FORMAT_VERSION GET "${_pack_manifest_json}" published ${_pack_published_last})
+if(NOT HARKEN_PACK_FORMAT_VERSION MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "${_pack_manifest}: the last published version must be a positive integer")
+endif()
 file(GLOB HARKEN_PACK_FORMAT_HEADERS CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/Format/Pack/*.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/Schema/Pack/current/*.h)
 foreach(_header IN LISTS HARKEN_PACK_FORMAT_HEADERS)
     get_filename_component(_name ${_header} NAME)
     configure_file(${_header} ${HARKEN_PACK_FORMAT_INCLUDE_DIR}/harken_pack/${_name} COPYONLY)
 endforeach()
+file(CONFIGURE OUTPUT ${HARKEN_PACK_FORMAT_INCLUDE_DIR}/harken_pack/PackVersion.h
+    CONTENT "#ifndef HARKEN_PACK_VERSION_H\n#define HARKEN_PACK_VERSION_H\n\n#define HK_PACK_FORMAT_VERSION @HARKEN_PACK_FORMAT_VERSION@u\n\n#endif\n"
+    @ONLY)
+list(APPEND HARKEN_PACK_FORMAT_HEADERS ${HARKEN_PACK_FORMAT_INCLUDE_DIR}/harken_pack/PackVersion.h)
 add_library(harken_pack_format INTERFACE)
 add_library(Harken::PackFormat ALIAS harken_pack_format)
 target_include_directories(harken_pack_format INTERFACE
@@ -399,14 +412,14 @@ function(harken_add_engine_edition target output_name export_name)
 endfunction()
 
 if(HARKEN_BUILD_ENGINE)
-    harken_add_engine_edition(harken_engine HarkenEngine Engine)
-    target_compile_definitions(harken_engine PRIVATE HARKEN_ENGINE_DEV=0)
+    harken_add_engine_edition(harken_engine_release HarkenEngine Engine)
+    target_compile_definitions(harken_engine_release PRIVATE HARKEN_ENGINE_DEV=0)
     if(WIN32)
         # The export surface is a reviewed allowlist: CMake forwards the
         # checked-in .def to the linker as /DEF:. Regenerate it from Harken.h
         # with Source/Core/api/abi/gen_abi_exports.py after an entry point
         # changes; the abi export checks fail on drift.
-        target_sources(harken_engine PRIVATE ${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def)
+        target_sources(harken_engine_release PRIVATE ${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def)
     endif()
 endif()
 
@@ -464,11 +477,13 @@ if(HARKEN_BUILD_ENGINE_DEV)
 endif()
 
 set(_harken_installed_editions)
-foreach(_edition harken_engine harken_engine_dev)
+foreach(_edition harken_engine_release harken_engine_dev)
     if(TARGET ${_edition})
         list(APPEND _harken_installed_editions ${_edition})
     endif()
 endforeach()
+add_custom_target(harken_engine)
+add_dependencies(harken_engine ${_harken_installed_editions})
 install(TARGETS ${_harken_installed_editions} harken_pack_format
     EXPORT HarkenEngineTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -488,8 +503,10 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/generated/harken_a
 install(EXPORT HarkenEngineTargets
     NAMESPACE Harken::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HarkenEngine)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfig.cmake.in
+    "@PACKAGE_INIT@\n\ninclude(\"\${CMAKE_CURRENT_LIST_DIR}/HarkenEngineTargets.cmake\")\n\ncheck_required_components(HarkenEngine)\n")
 configure_package_config_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HarkenEngineConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfig.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HarkenEngine)
 write_basic_package_version_file(

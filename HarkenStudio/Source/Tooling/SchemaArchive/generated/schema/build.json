@@ -16,14 +16,14 @@
       "size": 83204
     },
     {
-      "path": "Pack/3/PackManifestSchema.json",
+      "path": "Pack/3/PackMetadataSchema.json",
       "sha256": "5df9b0e10fa5cc01037d04d5dbdfd31cb45c1cad621d98f872d043295eeb6ea3",
       "size": 14102
     },
     {
-      "path": "Pack/4/PackManifestSchema.json",
-      "sha256": "93727827a5ba63f8ac76c20a6dc304fb183e6826a1debfa7792016ccdcedc52a",
-      "size": 6785
+      "path": "Pack/4/PackMetadataSchema.json",
+      "sha256": "29761a7709537c931ccae1b51209f540603b0693a80e668edf1ae3d517df48a5",
+      "size": 6851
     }
   ],
   "generated": [
@@ -34,12 +34,12 @@
     },
     {
       "path": "ProjectSchemaValidator.generated.cpp",
-      "sha256": "3faae6537141e189d1620af0c3aee28ae8a28abcea87edd5daa3a9501d7d3246",
-      "size": 1030389
+      "sha256": "f8e2342daef154d20f754af6e9b8139c1e5d3f75cf780ce6660fb1ca3646853c",
+      "size": 1030479
     },
     {
       "path": "ProjectSchemaValidator.generated.h",
-      "sha256": "35db3b6e0439053637ecc5c3081d1c09cc5ca23c7e4599005d2a0f4a81afb8a6",
+      "sha256": "1077611606dd2e1394f072476f40cea41a66dcfa0256b567c7d03d727b7eaedd",
       "size": 846
     }
   ],
@@ -65,14 +65,14 @@
       "size": 134
     },
     {
-      "path": "Pack/3/PackManifestSchema.json",
+      "path": "Pack/3/PackMetadataSchema.json",
       "sha256": "5df9b0e10fa5cc01037d04d5dbdfd31cb45c1cad621d98f872d043295eeb6ea3",
       "size": 14102
     },
     {
-      "path": "Pack/current/PackManifestSchema.json",
-      "sha256": "93727827a5ba63f8ac76c20a6dc304fb183e6826a1debfa7792016ccdcedc52a",
-      "size": 6785
+      "path": "Pack/current/PackMetadataSchema.json",
+      "sha256": "29761a7709537c931ccae1b51209f540603b0693a80e668edf1ae3d517df48a5",
+      "size": 6851
     },
     {
       "path": "Pack/manifest.json",
@@ -81,7 +81,7 @@
     }
   ],
   "manifestVersion": 1,
-  "snapshotHash": "4e768ff29d55709e1c7424ad7fdb5e075f8f8573185b7701b27fec35e7918265",
+  "snapshotHash": "d4ebc1f797ef89ae41e8cd54cc98b30b4405d57d1e0763c45a10bc4e356d52a3",
   "trees": {
     "Editor": {
       "currentVersion": 9,

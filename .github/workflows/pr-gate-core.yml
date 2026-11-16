@@ -73,7 +73,7 @@ jobs:
       - name: Build Engine editions and all registered runtime test targets
         shell: bash
         run: |
-          for target in harken_engine harken_engine_dev harken_runtime_ci_tests; do
+          for target in harken_engine harken_runtime_ci_tests; do
             cmake --build build-core --config Release --target "$target"
           done
 
@@ -133,7 +133,7 @@ jobs:
       - name: Build Engine editions and monitor runtime tests
         shell: bash
         run: |
-          for target in harken_engine harken_engine_dev harken_monitor_runtime_tests; do
+          for target in harken_engine harken_monitor_runtime_tests; do
             cmake --build build-macos-runtime --config Release --target "$target" --parallel
           done
 
@@ -190,9 +190,9 @@ jobs:
           -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build (harken_engine harken_engine_dev)
+      - name: Build (harken_engine)
         run: |
-          for target in harken_engine harken_engine_dev; do
+          for target in harken_engine; do
             cmake --build --preset linux-release --target "$target" --parallel
           done
 
@@ -218,7 +218,7 @@ jobs:
           -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build libHarkenEngine.a and libHarkenEngineDev.a
-        run: cmake --build build-ios --config Release --target harken_engine harken_engine_dev --parallel
+        run: cmake --build build-ios --config Release --target harken_engine --parallel
 
   core-android-arm64:
     name: core-android-arm64
@@ -253,4 +253,4 @@ jobs:
           -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build libHarkenEngine.so and libHarkenEngineDev.so
-        run: cmake --build build-android --config Release --target harken_engine harken_engine_dev --parallel
+        run: cmake --build build-android --config Release --target harken_engine --parallel

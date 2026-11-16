@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive"))
 import check_integration_version
 import schema_archive
-import studio_schema_release_audit
+import schema_release_audit
 from release import collect_legal_texts, integration_layout, release_evidence
 
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
@@ -25,7 +25,7 @@ CAPABILITIES_NAME = "capabilities.json"
 SCHEMA_SOURCE = (
     Path(__file__).resolve().parents[2]
     / "HarkenStudio"
-    / "Format"
+    / "Schema"
 )
 
 
@@ -149,10 +149,10 @@ def verify_release_candidate(args: argparse.Namespace, self_test: dict) -> None:
     if args.channel not in {"stable", "beta"}:
         return
     try:
-        report = studio_schema_release_audit.verify_current_release("WORKTREE")
+        report = schema_release_audit.verify_current_release("WORKTREE")
         if report["errors"]:
             raise ValueError("; ".join(report["errors"]))
-        studio_schema_release_audit.require_current_reader({"currentReader": self_test})
+        schema_release_audit.require_current_reader({"currentReader": self_test})
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         raise SystemExit(f"error: Schema release verification failed: {error}") from error
 

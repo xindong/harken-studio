@@ -18,7 +18,7 @@ if(NOT TARGET Harken::EngineDev)
     message(FATAL_ERROR "Harken Studio requires the Harken::EngineDev target")
 endif()
 
-set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Format")
+set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Schema")
 foreach(_format_tree Project PackMetadata)
     set(_format_manifest "${HARKEN_SCHEMA_SOURCE_DIR}/${_format_tree}/manifest.json")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_format_manifest}")

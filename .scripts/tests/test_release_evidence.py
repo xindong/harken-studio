@@ -788,7 +788,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         receipt = {"identity": {**self.identity, "gitCommit": commit, "platform": "android-arm64", "channel": "stable"},
                    "sourceState": {"configuredDirty": False, "checkoutDirty": False},
                    "artifacts": self.model["artifacts"], "components": [], "toolchains": [],
-                   "targets": ["harken_engine", "harken_engine_dev"], "cmakeVersion": "3.31.6",
+                   "targets": ["harken_engine_release", "harken_engine_dev"], "cmakeVersion": "3.31.6",
                    "notices": [evidence.file_record(notice, runtime)]}
         evidence.write_json(runtime / "runtime-build.json", receipt)
         second_runtime = self.root / "runtime/android-armv7"
