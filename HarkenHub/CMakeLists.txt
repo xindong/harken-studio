@@ -385,7 +385,7 @@ if(WIN32)
     )
 
     add_executable(harken_hub_update_bridge WIN32
-        Source/App/UpdateBridgeMain.cpp)
+        Source/App/UpdateBridgeMain.cpp "HarkenHub.rc")
     set_target_properties(harken_hub_update_bridge PROPERTIES
         OUTPUT_NAME "HarkenHubUpdateBridge"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Updater")
