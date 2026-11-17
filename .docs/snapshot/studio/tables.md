@@ -24,7 +24,7 @@
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sends | 六类对象的发送配置 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
-| C12 | 配置 | Conversion Editor / Sample Rate | Upper limit / Sample rate；阈值使用 KB／MB，按阈值排序，末行固定 Infinite |
+| C12 | 配置 | Conversion Editor / Platforms | Format / Quality / Upper limit / Sample rate；按平台分组，Format 与 Quality 位于组内首行；阈值使用 KB／MB，按阈值排序，末行固定 Infinite；组尾加减号增删有限阈值 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
@@ -104,7 +104,7 @@
 | 项目 | 当前表现 |
 |---|---|
 | 入口与布局 | 双击 Assets 中的 Conversion 预设或 Inspector 的 Settings 引用，在中央区域下方打开独立 Conversion Editor |
-| 平台页签 | 上半区平铺工程平台页签，Toolbar 当前平台置前，其余按工程顺序；每个页签独立编辑 Format、Quality 和 Sample Rate 分档，不提供跨平台复制或差异标记 |
+| 平台分组 | 上半区为分组配置表，每个工程平台一组并全部平铺，Toolbar 当前平台置顶，其余按工程顺序；组内首行编辑 Format 与 Quality，各行编辑 Sample Rate 分档；不提供跨平台复制或差异标记 |
 | 格式与采样率 | Format 为 PCM／Vorbis；Quality 以 0–100% 显示，仅 Vorbis 可编辑；采样率可选 Original（不重采样）或受支持的离散值，有限阈值可增删，Infinite 末行不可删除 |
 | 引用结果 | 下半区按 Toolbar 当前平台展示有效引用此预设的 Sound Source，包含各语言；没有有效缓存时 Converted 各列和 Ratio 留空 |
 | Convert | 表尾仅一个 Convert 按钮，为当前平台的引用源生成产物，已有缓存直接跳过；转换不显示进度或状态，Esc 可取消未完成工作 |

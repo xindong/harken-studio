@@ -3,20 +3,19 @@
 #include "Core/Components/VConversion.h"
 #include "Core/ConversionResults.h"
 
+#include <QHash>
 #include <QTimer>
 #include <QVariantMap>
 #include <QWidget>
 
 class QAction;
-class QComboBox;
-class QSpinBox;
 class QTreeWidgetItem;
 
 namespace VNX {
 
 struct ProjectItem;
+class ListFooter;
 class ProportionalTreeWidget;
-class SegmentedControl;
 class TableWidget;
 
 class ConversionEditorPanel final : public QWidget
@@ -49,29 +48,27 @@ protected:
 private:
     void installFocusFilter(QObject* object);
     void refreshPreset();
-    void refreshConfig();
-    void refreshTiers();
+    void rebuildPlatforms();
+    void refreshSelection();
+    QWidget* buildTierRow(const ConversionPlatformConfig& config, size_t index);
     void refreshResults();
     void commitConfig(const ConversionPlatformConfig& config);
-    void addTier();
-    void removeTier();
+    void addTier(const ProjectPlatformId& platform);
+    void removeTier(const ProjectPlatformId& platform);
     void startConversion();
     void cancelConversion();
-    const ConversionPlatformConfig* displayedConfig() const;
+    const ConversionPlatformConfig* displayedConfig(const ProjectPlatformId& platform) const;
 
     int panelId_ = 0;
     bool pinned_ = false;
     bool refreshing_ = false;
     QUuid itemGuid_;
-    ProjectPlatformId selectedPlatform_;
-    QVector<ProjectPlatformId> platformOrder_;
     std::vector<ConversionPlatformConfig> displayed_;
-    SegmentedControl* platforms_ = nullptr;
-    QWidget* fields_ = nullptr;
-    QComboBox* format_ = nullptr;
-    QSpinBox* quality_ = nullptr;
-    TableWidget* tiersTable_ = nullptr;
-    ProportionalTreeWidget* tiers_ = nullptr;
+    ProjectPlatformId selectedPlatform_;
+    int selectedTier_ = -1;
+    TableWidget* platforms_ = nullptr;
+    QList<QWidget*> tierRows_;
+    QHash<ProjectPlatformId, ListFooter*> groupFooters_;
     ProportionalTreeWidget* results_ = nullptr;
     QAction* convert_ = nullptr;
     QTimer resultsRefresh_;
