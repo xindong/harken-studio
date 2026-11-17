@@ -246,6 +246,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     QAction* logAction = settingsMenu->addAction(tr("Activity Log"));
     connect(logAction, &QAction::triggered, this,
             &HubWindow::showLogConsole);
+    settingsMenu->addSeparator();
     auto* cliGuide = settingsMenu->addAction(tr("CLI Guide"));
     connect(cliGuide, &QAction::triggered, this, [this] {
         QString error;

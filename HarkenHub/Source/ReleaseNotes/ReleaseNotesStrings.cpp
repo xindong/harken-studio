@@ -1,6 +1,9 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Open the offline CLI user guide and AI command reference from a separate group in Settings, in English or Simplified Chinese."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Use the new Hub icon consistently across light and dark themes, windows, the taskbar, tray, shortcuts, installer and update helper."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Explain files in both current and older Unity API folders in Integration Package change previews."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Keep Hub responsive while preparing an update and reduce the wait before installation after Hub exits."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Fix disabled Studio and Unity Integration Package changelog links for some published versions."),
