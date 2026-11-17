@@ -2794,9 +2794,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return true;
         };
         if (meta.current) {
+            const auto media = request.options.packBuildState->mediaResults(meta.fileName);
+            if (!media) {
+                unit.error = QStringLiteral("Cannot restore recorded media for Pack '%1'").arg(meta.fileName);
+                return unit;
+            }
             unit.success = true;
             unit.reusedResources = true;
-            unit.media = request.options.packBuildState->mediaResults(meta.fileName);
+            unit.media = *media;
             unit.outputPath = liveDir.filePath(meta.fileName);
             if (!appendResources(unit, {})) unit.success = false;
             meta.resourceFingerprint = meta.previousResourceFingerprint;
@@ -3629,8 +3634,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     auto writeUnit = [&](PackMeta& meta) -> ProjectPackExporter::ExportResult {
         const QString path = liveDir.filePath(meta.fileName);
         auto unit = std::move(meta.mediaResult);
-        if (meta.retained && request.options.packBuildState)
-            unit.media = request.options.packBuildState->mediaResults(meta.fileName);
         const auto reuse = [&] {
             unit.success = true;
             meta.skipped = true;
@@ -3802,6 +3805,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     QSet<qulonglong> completed;
     for (PackMeta& pack : packs) {
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+        const auto retainedMedia = pack.retained && request.options.packBuildState
+            ? request.options.packBuildState->mediaResults(pack.fileName) : std::nullopt;
         ProjectPackExporter::ExportResult unit;
         const auto failedDependency = std::find_if(pack.dependencies.begin(), pack.dependencies.end(),
             [&](auto dependency) { return !completed.contains(dependency); });
@@ -3934,8 +3939,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             else ++result.builtPackCount;
         }
         QJsonObject output{{QStringLiteral("key"), pack.unitKey},
-                           {QStringLiteral("path"), pack.fileName},
-                           {QStringLiteral("media"), unit.media}};
+                           {QStringLiteral("path"), pack.fileName}};
+        if (!pack.retained)
+            output.insert(QStringLiteral("media"), unit.media);
+        else if (retainedMedia)
+            output.insert(QStringLiteral("media"), *retainedMedia);
         if (pack.companion.contains(QStringLiteral("waveforms")))
             output.insert(QStringLiteral("companion"), QJsonObject{
                 {QStringLiteral("waveforms"), pack.companion.value(QStringLiteral("waveforms"))}});
