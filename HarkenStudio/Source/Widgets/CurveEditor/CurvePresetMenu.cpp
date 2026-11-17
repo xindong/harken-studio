@@ -28,6 +28,7 @@ QMenu* addCurvePresetMenu(QMenu* parentMenu,
     for (const CurvePreset preset : kCurvePresets) {
         auto* action = menu->addAction(QMenu::tr(names[static_cast<size_t>(preset)]));
         action->setData(static_cast<int>(preset));
+        action->setIconVisibleInMenu(true);
         action->setCheckable(true);
         action->setChecked(handles == curvePresetHandles(preset, a, b, scale)
             && (a.value != b.value || preset == CurvePreset::Linear));
