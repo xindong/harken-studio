@@ -145,6 +145,15 @@ AuditionManager::AuditionManager(VNX::AudioEngine* engine, QObject* parent)
     connect(&previewRevisionTimeoutTimer_, &QTimer::timeout,
             this, &AuditionManager::expirePendingRevisionStarts);
 
+    connect(&VNX::ProjectManager::instance(), &VNX::ProjectManager::itemPropertyChanged,
+            this, [this](VNX::ProjectItem* item, const QString& property) {
+        if (!item || property != QStringLiteral("sources")) return;
+        const auto active = getActiveAuditions();
+        for (const auto& audition : active)
+            if (audition.previewSounds.contains(item->runtimeId()))
+                stop(audition.playingId);
+    });
+
     if (engine_) {
         connect(engine_, &VNX::AudioEngine::playbackStarted,
                 this, &AuditionManager::onEnginePlaybackStarted);
@@ -457,6 +466,7 @@ uint32_t AuditionManager::playAuthoredPreview(
         return 0;
     }
 
+    const auto previewSounds = VNX::ProjectManager::instance().prepareRuntimePreview(item);
     const auto barrier = engine_->currentWorldPlaybackBarrier();
     const auto kind = previewKind(item.type);
     AuditionInfo info;
@@ -465,6 +475,7 @@ uint32_t AuditionManager::playAuthoredPreview(
     info.mode = kind ? AuditionMode::Preview : AuditionMode::NamedPlayback;
     info.previewPlayableKind = kind.value_or(0);
     info.runtimeStableId = item.runtimeId();
+    info.previewSounds = previewSounds;
     info.gameObjId = gameObjectId;
     info.projectSessionId = barrier.projectSessionId;
     info.runtimeEpoch = barrier.runtimeEpoch;

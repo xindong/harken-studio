@@ -144,13 +144,20 @@ CurrentWorldSyncResult registerPreparedSounds(PreparedProjectGenerationHold& hol
         return result;
     for (const auto& sound : hold.soundPreparation->sounds) {
         const auto revision = hold.soundPreparation->contentRevisions.find(sound.binding.soundId);
+        if (sound.media && (revision == hold.soundPreparation->contentRevisions.end()
+            || revision->second == 0 || revision->second != sound.media->contentRevision)) {
+            result.relatedStableId = sound.binding.soundId;
+            result.status = CurrentWorldSyncStatus::InvalidProject;
+            return result;
+        }
         if (revision != hold.soundPreparation->contentRevisions.end()
             && revision->second != 0
             && Detail::runtimeRegisteredSoundRevision(sound.binding.soundId) == revision->second)
             continue;
-        const auto registered = Detail::runtimeRegisterSoundPcm(
-            sound.binding.soundId, sound.samples, sound.channels, sound.sampleRate,
-            sound.loopStartFrame, sound.loopEndFrame);
+        const auto registered = sound.media
+            ? Detail::runtimeRegisterPreviewMedia(sound.binding.soundId, *sound.media)
+            : Detail::runtimeRegisterSoundPcm(sound.binding.soundId, sound.samples,
+                sound.channels, sound.sampleRate, sound.loopStartFrame, sound.loopEndFrame);
         if (registered == VN_OK)
             continue;
         result.relatedStableId = sound.binding.soundId;

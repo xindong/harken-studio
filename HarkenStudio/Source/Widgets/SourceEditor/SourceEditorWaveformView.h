@@ -42,7 +42,9 @@ public:
     void setEditable(bool editable);
     void setCommitHandler(std::function<void(const SoundSourceDef&)> handler);
     void startPlayhead(uint64_t startFrame, uint64_t windowStartFrame,
-                       uint64_t windowFrameCount, uint32_t sampleRate, bool loops);
+                       uint64_t windowFrameCount, uint32_t sampleRate, bool loops,
+                       uint64_t sourceStartFrame = 0, uint64_t sourceEndFrame = 0,
+                       uint32_t sourceSampleRate = 0);
     void stopPlayhead();
     std::optional<uint64_t> playheadFrame() const;
     bool isPlayheadActive() const { return playhead_.playing; }
@@ -151,6 +153,9 @@ private:
     SoundSourceDef originalSource_;
     SoundSourceDef previewSource_;
     SoundSourceSemantics::PlayheadExtrapolation playhead_;
+    uint64_t playheadSourceStartFrame_ = 0;
+    uint64_t playheadSourceEndFrame_ = 0;
+    uint32_t playheadSourceSampleRate_ = 0;
     QElapsedTimer playheadClock_;
     QTimer playheadTick_;
     Handle activeHandle_ = Handle::None;
