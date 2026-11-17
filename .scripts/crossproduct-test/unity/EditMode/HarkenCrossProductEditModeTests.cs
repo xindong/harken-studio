@@ -39,7 +39,11 @@ namespace HarkenCrossProduct
                     Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(preview.FiringCount, Is.GreaterThan(0));
                     Assert.That(preview.Stop(firing, 0), Is.EqualTo(VnResult.VN_OK));
-                    for (int i = 0; i < TickLimit && preview.FiringCount > 0; ++i) preview.Tick();
+                    for (int i = 0; i < TickLimit && preview.FiringCount > 0; ++i)
+                    {
+                        DevelopmentMeter.Advance(1);
+                        preview.Tick();
+                    }
                     Assert.That(preview.FiringCount, Is.Zero, "stopped preview firings are released");
                 }
                 finally

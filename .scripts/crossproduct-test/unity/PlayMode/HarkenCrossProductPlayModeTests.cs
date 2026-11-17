@@ -63,6 +63,8 @@ namespace HarkenCrossProduct
         [DllImport("HarkenEngineDev", CallingConvention = CallingConvention.Cdecl)]
         private static extern VnResult VnPreview_TakeChannelPeaks(IntPtr peaks);
 
+        public static void Advance(uint blocks) => VnPreview_PumpNullMixer(blocks);
+
         public static void Enable() => Assert.That(VnPreview_EnableChannelPeakMetering(), Is.EqualTo(VnResult.VN_OK));
 
         public static float[] Pump(MeterLayout layout, uint blocks)
@@ -167,6 +169,13 @@ namespace HarkenCrossProduct
 
         private string Main => Inputs.Absolute(inputs.main);
 
+        private ActionPreparation Prepare(params string[] actions)
+        {
+            Assert.That(runtime.Session.PrepareActions(actions, inputs.projectId, out ActionPreparation preparation),
+                Is.EqualTo(VnResult.VN_OK));
+            return preparation;
+        }
+
         private static VnVec3 Vec(float x, float y, float z) => new VnVec3 { x = x, y = y, z = z };
 
         [UnityTest]
@@ -248,6 +257,7 @@ namespace HarkenCrossProduct
             yield return Measure(value => stopped = value, 4);
             Assert.That(DevelopmentMeter.Peak(stopped), Is.LessThan(Silent), "Action stop silences audio");
 
+            ActionPreparation tone = Prepare(inputs.toneAction);
             Assert.That(Emitter.Create(out Emitter emitter), Is.EqualTo(VnResult.VN_OK));
             Assert.That(Actions.Post(inputs.toneAction, emitter, out ActionFiring emitterFiring), Is.EqualTo(VnResult.VN_OK));
             yield return Measure(value => playing = value);
@@ -257,6 +267,7 @@ namespace HarkenCrossProduct
             yield return Measure(value => stopped = value, 4);
             Assert.That(DevelopmentMeter.Peak(stopped), Is.LessThan(Silent), "emitter stop silences audio");
             emitter.Destroy();
+            Assert.That(tone.Release(), Is.EqualTo(VnResult.VN_OK));
 
             Assert.That(runtime.PlayAction(inputs.shortAction, inputs.projectId, out ActionFiring shortFiring), Is.EqualTo(VnResult.VN_OK));
             yield return Measure(_ => { }, 400);
@@ -271,6 +282,7 @@ namespace HarkenCrossProduct
             yield return StartFrom(PackSource.FromDirectory(Main));
             AssertReady();
             DevelopmentMeter.Enable();
+            ActionPreparation preparation = Prepare(inputs.spatialAction, inputs.flatAction);
             Assert.That(Listener.Set(Vec(0, 0, 0), Vec(0, 0, 1), Vec(0, 1, 0)), Is.EqualTo(VnResult.VN_OK));
             Assert.That(Emitter.Create(out Emitter emitter), Is.EqualTo(VnResult.VN_OK));
             try
@@ -301,7 +313,11 @@ namespace HarkenCrossProduct
                 Assert.That(Math.Abs(DevelopmentMeter.Balance(flatLeft) - DevelopmentMeter.Balance(flatRight)),
                     Is.LessThan(Audible), "2D playback ignores spatial movement");
             }
-            finally { emitter.Destroy(); }
+            finally
+            {
+                emitter.Destroy();
+                preparation.Release();
+            }
         }
 
         [UnityTest]

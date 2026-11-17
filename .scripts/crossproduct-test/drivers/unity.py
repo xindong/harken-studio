@@ -6,13 +6,15 @@ from pathlib import Path
 from drivers.process import run_bounded
 
 TEST_FRAMEWORK = "1.1.33"
+BUILT_IN_MODULES = ("com.unity.modules.audio", "com.unity.modules.jsonserialize", "com.unity.modules.unitywebrequest")
 
 
 def create_project(root: Path, package: Path, test_assets: Path) -> Path:
     (root / "Assets").mkdir(parents=True)
     (root / "Packages").mkdir()
     manifest = {"dependencies": {"com.harken.core": "file:" + package.resolve().as_posix(),
-                                 "com.unity.test-framework": TEST_FRAMEWORK}}
+                                 "com.unity.test-framework": TEST_FRAMEWORK,
+                                 **{module: "1.0.0" for module in BUILT_IN_MODULES}}}
     (root / "Packages" / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     shutil.copytree(test_assets, root / "Assets" / "HarkenCrossProductTests")
     return root

@@ -3,7 +3,8 @@
   "references": [
     "Harken.Core",
     "Harken.Unity",
-    "Harken.Unity.Editor"
+    "Harken.Unity.Editor",
+    "HarkenCrossProduct.PlayModeTests"
   ],
   "includePlatforms": [
     "Editor"

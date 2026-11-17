@@ -35,10 +35,19 @@ def _create(studio, project, parent, name, kind) -> str:
     return studio.call(project, "create_item", arguments, save=True)["path"]
 
 
-def _sound(studio, project, layer, name, tone) -> str:
-    path = _create(studio, project, layer, name, "Sound")
-    studio.call(project, "import_audio", {"path": str(tone), "pack": "Content", "target_parent_path": path}, save=True)
-    return path
+def _sound(studio, project, layer, name, tone, spatial: bool = False) -> str:
+    sound = studio.call(project, "create_item", {"parent": layer, "name": name, "type": "Sound"}, save=True)
+    studio.call(project, "import_audio", {"path": str(tone), "pack": "Content", "target_parent_path": sound["path"]},
+                save=True)
+    if spatial:
+        studio.run(project, [
+            {"cmd": "set_field_group_mode", "args": {"definition_guid": sound["guid"], "group": "spatialRating",
+                                                     "mode": "Local", "scope": "Shared"}},
+            {"cmd": "set_field_group_field", "args": {"definition_guid": sound["guid"], "group": "spatialRating",
+                                                      "field": "spatial.is3DEnabled", "value": True,
+                                                      "scope": "Shared"}},
+        ], save=True)
+    return sound["path"]
 
 
 def _action(studio, project, name, target) -> None:
@@ -80,7 +89,7 @@ def build(studio, work: Path) -> dict:
     _sound(studio, project, layer, "Tone", tones["tone"])
     _sound(studio, project, layer, "Short", tones["short"])
     for name, value in (("Spatial", mix["max"]), ("Flat", mix["min"])):
-        path = _sound(studio, project, layer, name, tones["spatial"])
+        path = _sound(studio, project, layer, name, tones["spatial"], spatial=name == "Spatial")
         studio.call(project, "set_item_property", {"path": path, "property": "spatializationMix", "value": value},
                     save=True)
     for language in LANGUAGES:
