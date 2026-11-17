@@ -39,7 +39,7 @@ public:
                            const QDateTime& now);
     bool approve(QString* error, const QDateTime& now);
     bool approveViaBridge(const QString& restartMode, QString* error,
-                          const QDateTime& now);
+                          const QDateTime& now, const UpdateStateRecord* reviewedState = nullptr);
     bool checkNow();
 
     static bool selfUpdateEnabled();

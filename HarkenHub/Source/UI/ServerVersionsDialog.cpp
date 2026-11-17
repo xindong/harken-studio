@@ -1,4 +1,5 @@
 #include "UI/ServerVersionsDialog.h"
+#include "UI/HubTheme.h"
 #include "UI/DialogLayout.h"
 
 #include "Localization/HubLocalization.h"
@@ -139,6 +140,7 @@ ServerVersionsDialog::ServerVersionsDialog(
     layout->addLayout(buttonRow);
 
     connect(this, &QDialog::rejected, &downloader_, &Downloader::cancel);
+    HubTheme::observe(this, [this] { updateReleaseNotes(); });
     connect(&downloader_, &Downloader::sourceSelected, this,
             [this](const QString&, bool restarted) { downloadRestarted_ = restarted; });
     connect(&catalog_, &ServerVersionCatalog::finished, this,
@@ -240,7 +242,7 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
                                            Qt::LinksAccessibleByKeyboard);
             link->setStyleSheet(QStringLiteral(
                 "QLabel { background: transparent; } "
-                "QLabel:disabled { color: #6B7488; }"));
+                "QLabel:disabled { color: palette(placeholder-text); }"));
             link->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(link, &QWidget::customContextMenuRequested, this,
                     [this, link, version = row.entry.version, product](const QPoint& pos) {
@@ -271,7 +273,7 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
         if (row.installed) {
             auto* label = new QLabel(QCoreApplication::translate("HarkenHub", "Installed"), holder);
             label->setStyleSheet(QStringLiteral(
-                "background: transparent; color: #6B7488;"));
+                "background: transparent; color: palette(placeholder-text);"));
             cellLayout->addWidget(label);
         } else if (row.installable) {
             auto* button = new QPushButton(QCoreApplication::translate("HarkenHub", "Install"), holder);
@@ -282,7 +284,7 @@ void ServerVersionsDialog::populate(const ServerVersionList& result)
             auto* label = new QLabel(QCoreApplication::translate("HarkenHub", "Not installable"),
                                      holder);
             label->setStyleSheet(QStringLiteral(
-                "background: transparent; color: #6B7488;"));
+                "background: transparent; color: palette(placeholder-text);"));
             label->setToolTip(QCoreApplication::translate("HarkenHub",
                 "The server has no valid signed release manifest for this "
                 "version, so it cannot be installed."));
@@ -304,9 +306,9 @@ void ServerVersionsDialog::updateReleaseNotes()
                                    VersionReleaseNotes::Product product, const QString& text) {
         const QUrl url = releaseNotes_->url(version, product);
         link->setEnabled(!url.isEmpty());
-        link->setText(url.isEmpty() ? text : QStringLiteral(
+        link->setText(url.isEmpty() ? text : HubTheme::html(QStringLiteral(
             "<a href=\"%1\" style=\"color: #00F0FF;\">%2</a>")
-                .arg(url.toString(QUrl::FullyEncoded).toHtmlEscaped(), text.toHtmlEscaped()));
+                .arg(url.toString(QUrl::FullyEncoded).toHtmlEscaped(), text.toHtmlEscaped())));
         link->setToolTip(url.isEmpty()
             ? QCoreApplication::translate("HarkenHub", "No valid web link was found.")
             : url.toDisplayString());

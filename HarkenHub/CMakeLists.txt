@@ -77,6 +77,12 @@ target_include_directories(harken_ed25519 PUBLIC ${ed25519_SOURCE_DIR}/src)
 target_compile_definitions(harken_ed25519 PUBLIC ED25519_NO_SEED)
 
 set(HARKEN_HUB_SOURCES
+    Source/Cli/HubCli.cpp
+    Source/Cli/CliGuide.cpp
+    Source/Cli/ProjectCommands.cpp
+    Source/Cli/VersionCommands.cpp
+    Source/Cli/IntegrationCommands.cpp
+    Source/Legal/LegalDocuments.cpp
     Source/App/FileLog.cpp
     Source/App/SingleInstanceGuard.cpp
     Source/Download/BackoffPolicy.cpp
@@ -162,6 +168,7 @@ set(HARKEN_HUB_SOURCES
     Source/UI/MessageDialog.cpp
     Source/UI/EngineIntegrationsPage.cpp
     Source/UI/HubIcons.cpp
+    Source/UI/HubTheme.cpp
     Source/UI/ServerVersionsDialog.cpp
     Source/UI/HubWindow.cpp
     Source/UI/LogConsoleDialog.cpp

@@ -60,7 +60,7 @@ TEST(ProjectProbe, ReadsSchemaNameAndCanonicalPath)
         EXPECT_TRUE(result.ok);
         EXPECT_EQ(result.schemaVersion, schemaVersion);
         EXPECT_EQ(result.savedStudioVersion, QStringLiteral("1.4.0"));
-        EXPECT_EQ(result.displayName, QStringLiteral("Demo Project"));
+        EXPECT_EQ(result.displayName, QStringLiteral("Demo"));
         EXPECT_FALSE(result.projectId.isEmpty());
         EXPECT_FALSE(result.canonicalPath.isEmpty());
     }

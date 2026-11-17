@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Harken Hub CLI guide</title>
+<style>
+html{color-scheme:light dark}body{font:16px/1.7 system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 24px 60px}a{color:light-dark(#006b82,#5edce9)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:light-dark(#eef2f5,#1d2430);padding:16px;border-radius:8px}code{font-family:ui-monospace,Consolas,monospace}table{border-collapse:collapse;width:100%}td,th{overflow-wrap:anywhere;text-align:left;padding:10px;border-bottom:1px solid #8886}h2{margin-top:40px}.note{border-left:3px solid #d98c24;padding-left:16px}
+</style>
+<nav>User guide · <a href="ai-reference.html">AI command reference</a> · <a href="command-reference.json">JSON contract</a></nav>
+<h1>Use Harken Hub from a terminal</h1>
+<p>The CLI lets you manage projects, Studio versions and Unity integration packages without opening the Hub window. It uses the same project list and settings as Hub. Opening or creating a project still starts Studio.</p>
+<h2>1. Run your first command</h2>
+<p>Open PowerShell in the folder containing <code>HarkenHub.exe</code> and run:</p>
+<pre>./HarkenHub.exe --cli projects list | Out-String</pre>
+<p>You will see JSON: structured text that people and automation can both read. <code>ok: true</code> means the command succeeded. Your results are under <code>data</code>. In a different directory, use the full executable path; keep paths containing spaces inside quotes.</p>
+<pre>&amp; "C:/path/to/HarkenHub.exe" --cli help</pre>
+<p>On macOS, invoke the executable inside the Hub application bundle from Terminal. The command words and options are the same. The help command lists the commands supported by your installed build.</p>
+<p>In an interactive PowerShell window, append <code>| Out-String</code> to wait for this Windows desktop executable and display its complete output. Scripts should wait for the process to exit before reading its exit code; in PowerShell, read <code>$LASTEXITCODE</code> after the pipeline completes.</p>
+<h2>2. Choose what you want to do</h2>
+<table><tr><th>Task</th><th>Command</th></tr>
+<tr><td>See projects</td><td><code>projects list</code></td></tr>
+<tr><td>Add an existing project</td><td><code>projects add --path "D:/Audio/Game.hsp"</code></td></tr>
+<tr><td>Open a registered project</td><td><code>projects open --path "D:/Audio/Game.hsp"</code></td></tr>
+<tr><td>See Studio versions and build IDs</td><td><code>versions list</code></td></tr>
+<tr><td>Choose a project's Studio version</td><td><code>projects select-version --path "D:/Audio/Game.hsp" --build BUILD_ID</code></td></tr>
+<tr><td>Create a project</td><td><code>projects create --build BUILD_ID --name GameAudio --location "D:/Audio"</code></td></tr>
+<tr><td>See available templates</td><td><code>projects templates --build BUILD_ID</code></td></tr>
+<tr><td>Find releases on the server</td><td><code>versions server</code></td></tr>
+<tr><td>Download a release</td><td><code>versions download --build BUILD_ID</code></td></tr>
+<tr><td>Register a local Studio build</td><td><code>versions add-local --path "D:/Build/HarkenStudio.exe"</code></td></tr>
+<tr><td>See integration projects</td><td><code>integrations list</code></td></tr>
+<tr><td>Check installed Unity integration</td><td><code>integrations verify --path "D:/UnityGame"</code></td></tr>
+<tr><td>Switch theme</td><td><code>settings set --key theme --value dark</code> (also <code>light</code> or <code>system</code>)</td></tr>
+<tr><td>Check updates</td><td><code>updates check --product hub</code> (or <code>studio</code>)</td></tr>
+<tr><td>Read window and background activity logs</td><td><code>diagnostics logs --lines 100</code></td></tr>
+</table>
+<p>Put <code>./HarkenHub.exe --cli</code> before each command in the table. Replace <code>BUILD_ID</code> with an ID returned by <code>versions list</code> or <code>versions server</code>. CLI setting changes are saved. Reopen an already running Hub window to reload appearance and language choices. Automatic update choices notify the background service immediately; enabling one starts the service if needed, without opening a Hub window.</p>
+<h2>3. Review before changing files</h2>
+<p>Installing, repairing or removing files uses two steps. First run the command without confirmation. Hub returns a plan and a <code>confirmation</code> token. Read the plan, then repeat the same command with <code>--confirm TOKEN</code>.</p>
+<pre>./HarkenHub.exe --cli versions install --package "D:/Downloads/Studio.zip" --manifest "D:/Downloads/release.manifest"
+./HarkenHub.exe --cli versions install --package "D:/Downloads/Studio.zip" --manifest "D:/Downloads/release.manifest" --confirm TOKEN</pre>
+<p>Use the exact package and manifest paths returned by the download command. <code>TOKEN</code> is a placeholder for the token you just received. If the files or options change, the old token stops working. Read the new plan before confirming again. Windows may ask for administrator permission to install, repair or uninstall Studio.</p>
+<p>Removing a project from the Hub list (<code>projects remove</code>) or removing a local build registration (<code>versions remove-local</code>) keeps its files. <code>versions uninstall</code> removes an installed Studio version. Repairing a damaged version replaces its installation directory: check the plan's <code>changes</code> list, including any personal files marked <code>remove</code>, before confirming.</p>
+<h2>4. Install or update a Unity integration</h2>
+<pre>./HarkenHub.exe --cli integrations install --path "D:/UnityGame" --source "D:/Integration/Harken"</pre>
+<p>Keep Unity closed during changes. Read the returned file list, then repeat the command with its confirmation token to install or update the selected integration package.</p>
+<p>To remove an integration, use <code>integrations remove --path "D:/UnityGame" --backup "D:/Backups/Game-integration-01"</code>. Choose a new backup directory and keep that same path when confirming. Move and restoration commands follow the same review process; see the reference for their parameters.</p>
+<h2>5. Updates, agreements and errors</h2>
+<p>If you close the CLI before a Studio installer starts, the pending attempt may be canceled during recovery. Check <code>updates status</code>, then review and confirm the update again.</p>
+<p>If a successful project command includes <code>data.warnings</code>, the project change is already saved. Read the warning; do not repeat a completed removal. A language change also updates the running background service. New projects require an existing parent directory.</p>
+<p>Use <code>updates download --product hub</code>, then <code>updates apply --product hub</code> to review a Hub update. Use <code>studio</code> for Studio. After confirmation, Hub updates close running Hub windows and the background service, use the update bridge, and restart the background service. A queued result is not a completed installation; check <code>updates status</code> and <code>diagnostics transactions</code>.</p>
+<p>If Hub asks for agreement acceptance, read <code>legal show --product studio</code> (or <code>hub</code>). Only if you accept the displayed documents, run <code>legal accept --product studio</code>, review the response and repeat with its token.</p>
+<table><tr><th>Exit code</th><th>What to do</th></tr><tr><td>0</td><td>The command succeeded. Read the returned result.</td></tr><tr><td>2</td><td>Correct the command or parameter using help.</td></tr><tr><td>3</td><td>Read the error and operation steps; resolve the cause before retrying.</td></tr><tr><td>4</td><td>Review the plan and confirm.</td></tr><tr><td>5</td><td>Read and decide whether to accept the current agreements.</td></tr></table>
+<p class="note">Do not let a script blindly reuse newly returned confirmation tokens. Each new plan needs a fresh review. For automation, use the <a href="ai-reference.html">AI command reference</a> and <a href="command-reference.json">JSON contract</a>.</p>
+</html>

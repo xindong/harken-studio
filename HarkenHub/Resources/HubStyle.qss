@@ -1,0 +1,240 @@
+QWidget {
+    background-color: palette(window);
+    color: palette(window-text);
+    font-family: "Inter", "Segoe UI", sans-serif;
+    font-size: 12px;
+    selection-background-color: palette(highlight);
+    selection-color: palette(highlighted-text);
+}
+QMainWindow { background-color: palette(dark); }
+QTextBrowser, QTreeWidget { border: 1px solid palette(mid); }
+#sidebarPanel { background-color: palette(dark); }
+#sidebarSeparator { background-color: palette(mid); }
+#sidebar { background-color: palette(dark); border: none; outline: none; }
+#sidebar::item {
+    margin: 0;
+    padding: 12px 22px;
+    border: none;
+    background-color: palette(alternate-base);
+    color: palette(placeholder-text);
+}
+#sidebar::item:hover { background-color: palette(midlight); color: palette(window-text); }
+#sidebar::item:selected {
+    background-color: palette(button);
+    border: none;
+    border-left: 2px solid palette(highlight);
+    padding-left: 20px;
+    color: palette(highlight);
+}
+  #pageTitle { font-size: 16px; font-weight: 600; color: palette(highlight); background: transparent; }
+  #pageSubtitle { color: palette(placeholder-text); background: transparent; }
+  #sidebarProduct { color: palette(highlight); background: transparent; font-size: 24px; font-weight: 700; }
+#sidebarNote { color: palette(placeholder-text); background: transparent; font-size: 11px; }
+#sidebarLinks { background: transparent; font-size: 11px; }
+  #tablePanel { background-color: palette(window); border: 1px solid palette(mid); border-radius: 0; }
+  #newProjectPanel { background-color: palette(window); border: 1px solid palette(mid); border-radius: 0; }
+  QLineEdit#newProjectField, QComboBox#newProjectVersion {
+      background-color: palette(base);
+      border: 1px solid palette(mid);
+      border-radius: 0;
+      color: palette(window-text);
+      padding: 3px 7px;
+  }
+  QLineEdit#newProjectField:hover, QComboBox#newProjectVersion:hover { border-color: palette(mid); }
+  QLineEdit#newProjectField:focus, QComboBox#newProjectVersion:focus { border-color: palette(highlight); }
+  QComboBox#newProjectVersion::drop-down { border-left: 1px solid palette(mid); width: 24px; }
+  QPushButton#newProjectBrowse, QPushButton#newProjectAddTemplate { border-color: palette(mid); padding: 4px 16px; }
+  QPushButton#newProjectBrowse:hover, QPushButton#newProjectAddTemplate:hover { border-color: palette(mid); }
+  QTreeWidget#templatePreviewTree {
+      background-color: palette(base);
+      border: 1px solid palette(mid);
+      border-radius: 0;
+      outline: none;
+  }
+  QTreeWidget#templatePreviewTree::item { border: none; padding: 1px 4px; }
+  QTreeWidget#templatePreviewTree QHeaderView::section {
+      background-color: palette(alternate-base);
+      border: none;
+      border-bottom: 1px solid palette(mid);
+      color: palette(placeholder-text);
+      padding: 6px 9px;
+  }
+QPushButton {
+    background-color: palette(button);
+    border: 1px solid palette(mid);
+    padding: 8px 16px;
+    border-radius: 0;
+    color: palette(window-text);
+    font-weight: 500;
+}
+QPushButton:hover { background-color: palette(light); border-color: palette(mid); }
+QPushButton:pressed { background-color: palette(highlight); color: palette(highlighted-text); }
+QPushButton:disabled { background-color: palette(alternate-base); color: palette(placeholder-text); border-color: palette(mid); }
+QPushButton#rowLaunchButton, QPushButton#newProjectButton, QPushButton#createProjectButton, QPushButton#getFromServerButton[updateAvailable="true"] {
+    background-color: palette(highlight);
+    border: 1px solid palette(highlight);
+    color: palette(highlighted-text);
+    font-weight: 600;
+}
+QPushButton#rowLaunchButton:hover, QPushButton#newProjectButton:hover, QPushButton#createProjectButton:hover, QPushButton#getFromServerButton[updateAvailable="true"]:hover { background-color: palette(highlight); border-color: palette(highlight); }
+QPushButton#rowLaunchButton:pressed, QPushButton#newProjectButton:pressed, QPushButton#createProjectButton:pressed, QPushButton#getFromServerButton[updateAvailable="true"]:pressed { background-color: palette(highlight); border-color: palette(highlight); color: palette(highlighted-text); }
+QPushButton#rowLaunchButton:disabled, QPushButton#newProjectButton:disabled, QPushButton#createProjectButton:disabled, QPushButton#getFromServerButton[updateAvailable="true"]:disabled { background-color: palette(alternate-base); color: palette(placeholder-text); border-color: palette(mid); }
+QPushButton#rowLaunchButton { padding: 4px 12px; }
+QPushButton#addIntegrationButton { padding: 0; font-size: 18px; }
+QToolButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 0;
+    padding: 4px;
+}
+QToolButton:hover { background-color: palette(button); border-color: palette(mid); }
+QToolButton:pressed { background-color: palette(highlight); color: palette(highlighted-text); }
+QToolButton:disabled { color: palette(placeholder-text); }
+QToolButton#rowMenuButton {
+    background-color: palette(button);
+    border: 1px solid palette(mid);
+    color: palette(placeholder-text);
+    font-size: 10px;
+}
+QToolButton#rowMenuButton:hover { background-color: palette(light); border-color: palette(mid); color: palette(window-text); }
+QToolButton#settingsButton {
+    background-color: transparent;
+    border: none;
+    padding: 5px;
+}
+QToolButton#settingsButton:hover { background-color: palette(midlight); border: none; }
+QToolButton#settingsButton:pressed,
+QToolButton#settingsButton:checked { background-color: palette(button); border: none; }
+QToolButton#settingsButton::menu-indicator { image: none; }
+QTableWidget {
+    background-color: transparent;
+    border: none;
+    outline: none;
+    selection-background-color: palette(button);
+    selection-color: palette(window-text);
+}
+QTableWidget::item { padding: 4px 10px; border-bottom: 1px solid palette(shadow); background: transparent; }
+QTableWidget::item:hover { background-color: palette(midlight); }
+QTableWidget::item:selected { background-color: palette(button); color: palette(window-text); }
+QHeaderView::section {
+    background-color: palette(alternate-base);
+    color: palette(placeholder-text);
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid palette(mid);
+    font-weight: 600;
+    font-size: 10px;
+}
+QTableCornerButton::section { background-color: palette(alternate-base); border: none; }
+QSplitter#resultsSplitter::handle:vertical {
+    background-color: palette(alternate-base);
+    border-top: 1px solid palette(mid);
+    border-bottom: 1px solid palette(shadow);
+}
+QMenu {
+    background-color: palette(alternate-base);
+    border: 1px solid palette(mid);
+    border-radius: 0;
+    padding: 6px 0;
+}
+QMenu::item { padding: 6px 32px 6px 24px; min-width: 150px; background: transparent; }
+QMenu#versionSelectMenu::item { padding: 6px 32px 6px 36px; }
+QMenu#versionSelectMenu::icon { left: 10px; }
+QMenu::item:selected { background-color: palette(highlight); color: palette(highlighted-text); }
+QMenu::item:disabled { color: palette(placeholder-text); }
+QMenu::item:disabled:selected { background-color: transparent; color: palette(placeholder-text); }
+QMenu::separator { height: 1px; background-color: palette(mid); margin: 4px 12px; }
+#destructiveMenu::item { color: #FF0055; }
+#destructiveMenu::item:selected { background-color: #FF0055; color: palette(highlighted-text); }
+#destructiveMenu::item:disabled { color: palette(placeholder-text); }
+#destructiveMenu::item:disabled:selected { background-color: transparent; color: palette(placeholder-text); }
+QToolTip { background-color: palette(alternate-base); color: palette(window-text); border: 1px solid palette(mid); }
+QScrollBar:vertical { background-color: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background-color: palette(mid); min-height: 20px; border-radius: 0; margin: 2px; }
+QScrollBar::handle:vertical:hover { background-color: palette(mid); }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+QScrollBar:horizontal { background-color: transparent; height: 10px; margin: 0; }
+QScrollBar::handle:horizontal { background-color: palette(mid); min-width: 20px; border-radius: 0; margin: 2px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+#TitleBarWidget {
+    background-color: palette(alternate-base);
+    border-bottom: 1px solid palette(mid);
+}
+#titleBarLogo { background-color: transparent; }
+#titleBarLabel {
+    background-color: transparent;
+    color: palette(window-text);
+    font-size: 13px;
+    font-weight: 500;
+}
+#titleBarMin,
+#titleBarMax,
+#titleBarClose {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: palette(placeholder-text);
+    font-weight: 400;
+    margin: 0;
+    padding: 0;
+    min-width: 46px;
+    max-width: 46px;
+    min-height: 36px;
+    max-height: 36px;
+}
+#titleBarMin:hover,
+#titleBarMax:hover {
+    background-color: palette(button);
+    color: palette(bright-text);
+}
+#titleBarMin:pressed,
+#titleBarMax:pressed {
+    background-color: palette(midlight);
+}
+#titleBarClose:hover {
+    background-color: #E81123;
+    color: #FFFFFF;
+}
+#titleBarClose:pressed {
+    background-color: #F1707A;
+    color: #FFFFFF;
+}
+#releaseNotesScroll { background-color: transparent; }
+#releaseNotesScroll > QWidget > QWidget { background-color: transparent; }
+#currentReleaseVersion {
+    color: palette(bright-text);
+    font-size: 17px;
+    font-weight: 600;
+    padding: 4px 0;
+}
+#releaseNotesSeparator {
+    color: palette(mid);
+    background-color: palette(mid);
+    max-height: 1px;
+    margin: 8px 0;
+}
+#releaseNotesVersion {
+    background-color: palette(alternate-base);
+    border: 1px solid palette(mid);
+    color: palette(window-text);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 12px;
+    text-align: left;
+}
+#releaseNotesVersion:hover { background-color: palette(midlight); border-color: palette(mid); }
+#releaseNotesVersion:checked { border-color: palette(mid); }
+#releaseNotesChange { color: palette(window-text); padding-left: 8px; }
+#releaseNotesContributors { color: palette(placeholder-text); padding: 6px 0 2px 8px; }
+#releaseNotesCategory_added,
+#releaseNotesCategory_improved,
+#releaseNotesCategory_removed {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 5px;
+}
+#releaseNotesCategory_added { color: palette(highlight); }
+#releaseNotesCategory_improved { color: palette(link); }
+#releaseNotesCategory_removed { color: palette(placeholder-text); }

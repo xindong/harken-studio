@@ -195,6 +195,49 @@ TEST_F(UpdateCoordinatorTest, DownloadsAndVerifiesNewBuild)
     EXPECT_TRUE(QFile::exists(state.manifestEnvelopePath));
 }
 
+TEST_F(UpdateCoordinatorTest, InterruptedElevationKeepsActiveWorkExclusiveAndCanBeRetried)
+{
+    const auto placement = VNH::HandoffArea::place(dir.filePath("source.zip"), "manifest");
+    ASSERT_TRUE(placement.ok);
+    VNH::UpdateStateRecord pending;
+    pending.product = "HarkenStudio";
+    pending.state = "AwaitingElevation";
+    pending.buildId = "run3.cccc3333";
+    pending.downloadPath = dir.filePath("source.zip");
+    pending.transactionId = placement.transactionId;
+    ASSERT_TRUE(UpdateStateStore::save(pending, kNow));
+    auto lease = VNH::DownloadLease::acquire(pending.downloadPath);
+    ASSERT_TRUE(lease);
+    UpdateCoordinator coordinator;
+    auto newer = manifestResultFor();
+    newer.manifest.buildId = "run4.dddd4444";
+    newer.manifest.releaseSequence = 10;
+    coordinator.handleCheckResult(newer, kNow);
+    EXPECT_EQ(UpdateStateStore::load(pending.product).transactionId, placement.transactionId);
+    EXPECT_EQ(UpdateStateStore::load(pending.product).state, "AwaitingElevation");
+    lease.reset();
+    QLockFile installer(VNH::InstallExecutor::lockFilePath());
+    ASSERT_TRUE(installer.tryLock(0));
+    UpdateCoordinator::reconcileElevation(kNow);
+    EXPECT_EQ(UpdateStateStore::load(pending.product).state, "AwaitingElevation");
+    installer.unlock();
+    UpdateCoordinator::reconcileElevation(kNow);
+    EXPECT_EQ(UpdateStateStore::load(pending.product).state, "InstallFailed");
+    EXPECT_FALSE(QFileInfo::exists(placement.packagePath));
+    EXPECT_TRUE(QFileInfo::exists(pending.downloadPath));
+
+    VNH::InstalledVersionRecord installed;
+    installed.buildId = pending.buildId;
+    installed.semanticVersion = "1.5.0";
+    installed.healthState = "Installed";
+    installed.installPath = dir.filePath("installed");
+    QString error;
+    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 9, &error)) << error.toStdString();
+    ASSERT_TRUE(UpdateStateStore::save(pending, kNow));
+    UpdateCoordinator::reconcileElevation(kNow);
+    EXPECT_FALSE(UpdateStateStore::load(pending.product).found);
+}
+
 TEST_F(UpdateCoordinatorTest, RecordsAvailableBuildWithoutAutomaticDownload)
 {
     UpdateCoordinator coordinator;

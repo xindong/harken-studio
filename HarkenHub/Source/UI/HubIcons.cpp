@@ -1,7 +1,9 @@
 #include "UI/HubIcons.h"
 
 #include <QApplication>
+#include <QIconEngine>
 #include <QPainter>
+#include <QPalette>
 #include <QPixmap>
 #include <QSvgRenderer>
 
@@ -29,6 +31,8 @@ QPixmap renderSettings(qreal devicePixelRatio)
     QPainter painter(&pixmap);
     QSvgRenderer renderer(QStringLiteral(":/Resources/icons/Settings.svg"));
     renderer.render(&painter, QRectF(QPointF(0, 0), QSizeF(logicalSize)));
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(pixmap.rect(), QApplication::palette().color(QPalette::ButtonText));
     return pixmap;
 }
 
@@ -42,21 +46,34 @@ QPixmap renderMore(qreal devicePixelRatio)
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0xAA, 0xB0, 0xBA));
+    painter.setBrush(QApplication::palette().color(QPalette::ButtonText));
     for (const qreal x : {4.0, 8.0, 12.0})
         painter.drawEllipse(QPointF(x, 8.0), 1.25, 1.25);
     return pixmap;
 }
 
-QIcon iconWithAllStates(const QPixmap& pixmap)
+class ControlIconEngine final : public QIconEngine
 {
-    QIcon icon;
-    icon.addPixmap(pixmap, QIcon::Normal);
-    icon.addPixmap(pixmap, QIcon::Disabled);
-    icon.addPixmap(pixmap, QIcon::Active);
-    icon.addPixmap(pixmap, QIcon::Selected);
-    return icon;
-}
+public:
+    explicit ControlIconEngine(bool settings) : settings_(settings) {}
+    QIconEngine* clone() const override { return new ControlIconEngine(settings_); }
+    void paint(QPainter* painter, const QRect& rect, QIcon::Mode, QIcon::State) override
+    {
+        const auto image = settings_ ? renderSettings(painter->device()->devicePixelRatioF())
+                                     : renderMore(painter->device()->devicePixelRatioF());
+        painter->drawPixmap(rect, image);
+    }
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override
+    {
+        QPixmap image(size);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        paint(&painter, image.rect(), mode, state);
+        return image;
+    }
+private:
+    bool settings_;
+};
 
 }
 
@@ -96,12 +113,14 @@ void ApplicationIcon::applyColor(const QColor& color)
 
 QIcon settingsIcon(qreal devicePixelRatio)
 {
-    return iconWithAllStates(renderSettings(devicePixelRatio));
+    Q_UNUSED(devicePixelRatio);
+    return QIcon(new ControlIconEngine(true));
 }
 
 QIcon moreIcon(qreal devicePixelRatio)
 {
-    return iconWithAllStates(renderMore(devicePixelRatio));
+    Q_UNUSED(devicePixelRatio);
+    return QIcon(new ControlIconEngine(false));
 }
 
 }

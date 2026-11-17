@@ -1,4 +1,7 @@
 #include "UI/EngineIntegrationsPage.h"
+#include "UI/HubTheme.h"
+#include <QTabWidget>
+#include <QPalette>
 #include "UI/DialogLayout.h"
 #include "UI/ProjectsPage.h"
 #include "UI/VersionsPage.h"
@@ -7,6 +10,7 @@
 #include "Integrations/EngineTargetStore.h"
 #include "Integrations/EngineTargetProbe.h"
 #include "Integrations/IntegrationStore.h"
+#include "Integrations/HubUnityIntegrationService.h"
 #include "UnityIntegrationService.h"
 #include "UnityInstallation.h"
 #include "Platform/PlatformPaths.h"
@@ -891,6 +895,52 @@ TEST_F(EngineIntegrationsPageTest, ExternalIntegrationInstallsWithoutStudioAndFo
     startIntegrationSelection();
     applyIntegrationAndClose();
     EXPECT_TRUE(QFileInfo::exists(QDir(unityPath).filePath("Packages/com.harken.core/Runtime/Added.cs")));
+}
+
+TEST_F(EngineIntegrationsPageTest, AppearanceChangesPreserveReviewedPlans)
+{
+    const auto previousPalette = qApp->palette();
+    const auto previousStyle = qApp->styleSheet();
+    const auto resetAppearance = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); qApp->setPalette(previousPalette); });
+    makeIntegration();
+    VNH::UnityIntegrationRequest install;
+    install.unityProjectPath = unityPath;
+    install.integrationSourcePath = integrationPath;
+    ASSERT_TRUE(VNH::HubUnityIntegrationService::run(install).success);
+    writeFile(integrationPath + "/Runtime/Added.cs", "new core content");
+    page->beginEditForProject(harkenPath, {}, unityPath);
+    ASSERT_TRUE(waitForVersion());
+    selectIntegrationFolder(integrationPath);
+    checkButton()->click();
+    ASSERT_TRUE(primary()->isEnabled());
+    auto* dialog = page->findChild<QDialog*>("integrationSelectionDialog");
+    auto* tabs = dialog->findChild<QTabWidget*>();
+    ASSERT_NE(tabs, nullptr);
+    tabs->setCurrentIndex(1);
+    for (const auto* mode : {"light", "dark"}) {
+        ASSERT_TRUE(VNH::HubSettings::setThemePreference(mode));
+        VNH::HubTheme::applyPreference();
+        QCoreApplication::processEvents();
+        EXPECT_EQ(tabs->currentIndex(), 1);
+        EXPECT_TRUE(primary()->isEnabled());
+        const QString filename = QStringLiteral("#69D391/style='color:#69D391'.cs").toHtmlEscaped();
+        const auto formatted = VNH::HubTheme::html(QStringLiteral("<span style='color:#69D391'>%1</span>").arg(filename));
+        EXPECT_TRUE(formatted.contains(filename));
+        EXPECT_TRUE(formatted.startsWith(QStringLiteral("<span style='color:%1'>").arg(VNH::HubTheme::color(VNH::HubTheme::Tone::Success).name())));
+        const auto warning = VNH::HubTheme::color(VNH::HubTheme::Tone::Warning);
+        EXPECT_GT(warning.red(), warning.blue());
+        EXPECT_EQ(qApp->palette().color(QPalette::Window).lightness() < 128, QString::fromLatin1(mode) == "dark");
+        const auto screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOTS");
+        if (!screenshots.isEmpty()) {
+            QDir().mkpath(screenshots);
+            tabs->setCurrentIndex(0);
+            QCoreApplication::processEvents();
+            EXPECT_TRUE(dialog->grab().save(QDir(screenshots).filePath(QString("integration-%1.png").arg(mode))));
+            tabs->setCurrentIndex(1);
+        }
+    }
+    primary()->click();
+    EXPECT_TRUE(QFileInfo::exists(unityPath + "/Packages/com.harken.core/Runtime/Added.cs"));
 }
 
 TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksAfterConfirmation)

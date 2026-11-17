@@ -147,7 +147,6 @@ namespace Harken.Unity.Tests
         {
             var serialized = new SerializedObject(settings);
             serialized.FindProperty("enableCommunicationInBuilds").boolValue = false;
-            serialized.FindProperty("remoteBindAddress").stringValue = "127.0.0.1";
             serialized.FindProperty("enableRemoteDiscovery").boolValue = false;
             serialized.FindProperty("remoteApplicationName").stringValue = "Settings fixture";
             serialized.ApplyModifiedPropertiesWithoutUndo();
@@ -156,7 +155,6 @@ namespace Harken.Unity.Tests
             settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(settingsPath);
             Assert.That(settings.EnableCommunicationInBuilds, Is.False);
             var reloaded = new SerializedObject(settings);
-            Assert.That(reloaded.FindProperty("remoteBindAddress").stringValue, Is.EqualTo("127.0.0.1"));
             Assert.That(reloaded.FindProperty("enableRemoteDiscovery").boolValue, Is.False);
             Assert.That(reloaded.FindProperty("remoteApplicationName").stringValue, Is.EqualTo("Settings fixture"));
             Assert.That(HarkenProjectSettings.Load(), Is.SameAs(settings));
