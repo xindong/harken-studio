@@ -669,7 +669,7 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
             }
             auto media = SoundSourceDerivative::prepare(
                 asset->absolutePath, *source, sound->scheduleOffsetSec,
-                0, &mediaError);
+                std::nullopt, &mediaError);
             if (media) {
                 revision = Bridge::soundPcmContentRevision(
                     media->samples, media->channels, media->sampleRate,

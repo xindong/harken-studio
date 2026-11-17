@@ -35,7 +35,6 @@ struct PackMediaPreparation::Impl
 
     struct Group
     {
-        uint32_t sourceId;
         std::vector<Work> items;
     };
 
@@ -68,7 +67,8 @@ struct PackMediaPreparation::Impl
     uint64_t estimateBytes(const Work& work, const Result& result) const
     {
         const auto& metadata = result.conversion->asset.metadata;
-        const auto targetSampleRateHz = result.conversion->targetSampleRateHz;
+        const auto& conversion = result.conversion->conversion;
+        const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
         if (metadata.sampleRate == 0 || metadata.channels == 0
             || !std::isfinite(work.scheduleOffsetSec) || work.scheduleOffsetSec < 0.0)
             return byteLimit + 1;
@@ -115,8 +115,7 @@ struct PackMediaPreparation::Impl
         budgetChanged.wakeAll();
     }
 
-    Result prepare(const Work& work, const std::optional<MediaConversionRequest>& conversion,
-                   const QString& captureError)
+    Result prepare(const Work& work)
     {
         Result result;
         result.source = work.source;
@@ -124,9 +123,11 @@ struct PackMediaPreparation::Impl
             result.error = QStringLiteral("Export canceled");
             return result;
         }
+        const QUuid soundGuid(VNX::objectIdString(work.soundId));
+        const auto conversion = snapshot.inspectRequest(
+            soundGuid, work.source.sourceId, platform, &result.error);
         result.conversion = conversion;
         if (!conversion) {
-            result.error = captureError;
             return result;
         }
         result.source = SoundSourceSemantics::authoredView(work.source, &conversion->asset);
@@ -139,7 +140,7 @@ struct PackMediaPreparation::Impl
         QString derivativeError;
         bool captureFailed = false;
         const auto capture = [&](QString* error) -> std::shared_ptr<const BuildSourceInput> {
-            const auto captured = snapshot.request(work.source.sourceId, platform, error);
+            const auto captured = snapshot.request(soundGuid, work.source.sourceId, platform, error);
             if (!captured) {
                 captureFailed = true;
                 return {};
@@ -149,7 +150,7 @@ struct PackMediaPreparation::Impl
         };
         result.artifact = SoundSourceDerivative::materialize(
             conversion->inputPath(), result.source, work.scheduleOffsetSec,
-            platform, derivativeDir, conversion->targetSampleRateHz, &derivativeError,
+            platform, derivativeDir, conversion->conversion, &derivativeError,
             cache.get(), conversion->sourceInput.get(), capture);
         if (captureFailed) {
             result.error = derivativeError;
@@ -167,19 +168,9 @@ struct PackMediaPreparation::Impl
 
     void run(Group& group)
     {
-        std::optional<MediaConversionRequest> conversion;
-        QString captureError;
-        std::exception_ptr captureException;
-        try {
-            if (!stopped.load(std::memory_order_acquire))
-                conversion = snapshot.inspectRequest(group.sourceId, platform, &captureError);
-        } catch (...) {
-            captureException = std::current_exception();
-        }
         for (auto& work : group.items) {
             try {
-                if (captureException) work.result.set_exception(captureException);
-                else work.result.set_value(prepare(work, conversion, captureError));
+                work.result.set_value(prepare(work));
             } catch (...) {
                 work.result.set_exception(std::current_exception());
             }
@@ -205,7 +196,7 @@ void PackMediaPreparation::add(harkenstudio::ObjectId soundId, const SoundSource
 {
     auto [found, inserted] = impl_->groupIndices.emplace(source.sourceId, impl_->groups.size());
     if (inserted)
-        impl_->groups.push_back(std::make_shared<Impl::Group>(Impl::Group{source.sourceId, {}}));
+        impl_->groups.push_back(std::make_shared<Impl::Group>());
     Impl::Work work{soundId, source, scheduleOffsetSec, {}};
     impl_->results[{soundId, source.entryId}].push_back(work.result.get_future());
     impl_->groups[found->second]->items.push_back(std::move(work));
