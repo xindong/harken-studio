@@ -336,7 +336,9 @@ namespace HarkenCrossProduct
                 yield return TearDown();
             }
             yield return StartFrom(PackSource.FromDirectory(Main, "NoSuchLanguage"), "NoSuchLanguage");
-            Assert.That(runtime.State, Is.Not.EqualTo(HarkenRuntimeState.Ready), "an unexported language is refused");
+            AssertReady();
+            Assert.That(runtime.PlayAction(inputs.localizedAction, inputs.projectId, out _), Is.Not.EqualTo(VnResult.VN_OK),
+                "localized content of an unexported language does not play");
         }
 
         [UnityTest]
