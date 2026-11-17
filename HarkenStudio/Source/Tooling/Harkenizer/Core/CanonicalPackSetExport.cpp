@@ -1049,8 +1049,8 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
             const auto* item = findItemByStableId(project, media.soundStableId);
             const auto* sound = item ? item->comp<VSound>() : nullptr;
             const auto* source = sound ? SoundSourceSemantics::findEntry(*sound, media.sourceEntryId) : nullptr;
-            const auto conversion = snapshot.media.request(media.authoringSourceId,
-                QUuid(pack.platform), error);
+            const auto conversion = snapshot.media.request(
+                QUuid(objectIdString(media.soundStableId)), media.authoringSourceId, QUuid(pack.platform), error);
             if (!source || !conversion) {
                 *error = QStringLiteral("Waveform source is unavailable for Sound %1")
                     .arg(objectIdString(media.soundStableId));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Components/VSound.h"
+#include "Core/ConversionResolution.h"
 #include "ProjectPlatform.h"
 
 #include <QByteArray>
@@ -19,6 +20,8 @@ struct AudioMetadata;
 }
 
 namespace VNX::SoundSourceDerivative {
+
+inline constexpr uint32_t kVorbisSeekGrainFrames = 4096;
 
 struct FrameRange
 {
@@ -65,7 +68,7 @@ struct PreparedMedia
 };
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                 double scheduleOffsetSec, uint32_t targetSampleRateHz,
+                 double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                  const AudioMetadata& metadata);
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
@@ -73,14 +76,14 @@ std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
-                                     uint32_t targetSampleRateHz,
+                                     const std::optional<ResolvedConversion>& conversion,
                                      QString* error = nullptr);
 std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 const SoundSourceDef& source,
                                                 double scheduleOffsetSec,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
-                                                uint32_t targetSampleRateHz,
+                                                const std::optional<ResolvedConversion>& conversion,
                                                 QString* error = nullptr,
                                                 MaterializationCache* cache = nullptr,
                                                 const BuildSourceInput* input = nullptr,

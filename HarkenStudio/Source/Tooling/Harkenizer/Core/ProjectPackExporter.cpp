@@ -1305,13 +1305,50 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         return true;
     };
     if (canceled()) return false;
-    QString projectDir = QFileInfo(project.projectPath).absolutePath();
-    QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectDir);
+    const QString projectDir = QFileInfo(project.projectPath).absolutePath();
+    const QString derivativeDir = options.packBuildState
+        ? QDir(PathUtils::getDotCacheDir(projectDir)).filePath(QStringLiteral("pack/media"))
+        : QString();
     const ProjectPlatformId platform = QUuid::fromString(options.platform);
     const auto& mediaSnapshot = options.snapshot->media;
 
-    std::set<uint32_t> processedMedia;
     std::set<harkenstudio::ObjectId> processedSounds;
+    const auto collectPrepared = [&](harkenstudio::ObjectId soundId,
+                                     const PackMediaPreparation::Result& result, bool publish) {
+        if (!result.error.isEmpty()) {
+            if (errorOut) *errorOut = result.error;
+            return false;
+        }
+        const auto& artifact = result.artifact;
+        if (stats) {
+            if (artifact->cacheHit) ++stats->cacheHits;
+            else ++stats->conversions;
+        }
+        Bridge::PackMediaDesc desc;
+        desc.sourceId = soundId;
+        desc.authoringSourceId = result.source.sourceId;
+        desc.sourcePath = result.conversion->asset.absolutePath;
+        desc.interleavedSamples = artifact->samples;
+        desc.contentHash = artifact->contentHash;
+        desc.sampleRate = artifact->sampleRate;
+        desc.channels = artifact->channels;
+        desc.loopable = artifact->loopable;
+        desc.loopStartFrame = artifact->loopStartFrame;
+        desc.loopEndFrame = artifact->loopEndFrame;
+        desc.format = Bridge::PackMediaFormat::PcmFloat;
+        if (publish) builder.addMedia(desc);
+        if (!publish || options.buildPlan) {
+            const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);
+            if (!stats || !revision) {
+                if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
+                    .arg(VNX::objectIdString(soundId));
+                return false;
+            }
+            stats->soundContentRevisions.emplace(soundId, *revision);
+        }
+        processedSounds.insert(soundId);
+        return true;
+    };
 
     if (closure && (!closure->media.empty() || !closure->controlMedia.empty())) {
         const auto& sourceIndex = *options.buildContext->capabilities->sourceIndex();
@@ -1319,10 +1356,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         auto* preparation = options.mediaPreparation;
         if (!preparation) {
             localPreparation = std::make_unique<PackMediaPreparation>(mediaSnapshot,
-                options.snapshot->derivativeCache, platform,
-                options.packBuildState
-                    ? QDir(PathUtils::getDotCacheDir(projectDir)).filePath(QStringLiteral("pack/media"))
-                    : QString());
+                options.snapshot->derivativeCache, platform, derivativeDir);
             preparation = localPreparation.get();
         }
         auto inputs = closure->media;
@@ -1371,39 +1405,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         for (const auto& input : planned) {
             if (canceled()) return false;
             auto result = preparation->take(input.soundId, input.entryId, options.cancelCheck);
-            if (!result.error.isEmpty()) {
-                if (errorOut) *errorOut = result.error;
-                return false;
-            }
-            const auto& artifact = result.artifact;
-            if (stats) {
-                if (artifact->cacheHit) ++stats->cacheHits;
-                else ++stats->conversions;
-            }
-            Bridge::PackMediaDesc desc;
-            desc.sourceId = input.soundId;
-            desc.authoringSourceId = result.source.sourceId;
-            desc.sourcePath = result.conversion->asset.absolutePath;
-            desc.interleavedSamples = artifact->samples;
-            desc.contentHash = artifact->contentHash;
-            desc.sampleRate = artifact->sampleRate;
-            desc.channels = artifact->channels;
-            desc.loopable = artifact->loopable;
-            desc.loopStartFrame = artifact->loopStartFrame;
-            desc.loopEndFrame = artifact->loopEndFrame;
-            desc.format = Bridge::PackMediaFormat::PcmFloat;
-            if (input.publish)
-                builder.addMedia(desc);
-            if (!input.publish || options.buildPlan) {
-                const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);
-                if (!stats || !revision) {
-                    if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
-                        .arg(VNX::objectIdString(input.soundId));
-                    return false;
-                }
-                stats->soundContentRevisions.emplace(input.soundId, *revision);
-            }
-            processedSounds.insert(input.soundId);
+            if (!collectPrepared(input.soundId, result, input.publish)) return false;
         }
         if (planningError) {
             if (errorOut) *errorOut = *planningError;
@@ -1412,7 +1414,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
     }
 
     auto stableSoundsForSource = [&](uint32_t sourceID) {
-        std::set<harkenstudio::ObjectId> sounds;
+        std::map<harkenstudio::ObjectId, const ProjectItem*> sounds;
         std::function<void(const ProjectItem*)> scan = [&](const ProjectItem* item) {
             if (!item)
                 return;
@@ -1427,7 +1429,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                     item, exportPlatformOf(options),
                     SoundSourceEditing::exportLanguage(*item, exportLanguageOf(options)));
                 if (!harkenstudio::IsNull(soundId) && processedSounds.count(soundId) == 0)
-                    sounds.insert(soundId);
+                    sounds.emplace(soundId, item);
             }
             for (const auto& child : item->children)
                 scan(child.get());
@@ -1440,67 +1442,24 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         return sounds;
     };
 
-    for (uint32_t sourceID : requiredMedia)
-    {
+    PackMediaPreparation preparation(mediaSnapshot, options.snapshot->derivativeCache, platform, derivativeDir);
+    std::vector<std::pair<harkenstudio::ObjectId, QUuid>> planned;
+    for (uint32_t sourceID : requiredMedia) {
         if (canceled()) return false;
-        if (processedMedia.count(sourceID)) continue;
-        processedMedia.insert(sourceID);
         const auto sounds = stableSoundsForSource(sourceID);
-        if (sounds.empty()) continue;
-        const auto assetIt = mediaSnapshot.assets.constFind(sourceID);
-        const AssetInfo* assetInfo = assetIt == mediaSnapshot.assets.cend() ? nullptr : &*assetIt;
-        std::optional<MediaConversionRequest> inputRequest;
-        QString filePath;
-
-        if (assetInfo && mediaSnapshot.sourceInputs) {
-            inputRequest = mediaSnapshot.request(sourceID, platform, errorOut);
-            if (!inputRequest) return false;
-            assetInfo = &inputRequest->asset;
-            filePath = inputRequest->inputPath();
-        } else if (assetInfo && !assetInfo->absolutePath.isEmpty()) {
-            filePath = assetInfo->absolutePath;
-        } else if (assetInfo && !assetInfo->relativePath.isEmpty()) {
-            filePath = AudioSourcesDir + "/" + assetInfo->relativePath;
-        } else {
-            const AudioSourceData* srcPtr = nullptr;
-            for (const auto& as : project.audioSources) {
-                if (as.sourceID == sourceID) { srcPtr = &as; break; }
-            }
-            if (!srcPtr) continue;
-            filePath = AudioSourcesDir + "/" + srcPtr->relativePath;
+        for (const auto& [soundId, item] : sounds) {
+            const auto* sound = item->comp<VSound>();
+            const auto* source = SoundSourceEditing::activeSource(*item, platform,
+                SoundSourceEditing::exportLanguage(*item, exportLanguageOf(options)));
+            preparation.add(soundId, *source, sound->scheduleOffsetSec);
+            planned.emplace_back(soundId, source->entryId);
         }
-
-        filePath = QFileInfo(filePath).absoluteFilePath();
-        if (!QFileInfo::exists(filePath)) {
-            if (errorOut) {
-                *errorOut = QStringLiteral("Pack source file does not exist for sourceID %1: %2")
-                                .arg(sourceID)
-                                .arg(filePath);
-            }
-            return false;
-        }
-
-        if (!assetInfo) {
-            if (errorOut) *errorOut = QStringLiteral("No registered source for sourceID %1").arg(sourceID);
-            return false;
-        }
-        const auto& loopInfo = assetInfo->metadata.loopInfo;
-
-        for (const auto& soundId : sounds) {
-            if (canceled()) return false;
-            Bridge::PackMediaDesc desc;
-            desc.sourceId = soundId;
-            desc.authoringSourceId = sourceID;
-            desc.sourcePath = filePath;
-            desc.loopable = loopInfo.enabled
-                && loopInfo.loopEnd >= loopInfo.loopStart
-                && loopInfo.loopEnd != std::numeric_limits<uint64_t>::max();
-            desc.loopStartFrame = loopInfo.loopStart;
-            desc.loopEndFrame = desc.loopable
-                ? loopInfo.loopEnd + 1 : 0;
-            desc.format = Bridge::PackMediaFormat::PcmFloat;
-            builder.addMedia(desc);
-        }
+    }
+    preparation.start();
+    for (const auto& [soundId, entryId] : planned) {
+        if (canceled()) return false;
+        const auto result = preparation.take(soundId, entryId, options.cancelCheck);
+        if (!collectPrepared(soundId, result, true)) return false;
     }
     return true;
 }

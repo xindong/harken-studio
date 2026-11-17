@@ -9,6 +9,7 @@
 #include "Components/VMixNode.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "SoundSourceSemantics.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 
@@ -103,6 +104,7 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     const auto& project = snapshot_->project;
     const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(options.platform));
     if (!platform) { reusable_ = false; return; }
+    const auto& sourceIndex = *options.buildContext->capabilities->sourceIndex();
     ProjectSerializer serializer;
     if (!serializer.prepareReferenceWrite(project)) { reusable_ = false; return; }
     const auto itemDigest = [&](const ProjectItem* item) {
@@ -110,6 +112,13 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
         if (cached != objectDigests_.cend()) return *cached;
         auto json = serializer.projectItemToJson(*item, false);
         if (json.isEmpty()) return QString();
+        if (json.value(QStringLiteral("fieldGroups")).isObject()) {
+            auto groups = json.value(QStringLiteral("fieldGroups")).toObject();
+            auto shared = groups.value(QStringLiteral("shared")).toObject();
+            shared.remove(QStringLiteral("conversion"));
+            groups.insert(QStringLiteral("shared"), shared);
+            json.insert(QStringLiteral("fieldGroups"), groups);
+        }
         if (const auto* mix = item->comp<VMixNode>()) {
             QJsonObject effects;
             bool valid = true;
@@ -219,12 +228,24 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
                 for (const auto& member : *members) addMember(member);
             for (const auto* entries : {&variant.closure.media, &variant.closure.controlMedia}) {
                 for (const auto& entry : *entries) {
-                    const auto id = QString::number(entry.authoringSourceId);
+                    const auto soundGuid = QUuid(objectIdString(entry.soundStableId));
+                    const auto id = soundGuid.toString(QUuid::WithoutBraces)
+                        + QLatin1Char('/') + entry.sourceEntryId.toString(QUuid::WithoutBraces);
                     media.insert(entry.artifactId);
                     if (sources.contains(id)) continue;
-                    const auto input = snapshot_->media.inspectRequest(entry.authoringSourceId, platform->id);
-                    if (!input) { valid = false; continue; }
-                    sources.insert(id, input->fingerprint());
+                    const auto owner = sourceIndex.byQtGuid.find(soundGuid);
+                    const auto* sound = owner == sourceIndex.byQtGuid.end()
+                        ? nullptr : owner->second->comp<VSound>();
+                    const auto* source = sound
+                        ? SoundSourceSemantics::findEntry(*sound, entry.sourceEntryId) : nullptr;
+                    const auto input = snapshot_->media.inspectRequest(
+                        soundGuid, entry.authoringSourceId, platform->id);
+                    if (!source || !input) { valid = false; continue; }
+                    const auto authored = SoundSourceSemantics::authoredView(*source, &input->asset);
+                    const auto key = SoundSourceDerivative::cacheKey(input->asset.contentHash,
+                        authored, sound->scheduleOffsetSec, input->conversion, input->asset.metadata);
+                    valid = valid && !key.isEmpty();
+                    sources.insert(id, key);
                 }
             }
         }
@@ -494,7 +515,6 @@ bool PackBuildState::flush()
 void PackBuildState::prune() const
 {
     const auto& snapshot = *snapshot_;
-    const auto assets = snapshot.media.sourceInputs->assets();
     QSet<QString> keys;
     QSet<const ProjectItem*> visited;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> void {
@@ -502,16 +522,17 @@ void PackBuildState::prune() const
         visited.insert(item);
         if (const auto* sound = item->comp<VSound>()) {
             QStringList languages = sound->distinguishLanguage ? snapshot.project.projectLanguages : QStringList{QString()};
-            for (const auto& platform : snapshot.project.platforms) {
+            for (const auto& platform : snapshot.media.platforms) {
                 for (const auto& language : languages) {
                     const auto selected = SoundSourceSemantics::resolveSourceSelection(
                         *sound, ProjectPlatformSemantics::idString(platform.id), language);
                     if (!selected) continue;
-                    const auto asset = assets.constFind(selected.source->sourceId);
-                    if (asset == assets.cend() || asset->contentHash.isEmpty()) continue;
-                    const auto source = SoundSourceSemantics::authoredView(*selected.source, &*asset);
-                    keys.insert(SoundSourceDerivative::cacheKey(asset->contentHash, source,
-                        sound->scheduleOffsetSec, 0, asset->metadata));
+                    const auto input = snapshot.media.inspectRequest(
+                        item->guid, selected.source->sourceId, platform.id);
+                    if (!input) continue;
+                    const auto source = SoundSourceSemantics::authoredView(*selected.source, &input->asset);
+                    keys.insert(SoundSourceDerivative::cacheKey(input->asset.contentHash, source,
+                        sound->scheduleOffsetSec, input->conversion, input->asset.metadata));
                 }
             }
         }

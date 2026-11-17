@@ -16,7 +16,7 @@
 
 namespace VNX {
 
-inline constexpr uint32_t kMediaCacheArtifactVersion = 4;
+inline constexpr uint32_t kMediaCacheArtifactVersion = 5;
 
 using Platform = AuthoringPlatform;
 

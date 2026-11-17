@@ -13,6 +13,8 @@
 #include <QFile>
 #include <QMutexLocker>
 
+#include <vorbis/codec.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -48,12 +50,17 @@ std::optional<uint64_t> scheduleFrames(double seconds, uint32_t sampleRate)
 }
 
 QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                      double scheduleOffsetSec, uint32_t targetSampleRateHz,
+                      double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                       const AudioMetadata& metadata)
 {
     if (inputFingerprint.isEmpty() || !std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0)
         return {};
+    const auto format = conversion ? conversion->format : ConversionFormat::PCM;
+    if (format != ConversionFormat::PCM && format != ConversionFormat::Vorbis) return {};
+    if (format == ConversionFormat::Vorbis && (!std::isfinite(conversion->vorbisQuality)
+        || conversion->vorbisQuality < 0.0f || conversion->vorbisQuality > 1.0f)) return {};
     const auto range = mapFrameRange(source, metadata.totalSamples);
+    const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
     const auto outputRate = targetSampleRateHz != 0 ? targetSampleRateHz : metadata.sampleRate;
     const auto offset = scheduleFrames(scheduleOffsetSec, outputRate);
     if (!range || outputRate == 0 || !offset) return {};
@@ -65,7 +72,11 @@ QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& sou
            << inputFingerprint << static_cast<quint64>(range->start) << static_cast<quint64>(range->end)
            << static_cast<quint64>(loop ? loop->start : 0) << static_cast<quint64>(loop ? loop->end : 0)
            << static_cast<quint64>(*offset)
+           << static_cast<quint8>(format)
            << static_cast<quint32>(outputRate == metadata.sampleRate ? 0 : outputRate);
+    if (format == ConversionFormat::Vorbis)
+        stream << conversion->vorbisQuality << QString::fromUtf8(vorbis_version_string())
+               << static_cast<quint32>(kVorbisSeekGrainFrames);
     const auto canonicalSource = SoundSourceSemantics::canonicalized(source, metadata.totalSamples);
     for (const auto* fade : {&canonicalSource.fadeIn, &canonicalSource.fadeOut}) {
         stream << static_cast<quint64>(fade->durationFrames);
@@ -142,10 +153,10 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
 }
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                 double scheduleOffsetSec, uint32_t targetSampleRateHz,
+                 double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                  const AudioMetadata& metadata)
 {
-    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, targetSampleRateHz, metadata));
+    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, conversion, metadata));
 }
 
 std::optional<MaterializedArtifact> MaterializationCache::find(const QByteArray& request)
@@ -205,9 +216,15 @@ static std::optional<MaterializedArtifact> findCached(const QByteArray& key,
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
-                                     uint32_t targetSampleRateHz,
+                                     const std::optional<ResolvedConversion>& conversion,
                                      QString* error)
 {
+    if (conversion && conversion->format != ConversionFormat::PCM) {
+        fail(error, conversion->format == ConversionFormat::Vorbis
+            ? QStringLiteral("Vorbis Pack writing is not integrated")
+            : QStringLiteral("Conversion format is invalid"));
+        return std::nullopt;
+    }
     if (!std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0) {
         fail(error, QStringLiteral("Schedule offset is invalid"));
         return std::nullopt;
@@ -245,6 +262,7 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
         loop.loopStart = region->start;
         loop.loopEnd = region->end - 1;
     }
+    const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
     if (targetSampleRateHz != 0 && targetSampleRateHz != static_cast<uint32_t>(sampleRate)) {
         if (!AssetConverter::processSamples(trimmed, sampleRate, channels, targetSampleRateHz, loop, error))
             return std::nullopt;
@@ -278,13 +296,19 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 double scheduleOffsetSec,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
-                                                uint32_t targetSampleRateHz,
+                                                const std::optional<ResolvedConversion>& conversion,
                                                 QString* error,
                                                 MaterializationCache* cache,
                                                 const BuildSourceInput* input,
                                                 const std::function<std::shared_ptr<const BuildSourceInput>(QString*)>&
                                                     captureSource)
 {
+    if (conversion && conversion->format != ConversionFormat::PCM) {
+        fail(error, conversion->format == ConversionFormat::Vorbis
+            ? QStringLiteral("Vorbis Pack writing is not integrated")
+            : QStringLiteral("Conversion format is invalid"));
+        return std::nullopt;
+    }
     if (platform.isNull()) {
         fail(error, QStringLiteral("Platform ID is required for derivative media"));
         return std::nullopt;
@@ -301,7 +325,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
     }
     const QString inputRevision = input->contentHash;
     const auto metadata = input->metadata;
-    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, targetSampleRateHz, metadata);
+    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, conversion, metadata);
     if (auto cached = findCached(key, outputDir, cache))
         return cached;
     std::shared_ptr<const BuildSourceInput> captured;
@@ -310,7 +334,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         if (!captured) return std::nullopt;
         input = captured.get();
     }
-    auto media = prepare(input->inputPath, source, scheduleOffsetSec, targetSampleRateHz, error);
+    auto media = prepare(input->inputPath, source, scheduleOffsetSec, conversion, error);
     if (!media) return std::nullopt;
     if (key.isEmpty()) {
         fail(error, QStringLiteral("Cannot identify converted media input"));
