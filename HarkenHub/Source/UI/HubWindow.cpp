@@ -883,9 +883,9 @@ void HubWindow::flushPendingWindowGeometry()
     if (windowSizeSaveTimer_ && windowSizeSaveTimer_->isActive())
         windowSizeSaveTimer_->stop();
     if (isMaximized() || isFullScreen())
-        persistNormalGeometry(normalGeometry());
+        persistNormalGeometry(normalGeometry(), 1000);
     else if (!isMinimized())
-        persistWindowGeometry();
+        persistNormalGeometry(QRect(pos(), size()), 1000);
 }
 
 void HubWindow::persistWindowGeometry()
@@ -895,13 +895,13 @@ void HubWindow::persistWindowGeometry()
     persistNormalGeometry(QRect(pos(), size()));
 }
 
-void HubWindow::persistNormalGeometry(const QRect& geometry)
+void HubWindow::persistNormalGeometry(const QRect& geometry, int timeoutMs)
 {
     if (!geometry.isValid())
         return;
-    if (!HubSettings::setWindowGeometry(geometry)) {
-        qWarning() << "Window geometry could not be saved; retrying";
-        if (windowSizeSaveTimer_) windowSizeSaveTimer_->start();
+    if (!HubSettings::setWindowGeometry(geometry, timeoutMs)) {
+        qWarning() << "Window geometry could not be saved";
+        if (timeoutMs == 0 && windowSizeSaveTimer_) windowSizeSaveTimer_->start();
     }
 }
 

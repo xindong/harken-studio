@@ -77,7 +77,8 @@ TableSorting::TableSorting(QTableWidget* table, const QString& settingsKey, int 
 
 TableSorting::~TableSorting()
 {
-    save();
+    if (changed_ && !HubSettings::setTableSort(settingsKey_, sort_, 1000))
+        qWarning() << "The final table sorting preference could not be saved";
 }
 
 void TableSorting::beginRefresh()

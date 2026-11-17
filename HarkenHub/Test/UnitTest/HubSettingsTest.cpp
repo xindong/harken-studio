@@ -9,6 +9,9 @@
 #include <QTemporaryDir>
 #include <QProcess>
 #include <QThread>
+#include <QLockFile>
+#include <QElapsedTimer>
+#include <future>
 #include <QProcessEnvironment>
 #include <memory>
 #include <vector>
@@ -231,6 +234,29 @@ TEST_F(HubSettingsTest, ConcurrentProcessesPreserveIndependentPreferencesAndWind
     EXPECT_FALSE(HubSettings::autoDownloadStudio());
     EXPECT_EQ(HubSettings::windowPosition(), QPoint(50, 50));
     for (int i = 1; i <= 50; ++i) EXPECT_EQ(HubSettings::tableSort(QString::number(i)).column, i);
+}
+
+TEST_F(HubSettingsTest, InteractiveSavesStayResponsiveAndFinalSavesWaitForBriefContention)
+{
+    ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(1, 2, 800, 600)));
+    std::promise<bool> locked;
+    auto ready = locked.get_future();
+    auto owner = std::async(std::launch::async, [&] {
+        QLockFile lock(HubSettings::filePath() + QStringLiteral(".lock"));
+        locked.set_value(lock.tryLock(0));
+        QThread::msleep(150);
+    });
+    ASSERT_TRUE(ready.get());
+    QElapsedTimer timer;
+    timer.start();
+    EXPECT_FALSE(HubSettings::setWindowGeometry(QRect(3, 4, 900, 700), 0));
+    EXPECT_LT(timer.elapsed(), 100);
+    EXPECT_TRUE(HubSettings::setWindowGeometry(QRect(5, 6, 1000, 800), 1000));
+    owner.get();
+    EXPECT_EQ(HubSettings::windowPosition(), QPoint(5, 6));
+    EXPECT_EQ(HubSettings::windowSize(), QSize(1000, 800));
+    EXPECT_TRUE(HubSettings::setTableSort("projects", {2, Qt::DescendingOrder}, 1000));
+    EXPECT_EQ(HubSettings::tableSort("projects").column, 2);
 }
 
 TEST_F(HubSettingsTest, InvalidFileFallsBackToDefault)

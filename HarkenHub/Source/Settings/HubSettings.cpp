@@ -17,11 +17,11 @@ namespace VNH {
 
 namespace {
 
-bool lockSettings(QLockFile& lock, bool reading = false)
+bool lockSettings(QLockFile& lock, bool reading = false, int timeoutMs = -1)
 {
     const auto* app = QCoreApplication::instance();
     const bool guiThread = app && app->inherits("QApplication") && QThread::currentThread() == app->thread();
-    QDeadlineTimer deadline(guiThread ? (reading ? 50 : 0) : 5000);
+    QDeadlineTimer deadline(timeoutMs >= 0 ? timeoutMs : guiThread ? (reading ? 50 : 0) : 5000);
     do {
         if (lock.tryLock(0)) return true;
         if (deadline.hasExpired()) return false;
@@ -47,13 +47,13 @@ QJsonObject loadRoot()
     return readRoot();
 }
 
-template<class Mutation> bool updateRoot(Mutation mutate)
+template<class Mutation> bool updateRoot(Mutation mutate, int timeoutMs = -1)
 {
     const QString path = HubSettings::filePath();
     if (!QDir().mkpath(QFileInfo(path).dir().path()))
         return false;
     QLockFile lock(path + QStringLiteral(".lock"));
-    if (!lockSettings(lock))
+    if (!lockSettings(lock, false, timeoutMs))
         return false;
     QJsonObject root = readRoot();
     if (!mutate(root))
@@ -146,14 +146,14 @@ bool HubSettings::setThemePreference(const QString& preference)
     return updateValue(QStringLiteral("theme"), preference);
 }
 
-bool HubSettings::setWindowGeometry(const QRect& geometry)
+bool HubSettings::setWindowGeometry(const QRect& geometry, int timeoutMs)
 {
     if (!geometry.isValid()) return false;
     return updateRoot([&](QJsonObject& root) {
         root[QStringLiteral("windowSize")] = QJsonObject{{"width", geometry.width()}, {"height", geometry.height()}};
         root[QStringLiteral("windowPosition")] = QJsonObject{{"x", geometry.x()}, {"y", geometry.y()}};
         return true;
-    });
+    }, timeoutMs);
 }
 
 QSize HubSettings::windowSize()
@@ -205,7 +205,7 @@ TableSortPreference HubSettings::tableSort(const QString& table)
                 ? Qt::DescendingOrder : Qt::AscendingOrder};
 }
 
-bool HubSettings::setTableSort(const QString& table, const TableSortPreference& sort)
+bool HubSettings::setTableSort(const QString& table, const TableSortPreference& sort, int timeoutMs)
 {
     return updateRoot([&](QJsonObject& root) {
         QJsonObject tables = root.value(QStringLiteral("tableSort")).toObject();
@@ -213,7 +213,7 @@ bool HubSettings::setTableSort(const QString& table, const TableSortPreference& 
                                   {QStringLiteral("descending"), sort.order == Qt::DescendingOrder}};
         root[QStringLiteral("tableSort")] = tables;
         return true;
-    });
+    }, timeoutMs);
 }
 
 QString HubSettings::pendingUpdateNotesVersion()
