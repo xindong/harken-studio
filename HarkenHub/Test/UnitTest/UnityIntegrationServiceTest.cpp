@@ -2983,12 +2983,14 @@ TEST(UnityIntegrationService, RestorationPreservesDeliberatelyOmittedAndRetained
         request.restorationBackupPath = dir.filePath("Backup");
         writeFile(installed + "/Runtime/Harken.Core.asmdef", "damaged");
         const auto review = service.run(request);
-        ASSERT_TRUE(review.success) << review.steps.back().summary.toStdString();
+        ASSERT_TRUE(review.success) << review.steps.back().summary.toStdString()
+                                    << '\n' << review.steps.back().cause.toStdString();
         request.approvedPlanHash = review.planHash;
         request.checkOnly = false;
         request.confirmTargetChanges = true;
         const auto restored = service.run(request);
-        ASSERT_TRUE(restored.success) << restored.steps.back().summary.toStdString();
+        ASSERT_TRUE(restored.success) << restored.steps.back().summary.toStdString()
+                                      << '\n' << restored.steps.back().cause.toStdString();
         EXPECT_EQ(QFileInfo::exists(installed + '/' + document), retained);
         if (retained) EXPECT_EQ(readFile(installed + '/' + document), "original documentation");
         EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), readFile(source + "/Runtime/Harken.Core.asmdef"));
