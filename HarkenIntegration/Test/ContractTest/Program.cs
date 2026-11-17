@@ -58,8 +58,6 @@ namespace Harken.Test
                 return refused ? 0 : 1;
             }
             bool requireNative = false;
-            string currentWorldPath = null;
-            string packRoot = null;
             string companionRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
@@ -69,23 +67,13 @@ namespace Harken.Test
                     requireNative = true;
                     continue;
                 }
-                if (arg == "--current-world" && i + 1 < args.Length)
-                {
-                    currentWorldPath = args[++i];
-                    continue;
-                }
-                if (arg == "--pack-root" && i + 1 < args.Length)
-                {
-                    packRoot = args[++i];
-                    continue;
-                }
                 if (arg == "--companion-root" && i + 1 < args.Length)
                 {
                     companionRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--current-world path] [--pack-root path] [--companion-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--companion-root path]");
                 return 2;
             }
 
@@ -99,13 +87,10 @@ namespace Harken.Test
             bool coordinatesOk = RunCoordinateConversions();
             bool bootstrapOk = RunPackBootstrapContract();
             int namePost = RunNamePostAndProvider();
-            int nativeBootstrap = RunNativePackBootstrap(packRoot);
-            int zeroGc = RunZeroGc(currentWorldPath);   // 0 PASS, 1 FAIL, 2 SKIP
+            int zeroGc = RunZeroGc();   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
-            bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
-            bool companionNativeOk = !requireNative || CompanionDirectoryContract.Run();
-            companionNativeOk &= !requireNative || CompanionSourceContract.Run();
-            companionNativeOk &= !requireNative || StreamSourceContract.Run();
+            bool companionVersionOk = CompanionVersionContract.Run();
+            bool companionNativeOk = !requireNative || StreamSourceContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -113,16 +98,12 @@ namespace Harken.Test
             Console.WriteLine("Pack bootstrap: " + (bootstrapOk ? "PASS" : "FAIL"));
             Console.WriteLine("Name post     : " +
                 (namePost == 0 ? "PASS" : namePost == 2 ? "SKIP" : "FAIL"));
-            Console.WriteLine("Pack native   : " +
-                (nativeBootstrap == 0 ? "PASS" :
-                 nativeBootstrap == 2 ? "SKIP" :
-                 nativeBootstrap == 3 ? "NOT REQUESTED" : "FAIL"));
+            Console.WriteLine("Metadata version: " + (companionVersionOk ? "PASS" : "FAIL"));
             Console.WriteLine("Zero-GC hot  : " + (zeroGc == 0 ? "PASS" : zeroGc == 2 ? "SKIP" : "FAIL"));
             Console.WriteLine("Remote native: " + (remoteNative == 0 ? "PASS" : remoteNative == 2 ? "SKIP" : "FAIL"));
             if (requireNative)
             {
-                Console.WriteLine("Repository publications: " + (repositoryNativeOk ? "PASS" : "FAIL"));
-                bool nativeOk = companionNativeOk && repositoryNativeOk && namePost == 0 && zeroGc == 0 && remoteNative == 0;
+                bool nativeOk = companionNativeOk && namePost == 0 && zeroGc == 0 && remoteNative == 0;
                 Console.WriteLine("Required native validation: " + (nativeOk ? "PASS" : "FAIL"));
                 if (namePost == 2 || zeroGc == 2 || remoteNative == 2)
                 {
@@ -130,9 +111,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionNativeOk && repositoryNativeOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
-                (nativeBootstrap == 0 || nativeBootstrap == 3 ||
-                 (!requireNative && nativeBootstrap == 2)) &&
+            bool ok = companionNativeOk && companionVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&
                 (zeroGc == 0 || (!requireNative && zeroGc == 2)) &&
                 (remoteNative == 0 || (!requireNative && remoteNative == 2));
@@ -375,14 +354,6 @@ namespace Harken.Test
             return VnResult.VN_PACK_PROVIDER_FAILED;
         }
 
-        static VnResult ValidProvider(
-            ulong packStableId, string relativeLocatorUtf8, uint variantKey,
-            ulong expectedContentHash, out byte[] payload, object state)
-        {
-            payload = (byte[])state;
-            return VnResult.VN_OK;
-        }
-
         static VnResult GarbageProvider(
             ulong packStableId, string relativeLocatorUtf8, uint variantKey,
             ulong expectedContentHash, out byte[] payload, object state)
@@ -500,110 +471,7 @@ namespace Harken.Test
             return ok;
         }
 
-        private static int RunNativePackBootstrap(string packRoot)
-        {
-            if (string.IsNullOrEmpty(packRoot))
-            {
-                return 3;
-            }
-            string fullRoot = Path.GetFullPath(packRoot);
-            string initPath = Path.Combine(fullRoot, "Init.pack");
-            if (!File.Exists(initPath) ||
-                !File.Exists(Path.Combine(fullRoot, "Content.pack")))
-            {
-                Console.WriteLine(
-                    "[PackNative] FAIL: shared fixture is incomplete at " +
-                    fullRoot + ".");
-                return 1;
-            }
-
-            bool initialized = false;
-            try
-            {
-                VnResult result = Packs.InspectInitPack(initPath, out InitPackInspection inspection);
-                if (result != VnResult.VN_OK) return 1;
-                VnConfig config = HarkenEngine.DefaultConfig();
-                config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-                config.maxPacks = 4;
-                config.maxActions = 64;
-                config.maxResidentDefinitionBytes = 32UL << 20;
-                if (PackBootstrap.ApplyRecommendations(ref config, inspection, 1) != VnResult.VN_OK ||
-                    HarkenEngine.Init(config) != VnResult.VN_OK) return 1;
-                initialized = true;
-                var members = new[] {
-                    new CanonicalPackMember(inspection.PackStableId, 2, provider: ValidProvider,
-                        providerState: File.ReadAllBytes(initPath)),
-                    new CanonicalPackMember(22, 3, provider: ValidProvider,
-                        providerState: File.ReadAllBytes(Path.Combine(fullRoot, "Content.pack")))
-                };
-                int provides = PackByteProvider.LastProvideCalls;
-                int releases = PackByteProvider.LastReleaseCalls;
-                result = Packs.ActivateCanonicalPackSet(members, 1, out var report, out var rows);
-                bool ok = result == VnResult.VN_OK && inspection.CatalogEntries == 0 &&
-                    rows.Length == 2 && Array.TrueForAll(rows, row => row.handle != 0) &&
-                    PackByteProvider.LastProvideCalls - provides == 2 &&
-                    PackByteProvider.LastReleaseCalls - releases == 2 && PackByteProvider.OutstandingPinCount == 0;
-                if (!ok) return 1;
-                result = Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710100UL),
-                    Emitter.None, out ActionFiring firing);
-                ok &= result == VnResult.VN_OK && firing.IsValid;
-                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710140UL),
-                    Emitter.None, out _) == VnResult.VN_UNKNOWN_ID;
-                ok &= Packs.UnloadCanonicalPackSet(new Pack(report.initHandle),
-                    report.resultSetRevision, report.resultSetRevision + 1) == VnResult.VN_OK;
-                Console.WriteLine(ok ? "[PackNative] shared Init/content fixture PASS."
-                    : "[PackNative] shared Init/content fixture FAIL.");
-                return ok ? 0 : 1;
-            }
-            catch (DllNotFoundException)
-            {
-                Console.WriteLine("[PackNative] SKIP: native '" + HarkenNative.LibraryName + "' library not found.");
-                return 2;
-            }
-            catch (BadImageFormatException)
-            {
-                Console.WriteLine("[PackNative] SKIP: native library architecture mismatch.");
-                return 2;
-            }
-            finally
-            {
-                if (initialized) HarkenEngine.Term();
-            }
-        }
-
-        private static VnVec3 Cross(VnVec3 a, VnVec3 b)
-        {
-            return new VnVec3
-            {
-                x = a.y * b.z - a.z * b.y,
-                y = a.z * b.x - a.x * b.z,
-                z = a.x * b.y - a.y * b.x
-            };
-        }
-
-        private static float Dot(VnVec3 a, VnVec3 b)
-        {
-            return a.x * b.x + a.y * b.y + a.z * b.z;
-        }
-
-        private static bool CheckVector(string name, VnVec3 actual, float x, float y, float z)
-        {
-            const float epsilon = 0.000001f;
-            bool ok =
-                Math.Abs(actual.x - x) <= epsilon &&
-                Math.Abs(actual.y - y) <= epsilon &&
-                Math.Abs(actual.z - z) <= epsilon;
-            if (!ok)
-            {
-                Console.WriteLine(
-                    "[Coordinates] " + name + " FAIL: expected (" + x + ", " + y + ", " + z +
-                    "), got (" + actual.x + ", " + actual.y + ", " + actual.z + ").");
-            }
-            return ok;
-        }
-
-        // ---- Gate 3: zero-GC hot path (needs the native library) ------------
-        private static int RunZeroGc(string currentWorldPath)
+        private static int RunZeroGc()
         {
             VnObjectId actionId = new VnObjectId(0x3da91a64b9474560UL, 0xAC7101);
             VnObjectId varId = new VnObjectId(0x3da91a64b9474560UL, 0x5A1);
@@ -634,7 +502,7 @@ namespace Harken.Test
 
             try
             {
-                if (!CheckCurrentWorldContract(currentWorldPath))
+                if (!CheckCurrentWorldContract())
                 {
                     return 1;
                 }
@@ -650,7 +518,7 @@ namespace Harken.Test
             }
         }
 
-        private static bool CheckCurrentWorldContract(string artifactPath)
+        private static bool CheckCurrentWorldContract()
         {
             VnResult result = CurrentWorld.Load(
                 null, out CurrentWorldLoadReport report);
@@ -666,30 +534,6 @@ namespace Harken.Test
                 return false;
             }
             Console.WriteLine("[CurrentWorld] null path report contract PASS.");
-            if (string.IsNullOrEmpty(artifactPath))
-            {
-                return true;
-            }
-
-            result = CurrentWorld.Load(
-                artifactPath, out report);
-            const ulong actionDefinitions = 1UL << 9;
-            if (result != VnResult.VN_OK ||
-                report.Status != VnCurrentWorldLoadStatus.VN_CURRENT_WORLD_LOAD_OK ||
-                report.Result != VnResult.VN_OK ||
-                report.ResultGeneration == 0 ||
-                report.RuntimeSemanticFingerprint == 0 ||
-                (report.CapabilityMask & actionDefinitions) == 0)
-            {
-                Console.WriteLine(
-                    "[CurrentWorld] FAIL: Action artifact returned " + result +
-                    " with status " + report.Status +
-                    ", report result " + report.Result +
-                    ", generation " + report.ResultGeneration +
-                    ", capability mask 0x" + report.CapabilityMask.ToString("X") + ".");
-                return false;
-            }
-            Console.WriteLine("[CurrentWorld] Studio-authored Action artifact load PASS.");
             return true;
         }
 

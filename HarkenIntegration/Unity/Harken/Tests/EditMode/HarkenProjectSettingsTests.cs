@@ -165,28 +165,6 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void DisabledBuildPolicyKeepsPreviewCommunicationUntilAudioShutdown()
-        {
-            HarkenEditorServiceTests.RequirePublicationTooling();
-            var serialized = new SerializedObject(settings);
-            serialized.FindProperty("enableCommunicationInBuilds").boolValue = false;
-            serialized.ApplyModifiedPropertiesWithoutUndo();
-            using (var preview = new HarkenEditorPreview())
-            {
-                string root = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
-                Assert.That(preview.Prepare(root, null, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_OK), preview.Diagnostic);
-                Assert.That(preview.LastRemoteResult, Is.EqualTo(VnResult.VN_OK));
-                Assert.That(RemoteCommunication.GetStatus(out VnRemoteStatus status), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(status.state, Is.EqualTo((uint)VnRemoteState.VN_REMOTE_LISTENING));
-                Assert.That(status.tcpPort, Is.GreaterThan(0));
-                Assert.That(preview.Shutdown(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(RemoteCommunication.GetStatus(out status), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(status.state, Is.EqualTo((uint)VnRemoteState.VN_REMOTE_STOPPED));
-                Assert.That(status.tcpPort, Is.Zero);
-            }
-        }
-
-        [Test]
         public void ConflictingPlayerResourceRefusesBuildInsteadOfChoosingArbitraryPolicy()
         {
             duplicateFolder = "Assets/HarkenSettingsFixture_" + Guid.NewGuid().ToString("N");

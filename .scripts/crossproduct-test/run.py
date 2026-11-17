@@ -4,6 +4,7 @@ import datetime
 import importlib
 import json
 import platform
+import shutil
 import sys
 import time
 import traceback
@@ -15,7 +16,8 @@ sys.path.insert(0, str(HERE))
 from drivers import engine  # noqa: E402
 from drivers.studio_cli import StudioCli  # noqa: E402
 
-SCENARIOS = ("exported_packs_sound", "value_domain_limits", "preview_matches_export", "remote_connection")
+SCENARIOS = ("exported_packs_sound", "value_domain_limits", "preview_matches_export", "remote_connection",
+             "integration_consumer", "integration_unity")
 PASSED, FAILED, SKIPPED = "passed", "failed", "skipped"
 
 
@@ -72,6 +74,19 @@ def probe_capabilities(args) -> dict:
             mark(name, False, f"{library.name} or ABI manifest missing under {args.engine_install}")
         else:
             mark(name, True, library=str(library))
+    if args.integration_package is None:
+        mark("integration-package", False, "no --integration-package given")
+    elif not (args.integration_package / "package.json").is_file():
+        mark("integration-package", False, f"{args.integration_package} has no package.json")
+    else:
+        mark("integration-package", True, package=str(args.integration_package))
+    for name, executable in (("unity", args.unity), ("dotnet", args.dotnet)):
+        if executable is None:
+            mark(name, False, f"no --{name} given and none found")
+        elif not executable.is_file():
+            mark(name, False, f"{executable} does not exist")
+        else:
+            mark(name, True, executable=str(executable))
     return found
 
 
@@ -118,9 +133,16 @@ def main() -> int:
     parser.add_argument("--scenario", action="append", choices=SCENARIOS)
     parser.add_argument("--require", action="append", default=[],
                         help="capability this environment must provide; missing it fails instead of skipping")
+    parser.add_argument("--integration-package", type=Path,
+                        help="Unity Integration Package root (package.json); Unity scenarios need its native plugins")
+    parser.add_argument("--unity", type=Path, help="Unity Editor executable")
+    parser.add_argument("--dotnet", type=Path, help="dotnet executable (defaults to the one on PATH)")
     parser.add_argument("--timeout", type=float, default=300, help="per external process, seconds")
+    parser.add_argument("--unity-timeout", type=float, default=1800, help="per Unity test run, seconds")
     args = parser.parse_args()
-    for name in ("engine_install", "studio_cli"):
+    if args.dotnet is None and shutil.which("dotnet"):
+        args.dotnet = Path(shutil.which("dotnet"))
+    for name in ("engine_install", "studio_cli", "integration_package", "unity", "dotnet"):
         if getattr(args, name) is not None:
             setattr(args, name, getattr(args, name).resolve())
 
@@ -144,7 +166,8 @@ def main() -> int:
     report = {
         "started": started,
         "host": {"platform": platform.platform(), "python": platform.python_version()},
-        "inputs": {"engine_install": str(args.engine_install), "studio_cli": str(args.studio_cli)},
+        "inputs": {"engine_install": str(args.engine_install), "studio_cli": str(args.studio_cli),
+                   "integration_package": str(args.integration_package), "unity": str(args.unity)},
         "capabilities": capabilities,
         "required": args.require,
         "required_but_skipped": required_missing,

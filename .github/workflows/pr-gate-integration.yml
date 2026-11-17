@@ -54,20 +54,18 @@ jobs:
         with:
           arch: x64
 
-      - name: Configure Core libraries and Pack tests (windows-release)
+      - name: Configure Engine libraries (windows-release)
         run: >-
           cmake --fresh --preset windows-release -B build-integration-runtime-clang
           -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_ENGINE_DEV=ON
-          -DHARKEN_BUILD_TOOLS=ON
-          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
       # No --parallel: bare --parallel means ninja's own default (cores + 2) and
       # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
       # .env sets so three concurrent jobs share the machine instead of each
       # claiming all of it.
-      - name: Build Engine editions and Pack tests
-        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine harken_pack_schema_tests
+      - name: Build Engine editions
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine
 
       - name: Install Engine
         run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install
@@ -79,25 +77,18 @@ jobs:
           python HarkenIntegration/Unity/Binding/gen_binding.py --manifest "$HARKEN_ABI_MANIFEST" --check
           python HarkenIntegration/Unity/Binding/test_managed_generation_policy.py
 
-      - name: Run Pack native fixture check
-        timeout-minutes: 3
-        run: >-
-          ctest --test-dir build-integration-runtime-clang/HarkenEngine/Test -C Release
-          --no-tests=error --output-on-failure --timeout 120
-          -R '^PackSchema[.]PackFoundationQualification[.]ExplicitMembersDefineResidentWindow$'
-
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 9.0.x
 
-      - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
+      - name: Run contract gates against native library (binding, metadata version and zero-GC hot path)
         timeout-minutes: 5
         env:
           HARKEN_NATIVE_DIR: ${{ github.workspace }}/.temp/engine-install/bin
         run: >-
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
-          --require-native --pack-root .temp/f3-resident-window
+          --require-native
 
   integration-macos:
     name: integration-macos-${{ matrix.slug }}
@@ -135,17 +126,15 @@ jobs:
       - name: Install macOS build deps
         run: brew install ninja
 
-      - name: Configure Core libraries and Pack tests (macos-release, ${{ matrix.arch }})
+      - name: Configure Engine libraries (macos-release, ${{ matrix.arch }})
         run: >-
           cmake --fresh --preset macos-release -B build-integration-runtime-clang
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
           -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_ENGINE_DEV=ON
-          -DHARKEN_BUILD_TOOLS=ON
-          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
-      - name: Build Engine editions and Pack tests
-        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine harken_pack_schema_tests
+      - name: Build Engine editions
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine
 
       - name: Install Engine
         run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install
@@ -153,22 +142,15 @@ jobs:
       - name: Check generated binding against the installed ABI manifest
         run: python3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest .temp/engine-install/share/HarkenEngine/harken_abi_manifest.json --check
 
-      - name: Run Pack native fixture check
-        timeout-minutes: 3
-        run: >-
-          ctest --test-dir build-integration-runtime-clang/HarkenEngine/Test -C Release
-          --no-tests=error --output-on-failure --timeout 120
-          -R '^PackSchema[.]PackFoundationQualification[.]ExplicitMembersDefineResidentWindow$'
-
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 9.0.x
 
-      - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
+      - name: Run contract gates against native library (binding, metadata version and zero-GC hot path)
         timeout-minutes: 5
         env:
           HARKEN_NATIVE_DIR: ${{ github.workspace }}/.temp/engine-install/lib
         run: >-
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
-          --require-native --pack-root .temp/f3-resident-window
+          --require-native

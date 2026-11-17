@@ -7,12 +7,10 @@ namespace Harken.Test
 {
     internal static class RepositoryPublicationContract
     {
-        public static bool Run(string publicationRoot = null)
+        public static bool Run(string root)
         {
             try
             {
-                string root = publicationRoot ?? Path.Combine(AppContext.BaseDirectory,
-                    "NativePublications", "UnityFixture", "CompanionPacks");
                 string[] directories = new[] { root }.Concat(Directory.GetDirectories(root)
                     .OrderBy(path => path, StringComparer.Ordinal)).ToArray();
                 int count = 0;
