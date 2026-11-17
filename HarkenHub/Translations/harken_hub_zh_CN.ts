@@ -164,8 +164,16 @@
         <translation>无需打开 Hub 窗口，即可通过命令行管理工程、Studio 版本、Unity 集成、设置和更新。</translation>
     </message>
     <message>
-        <source>Open the offline CLI user guide and AI command reference from Settings in English or Simplified Chinese.</source>
-        <translation>在设置菜单中打开离线 CLI 用户指南和 AI 命令参考，支持英文和简体中文。</translation>
+        <source>Open the offline CLI user guide and AI command reference from a separate group in Settings, in English or Simplified Chinese.</source>
+        <translation>在设置菜单的独立分组中打开离线 CLI 用户指南和 AI 命令参考，支持英文和简体中文。</translation>
+    </message>
+    <message>
+        <source>Use the new Hub icon consistently across light and dark themes, windows, the taskbar, tray, shortcuts, installer and update helper.</source>
+        <translation>明暗主题、窗口、任务栏、托盘、快捷方式、安装器和更新助手统一使用新版 Hub 图标。</translation>
+    </message>
+    <message>
+        <source>Explain files in both current and older Unity API folders in Integration Package change previews.</source>
+        <translation>在集成包变更预览中，为新旧 Unity API 目录内的文件提供用途说明。</translation>
     </message>
     <message>
         <source>Choose Follow System, Light or Dark in Settings and apply the theme immediately.</source>
