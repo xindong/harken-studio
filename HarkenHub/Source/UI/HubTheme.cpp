@@ -122,7 +122,6 @@ void applyPreference()
     QFile file(QStringLiteral(":/Resources/HubStyle.qss"));
     if (!file.open(QIODevice::ReadOnly)) return;
     QString sheet = QString::fromUtf8(file.readAll());
-    sheet.replace(QStringLiteral("@theme@"), dark ? QStringLiteral("dark") : QStringLiteral("light"));
     sheet.replace(QStringLiteral("palette(placeholder-text)"), color(Tone::Muted).name());
     for (auto tone : {Tone::Text, Tone::Muted, Tone::Accent, Tone::Warning, Tone::Error, Tone::Success, Tone::Info})
         sheet += QStringLiteral("\n*[hubTone=\"%1\"] { color: %2; }").arg(static_cast<int>(tone)).arg(color(tone).name());

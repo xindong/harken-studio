@@ -9,11 +9,11 @@
 <p>本页的命令和参数清单由 CLI 解析器的同一份定义生成。执行 <code>HarkenHub --cli help</code> 可获取当前可执行文件支持的契约。下方命令、参数名及机器契约使用英文，便于直接交给 AI 或脚本读取。</p>
 <p>启动进程时，将每个参数作为独立字符串传入；通过终端执行时，给含空格的路径加引号。不要把用户输入拼接成 shell 代码。所有选项都需要一个字符串值；布尔值只能写 <code>true</code> 或 <code>false</code>。未知命令、未知或重复选项、缺失值和非法枚举值会在执行前被拒绝。</p>
 <h2>读取结果</h2>
-<p>标准输出为一个 UTF-8 JSON 对象，含 <code>schemaVersion</code> 和 <code>ok</code>。同时检查进程退出码。退出码 0 表示命令成功；2 为参数错误；3 为操作失败；4 表示需要检查清单或选择内容；5 表示需要接受协议。失败信息可能位于 <code>error</code>，也可能位于 <code>data.steps</code>，报告问题时保留完整结果。</p>
+<p>标准输出为一个 UTF-8 JSON 对象，含 <code>schemaVersion</code> 和 <code>ok</code>。同时检查进程退出码。退出码 0 表示命令成功；2 为参数错误；3 为操作失败；4 表示需要检查清单并确认；5 表示需要接受协议。失败信息可能位于 <code>error</code>，也可能位于 <code>data.steps</code>，报告问题时保留完整结果。</p>
 <p>集成步骤的 <code>status</code>：0 待执行，1 执行中，2 成功，3 警告，4 失败，5 跳过。</p>
 <p>新建或打开工程会启动 Studio；Hub 更新可能只是交给更新桥接服务排队执行。上述返回成功不代表另一个进程已经完成。用返回的事务编号及 <code>updates status</code>、<code>diagnostics transactions</code> 继续核实结果。CLI 自身不打开 Hub 窗口；安装、修复或卸载版本可能出现操作系统的管理员授权提示。</p>
 <h2>确认流程</h2>
 <p>对于 <code>reviewBeforeApply</code> 命令，先不带 <code>--confirm</code> 执行，向用户展示返回的计划。用户同意后，以完全相同的参数加上 <code>--confirm TOKEN</code> 执行。文件或选项变化会使旧标识失效；不能自动接受新标识，必须重新检查计划。</p>
-<p><code>contentSelectionRequired</code> 表示旧内容需要用户决定。核心集成始终安装；API 文档和示例默认 <code>ask</code>：不存在时不复制，存在时要求分别选择 <code>keep</code>（保留）、<code>update</code>（更新）或 <code>remove</code>（移除）。移除仅处理受管文件，保留用户自己添加的文件；更新或移除的旧可选内容会备份。修改集成前关闭 Unity。</p>
+<p>修改集成前请关闭 Unity。</p>
 <p><code>--backup</code> 应指定新的备份目录，确认时重复同一路径。恢复中断操作时使用该操作原来的备份。还原会校验原始官方发布包；<code>--accept-conflicts true</code> 另外允许备份并替换冲突的非受管路径。</p>
 <p>接受协议是单独的用户决定。先用 <code>legal show</code> 展示完整文档，只有用户明确接受后，才提交 <code>legal accept</code> 返回的确认标识。</p>

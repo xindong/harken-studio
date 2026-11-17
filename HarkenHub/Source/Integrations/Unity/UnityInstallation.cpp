@@ -353,33 +353,14 @@ bool walk(const QString& root, bool importedOnly,
 
 }
 
-ContentComponent contentComponent(const QString& relative)
-{
-    const QString path = relative.toCaseFolded();
-    if (path == QStringLiteral("samples~") || path == QStringLiteral("samples~.meta")
-        || path.startsWith(QStringLiteral("samples~/"))) return ContentComponent::Samples;
-    if (path == QStringLiteral("documentation~") || path == QStringLiteral("documentation~.meta")
-        || path.startsWith(QStringLiteral("documentation~/"))
-        || path == QStringLiteral("readme.md") || path == QStringLiteral("readme.md.meta")
-        || path == QStringLiteral("changelog.md") || path == QStringLiteral("changelog.md.meta"))
-        return ContentComponent::Documentation;
-    return ContentComponent::Core;
-}
-
-QString contentActionName(ContentAction action)
-{
-    switch (action) {
-    case ContentAction::Keep: return QStringLiteral("keep");
-    case ContentAction::Update: return QStringLiteral("update");
-    case ContentAction::Remove: return QStringLiteral("remove");
-    case ContentAction::Ask: return QStringLiteral("omit");
-    }
-    return {};
-}
-
 bool isDocumentationOrSample(const QString& relative)
 {
-    return contentComponent(relative) != ContentComponent::Core;
+    return relative.startsWith(QStringLiteral("Documentation~/"))
+        || relative.startsWith(QStringLiteral("Samples~/"))
+        || relative == QStringLiteral("Documentation~.meta")
+        || relative == QStringLiteral("Samples~.meta")
+        || relative == QStringLiteral("README.md")
+        || relative == QStringLiteral("CHANGELOG.md");
 }
 
 static QByteArray utf8LineEndingHash(const QString& path, QByteArray* crlfHash)

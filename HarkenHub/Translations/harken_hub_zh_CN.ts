@@ -172,10 +172,6 @@
         <translation>在设置菜单中选择跟随系统、浅色或深色主题，切换后立即生效。</translation>
     </message>
     <message>
-        <source>Install core Unity integration by default and choose API documentation and samples separately. Existing optional content asks for a keep, update or remove decision, with backups before replacement or removal.</source>
-        <translation>Unity 集成默认只安装核心内容，API 文档和示例可单独选择；检测到已有可选内容时，可决定保留、更新或移除，覆盖或移除前会先备份。</translation>
-    </message>
-    <message>
         <source>Show the current project filename after a renamed project is added again.</source>
         <translation>工程改名后重新加入 Hub，列表会显示当前文件名。</translation>
     </message>
@@ -5404,21 +5400,5 @@ Close Unity and complete any required P4 checkout before continuing.</source>
         <source>Conflicting unowned files require separate approval before restoration.</source>
         <translation>非受管文件存在重名冲突，还原前需要单独确认。</translation>
     </message>
-    <message><source>Install Contents</source><translation>安装内容</translation></message>
-    <message><source>Core Integration</source><translation>核心集成</translation></message>
-    <message><source>API Documentation</source><translation>API 文档</translation></message>
-    <message><source>Samples</source><translation>示例</translation></message>
-    <message><source>Existing content was found. Choose how to handle each component:</source><translation>检测到旧版内容，请分别选择处置方式：</translation></message>
-    <message><source>Keep Existing</source><translation>保留旧版</translation></message>
-    <message><source>Update to New Version</source><translation>更新到新版</translation></message>
-    <message><source>Remove Existing</source><translation>移除旧版</translation></message>
-    <message><source>Choose how to handle existing content, then generate the change list.</source><translation>请选择旧版内容的处置方式，然后生成变更清单。</translation></message>
-    <message><source>Install contents changed. Check again before continuing.</source><translation>安装内容已更改，请重新检查后继续。</translation></message>
-    <message><source>Removal backs up recorded files first. Files you added or imported elsewhere are preserved.</source><translation>移除前会备份受管文件。自行添加或另行导入的内容将予以保留。</translation></message>
-    <message><source>Choose a Content Action First</source><translation>请先选择处置方式</translation></message>
-    <message><source>Generate Change List</source><translation>生成变更清单</translation></message>
-    <message><source>Existing documentation or samples were found. Choose whether to keep, update or remove each component.</source><translation>检测到旧版文档或示例，请分别选择保留、更新或移除。</translation></message>
-    <message><source>The selected source does not include the requested documentation or samples.</source><translation>所选集成包不包含要安装或更新的文档或示例。</translation></message>
-    <message><source>Keep or remove the existing content, or select a source that includes the content to update.</source><translation>请选择保留或移除已有内容，或改用包含所需内容的集成包进行更新。</translation></message>
 </context>
 </TS>

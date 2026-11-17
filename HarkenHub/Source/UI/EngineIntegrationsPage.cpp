@@ -30,9 +30,6 @@
 #include <QCoreApplication>
 #include <QColor>
 #include "UI/HubTheme.h"
-#include <QCheckBox>
-#include <QButtonGroup>
-#include <QRadioButton>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -956,23 +953,6 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     installRow->addWidget(integrationInstallBrowseButton_);
     selectionLayout->addWidget(installRowWidget);
 
-    auto [contentRow, contentLayout] = makeRow(QCoreApplication::translate("HarkenHub", "Install Contents"));
-    integrationContentRow_ = contentRow;
-    auto* coreCheck = new QCheckBox(QCoreApplication::translate("HarkenHub", "Core Integration"), contentRow);
-    coreCheck->setChecked(true);
-    coreCheck->setEnabled(false);
-    documentationCheck_ = new QCheckBox(QCoreApplication::translate("HarkenHub", "API Documentation"), contentRow);
-    documentationCheck_->setObjectName(QStringLiteral("integrationDocumentation"));
-    samplesCheck_ = new QCheckBox(QCoreApplication::translate("HarkenHub", "Samples"), contentRow);
-    samplesCheck_->setObjectName(QStringLiteral("integrationSamples"));
-    contentLayout->addWidget(coreCheck);
-    contentLayout->addSpacing(16);
-    contentLayout->addWidget(documentationCheck_);
-    contentLayout->addSpacing(16);
-    contentLayout->addWidget(samplesCheck_);
-    contentLayout->addStretch();
-    selectionLayout->addWidget(contentRow);
-
     auto* integrationActionRow = new QHBoxLayout();
     integrationActionRow->setContentsMargins(0, 0, 0, 0);
     integrationCheckButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Check Integration Package Changes"), integrationSelectionDialog_);
@@ -1020,71 +1000,6 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     auto* changesLayout = new QVBoxLayout(changesPage);
     changesLayout->setContentsMargins(12, 12, 12, 8);
     changesLayout->setSpacing(10);
-    existingContentPanel_ = new QWidget(changesPage);
-    existingContentPanel_->setObjectName(QStringLiteral("existingIntegrationContent"));
-    auto* existingLayout = new QVBoxLayout(existingContentPanel_);
-    existingLayout->setContentsMargins(0, 0, 0, 0);
-    existingLayout->setSpacing(6);
-    auto* existingTitle = new QLabel(QCoreApplication::translate("HarkenHub",
-        "Existing content was found. Choose how to handle each component:"), existingContentPanel_);
-    existingTitle->setWordWrap(true);
-    existingTitle->setObjectName(QStringLiteral("existingContentWarning"));
-    HubTheme::setTone(existingTitle, HubTheme::Tone::Warning);
-    existingLayout->addWidget(existingTitle);
-    const auto addContentActions = [this, existingLayout](bool documentation) {
-        auto* row = new QWidget(existingContentPanel_);
-        auto* layout = new QHBoxLayout(row);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(16);
-        auto* label = new QLabel(documentation
-            ? QCoreApplication::translate("HarkenHub", "API Documentation")
-            : QCoreApplication::translate("HarkenHub", "Samples"), row);
-        label->setMinimumWidth(76);
-        layout->addWidget(label);
-        auto* group = new QButtonGroup(row);
-        using VNX::UnityInstallation::ContentAction;
-        for (const auto& entry : {std::pair{ContentAction::Keep, QT_TRANSLATE_NOOP("HarkenHub", "Keep Existing")},
-                std::pair{ContentAction::Update, QT_TRANSLATE_NOOP("HarkenHub", "Update to New Version")},
-                std::pair{ContentAction::Remove, QT_TRANSLATE_NOOP("HarkenHub", "Remove Existing")}}) {
-            auto* radio = new QRadioButton(QCoreApplication::translate("HarkenHub", entry.second), row);
-            radio->setObjectName(QStringLiteral("%1ContentAction%2")
-                .arg(documentation ? QStringLiteral("documentation") : QStringLiteral("samples"))
-                .arg(static_cast<int>(entry.first)));
-            group->addButton(radio, static_cast<int>(entry.first));
-            layout->addWidget(radio);
-        }
-        layout->addStretch();
-        auto* checkbox = documentation ? documentationCheck_ : samplesCheck_;
-        connect(group, &QButtonGroup::idClicked, this, [this, checkbox](int action) {
-            const QSignalBlocker blocker(checkbox);
-            checkbox->setChecked(action == static_cast<int>(ContentAction::Update));
-            clearResults();
-            integrationPhase_ = IntegrationPhase::Resolving;
-            setSummaryText(QCoreApplication::translate("HarkenHub", "Choose how to handle existing content, then generate the change list."));
-            updatePrimaryAction();
-        });
-        connect(checkbox, &QCheckBox::toggled, this, [this, group](bool checked) {
-            group->setExclusive(false);
-            for (auto* button : group->buttons())
-                button->setChecked(checked && group->id(button) == static_cast<int>(ContentAction::Update));
-            group->setExclusive(true);
-            clearResults();
-            if (documentationPresent_ || samplesPresent_) integrationPhase_ = IntegrationPhase::Resolving;
-            setSummaryText(QCoreApplication::translate("HarkenHub", "Install contents changed. Check again before continuing."));
-            updatePrimaryAction();
-        });
-        if (documentation) { documentationActions_ = group; existingDocumentationRow_ = row; }
-        else { samplesActions_ = group; existingSamplesRow_ = row; }
-        existingLayout->addWidget(row);
-    };
-    addContentActions(true);
-    addContentActions(false);
-    auto* existingHint = new QLabel(QCoreApplication::translate("HarkenHub",
-        "Removal backs up recorded files first. Files you added or imported elsewhere are preserved."), existingContentPanel_);
-    existingHint->setWordWrap(true);
-    existingLayout->addWidget(existingHint);
-    existingContentPanel_->hide();
-    changesLayout->addWidget(existingContentPanel_);
     integrationDiffSummary_ = new DialogTextView(changesPage, Qt::RichText);
     integrationDiffSummary_->setObjectName(QStringLiteral("integrationDiffSummary"));
     connect(integrationDiffSummary_, &QTextBrowser::anchorClicked, this, [this]() {
@@ -1941,17 +1856,6 @@ void EngineIntegrationsPage::beginIntegrationSelection()
     integrationPhase_ = IntegrationPhase::Choosing;
     integrationPreviousVersion_ = integrationInstalled_ ? installedIntegrationVersion_
         : QCoreApplication::translate("HarkenHub", "Not installed");
-    documentationPresent_ = samplesPresent_ = false;
-    for (auto* checkbox : {documentationCheck_, samplesCheck_}) {
-        const QSignalBlocker blocker(checkbox);
-        checkbox->setChecked(false);
-    }
-    for (auto* group : {documentationActions_, samplesActions_}) {
-        group->setExclusive(false);
-        for (auto* button : group->buttons()) button->setChecked(false);
-        group->setExclusive(true);
-    }
-    existingContentPanel_->hide();
     refreshLocalIntegrationSources();
     clearResults();
     updateRemovalButtonState();
@@ -2396,34 +2300,12 @@ QString EngineIntegrationsPage::selectedIntegrationPackageName() const
         : integrationPackageName(target->engineKind);
 }
 
-VNX::UnityInstallation::ContentAction EngineIntegrationsPage::contentAction(bool documentation) const
-{
-    using VNX::UnityInstallation::ContentAction;
-    if ((documentation ? documentationCheck_ : samplesCheck_)->isChecked()) return ContentAction::Update;
-    const int action = (documentation ? documentationActions_ : samplesActions_)->checkedId();
-    return action < 0 ? ContentAction::Ask : static_cast<ContentAction>(action);
-}
-
-bool EngineIntegrationsPage::contentSelectionPending() const
-{
-    using VNX::UnityInstallation::ContentAction;
-    return (documentationPresent_ && contentAction(true) == ContentAction::Ask)
-        || (samplesPresent_ && contentAction(false) == ContentAction::Ask);
-}
-
 void EngineIntegrationsPage::updatePrimaryAction()
 {
     const QString packageName = selectedIntegrationPackageName();
     const bool current = integrationComparison_ == IntegrationComparison::Current;
     const bool linked = !editingIntegrationId_.isEmpty();
     const bool selecting = integrationSelection_.has_value();
-    const bool unity = selectedIntegrationPackageName() == integrationPackageName(EngineKind::Unity);
-    integrationContentRow_->setVisible(unity);
-    existingContentPanel_->setVisible(selecting && unity && (documentationPresent_ || samplesPresent_)
-        && integrationPhase_ != IntegrationPhase::Finished);
-    existingDocumentationRow_->setVisible(documentationPresent_);
-    existingSamplesRow_->setVisible(samplesPresent_);
-    existingContentPanel_->setEnabled(!operationRunning_);
     const auto inspection = targetInspections_.constFind(selectedEngineTargetId_);
     const bool inspecting = inspection != targetInspections_.cend()
         && !inspection->ready && inspection->cancelled;
@@ -2459,9 +2341,6 @@ void EngineIntegrationsPage::updatePrimaryAction()
         : integrationPhase_ == IntegrationPhase::Checking
             ? QCoreApplication::translate("HarkenHub", "Checking %1...").arg(packageName)
         : current ? QCoreApplication::translate("HarkenHub", "Up to Date")
-        : integrationPhase_ == IntegrationPhase::Resolving
-            ? (contentSelectionPending() ? QCoreApplication::translate("HarkenHub", "Choose a Content Action First")
-                                         : QCoreApplication::translate("HarkenHub", "Generate Change List"))
         : integrationPhase_ == IntegrationPhase::Reviewing
             ? (integrationInstalled_ ? QCoreApplication::translate("HarkenHub", "Confirm %1 Change").arg(packageName)
                              : QCoreApplication::translate("HarkenHub", "Confirm %1 Installation").arg(packageName))
@@ -2469,7 +2348,6 @@ void EngineIntegrationsPage::updatePrimaryAction()
     integrateButton_->setEnabled(!operationRunning_ && !versionResolutionPending_
         && !selectedHarkenProjectPath_.isEmpty() && !selectedEngineTargetId_.isEmpty()
         && integrationSourceAvailable_ && !targetBlocked_
-        && !(unity && contentSelectionPending())
         && integrationComparison_ != IntegrationComparison::Blocked && !current && selecting
         && integrationPhase_ != IntegrationPhase::Finished);
     integrateButton_->setToolTip(!integrationSourceAvailable_
@@ -3141,10 +3019,6 @@ bool EngineIntegrationsPage::runCheckForSelection(
         ? runUnity(target, integrationPath, true) : runUnreal(target, integrationPath, true);
     integrationPhase_ = success && integrationComparison_ == IntegrationComparison::Different && !reviewedIntegrationHash_.isEmpty()
         ? IntegrationPhase::Reviewing : IntegrationPhase::Choosing;
-    if (target.engineKind == EngineKind::Unity && contentSelectionPending()) {
-        integrationPhase_ = IntegrationPhase::Resolving;
-        setSummaryText(QCoreApplication::translate("HarkenHub", "Choose how to handle existing content, then generate the change list."));
-    }
     if (success) {
         integrationPreviousVersion_ = integrationInstalled_ ? installedIntegrationVersion_
             : QCoreApplication::translate("HarkenHub", "Not installed");
@@ -3635,30 +3509,23 @@ bool EngineIntegrationsPage::runUnity(
     request.integrationSourcePath = integrationPath;
     request.preserveUnownedTarget = true;
     request.integrationInstallPath = integrationInstallPathEdit_->text().trimmed();
-    request.documentation = contentAction(true);
-    request.samples = contentAction(false);
     request.checkOnly = checkOnly;
     request.confirmTargetChanges = !checkOnly;
     if (!checkOnly) request.approvedPlanHash = approved;
     const UnityIntegrationResult result =
         runUnityTask(request);
     if (result.cancelled) return false;
-    documentationPresent_ = result.documentationPresent;
-    samplesPresent_ = result.samplesPresent;
     if (checkOnly && result.success) reviewedIntegrationHash_ = result.planHash;
     if (!checkOnly) integrationReviewInvalidated_ = result.requiresConfirmation;
     integrationReportPath_ = QFileInfo::exists(result.textReportPath) ? result.textReportPath : QString();
     const QVector<ResultStep> steps = unityResultSteps(result, checkOnly);
-    integrationComparison_ = result.requiresContentSelection ? IntegrationComparison::Unknown
-        : !result.success ? IntegrationComparison::Blocked
+    integrationComparison_ = !result.success ? IntegrationComparison::Blocked
         : (checkOnly ? result.targetAlreadyCurrent : result.targetCurrent)
             ? IntegrationComparison::Current : IntegrationComparison::Different;
 
     QString summary;
     if (checkOnly) {
-        if (result.requiresContentSelection)
-            summary = QCoreApplication::translate("HarkenHub", "Choose how to handle existing content, then generate the change list.");
-        else if (!result.success)
+        if (!result.success)
             summary = QCoreApplication::translate("HarkenHub", "Integration Package check failed. Select the first failed step for details.");
         else if (!result.targetInstalled)
             summary = QCoreApplication::translate("HarkenHub", "Check completed. The selected Integration Package is valid and is not installed in this Unity project.");
@@ -3693,7 +3560,7 @@ bool EngineIntegrationsPage::runUnity(
                 .arg(targets_->lastError()));
         return false;
     }
-    return result.success || result.requiresContentSelection;
+    return result.success;
 }
 
 bool EngineIntegrationsPage::runUnreal(

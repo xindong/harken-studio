@@ -431,8 +431,6 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
         write(source + '/' + plugin.toObject()["alternatives"].toArray()[0].toString(), "fixture runtime");
     write(source + "/harken-integration.json", manifestBytes);
     write(source + "/package.json", R"({"name":"com.harken.core","version":"0.2.0-test"})");
-    write(source + "/Documentation~/Reference.md", "original docs");
-    write(source + "/Samples~/Example.cs", "original sample");
     const auto project = directory.filePath("Audio.hsp");
     write(project, R"({"harkenDocument":{"type":"project.root"}})");
     approve({"integrations", "link", "--path", game, "--project", project, "--source", "./Source"});
@@ -444,23 +442,12 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
     run(install + QStringList{"--confirm", plan["confirmation"].toString()}, 4);
     EXPECT_FALSE(QFileInfo::exists(installed));
     approve(install);
-    EXPECT_FALSE(QFileInfo::exists(installed + "/Documentation~/Reference.md"));
     write(source + "/package.json", R"({"name":"com.harken.core","version":"0.3.0-test"})");
     write(source + "/Runtime/Generated/HarkenAbi.g.cs", "next version core");
-    EXPECT_FALSE(run(install, 4)["contentSelectionRequired"].toBool());
     approve(install);
-    EXPECT_FALSE(QFileInfo::exists(installed + "/Documentation~/Reference.md"));
-    EXPECT_FALSE(QFileInfo::exists(installed + "/Samples~/Example.cs"));
     EXPECT_EQ(run({"integrations", "list"})["data"].toObject()["associations"].toArray()[0].toObject()["source"].toString(), source);
     run({"integrations", "verify", "--path", game});
-    approve(install + QStringList{"--documentation", "update", "--samples", "update"});
-    EXPECT_TRUE(run(install, 4)["contentSelectionRequired"].toBool());
-    write(installed + "/Samples~/Custom.cs", "my own content");
-    const auto changed = approve(install + QStringList{"--documentation", "keep", "--samples", "remove"});
-    EXPECT_TRUE(changed["data"].toObject()["contentBackup"].toString().startsWith(directory.filePath("user/")));
-    EXPECT_EQ(read(installed + "/Documentation~/Reference.md"), "original docs");
-    EXPECT_FALSE(QFileInfo::exists(installed + "/Samples~/Example.cs"));
-    EXPECT_EQ(read(installed + "/Samples~/Custom.cs"), "my own content");
+    write(installed + "/ProjectOnly.txt", "my own content");
     EXPECT_FALSE(run({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")}, 4)["plan"].toObject()["files"].toArray().isEmpty());
     approve({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")});
     run({"integrations", "verify", "--path", game, "--location", "Assets/Wrong"}, 3);
@@ -469,7 +456,7 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
     const auto removal = run({"integrations", "remove", "--path", game, "--backup", directory.filePath("RemoveBackup")}, 4);
     EXPECT_FALSE(removal["plan"].toObject()["files"].toArray().isEmpty());
     approve({"integrations", "remove", "--path", game, "--backup", directory.filePath("RemoveBackup")});
-    EXPECT_EQ(read(game + "/Assets/HarkenSDK/Samples~/Custom.cs"), "my own content");
+    EXPECT_EQ(read(game + "/Assets/HarkenSDK/ProjectOnly.txt"), "my own content");
 }
 
 }

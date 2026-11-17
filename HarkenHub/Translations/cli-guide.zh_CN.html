@@ -38,16 +38,13 @@
 .\HarkenHub.exe --cli versions install --package "D:\Downloads\Studio.zip" --manifest "D:\Downloads\release.manifest" --confirm TOKEN</pre>
 <p>安装包和清单路径请使用下载命令实际返回的路径。<code>TOKEN</code> 要换成刚收到的确认标识。文件或选项变化后，旧标识会失效；请重新阅读新计划。安装、修复、卸载 Studio 时，Windows 可能弹出系统管理员授权提示。</p>
 <p><code>projects remove</code> 只把工程移出 Hub 列表，<code>versions remove-local</code> 只移除本地构建登记，都不删除对应文件。<code>versions uninstall</code> 则会卸载已安装的 Studio 版本。</p>
-<h2>第四步：决定 Unity 集成包复制哪些内容</h2>
+<h2>第四步：安装或更新 Unity 集成包</h2>
 <pre>.\HarkenHub.exe --cli integrations install --path "D:\UnityGame" --source "D:\Integration\Harken"</pre>
-<p>核心集成始终安装，API 文档和示例默认不复制。发现旧版内容时，Hub 会先让你分别决定如何处置：</p>
-<table><tr><th>参数值</th><th>意思</th></tr><tr><td><code>keep</code></td><td>保留已有内容。</td></tr><tr><td><code>update</code></td><td>复制所选来源中的新版内容。</td></tr><tr><td><code>remove</code></td><td>备份并移除 Hub 管理的文件，保留你自行添加的文件。</td></tr></table>
-<pre>.\HarkenHub.exe --cli integrations install --path "D:\UnityGame" --source "D:\Integration\Harken" --documentation keep --samples remove</pre>
-<p>这条命令选择“保留文档、移除示例”。看完返回的文件清单后，再带确认标识执行。希望两者都复制时，使用 <code>--documentation update --samples update</code>。修改前请关闭 Unity；已复制或导入到其他位置的示例不在 Hub 的管理范围内。</p>
+<p>修改前请关闭 Unity。阅读返回的文件变更清单，再使用相同参数加上确认标识执行，安装或更新所选集成包。</p>
 <p>移除整个集成包可用 <code>integrations remove --path "D:\UnityGame" --backup "D:\Backups\Game-integration-01"</code>。备份位置必须是尚不存在的新目录，确认时保持同一路径。迁移、还原也采用先检查再确认的方式，完整参数见命令参考。</p>
 <h2>更新、协议与出错后的处理</h2>
 <p>先用 <code>updates download --product hub</code> 下载，再用 <code>updates apply --product hub</code> 查看更新计划。更新 Studio 时改用 <code>studio</code>。确认后，Hub 自身更新会关闭已运行的 Hub 窗口和后台服务，再通过更新桥接安装并重启后台服务；返回“已排队”不代表安装完成，请继续查看 <code>updates status</code> 和 <code>diagnostics transactions</code>。</p>
 <p>需要接受协议时，先运行 <code>legal show --product studio</code>（Hub 协议使用 <code>hub</code>），阅读完整内容。只有在你同意后，才运行 <code>legal accept --product studio</code>，核对返回内容并带确认标识再次执行。</p>
-<table><tr><th>退出码</th><th>该怎么做</th></tr><tr><td>0</td><td>命令成功，查看返回结果。</td></tr><tr><td>2</td><td>命令或参数有误，对照帮助修改。</td></tr><tr><td>3</td><td>操作失败，阅读错误和操作步骤，排除原因后重试。</td></tr><tr><td>4</td><td>需要选择内容处置方式，或阅读计划并确认。</td></tr><tr><td>5</td><td>需要阅读当前协议并决定是否接受。</td></tr></table>
+<table><tr><th>退出码</th><th>该怎么做</th></tr><tr><td>0</td><td>命令成功，查看返回结果。</td></tr><tr><td>2</td><td>命令或参数有误，对照帮助修改。</td></tr><tr><td>3</td><td>操作失败，阅读错误和操作步骤，排除原因后重试。</td></tr><tr><td>4</td><td>需要阅读计划并确认。</td></tr><tr><td>5</td><td>需要阅读当前协议并决定是否接受。</td></tr></table>
 <p class="note">不要让脚本自动拿到新确认标识就继续执行。新计划需要重新审阅。自动化使用方式见 <a href="ai-reference.html">AI 命令参考</a>，可供程序读取的定义见 <a href="command-reference.json">JSON 命令契约</a>。</p>
 </html>

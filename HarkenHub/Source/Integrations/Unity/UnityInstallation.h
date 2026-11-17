@@ -7,12 +7,6 @@
 
 namespace VNX::UnityInstallation {
 
-enum class ContentComponent { Core, Documentation, Samples };
-enum class ContentAction { Ask, Keep, Update, Remove };
-
-ContentComponent contentComponent(const QString& relative);
-QString contentActionName(ContentAction action);
-
 struct Installation
 {
     QString path;

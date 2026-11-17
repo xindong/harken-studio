@@ -3,7 +3,6 @@
 #include "Versions/VersionScanner.h"
 #include "Integrations/ProjectIntegrationExecutor.h"
 #include "Integrations/EngineTargetProbe.h"
-#include "UnityInstallation.h"
 
 #include <QHash>
 #include <QString>
@@ -16,8 +15,6 @@
 #include <memory>
 
 class QLabel;
-class QCheckBox;
-class QButtonGroup;
 class QAction;
 class QComboBox;
 class QLineEdit;
@@ -89,7 +86,7 @@ private:
     };
 
     enum class IntegrationComparison { Unknown, Different, Current, Blocked };
-    enum class IntegrationPhase { Choosing, Checking, Resolving, Reviewing, Applying, Finished };
+    enum class IntegrationPhase { Choosing, Checking, Reviewing, Applying, Finished };
 
     struct IntegrationSelection
     {
@@ -154,8 +151,6 @@ private:
     void showIntegrationResolution();
     QString selectedIntegrationPackageName() const;
     void updatePrimaryAction();
-    VNX::UnityInstallation::ContentAction contentAction(bool documentation) const;
-    bool contentSelectionPending() const;
     void refreshEngineRunningHint();
     void updateIntegrationSelectionContext();
     void updateIntegrationSourceState();
@@ -251,16 +246,6 @@ private:
     QPushButton* cancelIntegrationButton_ = nullptr;
     QWidget* integrationSelectionRow_ = nullptr;
     QWidget* integrationInstallRow_ = nullptr;
-    QWidget* integrationContentRow_ = nullptr;
-    QCheckBox* documentationCheck_ = nullptr;
-    QCheckBox* samplesCheck_ = nullptr;
-    QWidget* existingContentPanel_ = nullptr;
-    QWidget* existingDocumentationRow_ = nullptr;
-    QWidget* existingSamplesRow_ = nullptr;
-    QButtonGroup* documentationActions_ = nullptr;
-    QButtonGroup* samplesActions_ = nullptr;
-    bool documentationPresent_ = false;
-    bool samplesPresent_ = false;
     QLineEdit* installedIntegrationPath_ = nullptr;
     QPushButton* unlinkProjectsButton_ = nullptr;
     QPushButton* linkProjectsButton_ = nullptr;

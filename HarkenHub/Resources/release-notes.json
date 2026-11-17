@@ -26,10 +26,6 @@
         },
         {
           "category": "improved",
-          "text": "Install core Unity integration by default and choose API documentation and samples separately. Existing optional content asks for a keep, update or remove decision, with backups before replacement or removal."
-        },
-        {
-          "category": "improved",
           "text": "Show the current project filename after a renamed project is added again."
         },
         {

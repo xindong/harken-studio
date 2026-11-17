@@ -56,7 +56,7 @@ const Command commands[] = {
     {"integrations unlink", "id! confirm", "Remove an association without removing integration files."},
     {"integrations locate", "engine path! location!", "Rediscover and save an installed integration location."},
     {"integrations verify", "engine path! location", "Inspect installed integration integrity."},
-    {"integrations install", "engine path! source! location documentation samples preserve-unowned confirm", "Review or apply an integration installation/update."},
+    {"integrations install", "engine path! source! location preserve-unowned confirm", "Review or apply an integration installation/update."},
     {"integrations remove", "engine path! location backup! confirm", "Review or remove managed integration files with a backup."},
     {"integrations move", "engine path! location destination! backup! confirm", "Review or migrate an installed integration."},
     {"integrations recover-move", "engine path! location destination! backup! confirm", "Review or recover an interrupted integration migration."},
@@ -94,8 +94,6 @@ QJsonObject parameters(const Command& command)
         {"project", "Harken .hsp project file to associate with the Unity project."},
         {"source", "Unity integration source folder. For restoration, an optional verified official source."},
         {"id", "Association id returned by integrations list."},
-        {"documentation", "ask omits absent content and requests a choice for existing content; keep, update and remove are explicit decisions."},
-        {"samples", "ask omits absent content and requests a choice for existing content; keep, update and remove are explicit decisions."},
         {"preserve-unowned", "Permit preserving an unowned existing integration during replacement; inspect the returned plan first."},
         {"backup", "New backup directory for removal, migration or restoration; repeat the identical path when confirming. Recovery uses the interrupted operation's backup."},
         {"destination", "New integration path relative to the Unity project."},
@@ -114,10 +112,6 @@ QJsonObject parameters(const Command& command)
         if (QStringList{"allow-expired", "preserve-unowned", "accept-conflicts"}.contains(key)) {
             option["enum"] = QJsonArray{"true", "false"};
             option["default"] = "false";
-        }
-        if (key == "documentation" || key == "samples") {
-            option["enum"] = QJsonArray{"ask", "keep", "update", "remove"};
-            option["default"] = "ask";
         }
         if (key == "engine") { option["enum"] = QJsonArray{"unity"}; option["default"] = "unity"; }
         if (key == "product") { option["enum"] = QJsonArray{"hub", "studio"}; if (!required) option["default"] = "hub"; }
@@ -245,7 +239,7 @@ QJsonObject commandReference()
     }
     return {{"usage", "HarkenHub --cli <group> <operation> [--option value]"}, {"commands", catalog},
         {"schemaVersion", 1}, {"output", "One UTF-8 JSON object on stdout. Progress and diagnostics use stderr. No Hub window is created."},
-        {"confirmation", "Exit 4 returns the current plan and an opaque confirmation token. Review it and repeat the identical command with --confirm TOKEN. Any changed arguments or plan require a new review. contentSelectionRequired requires explicit component choices first."},
+        {"confirmation", "Exit 4 returns the current plan and an opaque confirmation token. Review it and repeat the identical command with --confirm TOKEN. Any changed arguments or plan require a new review."},
         {"consent", "Exit 5 requires explicit consent. Read legal show, preview legal accept and submit its token only after the user accepts the documents."},
         {"exitCodes", QJsonObject{{"0", "success"}, {"2", "invalid arguments"}, {"3", "operation failed"}, {"4", "review required"}, {"5", "consent required"}}}};
 }

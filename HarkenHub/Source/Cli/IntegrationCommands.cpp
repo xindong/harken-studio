@@ -30,16 +30,6 @@ QJsonObject relationship(const IntegrationRecord& record)
         {"source", record.integrationSourcePath}, {"enabled", record.enabled}};
 }
 
-VNX::UnityInstallation::ContentAction contentAction(const QString& value)
-{
-    using Action = VNX::UnityInstallation::ContentAction;
-    if (value == "keep") return Action::Keep;
-    if (value == "update") return Action::Update;
-    if (value == "remove") return Action::Remove;
-    require(value == "ask", "Content actions must be ask, keep, update or remove", "InvalidArguments");
-    return Action::Ask;
-}
-
 QJsonObject unityJson(const UnityIntegrationResult& result)
 {
     QJsonArray steps;
@@ -49,9 +39,7 @@ QJsonObject unityJson(const UnityIntegrationResult& result)
     QJsonArray files;
     for (const auto& file : result.fileChanges) files.append(QJsonObject{{"action", file.action}, {"path", file.path}});
     return {{"steps", steps}, {"files", files}, {"location", result.integrationInstallPath},
-        {"current", result.targetAlreadyCurrent}, {"documentationPresent", result.documentationPresent},
-        {"samplesPresent", result.samplesPresent}, {"contentSelectionRequired", result.requiresContentSelection},
-        {"contentBackup", result.contentBackupPath}, {"removalBackup", result.removalBackupPath},
+        {"current", result.targetAlreadyCurrent}, {"removalBackup", result.removalBackupPath},
         {"restorationBackup", result.restorationBackupPath}, {"migrationBackup", result.migrationBackupPath},
         {"migrationDestination", result.migrationTargetPath}, {"report", result.jsonReportPath},
         {"conflicts", QJsonArray::fromStringList(result.conflictingFiles)}};
@@ -75,8 +63,6 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
     }
     request.integrationInstallPath = target.integrationInstallPath;
     request.integrationSourcePath = args.value("source");
-    request.documentation = contentAction(args.value("documentation", "ask"));
-    request.samples = contentAction(args.value("samples", "ask"));
     request.preserveUnownedTarget = args.flag("preserve-unowned");
     request.checkOnly = true;
     request.verifyInstalledOnly = args.operation == "verify" || args.operation == "locate";
@@ -119,9 +105,6 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
         target.integrationInstallPath = result.integrationInstallPath;
         return {result.success ? 0 : 3, {{"ok", result.success}, {"data", unityJson(result)}}};
     }
-    if (result.requiresContentSelection)
-        return {4, {{"ok", false}, {"contentSelectionRequired", true}, {"data", unityJson(result)},
-            {"message", "Choose --documentation and --samples actions for existing components, then review again."}}};
     const bool failed = std::any_of(result.steps.begin(), result.steps.end(), [](const auto& step) { return step.status == UnityIntegrationStepStatus::Failed; });
     if (failed || (!result.success && !result.requiresConfirmation))
         return {3, {{"ok", false}, {"data", unityJson(result)}}};

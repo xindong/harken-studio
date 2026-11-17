@@ -1,7 +1,5 @@
 #pragma once
 
-#include "UnityInstallation.h"
-
 #include <QObject>
 #include <QJsonObject>
 #include <QMap>
@@ -51,8 +49,6 @@ public:
         QString integrationSourcePath;
         QString integrationInstallPath;
         bool installToAssets = false;
-        VNX::UnityInstallation::ContentAction documentation = VNX::UnityInstallation::ContentAction::Ask;
-        VNX::UnityInstallation::ContentAction samples = VNX::UnityInstallation::ContentAction::Ask;
         bool checkOnly = false;
         bool confirmTargetChanges = false;
         QByteArray approvedPlanHash;
@@ -86,10 +82,6 @@ public:
         bool integrationRemoved = false;
         bool removalBackupCreated = false;
         bool changesDetected = false;
-        bool documentationPresent = false;
-        bool samplesPresent = false;
-        bool requiresContentSelection = false;
-        QString contentBackupPath;
         QByteArray planHash;
         QStringList modifiedFiles;
         QStringList conflictingFiles;

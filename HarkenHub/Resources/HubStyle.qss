@@ -7,17 +7,6 @@ QWidget {
     selection-color: palette(highlighted-text);
 }
 QMainWindow { background-color: palette(dark); }
-QCheckBox, QRadioButton { spacing: 6px; }
-QCheckBox::indicator, QRadioButton::indicator {
-    width: 14px;
-    height: 14px;
-    border: 1px solid palette(placeholder-text);
-    background-color: palette(base);
-}
-QCheckBox::indicator:checked { background-color: palette(highlight); border-color: palette(highlight); image: url(:/Resources/icons/check-@theme@.svg); }
-QCheckBox::indicator:disabled { border-color: palette(mid); }
-QRadioButton::indicator { border-radius: 8px; }
-QRadioButton::indicator:checked { border: 4px solid palette(highlight); width: 8px; height: 8px; }
 QTextBrowser, QTreeWidget { border: 1px solid palette(mid); }
 #sidebarPanel { background-color: palette(dark); }
 #sidebarSeparator { background-color: palette(mid); }

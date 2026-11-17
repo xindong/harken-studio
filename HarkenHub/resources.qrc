@@ -7,8 +7,6 @@
         <file>Resources/icons/HubIcon.png</file>
         <file>Resources/icons/HubIcon.ico</file>
         <file>Resources/icons/Settings.svg</file>
-        <file>Resources/icons/check-dark.svg</file>
-        <file>Resources/icons/check-light.svg</file>
         <file>Resources/release-notes.json</file>
     </qresource>
 </RCC>
