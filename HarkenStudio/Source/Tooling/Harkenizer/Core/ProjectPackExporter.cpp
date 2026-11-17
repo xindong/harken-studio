@@ -475,7 +475,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             result.success = publication.success;
             result.canceled = publication.canceled;
             result.error = publication.error;
-            result.warnings.append(publication.warnings);
+            result.addGlobalWarnings(publication.warnings);
             return result;
         }
         return ExportAllPacks(prepared.snapshot->project, outputDir, prepared, outRecords);
@@ -656,10 +656,11 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
         if (effectiveOpts.progressCallback)
             effectiveOpts.progressCallback({effectiveOpts.platform, unit.variant.language,
                 unitKey, 100, PackGenerationStage::Skipped});
-        if (!outRecords) continue;
         const QString warning = unit.grouped
             ? QStringLiteral("Pack group has no Actions with steps; nothing to pack")
             : QStringLiteral("Action has no steps; nothing to pack");
+        result.warnings.append(warning);
+        if (!outRecords) continue;
         outRecords->push_back({
             unit.name, unit.grouped ? 0 : actionsByStableId.at(*empty)->objectID,
             unit.grouped ? PackBuildRecord::Source::Group : PackBuildRecord::Source::Action, true,
@@ -671,11 +672,6 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             unit.platformDefinition.toJson(), false,
             unitKey, true});
     }
-    if (!emptyActionIds.empty())
-        result.warnings.append(
-            QStringLiteral("%1 action(s) have no steps and were not packed")
-                .arg(emptyActionIds.size()));
-
     CanonicalPackSetExportRequest setRequest;
     setRequest.project = &project;
     setRequest.outputDir = outputDir;
