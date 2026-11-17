@@ -7,7 +7,6 @@
 #include "Core/ProjectManager.h"
 #include "Core/ThemeManager.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
-#include "Core/AssetPipeline/PlatformProfile.h"
 #include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/AudioEngine.h"
 

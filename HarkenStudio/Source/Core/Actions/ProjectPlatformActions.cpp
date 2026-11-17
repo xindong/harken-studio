@@ -17,7 +17,7 @@ namespace {
 
 namespace Platforms = ProjectPlatformSemantics;
 
-enum class Operation { Create, Rename, Delete, Base, Profile, Batch };
+enum class Operation { Create, Rename, Delete, Base, Batch };
 
 struct RootState
 {
@@ -246,7 +246,6 @@ ActionResult commitEdit(ProjectManager* manager, EditState before, EditState aft
         : operation == Operation::Rename ? QStringLiteral("Rename Project Platform")
         : operation == Operation::Delete ? QStringLiteral("Delete Project Platform")
         : operation == Operation::Base ? QStringLiteral("Change Base Platform")
-        : operation == Operation::Profile ? QStringLiteral("Set Project Platform Profile")
         : QStringLiteral("Apply Project Platforms");
     result.data.insert("affected_item_count", history->second.owners.size());
     return result;
@@ -258,11 +257,10 @@ ActionResult executeEdit(ProjectManager* manager, Operation operation, const QJs
         return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
 
     QStringList allowed;
-    if (operation == Operation::Create) allowed = {"name", "base_platform", "profile"};
+    if (operation == Operation::Create) allowed = {"name", "base_platform"};
     if (operation == Operation::Rename) allowed = {"platform_id", "name"};
     if (operation == Operation::Delete) allowed = {"platform_id"};
     if (operation == Operation::Base) allowed = {"platform_id", "base_platform"};
-    if (operation == Operation::Profile) allowed = {"platform_id", "profile"};
     for (const auto& key : args.keys()) {
         if (!allowed.contains(key))
             return {false, {}, "INVALID_ARGS", QStringLiteral("Unknown platform argument: %1").arg(key)};
@@ -295,24 +293,8 @@ ActionResult executeEdit(ProjectManager* manager, Operation operation, const QJs
         const auto base = Platforms::parseBasePlatform(args.value("base_platform").toString());
         if (!base) return {false, {}, "INVALID_ARGS", "base_platform must be Windows, macOS, Linux, Android, or iOS"};
         if (operation == Operation::Create) definition.id = QUuid::createUuid();
-        if (operation == Operation::Create || definition.basePlatform != *base)
-            definition.profile = ProjectPlatformProfile::fromBasePlatform(*base);
         definition.basePlatform = *base;
     }
-    if (operation == Operation::Profile || args.contains("profile")) {
-        if (!args.contains("profile")) return {false, {}, "INVALID_ARGS", "profile must be an object or null"};
-        const auto profile = args.value("profile");
-        if (profile.isNull()) definition.profile = ProjectPlatformProfile::fromBasePlatform(definition.basePlatform);
-        else {
-            auto json = definition.toJson();
-            json.insert("profile", profile);
-            QVector<ProjectPlatform> parsed;
-            if (!Platforms::platformsFromJson(QJsonArray{json}, &parsed, &error))
-                return {false, {}, "INVALID_ARGS", error};
-            definition.profile = parsed.first().profile;
-        }
-    }
-
     const auto id = Platforms::idString(definition.id);
     if (operation == Operation::Create) {
         after.root.platforms.append(definition);
@@ -407,10 +389,7 @@ void registerProjectPlatformActions(ActionManager& manager, ProjectManager* proj
         if (!projectManager || !projectManager->isProjectOpen())
             return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
         const auto& platforms = projectManager->currentProject()->platforms;
-        QJsonObject profiles;
-        for (const auto& platform : platforms)
-            profiles.insert(Platforms::idString(platform.id), platform.profile.toJson());
-        return {true, {{"platforms", Platforms::platformsToJson(platforms)}, {"effective_profiles", profiles},
+        return {true, {{"platforms", Platforms::platformsToJson(platforms)},
                        {"base_platforms", QJsonArray{"Windows", "macOS", "Linux", "Android", "iOS"}}}, {}, {}};
     };
     manager.registerAction(list);
@@ -436,7 +415,6 @@ void registerProjectPlatformActions(ActionManager& manager, ProjectManager* proj
     add(QStringLiteral("rename_project_platform"), QStringLiteral("Rename Project Platform"), Operation::Rename);
     add(QStringLiteral("delete_project_platform"), QStringLiteral("Delete Project Platform"), Operation::Delete);
     add(QStringLiteral("set_project_platform_base"), QStringLiteral("Change Base Platform"), Operation::Base);
-    add(QStringLiteral("set_project_platform_profile"), QStringLiteral("Set Project Platform Profile"), Operation::Profile);
 }
 
 }

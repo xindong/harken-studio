@@ -6,6 +6,7 @@
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/PathUtils.h"
 #include "Core/Components/VAction.h"
+#include "Core/Components/VConversion.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VTrack.h"
 #include "Core/IPC/IPCServer.h"
@@ -293,11 +294,7 @@ protected:
         ASSERT_FALSE(low.isNull());
         ASSERT_FALSE(high.isNull());
         setRate(low, 22050);
-        ProjectPlatformProfile highProfile;
-        highProfile.performResample = true;
-        highProfile.sizePolicies.front().config.targetSampleRate = 44100;
-        ASSERT_TRUE(run("set_project_platform_profile", {{"platform_id", Platforms::idString(high)},
-            {"profile", highProfile.toJson()}}).success);
+        setRate(high, 44100);
         layer = manager().createItem(nullptr, "MediaLayer", ProjectItem::Type::Layer);
         sound = manager().createItem(layer, "Tone", ProjectItem::Type::Sound);
         action = manager().createItem(nullptr, "PlayTone", ProjectItem::Type::Action);
@@ -359,11 +356,15 @@ protected:
     }
     void setRate(ProjectPlatformId id, uint32_t rate)
     {
-        ProjectPlatformProfile profile;
-        profile.performResample = true;
-        profile.sizePolicies.front().config.targetSampleRate = rate;
-        ASSERT_TRUE(run("set_project_platform_profile", {{"platform_id", Platforms::idString(id)},
-            {"profile", profile.toJson()}}).success);
+        auto* item = manager().findItemByGuid(project().defaultConversionRef);
+        ASSERT_NE(item, nullptr);
+        auto* conversion = item->comp<VConversion>();
+        ASSERT_NE(conversion, nullptr);
+        auto* config = conversion->platformConfig(id);
+        ASSERT_NE(config, nullptr);
+        config->format = ConversionFormat::PCM;
+        config->tiers = {{std::nullopt, rate}};
+        item->markDirty();
     }
     ProjectPackExporter::ExportResult exportPlatform(ProjectPlatformId id, const QString& path,
         std::vector<ProjectPackExporter::PackBuildRecord>& records)
@@ -399,66 +400,6 @@ protected:
     ProjectItem* action = nullptr;
     AssetInfo source;
 };
-
-TEST_F(ProjectPlatformBuild, ChangedProfileDoesNotJoinOrPublishAnOlderJob)
-{
-    AssetConverter converter;
-    auto before = converter.convertAsync(source.sourceID, low);
-    setRate(low, 32000);
-    auto after = converter.convertAsync(source.sourceID, low);
-    before.waitForFinished();
-    after.waitForFinished();
-    ASSERT_TRUE(before.result().success);
-    ASSERT_TRUE(after.result().success);
-    EXPECT_NE(before.result().cachePath, after.result().cachePath);
-    QCoreApplication::processEvents();
-    const auto* asset = AssetRegistry::instance().getAsset(source.sourceID);
-    ASSERT_NE(asset, nullptr);
-    EXPECT_EQ(asset->platformCaches.value(low).cachePath, after.result().cachePath);
-}
-
-TEST_F(ProjectPlatformBuild, DeleteAndUndoRejectsThePreviousPlatformLifetime)
-{
-    AssetConverter converter;
-    auto future = converter.convertAsync(source.sourceID, low);
-    ASSERT_TRUE(run("delete_project_platform", {{"platform_id", Platforms::idString(low)}}).success);
-    UndoRedoManager::instance().undo();
-    ASSERT_NE(Platforms::find(project().platforms, low), nullptr);
-    future.waitForFinished();
-    ASSERT_TRUE(future.result().success);
-    QCoreApplication::processEvents();
-    EXPECT_FALSE(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.contains(low));
-    ASSERT_TRUE(converter.convert(source.sourceID, low).success);
-}
-
-TEST_F(ProjectPlatformBuild, ReopenedRegistryWithSamePathAndIdsRejectsLateCompletion)
-{
-    AssetConverter converter;
-    auto future = converter.convertAsync(source.sourceID, low);
-    const auto root = AssetRegistry::instance().projectRoot();
-    AssetRegistry::instance().clear();
-    AssetRegistry::instance().setProjectRoot(root);
-    AssetRegistry::instance().setPlatforms(project().platforms);
-    ASSERT_TRUE(AssetRegistry::instance().registerAsset(source));
-    future.waitForFinished();
-    ASSERT_TRUE(future.result().success);
-    QCoreApplication::processEvents();
-    EXPECT_FALSE(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.contains(low));
-}
-
-TEST_F(ProjectPlatformBuild, CancelIsScopedToTheRequestedInstance)
-{
-    AssetConverter converter;
-    auto first = converter.convertAsync(source.sourceID, low);
-    auto second = converter.convertAsync(source.sourceID, high);
-    converter.cancelJob(source.sourceID, low);
-    first.waitForFinished();
-    second.waitForFinished();
-    ASSERT_TRUE(second.result().success);
-    QCoreApplication::processEvents();
-    EXPECT_FALSE(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.contains(low));
-    EXPECT_TRUE(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.contains(high));
-}
 
 TEST_F(ProjectPlatformBuild, LeasedProjectBuildsAfterTheActiveProjectCloses)
 {

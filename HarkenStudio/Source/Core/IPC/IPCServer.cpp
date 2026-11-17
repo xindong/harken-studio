@@ -124,8 +124,6 @@ IPCServer::~IPCServer()
 
 void IPCServer::waitForPendingOperations()
 {
-    if (transcodeCancel_) transcodeCancel_->store(true);
-    if (transcodeThread_) transcodeThread_->wait();
     if (packBuildThread_) {
         packBuildThread_->wait();
     }
@@ -461,14 +459,9 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         return withRequestId(errorResponse("DESKTOP_REQUIRED",
             "This command requires the desktop editor. Use the corresponding project operation for headless authoring."));
 
-    if (transcodeInProgress_ && !isReadOnlyCommand(cmd) && cmd != QLatin1String("cancel_transcode"))
-        return withRequestId(errorResponse("TRANSCODE_IN_PROGRESS",
-            "The project is read-only while media is being converted. Wait for completion or cancel_transcode."));
-
     if (PackGenerationRecordStore::instance().isExporting()
         && !isReadOnlyCommand(cmd)
         && cmd != QLatin1String("cancel_pack_build")
-        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("batch")
         && cmd != QLatin1String("query")
         && cmd != QLatin1String("find_widget")
@@ -484,9 +477,7 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         && cmd != QLatin1String("list_commands")
         && cmd != QLatin1String("get_command_schema")
         && cmd != QLatin1String("get_ui_operation")
-        && cmd != QLatin1String("get_transcode_status")
         && cmd != QLatin1String("audition_get_seek_status")
-        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("create_project")
         && cmd != QLatin1String("open_project"))
     {
@@ -763,8 +754,6 @@ bool IPCServer::isJsonCommandAvailableInCurrentState(const QString& cmd) const
         QStringLiteral("list_commands"),
         QStringLiteral("get_command_schema"),
         QStringLiteral("get_ui_operation"),
-        QStringLiteral("get_transcode_status"),
-        QStringLiteral("cancel_transcode"),
         QStringLiteral("open_project"),
         QStringLiteral("create_project"),
     };

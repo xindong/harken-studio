@@ -68,10 +68,9 @@ struct PackMediaPreparation::Impl
     uint64_t estimateBytes(const Work& work, const Result& result) const
     {
         const auto& metadata = result.conversion->asset.metadata;
-        const auto& settings = result.conversion->settings;
+        const auto targetSampleRateHz = result.conversion->targetSampleRateHz;
         if (metadata.sampleRate == 0 || metadata.channels == 0
-            || !std::isfinite(work.scheduleOffsetSec) || work.scheduleOffsetSec < 0.0
-            || (settings.performResample && settings.targetSampleRate == 0))
+            || !std::isfinite(work.scheduleOffsetSec) || work.scheduleOffsetSec < 0.0)
             return byteLimit + 1;
         const uint64_t start = std::min(result.source.trimStartFrame, metadata.totalSamples);
         const uint64_t end = std::clamp(result.source.trimEndFrame.value_or(metadata.totalSamples),
@@ -79,8 +78,7 @@ struct PackMediaPreparation::Impl
         const long double frameBytes = static_cast<long double>(metadata.channels) * sizeof(float);
         const long double decodedBytes = static_cast<long double>(metadata.totalSamples) * frameBytes;
         const long double trimmedFrames = static_cast<long double>(end - start);
-        const long double outputRate = settings.performResample
-            ? std::max(metadata.sampleRate, settings.targetSampleRate) : metadata.sampleRate;
+        const long double outputRate = std::max(metadata.sampleRate, targetSampleRateHz);
         const long double outputFrames = std::ceil(trimmedFrames * outputRate / metadata.sampleRate)
             + std::ceil(static_cast<long double>(work.scheduleOffsetSec) * outputRate);
         const long double bytes = 3.0L * (decodedBytes + trimmedFrames * frameBytes
@@ -151,7 +149,7 @@ struct PackMediaPreparation::Impl
         };
         result.artifact = SoundSourceDerivative::materialize(
             conversion->inputPath(), result.source, work.scheduleOffsetSec,
-            platform, derivativeDir, conversion->settings, &derivativeError,
+            platform, derivativeDir, conversion->targetSampleRateHz, &derivativeError,
             cache.get(), conversion->sourceInput.get(), capture);
         if (captureFailed) {
             result.error = derivativeError;

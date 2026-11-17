@@ -269,9 +269,6 @@ void ProjectConfigPage::commitPlatform(const ProjectPlatform& before)
     } else if (next.basePlatform != before.basePlatform) {
         command = QStringLiteral("set_project_platform_base");
         args.insert(QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(next.basePlatform));
-    } else if (next.profile.toJson() != before.profile.toJson()) {
-        command = QStringLiteral("set_project_platform_profile");
-        args.insert(QStringLiteral("profile"), next.profile.toJson());
     }
     if (command.isEmpty()) return;
     ActionResult result;
@@ -303,8 +300,7 @@ void ProjectConfigPage::addPlatform()
         QScopedValueRollback guard(committing_, true);
         result = ActionManager::instance().execute(QStringLiteral("create_project_platform"),
             {{QStringLiteral("name"), definition.name},
-             {QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(definition.basePlatform)},
-             {QStringLiteral("profile"), definition.profile.toJson()}}, ActionSource::GUI);
+             {QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(definition.basePlatform)}}, ActionSource::GUI);
     }
     syncPlatforms(true, project->platforms.size() - 1);
     if (!result.success) showError(result.errorMessage);

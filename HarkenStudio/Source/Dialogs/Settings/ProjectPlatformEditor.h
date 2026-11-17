@@ -5,15 +5,10 @@
 #include <QWidget>
 #include <QStringList>
 
-class QCheckBox;
 class QComboBox;
-class QDialogButtonBox;
 class QLineEdit;
 
 namespace VNX {
-
-class ProportionalTreeWidget;
-class TableWidget;
 
 class ProjectPlatformEditor : public QWidget
 {
@@ -32,10 +27,7 @@ signals:
     void platformChanged(const ProjectPlatform& before);
 
 private:
-    void refreshPolicies(int selected = -1);
     void updateControls();
-    void resetProfile();
-    void storePolicy(const SizePolicy& policy, int index);
     QString nameError() const;
 
     ProjectPlatform platform_;
@@ -43,10 +35,6 @@ private:
     bool readOnly_ = false;
     QLineEdit* name_ = nullptr;
     QComboBox* base_ = nullptr;
-    QCheckBox* resample_ = nullptr;
-    TableWidget* content_ = nullptr;
-    ProportionalTreeWidget* policies_ = nullptr;
-    QDialogButtonBox* buttons_ = nullptr;
 };
 
 }

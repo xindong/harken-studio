@@ -990,56 +990,6 @@
       },
       "type": "object"
     },
-    "platformConversionSettings": {
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "maximum": 5,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "targetSampleRate": {
-          "maximum": 4294967295,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "vorbisAverageBitrate": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisEncodeMode": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisMaxBitrate": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisMinBitrate": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisQuality": {
-          "maximum": 1.0,
-          "minimum": -0.1,
-          "type": "number"
-        }
-      },
-      "required": [
-        "format",
-        "targetSampleRate",
-        "vorbisAverageBitrate",
-        "vorbisEncodeMode",
-        "vorbisMaxBitrate",
-        "vorbisMinBitrate",
-        "vorbisQuality"
-      ],
-      "type": "object"
-    },
     "playableOverrideRow": {
       "additionalProperties": false,
       "properties": {
@@ -1211,60 +1161,18 @@
           "maxLength": 120,
           "minLength": 1,
           "type": "string"
-        },
-        "profile": {
-          "$ref": "#/$defs/projectPlatformProfile"
         }
       },
       "required": [
         "id",
         "name",
-        "basePlatform",
-        "profile"
+        "basePlatform"
       ],
       "type": "object"
     },
     "projectPlatformId": {
       "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "type": "string"
-    },
-    "projectPlatformProfile": {
-      "additionalProperties": false,
-      "properties": {
-        "performResample": {
-          "type": "boolean"
-        },
-        "sizePolicies": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "config": {
-                "$ref": "#/$defs/platformConversionSettings"
-              },
-              "maxBytes": {
-                "maximum": 9223372036854775807,
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "config",
-              "maxBytes"
-            ],
-            "type": "object"
-          },
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "performResample",
-        "sizePolicies"
-      ],
-      "type": "object"
     },
     "s3Pack": {
       "additionalProperties": false,

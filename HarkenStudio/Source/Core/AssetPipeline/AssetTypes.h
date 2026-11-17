@@ -169,144 +169,6 @@ inline bool audioMetadataEqual(const AudioMetadata& a, const AudioMetadata& b)
     return a.toJson() == b.toJson();
 }
 
-struct ConversionParameters {
-    enum class Codec {
-        PCM_16,
-        PCM_Float,
-        ADPCM,
-        Vorbis,
-        HarkenPackVorbis,
-        HarkenPackOpus
-    };
-
-    enum class VorbisEncodeMode {
-        VBRQuality,
-        ManagedBitrate
-    };
-
-    Codec format = Codec::PCM_Float;
-    float vorbisQuality = 0.6f;
-    VorbisEncodeMode vorbisEncodeMode = VorbisEncodeMode::VBRQuality;
-    uint32_t vorbisAverageBitrate = 0;
-    uint32_t vorbisMinBitrate = 0;
-    uint32_t vorbisMaxBitrate = 0;
-
-    uint32_t targetSampleRate = 48000;
-
-    QJsonObject toJson() const {
-        QJsonObject obj;
-        obj["format"] = static_cast<int>(format);
-        obj["vorbisQuality"] = static_cast<double>(vorbisQuality);
-        obj["vorbisEncodeMode"] = static_cast<int>(vorbisEncodeMode);
-        obj["vorbisAverageBitrate"] = static_cast<qint64>(vorbisAverageBitrate);
-        obj["vorbisMinBitrate"] = static_cast<qint64>(vorbisMinBitrate);
-        obj["vorbisMaxBitrate"] = static_cast<qint64>(vorbisMaxBitrate);
-        obj["targetSampleRate"] = static_cast<qint64>(targetSampleRate);
-        return obj;
-    }
-
-    static ConversionParameters fromJson(const QJsonObject& obj) {
-        ConversionParameters s;
-        s.format = static_cast<Codec>(
-            obj["format"].toInt(static_cast<int>(Codec::PCM_Float)));
-        s.vorbisQuality = static_cast<float>(obj["vorbisQuality"].toDouble(0.6));
-        s.vorbisEncodeMode = static_cast<VorbisEncodeMode>(
-            obj["vorbisEncodeMode"].toInt(static_cast<int>(VorbisEncodeMode::VBRQuality)));
-        s.vorbisAverageBitrate = static_cast<uint32_t>(obj["vorbisAverageBitrate"].toInteger(0));
-        s.vorbisMinBitrate = static_cast<uint32_t>(obj["vorbisMinBitrate"].toInteger(0));
-        s.vorbisMaxBitrate = static_cast<uint32_t>(obj["vorbisMaxBitrate"].toInteger(0));
-        s.targetSampleRate = static_cast<uint32_t>(obj["targetSampleRate"].toInteger(48000));
-        return s;
-    }
-
-    static QString codecToString(Codec c) {
-        switch (c) {
-            case Codec::PCM_16:    return QStringLiteral("PCM_16");
-            case Codec::PCM_Float: return QStringLiteral("PCM_Float");
-            case Codec::ADPCM:     return QStringLiteral("ADPCM");
-            case Codec::Vorbis:    return QStringLiteral("Vorbis");
-            case Codec::HarkenPackVorbis: return HarkenEditor::Bridge::packVorbisCodecName();
-            case Codec::HarkenPackOpus: return HarkenEditor::Bridge::packOpusCodecName();
-            default:               return QStringLiteral("Unknown");
-        }
-    }
-
-    static Codec codecFromString(const QString& s) {
-        if (s == QStringLiteral("PCM_Float")) return Codec::PCM_Float;
-        if (s == QStringLiteral("ADPCM"))     return Codec::ADPCM;
-        if (s == QStringLiteral("Vorbis"))    return Codec::Vorbis;
-        if (s == HarkenEditor::Bridge::packVorbisCodecName()) return Codec::HarkenPackVorbis;
-        if (s == HarkenEditor::Bridge::packOpusCodecName()) return Codec::HarkenPackOpus;
-        return Codec::PCM_Float;
-    }
-};
-
-struct ConversionSettings : ConversionParameters {
-    bool performResample = false;
-
-    ConversionSettings() = default;
-    ConversionSettings(const ConversionParameters& parameters, bool resample)
-        : ConversionParameters(parameters), performResample(resample) {}
-
-    uint32_t hash() const {
-        uint32_t h = 2166136261u;
-        auto mix = [&h](uint32_t value) {
-            h ^= value;
-            h *= 16777619u;
-        };
-
-        mix(kMediaCacheArtifactVersion);
-        mix(performResample ? 1u : 0u);
-        if (performResample)
-            mix(targetSampleRate);
-        return h;
-    }
-
-    QJsonObject toJson() const {
-        auto json = ConversionParameters::toJson();
-        json["performResample"] = performResample;
-        return json;
-    }
-
-    static ConversionSettings fromJson(const QJsonObject& json) {
-        return {ConversionParameters::fromJson(json), json["performResample"].toBool()};
-    }
-};
-
-struct CacheEntry {
-    bool valid = false;
-    uint64_t timestamp = 0;
-    uint64_t lastAccessTime = 0;
-    uint32_t settingsHash = 0;
-    QString fingerprint;
-    QString cachePath;
-    LoopInfo loopInfo;
-
-    QJsonObject toJson() const {
-        QJsonObject obj;
-        obj["valid"] = valid;
-        obj["timestamp"] = static_cast<qint64>(timestamp);
-        obj["lastAccessTime"] = static_cast<qint64>(lastAccessTime);
-        obj["settingsHash"] = static_cast<qint64>(settingsHash);
-        obj["fingerprint"] = fingerprint;
-        obj["cachePath"] = cachePath;
-        obj["loopInfo"] = loopInfo.toJson();
-        return obj;
-    }
-
-    static CacheEntry fromJson(const QJsonObject& obj) {
-        CacheEntry entry;
-        entry.valid = obj["valid"].toBool();
-        entry.timestamp = static_cast<uint64_t>(obj["timestamp"].toInteger());
-        entry.lastAccessTime = static_cast<uint64_t>(obj["lastAccessTime"].toInteger());
-        entry.settingsHash = static_cast<uint32_t>(obj["settingsHash"].toInteger());
-        entry.fingerprint = obj["fingerprint"].toString();
-        entry.cachePath = obj["cachePath"].toString();
-        entry.loopInfo = LoopInfo::fromJson(obj["loopInfo"].toObject());
-        return entry;
-    }
-};
-
 struct AssetInfo {
     uint32_t sourceID = 0;
     QString relativePath;
@@ -319,10 +181,8 @@ struct AssetInfo {
     QString ownerObjectGuid;
 
     AudioMetadata metadata;
-    ConversionSettings settings;
 
     uint64_t lastModified = 0;
-    QHash<QUuid, CacheEntry> platformCaches;
 
     bool isOrphaned = false;
 
@@ -335,15 +195,8 @@ struct AssetInfo {
         if (!waveformState.isEmpty()) obj["waveformState"] = QString::fromLatin1(waveformState.toHex());
         obj["lastModified"] = static_cast<qint64>(lastModified);
         obj["metadata"] = metadata.toJson();
-        obj["settings"] = settings.toJson();
         obj["isOrphaned"] = isOrphaned;
         obj["ownerObjectGuid"] = ownerObjectGuid;
-
-        QJsonObject caches;
-        for (auto it = platformCaches.begin(); it != platformCaches.end(); ++it) {
-            caches[it.key().toString(QUuid::WithoutBraces)] = it.value().toJson();
-        }
-        obj["platformCaches"] = caches;
 
         return obj;
     }
@@ -357,18 +210,8 @@ struct AssetInfo {
         info.waveformState = QByteArray::fromHex(obj["waveformState"].toString().toLatin1());
         info.lastModified = static_cast<uint64_t>(obj["lastModified"].toInteger());
         info.metadata = AudioMetadata::fromJson(obj["metadata"].toObject());
-        info.settings = ConversionSettings::fromJson(obj["settings"].toObject());
         info.isOrphaned = obj["isOrphaned"].toBool();
         info.ownerObjectGuid = obj["ownerObjectGuid"].toString();
-
-        QJsonObject caches = obj["platformCaches"].toObject();
-        for (auto it = caches.begin(); it != caches.end(); ++it) {
-            const QUuid p = QUuid::fromString(it.key());
-            if (p.isNull() || p.toString(QUuid::WithoutBraces) != it.key())
-                continue;
-            const auto entry = CacheEntry::fromJson(it.value().toObject());
-            if (!entry.fingerprint.isEmpty()) info.platformCaches[p] = entry;
-        }
 
         return info;
     }
@@ -419,37 +262,28 @@ inline QString assetErrorMessage(AssetError e) {
 }
 
 enum class MediaStatus : uint8_t {
-    Imported,
-    Converted,
+    Available,
     Missing,
-    Outdated,
     Orphaned,
-    Converting,
     Error
 };
 
 inline QString mediaStatusToString(MediaStatus s) {
     switch (s) {
-        case MediaStatus::Imported:   return QStringLiteral("Imported");
-        case MediaStatus::Converted:  return QStringLiteral("Converted");
+        case MediaStatus::Available:  return QStringLiteral("Available");
         case MediaStatus::Missing:    return QStringLiteral("Missing");
-        case MediaStatus::Outdated:   return QStringLiteral("Outdated");
         case MediaStatus::Orphaned:   return QStringLiteral("Orphaned");
-        case MediaStatus::Converting: return QStringLiteral("Converting");
         case MediaStatus::Error:      return QStringLiteral("Error");
         default:                      return QStringLiteral("Unknown");
     }
 }
 
 inline MediaStatus mediaStatusFromString(const QString& s) {
-    if (s == QStringLiteral("Imported"))   return MediaStatus::Imported;
-    if (s == QStringLiteral("Converted"))  return MediaStatus::Converted;
+    if (s == QStringLiteral("Available"))  return MediaStatus::Available;
     if (s == QStringLiteral("Missing"))    return MediaStatus::Missing;
-    if (s == QStringLiteral("Outdated"))   return MediaStatus::Outdated;
     if (s == QStringLiteral("Orphaned"))   return MediaStatus::Orphaned;
-    if (s == QStringLiteral("Converting")) return MediaStatus::Converting;
     if (s == QStringLiteral("Error"))      return MediaStatus::Error;
-    return MediaStatus::Imported;
+    return MediaStatus::Available;
 }
 
 }

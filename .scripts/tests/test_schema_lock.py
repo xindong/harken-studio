@@ -29,6 +29,14 @@ class SchemaLockTest(unittest.TestCase):
         self.editor_history = MODULE.schema_archive.load_tree("Editor")["manifest"]["supportedHistorical"]
         shutil.copytree(REPO_ROOT / "HarkenStudio" / "Schema", self.source)
         shutil.copytree(REPO_ROOT / "HarkenEngine" / "Schema" / "Pack", self.pack_binary)
+        editor = MODULE.schema_archive.load_tree("Editor", self.source)
+        manifest = editor["manifest"]
+        if manifest.pop("developmentVersion", None) is not None:
+            manifest["published"].append(self.editor_version)
+            path = self.source / f"Project/{self.editor_version}/ProjectSerializedSchema.json"
+            path.parent.mkdir()
+            path.write_bytes(MODULE.schema_archive.canonical_bytes(editor["current"]))
+            (self.source / "Project/manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         for name, value in (("SCHEMA_ROOT", self.source), ("PACK_BINARY_ROOT", self.pack_binary),
                             ("REPO_ROOT", self.root)):
             active = patch.object(MODULE, name, value)
@@ -59,6 +67,25 @@ class SchemaLockTest(unittest.TestCase):
         self.assertEqual(staged["currentSource"], source)
         self.assertEqual(staged["published"][self.editor_version], staged["current"])
         self.assertNotEqual(MODULE.schema_archive.load_tree("Editor", self.source)["published"][self.editor_version], staged["current"])
+
+    def test_development_generation_freezes_without_rewriting_published_contracts(self) -> None:
+        path = self.source / "Project/manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["developmentVersion"] = self.editor_version + 1
+        manifest["supportedHistorical"] = sorted(set(self.editor_history) | {self.editor_version})
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        before = self.snapshot()
+        result = self.stage(editor="next")
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version + 1)
+        MODULE.archive_candidate(self.candidate)
+        tree = MODULE.schema_archive.load_tree("Editor", self.source)
+        self.assertNotIn("developmentVersion", tree["manifest"])
+        self.assertEqual(tree["published"][self.editor_version + 1], tree["current"])
+        self.assertEqual(tree["manifest"]["supportedHistorical"], manifest["supportedHistorical"])
+        for name, data in before.items():
+            if name.startswith("HarkenStudio/Schema/Project/") and name.split("/")[3].isdigit():
+                self.assertEqual((self.root / name).read_bytes(), data)
 
     def test_pack_advances_independently_and_current_remains_unnumbered(self) -> None:
         current = MODULE.schema_archive.load_tree("Pack", self.source)["currentVersion"]

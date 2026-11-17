@@ -5,6 +5,11 @@
 
 namespace VNX {
 
+enum class ProjectDocumentContract {
+    VersionedSchema,
+    DevelopmentV9
+};
+
 struct ProjectDocumentData
 {
     QString type;
@@ -32,7 +37,8 @@ public:
     static bool parse(const QJsonObject& document,
                       const QString& expectedType,
                       ProjectDocumentData* data,
-                      QString* error = nullptr);
+                      QString* error = nullptr,
+                      ProjectDocumentContract contract = ProjectDocumentContract::VersionedSchema);
     static bool validateFieldGroupAuthoring(const QJsonObject& content,
                                               QString* error = nullptr);
     static void discardRetiredMakeUpGain(QJsonObject* properties);

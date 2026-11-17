@@ -18,9 +18,16 @@ bool ProjectSchemaValidator::supportsPackVersion(int version)
 
 QStringList ProjectSchemaValidator::validateProjectDocument(
     int version, const QString& documentType, const QJsonValue& document,
-    const QString& relativePath)
+    const QString& relativePath, ProjectDocumentContract contract)
 {
     QStringList errors;
+    if (contract == ProjectDocumentContract::DevelopmentV9) {
+        if (version != 9)
+            return {relativePath + QStringLiteral(": Development input requires Project Schema 9")};
+        GeneratedSchemaRegistry::validateDevelopmentProjectV9Document(
+            documentType, document, relativePath, errors);
+        return errors;
+    }
     QJsonValue input = document;
     if (version == kCurrentProjectSchemaVersion && document.isObject()) {
         auto object = document.toObject();

@@ -12,7 +12,6 @@
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/ThemeManager.h"
-#include "Core/AssetPipeline/PlatformProfile.h"
 #include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/AudioEngine.h"
 #include "Core/FontManager.h"

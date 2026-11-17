@@ -65,7 +65,7 @@ struct PreparedMedia
 };
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 double scheduleOffsetSec, uint32_t targetSampleRateHz,
                  const AudioMetadata& metadata);
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
@@ -73,14 +73,14 @@ std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
-                                     const ConversionSettings& settings,
+                                     uint32_t targetSampleRateHz,
                                      QString* error = nullptr);
 std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 const SoundSourceDef& source,
                                                 double scheduleOffsetSec,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
-                                                const ConversionSettings& settings,
+                                                uint32_t targetSampleRateHz,
                                                 QString* error = nullptr,
                                                 MaterializationCache* cache = nullptr,
                                                 const BuildSourceInput* input = nullptr,

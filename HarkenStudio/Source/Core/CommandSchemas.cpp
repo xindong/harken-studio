@@ -192,7 +192,7 @@ const QMap<QString, Contract>& contracts()
         put({"get_item_info", "get_container_info", "get_signal_chain", "get_referencing_actions"}, itemSelector(), true);
         put({"get_inspector_schema"}, object({{"schema_id", choice({"Sound", "Container", "Track", "Segment", "Layer",
             "Bus", "Action", "Variable", "Attenuation", "Effect"})}}, {"schema_id"}), true);
-        put({"get_asset_info", "get_conversion_settings"}, object({{"source_id", uint32()}}, {"source_id"}), true);
+        put({"get_asset_info"}, object({{"source_id", uint32()}}, {"source_id"}), true);
         put({"get_bus_properties"}, object({{"bus_id", QJsonObject{{"anyOf", QJsonArray{uuid(), uint32()}}}}}, {"bus_id"}), true);
         put({"get_bus_pitch", "get_bus_volume_db", "get_output_bus_gain"}, object({{"bus_name", text()}}, {"bus_name"}), true);
         put({"get_action_definition"}, object({{"name", text()}}, {"name"}), true);
@@ -211,18 +211,18 @@ const QMap<QString, Contract>& contracts()
         capability.insert("not", QJsonObject{{"required", QJsonArray{"rootStableId", "actionStableId"}}});
         put({"get_runtime_capability_matrix"}, capability, true);
 
-        for (const auto* name : {"list_project_platforms", "get_platform_profile", "get_action_pack_plan",
-                                "get_pack_build_status", "get_last_pack_build_records", "get_transcode_status", "get_media_status"})
+        for (const auto* name : {"list_project_platforms", "get_action_pack_plan",
+                                "get_pack_build_status", "get_last_pack_build_records", "get_media_status"})
             put({name}, projectPlatformCommandSchema(QLatin1String(name)), true);
         for (const auto* name : {"create_project_platform", "rename_project_platform", "delete_project_platform",
-                                "set_project_platform_base", "set_project_platform_profile", "apply_project_platforms",
-                                "export_pack", "cancel_pack_build", "transcode_asset", "batch_convert_media",
-                                "cancel_transcode", "rescan_media_sources"})
+                                "set_project_platform_base", "apply_project_platforms",
+                                "export_pack", "cancel_pack_build",
+                                "rescan_media_sources"})
             put({name}, projectPlatformCommandSchema(QLatin1String(name)));
 
         auto platformRows = projectPlatformCommandSchema("apply_project_platforms").value("properties").toObject().value("platforms").toObject();
         auto platformRow = platformRows.value("items").toObject();
-        platformRow.insert("required", QJsonArray{"id", "name", "basePlatform", "profile"});
+        platformRow.insert("required", QJsonArray{"id", "name", "basePlatform"});
         platformRows.insert("items", platformRow);
         auto createProject = object({{"name", text()}, {"location", text()},
             {"sample_rate", withDefault(integer(1), 48000)},
@@ -379,11 +379,6 @@ const QMap<QString, Contract>& contracts()
         put({"import_audio"}, importAudio);
         put({"import_audio_files"}, object({{"files", array(text(), 1)}, {"target_container_id", described(uint32(),
             "Target authoring handle: container, sound or output bus. Omit to import at the project root.")}}, {"files"}));
-        put({"set_conversion_settings"}, requireAny(object({{"source_id", uint32()},
-            {"codec", choice({"PCM_Float", "Vorbis", "ADPCM"})},
-            {"quality", QJsonObject{{"type", "number"}, {"minimum", -0.1}, {"maximum", 1}}},
-            {"resample", boolean()}, {"target_sample_rate", uint32()}, {"as_override", withDefault(boolean(), false)}}, {"source_id"}),
-            {"codec", "quality", "resample", "target_sample_rate", "as_override"}));
         put({"cleanup_cache"}, object({{"max_age_days", withDefault(integer(), 90)}, {"max_size_bytes", withDefault(integer(0, 9007199254740991.0), 0)}}));
         put({"regenerate_waveform_cache"}, object({{"path", described(text(), "Imported audio path. Omit to rebuild every waveform in the open project.")}}));
         const auto replacements = QJsonObject{{"type", "object"}, {"minProperties", 1},
@@ -441,7 +436,6 @@ const QMap<QString, Contract>& contracts()
             {"query_seek_action", "Read the state and results of a seek operation without changing it."},
             {"release_seek_action", "Release a completed seek operation record."},
             {"batch_replace_media", "Replace imported sources by source ID. All input rows must be valid; per-source I/O failures return an error with partial results."},
-            {"set_conversion_settings", "Update an imported source's conversion settings. Supported codecs are PCM_Float, ADPCM and Vorbis; as_override applies a file override."},
             {"regenerate_waveform_cache", "Regenerate one source's waveform cache, or rebuild all project waveforms when path is omitted."},
             {"set_container_property", "Set a supported container scalar property using value. Output, Send and Spatial Rating definitions use field-group commands."},
             {"set_bus_volume_db", "Set a bus's authored volume in decibels."},

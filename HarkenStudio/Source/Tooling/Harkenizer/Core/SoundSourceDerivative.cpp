@@ -48,14 +48,13 @@ std::optional<uint64_t> scheduleFrames(double seconds, uint32_t sampleRate)
 }
 
 QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                      double scheduleOffsetSec, const ConversionSettings& settings,
+                      double scheduleOffsetSec, uint32_t targetSampleRateHz,
                       const AudioMetadata& metadata)
 {
-    if (inputFingerprint.isEmpty() || !std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0
-        || (settings.performResample && settings.targetSampleRate == 0))
+    if (inputFingerprint.isEmpty() || !std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0)
         return {};
     const auto range = mapFrameRange(source, metadata.totalSamples);
-    const auto outputRate = settings.performResample ? settings.targetSampleRate : metadata.sampleRate;
+    const auto outputRate = targetSampleRateHz != 0 ? targetSampleRateHz : metadata.sampleRate;
     const auto offset = scheduleFrames(scheduleOffsetSec, outputRate);
     if (!range || outputRate == 0 || !offset) return {};
     const auto loop = loopRange(source, *range);
@@ -143,10 +142,10 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
 }
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 double scheduleOffsetSec, uint32_t targetSampleRateHz,
                  const AudioMetadata& metadata)
 {
-    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, settings, metadata));
+    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, targetSampleRateHz, metadata));
 }
 
 std::optional<MaterializedArtifact> MaterializationCache::find(const QByteArray& request)
@@ -206,7 +205,7 @@ static std::optional<MaterializedArtifact> findCached(const QByteArray& key,
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
-                                     const ConversionSettings& settings,
+                                     uint32_t targetSampleRateHz,
                                      QString* error)
 {
     if (!std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0) {
@@ -246,8 +245,8 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
         loop.loopStart = region->start;
         loop.loopEnd = region->end - 1;
     }
-    if (settings.performResample && settings.targetSampleRate != static_cast<uint32_t>(sampleRate)) {
-        if (!AssetConverter::processSamples(trimmed, sampleRate, channels, settings, loop, error))
+    if (targetSampleRateHz != 0 && targetSampleRateHz != static_cast<uint32_t>(sampleRate)) {
+        if (!AssetConverter::processSamples(trimmed, sampleRate, channels, targetSampleRateHz, loop, error))
             return std::nullopt;
     } else if (loop.enabled) {
         ++loop.loopEnd;
@@ -279,7 +278,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 double scheduleOffsetSec,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
-                                                const ConversionSettings& settings,
+                                                uint32_t targetSampleRateHz,
                                                 QString* error,
                                                 MaterializationCache* cache,
                                                 const BuildSourceInput* input,
@@ -302,7 +301,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
     }
     const QString inputRevision = input->contentHash;
     const auto metadata = input->metadata;
-    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, settings, metadata);
+    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, targetSampleRateHz, metadata);
     if (auto cached = findCached(key, outputDir, cache))
         return cached;
     std::shared_ptr<const BuildSourceInput> captured;
@@ -311,7 +310,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         if (!captured) return std::nullopt;
         input = captured.get();
     }
-    auto media = prepare(input->inputPath, source, scheduleOffsetSec, settings, error);
+    auto media = prepare(input->inputPath, source, scheduleOffsetSec, targetSampleRateHz, error);
     if (!media) return std::nullopt;
     if (key.isEmpty()) {
         fail(error, QStringLiteral("Cannot identify converted media input"));

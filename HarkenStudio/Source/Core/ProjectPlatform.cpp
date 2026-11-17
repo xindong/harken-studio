@@ -11,31 +11,7 @@
 #include <QRegularExpression>
 #include <QSet>
 
-#include <cmath>
-
 namespace VNX {
-
-ProjectPlatformProfile ProjectPlatformProfile::fromBasePlatform(BasePlatform platform)
-{
-    PlatformProfile profile;
-    switch (platform) {
-    case BasePlatform::Windows: profile = PlatformProfileManager::createWindowsDefault(); break;
-    case BasePlatform::macOS: profile = PlatformProfileManager::createMacOSDefault(); break;
-    case BasePlatform::Linux: profile = PlatformProfileManager::createLinuxDefault(); break;
-    case BasePlatform::Android: profile = PlatformProfileManager::createAndroidDefault(); break;
-    case BasePlatform::iOS: profile = PlatformProfileManager::createiOSDefault(); break;
-    }
-    return {profile.performResample, profile.sizePolicies};
-}
-
-QJsonObject ProjectPlatformProfile::toJson() const
-{
-    QJsonArray policies;
-    for (const auto& policy : sizePolicies)
-        policies.append(policy.toJson());
-    return {{QStringLiteral("performResample"), performResample},
-            {QStringLiteral("sizePolicies"), policies}};
-}
 
 QJsonObject ProjectPlatform::toJson() const
 {
@@ -43,7 +19,6 @@ QJsonObject ProjectPlatform::toJson() const
                      {QStringLiteral("name"), name},
                      {QStringLiteral("basePlatform"),
                       ProjectPlatformSemantics::basePlatformName(basePlatform)}};
-    json.insert(QStringLiteral("profile"), profile.toJson());
     return json;
 }
 
@@ -54,63 +29,6 @@ bool fail(QString* error, const QString& message)
 {
     if (error) *error = message;
     return false;
-}
-
-bool readConfig(const QJsonValue& value, ConversionParameters* config)
-{
-    if (!value.isObject()) return false;
-    const QJsonObject json = value.toObject();
-    const QJsonObject defaults = ConversionParameters{}.toJson();
-    if (json.keys() != defaults.keys()) return false;
-    for (auto it = defaults.begin(); it != defaults.end(); ++it) {
-        if (json.value(it.key()).type() != it.value().type()) return false;
-    }
-    for (const auto& key : {"format", "vorbisEncodeMode", "targetSampleRate",
-                            "vorbisAverageBitrate", "vorbisMinBitrate", "vorbisMaxBitrate"}) {
-        const double number = json.value(QLatin1String(key)).toDouble();
-        if (number < 0 || number > UINT32_MAX || std::trunc(number) != number)
-            return false;
-    }
-    if (json.value(QStringLiteral("format")).toInteger() > 5
-        || json.value(QStringLiteral("vorbisEncodeMode")).toInteger() > 1
-        || json.value(QStringLiteral("targetSampleRate")).toInteger() == 0
-        || json.value(QStringLiteral("vorbisQuality")).toDouble() < -0.1
-        || json.value(QStringLiteral("vorbisQuality")).toDouble() > 1.0)
-        return false;
-    *config = ConversionParameters::fromJson(json);
-    return true;
-}
-
-bool readProfile(const QJsonValue& value, ProjectPlatformProfile* profile)
-{
-    if (!value.isObject()) return false;
-    const QJsonObject json = value.toObject();
-    ProjectPlatformProfile parsed;
-    parsed.sizePolicies.clear();
-    if (json.keys() != QStringList{QStringLiteral("performResample"), QStringLiteral("sizePolicies")}
-        || !json.value(QStringLiteral("performResample")).isBool()
-        || !json.value(QStringLiteral("sizePolicies")).isArray())
-        return false;
-    parsed.performResample = json.value(QStringLiteral("performResample")).toBool();
-    const auto readBound = [](const QJsonValue& value) {
-        return value.isDouble() && value.toInteger(-1) >= 0
-            && static_cast<double>(value.toInteger()) == value.toDouble();
-    };
-    for (const auto& value : json.value(QStringLiteral("sizePolicies")).toArray()) {
-        if (!value.isObject()) return false;
-        const auto row = value.toObject();
-        const auto maximum = row.value(QStringLiteral("maxBytes"));
-        SizePolicy policy;
-        if (row.keys() != QStringList{QStringLiteral("config"), QStringLiteral("maxBytes")}
-            || (!maximum.isNull() && !readBound(maximum))
-            || !readConfig(row.value(QStringLiteral("config")), &policy.config))
-            return false;
-        if (!maximum.isNull()) policy.maxBytes = static_cast<uint64_t>(maximum.toInteger());
-        parsed.sizePolicies.push_back(std::move(policy));
-    }
-    if (!validateSizePolicies(parsed.sizePolicies)) return false;
-    *profile = std::move(parsed);
-    return true;
 }
 
 class ReferenceValidator
@@ -333,10 +251,6 @@ bool validatePlatforms(const QVector<ProjectPlatform>& platforms, QString* error
         names.insert(name);
         if (!parseBasePlatform(basePlatformName(platform.basePlatform)))
             return fail(error, QStringLiteral("Invalid base platform"));
-        if (!validateSizePolicies(platform.profile.sizePolicies, error)) return false;
-        ProjectPlatformProfile profile;
-        if (!readProfile(platform.profile.toJson(), &profile))
-            return fail(error, QStringLiteral("Invalid platform conversion profile"));
     }
     return true;
 }
@@ -353,12 +267,10 @@ bool platformsFromJson(const QJsonValue& value, QVector<ProjectPlatform>* platfo
         if (!value.isObject() || !id || !base || !json.value(QStringLiteral("name")).isString())
             return fail(error, QStringLiteral("Invalid project platform definition"));
         for (const auto& key : json.keys()) {
-            if (!QStringList{"id", "name", "basePlatform", "profile"}.contains(key))
+            if (!QStringList{"id", "name", "basePlatform"}.contains(key))
                 return fail(error, QStringLiteral("Unknown project platform field: %1").arg(key));
         }
         ProjectPlatform platform{*id, json.value(QStringLiteral("name")).toString(), *base};
-        if (!readProfile(json.value(QStringLiteral("profile")), &platform.profile))
-            return fail(error, QStringLiteral("A platform resampling flag and strictly increasing size limits ending with Infinite are required; legacy profiles are unsupported."));
         parsed.append(std::move(platform));
     }
     if (!validatePlatforms(parsed, error)) return false;
