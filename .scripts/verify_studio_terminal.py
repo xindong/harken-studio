@@ -202,6 +202,23 @@ def worker(work: Path, host: str, cli: Path, studio: Path):
         await_action(instance, "ConsoleSecondCommand")
         record("The interactive terminal continues accepting subsequent commands")
 
+        send('create_conversion {"name":"ConsoleConversion"}')
+        conversion = await_action(instance, "ConsoleConversion")["result"]["runtime_stable_id"]
+        send('set_conversion_fields ' + json.dumps({"conversion": conversion, "all_platforms": True,
+            "format": "PCM", "quality": 61, "sample_rate_tiers": [{"max_bytes": None, "sample_rate": 24000}]}))
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            code, converted = execute(instance, "get_item_info", {"path": "ConsoleConversion"})
+            rows = converted.get("result", {}).get("components", {}).get("conversion", {}).get("platforms", [])
+            if code == 0 and rows and all(row["sampleRateTiers"] == [{"maxBytes": None, "sampleRate": 24000}] for row in rows):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError((converted, screen()))
+        assert execute(instance, "undo")[0] == 0
+        assert execute(instance, "redo")[0] == 0
+        record("Terminal Conversion edits share the desktop model and undo history")
+
         assert execute(instance, "save_project")[0] == 0
         assert execute(instance, "get_project_state")[1]["result"]["is_dirty"] is False
         contents = screen()

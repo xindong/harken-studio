@@ -251,6 +251,7 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/MixerActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ProjectActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ProjectPlatformActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ConversionActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/FieldGroupActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/BindingActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/EditorActions.cpp
