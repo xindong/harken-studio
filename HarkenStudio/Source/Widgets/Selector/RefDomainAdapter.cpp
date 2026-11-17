@@ -134,6 +134,10 @@ public:
         QObject::connect(pm, &ProjectManager::itemCreated, receiver, onChanged);
         QObject::connect(pm, &ProjectManager::itemDeleted, receiver, onChanged);
         QObject::connect(pm, &ProjectManager::itemMoved, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::folderCreated, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::folderRenamed, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::folderDeleted, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::folderMoved, receiver, onChanged);
         return subscription;
     }
 
@@ -211,13 +215,32 @@ public:
             return bucket;
         };
 
+        QHash<const PhysicalFolder*, QTreeWidgetItem*> folders;
+        const auto folderFor = [&](auto&& self, const PhysicalFolder* folder,
+                                   const QString& bucket) -> QTreeWidgetItem* {
+            if (!folder)
+                return bucketFor(bucket);
+            if (auto* existing = folders.value(folder))
+                return existing;
+            auto* parent = self(self, folder->parent, bucket);
+            auto* row = TreeRowStyle::makeFolderRow(folder->name);
+            const QString path = bucket + QLatin1Char('/') + project->folderRelPath(folder);
+            row->setData(0, kRoleFolderPath, path);
+            row->setData(0, kRoleSearchPath, path);
+            row->setToolTip(0, path);
+            row->setFlags(row->flags() & ~Qt::ItemIsSelectable);
+            parent->addChild(row);
+            folders.insert(folder, row);
+            return row;
+        };
+
         const auto bindings = project->allFileBindings();
         auto addBindingsFor = [&](const QString& folder) {
             for (auto* binding : bindings) {
                 if (!binding || !binding->rootItem || binding->parentFolder != folder)
                     continue;
                 if (auto* row = build(binding->rootItem.get()))
-                    bucketFor(folder)->addChild(row);
+                    folderFor(folderFor, project->folderForItem(binding->rootItem.get()), folder)->addChild(row);
             }
         };
 
@@ -318,6 +341,7 @@ public:
                 }
                 QTreeWidgetItem* folder = TreeRowStyle::makeFolderRow(segment);
                 folder->setData(0, kRoleFolderPath, key);
+                folder->setData(0, kRoleSearchPath, key);
                 folder->setFlags(folder->flags() & ~Qt::ItemIsSelectable);
                 if (parent)
                     parent->addChild(folder);
@@ -345,6 +369,7 @@ public:
             row->setIcon(0, icon(id, QColor()));
             row->setData(0, kRoleObjectID, id);
             row->setData(0, kRoleSelectable, selectable);
+            row->setData(0, kRoleSearchPath, assetDisplayPath(*asset));
             if (!selectable)
                 row->setFlags(row->flags() & ~(Qt::ItemIsSelectable | Qt::ItemIsEnabled));
             if (QTreeWidgetItem* folder = folderFor(assetFolderSegments(*asset)))
