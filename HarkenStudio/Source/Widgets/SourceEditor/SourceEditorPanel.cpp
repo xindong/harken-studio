@@ -7,11 +7,12 @@
 #include "Core/PlatformContextService.h"
 #include "Core/PreviewMediaModeService.h"
 #include "Core/ProjectManager.h"
+#include "Core/QtControlSkin.h"
 #include "Core/ThemeLayout.h"
+#include "Widgets/Common/DialogFormLayout.h"
 
 #include <QChildEvent>
 #include <QFocusEvent>
-#include <QFormLayout>
 #include <QLabel>
 #include <QLocale>
 #include <QSplitter>
@@ -53,8 +54,12 @@ SourceEditorPanel::SourceEditorPanel(QWidget* parent)
     auto* properties = new QWidget(splitter);
     auto* propertiesLayout = new QVBoxLayout(properties);
     ThemeLayout::margins(propertiesLayout, ThemeLayout::Space::Panel);
-    propertiesLayout->addWidget(new QLabel(tr("File Properties"), properties));
-    auto* form = new QFormLayout;
+    ThemeLayout::spacing(propertiesLayout, ThemeLayout::Space::Control);
+    auto* title = new QLabel(tr("File Properties"), properties);
+    title->setObjectName(QStringLiteral("sourceFilePropertiesTitle"));
+    QtControlSkin::setSemanticProperty(title, "textRole", QStringLiteral("title"));
+    propertiesLayout->addWidget(title);
+    auto* form = new DialogFormLayout;
     const std::array<QString, 6> titles{
         tr("File Path"), tr("Channels"), tr("Sample Rate"), tr("Duration"), tr("Size"), tr("Format")};
     const std::array<const char*, 6> names{
