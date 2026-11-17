@@ -53,7 +53,7 @@
 |---|---|
 | 对象树 | 焦点所在 Explorer／Hierarchy 的本地选区；不合并其他树选区，未绑定可配置 Select All |
 | 曲线 | 曲线点；删除与剪切仍受可编辑点限制，粘贴受数据与点数限制 |
-| 曲线预设 | Attenuation、Binding、Mixing、Transition 与 Source Fade 共用七种正方形 SVG 图标预设，顺序为 S、强上凸、上凸、Linear、下凹、强下凹、镜像 S，沿用主题图标尺寸和着色，不显示名称；仅修改所选点与右侧下一点之间的曲线，最右点没有右邻段时不可应用；下降段沿时间方向镜像图标与曲线 |
+| 曲线预设 | Attenuation、Binding、Mixing、Transition 与 Source Fade 共用七种 SVG 图标与名称预设，上升段顺序为 S-Curve、Cubic Ease-Out、Quadratic Ease-Out、Linear、Quadratic Ease-In、Cubic Ease-In、Inverse S-Curve，由公共 QMenu 样式统一勾选列、图标列、文字、边距和状态着色；仅修改所选点与右侧下一点之间的曲线，最右点没有右邻段时不可应用；下降段沿时间方向镜像图标与曲线，Ease-In / Ease-Out 名称随实际进度函数对调 |
 | Timeline | 按焦点删除所选标记或本地多选片段；普通单击片段不切换全局对象或试听目标 |
 | Play/Stop：焦点在 Source Editor | 切换源片段试听；绑定 Sound Source 时应用其淡入淡出，素材库文件使用原音频；处理失败也不转向对象试听 |
 | Play/Stop：其他焦点 | 存在非原始文件试听时停止；否则播放当前试听目标 |
@@ -66,7 +66,7 @@
 
 表注：树间选择、导航和右键菜单目标见[对象右键菜单快照](object-context-menus.md)。快捷键绑定不豁免命令本身的业务限制。
 
-预设在归一化曲线轴坐标中定义。普通上凸为 `y = 2t − t²`，普通下凹为 `y = t²`；S 与镜像 S 关于 `y = x` 对角线镜像。Source Fade 默认使用普通上凸；已有保存的曲线不迁移。
+预设在归一化曲线轴坐标中定义。Quadratic Ease-Out / Ease-In 分别为 `y = 1 − (1 − x)²` / `y = x²`，Cubic Ease-Out / Ease-In 分别为 `y = 1 − (1 − x)³` / `y = x³`，不属于对数或指数函数。S-Curve 的控制点为 `(s, 0)`、`(1 − s, 1)`，其中 `s = 1 − 2/π`；Inverse S-Curve 交换其控制点的 x/y 坐标，两者互为反函数。代码枚举标识上升参考形状，下降段的进度函数为 `g(x) = 1 − f(1 − x)`。Source Fade 默认淡入为 Quadratic Ease-Out，默认淡出为 Quadratic Ease-In；已有保存的曲线不迁移。
 
 ## 固定操作键
 

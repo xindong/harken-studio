@@ -45,6 +45,13 @@ int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
         ? qMax(metrics.popup.iconColumnWidth, item.maxIconWidth) : metrics.control.textPaddingX;
 }
 
+int popupCheckColumnWidth(const QStyleOptionMenuItem& item, const QWidget* widget,
+                          const VNX::ThemeMetrics& metrics)
+{
+    return qobject_cast<const QMenu*>(widget) && item.menuHasCheckableItems && item.maxIconWidth > 0
+        ? metrics.popup.iconColumnWidth : 0;
+}
+
 class PopupItemDelegate final : public QStyledItemDelegate
 {
 public:
@@ -225,7 +232,8 @@ QSize QtControlSkin::popupItemSize(const QStyleOptionMenuItem& item,
         ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
     const int contentWidth = qobject_cast<const QMenu*>(widget)
         ? qMax(metrics().popup.minimumWidth, contentsSize.width() + spacing) : contentsSize.width() + spacing;
-    return QSize(contentWidth + margin + trailingMargin, popupRowHeight(item.fontMetrics));
+    return QSize(contentWidth + margin + popupCheckColumnWidth(item, widget, metrics()) + trailingMargin,
+                 popupRowHeight(item.fontMetrics));
 }
 
 void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem& item,
@@ -244,9 +252,10 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
     painter.setPen(textColor);
 
     const int margin = popupTextMargin(item, widget, metrics());
+    const int checkColumnWidth = popupCheckColumnWidth(item, widget, metrics());
     const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
         ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
-    QRect textRect = item.rect.adjusted(margin, 0, -trailingMargin, 0);
+    QRect textRect = item.rect.adjusted(margin + checkColumnWidth, 0, -trailingMargin, 0);
     const QStringView text(item.text);
     const qsizetype tab = text.indexOf(QLatin1Char('\t'));
     const int textFlags = Qt::AlignVCenter | Qt::TextSingleLine | Qt::TextHideMnemonic;
@@ -267,7 +276,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
 
     if (margin >= metrics().popup.iconColumnWidth && !item.icon.isNull()) {
         const int extent = qMin(metrics().iconExtent, item.rect.height());
-        const QRect iconRect(item.rect.left(), item.rect.top(), margin, item.rect.height());
+        const QRect iconRect(item.rect.left() + checkColumnWidth, item.rect.top(), margin, item.rect.height());
         const auto state = item.checked ? QIcon::On : QIcon::Off;
         QPixmap glyph = item.icon.pixmap(QSize(extent, extent),
             painter.device()->devicePixelRatioF(), QIcon::Normal, state);
@@ -280,12 +289,14 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
                 QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
                                     glyph.deviceIndependentSize().toSize(), iconRect)), glyph);
         }
-    } else if (margin >= metrics().popup.iconColumnWidth
-               && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
+    }
+    if (margin >= metrics().popup.iconColumnWidth && (checkColumnWidth > 0 || item.icon.isNull())
+        && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
         QStyleOptionMenuItem check = item;
         check.rect = QStyle::visualRect(item.direction, item.rect,
             QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(metrics().control.smallIconExtent, metrics().control.smallIconExtent),
-                                QRect(item.rect.topLeft(), QSize(margin, item.rect.height()))));
+                                QRect(item.rect.topLeft(), QSize(checkColumnWidth > 0 ? checkColumnWidth : margin,
+                                                               item.rect.height()))));
         check.state |= QStyle::State_On;
         check.palette.setColor(QPalette::Text, textColor);
         check.palette.setColor(QPalette::HighlightedText, textColor);
