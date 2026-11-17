@@ -260,6 +260,7 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
         emit projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
         QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
         for (const uint64_t start : {4105ull, 12007ull, 25120ull}) {
+            SCOPED_TRACE(start);
             ASSERT_TRUE(editor.startPreviewPlayhead(start));
             const auto windowStart = mapFrame(source.loopRegion->startFrame, 22050);
             const auto windowEnd = mapFrame(source.loopRegion->endFrame, 22050);
@@ -274,6 +275,9 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
             ASSERT_TRUE(playhead);
             EXPECT_GE(*playhead, source.trimStartFrame);
             EXPECT_LT(*playhead, *source.trimEndFrame);
+            ASSERT_EQ(Vn_Update(), VN_OK);
+            VnPreview_PumpNullMixer(1);
+            ASSERT_EQ(Vn_Update(), VN_OK);
         }
         settings->platformConfig(secondPlatform)->tiers = {{std::nullopt, 16000}};
         emit projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
