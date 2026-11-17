@@ -54,6 +54,8 @@ Studio 的 Publisher 窗口及操作命令与 CLI 命令目录分别注册；共
 
 构建窗口显示平台、包、处理阶段和进度。取消按钮、Esc 和关闭请求均请求取消，直到后台构建退出才关闭窗口；Publisher 表格只保留构建结果，不再绘制行进度。工程文件和媒体文件的监视通知延后到构建结束，随后再处理外部修改与重载。
 
+构建警告按平台、语言和包归属展示一次；不同归属的相同文本分别保留，失败包的警告也进入结果与计数。空 Action 的跳过说明归属对应包，冷构建与增量复用保持一致。GUI 汇总仅报告总数，平台／发布级警告单独展示。CLI 与 IPC 的 `warnings` 是完整汇总，`global_warnings` 标识其中的全局警告；按包展示时使用包记录及全局警告，不再重复展示完整汇总。名称映射和可选对象元数据由伴随 JSON 发布，资源编译接口不再接收这两类数据，也没有 `debugStrings` 开关。
+
 ```text
 HarkenStudioCLI list-targets --project <project.hsp> --json
 HarkenStudioCLI build --project <project.hsp> --all --platform-id <UUID> [--platform-id <UUID> ...] --self-clean <on|off> [--output <directory>] [--force] [--json]

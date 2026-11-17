@@ -743,13 +743,6 @@ bool isPackCodecCodebookSection(uint32_t) { return false; }
 
 struct PackBuildSession::Impl
 {
-    struct MetadataEntry
-    {
-        harkenstudio::ObjectId ownerObjectId = {};
-        QByteArray guidRfc4122;
-        QString objectPath;
-    };
-
     bool initPack = false;
     QString lastError;
     QStringList warnings;
@@ -766,8 +759,6 @@ struct PackBuildSession::Impl
     std::vector<PackParameterBinding> bindings;
     std::vector<PackBindingAttachment> bindingAttachments;
     std::vector<std::pair<harkenstudio::ObjectId, PackModulator>> modulatorBindings;
-    std::vector<std::pair<harkenstudio::ObjectId, QString>> stringMappings;
-    std::vector<MetadataEntry> objectMetadata;
 
     void warn(const QString& message)
     {
@@ -1115,12 +1106,6 @@ struct PackBuildSession::Impl
         if (!modulatorBindings.empty())
             warn(QStringLiteral("Modulator bindings have no pack representation "
                                 "and were not emitted"));
-        if (!stringMappings.empty())
-            warn(QStringLiteral("String mappings have no pack representation "
-                                "and were not emitted"));
-        if (!objectMetadata.empty())
-            warn(QStringLiteral("Object metadata has no pack representation "
-                                "and was not emitted"));
 
         QJsonObject root = resident ? residentSections() : bindingSections(false);
         if (!lastError.isEmpty())
@@ -1193,18 +1178,6 @@ void PackBuildSession::addBinding(const PackParameterBinding& binding)
 void PackBuildSession::addBindingAttachment(const PackBindingAttachment& attachment)
 {
     impl_->bindingAttachments.push_back(attachment);
-}
-
-void PackBuildSession::addStringMapping(harkenstudio::ObjectId objectId, const QString& name)
-{
-    impl_->stringMappings.emplace_back(objectId, name);
-}
-
-void PackBuildSession::addObjectMetadata(harkenstudio::ObjectId ownerObjectId,
-                                         const QByteArray& guidRfc4122,
-                                         const QString& objectPath)
-{
-    impl_->objectMetadata.push_back({ownerObjectId, guidRfc4122, objectPath});
 }
 
 void PackBuildSession::addWarning(const QString& warning)

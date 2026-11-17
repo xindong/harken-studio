@@ -354,10 +354,6 @@ public:
     void addBinding(const PackParameterBinding& binding);
     void addBindingAttachment(const PackBindingAttachment& attachment);
     void addMedia(const PackMediaDesc& media);
-    void addStringMapping(harkenstudio::ObjectId objectId, const QString& name);
-    void addObjectMetadata(harkenstudio::ObjectId ownerObjectId,
-                           const QByteArray& guidRfc4122,
-                           const QString& objectPath);
     void addWarning(const QString& warning);
 
     bool buildToFile(const QString& outputPath);

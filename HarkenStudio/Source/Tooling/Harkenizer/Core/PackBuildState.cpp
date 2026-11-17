@@ -88,7 +88,7 @@ void PackBuildState::select(const ProjectPackExporter::ExportOptions& options, c
     current_.clear();
     resources_.clear();
     records_.clear();
-    objectCount_ = mediaCount_ = actionCount_ = emptyActionCount_ = 0;
+    objectCount_ = mediaCount_ = actionCount_ = 0;
     inputsReady_ = false;
     reusable_ = false;
     if (!options.forceReexport && !packs_.isEmpty()) deriveInputs();
@@ -146,7 +146,7 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     };
     QJsonObject globals;
     QSet<const ProjectItem*> visited;
-    QSet<harkenstudio::ObjectId> objects, actions, emptyActions;
+    QSet<harkenstudio::ObjectId> objects, actions;
     QSet<QString> media;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> void {
         if (!item || visited.contains(item)) return;
@@ -199,7 +199,6 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
                 actions.insert(member.stableId);
                 const auto* action = item->comp<VAction>();
                 if (action && !action->steps.empty()) hasSteps = true;
-                else emptyActions.insert(member.stableId);
                 if (!unit.grouped && member.stableId == unit.actionStableIds.front()) objectId = item->objectID;
             } else {
                 objects.insert(member.stableId);
@@ -268,7 +267,6 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     objectCount_ = objects.size();
     mediaCount_ = media.size();
     actionCount_ = actions.size();
-    emptyActionCount_ = emptyActions.size();
     inputsReady_ = true;
     reusable_ = reusable_ && !successfulPaths;
 }
@@ -380,11 +378,10 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
             {QStringLiteral("key"), record.unitKey},
             {QStringLiteral("companion"), QJsonObject{{QStringLiteral("waveforms"), waveforms}}}});
     }
-    if (emptyActionCount_ != 0)
-        restored.warnings.append(QStringLiteral("%1 action(s) have no steps and were not packed")
-            .arg(emptyActionCount_));
     if (options_.updateSelectedOnly)
         std::erase_if(restoredRecords, [](const auto& record) { return record.source == BuildRecord::Source::Init; });
+    for (const auto& record : restoredRecords)
+        restored.warnings.append(record.warnings);
     restored.success = true;
     *result = std::move(restored);
     *records = std::move(restoredRecords);
