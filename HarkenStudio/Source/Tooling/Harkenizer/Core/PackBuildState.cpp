@@ -524,15 +524,16 @@ void PackBuildState::prune() const
             QStringList languages = sound->distinguishLanguage ? snapshot.project.projectLanguages : QStringList{QString()};
             for (const auto& platform : snapshot.media.platforms) {
                 for (const auto& language : languages) {
-                    const auto selected = SoundSourceSemantics::resolveSourceSelection(
-                        *sound, ProjectPlatformSemantics::idString(platform.id), language);
-                    if (!selected) continue;
-                    const auto input = snapshot.media.inspectRequest(
-                        item->guid, selected.source->sourceId, platform.id);
-                    if (!input) continue;
-                    const auto source = SoundSourceSemantics::authoredView(*selected.source, &input->asset);
-                    keys.insert(SoundSourceDerivative::cacheKey(input->asset.contentHash, source,
-                        sound->scheduleOffsetSec, input->conversion, input->asset.metadata));
+                    const auto* set = SoundSourceSemantics::sourceSet(*sound, language);
+                    if (!set) continue;
+                    for (const auto& entry : set->entries) {
+                        const auto input = snapshot.media.inspectRequest(
+                            item->guid, entry.sourceId, platform.id);
+                        if (!input) continue;
+                        const auto source = SoundSourceSemantics::authoredView(entry, &input->asset);
+                        keys.insert(SoundSourceDerivative::cacheKey(input->asset.contentHash, source,
+                            sound->scheduleOffsetSec, input->conversion, input->asset.metadata));
+                    }
                 }
             }
         }
@@ -543,8 +544,10 @@ void PackBuildState::prune() const
     const QDir cache(PathUtils::getDotCacheDir(snapshot.media.projectRoot));
     const QDir conversions(cache.filePath(QStringLiteral("pack/media")));
     for (const auto& file : conversions.entryInfoList(
-            {QStringLiteral("*.pcm"), QStringLiteral("*.pcm.??????")}, QDir::Files))
-        if ((file.suffix() != QStringLiteral("pcm") || !keys.contains(file.completeBaseName()))
+            {QStringLiteral("*.pcm"), QStringLiteral("*.pcm.??????"),
+             QStringLiteral("*.vcm"), QStringLiteral("*.vcm.??????")}, QDir::Files))
+        if (((file.suffix() != QStringLiteral("pcm") && file.suffix() != QStringLiteral("vcm"))
+             || !keys.contains(file.completeBaseName()))
             && !QFile::remove(file.absoluteFilePath()))
             qWarning().noquote() << QStringLiteral("Could not remove unused Pack media: %1").arg(file.absoluteFilePath());
     if (!legacyCleanup_) return;

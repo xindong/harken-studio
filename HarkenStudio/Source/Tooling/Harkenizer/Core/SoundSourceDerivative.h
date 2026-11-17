@@ -3,6 +3,7 @@
 #include "Components/VSound.h"
 #include "Core/ConversionResolution.h"
 #include "ProjectPlatform.h"
+#include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -21,7 +22,7 @@ struct AudioMetadata;
 
 namespace VNX::SoundSourceDerivative {
 
-inline constexpr uint32_t kVorbisSeekGrainFrames = 4096;
+inline constexpr uint32_t kVorbisSeekGrainFrames = VorbisEncoder::kSeekGrainFrames;
 
 struct FrameRange
 {
@@ -31,6 +32,7 @@ struct FrameRange
 
 struct MaterializedArtifact
 {
+    ConversionFormat format = ConversionFormat::PCM;
     QString path;
     QString cacheKey;
     uint32_t sampleRate = 0;
@@ -41,6 +43,8 @@ struct MaterializedArtifact
     bool cacheHit = false;
     QString contentHash;
     std::shared_ptr<const std::vector<float>> samples;
+    std::shared_ptr<const VorbisEncoder::EncodedMedia> encodedMedia;
+    QByteArray cacheImage;
     uint64_t revision = 0;
 };
 
@@ -49,6 +53,9 @@ class MaterializationCache
 public:
     std::optional<MaterializedArtifact> find(const QByteArray& request);
     void insert(const QByteArray& request, const MaterializedArtifact& artifact);
+    std::optional<MaterializedArtifact> getOrCreate(const QByteArray& request,
+        const std::function<std::optional<MaterializedArtifact>(QString*)>& create,
+        QString* error = nullptr, const QString& outputDir = {});
     std::optional<uint64_t> contentRevision(const MaterializedArtifact& artifact);
     void clear();
 
