@@ -427,10 +427,12 @@ QString PackBuildState::resourceFingerprint(const QString& path) const
         ? row.value(QStringLiteral("resourceFingerprint")).toString() : QString();
 }
 
-QJsonArray PackBuildState::mediaResults(const QString& path) const
+std::optional<QJsonArray> PackBuildState::mediaResults(const QString& path) const
 {
-    return savedPackMatches(path) && savedCompanionMatches(path)
-        ? packs_.value(path).toObject().value(QStringLiteral("media")).toArray() : QJsonArray{};
+    const auto media = packs_.value(path).toObject().value(QStringLiteral("media"));
+    if (!media.isArray() || !savedPackMatches(path) || !savedCompanionMatches(path))
+        return std::nullopt;
+    return media.toArray();
 }
 
 void PackBuildState::setResourceFingerprint(const QString& path, const QString& fingerprint)

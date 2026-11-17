@@ -3,6 +3,7 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetConverter.h"
 #include "AssetPipeline/BuildSourceInputs.h"
+#include "AssetPipeline/CacheArtifactWriter.h"
 #include "AssetPipeline/SourceFileState.h"
 #include "AssetPipeline/PathUtils.h"
 #include "AssetPipeline/WaveformCache.h"
@@ -22,6 +23,7 @@
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
+#include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 #include "ProjectSerializer.h"
 #include "ProjectSchemaGenerated.h"
 #include "ItemTypeCatalog.h"
@@ -2574,9 +2576,44 @@ void verifyPartialPublication(const QString& directory, void (*verifyActivation)
     const auto root = dir.filePath("exports");
     const QDir live(QDir(root).filePath("Windows"));
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> initialRecords;
-    const auto initial = exporter.ExportAllPacks(project, live.path(), opts, &initialRecords);
+    const auto initial = buildPersistedPackSet(project, root, opts, &initialRecords);
     ASSERT_TRUE(initial.success) << initial.error.toStdString();
     ASSERT_NO_FATAL_FAILURE(verifyActivation(live.path()));
+    const auto statePath = QDir(VNX::PathUtils::getDotCacheDir(dir.path()))
+        .filePath(QStringLiteral("pack/builds.json"));
+    auto state = QJsonDocument::fromJson(readFileBytes(statePath)).object();
+    auto targets = state.value(QStringLiteral("targets")).toObject();
+    auto target = targets.value(live.absolutePath()).toObject();
+    auto savedPacks = target.value(QStringLiteral("packs")).toObject();
+    auto legacyPack = savedPacks.value(QStringLiteral("Two.bytes")).toObject();
+    ASSERT_TRUE(legacyPack.value(QStringLiteral("media")).isArray());
+    legacyPack.remove(QStringLiteral("media"));
+    savedPacks.insert(QStringLiteral("Two.bytes"), legacyPack);
+    target.insert(QStringLiteral("packs"), savedPacks);
+    targets.insert(live.absolutePath(), target);
+    state.insert(QStringLiteral("targets"), targets);
+    writeFileBytes(statePath, QJsonDocument(state).toJson());
+    auto partialOptions = opts;
+    partialOptions.updateSelectedOnly = true;
+    partialOptions.onlyPackPaths = {QStringLiteral("One")};
+    const auto legacyPartial = buildPersistedPackSet(project, root, partialOptions);
+    ASSERT_TRUE(legacyPartial.success) << legacyPartial.error.toStdString();
+    bool retainedSeen = false;
+    for (const auto& value : legacyPartial.outputs) {
+        const auto output = value.toObject();
+        if (output.value(QStringLiteral("path")).toString() != QStringLiteral("Two.bytes")) continue;
+        retainedSeen = true;
+        EXPECT_FALSE(output.contains(QStringLiteral("media")));
+    }
+    EXPECT_TRUE(retainedSeen);
+    ASSERT_FALSE(legacyPartial.media.isEmpty());
+    for (const auto& value : legacyPartial.media)
+        EXPECT_EQ(value.toObject().value(QStringLiteral("pack")).toString(), QStringLiteral("One.bytes"));
+    const auto recovered = buildPersistedPackSet(project, root, opts);
+    ASSERT_TRUE(recovered.success) << recovered.error.toStdString();
+    ASSERT_EQ(recovered.media.size(), initial.media.size());
+    for (const auto& value : initial.media)
+        EXPECT_TRUE(recovered.media.contains(value));
     const auto old = readPublication(live.path());
     QSet<QString> initialKeys;
     QSet<QString> selectedKeys;
@@ -3790,11 +3827,46 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
         EXPECT_EQ(image.media.size(), 1u);
         return image.media.size() == 1 ? image.media.front().sampleRate : 0;
     };
+    const auto mediaReport = [](const auto& buildResult) {
+        QMap<QString, QJsonObject> rows;
+        EXPECT_EQ(buildResult.platforms.size(), 1u);
+        for (const auto& platform : buildResult.platforms) {
+            for (const auto& value : platform.result.media) {
+                const auto row = value.toObject();
+                const auto path = row.value(QStringLiteral("pack")).toString();
+                EXPECT_FALSE(rows.contains(path));
+                rows.insert(path, row);
+            }
+        }
+        return rows;
+    };
+    const auto expectPcmReport = [&](const QMap<QString, QJsonObject>& rows) {
+        ASSERT_EQ(rows.size(), 2);
+        for (auto it = rows.cbegin(); it != rows.cend(); ++it) {
+            const auto& row = it.value();
+            const auto* asset = AssetRegistry::instance().getAsset(
+                static_cast<uint32_t>(row.value(QStringLiteral("sourceId")).toInteger()));
+            ASSERT_NE(asset, nullptr);
+            const auto bytes = readFileBytes(context.live.filePath(it.key()));
+            harkenstudiobuild::PackCanonicalImage image;
+            ASSERT_EQ(VN_OK, harkenstudiobuild::ParsePackCanonicalImage(
+                reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                static_cast<std::uint64_t>(bytes.size()), &image));
+            ASSERT_EQ(image.media.size(), 1u);
+            EXPECT_EQ(row.value(QStringLiteral("format")).toString(), QStringLiteral("PCM"));
+            EXPECT_EQ(row.value(QStringLiteral("originalBytes")).toInteger(),
+                QFileInfo(asset->absolutePath).size());
+            EXPECT_EQ(row.value(QStringLiteral("outputBytes")).toInteger(),
+                static_cast<qint64>(image.media.front().blobBytes));
+        }
+    };
     const auto initial = build();
     ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
     ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
     EXPECT_EQ(mediaRate(QStringLiteral("One")), 24000u);
     EXPECT_EQ(mediaRate(QStringLiteral("Two")), 16000u);
+    const auto initialReport = mediaReport(initial);
+    ASSERT_NO_FATAL_FAILURE(expectPcmReport(initialReport));
     const auto secondBytes = readFileBytes(context.live.filePath(QStringLiteral("Two.bytes")));
     auto* firstConfig = firstPreset->comp<VConversion>()->platformConfig(QUuid(context.platform));
     ASSERT_NE(firstConfig, nullptr);
@@ -3806,6 +3878,7 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     ASSERT_TRUE(unrelated.allPlatformsSucceeded) << unrelated.preflightError.toStdString();
     ASSERT_TRUE(unrelated.finalizationResult.success) << unrelated.finalizationResult.error.toStdString();
     EXPECT_FALSE(compiled);
+    EXPECT_EQ(mediaReport(unrelated), initialReport);
     QString error;
     const auto captured = ProjectBuildSnapshot::capture(context.project, &error);
     ASSERT_TRUE(captured) << error.toStdString();
@@ -3822,6 +3895,10 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     EXPECT_TRUE(compiled);
     EXPECT_EQ(mediaRate(QStringLiteral("One")), 22050u);
     EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("Two.bytes"))), secondBytes);
+    const auto changedReport = mediaReport(changed);
+    ASSERT_NO_FATAL_FAILURE(expectPcmReport(changedReport));
+    EXPECT_EQ(changedReport.value(QStringLiteral("Two.bytes")),
+        initialReport.value(QStringLiteral("Two.bytes")));
     ASSERT_EQ(changed.platforms.size(), 1u);
     const auto secondRecord = std::find_if(changed.platforms.front().records.begin(),
         changed.platforms.front().records.end(), [](const auto& record) { return record.packName == QStringLiteral("Two"); });
@@ -3858,14 +3935,42 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     ASSERT_TRUE(inherited.finalizationResult.success) << inherited.finalizationResult.error.toStdString();
     EXPECT_EQ(mediaRate(QStringLiteral("One")), 32000u);
     EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("Two.bytes"))), secondBytes);
+    const auto publishedReport = mediaReport(inherited);
+    ASSERT_NO_FATAL_FAILURE(expectPcmReport(publishedReport));
     const auto published = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    const auto publishedCompanion = readFileBytes(context.live.filePath(QStringLiteral("One.json")));
     firstConfig->format = ConversionFormat::Vorbis;
     const auto refused = build();
     EXPECT_FALSE(refused.allPlatformsSucceeded);
     QString diagnostic = refused.preflightError;
     for (const auto& platform : refused.platforms) diagnostic += platform.result.error;
-    EXPECT_TRUE(diagnostic.contains(QStringLiteral("Vorbis"))) << diagnostic.toStdString();
+    EXPECT_TRUE(diagnostic.contains(QStringLiteral("Vorbis Pack writing is not integrated")))
+        << diagnostic.toStdString();
     EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), published);
+    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.json"))), publishedCompanion);
+    const auto refusedReport = mediaReport(refused);
+    ASSERT_EQ(refusedReport.size(), 2);
+    EXPECT_EQ(refusedReport.value(QStringLiteral("Two.bytes")),
+        publishedReport.value(QStringLiteral("Two.bytes")));
+    const auto encodedReport = refusedReport.value(QStringLiteral("One.bytes"));
+    EXPECT_EQ(encodedReport.value(QStringLiteral("format")).toString(), QStringLiteral("Vorbis"));
+    const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
+    ASSERT_NE(asset, nullptr);
+    EXPECT_EQ(encodedReport.value(QStringLiteral("originalBytes")).toInteger(),
+        QFileInfo(asset->absolutePath).size());
+    const QDir cache(QDir(PathUtils::getDotCacheDir(context.directory.path()))
+        .filePath(QStringLiteral("pack/media")));
+    const auto encodedFiles = cache.entryInfoList({QStringLiteral("*.vcm")}, QDir::Files);
+    ASSERT_EQ(encodedFiles.size(), 1);
+    VorbisEncoder::EncodedMedia encoded;
+    uint64_t revision = 0;
+    uint64_t payloadBytes = 0;
+    ASSERT_TRUE(readVorbisCacheArtifact(encodedFiles.front().absoluteFilePath(),
+        encoded, revision, nullptr, &error, &payloadBytes)) << error.toStdString();
+    EXPECT_GT(payloadBytes, 0u);
+    EXPECT_LT(payloadBytes, static_cast<uint64_t>(encodedFiles.front().size()));
+    EXPECT_EQ(encodedReport.value(QStringLiteral("outputBytes")).toInteger(),
+        static_cast<qint64>(payloadBytes));
     const auto remainingBytes = readFileBytes(context.live.filePath(QStringLiteral("Two.bytes")));
     harkenstudiobuild::PackCanonicalImage previousImage;
     harkenstudiobuild::PackCanonicalImage remainingImage;
