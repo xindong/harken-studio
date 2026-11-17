@@ -78,7 +78,7 @@ bool writeCacheArtifact(const QString& path, const std::function<bool(QIODevice&
 }
 
 QByteArray encodeVorbisCacheArtifact(const VorbisEncoder::EncodedMedia& media,
-    uint64_t mediaRevision, QString* contentHash, QString* error)
+    uint64_t mediaRevision, QString* contentHash, QString* error, uint64_t* outputBytes)
 {
     if (!VorbisEncoder::validate(media, error)) return {};
     const auto encoderVersion = media.encoderVersion.toUtf8();
@@ -129,11 +129,12 @@ QByteArray encodeVorbisCacheArtifact(const VorbisEncoder::EncodedMedia& media,
     }
     const auto digest = vorbisDigest(header, payload);
     if (contentHash) *contentHash = QString::fromLatin1(digest.toHex());
+    if (outputBytes) *outputBytes = static_cast<uint64_t>(payload.size());
     return header + digest + payload;
 }
 
 bool readVorbisCacheArtifact(const QString& path, VorbisEncoder::EncodedMedia& media,
-    uint64_t& mediaRevision, QString* contentHash, QString* error)
+    uint64_t& mediaRevision, QString* contentHash, QString* error, uint64_t* outputBytes)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return cacheError(error, file.errorString());
@@ -197,6 +198,7 @@ bool readVorbisCacheArtifact(const QString& path, VorbisEncoder::EncodedMedia& m
     media = std::move(decoded);
     mediaRevision = revision;
     if (contentHash) *contentHash = QString::fromLatin1(digest.toHex());
+    if (outputBytes) *outputBytes = payloadBytes;
     return true;
 }
 

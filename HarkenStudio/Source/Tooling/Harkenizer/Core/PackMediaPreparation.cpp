@@ -130,10 +130,6 @@ struct PackMediaPreparation::Impl
         if (!conversion) {
             return result;
         }
-        if (conversion->conversion && conversion->conversion->format == ConversionFormat::Vorbis) {
-            result.error = QStringLiteral("Vorbis Pack writing is not integrated");
-            return result;
-        }
         result.source = SoundSourceSemantics::authoredView(work.source, &conversion->asset);
         const uint64_t bytes = estimateBytes(work, result);
         if (!acquire(bytes)) {

@@ -125,7 +125,7 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
         artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".vcm"));
         auto encoded = std::make_shared<VorbisEncoder::EncodedMedia>();
         if (!readVorbisCacheArtifact(artifact.path, *encoded, artifact.revision,
-                                    &artifact.contentHash))
+                                    &artifact.contentHash, nullptr, &artifact.outputBytes))
             return std::nullopt;
         artifact.sampleRate = encoded->sampleRate;
         artifact.channels = encoded->channels;
@@ -168,6 +168,7 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
     artifact.contentHash = QString::fromLatin1(digest.toHex());
     artifact.samples = std::move(samples);
     artifact.revision = revision;
+    artifact.outputBytes = static_cast<uint64_t>(payloadBytes);
     return artifact;
 }
 
@@ -184,7 +185,7 @@ bool publishArtifact(MaterializedArtifact& artifact, const QString& outputDir, Q
     if (artifact.format == ConversionFormat::Vorbis) {
         if (artifact.cacheImage.isEmpty())
             artifact.cacheImage = encodeVorbisCacheArtifact(*artifact.encodedMedia,
-                artifact.revision, &artifact.contentHash, error);
+                artifact.revision, &artifact.contentHash, error, &artifact.outputBytes);
         if (artifact.cacheImage.isEmpty()) return false;
         written = writeCacheArtifact(path, [&](QIODevice& file) {
             return file.write(artifact.cacheImage) == artifact.cacheImage.size();
@@ -457,11 +458,12 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
             if (!encoded) return std::nullopt;
             artifact.revision = key.left(16).toULongLong(nullptr, 16);
             artifact.cacheImage = encodeVorbisCacheArtifact(*encoded, artifact.revision,
-                &artifact.contentHash, creationError);
+                &artifact.contentHash, creationError, &artifact.outputBytes);
             if (artifact.cacheImage.isEmpty()) return std::nullopt;
             artifact.encodedMedia = std::make_shared<const VorbisEncoder::EncodedMedia>(std::move(*encoded));
         } else {
             artifact.samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
+            artifact.outputBytes = static_cast<uint64_t>(artifact.samples->size()) * sizeof(float);
             HarkenEditor::Bridge::PackMediaDesc description;
             description.interleavedSamples = artifact.samples;
             description.sampleRate = artifact.sampleRate;

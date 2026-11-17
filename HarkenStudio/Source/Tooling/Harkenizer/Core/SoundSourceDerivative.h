@@ -46,6 +46,7 @@ struct MaterializedArtifact
     std::shared_ptr<const VorbisEncoder::EncodedMedia> encodedMedia;
     QByteArray cacheImage;
     uint64_t revision = 0;
+    uint64_t outputBytes = 0;
 };
 
 class MaterializationCache

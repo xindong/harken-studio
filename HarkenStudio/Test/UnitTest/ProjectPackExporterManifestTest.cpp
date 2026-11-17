@@ -2411,9 +2411,32 @@ void verifyIncrementalPublication(const QString& directory)
     opts.platform = HarkenTest::platformIdString("Windows");
     const auto outputRoot = dir.filePath("exports");
     const QDir live(QDir(outputRoot).filePath("Windows"));
+    const auto mediaReport = [](const VNX::ProjectPackExporter::ExportResult& result) {
+        QMap<QByteArray, QJsonObject> rows;
+        for (const auto& value : result.media) {
+            const auto row = value.toObject();
+            const auto identity = QJsonDocument(QJsonArray{
+                row.value(QStringLiteral("pack")),
+                row.value(QStringLiteral("soundId")),
+                row.value(QStringLiteral("sourceEntryId")),
+                row.value(QStringLiteral("language"))}).toJson(QJsonDocument::Compact);
+            EXPECT_FALSE(rows.contains(identity));
+            rows.insert(identity, row);
+        }
+        return rows;
+    };
     const auto initial = buildPersistedPackSet(project, outputRoot, opts);
     ASSERT_TRUE(initial.success) << initial.error.toStdString();
     EXPECT_EQ(initial.builtPackCount, 3);
+    const auto initialMedia = mediaReport(initial);
+    QMap<QString, qsizetype> reportedMediaCounts;
+    for (const auto& row : initialMedia)
+        ++reportedMediaCounts[row.value(QStringLiteral("pack")).toString()];
+    for (const auto& value : initial.outputs) {
+        const auto path = value.toObject().value(QStringLiteral("path")).toString();
+        EXPECT_EQ(reportedMediaCounts.value(path),
+            packKindCount(live.filePath(path), HK_PACK_ENTRY_KIND_MEDIA));
+    }
     QMap<QString, QDateTime> timestamps;
     for (const auto& name : publicationFiles(live.path()))
         timestamps.insert(name, QFileInfo(live.filePath(name)).lastModified());
@@ -2422,6 +2445,7 @@ void verifyIncrementalPublication(const QString& directory)
     ASSERT_TRUE(unchanged.success) << unchanged.error.toStdString();
     EXPECT_EQ(unchanged.builtPackCount, 0);
     EXPECT_EQ(unchanged.skippedPackCount, 3);
+    EXPECT_EQ(mediaReport(unchanged), initialMedia);
     ASSERT_EQ(records.size(), 3u);
     for (const auto& record : records) {
         EXPECT_TRUE(record.skipped);
@@ -2440,6 +2464,7 @@ void verifyIncrementalPublication(const QString& directory)
     ASSERT_TRUE(reselected.success) << reselected.error.toStdString();
     EXPECT_EQ(reselected.builtPackCount, 0);
     EXPECT_EQ(reselected.skippedPackCount, 3);
+    EXPECT_EQ(mediaReport(reselected), initialMedia);
     EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), timestamps.value(QStringLiteral("Two.bytes")));
     const auto oldOne = readFileBytes(live.filePath("One.bytes"));
     project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.front().delay = 0.1f;
@@ -2447,6 +2472,7 @@ void verifyIncrementalPublication(const QString& directory)
     ASSERT_TRUE(changed.success) << changed.error.toStdString();
     EXPECT_EQ(changed.builtPackCount, 1);
     EXPECT_EQ(changed.skippedPackCount, 2);
+    EXPECT_EQ(mediaReport(changed), initialMedia);
     EXPECT_NE(readFileBytes(live.filePath("One.bytes")), oldOne);
     EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), timestamps.value(QStringLiteral("Two.bytes")));
     const auto validTwo = readFileBytes(live.filePath("Two.bytes"));

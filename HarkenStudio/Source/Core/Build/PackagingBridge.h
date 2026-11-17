@@ -34,6 +34,8 @@ namespace harkenizer::resourcecompiler {
 class MediaCache;
 }
 
+namespace VNX::VorbisEncoder { struct EncodedMedia; }
+
 namespace HarkenEditor {
 namespace Bridge {
 
@@ -313,6 +315,7 @@ struct PackMediaDesc
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
     QString sourcePath;
     std::shared_ptr<const std::vector<float>> interleavedSamples;
+    std::shared_ptr<const VNX::VorbisEncoder::EncodedMedia> encodedMedia;
     QString contentHash;
     bool downmixToMono = false;
     bool loopable = false;
