@@ -133,7 +133,7 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 
 `format` 仅接受 `PCM`、`Vorbis`，`quality` 为 0–100。`sample_rate_tiers` 是完整分档数组，元素形如 `{"max_bytes":null,"sample_rate":24000}`；按原始文件字节数匹配首个上限，有限上限严格递增且仅末档必须为 `null`（Infinite）。采样率可选 `0/8000/11025/16000/22050/24000/32000/44100/48000`；`0` 保留原始采样率，目标不低于原始采样率时也保持原样，不升采样。
 
-`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversion` 返回默认预设 GUID 或 `null`。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
+`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversion` 返回默认预设 GUID 或 `null`。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
 
 Part A 已提供 PCM / Vorbis 转换缓存和 Converted 试听；Vorbis 试听使用 Studio 过渡解码。PCM Pack 可导出，Vorbis Pack 写入仍明确报错 `Vorbis Pack writing is not integrated`。原生 Engine Vorbis 解码、Pack 接入与采样率解耦属于 Part B。
 

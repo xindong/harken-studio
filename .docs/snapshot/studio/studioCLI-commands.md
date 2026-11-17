@@ -179,7 +179,7 @@ harken> convert {"conversion":"PreviewPCM"}
 harken> save_project
 ```
 
-`get_effective_conversion` 返回预设、来源对象与平台；Sound 另返回当前语言有效 Source 的身份和最终采样率。`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.conversion`，预设在 `components.conversion` 读回原生配置；`get_project_info.default_conversion` 为默认预设 GUID 或 `null`。
+`get_effective_conversion` 返回预设、来源对象与平台；Sound 另返回当前语言有效 Source 的身份和最终采样率。`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`，预设在 `components.conversion` 读回原生配置；`get_project_info.default_conversion` 为默认预设 GUID 或 `null`。
 
 `get_conversion_results` 仅检查现有缓存，不触发编码。返回 `sources`，每行包含 Sound、Source、语言、`original` 和 `converted`；未转换时 `converted:null`，已有结果带格式、采样率、声道、帧数、字节数、时长和路径。`convert` 使用相同范围，覆盖该平台各工程语言下实际引用预设的有效 Source，同步等待完成后返回 `conversion_result`（`converted/cached/canceled/errors`）与 `sources`。失败返回 `CONVERSION_FAILED`，成功生成的缓存保留。该同步命令不使用旧作业协议：独立 CLI 进程内执行不受异步作业等待期限约束；`--instance` 附加模式仍受 `--timeout` 的传输等待期限约束，等待超时不会取消 Studio 侧正在执行的同步转换。旧 `set_conversion_settings/transcode_asset/batch_convert_media/get_transcode_status/cancel_transcode` 已移除。
 
