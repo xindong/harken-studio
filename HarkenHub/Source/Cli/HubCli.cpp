@@ -209,7 +209,8 @@ Reply execute(const Arguments& args)
             const bool opened = file.open(QIODevice::ReadOnly);
             require(opened, file.errorString());
             file.seek(qMax(qint64(0), file.size() - 4 * 1024 * 1024));
-            const auto lines = QString::fromUtf8(file.readAll()).split('\n');
+            auto lines = QString::fromUtf8(file.readAll()).split('\n');
+            if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
             return success({{"path", file.fileName()}, {"lines", QJsonArray::fromStringList(lines.mid(qMax(0, int(lines.size()) - count)))}});
         }
         const QString path = args.required("path");

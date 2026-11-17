@@ -133,8 +133,11 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
 
 }
 
-Reply integrations(const Arguments& args)
+Reply integrations(const Arguments& input)
 {
+    auto args = input;
+    if (args.options.contains("source"))
+        args.options["source"] = QFileInfo(args.required("source")).absoluteFilePath();
     EngineTargetStore targets;
     IntegrationStore associations;
     requireStore(targets, targets.open(userDataDir() + "/engine-targets.db"));

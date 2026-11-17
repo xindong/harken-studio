@@ -7,6 +7,10 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QTemporaryDir>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <memory>
+#include <vector>
 
 using VNH::HubSettings;
 
@@ -181,6 +185,35 @@ TEST_F(HubSettingsTest, ProjectLocationPreservesOtherSettings)
     EXPECT_FALSE(saved.value(QStringLiteral("autoDownloadStudio")).toBool());
     EXPECT_EQ(saved.value(QStringLiteral("projectLocation")).toString(),
               QStringLiteral("D:/Harken Projects"));
+}
+
+TEST_F(HubSettingsTest, ConcurrentProcessesPreserveIndependentPreferencesAndWindowState)
+{
+    ASSERT_TRUE(HubSettings::setAutoDownloadStudio(false));
+    std::vector<std::unique_ptr<QProcess>> clients;
+    for (int i = 0; i < 12; ++i) {
+        auto client = std::make_unique<QProcess>();
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert("QT_QPA_PLATFORM", "invalid-platform-cli-must-not-load");
+        client->setProcessEnvironment(environment);
+        client->start(QString::fromUtf8(HARKEN_HUB_CLI_FIXTURE),
+            {"--cli", "settings", "set", "--key", i % 2 ? "theme" : "language", "--value", i % 2 ? "dark" : "zh_CN"});
+        ASSERT_TRUE(client->waitForStarted());
+        clients.push_back(std::move(client));
+    }
+    for (int i = 1; i <= 50; ++i) {
+        ASSERT_TRUE(HubSettings::setWindowPosition(QPoint(i, i)));
+        ASSERT_TRUE(HubSettings::setTableSort(QString::number(i), {i, Qt::DescendingOrder}));
+    }
+    for (const auto& client : clients) {
+        ASSERT_TRUE(client->waitForFinished(15000));
+        EXPECT_EQ(client->exitCode(), 0) << client->readAllStandardOutput().toStdString();
+    }
+    EXPECT_EQ(HubSettings::themePreference(), "dark");
+    EXPECT_EQ(HubSettings::languagePreference(), "zh_CN");
+    EXPECT_FALSE(HubSettings::autoDownloadStudio());
+    EXPECT_EQ(HubSettings::windowPosition(), QPoint(50, 50));
+    for (int i = 1; i <= 50; ++i) EXPECT_EQ(HubSettings::tableSort(QString::number(i)).column, i);
 }
 
 TEST_F(HubSettingsTest, InvalidFileFallsBackToDefault)

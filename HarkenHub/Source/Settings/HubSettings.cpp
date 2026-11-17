@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QLockFile>
 
 namespace VNH {
 
@@ -22,16 +23,27 @@ QJsonObject loadRoot()
     return document.isObject() ? document.object() : QJsonObject();
 }
 
-bool saveRoot(const QJsonObject& root)
+template<class Mutation> bool updateRoot(Mutation mutate)
 {
     const QString path = HubSettings::filePath();
     if (!QDir().mkpath(QFileInfo(path).dir().path()))
+        return false;
+    QLockFile lock(path + QStringLiteral(".lock"));
+    if (!lock.tryLock(5000))
+        return false;
+    QJsonObject root = loadRoot();
+    if (!mutate(root))
         return false;
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly))
         return false;
     const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
     return file.write(json) == json.size() && file.commit();
+}
+
+bool updateValue(const QString& key, const QJsonValue& value)
+{
+    return updateRoot([&](QJsonObject& root) { root[key] = value; return true; });
 }
 
 }
@@ -50,9 +62,7 @@ bool HubSettings::autoSilentlyUpdateHub()
 
 bool HubSettings::setAutoSilentlyUpdateHub(bool enabled)
 {
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("autoSilentlyUpdateHub")] = enabled;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("autoSilentlyUpdateHub"), enabled);
 }
 
 bool HubSettings::autoDownloadStudio()
@@ -64,9 +74,7 @@ bool HubSettings::autoDownloadStudio()
 
 bool HubSettings::setAutoDownloadStudio(bool enabled)
 {
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("autoDownloadStudio")] = enabled;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("autoDownloadStudio"), enabled);
 }
 
 QString HubSettings::projectLocation()
@@ -81,9 +89,7 @@ bool HubSettings::setProjectLocation(const QString& path)
     const QString value = path.trimmed();
     if (value.isEmpty())
         return false;
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("projectLocation")] = value;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("projectLocation"), value);
 }
 
 QString HubSettings::languagePreference()
@@ -99,9 +105,7 @@ bool HubSettings::setLanguagePreference(const QString& preference)
         preference != QStringLiteral("en") &&
         preference != QStringLiteral("zh_CN"))
         return false;
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("language")] = preference;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("language"), preference);
 }
 
 QString HubSettings::themePreference()
@@ -115,9 +119,7 @@ bool HubSettings::setThemePreference(const QString& preference)
 {
     if (preference != QStringLiteral("system") && preference != QStringLiteral("light")
         && preference != QStringLiteral("dark")) return false;
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("theme")] = preference;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("theme"), preference);
 }
 
 QSize HubSettings::windowSize()
@@ -136,9 +138,7 @@ bool HubSettings::setWindowSize(const QSize& size)
     QJsonObject object;
     object[QStringLiteral("width")] = size.width();
     object[QStringLiteral("height")] = size.height();
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("windowSize")] = object;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("windowSize"), object);
 }
 
 std::optional<QPoint> HubSettings::windowPosition()
@@ -159,9 +159,7 @@ bool HubSettings::setWindowPosition(const QPoint& position)
     QJsonObject object;
     object[QStringLiteral("x")] = position.x();
     object[QStringLiteral("y")] = position.y();
-    QJsonObject root = loadRoot();
-    root[QStringLiteral("windowPosition")] = object;
-    return saveRoot(root);
+    return updateValue(QStringLiteral("windowPosition"), object);
 }
 
 TableSortPreference HubSettings::tableSort(const QString& table)
@@ -175,12 +173,13 @@ TableSortPreference HubSettings::tableSort(const QString& table)
 
 bool HubSettings::setTableSort(const QString& table, const TableSortPreference& sort)
 {
-    QJsonObject root = loadRoot();
-    QJsonObject tables = root.value(QStringLiteral("tableSort")).toObject();
-    tables[table] = QJsonObject{{QStringLiteral("column"), sort.column},
-                              {QStringLiteral("descending"), sort.order == Qt::DescendingOrder}};
-    root[QStringLiteral("tableSort")] = tables;
-    return saveRoot(root);
+    return updateRoot([&](QJsonObject& root) {
+        QJsonObject tables = root.value(QStringLiteral("tableSort")).toObject();
+        tables[table] = QJsonObject{{QStringLiteral("column"), sort.column},
+                                  {QStringLiteral("descending"), sort.order == Qt::DescendingOrder}};
+        root[QStringLiteral("tableSort")] = tables;
+        return true;
+    });
 }
 
 QString HubSettings::pendingUpdateNotesVersion()
@@ -192,13 +191,14 @@ QString HubSettings::pendingUpdateNotesVersion()
 
 bool HubSettings::setPendingUpdateNotesVersion(const QString& version)
 {
-    QJsonObject root = loadRoot();
-    const QString value = version.trimmed();
-    if (value.isEmpty())
-        root.remove(QStringLiteral("pendingUpdateNotesVersion"));
-    else
-        root[QStringLiteral("pendingUpdateNotesVersion")] = value;
-    return saveRoot(root);
+    return updateRoot([&](QJsonObject& root) {
+        const QString value = version.trimmed();
+        if (value.isEmpty())
+            root.remove(QStringLiteral("pendingUpdateNotesVersion"));
+        else
+            root[QStringLiteral("pendingUpdateNotesVersion")] = value;
+        return true;
+    });
 }
 
 bool HubSettings::clearPendingUpdateNotesVersion(const QString& version)
@@ -206,12 +206,12 @@ bool HubSettings::clearPendingUpdateNotesVersion(const QString& version)
     const QString value = version.trimmed();
     if (value.isEmpty())
         return false;
-    QJsonObject root = loadRoot();
-    if (root.value(QStringLiteral("pendingUpdateNotesVersion")).toString() !=
-        value)
-        return false;
-    root.remove(QStringLiteral("pendingUpdateNotesVersion"));
-    return saveRoot(root);
+    return updateRoot([&](QJsonObject& root) {
+        if (root.value(QStringLiteral("pendingUpdateNotesVersion")).toString() != value)
+            return false;
+        root.remove(QStringLiteral("pendingUpdateNotesVersion"));
+        return true;
+    });
 }
 
 }

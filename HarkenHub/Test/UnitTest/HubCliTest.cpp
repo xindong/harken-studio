@@ -46,6 +46,7 @@ protected:
     {
         QProcess process;
         process.setProcessEnvironment(environment);
+        process.setWorkingDirectory(directory.path());
         QEventLoop loop;
         QTimer timeout;
         timeout.setSingleShot(true);
@@ -143,6 +144,18 @@ TEST_F(HubCliTest, PersistentChoicesAndRegistrationRemovalDoNotModifyProjectFile
     const auto consents = run({"legal", "status"})["data"].toObject();
     EXPECT_TRUE(consents["hub"].toBool());
     EXPECT_TRUE(consents["studio"].toBool());
+}
+
+TEST_F(HubCliTest, LogTailCountsRecordsWithAndWithoutATerminatingNewline)
+{
+    const auto path = directory.filePath("user/logs/hub-gui.log");
+    for (const auto& bytes : {QByteArray("first\nlast\n"), QByteArray("first\nlast")}) {
+        write(path, bytes);
+        EXPECT_EQ(run({"diagnostics", "logs", "--lines", "1"})["data"].toObject()["lines"].toArray(), QJsonArray{"last"});
+        EXPECT_EQ(run({"diagnostics", "logs", "--lines", "5"})["data"].toObject()["lines"].toArray(), (QJsonArray{"first", "last"}));
+    }
+    write(path, {});
+    EXPECT_TRUE(run({"diagnostics", "logs"})["data"].toObject()["lines"].toArray().isEmpty());
 }
 
 TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStudioIntake)
@@ -336,7 +349,10 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
     write(source + "/package.json", R"({"name":"com.harken.core","version":"0.2.0-test"})");
     write(source + "/Documentation~/Reference.md", "original docs");
     write(source + "/Samples~/Example.cs", "original sample");
-    const QStringList install{"integrations", "install", "--path", game, "--source", source};
+    const auto project = directory.filePath("Audio.hsp");
+    write(project, R"({"harkenDocument":{"type":"project.root"}})");
+    approve({"integrations", "link", "--path", game, "--project", project, "--source", "./Source"});
+    const QStringList install{"integrations", "install", "--path", game, "--source", "./Source"};
     const auto plan = run(install, 4);
     const auto installed = game + "/Packages/com.harken.core";
     EXPECT_FALSE(QFileInfo::exists(installed));
@@ -345,6 +361,13 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
     EXPECT_FALSE(QFileInfo::exists(installed));
     approve(install);
     EXPECT_FALSE(QFileInfo::exists(installed + "/Documentation~/Reference.md"));
+    write(source + "/package.json", R"({"name":"com.harken.core","version":"0.3.0-test"})");
+    write(source + "/Runtime/Generated/HarkenAbi.g.cs", "next version core");
+    EXPECT_FALSE(run(install, 4)["contentSelectionRequired"].toBool());
+    approve(install);
+    EXPECT_FALSE(QFileInfo::exists(installed + "/Documentation~/Reference.md"));
+    EXPECT_FALSE(QFileInfo::exists(installed + "/Samples~/Example.cs"));
+    EXPECT_EQ(run({"integrations", "list"})["data"].toObject()["associations"].toArray()[0].toObject()["source"].toString(), source);
     run({"integrations", "verify", "--path", game});
     approve(install + QStringList{"--documentation", "update", "--samples", "update"});
     EXPECT_TRUE(run(install, 4)["contentSelectionRequired"].toBool());
