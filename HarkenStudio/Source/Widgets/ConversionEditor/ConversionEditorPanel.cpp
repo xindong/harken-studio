@@ -277,7 +277,7 @@ void ConversionEditorPanel::bindItem(ProjectItem* item)
 void ConversionEditorPanel::clearEditor()
 {
     cancelConversion();
-    itemGuid_ = {};
+    itemGuid_ = QUuid{};
     displayed_.clear();
     refreshPreset();
 }
