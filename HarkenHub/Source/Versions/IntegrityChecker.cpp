@@ -3,12 +3,42 @@
 #include "Packaging/PackageReader.h"
 
 #include <QFile>
+#include <QDir>
+#include <QDirIterator>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
 namespace VNH {
+
+InstallationSnapshot IntegrityChecker::snapshot(const QString& installPath)
+{
+    InstallationSnapshot result;
+    const QFileInfo root(installPath);
+    QDirIterator iterator(installPath, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        iterator.next();
+        const auto info = iterator.fileInfo();
+        QJsonObject entry;
+        if (info.isSymbolicLink() || info.isJunction()) entry["link"] = info.symLinkTarget();
+        else if (info.isDir()) entry["directory"] = true;
+        else {
+            const auto hash = PackageReader::fileSha256Hex(info.absoluteFilePath());
+            if (hash.isEmpty()) {
+                result.error = QStringLiteral("Cannot read installed file: %1").arg(info.absoluteFilePath());
+                return result;
+            }
+            entry["sha256"] = hash;
+        }
+        result.files[QDir(installPath).relativeFilePath(info.absoluteFilePath())] = entry;
+    }
+    const QJsonObject identity{{"path", root.absoluteFilePath()}, {"exists", root.exists()},
+        {"link", root.symLinkTarget()}, {"files", result.files}};
+    result.hash = QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(identity).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+    return result;
+}
 
 IntegrityReport IntegrityChecker::check(
     const QString& installPath, const QString& expectedPackageManifestHash,

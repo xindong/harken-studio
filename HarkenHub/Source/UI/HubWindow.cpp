@@ -899,8 +899,10 @@ void HubWindow::persistNormalGeometry(const QRect& geometry)
 {
     if (!geometry.isValid())
         return;
-    HubSettings::setWindowSize(geometry.size());
-    HubSettings::setWindowPosition(geometry.topLeft());
+    if (!HubSettings::setWindowGeometry(geometry)) {
+        qWarning() << "Window geometry could not be saved; retrying";
+        if (windowSizeSaveTimer_) windowSizeSaveTimer_->start();
+    }
 }
 
 void HubWindow::restoreWindowGeometry()

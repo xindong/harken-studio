@@ -8,10 +8,34 @@
   "releases": [
     {
       "version": "0.2.4",
-      "date": "2026-11-06",
-      "pullRequests": [277],
+      "date": "2026-11-17",
+      "pullRequests": [277, 322],
       "contributors": ["liuxin2-sys"],
       "changes": [
+        {
+          "category": "added",
+          "text": "Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window."
+        },
+        {
+          "category": "added",
+          "text": "Open the offline CLI user guide and AI command reference from Settings in English or Simplified Chinese."
+        },
+        {
+          "category": "added",
+          "text": "Choose Follow System, Light or Dark in Settings and apply the theme immediately."
+        },
+        {
+          "category": "improved",
+          "text": "Install core Unity integration by default and choose API documentation and samples separately. Existing optional content asks for a keep, update or remove decision, with backups before replacement or removal."
+        },
+        {
+          "category": "improved",
+          "text": "Show the current project filename after a renamed project is added again."
+        },
+        {
+          "category": "improved",
+          "text": "Preserve independent settings when the Hub window and command-line tools save preferences at the same time."
+        },
         {
           "category": "improved",
           "text": "Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer."

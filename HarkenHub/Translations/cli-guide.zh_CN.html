@@ -46,7 +46,7 @@
 <p>这条命令选择“保留文档、移除示例”。看完返回的文件清单后，再带确认标识执行。希望两者都复制时，使用 <code>--documentation update --samples update</code>。修改前请关闭 Unity；已复制或导入到其他位置的示例不在 Hub 的管理范围内。</p>
 <p>移除整个集成包可用 <code>integrations remove --path "D:\UnityGame" --backup "D:\Backups\Game-integration-01"</code>。备份位置必须是尚不存在的新目录，确认时保持同一路径。迁移、还原也采用先检查再确认的方式，完整参数见命令参考。</p>
 <h2>更新、协议与出错后的处理</h2>
-<p>先用 <code>updates download --product hub</code> 下载，再用 <code>updates apply --product hub</code> 查看更新计划。更新 Studio 时改用 <code>studio</code>。Hub 自身更新沿用已有更新桥接，并重启后台服务；返回“已排队”不代表安装完成，请继续查看 <code>updates status</code> 和 <code>diagnostics transactions</code>。</p>
+<p>先用 <code>updates download --product hub</code> 下载，再用 <code>updates apply --product hub</code> 查看更新计划。更新 Studio 时改用 <code>studio</code>。确认后，Hub 自身更新会关闭已运行的 Hub 窗口和后台服务，再通过更新桥接安装并重启后台服务；返回“已排队”不代表安装完成，请继续查看 <code>updates status</code> 和 <code>diagnostics transactions</code>。</p>
 <p>需要接受协议时，先运行 <code>legal show --product studio</code>（Hub 协议使用 <code>hub</code>），阅读完整内容。只有在你同意后，才运行 <code>legal accept --product studio</code>，核对返回内容并带确认标识再次执行。</p>
 <table><tr><th>退出码</th><th>该怎么做</th></tr><tr><td>0</td><td>命令成功，查看返回结果。</td></tr><tr><td>2</td><td>命令或参数有误，对照帮助修改。</td></tr><tr><td>3</td><td>操作失败，阅读错误和操作步骤，排除原因后重试。</td></tr><tr><td>4</td><td>需要选择内容处置方式，或阅读计划并确认。</td></tr><tr><td>5</td><td>需要阅读当前协议并决定是否接受。</td></tr></table>
 <p class="note">不要让脚本自动拿到新确认标识就继续执行。新计划需要重新审阅。自动化使用方式见 <a href="ai-reference.html">AI 命令参考</a>，可供程序读取的定义见 <a href="command-reference.json">JSON 命令契约</a>。</p>

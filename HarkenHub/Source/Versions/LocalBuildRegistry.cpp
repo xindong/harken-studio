@@ -15,6 +15,7 @@
 #include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QLockFile>
 
 #include <algorithm>
 
@@ -161,6 +162,12 @@ static std::vector<LocalBuildRecord> loadRecords(QString* error)
 std::vector<LocalBuildRecord> LocalBuildRegistry::load(QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return {};
+    }
     return loadRecords(error);
 }
 
@@ -223,6 +230,12 @@ bool LocalBuildRegistry::probe(const QString& executablePath,
 bool LocalBuildRegistry::upsert(const LocalBuildRecord& record, QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
@@ -246,6 +259,12 @@ bool LocalBuildRegistry::updateExisting(const LocalBuildRecord& record,
                                         QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
@@ -272,6 +291,12 @@ bool LocalBuildRegistry::requestRecheck(const QString& executablePath,
                                        QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     auto records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
@@ -297,6 +322,12 @@ bool LocalBuildRegistry::requestRecheck(const QString& executablePath,
 bool LocalBuildRegistry::remove(const QString& executablePath, QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {

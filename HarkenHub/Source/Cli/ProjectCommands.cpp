@@ -5,6 +5,8 @@
 #include "Launch/ProjectOpenFlow.h"
 #include "Launch/StudioLauncher.h"
 #include "Maintenance/BuildPinRegistry.h"
+#include "Transactions/InstallIndex.h"
+#include "Versions/IntegrityChecker.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectProbe.h"
 #include "Projects/ProjectIntakeConsumer.h"
@@ -64,6 +66,15 @@ Reply projects(const Arguments& args)
         requireConsent("studio");
         ProjectCreateRequest request;
         request.version = selectedVersion(args.required("build"));
+        if (!request.version.isLocalBuild()) {
+            const auto index = InstallIndex::snapshot();
+            require(index.ok, index.error);
+            const auto record = std::find_if(index.records.begin(), index.records.end(),
+                [&](const auto& item) { return item.buildId == request.version.buildId; });
+            require(record != index.records.end(), "The selected version has no trusted installation record");
+            const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash, record->capabilitiesHash);
+            require(integrity.ok, integrity.error, "VersionNeedsRepair");
+        }
         request.name = args.required("name").trimmed();
         request.location = QFileInfo(args.required("location")).absoluteFilePath();
         request.templateId = args.value("template");
@@ -85,7 +96,12 @@ Reply projects(const Arguments& args)
             if (request.templateId.isEmpty()) request.templateId = QFileInfo(request.templatePath).completeBaseName();
         }
         QString error;
-        require(ProjectCreateFlow::create(request, &error), error);
+        const QString projectPath = QDir(request.location).filePath(request.name + '/' + request.name + ".hsp");
+        require(ProjectIntakeConsumer::rememberCreationBuild(projectPath, request.version.buildId, &error), error);
+        if (!ProjectCreateFlow::create(request, &error)) {
+            ProjectIntakeConsumer::forgetCreationBuild(projectPath);
+            require(false, error);
+        }
         return success({{"started", true}, {"projectDirectory", QDir(request.location).filePath(request.name)}, {"buildId", request.version.buildId}});
     }
     ProjectStore store;

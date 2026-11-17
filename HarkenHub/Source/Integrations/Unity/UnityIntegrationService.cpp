@@ -124,8 +124,11 @@ QString safePathSegment(const QString& value)
 
 QString defaultIntegrationBackupPath(const QString& unityProjectPath)
 {
-    const QString appData = QStandardPaths::writableLocation(
-        QStandardPaths::AppDataLocation);
+    const QString appData =
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+        qEnvironmentVariableIsSet("HARKEN_HUB_USER_ROOT") ? VNH::userDataDir() :
+#endif
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (appData.isEmpty()) return {};
     const QString timestamp = QDateTime::currentDateTime().toString(
         QStringLiteral("yyyy-MM-dd_HH-mm-ss-zzz"));
@@ -1620,7 +1623,9 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         }
         const QJsonObject currentFiles = reviewSnapshot.value(QStringLiteral("files")).toObject();
         for (auto it = currentFiles.begin(); it != currentFiles.end(); ++it) {
-            if (removalFiles.contains(it.key())) filesToChange << QDir(targetIntegration).filePath(it.key());
+            const bool removed = removalFiles.contains(it.key());
+            result.fileChanges.push_back({removed ? QStringLiteral("remove") : QStringLiteral("preserve"), it.key()});
+            if (removed) filesToChange << QDir(targetIntegration).filePath(it.key());
             else preservedFiles << it.key();
         }
         const qsizetype pendingFiles = filesToChange.size();
@@ -1631,7 +1636,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 return relative.startsWith(prefix);
             });
         });
-        if (preservedFiles.isEmpty() && !preservedDirectory) filesToChange << targetIntegration + QStringLiteral(".meta");
+        if (preservedFiles.isEmpty() && !preservedDirectory) {
+            const QString rootMeta = targetIntegration + QStringLiteral(".meta");
+            filesToChange << rootMeta;
+            if (QFileInfo::exists(rootMeta))
+                result.fileChanges.push_back({QStringLiteral("remove"), QDir(targetIntegration).relativeFilePath(rootMeta)});
+        }
         if (!VNH::checkIntegrationFilesWritable(filesToChange, &error)
             || !VNH::checkIntegrationDirectoryChanges({targetIntegration}, {targetIntegration}, &error)) {
             step.status = StepStatus::Failed;
@@ -2505,6 +2515,16 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 QDir(result.integrationSourcePath).filePath(relative));
             if (!textHash.isEmpty()) sourceTextHashes.insert(relative, textHash);
         }
+        for (const auto component : {ContentComponent::Documentation, ContentComponent::Samples}) {
+            const auto action = component == ContentComponent::Documentation ? request.documentation : request.samples;
+            if (action == ContentAction::Update && std::none_of(sourceFiles.begin(), sourceFiles.end(),
+                [&](const auto& path) { return UnityInstallation::contentComponent(path) == component; })) {
+                step.status = StepStatus::Failed;
+                step.summary = QStringLiteral("The selected source does not include the requested documentation or samples.");
+                step.remediation = QStringLiteral("Keep or remove the existing content, or select a source that includes the content to update.");
+                return;
+            }
+        }
         sourceVersion = packageVersion(result.integrationSourcePath);
         installedContentHashes = sourceHashes;
         sourceFiles.erase(std::remove_if(sourceFiles.begin(), sourceFiles.end(), [&](const auto& relative) {
@@ -2659,6 +2679,21 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             comparisonPathKeys(previousManaged.managedFiles);
         QStringList targetFiles = allRelativeFiles(targetIntegration);
         targetFiles.removeAll(QLatin1String(kInstalledState));
+        sourceFiles.erase(std::remove_if(sourceFiles.begin(), sourceFiles.end(), [&](const QString& relative) {
+            return UnityInstallation::isDocumentationOrSample(relative)
+                && !previousManagedKeys.contains(comparisonPathKey(relative))
+                && QFileInfo::exists(QDir(targetIntegration).filePath(relative));
+        }), sourceFiles.end());
+        const auto targetKeys = comparisonPathKeys(targetFiles);
+        for (const auto& relative : previousManaged.managedFiles) {
+            if (UnityInstallation::isDocumentationOrSample(relative)
+                && contentAction(relative) != ContentAction::Remove && contentAction(relative) != ContentAction::Update
+                && !targetKeys.contains(comparisonPathKey(relative))) {
+                retainedManagedFiles << relative;
+                installedContentHashes[relative] = installedHashes.value(relative).toString().toLatin1();
+                sourceTextHashes[relative] = installedTextHashes.value(relative).toString().toLatin1();
+            }
+        }
         const QSet<QString> sourceKeys = comparisonPathKeys(sourceFiles);
         QSet<QString> sourceRuntimeIdentities;
         QMap<QString, QString> sourceRuntimePaths;
@@ -2727,8 +2762,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 changes.push_back({QStringLiteral("preserve"), relative});
                 if (previousManagedKeys.contains(comparisonPathKey(relative))) {
                     retainedManagedFiles << relative;
-                    installedContentHashes[relative] = installedHashes.value(relative).toString().toLatin1();
-                    sourceTextHashes[relative] = installedTextHashes.value(relative).toString().toLatin1();
+                    const auto recorded = std::find_if(previousManaged.managedFiles.cbegin(), previousManaged.managedFiles.cend(),
+                        [&](const QString& path) { return comparisonPathKey(path) == comparisonPathKey(relative); });
+                    installedContentHashes[relative] = installedHashes.value(*recorded).toString().toLatin1();
+                    sourceTextHashes[relative] = installedTextHashes.value(*recorded).toString().toLatin1();
                 }
                 continue;
             }

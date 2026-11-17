@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Support/ManifestTestUtils.h"
+#include "Support/StudioProtocolTestUtils.h"
 #include "Support/RangeHttpServer.h"
 #include "App/SingleInstanceGuard.h"
 #include "Platform/PlatformPaths.h"
@@ -8,6 +9,7 @@
 #include "ZipTestUtils.h"
 
 #include <QDir>
+#include <QDateTime>
 #include <QCryptographicHash>
 #include <QEventLoop>
 #include <QElapsedTimer>
@@ -22,6 +24,8 @@
 #include <QTimer>
 #include <QThread>
 #include <QScopeGuard>
+#include <memory>
+#include <vector>
 
 namespace {
 
@@ -146,16 +150,53 @@ TEST_F(HubCliTest, PersistentChoicesAndRegistrationRemovalDoNotModifyProjectFile
     EXPECT_TRUE(consents["studio"].toBool());
 }
 
+TEST_F(HubCliTest, ConcurrentClientsPreserveIndependentConsentsAndBuildRegistrations)
+{
+    std::vector<QStringList> commands;
+    for (const auto* product : {"hub", "studio"}) {
+        const QStringList command{"legal", "accept", "--product", product};
+        const auto review = run(command, 4);
+        commands.push_back(command + QStringList{"--confirm", review["confirmation"].toString()});
+    }
+    for (int i = 0; i < 4; ++i) {
+        const auto path = directory.filePath(QStringLiteral("studio-%1").arg(i)
+            + QFileInfo(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE)).suffix().prepend('.'));
+        ASSERT_TRUE(QFile::copy(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE), path));
+        commands.push_back({"versions", "add-local", "--path", path});
+    }
+    std::vector<std::unique_ptr<QProcess>> clients;
+    for (const auto& command : commands) {
+        auto client = std::make_unique<QProcess>();
+        client->setProcessEnvironment(environment);
+        client->start(QString::fromUtf8(HARKEN_HUB_CLI_FIXTURE), QStringList{"--cli"} + command);
+        ASSERT_TRUE(client->waitForStarted());
+        clients.push_back(std::move(client));
+    }
+    for (const auto& client : clients) {
+        if (client->state() != QProcess::NotRunning) ASSERT_TRUE(client->waitForFinished(15000));
+        EXPECT_EQ(client->exitCode(), 0) << client->readAllStandardOutput().toStdString() << client->readAllStandardError().toStdString();
+    }
+    const auto accepted = run({"legal", "status"})["data"].toObject();
+    EXPECT_TRUE(accepted["hub"].toBool());
+    EXPECT_TRUE(accepted["studio"].toBool());
+    EXPECT_EQ(run({"versions", "list"})["data"].toObject()["versions"].toArray().size(), 4);
+}
+
 TEST_F(HubCliTest, LogTailCountsRecordsWithAndWithoutATerminatingNewline)
 {
     const auto path = directory.filePath("user/logs/hub-gui.log");
     for (const auto& bytes : {QByteArray("first\nlast\n"), QByteArray("first\nlast")}) {
         write(path, bytes);
-        EXPECT_EQ(run({"diagnostics", "logs", "--lines", "1"})["data"].toObject()["lines"].toArray(), QJsonArray{"last"});
-        EXPECT_EQ(run({"diagnostics", "logs", "--lines", "5"})["data"].toObject()["lines"].toArray(), (QJsonArray{"first", "last"}));
+        EXPECT_EQ(run({"diagnostics", "logs", "--lines", "1"})["data"].toObject()["logs"].toArray()[0].toObject()["lines"].toArray(), QJsonArray{"last"});
+        EXPECT_EQ(run({"diagnostics", "logs", "--lines", "5"})["data"].toObject()["logs"].toArray()[0].toObject()["lines"].toArray(), (QJsonArray{"first", "last"}));
     }
     write(path, {});
-    EXPECT_TRUE(run({"diagnostics", "logs"})["data"].toObject()["lines"].toArray().isEmpty());
+    EXPECT_TRUE(run({"diagnostics", "logs"})["data"].toObject()["logs"].toArray()[0].toObject()["lines"].toArray().isEmpty());
+    ASSERT_TRUE(QFile::remove(path));
+    write(directory.filePath("user/logs/hub-background.log"), "update completed\n");
+    const auto logs = run({"diagnostics", "logs"})["data"].toObject()["logs"].toArray();
+    EXPECT_FALSE(logs[0].toObject()["exists"].toBool());
+    EXPECT_EQ(logs[1].toObject()["lines"].toArray(), QJsonArray{"update completed"});
 }
 
 TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStudioIntake)
@@ -187,11 +228,13 @@ TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStu
     EXPECT_EQ(arguments.value(templateIndex + 1).toString(), templatePath);
     write(project, R"({"harkenDocument":{"type":"project.root"},"metadata":{"name":"Old name"}})");
     const auto intakePath = directory.filePath("user/project-intake/created.json");
-    write(intakePath, QJsonDocument(QJsonObject{{"projectPath", project}, {"buildId", version}, {"openedAt", "2026-01-01T01:02:03.000Z"}}).toJson());
+    const auto openedAt = QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs);
+    write(intakePath, QJsonDocument(QJsonObject{{"projectPath", project}, {"buildId", version}, {"openedAt", openedAt}}).toJson());
     const auto projects = run({"projects", "list"})["data"].toObject()["projects"].toArray();
     ASSERT_EQ(projects.size(), 1);
     EXPECT_EQ(projects[0].toObject()["name"].toString(), "Demo");
-    EXPECT_EQ(projects[0].toObject()["lastOpenedAt"].toString(), "2026-01-01T01:02:03.000Z");
+    EXPECT_EQ(projects[0].toObject()["lastOpenedAt"].toString(), openedAt);
+    EXPECT_EQ(projects[0].toObject()["preferredBuild"].toString(), version);
     EXPECT_FALSE(QFileInfo::exists(intakePath));
 }
 
@@ -200,17 +243,25 @@ TEST_F(HubCliTest, InstalledMetadataCannotValidateItselfAndFileChangesInvalidate
     const auto installation = directory.filePath("versions/build");
     const auto hash = [](const QByteArray& bytes) { return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()); };
     const QByteArray binary("original");
-    QJsonObject manifest{{"files", QJsonArray{QJsonObject{{"path", "payload.bin"}, {"size", binary.size()}, {"sha256", hash(binary)}}}}};
+    QJsonObject manifest{{"product", "HarkenStudio"}, {"buildId", "build"}, {"version", "1.0.0"}, {"channel", "stable"},
+        {"files", QJsonArray{QJsonObject{{"path", "payload.bin"}, {"size", binary.size()}, {"sha256", hash(binary)}},
+            QJsonObject{{"path", VNH::studioBinaryRelativePath()}, {"size", binary.size()}, {"sha256", hash(binary)}}}}};
     const auto manifestBytes = QJsonDocument(manifest).toJson();
     write(installation + "/package-manifest.json", manifestBytes);
-    write(installation + "/capabilities.json", "{}");
+    const auto capabilities = QJsonDocument(HarkenHubTest::studioCapabilities("build", "1.0.0")).toJson();
+    write(installation + "/capabilities.json", capabilities);
+    write(installation + '/' + VNH::studioBinaryRelativePath(), binary);
     write(installation + "/payload.bin", binary);
     const QJsonObject record{{"buildId", "build"}, {"semanticVersion", "1.0.0"}, {"channel", "stable"},
         {"installPath", installation}, {"packageHash", "unused"}, {"packageManifestHash", hash(manifestBytes)},
-        {"capabilitiesHash", hash("{}")}, {"installedAt", "2026-01-01"}, {"healthState", "Installed"}};
+        {"capabilitiesHash", hash(capabilities)}, {"installedAt", "2026-01-01"}, {"healthState", "Installed"}};
     write(directory.filePath("machine/install-index.json"), QJsonDocument(QJsonObject{{"lastReleaseSequence", 1}, {"installed", QJsonArray{record}}}).toJson());
     run({"versions", "verify", "--build", "build"});
     write(installation + "/payload.bin", "modified");
+    approve({"legal", "accept", "--product", "studio"});
+    const auto create = run({"projects", "create", "--build", "build", "--name", "Rejected", "--location", directory.path()}, 3);
+    EXPECT_EQ(create["error"].toObject()["code"].toString(), "VersionNeedsRepair");
+    EXPECT_FALSE(QDir(directory.filePath("Rejected")).exists());
     const auto review = run({"versions", "uninstall", "--build", "build"}, 4);
     write(installation + "/payload.bin", "modified again");
     run({"versions", "uninstall", "--build", "build", "--confirm", review["confirmation"].toString()}, 4);
@@ -265,7 +316,7 @@ TEST_F(HubCliTest, UpdateApplicationRejectsActiveTransactionsAndUntrustedFilesBe
     const auto statePath = directory.filePath("user/update-state.json");
     const auto save = [&] { write(statePath, QJsonDocument(QJsonObject{{"HarkenStudio", state}}).toJson()); };
     save();
-    run({"updates", "apply", "--product", "studio"}, 4);
+    run({"updates", "apply", "--product", "studio"}, 3);
     for (const auto* busy : {"AwaitingBridge", "AwaitingElevation", "Downloading", "Verifying"}) {
         state["state"] = busy;
         save();
@@ -291,6 +342,13 @@ TEST_F(HubCliTest, NetworkDownloadsRequireBothSignedIdentityAndValidArchiveConte
     HarkenHubTest::RangeHttpServer server;
     ASSERT_TRUE(server.listen());
     environment.insert("HARKEN_CONTENT_BASE_URL", server.baseUrl().toString());
+    HarkenHubTest::RangeHttpServer primary;
+    ASSERT_TRUE(primary.listen());
+    HarkenHubTest::RangeHttpServer::Script unavailable;
+    unavailable.mode = HarkenHubTest::RangeHttpServer::Script::Mode::Status;
+    unavailable.status = 503;
+    primary.setDefaultScript(unavailable);
+    environment.insert("HARKEN_HUB_GITHUB_BASE_URL", primary.baseUrl().toString());
     const auto keys = HarkenHubTest::makeKeypair();
     environment.insert("HARKEN_HUB_MANIFEST_PUBKEY", QString::fromLatin1(keys.publicKey.toHex()));
     const auto hash = [](const QByteArray& bytes) { return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()); };
@@ -319,6 +377,10 @@ TEST_F(HubCliTest, NetworkDownloadsRequireBothSignedIdentityAndValidArchiveConte
     publish(validBytes, keys);
     const auto result = run({"versions", "download", "--build", build});
     EXPECT_EQ(read(result["data"].toObject()["package"].toString()), validBytes);
+    const auto installation = run({"versions", "install", "--package", result["data"].toObject()["package"].toString(),
+        "--manifest", result["data"].toObject()["manifest"].toString()}, 4)["plan"].toObject()["installation"].toObject();
+    EXPECT_TRUE(installation["files"].toObject().contains(QString::fromUtf8(binaryPath)));
+    EXPECT_TRUE(installation["destination"].toString().startsWith(directory.filePath("versions/")));
     publish(validBytes, HarkenHubTest::makeKeypair(7));
     const auto requests = server.requestCount();
     run({"versions", "download", "--build", build}, 3);
@@ -372,12 +434,17 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
     approve(install + QStringList{"--documentation", "update", "--samples", "update"});
     EXPECT_TRUE(run(install, 4)["contentSelectionRequired"].toBool());
     write(installed + "/Samples~/Custom.cs", "my own content");
-    approve(install + QStringList{"--documentation", "keep", "--samples", "remove"});
+    const auto changed = approve(install + QStringList{"--documentation", "keep", "--samples", "remove"});
+    EXPECT_TRUE(changed["data"].toObject()["contentBackup"].toString().startsWith(directory.filePath("user/")));
     EXPECT_EQ(read(installed + "/Documentation~/Reference.md"), "original docs");
     EXPECT_FALSE(QFileInfo::exists(installed + "/Samples~/Example.cs"));
     EXPECT_EQ(read(installed + "/Samples~/Custom.cs"), "my own content");
     approve({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")});
+    run({"integrations", "verify", "--path", game, "--location", "Assets/Wrong"}, 3);
+    run({"integrations", "locate", "--path", game, "--location", "Assets/Wrong"}, 3);
     run({"integrations", "verify", "--path", game});
+    const auto removal = run({"integrations", "remove", "--path", game, "--backup", directory.filePath("RemoveBackup")}, 4);
+    EXPECT_FALSE(removal["plan"].toObject()["files"].toArray().isEmpty());
     approve({"integrations", "remove", "--path", game, "--backup", directory.filePath("RemoveBackup")});
     EXPECT_EQ(read(game + "/Assets/HarkenSDK/Samples~/Custom.cs"), "my own content");
 }

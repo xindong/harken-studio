@@ -160,6 +160,30 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window.</source>
+        <translation>无需打开 Hub 窗口，即可通过命令行管理工程、Studio 版本、Unity 集成、设置和更新。</translation>
+    </message>
+    <message>
+        <source>Open the offline CLI user guide and AI command reference from Settings in English or Simplified Chinese.</source>
+        <translation>在设置菜单中打开离线 CLI 用户指南和 AI 命令参考，支持英文和简体中文。</translation>
+    </message>
+    <message>
+        <source>Choose Follow System, Light or Dark in Settings and apply the theme immediately.</source>
+        <translation>在设置菜单中选择跟随系统、浅色或深色主题，切换后立即生效。</translation>
+    </message>
+    <message>
+        <source>Install core Unity integration by default and choose API documentation and samples separately. Existing optional content asks for a keep, update or remove decision, with backups before replacement or removal.</source>
+        <translation>Unity 集成默认只安装核心内容，API 文档和示例可单独选择；检测到已有可选内容时，可决定保留、更新或移除，覆盖或移除前会先备份。</translation>
+    </message>
+    <message>
+        <source>Show the current project filename after a renamed project is added again.</source>
+        <translation>工程改名后重新加入 Hub，列表会显示当前文件名。</translation>
+    </message>
+    <message>
+        <source>Preserve independent settings when the Hub window and command-line tools save preferences at the same time.</source>
+        <translation>Hub 窗口与命令行同时保存设置时，保留双方各自修改的选项。</translation>
+    </message>
+    <message>
         <source>Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer.</source>
         <translation>Windows 安装程序会先处理占用 Harken Hub 文件的应用程序，再继续安装，不再询问是否重启电脑。</translation>
     </message>
@@ -5394,5 +5418,7 @@ Close Unity and complete any required P4 checkout before continuing.</source>
     <message><source>Choose a Content Action First</source><translation>请先选择处置方式</translation></message>
     <message><source>Generate Change List</source><translation>生成变更清单</translation></message>
     <message><source>Existing documentation or samples were found. Choose whether to keep, update or remove each component.</source><translation>检测到旧版文档或示例，请分别选择保留、更新或移除。</translation></message>
+    <message><source>The selected source does not include the requested documentation or samples.</source><translation>所选集成包不包含要安装或更新的文档或示例。</translation></message>
+    <message><source>Keep or remove the existing content, or select a source that includes the content to update.</source><translation>请选择保留或移除已有内容，或改用包含所需内容的集成包进行更新。</translation></message>
 </context>
 </TS>

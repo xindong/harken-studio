@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QPoint>
+#include <QRect>
 #include <QSize>
 #include <QString>
 
@@ -28,6 +29,7 @@ public:
     static bool setLanguagePreference(const QString& preference);
     static QString themePreference();
     static bool setThemePreference(const QString& preference);
+    static bool setWindowGeometry(const QRect& geometry);
     static QSize windowSize();
     static bool setWindowSize(const QSize& size);
     static std::optional<QPoint> windowPosition();

@@ -61,6 +61,17 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
 {
     UnityIntegrationRequest request;
     request.unityProjectPath = target.canonicalRoot;
+    const auto discovery = VNX::UnityInstallation::discover(target.canonicalRoot);
+    require(discovery.errors.isEmpty(), discovery.errors.join('\n'));
+    if (target.integrationInstallPath.isEmpty() && discovery.installations.size() == 1)
+        target.integrationInstallPath = QDir(target.canonicalRoot).relativeFilePath(discovery.installations.front().path);
+    if (args.options.contains("location") && (args.operation == "verify" || args.operation == "locate")) {
+        QString resolved;
+        QString error;
+        require(VNX::UnityInstallation::resolveTarget(target.canonicalRoot, args.required("location"), &resolved, &error), error);
+        require(discovery.installations.size() == 1 && VNX::UnityInstallation::samePath(resolved, discovery.installations.front().path),
+            "The supplied location does not identify the installed integration");
+    }
     request.integrationInstallPath = target.integrationInstallPath;
     request.integrationSourcePath = args.value("source");
     request.documentation = contentAction(args.value("documentation", "ask"));
@@ -175,7 +186,13 @@ Reply integrations(const Arguments& input)
     target.addedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     bool known = false;
     for (const auto& current : registered)
-        if (current.canonicalRoot.compare(target.canonicalRoot, Qt::CaseInsensitive) == 0 && current.engineKind == target.engineKind) {
+        if (
+#ifdef Q_OS_WIN
+            current.canonicalRoot.compare(target.canonicalRoot, Qt::CaseInsensitive) == 0
+#else
+            current.canonicalRoot == target.canonicalRoot
+#endif
+            && current.engineKind == target.engineKind) {
             target = current;
             known = true;
             break;

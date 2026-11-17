@@ -8,6 +8,7 @@
 #include <QJsonValue>
 #include <QTemporaryDir>
 #include <QProcess>
+#include <QThread>
 #include <QProcessEnvironment>
 #include <memory>
 #include <vector>
@@ -201,12 +202,28 @@ TEST_F(HubSettingsTest, ConcurrentProcessesPreserveIndependentPreferencesAndWind
         ASSERT_TRUE(client->waitForStarted());
         clients.push_back(std::move(client));
     }
+    const auto retry = [](auto save) {
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            if (save()) return true;
+            QThread::msleep(10);
+        }
+        return false;
+    };
     for (int i = 1; i <= 50; ++i) {
-        ASSERT_TRUE(HubSettings::setWindowPosition(QPoint(i, i)));
-        ASSERT_TRUE(HubSettings::setTableSort(QString::number(i), {i, Qt::DescendingOrder}));
+        ASSERT_TRUE(retry([&] { return HubSettings::setWindowGeometry(QRect(i, i, 800, 600)); }));
+        ASSERT_TRUE(retry([&] { return HubSettings::setTableSort(QString::number(i), {i, Qt::DescendingOrder}); }));
     }
     for (const auto& client : clients) {
         ASSERT_TRUE(client->waitForFinished(15000));
+        if (client->exitCode() != 0) {
+            const auto response = QJsonDocument::fromJson(client->readAllStandardOutput()).object();
+            ASSERT_EQ(client->exitCode(), 3);
+            EXPECT_FALSE(response["ok"].toBool(true));
+            EXPECT_FALSE(response["error"].toObject().isEmpty());
+            client->start();
+            ASSERT_TRUE(client->waitForStarted());
+            ASSERT_TRUE(client->waitForFinished(15000));
+        }
         EXPECT_EQ(client->exitCode(), 0) << client->readAllStandardOutput().toStdString();
     }
     EXPECT_EQ(HubSettings::themePreference(), "dark");

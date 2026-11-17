@@ -101,8 +101,12 @@ void TableSorting::apply()
 
 void TableSorting::save()
 {
-    if (changed_ && HubSettings::setTableSort(settingsKey_, sort_))
-        changed_ = false;
+    if (!changed_) return;
+    if (HubSettings::setTableSort(settingsKey_, sort_)) changed_ = false;
+    else {
+        qWarning() << "Table sorting preference could not be saved; retrying";
+        saveTimer_.start();
+    }
 }
 
 }

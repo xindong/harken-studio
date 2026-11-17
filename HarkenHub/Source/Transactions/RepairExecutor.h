@@ -23,9 +23,9 @@ public:
     using ProcessProbe = std::function<QStringList(const QString&)>;
 
     static RepairOutcome run(const QString& buildId, const QDateTime& now,
-                             const QString& transactionId = {});
+                             const QString& transactionId = {}, const QString& reviewedSnapshot = {});
     static RepairOutcome run(const QString& buildId, const QDateTime& now,
-                             const ProcessProbe& probe, const QString& transactionId = {});
+                             const ProcessProbe& probe, const QString& transactionId = {}, const QString& reviewedSnapshot = {});
 };
 
 }

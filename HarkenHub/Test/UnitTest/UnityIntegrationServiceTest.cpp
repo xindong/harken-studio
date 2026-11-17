@@ -2855,9 +2855,26 @@ TEST(UnityIntegrationService, ComponentDecisionsRemainBoundToReviewAndPreserveOw
     request.confirmTargetChanges = true;
     request.approvedPlanHash = installation.planHash;
     ASSERT_TRUE(service.run(request).success);
+    writeFile(installed + "/Documentation~/User.md", "user document");
+    writeFile(source + "/Documentation~/User.md", "new source collision");
+    request.checkOnly = true;
+    request.approvedPlanHash.clear();
+    const auto collision = service.run(request);
+    ASSERT_TRUE(collision.success);
+    request.checkOnly = false;
+    request.approvedPlanHash = collision.planHash;
+    ASSERT_TRUE(service.run(request).success);
+    EXPECT_EQ(readFile(installed + "/Documentation~/User.md"), "user document");
     const QByteArray receipt = readFile(installed + "/.harken-integration-state.json");
+    EXPECT_FALSE(QJsonDocument::fromJson(receipt).object()["managed_files"].toArray().contains("Documentation~/User.md"));
     writeFile(installed + "/Samples~/Custom.cs", "user file");
     writeFile(installed + '/' + document, "user documentation edits");
+    QString retainedDocument = document;
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    retainedDocument = "Documentation~/reference.md";
+    ASSERT_TRUE(QFile::rename(installed + '/' + document, installed + "/renaming-document"));
+    ASSERT_TRUE(QFile::rename(installed + "/renaming-document", installed + '/' + retainedDocument));
+#endif
     writeFile(source + '/' + document, "new documentation");
     writeFile(source + '/' + sample, "new sample");
     writeFile(source + "/Runtime/Harken.Core.asmdef", "new core");
@@ -2887,14 +2904,32 @@ TEST(UnityIntegrationService, ComponentDecisionsRemainBoundToReviewAndPreserveOw
     EXPECT_EQ(readFile(result.contentBackupPath + "/UnityProject/Packages/com.harken.core/" + sample), "original sample");
     const auto before = QJsonDocument::fromJson(receipt).object();
     const auto after = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
-    EXPECT_EQ(after["sha256"].toObject()[document], before["sha256"].toObject()[document]);
-    EXPECT_TRUE(after["managed_files"].toArray().contains(document));
+    EXPECT_EQ(after["sha256"].toObject()[retainedDocument], before["sha256"].toObject()[document]);
+    EXPECT_TRUE(after["managed_files"].toArray().contains(retainedDocument));
     EXPECT_FALSE(after["managed_files"].toArray().contains("Samples~/Custom.cs"));
     VNH::UnityIntegrationRequest verify;
     verify.unityProjectPath = project;
     verify.verifyInstalledOnly = true;
     const auto inspection = VNH::HubUnityIntegrationService::run(verify);
-    EXPECT_TRUE(inspection.modifiedFiles.contains(document));
+    EXPECT_TRUE(inspection.modifiedFiles.contains(retainedDocument));
+    ASSERT_TRUE(QFile::remove(installed + '/' + retainedDocument));
+    request.approvedPlanHash.clear();
+    request.checkOnly = true;
+    const auto missingReview = service.run(request);
+    ASSERT_TRUE(missingReview.success);
+    request.approvedPlanHash = missingReview.planHash;
+    request.checkOnly = false;
+    ASSERT_TRUE(service.run(request).success);
+    const auto retained = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
+    EXPECT_TRUE(retained["managed_files"].toArray().contains(retainedDocument));
+    EXPECT_EQ(retained["sha256"].toObject()[retainedDocument], before["sha256"].toObject()[document]);
+    EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).missingOptionalFiles.contains(retainedDocument));
+    ASSERT_TRUE(QDir(source + "/Documentation~").removeRecursively());
+    request.documentation = Action::Update;
+    request.approvedPlanHash.clear();
+    request.checkOnly = true;
+    EXPECT_FALSE(service.run(request).success);
+    EXPECT_EQ(QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object(), retained);
 }
 
 TEST(UnityIntegrationService, RestorationPreservesDeliberatelyOmittedAndRetainedComponents)

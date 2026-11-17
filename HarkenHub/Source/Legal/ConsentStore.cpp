@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QLockFile>
 
 namespace VNH {
 
@@ -30,11 +31,10 @@ QString ConsentStore::filePath()
     return userDataDir() + QStringLiteral("/consents.json");
 }
 
-bool ConsentStore::hasConsent(const QString& documentId,
+static bool containsConsent(const QJsonArray& consents, const QString& documentId,
                               const QString& documentVersion,
                               const QString& documentSha256)
 {
-    const QJsonArray consents = loadConsents();
     for (const auto& value : consents) {
         const QJsonObject entry = value.toObject();
         if (entry[QStringLiteral("documentId")].toString() != documentId ||
@@ -49,6 +49,14 @@ bool ConsentStore::hasConsent(const QString& documentId,
     return false;
 }
 
+bool ConsentStore::hasConsent(const QString& documentId, const QString& documentVersion, const QString& documentSha256)
+{
+    if (!QFileInfo::exists(filePath())) return false;
+    QLockFile lock(filePath() + QStringLiteral(".lock"));
+    if (!lock.tryLock(5000)) return false;
+    return containsConsent(loadConsents(), documentId, documentVersion, documentSha256);
+}
+
 bool ConsentStore::recordConsent(const QString& documentId,
                                  const QString& documentVersion,
                                  const QString& documentSha256,
@@ -57,10 +65,15 @@ bool ConsentStore::recordConsent(const QString& documentId,
 {
     if (documentId.isEmpty() || documentVersion.isEmpty())
         return false;
-    if (hasConsent(documentId, documentVersion, documentSha256))
-        return true;
-
+    const QString path = filePath();
+    if (!QDir().mkpath(QFileInfo(path).dir().path()))
+        return false;
+    QLockFile lock(path + QStringLiteral(".lock"));
+    if (!lock.tryLock(5000))
+        return false;
     QJsonArray consents = loadConsents();
+    if (containsConsent(consents, documentId, documentVersion, documentSha256))
+        return true;
     QJsonObject entry;
     entry[QStringLiteral("documentId")] = documentId;
     entry[QStringLiteral("documentVersion")] = documentVersion;
@@ -70,9 +83,6 @@ bool ConsentStore::recordConsent(const QString& documentId,
         at.toUTC().toString(Qt::ISODateWithMs);
     consents.append(entry);
 
-    const QString path = filePath();
-    if (!QDir().mkpath(QFileInfo(path).dir().path()))
-        return false;
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly))
         return false;

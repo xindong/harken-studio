@@ -11,17 +11,18 @@ ElevationLaunchResult launchElevatedInstall(const QString& transactionId,
     return launchElevatedCommand(arguments);
 }
 
-ElevationLaunchResult launchElevatedUninstall(const QString& buildId)
+ElevationLaunchResult launchElevatedUninstall(const QString& buildId, const QString& reviewedSnapshot)
 {
-    return launchElevatedCommand(
-        {QStringLiteral("--uninstall-version"), buildId});
+    QStringList arguments{QStringLiteral("--uninstall-version"), buildId};
+    if (!reviewedSnapshot.isEmpty()) arguments << QStringLiteral("--reviewed-snapshot") << reviewedSnapshot;
+    return launchElevatedCommand(arguments);
 }
 
-ElevationLaunchResult launchElevatedRepair(const QString& buildId, const QString& transactionId)
+ElevationLaunchResult launchElevatedRepair(const QString& buildId, const QString& transactionId, const QString& reviewedSnapshot)
 {
-    return launchElevatedCommand(
-        {QStringLiteral("--repair-version"), buildId,
-         QStringLiteral("--transaction-id"), transactionId});
+    QStringList arguments{QStringLiteral("--repair-version"), buildId, QStringLiteral("--transaction-id"), transactionId};
+    if (!reviewedSnapshot.isEmpty()) arguments << QStringLiteral("--reviewed-snapshot") << reviewedSnapshot;
+    return launchElevatedCommand(arguments);
 }
 
 }

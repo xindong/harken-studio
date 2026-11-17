@@ -9,12 +9,27 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QLockFile>
+#include <QCoreApplication>
+#include <QDeadlineTimer>
+#include <QThread>
 
 namespace VNH {
 
 namespace {
 
-QJsonObject loadRoot()
+bool lockSettings(QLockFile& lock, bool reading = false)
+{
+    const auto* app = QCoreApplication::instance();
+    const bool guiThread = app && app->inherits("QApplication") && QThread::currentThread() == app->thread();
+    QDeadlineTimer deadline(guiThread ? (reading ? 50 : 0) : 5000);
+    do {
+        if (lock.tryLock(0)) return true;
+        if (deadline.hasExpired()) return false;
+        QThread::msleep(5);
+    } while (true);
+}
+
+QJsonObject readRoot()
 {
     QFile file(HubSettings::filePath());
     if (!file.open(QIODevice::ReadOnly))
@@ -23,15 +38,24 @@ QJsonObject loadRoot()
     return document.isObject() ? document.object() : QJsonObject();
 }
 
+QJsonObject loadRoot()
+{
+    const auto path = HubSettings::filePath();
+    if (!QFileInfo::exists(path)) return {};
+    QLockFile lock(path + QStringLiteral(".lock"));
+    if (!lockSettings(lock, true)) return {};
+    return readRoot();
+}
+
 template<class Mutation> bool updateRoot(Mutation mutate)
 {
     const QString path = HubSettings::filePath();
     if (!QDir().mkpath(QFileInfo(path).dir().path()))
         return false;
     QLockFile lock(path + QStringLiteral(".lock"));
-    if (!lock.tryLock(5000))
+    if (!lockSettings(lock))
         return false;
-    QJsonObject root = loadRoot();
+    QJsonObject root = readRoot();
     if (!mutate(root))
         return false;
     QSaveFile file(path);
@@ -120,6 +144,16 @@ bool HubSettings::setThemePreference(const QString& preference)
     if (preference != QStringLiteral("system") && preference != QStringLiteral("light")
         && preference != QStringLiteral("dark")) return false;
     return updateValue(QStringLiteral("theme"), preference);
+}
+
+bool HubSettings::setWindowGeometry(const QRect& geometry)
+{
+    if (!geometry.isValid()) return false;
+    return updateRoot([&](QJsonObject& root) {
+        root[QStringLiteral("windowSize")] = QJsonObject{{"width", geometry.width()}, {"height", geometry.height()}};
+        root[QStringLiteral("windowPosition")] = QJsonObject{{"x", geometry.x()}, {"y", geometry.y()}};
+        return true;
+    });
 }
 
 QSize HubSettings::windowSize()

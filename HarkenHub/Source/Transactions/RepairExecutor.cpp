@@ -82,13 +82,13 @@ bool expectedHashesFor(const QString& packagePath,
 }
 
 RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
-                                  const QString& transactionId)
+                                  const QString& transactionId, const QString& reviewedSnapshot)
 {
-    return run(buildId, now, [](const QString& path) { return runningExecutablesUnder(path); }, transactionId);
+    return run(buildId, now, [](const QString& path) { return runningExecutablesUnder(path); }, transactionId, reviewedSnapshot);
 }
 
 RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
-                                  const ProcessProbe& probe, const QString& requestedTransactionId)
+                                  const ProcessProbe& probe, const QString& requestedTransactionId, const QString& reviewedSnapshot)
 {
     RepairOutcome outcome;
     outcome.buildId = buildId;
@@ -139,6 +139,10 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
         return fail(transactionId, buildId, QStringLiteral("IdentityMismatch"),
                     QStringLiteral("Install path is outside the versions root"),
                     now);
+
+    if (!reviewedSnapshot.isEmpty() && IntegrityChecker::snapshot(record->installPath).hash != reviewedSnapshot)
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("Installed files changed; review the operation again"), now);
 
     TransactionJournal::append(transactionId, kProduct, buildId,
                                QStringLiteral("Repairing"), QString(), now);
@@ -251,6 +255,11 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
         return runningFailure(startedDuringRepair);
     }
 
+    if (!reviewedSnapshot.isEmpty() && IntegrityChecker::snapshot(record->installPath).hash != reviewedSnapshot) {
+        QDir(replacement).removeRecursively();
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("Installed files changed; review the operation again"), now);
+    }
     const bool hadPrevious = QFileInfo::exists(record->installPath);
     if (hadPrevious && !QDir().rename(record->installPath, previous)) {
         QDir(replacement).removeRecursively();

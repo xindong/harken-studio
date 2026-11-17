@@ -171,6 +171,12 @@ void SingleInstanceGuard::startServer()
 
 QString SingleInstanceGuard::guiServerName()
 {
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+    const auto root = qgetenv("HARKEN_HUB_USER_ROOT");
+    if (!root.isEmpty())
+        return QStringLiteral("HarkenHub.Test.Gui.") + QString::fromLatin1(
+            QCryptographicHash::hash(root, QCryptographicHash::Sha256).toHex().left(24));
+#endif
     return QStringLiteral("HarkenSound.HarkenHub");
 }
 
@@ -179,8 +185,8 @@ QString SingleInstanceGuard::backgroundServerName()
 #ifdef HARKEN_HUB_TEST_OVERRIDES
     const auto root = qgetenv("HARKEN_HUB_USER_ROOT");
     if (!root.isEmpty())
-        return QStringLiteral("HarkenHub.Test.Background.") + QString::fromLatin1(
-            QCryptographicHash::hash(root, QCryptographicHash::Sha256).toHex());
+        return QStringLiteral("HarkenHub.Test.") + QString::fromLatin1(
+            QCryptographicHash::hash(root, QCryptographicHash::Sha256).toHex().left(24));
 #endif
     return QStringLiteral("HarkenSound.HarkenHub.Background");
 }

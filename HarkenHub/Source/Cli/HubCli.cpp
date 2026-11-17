@@ -103,7 +103,7 @@ QJsonObject parameters(const Command& command)
         {"key", "Setting name. theme: system/light/dark; language: system/en/zh_CN; project-location: directory; auto options: true/false."},
         {"value", "New value for the selected setting."},
         {"product", "hub or studio."},
-        {"lines", "Maximum log lines to return, from 1 to 10000."},
+        {"lines", "Maximum lines per GUI/background log, from 1 to 10000."},
         {"confirm", "Opaque token returned by a previous review of the identical command and current plan."}
     };
     QJsonObject result;
@@ -205,13 +205,22 @@ Reply execute(const Arguments& args)
             bool valid = false;
             const int count = args.value("lines", "100").toInt(&valid);
             require(valid && count > 0 && count <= 10000, "--lines must be between 1 and 10000", "InvalidArguments");
-            QFile file(FileLog::filePathFor("gui"));
-            const bool opened = file.open(QIODevice::ReadOnly);
-            require(opened, file.errorString());
-            file.seek(qMax(qint64(0), file.size() - 4 * 1024 * 1024));
-            auto lines = QString::fromUtf8(file.readAll()).split('\n');
-            if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
-            return success({{"path", file.fileName()}, {"lines", QJsonArray::fromStringList(lines.mid(qMax(0, int(lines.size()) - count)))}});
+            QJsonArray logs;
+            for (const auto* role : {"gui", "background"}) {
+                QFile file(FileLog::filePathFor(role));
+                QStringList lines;
+                const bool exists = file.exists();
+                if (exists) {
+                    const bool opened = file.open(QIODevice::ReadOnly);
+                    require(opened, file.errorString());
+                    file.seek(qMax(qint64(0), file.size() - 4 * 1024 * 1024));
+                    lines = QString::fromUtf8(file.readAll()).split('\n');
+                    if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
+                }
+                logs.append(QJsonObject{{"role", role}, {"path", file.fileName()}, {"exists", exists},
+                    {"lines", QJsonArray::fromStringList(lines.mid(qMax(0, int(lines.size()) - count)))}});
+            }
+            return success({{"logs", logs}});
         }
         const QString path = args.required("path");
         confirm(args, {{"path", path}, {"existingSha256", fileHash(path)}});

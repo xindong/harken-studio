@@ -309,9 +309,12 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--uninstall-version") == 0) {
             QCoreApplication app(argc, argv);
+            QString reviewedSnapshot;
+            for (int j = 1; j + 1 < argc; ++j)
+                if (qstrcmp(argv[j], "--reviewed-snapshot") == 0) reviewedSnapshot = QString::fromLatin1(argv[j + 1]);
             const auto outcome = VNH::UninstallExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc());
+                QDateTime::currentDateTimeUtc(), reviewedSnapshot);
             if (!outcome.ok) {
                 qCritical().noquote() << "Uninstall failed:"
                                       << outcome.failureCode << outcome.error;
@@ -323,13 +326,15 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--repair-version") == 0) {
             QCoreApplication app(argc, argv);
             QString transactionId;
+            QString reviewedSnapshot;
             for (int j = 1; j + 1 < argc; ++j) {
+                if (qstrcmp(argv[j], "--reviewed-snapshot") == 0) reviewedSnapshot = QString::fromLatin1(argv[j + 1]);
                 if (qstrcmp(argv[j], "--transaction-id") == 0)
                     transactionId = QString::fromLatin1(argv[j + 1]);
             }
             const auto outcome = VNH::RepairExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc(), transactionId);
+                QDateTime::currentDateTimeUtc(), transactionId, reviewedSnapshot);
             if (!outcome.ok) {
                 qCritical().noquote() << "Repair failed:"
                                       << outcome.failureCode << outcome.error;
