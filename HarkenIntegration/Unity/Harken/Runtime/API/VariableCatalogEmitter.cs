@@ -236,12 +236,12 @@ namespace Harken
             text.Append("        public const ulong ExecutionCatalogFingerprint = ").Append(execution.ToString(CultureInfo.InvariantCulture)).AppendLine("UL;");
             text.Append("        public const ulong CatalogFingerprint = ").Append(catalog.ToString(CultureInfo.InvariantCulture)).AppendLine("UL;");
             text.AppendLine("#if UNITY_5_3_OR_NEWER");
-            text.AppendLine("        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]");
+            text.AppendLine("        [global::UnityEngine.RuntimeInitializeOnLoadMethod(global::UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]");
             text.AppendLine("#endif");
             text.AppendLine("#if UNITY_EDITOR");
-            text.AppendLine("        [UnityEditor.InitializeOnLoadMethod]");
+            text.AppendLine("        [global::UnityEditor.InitializeOnLoadMethod]");
             text.AppendLine("#endif");
-            text.AppendLine("        public static void Register() => Harken.Values.RegisterGeneratedCatalog(ExecutionCatalogFingerprint, CatalogFingerprint, typeof(HarkenVariables));");
+            text.AppendLine("        public static void Register() => global::Harken.Values.RegisterGeneratedCatalog(ExecutionCatalogFingerprint, CatalogFingerprint, typeof(HarkenVariables));");
             foreach (Variable variable in variables)
             {
                 text.Append("        public static readonly VnObjectId ").Append(SymbolName(variable.CodeName))
