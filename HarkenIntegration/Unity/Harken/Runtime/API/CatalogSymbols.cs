@@ -18,7 +18,7 @@ namespace Harken
             "mutable noexcept not not_eq nullptr or or_eq register reinterpret_cast requires " +
             "signed static_assert static_cast template thread_local typedef typeid typename " +
             "union unsigned wchar_t xor xor_eq HarkenActions HarkenVariables " +
-            "ExecutionCatalogFingerprint CatalogFingerprint").Split(' '), StringComparer.Ordinal);
+            "ExecutionCatalogFingerprint CatalogFingerprint Register").Split(' '), StringComparer.Ordinal);
 
         internal static string Name(string name, string prefix)
             => Reserved.Contains(name) || name.StartsWith(prefix, StringComparison.Ordinal) ||

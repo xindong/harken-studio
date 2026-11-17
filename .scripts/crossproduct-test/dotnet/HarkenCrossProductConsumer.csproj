@@ -13,6 +13,7 @@
     <Compile Include="$(HarkenPackageRoot)/Runtime/Generated/**/*.cs" />
     <Compile Include="$(HarkenPackageRoot)/Runtime/API/**/*.cs" />
     <Compile Include="$(HarkenPackageRoot)/Runtime/Unity/UnityCoordinates.cs" />
+    <Compile Include="AsyncSourceChecks.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 </Project>

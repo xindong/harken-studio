@@ -395,6 +395,37 @@ namespace Harken.Test
             return ok;
         }
 
+        private static VnVec3 Cross(VnVec3 a, VnVec3 b)
+        {
+            return new VnVec3
+            {
+                x = a.y * b.z - a.z * b.y,
+                y = a.z * b.x - a.x * b.z,
+                z = a.x * b.y - a.y * b.x
+            };
+        }
+
+        private static float Dot(VnVec3 a, VnVec3 b)
+        {
+            return a.x * b.x + a.y * b.y + a.z * b.z;
+        }
+
+        private static bool CheckVector(string name, VnVec3 actual, float x, float y, float z)
+        {
+            const float epsilon = 0.000001f;
+            bool ok =
+                Math.Abs(actual.x - x) <= epsilon &&
+                Math.Abs(actual.y - y) <= epsilon &&
+                Math.Abs(actual.z - z) <= epsilon;
+            if (!ok)
+            {
+                Console.WriteLine(
+                    "[Coordinates] " + name + " FAIL: expected (" + x + ", " + y + ", " + z +
+                    "), got (" + actual.x + ", " + actual.y + ", " + actual.z + ").");
+            }
+            return ok;
+        }
+
         private static bool RunPackBootstrapContract()
         {
             VnInitPackInspectReport native = default;

@@ -89,13 +89,19 @@ def build(studio, work: Path) -> dict:
     studio.call(project, "set_item_property", {"path": voice, "property": "distinguishLanguage", "value": True},
                 save=True)
     for language in LANGUAGES:
-        studio.call(project, "set_voice_language", {"language": language}, save=True)
         studio.call(project, "import_audio", {"path": str(tones[language.lower()]), "pack": "Content",
                                               "target_parent_path": voice}, save=True)
+    sources = find_key(studio.call(project, "get_item_info", {"path": voice}), "sources")
+    imported = sources["localized"][LANGUAGES[0]]["entries"]
+    sources["localized"] = {language: {"active": entry["entryId"], "entries": [entry], "platforms": {}}
+                            for language, entry in zip(LANGUAGES, imported)}
+    studio.call(project, "set_item_property", {"path": voice, "property": "sources", "value": sources}, save=True)
     for key, target in (("tone", "Tone"), ("short", "Short"), ("spatial", "Spatial"), ("flat", "Flat"),
                         ("localized", "Voice")):
         _action(studio, project, ACTIONS[key], target)
     _create(studio, project, None, VARIABLE, "Variable")
+    for setting in ("set_build_project_data_export", "set_build_pack_metadata_export"):
+        studio.call(project, setting, {"enabled": True}, save=True)
     for platform in PLATFORMS:
         studio.call(project, "create_project_platform", {"name": platform, "base_platform": "Android"}, save=True)
 
@@ -117,10 +123,18 @@ def build(studio, work: Path) -> dict:
     other_main = _export(studio, other, studio.call(other, "list_project_platforms")["platforms"][0]["id"],
                          work / "Export" / "Other")
 
-    init = json.loads((main / "Init.json").read_text(encoding="utf-8"))
+    tone_pack_stable_id = find_key(tone_metadata, "packStableId")
+    if not tone_pack_stable_id:
+        raise AssertionError(f"{ACTIONS['tone']}.json has no packStableId")
+    project_data = list((work / "Export" / "Main").rglob("Project.json"))
+    if len(project_data) != 1:
+        raise AssertionError(f"expected one Project.json, found {sorted(map(str, project_data))}")
+    project_id = json.loads(project_data[0].read_text(encoding="utf-8")).get("projectGuid")
+    if not project_id:
+        raise AssertionError(f"{project_data[0]} has no projectGuid")
     return {
         "main": main, "renamed": renamed, "other": other_main, "platforms_root": platforms_root,
-        "project_id": find_key(init, "projectGuid"),
+        "project_id": project_id,
         "tone_action_id": tone_metadata["guid"],
-        "tone_pack_stable_id": find_key(tone_metadata, "packStableId"),
+        "tone_pack_stable_id": tone_pack_stable_id,
     }

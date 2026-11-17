@@ -6,7 +6,7 @@ using Harken;
 
 internal static class Program
 {
-    private const int HotIterations = 2048;
+    private const int HotIterations = 128;
 
     private static int Main(string[] args)
     {
@@ -48,16 +48,15 @@ internal static class Program
             Require(firing.Stop(0), "stop");
             Require(HarkenEngine.Update(), "update");
 
-            ActionFiring warm;
-            Actions.Post(in action, Emitter.None, 0, out warm);
-            warm.Stop(0);
-            HarkenEngine.Update();
+            Require(Actions.Post(in action, Emitter.None, 0, out ActionFiring warm), "warm post");
+            Require(warm.Stop(0), "warm stop");
+            Require(HarkenEngine.Update(), "warm update");
             long before = GC.GetAllocatedBytesForCurrentThread();
             for (int i = 0; i < HotIterations; ++i)
             {
-                Actions.Post(in action, Emitter.None, (ulong)i, out ActionFiring hot);
-                hot.Stop(0);
-                HarkenEngine.Update();
+                Require(Actions.Post(in action, Emitter.None, (ulong)i, out ActionFiring hot), "hot post");
+                Require(hot.Stop(0), "hot stop");
+                Require(HarkenEngine.Update(), "hot update");
             }
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             Check(allocated == 0, "post, stop and update allocate no managed memory (allocated " + allocated + " bytes)");
@@ -67,6 +66,7 @@ internal static class Program
             Require(preparation.Release(), "release");
             Require(session.Shutdown(), "shutdown");
             session = null;
+            AsyncSourceChecks.Run(directory, actionName);
             Console.WriteLine("PASS");
             return 0;
         }

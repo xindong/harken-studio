@@ -10,6 +10,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>

@@ -36,4 +36,7 @@ def run_tests(editor: Path, project: Path, platform: str, work: Path, timeout: f
                       "message": (failure.text or "").strip() if failure is not None else ""})
     if not cases:
         raise AssertionError(f"Unity {platform} run found no tests; see {work / f'unity-{platform}.log'}")
+    failed = any(case["result"] != "Passed" for case in cases)
+    if code != 0 and not (code == 2 and failed):
+        raise AssertionError(f"Unity {platform} run exited {code}; results kept at {results}")
     return cases

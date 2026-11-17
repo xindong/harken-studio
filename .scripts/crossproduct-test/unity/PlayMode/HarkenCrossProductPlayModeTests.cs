@@ -365,8 +365,11 @@ namespace HarkenCrossProduct
             yield return StartFrom(PackSource.FromDirectory(Main));
             AssertReady();
             PackBootstrapSession session = runtime.Session;
+            Assert.That(session.PrepareActions(new[] { inputs.toneAction }, inputs.projectId, out ActionPreparation preparation),
+                Is.EqualTo(VnResult.VN_OK));
             Assert.That(session.AcquirePack(packId, out Pack first), Is.EqualTo(VnResult.VN_OK));
             Assert.That(session.AcquirePack(packId, out Pack second), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(preparation.Release(), Is.EqualTo(VnResult.VN_OK));
             Assert.That(session.ReleasePack(packId, first), Is.EqualTo(VnResult.VN_OK));
             Assert.That(Actions.Post(actionId, Emitter.None, out ActionFiring held), Is.EqualTo(VnResult.VN_OK),
                 "content stays loaded while a reference remains");
