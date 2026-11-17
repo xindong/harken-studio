@@ -2031,6 +2031,7 @@ TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnown
         const QString project = makeUnityProject(dir.filePath("Game"));
         const QString source = makeCompleteIntegration(dir.filePath("Source"));
         writeFile(source + "/README.md", "documentation");
+        writeFile(source + "/Documentation~/Reference.md", "API documentation");
         const QString target = project + "/Packages/com.harken.core";
         VNX::UnityIntegrationService service;
         VNX::UnityIntegrationService::Request request;
