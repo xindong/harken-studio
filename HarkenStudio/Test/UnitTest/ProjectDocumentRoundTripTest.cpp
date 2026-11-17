@@ -12,6 +12,7 @@
 #include "Core/Components/VSegment.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectContract.h"
+#include "Core/ProjectOpenProtocol.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/ProjectTypes.h"
 #include "Core/ProjectUpgradeManager.h"
@@ -325,6 +326,13 @@ protected:
 TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAndReopening)
 {
     auto& manager = ProjectManager::instance();
+    auto& actions = ActionManager::instance();
+    actions.clearAllForTesting();
+    const auto cleanup = qScopeGuard([&] {
+        UndoRedoManager::instance().clearHistory();
+        actions.clearAllForTesting();
+    });
+    registerProjectPlatformActions(actions, &manager);
     ASSERT_TRUE(manager.loadProject(projectPath_));
     ProjectData& project = *manager.currentProject();
     expectModelMetadata(project);
@@ -334,7 +342,16 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     project.name = QStringLiteral("Edited by the baseline reader");
     project.sampleRate = 44100;
     project.channelConfig = AudioChannelConfig::Surround_5_1;
-    project.platforms = HarkenTest::platforms({"Windows", "Android"});
+    QJsonArray editedPlatforms;
+    for (const auto& platform : project.platforms) {
+        if (platform.basePlatform == BasePlatform::Windows || platform.basePlatform == BasePlatform::Android)
+            editedPlatforms.append(platform.toJson());
+    }
+    ASSERT_EQ(editedPlatforms.size(), 2);
+    const auto platformEdit = actions.execute(QStringLiteral("apply_project_platforms"), {
+        {QStringLiteral("expected_platforms"), ProjectPlatformSemantics::platformsToJson(project.platforms)},
+        {QStringLiteral("platforms"), editedPlatforms}});
+    ASSERT_TRUE(platformEdit.success) << platformEdit.errorMessage.toStdString();
     ASSERT_TRUE(manager.addProjectLanguage(QStringLiteral("English")));
     ASSERT_TRUE(manager.addProjectLanguage(QStringLiteral("Japanese")));
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
@@ -356,7 +373,7 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     EXPECT_EQ(reopened.sampleRate, 44100);
     EXPECT_EQ(reopened.channelConfig, AudioChannelConfig::Surround_5_1);
     EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(reopened.platforms),
-              ProjectPlatformSemantics::platformsToJson(HarkenTest::platforms({"Windows", "Android"})));
+              editedPlatforms);
     EXPECT_EQ(reopened.projectLanguages, (QStringList{"English", "Japanese"}));
     const auto savedPaths = documentPathsById(projectDirectory_);
     EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
@@ -698,7 +715,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         ASSERT_TRUE(errors.isEmpty()) << errors.join(QLatin1Char('\n')).toStdString();
     }
     ProjectUpgradeManager upgrades;
-    const auto analysis = upgrades.analyze(projectPath_);
+    const auto analysis = upgrades.analyzeForProjectOpen(projectPath_);
     ASSERT_TRUE(analysis.ok) << analysis.blockingErrors.join(QLatin1Char('\n')).toStdString();
     EXPECT_EQ(analysis.upgradeRequired, version < ProjectSchema::kProjectSchemaVersion);
     for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
@@ -718,13 +735,19 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         }
     }
     if (analysis.upgradeRequired) {
-        auto result = upgrades.execute(analysis);
-        ASSERT_TRUE(result.ok) << result.error.toStdString();
+        const auto requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto digest = projectOpenApprovalDigest(analysis, requestId);
+        auto prepared = ProjectManager::prepareProject(projectPath_, true, {},
+            [&](const ProjectUpgradeAnalysis& current) {
+                return current.ok && current.upgradeRequired
+                    && projectOpenApprovalDigest(current, requestId) == digest;
+            });
+        ASSERT_TRUE(prepared.project) << prepared.error.toStdString();
+        ASSERT_TRUE(manager.commitPreparedProject(std::move(prepared)));
+    } else {
         QString error;
-        ASSERT_TRUE(upgrades.finalize(result, &error)) << error.toStdString();
+        ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
     }
-    QString error;
-    ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
     UndoRedoManager::instance().clearHistory();
     expectModelMetadata(*manager.currentProject());
     if (version == 9) {
@@ -745,7 +768,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
                 quint32 rate = metadata.first;
                 for (const auto& tier : config->tiers) {
                     if (tier.maxBytes && static_cast<quint64>(metadata.second) > *tier.maxBytes) continue;
-                    if (tier.sampleRate != 0) rate = std::min(rate, tier.sampleRate);
+                    if (tier.sampleRate != 0) rate = (std::min)(rate, tier.sampleRate);
                     break;
                 }
                 EXPECT_EQ(rate, source.value());

@@ -1,4 +1,6 @@
 #include "Core/ActionManager.h"
+#include "Core/Components/VConversion.h"
+#include "Core/FieldGroupProjectAdapter.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/MemorySettingsStorage.h"
@@ -61,6 +63,7 @@ protected:
         QJsonArray targeting;
         for (const auto& row : manager().getActionPackTargeting()) targeting.append(row.toJson());
         return {{"platforms", Platforms::platformsToJson(project().platforms)}, {"items", items},
+            {"defaultConversion", project().defaultConversionRef.toString(QUuid::WithoutBraces)},
             {"targeting", targeting},
             {"current", manager().getPackExportCurrentPlatform()},
             {"selected", QJsonArray::fromStringList(manager().getPackExportSelectedPlatforms())}};
@@ -93,6 +96,95 @@ TEST_F(ProjectPlatformCommand, OldCommandCannotReplayIntoReopenedProjectWithSame
     result.undoFn();
     EXPECT_EQ(authoredState(), before);
     result.redoFn();
+    EXPECT_EQ(authoredState(), before);
+}
+
+TEST_F(ProjectPlatformCommand, PlatformMembershipEditsRoundTripAllAuthoredOwners)
+{
+    auto* preset = manager().createItem(nullptr, "Custom", ProjectItem::Type::Conversion);
+    auto* layer = manager().createItem(nullptr, "Layer", ProjectItem::Type::Layer);
+    ASSERT_NE(preset, nullptr);
+    ASSERT_NE(layer, nullptr);
+    auto* conversion = preset->comp<VConversion>();
+    ASSERT_NE(conversion, nullptr);
+    ASSERT_FALSE(conversion->platforms.empty());
+    conversion->platforms.front().tiers = {{1024, 32000}, {std::nullopt, 22050}};
+    layer->fieldGroups.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(preset->guid)};
+    layer->fieldGroups.output.platforms[toFieldGroupGuid(project().platforms.front().id)] = {
+        FieldGroupMode::Local, OutputFieldGroup{toFieldGroupGuid(manager().getMasterBusItem()->guid), -6.0f}};
+    undo().clear();
+    const auto initial = authoredState();
+    const auto create = ActionManager::instance().execute("create_project_platform",
+        {{"name", "Mobile"}, {"base_platform", "Android"}}, ActionSource::IPC);
+    ASSERT_TRUE(create.success) << create.errorMessage.toStdString();
+    QString error;
+    ASSERT_TRUE(Platforms::validateProject(project(), &error)) << error.toStdString();
+    const auto created = authoredState();
+    EXPECT_NE(created, initial);
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(authoredState(), initial);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(authoredState(), created);
+
+    const auto platform = create.data.value("platform_id");
+    const auto changeBase = ActionManager::instance().execute("set_project_platform_base",
+        {{"platform_id", platform}, {"base_platform", "Linux"}}, ActionSource::IPC);
+    ASSERT_TRUE(changeBase.success) << changeBase.errorMessage.toStdString();
+    const auto changed = authoredState();
+    auto expected = created;
+    expected.insert("platforms", changed.value("platforms"));
+    EXPECT_EQ(changed, expected);
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(authoredState(), created);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(authoredState(), changed);
+
+    const auto remove = ActionManager::instance().execute("delete_project_platform",
+        {{"platform_id", platform}}, ActionSource::IPC);
+    ASSERT_TRUE(remove.success) << remove.errorMessage.toStdString();
+    ASSERT_TRUE(Platforms::validateProject(project(), &error)) << error.toStdString();
+    const auto removed = authoredState();
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(authoredState(), changed);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(authoredState(), removed);
+    ASSERT_TRUE(undo().undo());
+    reopen();
+    EXPECT_EQ(authoredState(), changed);
+}
+
+TEST_F(ProjectPlatformCommand, DeletingReferencedAssetsRestoresDefaultsAndInheritedHistory)
+{
+    auto* layer = manager().createItem(nullptr, "Layer", ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    auto* inherited = manager().createItem(layer, "Inherited", ProjectItem::Type::Sound);
+    auto* local = manager().createItem(layer, "Local", ProjectItem::Type::Sound);
+    ASSERT_NE(inherited, nullptr);
+    ASSERT_NE(local, nullptr);
+    const auto presetGuid = project().defaultConversionRef;
+    auto* preset = manager().findItemByGuid(presetGuid);
+    ASSERT_NE(preset, nullptr);
+    const ConversionFieldGroup reference{toFieldGroupGuid(presetGuid)};
+    inherited->fieldGroups.conversion.shared.localHistory = reference;
+    local->fieldGroups.conversion.shared = {FieldGroupMode::Local, reference};
+    undo().clear();
+    const auto before = authoredState();
+    ASSERT_TRUE(manager().deleteItem(preset));
+    EXPECT_EQ(manager().findItemByGuid(presetGuid), nullptr);
+    EXPECT_TRUE(project().defaultConversionRef.isNull());
+    const auto effective = buildFieldGroupEffectiveSnapshot(project(), {});
+    ASSERT_TRUE(effective.ok());
+    for (const auto* item : {layer, inherited, local})
+        EXPECT_TRUE(harkenprojectschema::IsNull(
+            effective.definitions.at(toFieldGroupGuid(item->guid)).conversion.settingsRef));
+    const auto deleted = authoredState();
+    ASSERT_TRUE(manager().saveProject());
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(authoredState(), before);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(authoredState(), deleted);
+    ASSERT_TRUE(undo().undo());
+    reopen();
     EXPECT_EQ(authoredState(), before);
 }
 

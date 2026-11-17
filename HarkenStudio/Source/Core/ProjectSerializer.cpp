@@ -1592,7 +1592,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (!ProjectPlatformSemantics::platformsFromJson(root["deployPlatforms"], &project.platforms, &lastError_))
         return false;
     const QJsonObject audio = root["audio"].toObject();
-    project.defaultConversionRef = {};
+    project.defaultConversionRef = QUuid{};
     const auto defaultConversion = audio.value(QStringLiteral("defaultConversion"));
     if (!defaultConversion.isNull() && !defaultConversion.isUndefined()) {
         uint32_t objectId = 0;

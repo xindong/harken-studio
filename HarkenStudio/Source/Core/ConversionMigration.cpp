@@ -173,7 +173,8 @@ bool prepareConversionMigration(const QString& sourceDirectory,
             return !names.contains(candidate.toCaseFolded());
         });
         names.insert(name.toCaseFolded());
-        const QUuid guid = QUuid::createUuid();
+        const QUuid guid = QUuid::createUuidV5(QUuid(projectId),
+            QByteArrayLiteral("conversion-migration-9-to-10/") + key);
         const QString id = guid.toString(QUuid::WithoutBraces);
         const QString path = QStringLiteral("Conversions/") + NameValidator::objectFileName(name, guid);
         const QJsonObject content{{QStringLiteral("type"), QStringLiteral("Conversion")},

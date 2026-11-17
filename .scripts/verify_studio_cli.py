@@ -363,6 +363,9 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
             stream.writeframes(b"".join(struct.pack("<h", int(6000 * math.sin(2 * math.pi * 440 * i / 48000)))
                                        for i in range(24000)))
         imported = execute("import_audio", {"path": str(audio)}, save=True)["result"]
+        tone_guid = execute("get_item_info", {"path": "tone"})["result"]["runtime_stable_id"]
+        execute("set_field_group_field", {"definition_guid": tone_guid, "group": "conversion",
+            "scope": "Shared", "field": "settingsRef", "value": None}, save=True)
         assert "languages" in execute("list_project_languages")["result"]
         states = call("run", "--project", str(project), "--input", "-", data=[
             {"cmd": "get_project_state"},

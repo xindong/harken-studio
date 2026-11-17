@@ -30,6 +30,7 @@
 #include "Core/Components/VEffect.h"
 #include "Core/Components/VAudio.h"
 #include "Core/Components/VBus.h"
+#include "Core/Components/VConversion.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSelection.h"
 #include "Core/Components/VSound.h"
@@ -1539,6 +1540,7 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
         case ComponentType::Track:       return item->comp<VTrack>();
         case ComponentType::Segment:       return item->comp<VSegment>();
         case ComponentType::Sound:       return item->comp<VSound>();
+        case ComponentType::Conversion:  return item->comp<VConversion>();
         default:                         return nullptr;
     }
 }
