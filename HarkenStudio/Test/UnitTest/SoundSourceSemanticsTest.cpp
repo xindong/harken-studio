@@ -8,6 +8,7 @@
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/ProjectTypes.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
+#include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 #include "Core/SoundSourceSemantics.h"
 
 #include <QDateTime>
@@ -18,10 +19,15 @@
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
+#include <vorbis/codec.h>
 
+#include <algorithm>
+#include <atomic>
 #include <barrier>
+#include <cmath>
 #include <future>
 #include <limits>
+#include <stdexcept>
 
 using namespace VNX;
 
@@ -33,6 +39,96 @@ SoundSourceDef source(uint32_t sourceId)
     result.entryId = QUuid::createUuid();
     result.sourceId = sourceId;
     return result;
+}
+
+std::optional<std::vector<float>> decodeVorbisReference(
+    const VorbisEncoder::EncodedMedia& media, const VorbisEncoder::SeekEntry* seek = nullptr)
+{
+    struct Decoder
+    {
+        vorbis_info info{};
+        vorbis_comment comment{};
+        vorbis_dsp_state state{};
+        vorbis_block block{};
+        bool stateReady = false;
+        bool blockReady = false;
+
+        Decoder()
+        {
+            vorbis_info_init(&info);
+            vorbis_comment_init(&comment);
+        }
+
+        ~Decoder()
+        {
+            if (blockReady) vorbis_block_clear(&block);
+            if (stateReady) vorbis_dsp_clear(&state);
+            vorbis_comment_clear(&comment);
+            vorbis_info_clear(&info);
+        }
+    } decoder;
+    QByteArray comment("\x03vorbis", 7);
+    comment.append(QByteArray(8, '\0'));
+    comment.append('\x01');
+    const QByteArray* headers[]{&media.identificationHeader, &comment, &media.setupHeader};
+    for (int index = 0; index < 3; ++index) {
+        ogg_packet packet{};
+        packet.packet = reinterpret_cast<unsigned char*>(const_cast<char*>(headers[index]->constData()));
+        packet.bytes = static_cast<long>(headers[index]->size());
+        packet.b_o_s = index == 0;
+        packet.packetno = index;
+        if (vorbis_synthesis_headerin(&decoder.info, &decoder.comment, &packet) != 0)
+            return std::nullopt;
+    }
+    if (vorbis_synthesis_init(&decoder.state, &decoder.info) != 0) return std::nullopt;
+    decoder.stateReady = true;
+    if (vorbis_block_init(&decoder.state, &decoder.block) != 0) return std::nullopt;
+    decoder.blockReady = true;
+    std::vector<float> result;
+    uint64_t discard = seek ? seek->discardFrames : 0;
+    const uint64_t wanted = seek ? media.frameCount - seek->outputFrame
+                                : std::numeric_limits<uint64_t>::max();
+    for (size_t index = seek ? seek->packetIndex : 0; index < media.packets.size(); ++index) {
+        const auto& encoded = media.packets[index];
+        ogg_packet packet{};
+        packet.packet = reinterpret_cast<unsigned char*>(const_cast<char*>(encoded.bytes.constData()));
+        packet.bytes = static_cast<long>(encoded.bytes.size());
+        packet.granulepos = seek ? -1 : encoded.granuleFrame;
+        packet.packetno = static_cast<ogg_int64_t>(index + 3);
+        packet.e_o_s = !seek && index + 1 == media.packets.size();
+        if (vorbis_synthesis(&decoder.block, &packet) != 0
+            || vorbis_synthesis_blockin(&decoder.state, &decoder.block) != 0)
+            return std::nullopt;
+        float** channels = nullptr;
+        int available = 0;
+        while ((available = vorbis_synthesis_pcmout(&decoder.state, &channels)) > 0) {
+            for (int frame = 0; frame < available; ++frame) {
+                if (discard != 0) {
+                    --discard;
+                } else if (result.size() / media.channels < wanted) {
+                    for (uint16_t channel = 0; channel < media.channels; ++channel)
+                        result.push_back(channels[channel][frame]);
+                }
+            }
+            if (vorbis_synthesis_read(&decoder.state, available) != 0) return std::nullopt;
+        }
+        if (available < 0) return std::nullopt;
+    }
+    if (discard != 0) return std::nullopt;
+    return result;
+}
+
+std::vector<float> channelTones(uint64_t frames, uint16_t channels, uint32_t sampleRate)
+{
+    std::vector<float> samples(frames * channels);
+    for (uint64_t frame = 0; frame < frames; ++frame) {
+        for (uint16_t channel = 0; channel < channels; ++channel) {
+            const double frequency = channels >= 6 && channel == 3 ? 61.0 : 173.0 + 137.0 * channel;
+            samples[frame * channels + channel] = static_cast<float>(
+                0.2 * std::sin(6.283185307179586 * frequency * frame / sampleRate));
+        }
+    }
+    return samples;
 }
 
 }
@@ -710,11 +806,14 @@ TEST(SoundSourceSemanticsTest, CacheIdentityTracksEffectiveMediaParameters)
     const auto originalMedia = SoundSourceDerivative::materialize(inputPath, definition, 0.0,
         QUuid::createUuid(), outputDir, std::nullopt, &error, &cache);
     ASSERT_TRUE(originalMedia) << error.toStdString();
-    const auto refused = SoundSourceDerivative::materialize(inputPath, definition, 0.0,
+    const auto encodedMedia = SoundSourceDerivative::materialize(inputPath, definition, 0.0,
         QUuid::createUuid(), outputDir, vorbis, &error, &cache);
-    EXPECT_FALSE(refused);
-    EXPECT_TRUE(error.contains(QStringLiteral("Vorbis")));
-    EXPECT_EQ(QDir(outputDir).entryList(QDir::Files).size(), 1);
+    ASSERT_TRUE(encodedMedia) << error.toStdString();
+    EXPECT_EQ(encodedMedia->format, ConversionFormat::Vorbis);
+    EXPECT_TRUE(encodedMedia->encodedMedia);
+    EXPECT_FALSE(encodedMedia->samples);
+    EXPECT_NE(encodedMedia->cacheKey, originalMedia->cacheKey);
+    EXPECT_EQ(QDir(outputDir).entryList(QDir::Files).size(), 2);
 }
 
 TEST(SoundSourceSemanticsTest, EquivalentMediaTransformsShareOneArtifactAcrossPlatforms)
@@ -786,4 +885,290 @@ TEST(SoundSourceSemanticsTest, EquivalentMediaTransformsShareOneArtifactAcrossPl
     ASSERT_TRUE(recovered) << error.toStdString();
     EXPECT_FALSE(recovered->cacheHit);
     EXPECT_EQ(*recovered->samples, *converted->samples);
+}
+
+TEST(SoundSourceSemanticsTest, EncodedMediaPreservesFrameCoordinatesAndChannelIdentity)
+{
+    struct Case { uint16_t channels; uint32_t rate; uint64_t frames; };
+    const Case cases[]{{1, 48000, 16397}, {2, 44100, 12289}, {6, 48000, 16397},
+        {8, 32000, 8193}, {1, 8000, 4097}, {2, 48000, 1}, {1, 48000, 31}, {6, 48000, 127}};
+    for (const auto& item : cases) {
+        SCOPED_TRACE(::testing::Message() << item.channels << "/" << item.rate << "/" << item.frames);
+        const auto samples = channelTones(item.frames, item.channels, item.rate);
+        const uint64_t loopStart = item.frames > 2 ? item.frames / 3 : 0;
+        const uint64_t loopEnd = item.frames > 2 ? item.frames - 1 : 0;
+        QString error;
+        const auto encoded = VorbisEncoder::encode(samples, item.rate, item.channels, 0.6f,
+            loopStart, loopEnd, &error);
+        ASSERT_TRUE(encoded) << error.toStdString();
+        const auto linear = decodeVorbisReference(*encoded);
+        ASSERT_TRUE(linear);
+        ASSERT_EQ(linear->size(), samples.size());
+        EXPECT_EQ(encoded->frameCount, item.frames);
+        EXPECT_EQ(encoded->loopStartFrame, loopStart);
+        EXPECT_EQ(encoded->loopEndFrame, loopEnd);
+        if (item.frames > item.rate / 10) {
+            const int surround[]{0, 2, 1, 4, 5, 3};
+            const int surround71[]{0, 2, 1, 6, 7, 4, 5, 3};
+            for (uint16_t channel = 0; channel < item.channels; ++channel) {
+                const int originalChannel = item.channels == 6 ? surround[channel]
+                    : item.channels == 8 ? surround71[channel] : channel;
+                double energy = 0.0;
+                double residual = 0.0;
+                for (uint64_t frame = 0; frame < item.frames; ++frame) {
+                    const double expected = samples[frame * item.channels + originalChannel];
+                    const double difference = (*linear)[frame * item.channels + channel] - expected;
+                    energy += expected * expected;
+                    residual += difference * difference;
+                }
+                EXPECT_LT(residual, energy * 0.06) << "channel " << channel;
+            }
+        }
+        ASSERT_FALSE(encoded->seekTable.empty());
+        EXPECT_EQ(encoded->seekTable.front().outputFrame, 0u);
+        if (loopEnd != 0)
+            EXPECT_TRUE(std::any_of(encoded->seekTable.begin(), encoded->seekTable.end(),
+                [&](const auto& entry) { return entry.outputFrame == loopStart; }));
+        for (const auto& seek : encoded->seekTable) {
+            SCOPED_TRACE(seek.outputFrame);
+            const auto decoded = decodeVorbisReference(*encoded, &seek);
+            ASSERT_TRUE(decoded);
+            const size_t start = static_cast<size_t>(seek.outputFrame * item.channels);
+            ASSERT_EQ(decoded->size(), linear->size() - start);
+            float maximumDifference = 0.0f;
+            for (size_t index = 0; index < decoded->size(); ++index)
+                maximumDifference = std::max(maximumDifference,
+                    std::abs((*decoded)[index] - (*linear)[start + index]));
+            EXPECT_LT(maximumDifference, 0.00001f);
+        }
+    }
+}
+
+TEST(SoundSourceSemanticsTest, EncodedDerivativeCacheRoundTripsAndRepairsCorruption)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto inputPath = directory.filePath(QStringLiteral("source.wav"));
+    const auto outputDir = directory.filePath(QStringLiteral("media"));
+    const auto referenceDir = directory.filePath(QStringLiteral("reference"));
+    ASSERT_TRUE(AssetConverter::writeFloatWav(inputPath, channelTones(16397, 2, 48000), 2, 48000));
+    auto definition = source(1);
+    definition.trimStartFrame = 37;
+    definition.trimEndFrame = 15991;
+    definition.loopRegion = SoundLoopRegion{4133, 15007};
+    definition.fadeIn.durationFrames = 263;
+    definition.fadeOut.durationFrames = 509;
+    const auto platform = QUuid::createUuid();
+    const ResolvedConversion conversion{
+        .format = ConversionFormat::Vorbis, .vorbisQuality = 0.6f, .sampleRate = 32000};
+    SoundSourceDerivative::MaterializationCache cache;
+    QString error;
+    const auto initial = SoundSourceDerivative::materialize(inputPath, definition, 0.001,
+        platform, outputDir, conversion, &error, &cache);
+    ASSERT_TRUE(initial) << error.toStdString();
+    ASSERT_TRUE(initial->encodedMedia);
+    EXPECT_FALSE(initial->samples);
+    const auto prepared = SoundSourceDerivative::prepare(inputPath, definition, 0.001, conversion, &error);
+    ASSERT_TRUE(prepared) << error.toStdString();
+    EXPECT_EQ(initial->encodedMedia->frameCount, prepared->samples.size() / prepared->channels);
+    EXPECT_EQ(initial->loopStartFrame, prepared->loopStartFrame);
+    EXPECT_EQ(initial->loopEndFrame, prepared->loopEndFrame);
+    const auto linear = decodeVorbisReference(*initial->encodedMedia);
+    ASSERT_TRUE(linear);
+    ASSERT_EQ(linear->size(), prepared->samples.size());
+    QFile artifact(initial->path);
+    ASSERT_TRUE(artifact.open(QIODevice::ReadOnly));
+    const auto expectedBytes = artifact.readAll();
+    artifact.close();
+    SoundSourceDerivative::MaterializationCache independentCache;
+    const auto repeated = SoundSourceDerivative::materialize(inputPath, definition, 0.001,
+        platform, referenceDir, conversion, &error, &independentCache);
+    ASSERT_TRUE(repeated) << error.toStdString();
+    QFile reference(repeated->path);
+    ASSERT_TRUE(reference.open(QIODevice::ReadOnly));
+    EXPECT_EQ(reference.readAll(), expectedBytes);
+    EXPECT_EQ(repeated->contentHash, initial->contentHash);
+    EXPECT_EQ(repeated->revision, initial->revision);
+    reference.close();
+    cache.clear();
+    const auto restarted = SoundSourceDerivative::materialize(inputPath, definition, 0.001,
+        platform, outputDir, conversion, &error, &cache);
+    ASSERT_TRUE(restarted) << error.toStdString();
+    ASSERT_TRUE(restarted->encodedMedia);
+    EXPECT_TRUE(restarted->cacheHit);
+    EXPECT_EQ(decodeVorbisReference(*restarted->encodedMedia), linear);
+    EXPECT_EQ(cache.contentRevision(*restarted), cache.contentRevision(*initial));
+    for (int corruption = 0; corruption < 3; ++corruption) {
+        SCOPED_TRACE(corruption);
+        ASSERT_TRUE(artifact.open(QIODevice::ReadWrite));
+        if (corruption < 2) {
+            const qint64 position = corruption == 0 ? artifact.size() - 1 : 8;
+            ASSERT_TRUE(artifact.seek(position));
+            const auto original = artifact.read(1);
+            ASSERT_EQ(original.size(), 1);
+            ASSERT_TRUE(artifact.seek(position));
+            ASSERT_EQ(artifact.write(QByteArray(1, original.front() ^ 1)), 1);
+        } else {
+            ASSERT_TRUE(artifact.resize(artifact.size() - 1));
+        }
+        artifact.close();
+        cache.clear();
+        const auto recovered = SoundSourceDerivative::materialize(inputPath, definition, 0.001,
+            platform, outputDir, conversion, &error, &cache);
+        ASSERT_TRUE(recovered) << error.toStdString();
+        ASSERT_TRUE(recovered->encodedMedia);
+        EXPECT_FALSE(recovered->cacheHit);
+        EXPECT_EQ(recovered->contentHash, initial->contentHash);
+        EXPECT_EQ(recovered->revision, initial->revision);
+        EXPECT_EQ(decodeVorbisReference(*recovered->encodedMedia), linear);
+        ASSERT_TRUE(artifact.open(QIODevice::ReadOnly));
+        EXPECT_EQ(artifact.readAll(), expectedBytes);
+        artifact.close();
+    }
+}
+
+TEST(SoundSourceSemanticsTest, ConcurrentMediaRequestsShareOneMaterialization)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto inputPath = directory.filePath(QStringLiteral("source.wav"));
+    ASSERT_TRUE(AssetConverter::writeFloatWav(inputPath, channelTones(16397, 2, 48000), 2, 48000));
+    BuildSourceInputs inputs;
+    AssetInfo asset;
+    asset.sourceID = 1;
+    asset.absolutePath = inputPath;
+    QString error;
+    const auto captured = inputs.capture(asset, &error);
+    ASSERT_TRUE(captured) << error.toStdString();
+    for (const auto format : {ConversionFormat::PCM, ConversionFormat::Vorbis}) {
+        SCOPED_TRACE(static_cast<int>(format));
+        SoundSourceDerivative::MaterializationCache cache;
+        const auto definition = source(1);
+        std::atomic<int> captures = 0;
+        std::barrier<> start(8);
+        std::vector<std::future<std::optional<SoundSourceDerivative::MaterializedArtifact>>> requests;
+        for (int index = 0; index < 8; ++index) {
+            requests.push_back(std::async(std::launch::async, [&] {
+                start.arrive_and_wait();
+                return SoundSourceDerivative::materialize(inputPath, definition, 0.0,
+                    QUuid::createUuid(), {}, ResolvedConversion{.format = format}, nullptr,
+                    &cache, captured.get(), [&](QString*) {
+                        captures.fetch_add(1);
+                        return captured;
+                    });
+            }));
+        }
+        const auto first = requests.front().get();
+        ASSERT_TRUE(first);
+        for (size_t index = 1; index < requests.size(); ++index) {
+            const auto shared = requests[index].get();
+            ASSERT_TRUE(shared);
+            EXPECT_EQ(shared->contentHash, first->contentHash);
+            EXPECT_EQ(shared->samples, first->samples);
+            EXPECT_EQ(shared->encodedMedia, first->encodedMedia);
+        }
+        EXPECT_EQ(captures.load(), 1);
+    }
+}
+
+TEST(SoundSourceSemanticsTest, FailedMaterializationsCanBeRetriedWithoutRetainingErrors)
+{
+    SoundSourceDerivative::MaterializationCache cache;
+    const QByteArray request("retryable-media");
+    int attempts = 0;
+    const auto materialize = [&](QString* error) -> std::optional<SoundSourceDerivative::MaterializedArtifact> {
+        if (++attempts == 1) {
+            if (error) *error = QStringLiteral("source unavailable");
+            return std::nullopt;
+        }
+        SoundSourceDerivative::MaterializedArtifact artifact;
+        artifact.samples = std::make_shared<const std::vector<float>>(17, 0.25f);
+        return artifact;
+    };
+    QString error;
+    EXPECT_FALSE(cache.getOrCreate(request, materialize, &error));
+    EXPECT_EQ(error, QStringLiteral("source unavailable"));
+    error = QStringLiteral("caller diagnostic");
+    const auto recovered = cache.getOrCreate(request, materialize, &error);
+    ASSERT_TRUE(recovered);
+    EXPECT_EQ(error, QStringLiteral("caller diagnostic"));
+    const auto shared = cache.getOrCreate(request, materialize, &error);
+    ASSERT_TRUE(shared);
+    EXPECT_EQ(shared->samples, recovered->samples);
+    EXPECT_EQ(attempts, 2);
+}
+
+TEST(SoundSourceSemanticsTest, ExceptionalMaterializationsReleaseTasksForRetry)
+{
+    SoundSourceDerivative::MaterializationCache cache;
+    const QByteArray key("exceptional-media");
+    int attempts = 0;
+    const auto create = [&](QString*) -> std::optional<SoundSourceDerivative::MaterializedArtifact> {
+        if (++attempts == 1) throw std::runtime_error("producer stopped");
+        SoundSourceDerivative::MaterializedArtifact artifact;
+        artifact.samples = std::make_shared<const std::vector<float>>(17, 0.25f);
+        return artifact;
+    };
+    EXPECT_THROW(cache.getOrCreate(key, create), std::runtime_error);
+    const auto recovered = cache.getOrCreate(key, create);
+    ASSERT_TRUE(recovered);
+    const auto shared = cache.getOrCreate(key, create);
+    ASSERT_TRUE(shared);
+    EXPECT_EQ(shared->samples, recovered->samples);
+    EXPECT_EQ(attempts, 2);
+}
+
+TEST(SoundSourceSemanticsTest, SharedMediaCanBePublishedToIndependentDestinationsAfterWriteFailure)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto inputPath = directory.filePath(QStringLiteral("source.wav"));
+    ASSERT_TRUE(AssetConverter::writeFloatWav(inputPath, channelTones(16397, 2, 48000), 2, 48000));
+    const auto definition = source(1);
+    const auto platform = QUuid::createUuid();
+    for (const auto format : {ConversionFormat::PCM, ConversionFormat::Vorbis}) {
+        SCOPED_TRACE(static_cast<int>(format));
+        SoundSourceDerivative::MaterializationCache cache;
+        const ResolvedConversion conversion{.format = format};
+        QString error;
+        const auto resident = SoundSourceDerivative::materialize(inputPath, definition, 0.0,
+            platform, {}, conversion, &error, &cache);
+        ASSERT_TRUE(resident) << error.toStdString();
+        EXPECT_TRUE(resident->path.isEmpty());
+        QByteArray expectedBytes;
+        for (int destination = 0; destination < 3; ++destination) {
+            SCOPED_TRACE(destination);
+            const auto outputDir = directory.filePath(QStringLiteral("%1/%2")
+                .arg(static_cast<int>(format)).arg(destination));
+            if (destination == 1) {
+                QFile blocker(outputDir);
+                ASSERT_TRUE(blocker.open(QIODevice::WriteOnly));
+                ASSERT_EQ(blocker.write("preserved"), 9);
+                blocker.close();
+                const auto failed = SoundSourceDerivative::materialize(inputPath, definition, 0.0,
+                    platform, outputDir, conversion, &error, &cache);
+                EXPECT_FALSE(failed);
+                EXPECT_FALSE(error.isEmpty());
+                ASSERT_TRUE(blocker.open(QIODevice::ReadOnly));
+                EXPECT_EQ(blocker.readAll(), QByteArray("preserved"));
+                blocker.close();
+                ASSERT_TRUE(blocker.remove());
+            }
+            const auto published = SoundSourceDerivative::materialize(inputPath, definition, 0.0,
+                platform, outputDir, conversion, &error, &cache);
+            ASSERT_TRUE(published) << error.toStdString();
+            EXPECT_TRUE(published->cacheHit);
+            EXPECT_EQ(QFileInfo(published->path).absolutePath(), QFileInfo(outputDir).absoluteFilePath());
+            EXPECT_EQ(published->samples, resident->samples);
+            EXPECT_EQ(published->encodedMedia, resident->encodedMedia);
+            EXPECT_EQ(published->revision, resident->revision);
+            EXPECT_EQ(published->contentHash, resident->contentHash);
+            QFile output(published->path);
+            ASSERT_TRUE(output.open(QIODevice::ReadOnly));
+            const auto bytes = output.readAll();
+            ASSERT_FALSE(bytes.isEmpty());
+            if (destination == 0) expectedBytes = bytes;
+            else EXPECT_EQ(bytes, expectedBytes);
+        }
+    }
 }

@@ -98,6 +98,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackExporter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundSourceDerivative.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/VorbisEncoder.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionClosureSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepEditing.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepUtils.h
@@ -190,6 +191,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackExporter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundSourceDerivative.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/VorbisEncoder.h
     ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
     ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
     ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE}
