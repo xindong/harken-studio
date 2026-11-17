@@ -854,7 +854,7 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
             return errorResponse("INVALID_FIELD_GROUPS", QString::fromStdString(error));
         const auto groups = QJsonDocument::fromJson(QByteArray::fromStdString(fieldGroups)).object();
         info.insert("fieldGroups", groups);
-        info.insert("conversion", groups.value(QStringLiteral("conversion")));
+        info.insert("conversion", groups.value(QStringLiteral("shared")).toObject().value(QStringLiteral("conversion")));
     }
 
     return successResponse(info);
