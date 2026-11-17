@@ -98,7 +98,7 @@ struct CurrentWorldSoundPreparation {
         std::uint32_t sampleRate = 0;
         std::uint64_t loopStartFrame = 0;
         std::uint64_t loopEndFrame = 0;
-        std::shared_ptr<const PreparedPreviewMedia> media;
+        std::shared_ptr<const PreparedPreviewMedia> media = {};
     };
 
     std::vector<Sound> sounds;

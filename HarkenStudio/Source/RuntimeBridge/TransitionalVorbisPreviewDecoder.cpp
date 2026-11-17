@@ -70,9 +70,9 @@ std::optional<std::vector<float>> decodeTransitionalVorbisPreview(
         if (vorbis_synthesis_headerin(&decoder.info, &decoder.comment, &packet) != 0)
             return fail(QStringLiteral("Vorbis preview header is invalid"));
     }
-    if (decoder.info.channels != media.channels || decoder.info.rate != media.sampleRate
-        || vorbis_info_blocksize(&decoder.info, 0) != media.smallBlockFrames
-        || vorbis_info_blocksize(&decoder.info, 1) != media.largeBlockFrames)
+    if (decoder.info.channels != media.channels || static_cast<int64_t>(decoder.info.rate) != media.sampleRate
+        || static_cast<int64_t>(vorbis_info_blocksize(&decoder.info, 0)) != media.smallBlockFrames
+        || static_cast<int64_t>(vorbis_info_blocksize(&decoder.info, 1)) != media.largeBlockFrames)
         return fail(QStringLiteral("Vorbis preview header does not match media metadata"));
     if (vorbis_synthesis_init(&decoder.state, &decoder.info) != 0)
         return fail(QStringLiteral("Cannot initialize Vorbis preview decoder"));

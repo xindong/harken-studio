@@ -672,7 +672,7 @@ private:
     struct RuntimeSoundPreparationEntry {
         RuntimeSoundPreparationKey key;
         uint64_t revision = 0;
-        std::shared_ptr<const HarkenEditor::Bridge::PreparedPreviewMedia> media;
+        std::shared_ptr<const HarkenEditor::Bridge::PreparedPreviewMedia> media = {};
     };
     QHash<harkenstudio::ObjectId, RuntimeSoundPreparationEntry> m_runtimeSoundPreparation;
     struct PreviewConversionState {
