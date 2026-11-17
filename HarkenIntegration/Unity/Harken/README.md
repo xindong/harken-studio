@@ -406,9 +406,10 @@ Keep a single Editor settings asset; duplicates fail settings lookup and build v
 
 The Communication page contains the connection settings.
 `Bind Address` is fixed to `127.0.0.1`. TCP connections and UDP discovery are
-restricted to this machine; LAN communication is unavailable. The native service
-rejects other configured addresses with `VN_INVALID_ARG`; existing settings are
-not migrated.
+restricted to this machine; LAN communication is unavailable. Automatic startup
+always uses the loopback address, ignoring any legacy address field in the
+settings asset. Direct Remote API calls with other explicit bind addresses are
+rejected with `VN_INVALID_ARG`.
 `Remote Port` zero requests an available TCP port, allowing multiple game
 processes to run together. `Enable Remote Discovery` defaults to true, and
 `Remote Discovery Port` zero selects UDP port `37840`. Studio discovery reports
