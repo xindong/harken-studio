@@ -35,6 +35,7 @@ DefinitionFieldGroups LocalGroups(std::uint64_t bus, float volume)
     groups.spatialRating.shared = Local(
         SpatialRatingFieldGroup{0.5f, true, G(bus + 2), 2.0f});
     groups.effects.shared = Local(EffectFieldGroup{});
+    groups.conversion.shared = Local(ConversionFieldGroup{G(bus + 3)});
     return groups;
 }
 
@@ -98,18 +99,19 @@ TEST(FieldGroupResolution, EveryGroupSelectsOneOwnershipSourceAndRespectsPlatfor
         FieldGroupDefinitionView{G(3), ContentKind::Sound, G(2), &child}};
     const FieldGroupResolver resolver(definitions, kMaster);
     ASSERT_TRUE(resolver.ok());
-    for (const auto group : {Group::Output, Group::Send, Group::SpatialRating, Group::Effect}) {
+    for (const auto group : {Group::Output, Group::Send, Group::SpatialRating, Group::Effect, Group::Conversion}) {
         SCOPED_TRACE(FieldGroupName(group));
         const auto shared = resolver.Resolve(G(3), {}, group);
         const auto overridden = resolver.Resolve(G(3), platform, group);
         ASSERT_TRUE(shared.ok());
         ASSERT_TRUE(overridden.ok());
         EXPECT_EQ(shared.value->source.definition, G(2));
-        EXPECT_EQ(overridden.value->source.definition, G(1));
+        const auto platformOwner = group == Group::Conversion ? G(2) : G(1);
+        EXPECT_EQ(overridden.value->source.definition, platformOwner);
         EXPECT_TRUE(shared.value->effectiveInherit);
         EXPECT_TRUE(overridden.value->effectiveInherit);
         EXPECT_EQ(shared.value->payload, resolver.Resolve(G(2), {}, group).value->payload);
-        EXPECT_EQ(overridden.value->payload, resolver.Resolve(G(1), platform, group).value->payload);
+        EXPECT_EQ(overridden.value->payload, resolver.Resolve(platformOwner, platform, group).value->payload);
     }
 }
 

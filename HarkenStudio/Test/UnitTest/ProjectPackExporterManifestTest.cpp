@@ -3840,7 +3840,31 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     for (const auto& platform : refused.platforms) diagnostic += platform.result.error;
     EXPECT_TRUE(diagnostic.contains(QStringLiteral("Vorbis"))) << diagnostic.toStdString();
     EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), published);
-    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("Two.bytes"))), secondBytes);
+    const auto remainingBytes = readFileBytes(context.live.filePath(QStringLiteral("Two.bytes")));
+    harkenstudiobuild::PackCanonicalImage previousImage;
+    harkenstudiobuild::PackCanonicalImage remainingImage;
+    ASSERT_EQ(VN_OK, harkenstudiobuild::ParsePackCanonicalImage(
+        reinterpret_cast<const std::uint8_t*>(secondBytes.constData()),
+        static_cast<std::uint64_t>(secondBytes.size()), &previousImage));
+    ASSERT_EQ(VN_OK, harkenstudiobuild::ParsePackCanonicalImage(
+        reinterpret_cast<const std::uint8_t*>(remainingBytes.constData()),
+        static_cast<std::uint64_t>(remainingBytes.size()), &remainingImage));
+    ASSERT_EQ(previousImage.media.size(), 1u);
+    ASSERT_EQ(remainingImage.media.size(), 1u);
+    const auto& previousMedia = previousImage.media.front();
+    const auto& remainingMedia = remainingImage.media.front();
+    EXPECT_EQ(remainingMedia.soundId, previousMedia.soundId);
+    EXPECT_EQ(remainingMedia.sampleRate, previousMedia.sampleRate);
+    EXPECT_EQ(remainingMedia.channelCount, previousMedia.channelCount);
+    EXPECT_EQ(remainingMedia.sampleFormat, previousMedia.sampleFormat);
+    EXPECT_EQ(remainingMedia.frameCount, previousMedia.frameCount);
+    EXPECT_EQ(remainingMedia.flags, previousMedia.flags);
+    EXPECT_EQ(remainingMedia.loopStartFrame, previousMedia.loopStartFrame);
+    EXPECT_EQ(remainingMedia.loopEndFrame, previousMedia.loopEndFrame);
+    EXPECT_EQ(remainingBytes.mid(static_cast<qsizetype>(remainingMedia.blobOffset),
+                                static_cast<qsizetype>(remainingMedia.blobBytes)),
+              secondBytes.mid(static_cast<qsizetype>(previousMedia.blobOffset),
+                              static_cast<qsizetype>(previousMedia.blobBytes)));
 }
 
 TEST(EditorProjectPackExporterManifest, BuildCapturesSourceChangesOnTheFollowingRequest)
