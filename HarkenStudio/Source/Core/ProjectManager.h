@@ -601,6 +601,7 @@ signals:
     void packBuildOutputDirChanged(QString newValue);
     void projectPublishSettingsChanged();
     void defaultConversionChanged(const QUuid& guid);
+    void previewMediaInvalidated(const QUuid& soundGuid);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void actionPackTargetingChanged();
@@ -618,6 +619,7 @@ private:
     void initializeRuntimeSync();
     void bindPreviewMediaContext();
     void refreshPreviewConversions();
+    void invalidatePreviewMedia(const QVector<ProjectItem*>& sounds);
 
     bool createDirectoryStructure(const QString& projectRoot);
     bool createMainProjectFile(const ProjectConfig& config, const QString& projectRoot);

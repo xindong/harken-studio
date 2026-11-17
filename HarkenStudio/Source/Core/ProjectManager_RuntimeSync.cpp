@@ -507,17 +507,27 @@ void ProjectManager::resyncSourceToRuntime(uint32_t sourceId)
     }
     if (!manager.m_currentProject || manager.m_closing)
         return;
+    const auto platform = PlatformContextService::instance().context().primary;
+    const auto language = LanguageContextService::instance().language();
+    bool referenced = false;
+    QVector<ProjectItem*> affected;
     for (auto* item : ProjectPlatformSemantics::referenceOwners(*manager.m_currentProject)) {
         const auto* sound = item->comp<VSound>();
         if (!sound) continue;
         for (const auto* set : SoundSourceSemantics::sourceSets(sound->sources)) {
             if (std::any_of(set->entries.begin(), set->entries.end(),
                     [sourceId](const auto& source) { return source.sourceId == sourceId; })) {
-                emit manager.itemPropertyChanged(item, QStringLiteral("sources"), nullptr);
+                referenced = true;
+                if (SoundSourceEditing::activeSourceId(*item, platform,
+                        SoundSourceEditing::previewLanguage(*item, language)) == sourceId)
+                    affected.push_back(item);
                 break;
             }
         }
     }
+    if (referenced && affected.empty())
+        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+    manager.invalidatePreviewMedia(affected);
 }
 
 void ProjectManager::resyncItemToRuntime(ProjectItem* item)
@@ -686,8 +696,17 @@ void ProjectManager::refreshPreviewConversions()
             changed.push_back(item);
         m_previewConversions[item->runtimeId()] = std::move(next);
     }
-    for (auto* item : changed)
-        emit itemPropertyChanged(item, QStringLiteral("sources"), nullptr);
+    invalidatePreviewMedia(changed);
+}
+
+void ProjectManager::invalidatePreviewMedia(const QVector<ProjectItem*>& sounds)
+{
+    if (sounds.empty()) return;
+    for (const auto* sound : sounds)
+        m_runtimeSoundPreparation.remove(sound->runtimeId());
+    AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+    for (const auto* sound : sounds)
+        emit previewMediaInvalidated(sound->guid);
 }
 
 QSet<harkenstudio::ObjectId> ProjectManager::prepareRuntimePreview(const ProjectItem& root)
