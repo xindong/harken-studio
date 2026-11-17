@@ -151,7 +151,7 @@ TEST_F(ProjectPlatformCommand, ConversionBatchEditsRejectStaleMembersWithoutPart
     auto* layer = manager().createItem(nullptr, "ConversionLayer", ProjectItem::Type::Layer);
     ASSERT_NE(layer, nullptr);
     auto* first = manager().createItem(layer, "First", ProjectItem::Type::Sound);
-    auto* second = manager().createItem(layer, "Second", ProjectItem::Type::Sound);
+    auto* second = manager().createItem(nullptr, "Second", ProjectItem::Type::Sound);
     auto* preset = manager().createItem(nullptr, "BatchPreset", ProjectItem::Type::Conversion);
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
