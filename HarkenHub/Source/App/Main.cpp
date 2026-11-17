@@ -15,6 +15,7 @@
 #include <QDateTime>
 
 #include "App/FileLog.h"
+#include "Cli/HubCli.h"
 #include "App/SingleInstanceGuard.h"
 #include "Launch/ProjectOpenFlow.h"
 #include "Legal/ConsentStore.h"
@@ -40,6 +41,7 @@
 #include "UI/ConsentDialog.h"
 #include "UI/HubWindow.h"
 #include "UI/HubIcons.h"
+#include "UI/HubTheme.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/HubSelfUpdate.h"
 #include "Update/SelfUpdateHealthCheck.h"
@@ -71,248 +73,6 @@
 #endif
 
 namespace {
-
-const char kStyleSheet[] = R"(
-QWidget {
-    background-color: #0D111A;
-    color: #E0E0E0;
-    font-family: "Inter", "Segoe UI", sans-serif;
-    font-size: 12px;
-    selection-background-color: #00F0FF;
-    selection-color: #000000;
-}
-QMainWindow { background-color: #06080D; }
-#sidebarPanel { background-color: #06080D; }
-#sidebarSeparator { background-color: #313848; }
-#sidebar { background-color: #06080D; border: none; outline: none; }
-#sidebar::item {
-    margin: 0;
-    padding: 12px 22px;
-    border: none;
-    background-color: #171C28;
-    color: #AAAAAA;
-}
-#sidebar::item:hover { background-color: #222836; color: #CCCCCC; }
-#sidebar::item:selected {
-    background-color: #143C48;
-    border: none;
-    border-left: 2px solid #00F0FF;
-    padding-left: 20px;
-    color: #00F0FF;
-}
-  #pageTitle { font-size: 16px; font-weight: 600; color: #00F0FF; background: transparent; }
-  #pageSubtitle { color: #888888; background: transparent; }
-  #sidebarProduct { color: #00F0FF; background: transparent; font-size: 24px; font-weight: 700; }
-#sidebarNote { color: #6B7488; background: transparent; font-size: 11px; }
-#sidebarLinks { background: transparent; font-size: 11px; }
-  #tablePanel { background-color: #0D111A; border: 1px solid #272E3C; border-radius: 0; }
-  #newProjectPanel { background-color: #0D111A; border: 1px solid #3B4658; border-radius: 0; }
-  QLineEdit#newProjectField, QComboBox#newProjectVersion {
-      background-color: #080C14;
-      border: 1px solid #465268;
-      border-radius: 0;
-      color: #E0E0E0;
-      padding: 3px 7px;
-  }
-  QLineEdit#newProjectField:hover, QComboBox#newProjectVersion:hover { border-color: #627089; }
-  QLineEdit#newProjectField:focus, QComboBox#newProjectVersion:focus { border-color: #00F0FF; }
-  QComboBox#newProjectVersion::drop-down { border-left: 1px solid #465268; width: 24px; }
-  QPushButton#newProjectBrowse, QPushButton#newProjectAddTemplate { border-color: #536078; padding: 4px 16px; }
-  QPushButton#newProjectBrowse:hover, QPushButton#newProjectAddTemplate:hover { border-color: #71809A; }
-  QTreeWidget#templatePreviewTree {
-      background-color: #080C14;
-      border: 1px solid #3F4A5E;
-      border-radius: 0;
-      outline: none;
-  }
-  QTreeWidget#templatePreviewTree::item { border: none; padding: 1px 4px; }
-  QTreeWidget#templatePreviewTree QHeaderView::section {
-      background-color: #1A2130;
-      border: none;
-      border-bottom: 1px solid #4A566A;
-      color: #AAB3C2;
-      padding: 6px 9px;
-  }
-QPushButton {
-    background-color: #2A3140;
-    border: 1px solid #3D4554;
-    padding: 8px 16px;
-    border-radius: 0;
-    color: #E0E0E0;
-    font-weight: 500;
-}
-QPushButton:hover { background-color: #333B4D; border-color: #4D5668; }
-QPushButton:pressed { background-color: #00F0FF; color: #000000; }
-QPushButton:disabled { background-color: #171C28; color: #555555; border-color: #272D3A; }
-QPushButton#rowLaunchButton, QPushButton#newProjectButton, QPushButton#createProjectButton, QPushButton#getFromServerButton[updateAvailable="true"] {
-    background-color: #00F0FF;
-    border: 1px solid #00F0FF;
-    color: #000000;
-    font-weight: 600;
-}
-QPushButton#rowLaunchButton:hover, QPushButton#newProjectButton:hover, QPushButton#createProjectButton:hover, QPushButton#getFromServerButton[updateAvailable="true"]:hover { background-color: #5CF6FF; border-color: #5CF6FF; }
-QPushButton#rowLaunchButton:pressed, QPushButton#newProjectButton:pressed, QPushButton#createProjectButton:pressed, QPushButton#getFromServerButton[updateAvailable="true"]:pressed { background-color: #00B0BC; border-color: #00B0BC; color: #000000; }
-QPushButton#rowLaunchButton:disabled, QPushButton#newProjectButton:disabled, QPushButton#createProjectButton:disabled, QPushButton#getFromServerButton[updateAvailable="true"]:disabled { background-color: #171C28; color: #555555; border-color: #272D3A; }
-QPushButton#rowLaunchButton { padding: 4px 12px; }
-QPushButton#addIntegrationButton { padding: 0; font-size: 18px; }
-QToolButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 0;
-    padding: 4px;
-}
-QToolButton:hover { background-color: #2A3140; border-color: #3D4554; }
-QToolButton:pressed { background-color: #00F0FF; color: #000000; }
-QToolButton:disabled { color: #555555; }
-QToolButton#rowMenuButton {
-    background-color: #2A3140;
-    border: 1px solid #3D4554;
-    color: #AAAAAA;
-    font-size: 10px;
-}
-QToolButton#rowMenuButton:hover { background-color: #333B4D; border-color: #4D5668; color: #E0E0E0; }
-QToolButton#settingsButton {
-    background-color: transparent;
-    border: none;
-    padding: 5px;
-}
-QToolButton#settingsButton:hover { background-color: #1B2230; border: none; }
-QToolButton#settingsButton:pressed,
-QToolButton#settingsButton:checked { background-color: #242C3A; border: none; }
-QToolButton#settingsButton::menu-indicator { image: none; }
-QTableWidget {
-    background-color: transparent;
-    border: none;
-    outline: none;
-    selection-background-color: #2A3140;
-    selection-color: #E0E0E0;
-}
-QTableWidget::item { padding: 4px 10px; border-bottom: 1px solid #1A2030; background: transparent; }
-QTableWidget::item:hover { background-color: #222836; }
-QTableWidget::item:selected { background-color: #2A3140; color: #E0E0E0; }
-QHeaderView::section {
-    background-color: #171C28;
-    color: #888888;
-    padding: 8px 10px;
-    border: none;
-    border-bottom: 1px solid #313848;
-    font-weight: 600;
-    font-size: 10px;
-}
-QTableCornerButton::section { background-color: #171C28; border: none; }
-QSplitter#resultsSplitter::handle:vertical {
-    background-color: #171C28;
-    border-top: 1px solid #4A566A;
-    border-bottom: 1px solid #1A2030;
-}
-QMenu {
-    background-color: #1D2330;
-    border: 1px solid #3D4554;
-    border-radius: 0;
-    padding: 6px 0;
-}
-QMenu::item { padding: 6px 32px 6px 24px; min-width: 150px; background: transparent; }
-QMenu#versionSelectMenu::item { padding: 6px 32px 6px 36px; }
-QMenu#versionSelectMenu::icon { left: 10px; }
-QMenu::item:selected { background-color: #00F0FF; color: #000000; }
-QMenu::item:disabled { color: #555B66; }
-QMenu::item:disabled:selected { background-color: transparent; color: #555B66; }
-QMenu::separator { height: 1px; background-color: #3D4554; margin: 4px 12px; }
-#destructiveMenu::item { color: #FF0055; }
-#destructiveMenu::item:selected { background-color: #FF0055; color: #000000; }
-#destructiveMenu::item:disabled { color: #802B48; }
-#destructiveMenu::item:disabled:selected { background-color: transparent; color: #802B48; }
-QToolTip { background-color: #1D2330; color: #E0E0E0; border: 1px solid #3D4554; }
-QScrollBar:vertical { background-color: transparent; width: 10px; margin: 0; }
-QScrollBar::handle:vertical { background-color: #3A4250; min-height: 20px; border-radius: 0; margin: 2px; }
-QScrollBar::handle:vertical:hover { background-color: #4D5668; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-QScrollBar:horizontal { background-color: transparent; height: 10px; margin: 0; }
-QScrollBar::handle:horizontal { background-color: #3A4250; min-width: 20px; border-radius: 0; margin: 2px; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
-#TitleBarWidget {
-    background-color: #171C28;
-    border-bottom: 1px solid #313848;
-}
-#titleBarLogo { background-color: transparent; }
-#titleBarLabel {
-    background-color: transparent;
-    color: #E0E0E0;
-    font-size: 13px;
-    font-weight: 500;
-}
-#titleBarMin,
-#titleBarMax,
-#titleBarClose {
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    color: #AAB0BA;
-    font-weight: 400;
-    margin: 0;
-    padding: 0;
-    min-width: 46px;
-    max-width: 46px;
-    min-height: 36px;
-    max-height: 36px;
-}
-#titleBarMin:hover,
-#titleBarMax:hover {
-    background-color: #2A3140;
-    color: #FFFFFF;
-}
-#titleBarMin:pressed,
-#titleBarMax:pressed {
-    background-color: #222836;
-}
-#titleBarClose:hover {
-    background-color: #E81123;
-    color: #FFFFFF;
-}
-#titleBarClose:pressed {
-    background-color: #F1707A;
-    color: #FFFFFF;
-}
-#releaseNotesScroll { background-color: transparent; }
-#releaseNotesScroll > QWidget > QWidget { background-color: transparent; }
-#currentReleaseVersion {
-    color: #FFFFFF;
-    font-size: 17px;
-    font-weight: 600;
-    padding: 4px 0;
-}
-#releaseNotesSeparator {
-    color: #3D4554;
-    background-color: #3D4554;
-    max-height: 1px;
-    margin: 8px 0;
-}
-#releaseNotesVersion {
-    background-color: #171C28;
-    border: 1px solid #313848;
-    color: #E0E0E0;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 9px 12px;
-    text-align: left;
-}
-#releaseNotesVersion:hover { background-color: #222836; border-color: #465268; }
-#releaseNotesVersion:checked { border-color: #536078; }
-#releaseNotesChange { color: #C8CDD6; padding-left: 8px; }
-#releaseNotesContributors { color: #8F98A8; padding: 6px 0 2px 8px; }
-#releaseNotesCategory_added,
-#releaseNotesCategory_improved,
-#releaseNotesCategory_removed {
-    font-size: 12px;
-    font-weight: 600;
-    margin-top: 5px;
-}
-#releaseNotesCategory_added { color: #00F0FF; }
-#releaseNotesCategory_improved { color: #8BB8FF; }
-#releaseNotesCategory_removed { color: #AAB0BA; }
-)";
 
 QString projectArgumentIn(const QStringList& arguments)
 {
@@ -431,6 +191,23 @@ int main(int argc, char* argv[])
     }
     QCoreApplication::setOrganizationName(QStringLiteral("HarkenSound"));
     QCoreApplication::setApplicationName(QStringLiteral("HarkenHub"));
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--cli") != 0) continue;
+        QCoreApplication app(argc, argv);
+        app.setApplicationVersion(QString::fromUtf8(Harken::BuildInfo::HubVersion.data(), int(Harken::BuildInfo::HubVersion.size())));
+#ifdef Q_OS_WIN
+        const auto outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+        const bool hasOutput = outputHandle && outputHandle != INVALID_HANDLE_VALUE;
+        const auto errorHandle = GetStdHandle(STD_ERROR_HANDLE);
+        const bool hasError = errorHandle && errorHandle != INVALID_HANDLE_VALUE;
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+            FILE* stream = nullptr;
+            if (!hasOutput) freopen_s(&stream, "CONOUT$", "w", stdout);
+            if (!hasError) freopen_s(&stream, "CONOUT$", "w", stderr);
+        }
+#endif
+        return VNH::Cli::run(app.arguments());
+    }
     VNH::FileLog::install(logRole);
     QFile::remove(VNH::userDataDir() + QStringLiteral("/auth-token.bin"));
     QFile::remove(VNH::userDataDir() + QStringLiteral("/auth-state.json"));
@@ -939,7 +716,6 @@ int main(int argc, char* argv[])
     QApplication app(argc, argv);
     VNH::HubIcons::ApplicationIcon iconTheme;
     VNH::HubLocalization::install(&app);
-    app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
         QApplication::setStyle(fusion);
     app.setOrganizationDomain(QStringLiteral("harkensound.com"));
@@ -1009,7 +785,7 @@ int main(int argc, char* argv[])
     }
 
     app.setApplicationDisplayName(QStringLiteral("Harken Hub"));
-    app.setStyleSheet(QString::fromLatin1(kStyleSheet));
+    VNH::HubTheme::initialize();
 
     QTimer::singleShot(0, &app, [&app]() {
         confirmConsentReady(app.arguments());

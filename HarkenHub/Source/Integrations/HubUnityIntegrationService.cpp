@@ -666,6 +666,8 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     studioRequest.integrationSourcePath = request.integrationSourcePath;
     studioRequest.integrationInstallPath = request.integrationInstallPath;
     studioRequest.installToAssets = request.installToAssets;
+    studioRequest.documentation = request.documentation;
+    studioRequest.samples = request.samples;
     studioRequest.checkOnly = request.checkOnly;
     studioRequest.confirmTargetChanges = request.confirmTargetChanges;
     studioRequest.approvedPlanHash = request.approvedPlanHash;
@@ -698,6 +700,10 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.integrationRemoved = source.integrationRemoved;
     result.removalBackupCreated = source.removalBackupCreated;
     result.changesDetected = source.changesDetected;
+    result.documentationPresent = source.documentationPresent;
+    result.samplesPresent = source.samplesPresent;
+    result.requiresContentSelection = source.requiresContentSelection;
+    result.contentBackupPath = source.contentBackupPath;
     result.planHash = source.planHash;
     result.modifiedFiles = source.modifiedFiles;
     result.conflictingFiles = source.conflictingFiles;

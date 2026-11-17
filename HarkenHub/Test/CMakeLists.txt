@@ -1,4 +1,10 @@
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Test)
+add_executable(harken_hub_cli_fixture
+    ../Source/App/Main.cpp
+    ../resources.qrc)
+set_target_properties(harken_hub_cli_fixture PROPERTIES AUTORCC ON)
+target_link_libraries(harken_hub_cli_fixture PRIVATE harken_hub_test_lib)
+harken_add_hub_legal_resources(harken_hub_cli_fixture)
 add_executable(harken_hub_studio_fixture UnitTest/Support/StudioProcessFixture.cpp)
 target_link_libraries(harken_hub_studio_fixture PRIVATE Qt6::Core Qt6::Network)
 add_executable(harken_hub_tests
@@ -34,6 +40,7 @@ add_executable(harken_hub_tests
     UnitTest/HubSelfUpdateTest.cpp
     UnitTest/HubLocalizationTest.cpp
     UnitTest/HubSettingsTest.cpp
+    UnitTest/HubCliTest.cpp
     UnitTest/MaintenanceTest.cpp
     UnitTest/ManifestVerifierTest.cpp
     UnitTest/OfficialUnitySourceTest.cpp
@@ -90,6 +97,7 @@ target_link_libraries(harken_hub_tests PRIVATE
 )
 add_dependencies(harken_hub_tests harken_hub_lrelease)
 add_dependencies(harken_hub_tests harken_hub_studio_fixture)
+add_dependencies(harken_hub_tests harken_hub_cli_fixture)
 if(WIN32)
     add_custom_command(TARGET harken_hub_tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -101,6 +109,7 @@ add_custom_command(TARGET harken_hub_tests POST_BUILD
         "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
         "$<TARGET_FILE_DIR:harken_hub_tests>/platforms/")
 target_compile_definitions(harken_hub_tests PRIVATE
+    HARKEN_HUB_CLI_FIXTURE="$<TARGET_FILE:harken_hub_cli_fixture>"
     HARKEN_HUB_STUDIO_FIXTURE="$<TARGET_FILE:harken_hub_studio_fixture>"
     HARKEN_HUB_TRANSLATION_FILE="${CMAKE_BINARY_DIR}/HarkenHub/harken_hub_zh_CN.qm"
     HARKEN_HUB_RELEASE_NOTES_FILE="${CMAKE_SOURCE_DIR}/HarkenHub/Resources/release-notes.json")

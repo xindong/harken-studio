@@ -1,5 +1,7 @@
 #pragma once
 
+#include "UnityInstallation.h"
+
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -37,6 +39,8 @@ struct UnityIntegrationRequest
     QString integrationSourcePath;
     QString integrationInstallPath;
     bool installToAssets = false;
+    VNX::UnityInstallation::ContentAction documentation = VNX::UnityInstallation::ContentAction::Ask;
+    VNX::UnityInstallation::ContentAction samples = VNX::UnityInstallation::ContentAction::Ask;
     bool checkOnly = false;
     bool verifyInstalledOnly = false;
     bool confirmTargetChanges = false;
@@ -78,6 +82,10 @@ struct UnityIntegrationResult
     bool integrationRemoved = false;
     bool removalBackupCreated = false;
     bool changesDetected = false;
+    bool documentationPresent = false;
+    bool samplesPresent = false;
+    bool requiresContentSelection = false;
+    QString contentBackupPath;
     QByteArray planHash;
     QStringList modifiedFiles;
     QStringList conflictingFiles;

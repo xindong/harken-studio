@@ -189,7 +189,7 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
     repairBanner_ = new QFrame(this);
     repairBanner_->setObjectName(QStringLiteral("installationIssueBanner"));
     repairBanner_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #2A1420; border: 1px solid #FF0055; "
+        "QFrame { background-color: palette(alternate-base); border: 1px solid #FF0055; "
         "border-radius: 0; }"));
     auto* bannerLayout = new QHBoxLayout(repairBanner_);
     bannerLayout->setContentsMargins(14, 8, 14, 8);
@@ -205,7 +205,7 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
     repairLabel_->setMinimumWidth(0);
     repairLabel_->setTextFormat(Qt::PlainText);
     repairLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     bannerLayout->addWidget(repairLabel_, 1);
     repairButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Repair"), repairBanner_);
     repairButton_->setObjectName(QStringLiteral("installationRepairButton"));
@@ -228,13 +228,13 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
 
     hubUpdateBanner_ = new QFrame(this);
     hubUpdateBanner_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #0F2A30; border: 1px solid #00F0FF; "
+        "QFrame { background-color: palette(alternate-base); border: 1px solid palette(highlight); "
         "border-radius: 0; }"));
     auto* updateBannerLayout = new QHBoxLayout(hubUpdateBanner_);
     updateBannerLayout->setContentsMargins(14, 8, 14, 8);
     hubUpdateLabel_ = new QLabel(hubUpdateBanner_);
     hubUpdateLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     updateBannerLayout->addWidget(hubUpdateLabel_, 1);
     hubUpdateButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Install and Restart"), hubUpdateBanner_);
@@ -245,13 +245,13 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
 
     studioUpdateBanner_ = new QFrame(this);
     studioUpdateBanner_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #0F2A30; border: 1px solid #00F0FF; "
+        "QFrame { background-color: palette(alternate-base); border: 1px solid palette(highlight); "
         "border-radius: 0; }"));
     auto* studioBannerLayout = new QHBoxLayout(studioUpdateBanner_);
     studioBannerLayout->setContentsMargins(14, 8, 14, 8);
     studioUpdateLabel_ = new QLabel(studioUpdateBanner_);
     studioUpdateLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     studioBannerLayout->addWidget(studioUpdateLabel_, 1);
     studioUpdateButton_ =
         new QPushButton(QCoreApplication::translate("HarkenHub", "Install"), studioUpdateBanner_);
@@ -262,13 +262,13 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
 
     autoProgressFrame_ = new QFrame(this);
     autoProgressFrame_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #0D111A; border: 1px solid #313848; "
+        "QFrame { background-color: palette(window); border: 1px solid palette(mid); "
         "border-radius: 0; }"));
     auto* progressLayout = new QHBoxLayout(autoProgressFrame_);
     progressLayout->setContentsMargins(14, 8, 14, 8);
     autoProgressLabel_ = new QLabel(autoProgressFrame_);
     autoProgressLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     progressLayout->addWidget(autoProgressLabel_, 1);
     autoProgressBar_ = new QProgressBar(autoProgressFrame_);
     autoProgressBar_->setFixedSize(180, 10);
@@ -355,8 +355,8 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
         this);
     launchHint->setWordWrap(true);
     launchHint->setStyleSheet(QStringLiteral(
-        "background-color: #111722; border: 1px solid #3D4554; "
-        "border-radius: 0; color: #AAB3C2; padding: 8px 11px;"));
+        "background-color: palette(window); border: 1px solid palette(mid); "
+        "border-radius: 0; color: palette(placeholder-text); padding: 8px 11px;"));
     layout->addWidget(launchHint);
     layout->addWidget(hubUpdateBanner_);
     layout->addWidget(studioUpdateBanner_);
@@ -1041,8 +1041,8 @@ void VersionsPage::showAddVersionMenu()
         button->setStyleSheet(QStringLiteral(
             "QPushButton { background: transparent; border: none; "
             "border-radius: 0; padding: 8px 14px; text-align: left; }"
-            "QPushButton:hover { background: #333B4D; }"
-            "QPushButton:pressed { background: #252C3A; }"));
+            "QPushButton:hover { background: palette(light); }"
+            "QPushButton:pressed { background: palette(midlight); }"));
 
         auto* layout = new QVBoxLayout(button);
         layout->setContentsMargins(14, 7, 14, 7);
@@ -1050,13 +1050,13 @@ void VersionsPage::showAddVersionMenu()
         auto* titleLabel = new QLabel(title, button);
         titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
         titleLabel->setStyleSheet(QStringLiteral(
-            "background: transparent; border: none; color: #F2F4F8; "
+            "background: transparent; border: none; color: palette(window-text); "
             "font-weight: 600;"));
         layout->addWidget(titleLabel);
         auto* descriptionLabel = new QLabel(description, button);
         descriptionLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
         descriptionLabel->setStyleSheet(QStringLiteral(
-            "background: transparent; border: none; color: #9AA6BD;"));
+            "background: transparent; border: none; color: palette(placeholder-text);"));
         layout->addWidget(descriptionLabel);
 
         action->setDefaultWidget(button);

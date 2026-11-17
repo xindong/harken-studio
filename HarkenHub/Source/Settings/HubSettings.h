@@ -26,6 +26,8 @@ public:
     static bool setProjectLocation(const QString& path);
     static QString languagePreference();
     static bool setLanguagePreference(const QString& preference);
+    static QString themePreference();
+    static bool setThemePreference(const QString& preference);
     static QSize windowSize();
     static bool setWindowSize(const QSize& size);
     static std::optional<QPoint> windowPosition();

@@ -2035,6 +2035,7 @@ TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnown
         VNX::UnityIntegrationService::Request request;
         request.unityProjectPath = project;
         request.integrationSourcePath = source;
+        request.documentation = VNX::UnityInstallation::ContentAction::Update;
         ASSERT_TRUE(service.run(request).success);
         ASSERT_TRUE(QFile::remove(target + "/" + damaged));
         writeFile(target + "/Project.txt", "project content");
@@ -2772,6 +2773,8 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
     request.integrationSourcePath = source;
+    request.documentation = VNX::UnityInstallation::ContentAction::Update;
+    request.samples = VNX::UnityInstallation::ContentAction::Update;
     ASSERT_TRUE(service.run(request).success);
     const QString installed = project + "/Packages/com.harken.core";
     for (const auto& path : optional) ASSERT_TRUE(QFile::remove(installed + "/" + path));
@@ -2823,6 +2826,128 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     const auto missingRequired = VNH::HubUnityIntegrationService::run(verify);
     EXPECT_FALSE(missingRequired.success);
     EXPECT_EQ(missingRequired.missingFiles, QStringList{"Runtime/Harken.Core.asmdef"});
+}
+
+TEST(UnityIntegrationService, ComponentDecisionsRemainBoundToReviewAndPreserveOwnershipAndBackups)
+{
+    using Action = VNX::UnityInstallation::ContentAction;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteIntegration(dir.filePath("Source"));
+    const QString installed = project + "/Packages/com.harken.core";
+    const QString document = "Documentation~/Reference.md";
+    const QString sample = "Samples~/Demo.cs";
+    writeFile(source + '/' + document, "original documentation");
+    writeFile(source + '/' + sample, "original sample");
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = project;
+    request.integrationSourcePath = source;
+    ASSERT_TRUE(service.run(request).success);
+    EXPECT_FALSE(QFileInfo::exists(installed + '/' + document));
+    EXPECT_FALSE(QFileInfo::exists(installed + '/' + sample));
+    request.documentation = request.samples = Action::Update;
+    request.checkOnly = true;
+    const auto installation = service.run(request);
+    ASSERT_TRUE(installation.success);
+    request.checkOnly = false;
+    request.confirmTargetChanges = true;
+    request.approvedPlanHash = installation.planHash;
+    ASSERT_TRUE(service.run(request).success);
+    const QByteArray receipt = readFile(installed + "/.harken-integration-state.json");
+    writeFile(installed + "/Samples~/Custom.cs", "user file");
+    writeFile(installed + '/' + document, "user documentation edits");
+    writeFile(source + '/' + document, "new documentation");
+    writeFile(source + '/' + sample, "new sample");
+    writeFile(source + "/Runtime/Harken.Core.asmdef", "new core");
+    request.approvedPlanHash.clear();
+    request.documentation = request.samples = Action::Ask;
+    const auto undecided = service.run(request);
+    EXPECT_FALSE(undecided.success);
+    EXPECT_TRUE(undecided.requiresContentSelection);
+    EXPECT_EQ(readFile(installed + "/.harken-integration-state.json"), receipt);
+    request.documentation = Action::Keep;
+    request.samples = Action::Remove;
+    request.checkOnly = true;
+    const auto review = service.run(request);
+    ASSERT_TRUE(review.success);
+    request.checkOnly = false;
+    request.approvedPlanHash = review.planHash;
+    request.documentation = Action::Update;
+    EXPECT_FALSE(service.run(request).success);
+    EXPECT_EQ(readFile(installed + '/' + document), "user documentation edits");
+    request.documentation = Action::Keep;
+    const auto result = service.run(request);
+    ASSERT_TRUE(result.success);
+    EXPECT_EQ(readFile(installed + '/' + document), "user documentation edits");
+    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), "new core");
+    EXPECT_FALSE(QFileInfo::exists(installed + '/' + sample));
+    EXPECT_EQ(readFile(installed + "/Samples~/Custom.cs"), "user file");
+    EXPECT_EQ(readFile(result.contentBackupPath + "/UnityProject/Packages/com.harken.core/" + sample), "original sample");
+    const auto before = QJsonDocument::fromJson(receipt).object();
+    const auto after = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
+    EXPECT_EQ(after["sha256"].toObject()[document], before["sha256"].toObject()[document]);
+    EXPECT_TRUE(after["managed_files"].toArray().contains(document));
+    EXPECT_FALSE(after["managed_files"].toArray().contains("Samples~/Custom.cs"));
+    VNH::UnityIntegrationRequest verify;
+    verify.unityProjectPath = project;
+    verify.verifyInstalledOnly = true;
+    const auto inspection = VNH::HubUnityIntegrationService::run(verify);
+    EXPECT_TRUE(inspection.modifiedFiles.contains(document));
+}
+
+TEST(UnityIntegrationService, RestorationPreservesDeliberatelyOmittedAndRetainedComponents)
+{
+    using Action = VNX::UnityInstallation::ContentAction;
+    for (bool retained : {false, true}) {
+        SCOPED_TRACE(retained);
+        QTemporaryDir dir;
+        ASSERT_TRUE(dir.isValid());
+        const QString project = makeUnityProject(dir.filePath("Game"));
+        const QString source = makeCompleteIntegration(dir.filePath("Source"));
+        const QString installed = project + "/Packages/com.harken.core";
+        const QString document = "Documentation~/Reference.md";
+        writeFile(source + '/' + document, "original documentation");
+        VNX::UnityIntegrationService service;
+        VNX::UnityIntegrationService::Request request;
+        request.unityProjectPath = project;
+        request.integrationSourcePath = source;
+        request.documentation = retained ? Action::Update : Action::Ask;
+        ASSERT_TRUE(service.run(request).success);
+        if (retained) {
+            writeFile(source + '/' + document, "new documentation");
+            request.documentation = Action::Keep;
+            request.checkOnly = true;
+            const auto review = service.run(request);
+            ASSERT_TRUE(review.success);
+            request.checkOnly = false;
+            request.confirmTargetChanges = true;
+            request.approvedPlanHash = review.planHash;
+            ASSERT_TRUE(service.run(request).success);
+        }
+        const auto receipt = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
+        const auto hashes = receipt["sha256"].toObject();
+        for (auto it = hashes.begin(); it != hashes.end(); ++it)
+            request.officialFileHashes[it.key()] = it.value().toString().toLatin1();
+        request.officialFileHashes[document] = QCryptographicHash::hash(readFile(source + '/' + document), QCryptographicHash::Sha256).toHex();
+        request.officialRelease = QJsonObject{{"buildId", "fixture-build"}};
+        request.restoreIntegration = true;
+        request.checkOnly = true;
+        request.approvedPlanHash.clear();
+        request.restorationBackupPath = dir.filePath("Backup");
+        writeFile(installed + "/Runtime/Harken.Core.asmdef", "damaged");
+        const auto review = service.run(request);
+        ASSERT_TRUE(review.success) << review.steps.back().summary.toStdString();
+        request.approvedPlanHash = review.planHash;
+        request.checkOnly = false;
+        request.confirmTargetChanges = true;
+        const auto restored = service.run(request);
+        ASSERT_TRUE(restored.success) << restored.steps.back().summary.toStdString();
+        EXPECT_EQ(QFileInfo::exists(installed + '/' + document), retained);
+        if (retained) EXPECT_EQ(readFile(installed + '/' + document), "original documentation");
+        EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), readFile(source + "/Runtime/Harken.Core.asmdef"));
+    }
 }
 
 TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextChanges)

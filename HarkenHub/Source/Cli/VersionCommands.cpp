@@ -1,0 +1,382 @@
+#include "Cli/HubCli.h"
+
+#include "Download/Downloader.h"
+#include "Packaging/PackageVerifier.h"
+#include "Platform/Elevation.h"
+#include "Platform/PlatformPaths.h"
+#include "ReleaseNotes/VersionReleaseNotes.h"
+#include "Security/ManifestVerifier.h"
+#include "Security/TrustAnchors.h"
+#include "Transactions/HandoffArea.h"
+#include "Transactions/InstallIndex.h"
+#include "Transactions/InstallRequest.h"
+#include "Transactions/TransactionDiagnostics.h"
+#include "Update/HubSelfUpdate.h"
+#include "Update/ServerEndpoints.h"
+#include "Update/ServerVersionCatalog.h"
+#include "Update/UpdateChecker.h"
+#include "Update/UpdateStateStore.h"
+#include "Versions/IntegrityChecker.h"
+#include "Versions/LocalBuildRegistry.h"
+#include "Versions/VersionScanner.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QDirIterator>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QSaveFile>
+#include <QTimer>
+#include <algorithm>
+
+namespace VNH::Cli {
+namespace {
+
+QJsonObject manifestJson(const ReleaseManifest& manifest)
+{
+    return {{"product", manifest.product}, {"version", manifest.version}, {"buildId", manifest.buildId},
+        {"channel", manifest.channel}, {"sha256", manifest.sha256Hex}, {"size", manifest.packageSize},
+        {"releaseSequence", manifest.releaseSequence}, {"expiresAt", manifest.expiresAt.toString(Qt::ISODate)}};
+}
+
+QJsonObject stateJson(const UpdateStateRecord& state)
+{
+    return {{"found", state.found}, {"product", state.product}, {"state", state.state}, {"version", state.version},
+        {"buildId", state.buildId}, {"package", state.downloadPath}, {"manifest", state.manifestEnvelopePath},
+        {"transactionId", state.transactionId}, {"failureCode", state.failureCode}, {"failureDetail", state.failureDetail}};
+}
+
+QJsonObject versionJson(const InstalledVersion& version)
+{
+    return {{"buildId", version.buildId}, {"version", version.semanticVersion}, {"channel", version.channel},
+        {"path", version.installPath}, {"executable", version.executablePath}, {"localBuild", version.isLocalBuild()},
+        {"available", version.available}, {"error", version.availabilityError}};
+}
+
+QJsonObject installationSnapshot(const QString& path)
+{
+    QJsonObject files;
+    QDirIterator iterator(path, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        iterator.next();
+        const auto info = iterator.fileInfo();
+        files[QDir(path).relativeFilePath(info.absoluteFilePath())] = info.isSymLink()
+            ? QJsonObject{{"link", info.symLinkTarget()}}
+            : info.isDir() ? QJsonObject{{"directory", true}}
+                           : QJsonObject{{"sha256", fileHash(info.absoluteFilePath())}};
+    }
+    return files;
+}
+
+ServerVersionList serverVersions()
+{
+    ServerVersionCatalog catalog;
+    QEventLoop loop;
+    ServerVersionList result;
+    QObject::connect(&catalog, &ServerVersionCatalog::finished, &loop, [&](const auto& response) { result = response; loop.quit(); });
+    require(catalog.fetch(ServerEndpoints::versionsUrl(ServerEndpoints::resolvedBaseUrl(), "harken", ServerEndpoints::hostChannel()), "harken", ServerEndpoints::hostChannel()), "Could not start server version lookup");
+    loop.exec();
+    require(result.ok, result.error);
+    return result;
+}
+
+void waitForElevated(const ElevationLaunchResult& launch, const QString& transaction = {})
+{
+    require(launch.ok, launch.error, launch.canceled ? "ElevationDeclined" : "ElevationFailed");
+    QEventLoop loop;
+    QTimer poll;
+    int exitCode = 1;
+    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+        if (pollElevatedInstall(launch.processHandle, &exitCode)) loop.quit();
+    });
+    poll.start(250);
+    loop.exec();
+    releaseElevatedInstall(launch.processHandle);
+    require(exitCode == 0, transaction.isEmpty() ? QStringLiteral("Elevated operation failed with exit code %1").arg(exitCode)
+        : TransactionDiagnostics::failureMessage(transaction, exitCode));
+}
+
+QJsonObject download(const ReleaseManifest& manifest, const QByteArray& envelope, const QString& objectPath, const QString& releaseTag)
+{
+    require(ManifestVerifier::isSafeFileToken(manifest.buildId), "Invalid build id in manifest");
+    const QString fileName = QFileInfo(QUrl(objectPath).path()).fileName();
+    require(ManifestVerifier::isSafeFileToken(fileName), "Invalid download file name");
+    const QString root = userDataDir() + "/downloads/cli/" + manifest.product + '/' + manifest.buildId;
+    require(QDir().mkpath(root), "Could not create download directory");
+    QString error;
+    const QString envelopePath = root + '/' + fileName + ".manifest";
+    auto lease = DownloadLease::acquire(envelopePath, &error);
+    require(bool(lease), error);
+    QSaveFile manifestFile(envelopePath);
+    require(manifestFile.open(QIODevice::WriteOnly) && manifestFile.write(envelope) == envelope.size() && manifestFile.commit(), "Could not save the signed manifest");
+    DownloadRequest request;
+    auto urls = ServerEndpoints::downloadUrls(ServerEndpoints::resolvedBaseUrl(), objectPath, releaseTag);
+    require(!urls.isEmpty(), "No valid package download URLs");
+    request.url = urls.takeFirst();
+    request.fallbackUrls = urls;
+    request.targetPath = root + '/' + fileName;
+    request.expectedSizeBytes = manifest.packageSize;
+    request.expectedSha256 = manifest.sha256Hex;
+    request.lease = lease;
+    Downloader downloader;
+    DownloadResult result;
+    QEventLoop loop;
+    QObject::connect(&downloader, &Downloader::finished, &loop, [&](const auto& response) { result = response; loop.quit(); });
+    const bool started = downloader.start(request, &error);
+    require(started, error.isEmpty() ? QStringLiteral("The download request could not be started") : error);
+    loop.exec();
+    require(result.ok, result.error);
+    if (manifest.product == "HarkenStudio") {
+        const auto verified = PackageVerifier::verify(result.filePath,
+            {manifest.buildId, manifest.version, manifest.sha256Hex, manifest.packageSize});
+        require(verified.ok, verified.error);
+        require(verified.channel == manifest.channel, "Package channel does not match the signed manifest");
+    } else {
+        require(HubSelfUpdate::verifyInstaller(result.filePath, manifest.sha256Hex, manifest.packageSize, &error), error);
+    }
+    return {{"package", result.filePath}, {"manifest", envelopePath}, {"release", manifestJson(manifest)}};
+}
+
+UpdateCheckResult checkUpdate(const QString& product)
+{
+    UpdateChecker checker;
+    UpdateChecker::Options options;
+    auto urls = ServerEndpoints::manifestUrls(ServerEndpoints::resolvedBaseUrl(), product, ServerEndpoints::hostChannel());
+    require(!urls.isEmpty(), "No valid update manifest URLs");
+    options.latestUrl = urls.takeFirst();
+    options.fallbackUrls = urls;
+    options.trustedHttpOrigin = ServerEndpoints::resolvedBaseUrl();
+    options.product = product;
+    options.channel = ServerEndpoints::hostChannel();
+    options.manifestPublicKey = TrustAnchors::manifestPublicKey();
+    QEventLoop loop;
+    UpdateCheckResult result;
+    QObject::connect(&checker, &UpdateChecker::checkFinished, &loop, [&](const auto& response) { result = response; loop.quit(); });
+    require(checker.start(options), "Could not start update lookup");
+    loop.exec();
+    checker.stop();
+    require(result.ok, result.error);
+    return result;
+}
+
+QJsonObject installPackage(const QString& package, const QString& manifest, bool allowExpired)
+{
+    const auto preparation = InstallRequest::prepare(package, manifest, TrustAnchors::manifestPublicKey(), QDateTime::currentDateTimeUtc(), allowExpired);
+    require(preparation.ok, preparation.error);
+    const auto launch = launchElevatedInstall(preparation.transactionId, true);
+    if (!launch.ok) HandoffArea::discard(preparation.transactionId);
+    waitForElevated(launch, preparation.transactionId);
+    return {{"buildId", preparation.buildId}, {"version", preparation.version}, {"transactionId", preparation.transactionId}};
+}
+
+}
+
+Reply versions(const Arguments& args)
+{
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto key = TrustAnchors::manifestPublicKey();
+    if (args.operation == "server" || args.operation == "download") {
+        const auto catalog = serverVersions();
+        QJsonArray entries;
+        for (const auto& entry : catalog.entries) {
+            const auto verified = ManifestVerifier::verify(entry.updateManifest, key, now, true);
+            auto row = verified.ok ? manifestJson(verified.manifest) : QJsonObject{};
+            row["version"] = entry.version;
+            row["verified"] = verified.ok;
+            row["error"] = verified.error;
+            row["releaseNotes"] = entry.changelog;
+            entries.append(row);
+            if (args.operation == "download" && verified.ok && verified.manifest.buildId == args.required("build")) {
+                require(ServerEndpoints::isReleaseObjectPath(entry.objectPath, "harken", ServerEndpoints::hostChannel(), verified.manifest.version), "Invalid server package path");
+                require(verified.manifest.product == "HarkenStudio", "Unexpected package product");
+                return success(download(verified.manifest, entry.updateManifest, entry.objectPath, entry.releaseTag));
+            }
+        }
+        require(args.operation == "server", "No verified server release matches the build id");
+        return success({{"versions", entries}});
+    }
+    if (args.operation == "list") {
+        QJsonArray entries;
+        const auto index = InstallIndex::snapshot();
+        require(index.ok, index.error);
+        QString error;
+        LocalBuildRegistry::load(&error);
+        require(error.isEmpty(), error);
+        for (const auto& version : VersionScanner::scanLocalBuilds()) entries.append(versionJson(version));
+        for (const auto& record : index.records) {
+            InstalledVersion version;
+            QString issue;
+            const bool available = VersionScanner::inspect(record, &version, &issue) == InstallationIssue::None
+                && record.healthState == "Installed";
+            auto row = versionJson(version);
+            row["buildId"] = record.buildId;
+            row["version"] = record.semanticVersion;
+            row["path"] = record.installPath;
+            row["available"] = available;
+            row["healthState"] = record.healthState;
+            row["error"] = issue;
+            entries.append(row);
+        }
+        return success({{"versions", entries}});
+    }
+    if (args.operation == "add-local" || args.operation == "refresh-local" || args.operation == "remove-local") {
+        const QString path = QFileInfo(args.required("path")).absoluteFilePath();
+        QString error;
+        if (args.operation == "remove-local") {
+            confirm(args, {{"executable", path}, {"registry", fileHash(LocalBuildRegistry::filePath())}, {"deleteFiles", false}});
+            require(LocalBuildRegistry::remove(path, &error), error);
+        } else {
+            LocalBuildRecord record;
+            require(LocalBuildRegistry::probe(path, &record, &error), error);
+            require(args.operation == "add-local" ? LocalBuildRegistry::upsert(record, &error) : LocalBuildRegistry::updateExisting(record, &error), error);
+        }
+        return success({{"path", path}, {"buildId", LocalBuildRegistry::stableIdForPath(path)}});
+    }
+    if (args.operation == "install") {
+        const QString package = QFileInfo(args.required("package")).absoluteFilePath();
+        const QString manifest = args.value("manifest", InstallRequest::manifestPathForPackage(package));
+        const bool allowExpired = args.flag("allow-expired");
+        const auto verified = ManifestVerifier::verify(readFile(manifest), key, now, allowExpired);
+        require(verified.ok, verified.error);
+        require(verified.manifest.product == "HarkenStudio", "Use updates apply for a Hub update");
+        const auto hash = fileHash(package);
+        require(hash.compare(verified.manifest.sha256Hex, Qt::CaseInsensitive) == 0, "Package hash does not match the signed manifest");
+        confirm(args, {{"release", manifestJson(verified.manifest)}, {"package", package}, {"sha256", hash}, {"index", fileHash(InstallIndex::filePath())}});
+        requireConsent("studio");
+        return success(installPackage(package, manifest, allowExpired));
+    }
+    const QString build = args.required("build");
+    const auto available = VersionScanner::scanAvailable();
+    const auto version = std::find_if(available.begin(), available.end(), [&](const auto& value) { return value.buildId == build; });
+    if (args.operation == "verify" || args.operation == "repair" || args.operation == "uninstall") {
+        const auto index = InstallIndex::snapshot();
+        require(index.ok, index.error);
+        const auto record = std::find_if(index.records.begin(), index.records.end(), [&](const auto& value) { return value.buildId == build; });
+        require(record != index.records.end(), "The build is not a managed installation");
+        const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash, record->capabilitiesHash);
+        if (args.operation == "verify")
+            return {integrity.ok ? 0 : 3, {{"ok", integrity.ok}, {"data", QJsonObject{{"error", integrity.error},
+                {"missing", QJsonArray::fromStringList(integrity.missingFiles)}, {"modified", QJsonArray::fromStringList(integrity.mismatchedFiles)}}}}};
+        confirm(args, {{"buildId", build}, {"path", record->installPath}, {"index", fileHash(InstallIndex::filePath())},
+            {"files", installationSnapshot(record->installPath)},
+            {"missing", QJsonArray::fromStringList(integrity.missingFiles)}, {"modified", QJsonArray::fromStringList(integrity.mismatchedFiles)}});
+        const QString transaction = HandoffArea::newTransactionId();
+        waitForElevated(args.operation == "repair" ? launchElevatedRepair(build, transaction) : launchElevatedUninstall(build), args.operation == "repair" ? transaction : QString());
+        return success({{"buildId", build}, {"operation", args.operation}});
+    }
+    require(version != available.end(), "Unknown build id");
+    require(!version->isLocalBuild() && ManifestVerifier::isSafeFileToken(version->semanticVersion)
+        && version->semanticVersion.size() <= 128, "Release notes are available only for published Studio versions");
+    VersionReleaseNotes notes;
+    QEventLoop loop;
+    QObject::connect(&notes, &VersionReleaseNotes::finished, &loop, &QEventLoop::quit);
+    notes.fetch(version->semanticVersion);
+    loop.exec();
+    return success({{"studio", notes.url(version->semanticVersion, VersionReleaseNotes::Product::Studio).toString()},
+        {"unity", notes.url(version->semanticVersion, VersionReleaseNotes::Product::UnityIntegration).toString()}});
+}
+
+Reply updates(const Arguments& args)
+{
+    if (args.operation == "status") return success({{"hub", stateJson(UpdateStateStore::load("HarkenHub"))}, {"studio", stateJson(UpdateStateStore::load("HarkenStudio"))}});
+    const QString product = args.required("product");
+    require(product == "hub" || product == "studio", "--product must be hub or studio", "InvalidArguments");
+    const QString identity = product == "hub" ? "HarkenHub" : "HarkenStudio";
+    const auto before = UpdateStateStore::load(identity);
+    const auto now = QDateTime::currentDateTimeUtc();
+    if (args.operation != "check")
+        require(!QStringList{"AwaitingBridge", "AwaitingElevation", "Installing", "Downloading", "Verifying"}.contains(before.state),
+            "An update operation is already in progress; inspect updates status before retrying", "UpdateBusy");
+    if (args.operation == "apply") {
+        require(before.found && !before.downloadPath.isEmpty()
+            && QStringList{"Verified", "AwaitingRestart", "AwaitingUserApproval", "AwaitingUserInstall", "InstallFailed"}.contains(before.state), "No downloaded update is ready");
+        const auto verified = ManifestVerifier::verify(readFile(before.manifestEnvelopePath), TrustAnchors::manifestPublicKey(), now);
+        require(verified.ok, verified.error);
+        const auto& manifest = verified.manifest;
+        require(manifest.product == identity && manifest.buildId == before.buildId && manifest.version == before.version
+            && manifest.sha256Hex.compare(before.expectedSha256, Qt::CaseInsensitive) == 0
+            && manifest.packageSize == before.packageSize && manifest.releaseSequence == before.releaseSequence,
+            "Downloaded update state does not match its signed release");
+        const auto hash = fileHash(before.downloadPath);
+        require(hash.compare(manifest.sha256Hex, Qt::CaseInsensitive) == 0, "Downloaded update hash does not match its signed release");
+        confirm(args, {{"update", stateJson(before)}, {"release", manifestJson(manifest)}, {"packageSha256", hash},
+            {"manifestSha256", fileHash(before.manifestEnvelopePath)}});
+        requireConsent(product);
+        require(UpdateStateStore::load(identity) == before, "The update state changed; review the update again");
+        if (product == "studio") {
+            QString error;
+            auto lease = DownloadLease::acquire(before.downloadPath, &error);
+            require(bool(lease), error);
+            const auto prepared = InstallRequest::prepare(before.downloadPath, before.manifestEnvelopePath,
+                TrustAnchors::manifestPublicKey(), now, false);
+            require(prepared.ok, prepared.error);
+            auto pending = before;
+            pending.state = "AwaitingElevation";
+            pending.transactionId = prepared.transactionId;
+            pending.updatedAt = now.toUTC().toString(Qt::ISODateWithMs);
+            if (UpdateStateStore::replace(before, pending, now) != UpdateStateStore::WriteResult::Saved) {
+                HandoffArea::discard(prepared.transactionId);
+                require(false, "The update state changed; review the update again");
+            }
+            try {
+                const auto launch = launchElevatedInstall(prepared.transactionId, true);
+                if (!launch.ok) HandoffArea::discard(prepared.transactionId);
+                waitForElevated(launch, prepared.transactionId);
+            } catch (const Reply& failure) {
+                auto failed = pending;
+                failed.state = "InstallFailed";
+                failed.failureDetail = failure.body["error"].toObject()["message"].toString();
+                UpdateStateStore::replace(pending, failed, QDateTime::currentDateTimeUtc());
+                throw;
+            }
+            require(UpdateStateStore::clear(pending) != UpdateStateStore::WriteResult::Failed, "Update installed, but its pending state could not be cleared");
+            return success({{"buildId", prepared.buildId}, {"version", prepared.version}, {"transactionId", prepared.transactionId}});
+        }
+        require(HubSelfUpdate::isNewerVersion(manifest.version, QCoreApplication::applicationVersion()), "This Hub update is no longer newer than the running Hub");
+        HubSelfUpdate updater;
+        HubSelfUpdate::Options options;
+        options.serverBaseUrl = ServerEndpoints::resolvedBaseUrl();
+        options.manifestPublicKey = TrustAnchors::manifestPublicKey();
+        options.currentVersion = QCoreApplication::applicationVersion();
+        updater.configure(options);
+        QString error;
+        require(updater.approveViaBridge("background", &error, now), error);
+        return success(stateJson(UpdateStateStore::load(identity)));
+    }
+    const auto result = checkUpdate(product == "studio" ? "harken" : "hub");
+    if (result.manifestAbsent) return success({{"available", false}});
+    require(result.manifest.product == identity, "Unexpected update product");
+    const auto& manifest = result.manifest;
+    require(!before.found || before.releaseSequence < 0 || manifest.releaseSequence < 0
+        || (manifest.releaseSequence > before.releaseSequence
+            || (manifest.releaseSequence == before.releaseSequence && manifest.buildId == before.buildId)),
+        "The server release conflicts with a newer or different recorded release", "ReleaseRollback");
+    bool available = HubSelfUpdate::isNewerVersion(manifest.version, QCoreApplication::applicationVersion());
+    if (product == "studio") {
+        const auto index = InstallIndex::snapshot();
+        require(index.ok, index.error);
+        require(manifest.releaseSequence >= index.lastReleaseSequence, "The server release is older than the installed release sequence", "ReleaseRollback");
+        available = std::none_of(index.records.begin(), index.records.end(), [&](const auto& record) {
+            return record.buildId == manifest.buildId && record.healthState == "Installed";
+        });
+    }
+    if (args.operation == "check" || !available)
+        return success({{"available", available}, {"release", manifestJson(manifest)}});
+    requireConsent(product);
+    const auto files = download(result.manifest, result.envelope, result.objectPath, result.releaseTag);
+    UpdateStateRecord state;
+    state.product = identity;
+    state.state = product == "hub" ? "AwaitingRestart" : "AwaitingUserInstall";
+    state.version = result.manifest.version;
+    state.buildId = result.manifest.buildId;
+    state.downloadPath = files["package"].toString();
+    state.manifestEnvelopePath = files["manifest"].toString();
+    state.expectedSha256 = result.manifest.sha256Hex;
+    state.packageSize = result.manifest.packageSize;
+    state.releaseSequence = result.manifest.releaseSequence;
+    require(UpdateStateStore::replace(before, state, now) == UpdateStateStore::WriteResult::Saved, "The update state changed during download. Downloaded files were retained; review updates status.");
+    return success(files);
+}
+
+}

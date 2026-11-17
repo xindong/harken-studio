@@ -15,6 +15,8 @@
 #include "UI/ConsentDialog.h"
 #include "UI/EngineIntegrationsPage.h"
 #include "UI/HubIcons.h"
+#include "UI/HubTheme.h"
+#include "Cli/HubCli.h"
 #include "UI/LogConsoleDialog.h"
 #include "UI/ButtonPulseAnimator.h"
 #include "UI/ProjectsPage.h"
@@ -39,6 +41,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QDesktopServices>
 #include <QListWidget>
 #include <QMenu>
 #include <QCloseEvent>
@@ -71,8 +74,8 @@ namespace {
 QString hubUpdateButtonStyle()
 {
     return QStringLiteral(
-        "QToolButton#hubUpdateButton { background-color: #00F0FF; "
-        "border: 1px solid #00F0FF; color: #000000; font-weight: 600; "
+        "QToolButton#hubUpdateButton { background-color: palette(highlight); "
+        "border: 1px solid palette(highlight); color: palette(highlighted-text); font-weight: 600; "
         "padding: 4px 12px; }");
 }
 
@@ -163,6 +166,27 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                     tr("The language change will take effect after restarting "
                        "Harken Hub."));
             });
+    auto* themeMenu = settingsMenu->addMenu(tr("Theme"));
+    themeMenu->setObjectName(QStringLiteral("themeMenu"));
+    auto* themeGroup = new QActionGroup(themeMenu);
+    themeGroup->setExclusive(true);
+    for (const auto& entry : {std::pair{"system", QT_TR_NOOP("Follow System")},
+            std::pair{"light", QT_TR_NOOP("Light")}, std::pair{"dark", QT_TR_NOOP("Dark")}}) {
+        auto* action = themeMenu->addAction(tr(entry.second));
+        action->setCheckable(true);
+        action->setData(QString::fromLatin1(entry.first));
+        action->setChecked(action->data().toString() == HubSettings::themePreference());
+        themeGroup->addAction(action);
+    }
+    connect(themeGroup, &QActionGroup::triggered, this, [this, themeGroup](QAction* action) {
+        if (!HubSettings::setThemePreference(action->data().toString())) {
+            for (auto* candidate : themeGroup->actions())
+                candidate->setChecked(candidate->data().toString() == HubSettings::themePreference());
+            MessageDialog::warning(this, tr("Harken Hub"), tr("The theme setting could not be saved."));
+            return;
+        }
+        HubTheme::applyPreference();
+    });
     settingsMenu->addSeparator();
     QMenu* autoHubUpdateMenu =
         settingsMenu->addMenu(tr("Automatically Check and Silently Update Hub"));
@@ -222,6 +246,13 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     QAction* logAction = settingsMenu->addAction(tr("Activity Log"));
     connect(logAction, &QAction::triggered, this,
             &HubWindow::showLogConsole);
+    auto* cliGuide = settingsMenu->addAction(tr("CLI Guide"));
+    connect(cliGuide, &QAction::triggered, this, [this] {
+        QString error;
+        const QString path = Cli::writeGuides(&error);
+        if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+            MessageDialog::warning(this, tr("Harken Hub"), tr("The CLI guide could not be opened.\n%1").arg(error));
+    });
     settingsMenu->addSeparator();
     QAction* legalDocumentsAction = settingsMenu->addAction(
         tr("License Agreement && Privacy Policy"));
@@ -279,6 +310,11 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
             "style=\"color:#00F0FF;\">Harken Studio Repository</a>"),
         this);
     sidebarLinks->setObjectName(QStringLiteral("sidebarLinks"));
+    const QString linksText = sidebarLinks->text();
+    sidebarLinks->setText(HubTheme::html(linksText));
+    HubTheme::observe(sidebarLinks, [sidebarLinks, linksText] {
+        sidebarLinks->setText(HubTheme::html(linksText));
+    });
     sidebarLinks->setOpenExternalLinks(true);
     sidebarLinks->setTextInteractionFlags(Qt::TextBrowserInteraction);
     auto* linksRow = new QHBoxLayout();

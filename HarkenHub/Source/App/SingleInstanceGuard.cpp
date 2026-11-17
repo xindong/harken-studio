@@ -1,6 +1,7 @@
 #include "App/SingleInstanceGuard.h"
 
 #include <QDir>
+#include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -175,6 +176,12 @@ QString SingleInstanceGuard::guiServerName()
 
 QString SingleInstanceGuard::backgroundServerName()
 {
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+    const auto root = qgetenv("HARKEN_HUB_USER_ROOT");
+    if (!root.isEmpty())
+        return QStringLiteral("HarkenHub.Test.Background.") + QString::fromLatin1(
+            QCryptographicHash::hash(root, QCryptographicHash::Sha256).toHex());
+#endif
     return QStringLiteral("HarkenSound.HarkenHub.Background");
 }
 

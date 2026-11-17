@@ -104,6 +104,22 @@ bool HubSettings::setLanguagePreference(const QString& preference)
     return saveRoot(root);
 }
 
+QString HubSettings::themePreference()
+{
+    const QString value = loadRoot().value(QStringLiteral("theme")).toString();
+    return value == QStringLiteral("light") || value == QStringLiteral("dark")
+        ? value : QStringLiteral("system");
+}
+
+bool HubSettings::setThemePreference(const QString& preference)
+{
+    if (preference != QStringLiteral("system") && preference != QStringLiteral("light")
+        && preference != QStringLiteral("dark")) return false;
+    QJsonObject root = loadRoot();
+    root[QStringLiteral("theme")] = preference;
+    return saveRoot(root);
+}
+
 QSize HubSettings::windowSize()
 {
     const QJsonObject object =

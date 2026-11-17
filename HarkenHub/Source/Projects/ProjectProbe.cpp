@@ -59,11 +59,6 @@ ProjectProbeResult ProjectProbe::probe(const QString& inputPath)
     result.savedStudioVersion = header.value(QStringLiteral("studioVersion"))
         .toString(header.value(QStringLiteral("savedStudioVersion")).toString()).trimmed();
     result.schemaVersion = header.value(QStringLiteral("schemaVersion")).toInt(0);
-    const QString name = root.value(QStringLiteral("content")).toObject()
-                             .value(QStringLiteral("metadata")).toObject()
-                             .value(QStringLiteral("name")).toString();
-    if (!name.isEmpty())
-        result.displayName = name;
     return result;
 }
 

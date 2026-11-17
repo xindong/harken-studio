@@ -1,4 +1,9 @@
 #include "UI/EngineIntegrationsPage.h"
+#include "UI/HubTheme.h"
+#include <QCheckBox>
+#include <QRadioButton>
+#include <QTabWidget>
+#include <QPalette>
 #include "UI/DialogLayout.h"
 #include "UI/ProjectsPage.h"
 #include "UI/VersionsPage.h"
@@ -7,6 +12,7 @@
 #include "Integrations/EngineTargetStore.h"
 #include "Integrations/EngineTargetProbe.h"
 #include "Integrations/IntegrationStore.h"
+#include "Integrations/HubUnityIntegrationService.h"
 #include "UnityIntegrationService.h"
 #include "UnityInstallation.h"
 #include "Platform/PlatformPaths.h"
@@ -904,6 +910,68 @@ TEST_F(EngineIntegrationsPageTest, ExternalIntegrationInstallsWithoutStudioAndFo
     startIntegrationSelection();
     applyIntegrationAndClose();
     EXPECT_TRUE(QFileInfo::exists(QDir(unityPath).filePath("Packages/com.harken.core/Runtime/Added.cs")));
+}
+
+TEST_F(EngineIntegrationsPageTest, AppearanceChangesPreservePendingContentDecisionsAndReviewedPlans)
+{
+    const auto previousPalette = qApp->palette();
+    const auto previousStyle = qApp->styleSheet();
+    const auto resetAppearance = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); qApp->setPalette(previousPalette); });
+    makeIntegration();
+    writeFile(integrationPath + "/Documentation~/Reference.md", "old docs");
+    writeFile(integrationPath + "/Samples~/Example.cs", "old sample");
+    VNH::UnityIntegrationRequest install;
+    install.unityProjectPath = unityPath;
+    install.integrationSourcePath = integrationPath;
+    install.documentation = install.samples = VNX::UnityInstallation::ContentAction::Update;
+    ASSERT_TRUE(VNH::HubUnityIntegrationService::run(install).success);
+    page->beginEditForProject(harkenPath, {}, unityPath);
+    ASSERT_TRUE(waitForVersion());
+    selectIntegrationFolder(integrationPath);
+    auto* docs = page->findChild<QCheckBox*>("integrationDocumentation");
+    auto* samples = page->findChild<QCheckBox*>("integrationSamples");
+    ASSERT_NE(docs, nullptr);
+    ASSERT_NE(samples, nullptr);
+    EXPECT_FALSE(docs->isChecked());
+    EXPECT_FALSE(samples->isChecked());
+    checkButton()->click();
+    EXPECT_FALSE(primary()->isEnabled());
+    auto* keep = page->findChild<QRadioButton*>("documentationContentAction1");
+    auto* remove = page->findChild<QRadioButton*>("samplesContentAction3");
+    ASSERT_NE(keep, nullptr);
+    ASSERT_NE(remove, nullptr);
+    keep->click();
+    EXPECT_FALSE(primary()->isEnabled());
+    remove->click();
+    ASSERT_TRUE(primary()->isEnabled());
+    primary()->click();
+    auto* dialog = page->findChild<QDialog*>("integrationSelectionDialog");
+    auto* tabs = dialog->findChild<QTabWidget*>();
+    ASSERT_NE(tabs, nullptr);
+    tabs->setCurrentIndex(1);
+    for (const auto* mode : {"light", "dark"}) {
+        ASSERT_TRUE(VNH::HubSettings::setThemePreference(mode));
+        VNH::HubTheme::applyPreference();
+        QCoreApplication::processEvents();
+        EXPECT_EQ(tabs->currentIndex(), 1);
+        EXPECT_TRUE(keep->isChecked());
+        EXPECT_TRUE(remove->isChecked());
+        EXPECT_TRUE(primary()->isEnabled());
+        const auto warning = VNH::HubTheme::color(VNH::HubTheme::Tone::Warning);
+        EXPECT_GT(warning.red(), warning.blue());
+        EXPECT_EQ(qApp->palette().color(QPalette::Window).lightness() < 128, QString::fromLatin1(mode) == "dark");
+        const auto screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOTS");
+        if (!screenshots.isEmpty()) {
+            QDir().mkpath(screenshots);
+            tabs->setCurrentIndex(0);
+            QCoreApplication::processEvents();
+            EXPECT_TRUE(dialog->grab().save(QDir(screenshots).filePath(QString("integration-%1.png").arg(mode))));
+            tabs->setCurrentIndex(1);
+        }
+    }
+    primary()->click();
+    EXPECT_TRUE(QFileInfo::exists(unityPath + "/Packages/com.harken.core/Documentation~/Reference.md"));
+    EXPECT_FALSE(QFileInfo::exists(unityPath + "/Packages/com.harken.core/Samples~/Example.cs"));
 }
 
 TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksAfterConfirmation)

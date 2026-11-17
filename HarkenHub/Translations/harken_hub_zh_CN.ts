@@ -490,6 +490,15 @@ Continue?</source>
         <source>Engine Integrations</source>
         <translation>引擎集成</translation>
     </message>
+    <message><source>Theme</source><translation>主题</translation></message>
+    <message><source>Follow System</source><translation>跟随系统</translation></message>
+    <message><source>Light</source><translation>浅色</translation></message>
+    <message><source>Dark</source><translation>深色</translation></message>
+    <message><source>The theme setting could not be saved.</source><translation>无法保存主题设置。</translation></message>
+    <message><source>CLI Guide</source><translation>CLI 使用指南</translation></message>
+    <message><source>The CLI guide could not be opened.
+%1</source><translation>无法打开 CLI 使用指南。
+%1</translation></message>
 </context>
 <context>
     <name>VNH::LogConsoleDialog</name>
@@ -5371,5 +5380,19 @@ Close Unity and complete any required P4 checkout before continuing.</source>
         <source>Conflicting unowned files require separate approval before restoration.</source>
         <translation>非受管文件存在重名冲突，还原前需要单独确认。</translation>
     </message>
+    <message><source>Install Contents</source><translation>安装内容</translation></message>
+    <message><source>Core Integration</source><translation>核心集成</translation></message>
+    <message><source>API Documentation</source><translation>API 文档</translation></message>
+    <message><source>Samples</source><translation>示例</translation></message>
+    <message><source>Existing content was found. Choose how to handle each component:</source><translation>检测到旧版内容，请分别选择处置方式：</translation></message>
+    <message><source>Keep Existing</source><translation>保留旧版</translation></message>
+    <message><source>Update to New Version</source><translation>更新到新版</translation></message>
+    <message><source>Remove Existing</source><translation>移除旧版</translation></message>
+    <message><source>Choose how to handle existing content, then generate the change list.</source><translation>请选择旧版内容的处置方式，然后生成变更清单。</translation></message>
+    <message><source>Install contents changed. Check again before continuing.</source><translation>安装内容已更改，请重新检查后继续。</translation></message>
+    <message><source>Removal backs up recorded files first. Files you added or imported elsewhere are preserved.</source><translation>移除前会备份受管文件。自行添加或另行导入的内容将予以保留。</translation></message>
+    <message><source>Choose a Content Action First</source><translation>请先选择处置方式</translation></message>
+    <message><source>Generate Change List</source><translation>生成变更清单</translation></message>
+    <message><source>Existing documentation or samples were found. Choose whether to keep, update or remove each component.</source><translation>检测到旧版文档或示例，请分别选择保留、更新或移除。</translation></message>
 </context>
 </TS>

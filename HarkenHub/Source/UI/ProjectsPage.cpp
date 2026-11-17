@@ -20,6 +20,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QColor>
+#include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
@@ -159,25 +160,25 @@ public:
         painter->save();
 
         if (option.state & QStyle::State_Selected)
-            painter->fillRect(option.rect, QColor(0x2A, 0x31, 0x40));
+            painter->fillRect(option.rect, option.palette.color(QPalette::Button));
         else if (option.state & QStyle::State_MouseOver)
-            painter->fillRect(option.rect, QColor(0x22, 0x28, 0x36));
+            painter->fillRect(option.rect, option.palette.color(QPalette::Midlight));
 
-        painter->setPen(QColor(0x1A, 0x20, 0x30));
+        painter->setPen(option.palette.color(QPalette::Shadow));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
 
         const QRect content = option.rect.adjusted(10, 9, -8, -9);
         QFont nameFont = option.font;
         nameFont.setWeight(QFont::DemiBold);
         painter->setFont(nameFont);
-        painter->setPen(QColor(0xE0, 0xE0, 0xE0));
+        painter->setPen(option.palette.color(QPalette::Text));
         painter->drawText(content, Qt::AlignLeft | Qt::AlignTop,
                           index.data(Qt::DisplayRole).toString());
 
         QFont pathFont = option.font;
         pathFont.setPixelSize(pathFont.pixelSize() - 1);
         painter->setFont(pathFont);
-        painter->setPen(QColor(0x88, 0x88, 0x88));
+        painter->setPen(option.palette.color(QPalette::PlaceholderText));
         const QString path = index.data(kPathRole).toString();
         painter->drawText(content, Qt::AlignLeft | Qt::AlignBottom,
                           QFontMetrics(pathFont).elidedText(path, Qt::ElideMiddle,
@@ -327,12 +328,6 @@ ProjectsPage::ProjectsPage(ProjectStore* store, QWidget* parent)
     projectLaunchGuidanceAnimation_ = new QVariantAnimation(this);
     projectLaunchGuidanceAnimation_->setDuration(1000);
     projectLaunchGuidanceAnimation_->setLoopCount(3);
-    projectLaunchGuidanceAnimation_->setKeyValueAt(
-        0.0, QColor(QStringLiteral("#00F0FF")));
-    projectLaunchGuidanceAnimation_->setKeyValueAt(
-        0.5, QColor(QStringLiteral("#007D8A")));
-    projectLaunchGuidanceAnimation_->setKeyValueAt(
-        1.0, QColor(QStringLiteral("#00F0FF")));
     projectLaunchGuidanceAnimation_->setEasingCurve(QEasingCurve::InOutSine);
     connect(projectLaunchGuidanceAnimation_, &QVariantAnimation::valueChanged,
             this, [this](const QVariant& value) {
@@ -418,6 +413,10 @@ void ProjectsPage::showProjectLaunchGuidance(const QString& buildId)
     clearProjectLaunchGuidance();
     projectLaunchGuidanceBuildId_ = buildId;
     pendingCreateBuildId_ = buildId;
+    const QColor accent = palette().color(QPalette::Highlight);
+    projectLaunchGuidanceAnimation_->setKeyValueAt(0.0, accent);
+    projectLaunchGuidanceAnimation_->setKeyValueAt(0.5, accent.darker(120));
+    projectLaunchGuidanceAnimation_->setKeyValueAt(1.0, accent);
     projectLaunchGuidanceAnimation_->start();
 }
 
@@ -425,7 +424,7 @@ void ProjectsPage::applyProjectLaunchGuidanceColor(const QColor& color)
 {
     const QString style = QStringLiteral(
         "QPushButton { background-color: %1; border: 1px solid %1; "
-        "color: #000000; font-weight: 600; }")
+        "color: palette(highlighted-text); font-weight: 600; }")
                               .arg(color.name());
     auto updateButton = [&style](QPushButton* button, bool highlighted) {
         if (!button || !highlighted)
@@ -572,8 +571,8 @@ QWidget* ProjectsPage::createNewProjectPage()
     templateDescription_->setMinimumHeight(48);
     templateDescription_->setContentsMargins(10, 6, 10, 6);
     templateDescription_->setStyleSheet(QStringLiteral(
-        "QLabel#templateDescription { background-color: #141A24; "
-        "border: 1px solid #394457; color: #AAB3C2; }"));
+        "QLabel#templateDescription { background-color: palette(window); "
+        "border: 1px solid palette(mid); color: palette(placeholder-text); }"));
     templateDescription_->hide();
     form->addWidget(templateDescription_);
 
@@ -1106,7 +1105,8 @@ void ProjectsPage::renderProjects()
         if (!projectMetadata_.contains(record.canonicalPath) && record.preferredStudioBuildId.isEmpty())
             selection = {};
 
-        auto* projectItem = new SortableTableItem(record.displayName);
+        auto* projectItem = new SortableTableItem(probe.ok ? probe.displayName
+            : QFileInfo(record.canonicalPath).completeBaseName());
         projectItem->setData(kPathRole, record.canonicalPath);
         projectItem->setToolTip(
             QDir::toNativeSeparators(record.canonicalPath));
@@ -1214,6 +1214,8 @@ void ProjectsPage::addProjectFromPath(const QString& path)
         return;
     }
     if (store_->contains(probe.canonicalPath)) {
+        projectMetadata_.remove(probe.canonicalPath);
+        refresh();
         MessageDialog::information(this, QCoreApplication::translate("HarkenHub", "Add Project"),
                                  QCoreApplication::translate("HarkenHub", "This project is already in the list."));
         return;
@@ -1304,10 +1306,10 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
     menu.setAttribute(Qt::WA_TranslucentBackground);
     auto applyMenuPalette = [](QMenu* target) {
         QPalette palette = target->palette();
-        const QColor window(0x1D, 0x23, 0x30);
-        const QColor text(0xE0, 0xE0, 0xE0);
-        const QColor highlight(0x00, 0xF0, 0xFF);
-        const QColor highlightedText(0x00, 0x00, 0x00);
+        const QColor window = QApplication::palette().color(QPalette::Window);
+        const QColor text = QApplication::palette().color(QPalette::WindowText);
+        const QColor highlight = QApplication::palette().color(QPalette::Highlight);
+        const QColor highlightedText = QApplication::palette().color(QPalette::HighlightedText);
         for (const auto group : {QPalette::Active, QPalette::Inactive}) {
             palette.setColor(group, QPalette::Window, window);
             palette.setColor(group, QPalette::WindowText, text);
