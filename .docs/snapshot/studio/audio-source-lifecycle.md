@@ -156,3 +156,18 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | Source Editor 试听失效 | 提交编辑、撤销／重做或源文件内容变化时停止旧试听，下次播放重建；运行时清空或重启后可直接重新播放 |
 | 对象试听与打包 | 共用媒体处理，在裁剪后、重采样与调度前置静音之前将包络写入 PCM；引擎直接播放处理后的媒体，不再重复计算 Source fade |
 | 转换缓存 | 有效淡入淡出时长与曲线参与派生媒体身份；修改、撤销与重做后使用对应媒体，未启用的曲线形状不生成不同派生媒体 |
+
+## 10. Conversion 与试听媒体（Part A）
+
+| 操作／条件 | 业务结果 |
+|---|---|
+| Conversion 归属 | Sound、Container、Layer、Track、Segment 在 Limitation > Conversion 设置 Inherit／Settings；引用为 Shared，预设内配置各平台；同一 Sound 全部 Source 共用有效预设 |
+| 默认引用 | 项目设置 Default Conversion 只赋给新根对象；空值表示新根对象不转换；不改已有对象 |
+| Original／Converted | Toolbar 与语言、平台同区切换，本机按工程记忆；绑定 Sound Source 的试听跟随模式与当前主平台，素材库始终 Original |
+| Converted 首次播放 | 没有产物时按需转换后播放，不做后台预转换；PCM 注册处理后的样本，Vorbis 经独立过渡模块解为 PCM 后注册 |
+| 转换入口 | 预设双击或 Settings 双击打开下方独立 Conversion Editor；Convert 处理当前主平台、有效引用该预设的各语言 Active Source，按文件并行、共享缓存且可取消 |
+| 显示边界 | 转换过程不显示进度、状态或失败文字，错误只进日志；结果表只读，未转换的产物字段留空 |
+| Source Editor File Properties | 可拖动分隔条下显示路径、声道、采样率、时长、大小、格式；Original 显示原文件，Converted 显示已有产物；有预设但未转换时留空，无有效预设则仍显示原文件 |
+| 刷新与失效 | 转换完成、预设／引用修改、平台或模式变化刷新结果及文件属性；相关试听停止，下次播放按新输入重建；编辑器显示仍使用源文件坐标 |
+| 层级树状态 | Missing／Orphaned／Error 保持原语义；可用 Sound 按当前平台的有效预设和缓存 key 显示 Converted／Not Converted；无预设显示 Available，不再有 Outdated 警告色 |
+| Pack 边界 | PCM 可导出；Vorbis Pack 写入尚未接入并明确失败。Engine 解码试听、Vorbis Pack 和 Integration 接入留在 Part B |
