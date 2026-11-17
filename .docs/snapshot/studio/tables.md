@@ -5,8 +5,8 @@
 | 类别 | 去重用途数 | 页面 / 对象类型位置数 |
 |---|---:|---:|
 | 配置表 | 11 | 21 |
-| 展示表 | 13 | 13 |
-| 普通表格合计 | 24 | 34 |
+| 展示表 | 14 | 14 |
+| 普通表格合计 | 25 | 35 |
 | 导航配置（不计入普通表格） | 2 | 2 |
 
 注：Sends、Effects 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
@@ -24,7 +24,7 @@
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sends | 六类对象的发送配置 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
-| C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
+| C12 | 配置 | Conversion Editor / Sample Rate | Upper limit / Sample rate；阈值使用 KB／MB，按阈值排序，末行固定 Infinite |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
@@ -39,6 +39,7 @@
 | D12 | 展示 | Monitor / Effects | Effect 运行记录 |
 | D13 | 展示 | Monitor / Events | 事件运行记录 |
 | D14 | 展示 | Sources Import / 同名音频冲突选择 | 导入冲突处理 |
+| D15 | 展示 | Conversion Editor / Results | Sound / Source / Language / Original format / Original rate / Original channels / Original size / Converted format / Converted rate / Converted size / Ratio；只读，无状态列或汇总行 |
 
 ## 分类与公共能力
 
@@ -89,14 +90,27 @@
 
 | ID / 位置 | 内容与当前行为 |
 |---|---|
-| C10 / Platform Configuration | 左侧平台导航、右侧名称与转换配置；进入时选首个平台，加号打开支持平台选择与默认配置预览 |
+| C10 / Platform Configuration | 左侧平台导航、右侧名称与基础平台类型；同一区域提供 Default Conversion ObjectRef，指定新建根对象的默认预设，可清空 |
 | C11 / Language Configuration | 左侧语言导航与增删，右侧名称；无语言时右侧留空，加号通过弹窗新增 |
 | 平台与语言编辑 | 结束编辑即提交，无效输入恢复旧值；支持项目撤销并随项目保存 |
-| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；Reset 恢复所选基础平台的默认转换配置 |
+| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；转换参数由 Conversion 预设保存，每个平台行按基础平台类型初始化 |
 | 导航布局 | 无表头，保留当前激活项；纵向槽常驻、无横向滚动，不适用普通表格的空白与 Esc 清选 |
-| 主 toolbar | Capture 后为平台（含 ALL）与语言，播放控件居中，Layout 在最右侧 |
+| 主 toolbar | 提供 Original / Converted 试听开关，与平台（含 ALL）、语言一起按本机工程记忆；播放控件居中，Layout 在最右侧 |
 | Layout 切换与保存 | 切换保留各布局在当前工程的工作状态；同名保存更新预设，另存后切换当前布局身份 |
 | Layout 重置与删除 | 重置当前或经确认重置全部均保留预设；Default 恢复内置状态，删除当前预设后恢复 Default 工作状态 |
+
+## Conversion Editor 与源文件属性
+
+| 项目 | 当前表现 |
+|---|---|
+| 入口与布局 | 双击 Assets 中的 Conversion 预设或 Inspector 的 Settings 引用，在中央区域下方打开独立 Conversion Editor |
+| 平台页签 | 上半区平铺工程平台页签，Toolbar 当前平台置前，其余按工程顺序；每个页签独立编辑 Format、Quality 和 Sample Rate 分档，不提供跨平台复制或差异标记 |
+| 格式与采样率 | Format 为 PCM／Vorbis；Quality 以 0–100% 显示，仅 Vorbis 可编辑；采样率可选 Original（不重采样）或受支持的离散值，有限阈值可增删，Infinite 末行不可删除 |
+| 引用结果 | 下半区按 Toolbar 当前平台展示有效引用此预设的 Sound Source，包含各语言；没有有效缓存时 Converted 各列和 Ratio 留空 |
+| Convert | 表尾仅一个 Convert 按钮，为当前平台的引用源生成产物，已有缓存直接跳过；转换不显示进度或状态，Esc 可取消未完成工作 |
+| 文件属性 | Source Editor 下半区显示 File Properties，可拖动分隔条调整高度；Original／Converted 共用路径、声道、采样率、时长、大小和格式字段 |
+| 属性切换 | 绑定 Sound Source 时跟随试听模式及当前平台；Converted 无缓存时留空，有效 Conversion 为空时显示原件；素材库试听始终显示并播放 Original |
+| Part A 播放边界 | Studio 的 Vorbis 试听使用过渡解码路径；Pack 编译仍拒绝 Vorbis，Engine 原生解码与 Pack 放开留待 Part B |
 
 ## Selection Editor
 
