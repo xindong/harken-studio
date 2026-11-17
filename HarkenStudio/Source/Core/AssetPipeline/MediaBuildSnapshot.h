@@ -7,30 +7,20 @@ namespace VNX {
 
 struct MediaConversionRequest
 {
-    QString projectRoot;
-    QUuid registrySession;
-    QUuid platformRevision;
     ProjectPlatform platform;
     AssetInfo asset;
-    ConversionSettings settings;
+    uint32_t targetSampleRateHz = 0;
     std::shared_ptr<const BuildSourceInput> sourceInput;
 
     QString inputPath() const;
     QString fingerprint() const;
-    QString cachePath() const;
-    QString jobKey() const;
-    bool sourceMatches() const;
-    bool cacheValid() const;
 };
 
 struct MediaBuildSnapshot
 {
     QString projectRoot;
-    QUuid registrySession;
-    QHash<ProjectPlatformId, QUuid> platformRevisions;
     QVector<ProjectPlatform> platforms;
     QHash<uint32_t, AssetInfo> assets;
-    QHash<uint32_t, ConversionSettings> fileOverrides;
     std::shared_ptr<BuildSourceInputs> sourceInputs;
 
     std::optional<MediaConversionRequest> inspectRequest(

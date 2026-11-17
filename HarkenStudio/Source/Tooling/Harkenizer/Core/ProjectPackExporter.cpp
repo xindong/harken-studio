@@ -21,10 +21,8 @@
 #include "Components/VAudio.h"
 #include "Components/VMixNode.h"
 #include "Components/VAction.h"
-#include "AssetPipeline/AssetConverter.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/PathUtils.h"
-#include "AssetPipeline/PlatformProfile.h"
 #include "AssetPipeline/WaveformCache.h"
 
 #include "PlayablePropertyAuthoringV1.h"
@@ -1311,8 +1309,6 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
     QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectDir);
     const ProjectPlatformId platform = QUuid::fromString(options.platform);
     const auto& mediaSnapshot = options.snapshot->media;
-    AssetConverter converter;
-    converter.setBuildSnapshot(mediaSnapshot);
 
     std::set<uint32_t> processedMedia;
     std::set<harkenstudio::ObjectId> processedSounds;
@@ -1484,56 +1480,24 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             return false;
         }
 
-        QString packInputPath;
-        LoopInfo loopInfo;
-        bool loopEndExclusive = false;
-
-        if (assetInfo) {
-            const ConversionResult conversion = inputRequest
-                ? converter.convert(*inputRequest) : converter.convert(sourceID, platform);
-            if (canceled()) return false;
-            if (conversion.success) {
-                packInputPath = conversion.absolutePath;
-                loopInfo = conversion.cacheEntry.loopInfo;
-                loopEndExclusive = true;
-                if (stats) {
-                    if (conversion.cacheHit) ++stats->cacheHits;
-                    else ++stats->conversions;
-                }
-            } else {
-                if (errorOut) *errorOut = conversion.errorMessage;
-                return false;
-            }
-        } else {
+        if (!assetInfo) {
             if (errorOut) *errorOut = QStringLiteral("No registered source for sourceID %1").arg(sourceID);
             return false;
         }
-
-        packInputPath = QFileInfo(packInputPath).absoluteFilePath();
-        if (!QFileInfo::exists(packInputPath)) {
-            if (errorOut) {
-                *errorOut = QStringLiteral("Pack input file does not exist for sourceID %1: %2")
-                                .arg(sourceID)
-                                .arg(packInputPath);
-            }
-            return false;
-        }
+        const auto& loopInfo = assetInfo->metadata.loopInfo;
 
         for (const auto& soundId : sounds) {
             if (canceled()) return false;
             Bridge::PackMediaDesc desc;
             desc.sourceId = soundId;
             desc.authoringSourceId = sourceID;
-            desc.sourcePath = packInputPath;
+            desc.sourcePath = filePath;
             desc.loopable = loopInfo.enabled
-                && (loopEndExclusive
-                        ? loopInfo.loopEnd > loopInfo.loopStart
-                        : loopInfo.loopEnd >= loopInfo.loopStart)
-                && (loopEndExclusive
-                        || loopInfo.loopEnd != std::numeric_limits<uint64_t>::max());
+                && loopInfo.loopEnd >= loopInfo.loopStart
+                && loopInfo.loopEnd != std::numeric_limits<uint64_t>::max();
             desc.loopStartFrame = loopInfo.loopStart;
             desc.loopEndFrame = desc.loopable
-                ? loopInfo.loopEnd + (loopEndExclusive ? 0 : 1) : 0;
+                ? loopInfo.loopEnd + 1 : 0;
             desc.format = Bridge::PackMediaFormat::PcmFloat;
             builder.addMedia(desc);
         }

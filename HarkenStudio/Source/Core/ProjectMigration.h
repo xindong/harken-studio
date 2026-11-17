@@ -69,6 +69,7 @@ struct ProjectMigrationPlan
     int targetSchema = 0;
     std::vector<ProjectMigrationStep> steps;
     QStringList writeSet;
+    QHash<QString, QByteArray> inputFingerprints;
     int fileCount = 0;
     int stepCount = 0;
     qint64 recoveryBytes = 0;

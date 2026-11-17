@@ -59,7 +59,6 @@ QColor mediaStatusColor(MediaStatus status)
 {
     const auto& colors = ThemeManager::instance().colors();
     switch (status) {
-    case MediaStatus::Outdated: return colors.warning;
     case MediaStatus::Missing:
     case MediaStatus::Error: return colors.error;
     case MediaStatus::Orphaned: return colors.textSecondary;
@@ -2246,23 +2245,14 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         QString statusLabel;
 
         switch (mediaStatus) {
-            case MediaStatus::Converted:
-                statusLabel = tr("Converted");
-                break;
-            case MediaStatus::Imported:
-                statusLabel = tr("Not Converted");
-                break;
-            case MediaStatus::Outdated:
-                statusLabel = tr("Outdated");
+            case MediaStatus::Available:
+                statusLabel = tr("Available");
                 break;
             case MediaStatus::Missing:
                 statusLabel = tr("Missing");
                 break;
             case MediaStatus::Orphaned:
                 statusLabel = tr("Orphaned");
-                break;
-            case MediaStatus::Converting:
-                statusLabel = tr("Converting...");
                 break;
             case MediaStatus::Error:
                 statusLabel = tr("Error");

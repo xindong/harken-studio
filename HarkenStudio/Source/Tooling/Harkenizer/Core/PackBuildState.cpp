@@ -3,7 +3,6 @@
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/SourceFileState.h"
 #include "AssetPipeline/PathUtils.h"
-#include "AssetPipeline/PlatformProfile.h"
 #include "ProjectSerializer.h"
 #include "Components/VAction.h"
 #include "Components/VEffect.h"
@@ -510,12 +509,9 @@ void PackBuildState::prune() const
                     if (!selected) continue;
                     const auto asset = assets.constFind(selected.source->sourceId);
                     if (asset == assets.cend() || asset->contentHash.isEmpty()) continue;
-                    const auto override = snapshot.media.fileOverrides.constFind(selected.source->sourceId);
-                    const auto settings = PlatformProfileManager::effectiveSettingsForAsset(
-                        *asset, platform, override == snapshot.media.fileOverrides.cend() ? nullptr : &*override);
                     const auto source = SoundSourceSemantics::authoredView(*selected.source, &*asset);
                     keys.insert(SoundSourceDerivative::cacheKey(asset->contentHash, source,
-                        sound->scheduleOffsetSec, settings, asset->metadata));
+                        sound->scheduleOffsetSec, 0, asset->metadata));
                 }
             }
         }

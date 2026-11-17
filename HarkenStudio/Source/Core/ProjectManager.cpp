@@ -2557,7 +2557,6 @@ bool ProjectManager::closeProject()
             emit errorOccurred(discardError);
             return false;
         }
-        AssetRegistry::instance().discardUncommittedCaches();
         m_closing = true;
         m_runtimePrepared = false;
         m_itemSaveState.reset();

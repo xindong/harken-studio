@@ -299,32 +299,12 @@ uint64_t AssetGarbageCollector::deleteFile(const QString& path)
         return 0;
     }
 
-    AssetRegistry::instance().invalidateCache(path);
 
     return size;
 }
 
 uint64_t AssetGarbageCollector::getFileAccessTime(const QString& cachePath) const
 {
-    QString relativePath = PathUtils::toRelativePath(cachePath, PathUtils::getCacheDir(projectRoot_));
-
-    QFileInfo info(relativePath);
-    QString platformName = info.dir().dirName();
-    QString fileName = info.completeBaseName().section(QLatin1Char('_'), 0, 0);
-
-    bool ok;
-    uint32_t sourceID = fileName.toUInt(&ok);
-    if (ok) {
-        const auto platform = QUuid::fromString(platformName);
-        const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceID);
-        if (asset) {
-            auto cacheIt = asset->platformCaches.find(platform);
-            if (cacheIt != asset->platformCaches.end() && cacheIt->cachePath == relativePath) {
-                return cacheIt->lastAccessTime;
-            }
-        }
-    }
-
     QFileInfo fileInfo(cachePath);
     return fileInfo.lastRead().toSecsSinceEpoch();
 }

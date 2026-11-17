@@ -1,11 +1,6 @@
 #include "MediaBuildSnapshot.h"
 
-#include "AssetImporter.h"
-#include "PathUtils.h"
-
 #include <QCryptographicHash>
-#include <QDir>
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <utility>
 
@@ -21,41 +16,10 @@ QString MediaConversionRequest::fingerprint() const
     const QJsonObject identity{
         {QStringLiteral("source"), asset.contentHash},
         {QStringLiteral("loop"), asset.metadata.loopInfo.toJson()},
-        {QStringLiteral("settings"), static_cast<qint64>(settings.hash())}};
+        {QStringLiteral("targetSampleRate"), static_cast<qint64>(targetSampleRateHz)}};
     return QString::fromLatin1(QCryptographicHash::hash(
         QJsonDocument(identity).toJson(QJsonDocument::Compact),
         QCryptographicHash::Sha256).toHex());
-}
-
-QString MediaConversionRequest::cachePath() const
-{
-    return QStringLiteral("%1/%2_%3.wav")
-        .arg(ProjectPlatformSemantics::idString(platform.id))
-        .arg(asset.sourceID).arg(fingerprint());
-}
-
-QString MediaConversionRequest::jobKey() const
-{
-    return projectRoot + QLatin1Char('/') + registrySession.toString()
-        + QLatin1Char('/') + platformRevision.toString() + QLatin1Char('/') + cachePath();
-}
-
-bool MediaConversionRequest::sourceMatches() const
-{
-    if (sourceInput)
-        return sourceInput->contentHash == asset.contentHash
-            && QFileInfo::exists(sourceInput->inputPath);
-    return !asset.contentHash.isEmpty()
-        && AssetImporter::computeContentHash(asset.absolutePath) == asset.contentHash;
-}
-
-bool MediaConversionRequest::cacheValid() const
-{
-    const auto it = asset.platformCaches.constFind(platform.id);
-    return it != asset.platformCaches.cend() && it->valid
-        && it->fingerprint == fingerprint() && it->cachePath == cachePath()
-        && sourceMatches()
-        && QFileInfo::exists(QDir(PathUtils::getCacheDir(projectRoot)).filePath(it->cachePath));
 }
 
 namespace {
@@ -82,11 +46,7 @@ std::optional<MediaConversionRequest> buildRequest(const MediaBuildSnapshot& sna
         current.contentHash = input->contentHash;
         current.metadata = input->metadata;
     }
-    const auto overrideIt = snapshot.fileOverrides.constFind(sourceID);
-    const auto settings = PlatformProfileManager::effectiveSettingsForAsset(
-        current, *definition, overrideIt == snapshot.fileOverrides.cend() ? nullptr : &*overrideIt);
-    return MediaConversionRequest{snapshot.projectRoot, snapshot.registrySession,
-        snapshot.platformRevisions.value(platformId), *definition, std::move(current), settings, std::move(input)};
+    return MediaConversionRequest{*definition, std::move(current), 0, std::move(input)};
 }
 
 }

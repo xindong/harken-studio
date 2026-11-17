@@ -45,6 +45,9 @@ def stage_candidate(target: Path, modes: dict[str, str], source_root: Path | Non
     for tree, data in trees.items():
         manifest = dict(data["manifest"])
         version = max(manifest["published"])
+        development = manifest.pop("developmentVersion", None)
+        if development is not None and modes[tree] != "next":
+            raise ValueError(f"{tree} development generation must be staged with next")
         if modes[tree] == "next":
             version += 1
             manifest["published"] = [*manifest["published"], version]
@@ -113,7 +116,9 @@ def candidate_updates(candidate_root: Path) -> dict[Path, bytes | None]:
         candidate = schema_archive.load_tree(tree, studio_candidate)
         if previous["currentSource"] != candidate["currentSource"]:
             raise ValueError(f"{tree} candidate is stale; current changed after staging")
-        old_version, version = previous["currentVersion"], candidate["currentVersion"]
+        old_version, version = max(previous["manifest"]["published"]), candidate["currentVersion"]
+        if "developmentVersion" in candidate["manifest"]:
+            raise ValueError(f"{tree} candidate must freeze its development generation")
         expected_published = previous["manifest"]["published"]
         expected_history = previous["manifest"]["supportedHistorical"]
         if version == old_version + 1:

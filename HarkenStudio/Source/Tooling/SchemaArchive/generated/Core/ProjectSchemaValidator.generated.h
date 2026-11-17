@@ -22,5 +22,10 @@ bool validatePackMetadata(int version,
 bool validateProjectRules(int version,
                           VNX::ProjectSchemaRuleExecutor& executor,
                           QStringList& errors);
+bool validateDevelopmentProjectV9Document(QStringView documentType,
+                                          const QJsonValue& document,
+                                          const QString& relativePath,
+                                          QStringList& errors);
+void validateDevelopmentProjectV9Rules(VNX::ProjectSchemaRuleExecutor& executor);
 
 }

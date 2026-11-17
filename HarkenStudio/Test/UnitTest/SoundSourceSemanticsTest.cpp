@@ -128,9 +128,6 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
             ASSERT_TRUE(captured) << captureError.toStdString();
             size_t requestIndex = 0;
             for (const uint32_t rate : {0u, 22050u, 48000u}) {
-                ConversionSettings settings;
-                settings.performResample = rate != 0;
-                if (rate != 0) settings.targetSampleRate = rate;
                 std::vector<float> uneditedSamples, previousFadeSamples;
                 QString uneditedKey, previousFadeKey;
                 for (int variant = 0; variant < 7; ++variant) {
@@ -161,10 +158,10 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                     }
                     QString error;
                     const auto uncached = SoundSourceDerivative::prepare(
-                        inputPath, definition, offset, settings, &error);
+                        inputPath, definition, offset, rate, &error);
                     ASSERT_TRUE(uncached) << error.toStdString();
                     const auto reference = SoundSourceDerivative::materialize(
-                        inputPath, definition, offset, platform, referenceDir, settings, &error);
+                        inputPath, definition, offset, platform, referenceDir, rate, &error);
                     ASSERT_TRUE(reference) << error.toStdString();
                     EXPECT_EQ(*reference->samples, uncached->samples);
                     if (variant == 0) {
@@ -181,39 +178,39 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                     }
                     const auto fromSnapshot = SoundSourceDerivative::materialize(
                         captured->inputPath, definition, offset, platform, snapshotDir,
-                        settings, &error, &snapshotCache, captured.get());
+                        rate, &error, &snapshotCache, captured.get());
                     ASSERT_TRUE(fromSnapshot) << error.toStdString();
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *fromSnapshot));
                     const auto first = SoundSourceDerivative::materialize(
-                        inputPath, definition, offset, platform, cachedDir, settings, &error, &cache);
+                        inputPath, definition, offset, platform, cachedDir, rate, &error, &cache);
                     ASSERT_TRUE(first) << error.toStdString();
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *first));
                     const auto warm = SoundSourceDerivative::materialize(
-                        inputPath, definition, offset, platform, cachedDir, settings, &error, &cache);
+                        inputPath, definition, offset, platform, cachedDir, rate, &error, &cache);
                     ASSERT_TRUE(warm) << error.toStdString();
                     EXPECT_TRUE(warm->cacheHit);
                     EXPECT_EQ(warm->path, first->path);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *warm));
                     SoundSourceDerivative::MaterializationCache restartedCache;
                     const auto restarted = SoundSourceDerivative::materialize(
-                        inputPath, definition, offset, platform, cachedDir, settings, &error, &restartedCache);
+                        inputPath, definition, offset, platform, cachedDir, rate, &error, &restartedCache);
                     ASSERT_TRUE(restarted) << error.toStdString();
                     EXPECT_TRUE(restarted->cacheHit);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *restarted));
                     const auto relocated = SoundSourceDerivative::materialize(
-                        inputPath, definition, offset, platform, referenceDir, settings, &error, &cache);
+                        inputPath, definition, offset, platform, referenceDir, rate, &error, &cache);
                     ASSERT_TRUE(relocated) << error.toStdString();
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *relocated));
                     ASSERT_TRUE(QFile::remove(warm->path));
                     const auto retained = SoundSourceDerivative::materialize(
-                        inputPath, definition, offset, platform, cachedDir, settings, &error, &cache);
+                        inputPath, definition, offset, platform, cachedDir, rate, &error, &cache);
                     ASSERT_TRUE(retained) << error.toStdString();
                     EXPECT_TRUE(retained->cacheHit);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *retained));
                     SoundSourceDerivative::MaterializationCache missingCache;
                     const auto regenerated = SoundSourceDerivative::materialize(
                         inputPath, definition, offset, platform, QFileInfo(warm->path).absolutePath(),
-                        settings, &error, &missingCache);
+                        rate, &error, &missingCache);
                     ASSERT_TRUE(regenerated) << error.toStdString();
                     EXPECT_FALSE(regenerated->cacheHit);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *regenerated));
@@ -272,16 +269,13 @@ TEST(SoundSourceSemanticsTest, MediaEditsPreserveSourceCoordinatesAcrossSlicesAn
         ASSERT_TRUE(AssetConverter::writeFloatWav(originalPath, original, channels, 44100));
         ASSERT_TRUE(AssetConverter::writeFloatWav(bakedPath, baked, channels, 44100));
         for (const uint32_t rate : {44100u, 22050u, 48000u}) {
-            ConversionSettings settings;
-            settings.performResample = true;
-            settings.targetSampleRate = rate;
             for (const double offset : {0.0, 0.00125}) {
                 QString error;
                 const auto prepared = SoundSourceDerivative::prepare(
-                    originalPath, definition, offset, settings, &error);
+                    originalPath, definition, offset, rate, &error);
                 ASSERT_TRUE(prepared) << error.toStdString();
                 const auto reference = SoundSourceDerivative::prepare(
-                    bakedPath, bakedDefinition, offset, settings, &error);
+                    bakedPath, bakedDefinition, offset, rate, &error);
                 ASSERT_TRUE(reference) << error.toStdString();
                 EXPECT_EQ(prepared->samples, reference->samples);
                 EXPECT_EQ(prepared->loopStartFrame, reference->loopStartFrame);
@@ -601,28 +595,24 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesInvalidRequestErrors)
         inputPath, definition, 0.0, platform, outputDir, {}, &error, &cache);
     ASSERT_TRUE(first) << error.toStdString();
     EXPECT_EQ(error, QStringLiteral("Retained diagnostic"));
-    for (int mode = 0; mode < 7; ++mode) {
+    for (int mode = 0; mode < 6; ++mode) {
         SCOPED_TRACE(mode);
         auto invalidSource = definition;
         auto invalidPlatform = platform;
         QString invalidPath = inputPath;
         double offset = 0.0;
-        ConversionSettings settings;
         if (mode == 0) invalidSource.trimStartFrame = 1000;
         else if (mode == 1) invalidSource.trimEndFrame = 0;
         else if (mode == 2) offset = -1.0;
         else if (mode == 3) offset = std::numeric_limits<double>::quiet_NaN();
-        else if (mode == 4) {
-            settings.performResample = true;
-            settings.targetSampleRate = 0;
-        } else if (mode == 5) invalidPlatform = QUuid{};
+        else if (mode == 4) invalidPlatform = QUuid{};
         else invalidPath = directory.filePath(QStringLiteral("missing.wav"));
         QString referenceError;
         QString cachedError;
         const auto reference = SoundSourceDerivative::materialize(
-            invalidPath, invalidSource, offset, invalidPlatform, outputDir, settings, &referenceError);
+            invalidPath, invalidSource, offset, invalidPlatform, outputDir, 0, &referenceError);
         const auto cached = SoundSourceDerivative::materialize(
-            invalidPath, invalidSource, offset, invalidPlatform, outputDir, settings, &cachedError, &cache);
+            invalidPath, invalidSource, offset, invalidPlatform, outputDir, 0, &cachedError, &cache);
         EXPECT_FALSE(reference);
         EXPECT_FALSE(cached);
         EXPECT_EQ(cachedError, referenceError);
@@ -650,24 +640,17 @@ TEST(SoundSourceSemanticsTest, EquivalentMediaTransformsShareOneArtifactAcrossPl
     ASSERT_TRUE(first) << error.toStdString();
     auto equivalent = source(2);
     equivalent.trimEndFrame = 5000;
-    ConversionSettings encoding;
-    encoding.format = ConversionParameters::Codec::Vorbis;
-    encoding.vorbisQuality = 0.2f;
-    encoding.targetSampleRate = 22050;
     cache.clear();
     const auto shared = SoundSourceDerivative::materialize(
-        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, encoding, &error, &cache);
+        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, 0, &error, &cache);
     ASSERT_TRUE(shared) << error.toStdString();
     EXPECT_TRUE(shared->cacheHit);
     EXPECT_EQ(shared->path, first->path);
     EXPECT_EQ(*shared->samples, *first->samples);
     EXPECT_EQ(cache.contentRevision(*shared), cache.contentRevision(*first));
-    auto unchangedRate = encoding;
-    unchangedRate.performResample = true;
-    unchangedRate.targetSampleRate = 44100;
     const auto normalized = SoundSourceDerivative::materialize(
         inputPath, equivalent, 0.1 / 44100.0, QUuid::createUuid(), outputDir,
-        unchangedRate, &error, &cache);
+        44100, &error, &cache);
     ASSERT_TRUE(normalized) << error.toStdString();
     EXPECT_TRUE(normalized->cacheHit);
     EXPECT_EQ(normalized->path, first->path);
@@ -694,9 +677,8 @@ TEST(SoundSourceSemanticsTest, EquivalentMediaTransformsShareOneArtifactAcrossPl
     EXPECT_TRUE(resident->path.isEmpty());
     EXPECT_EQ(*resident->samples, *first->samples);
     EXPECT_EQ(memory.contentRevision(*resident), cache.contentRevision(*first));
-    encoding.performResample = true;
     const auto converted = SoundSourceDerivative::materialize(
-        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, encoding, &error, &cache);
+        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, 22050, &error, &cache);
     ASSERT_TRUE(converted) << error.toStdString();
     EXPECT_FALSE(converted->cacheHit);
     EXPECT_NE(converted->path, first->path);
@@ -708,7 +690,7 @@ TEST(SoundSourceSemanticsTest, EquivalentMediaTransformsShareOneArtifactAcrossPl
     truncated.close();
     cache.clear();
     const auto recovered = SoundSourceDerivative::materialize(
-        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, encoding, &error, &cache);
+        inputPath, equivalent, 0.0, QUuid::createUuid(), outputDir, 22050, &error, &cache);
     ASSERT_TRUE(recovered) << error.toStdString();
     EXPECT_FALSE(recovered->cacheHit);
     EXPECT_EQ(*recovered->samples, *converted->samples);

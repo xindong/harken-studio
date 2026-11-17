@@ -266,7 +266,10 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
                     data={"typo": True}, exit_code=2)
     assert rejected["code"] == "INVALID_ARGUMENTS" and "typo" in rejected["message"], rejected
     for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener",
-                     "set_platform_profile", "set_preferred_format", "audition_get_speed"):
+                     "set_platform_profile", "set_preferred_format", "audition_get_speed",
+                     "transcode_asset", "batch_convert_media", "get_transcode_status", "cancel_transcode",
+                     "get_conversion_settings", "set_conversion_settings", "get_platform_profile",
+                     "set_project_platform_profile"):
         assert excluded not in names
         assert call("commands", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
         assert call("exec", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
@@ -385,13 +388,6 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         call("list-targets", "--project", str(project), "--all", exit_code=2)
         call(*build_flags, "--platform-id", platform, exit_code=2)
         assert authored_contents() == saved
-        converted = execute("transcode_asset", {"source_id": imported["source_id"], "platform_id": platform})
-        assert converted["result"]["success"] and not converted["result"].get("async"), converted
-        batch = execute("batch_convert_media", {"source_ids": [imported["source_id"]], "platform_id": platform})
-        assert batch["result"]["success"] and batch["result"]["completed"] == batch["result"]["total"] == 1, batch
-        assert batch["result"]["results"][0]["response"]["result"]["cache_path"] == converted["result"]["cache_path"]
-        for invalid in ([imported["source_id"], "invalid"], [imported["source_id"], imported["source_id"]]):
-            execute("batch_convert_media", {"source_ids": invalid, "platform_id": platform}, exit_code=2)
         workflow = root / "workflow.json"
         workflow.write_text(json.dumps([
             {"cmd": "create_action", "args": {"name": "PlayTone"}},

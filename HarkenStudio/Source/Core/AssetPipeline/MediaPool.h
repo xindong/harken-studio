@@ -15,36 +15,29 @@
 namespace VNX {
 
 class AssetRegistry;
-class AssetConverter;
 class AssetImporter;
 
 struct MediaInfo {
     uint32_t    sourceID = 0;
     QString     relativePath;
     QString     absolutePath;
-    MediaStatus status = MediaStatus::Imported;
+    MediaStatus status = MediaStatus::Available;
     AudioMetadata metadata;
-    ConversionSettings settings;
-    QHash<ProjectPlatformId, CacheEntry> platformCaches;
     bool        isOrphaned = false;
 };
 
 struct PoolStats {
     uint32_t totalMedia = 0;
-    uint32_t importedCount = 0;
-    uint32_t convertedCount = 0;
+    uint32_t availableCount = 0;
     uint32_t missingCount = 0;
-    uint32_t outdatedCount = 0;
     uint32_t orphanedCount = 0;
     uint64_t totalOriginalBytes = 0;
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["totalMedia"]        = static_cast<qint64>(totalMedia);
-        obj["importedCount"]     = static_cast<qint64>(importedCount);
-        obj["convertedCount"]    = static_cast<qint64>(convertedCount);
+        obj["availableCount"]     = static_cast<qint64>(availableCount);
         obj["missingCount"]      = static_cast<qint64>(missingCount);
-        obj["outdatedCount"]     = static_cast<qint64>(outdatedCount);
         obj["orphanedCount"]     = static_cast<qint64>(orphanedCount);
         obj["totalOriginalBytes"] = static_cast<qint64>(totalOriginalBytes);
         return obj;
@@ -87,7 +80,6 @@ public:
     QVector<BatchReplaceResult> batchReplace(const QMap<uint32_t, QString>& replacements);
 
 
-    void batchConvert(const QVector<uint32_t>& sourceIDs, ProjectPlatformId platform);
 
 
     PoolStats getStats(ProjectPlatformId platform = {}) const;
@@ -145,13 +137,6 @@ private:
         bool published = false;
     };
 
-    struct ConversionBatch {
-        std::shared_ptr<AssetConverter> converter;
-        QFuture<void> future;
-        QVector<uint32_t> sourceIDs;
-        ProjectPlatformId platform;
-    };
-
     static bool stageReplacement(AssetImporter& importer,
                                  const QString& projectRoot,
                                  uint32_t sourceID,
@@ -168,7 +153,6 @@ private:
                           uint64_t lastModified);
 
     bool isSourceFileMissing(const AssetInfo& info) const;
-    bool hasAnyValidCache(const AssetInfo& info) const;
     bool isReferencedByAnyObject(uint32_t sourceID) const;
 
     void rebuildReferenceCache() const;
@@ -187,12 +171,10 @@ private:
     QFutureWatcherBase* sourceRefreshWatcher_ = nullptr;
     QList<QFuture<void>> sourceFileFutures_;
     QList<std::shared_ptr<ReplacementBatch>> replacementBatches_;
-    QList<std::shared_ptr<ConversionBatch>> conversionBatches_;
     QStringList sourceRefreshPaths_;
     QSet<QString> deferredSourceRefreshPaths_;
     QSet<uint32_t> deferredWaveformIds_;
     QMap<uint32_t, QString> deferredReplacements_;
-    QMap<ProjectPlatformId, QSet<uint32_t>> deferredConversions_;
     ProjectPlatformId deferredStatusPlatform_;
     bool deferredStatusRefresh_ = false;
     bool projectClosedDuringFileChange_ = false;
