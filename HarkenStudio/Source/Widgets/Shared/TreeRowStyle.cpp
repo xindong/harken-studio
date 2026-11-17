@@ -64,13 +64,14 @@ QTreeWidgetItem* makeFolderRow(const QString& text)
     row->setIcon(0, ThemeManager::instance().resolveToggleIcon(
         QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
         QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon);
-    row->setData(0, kBucketRole, true);
     return row;
 }
 
 QTreeWidgetItem* makeBucketRow(const QString& folderKey)
 {
-    return makeFolderRow(ProjectManager::bucketDisplayName(folderKey));
+    auto* row = makeFolderRow(ProjectManager::bucketDisplayName(folderKey));
+    row->setData(0, kBucketRole, true);
+    return row;
 }
 
 void paintDropHighlight(QPainter* p, const QRect& rowRect)
