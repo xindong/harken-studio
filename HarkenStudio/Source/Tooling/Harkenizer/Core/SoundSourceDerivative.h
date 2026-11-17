@@ -8,6 +8,7 @@
 #include <QByteArray>
 #include <QHash>
 #include <QMutex>
+#include <QObject>
 #include <QString>
 #include <cstdint>
 #include <functional>
@@ -23,6 +24,17 @@ struct AudioMetadata;
 namespace VNX::SoundSourceDerivative {
 
 inline constexpr uint32_t kVorbisSeekGrainFrames = VorbisEncoder::kSeekGrainFrames;
+
+class MaterializationEvents final : public QObject
+{
+    Q_OBJECT
+
+public:
+    static MaterializationEvents& instance();
+
+signals:
+    void artifactReady(const QString& path);
+};
 
 struct FrameRange
 {
@@ -78,6 +90,9 @@ struct PreparedMedia
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
                  double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                  const AudioMetadata& metadata);
+
+std::optional<MaterializedArtifact> findCachedArtifact(const QString& key,
+    const QString& outputDir, ConversionFormat format);
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
                                         uint64_t totalFrames);

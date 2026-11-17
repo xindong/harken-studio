@@ -77,6 +77,7 @@
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "Widgets/ExternalEditor/ExternalEditorPanel.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
+#include "Widgets/ConversionEditor/ConversionEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
@@ -448,8 +449,11 @@ void MainWindow::initializeStructure(
         [this](RefDomain domain, uint32_t id) {
             switch (domain) {
             case RefDomain::ProjectObject:
-                if (auto* item = ProjectManager::instance().findItemByObjectID(id))
+                if (auto* item = ProjectManager::instance().findItemByObjectID(id)) {
                     selectionRouter_->selectItem(item, true);
+                    if (item->type == ProjectItem::Type::Conversion)
+                        openStandaloneEditor(QStringLiteral("ConversionEditor"), item);
+                }
                 break;
             case RefDomain::AudioAsset:
                 openSourceEditor(id);
@@ -628,6 +632,62 @@ void MainWindow::initializeStructure(
                 editor->restoreState(params);
         };
         registerStandaloneEditorType(QStringLiteral("EffectEditor"), std::move(info));
+    }
+    {
+        StandaloneEditorTypeInfo info;
+        info.label = tr("Conversion Editor");
+        info.openBelowCentralArea = true;
+        info.clearOnUnrelatedSelection = false;
+        info.dockObjectPrefix = QStringLiteral("ConversionEditorDock");
+        info.createConfigured = [this](int id) -> QWidget* {
+            auto* editor = new ConversionEditorPanel(this);
+            editor->setPanelId(id);
+            connect(editor, &ConversionEditorPanel::panelFocused, this, [this](int panelId) {
+                panelRegistry_->setLastFocusedPanelId(QStringLiteral("ConversionEditor"), panelId);
+            });
+            connect(editor, &ConversionEditorPanel::navigateRequested, this, [this](const QUuid& guid) {
+                if (auto* item = ProjectManager::instance().findItemByGuid(guid))
+                    selectionRouter_->selectItem(item, true);
+            });
+            connect(editor, &QWidget::windowTitleChanged, this, [this, editor](const QString& title) {
+                if (auto* dock = dockOfPanel(editor))
+                    dock->setWindowTitle(title);
+            });
+            wireStandaloneEditorPin(editor);
+            return editor;
+        };
+        info.bind = [](QWidget* widget, ProjectItem* item) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->bindItem(item);
+        };
+        info.boundItem = [](QWidget* widget) -> ProjectItem* {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor ? editor->boundItem() : nullptr;
+        };
+        info.accepts = [](const ProjectItem* item) {
+            return item && item->type == ProjectItem::Type::Conversion;
+        };
+        info.isPinned = [](QWidget* widget) {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor && editor->isPinned();
+        };
+        info.setPinned = [](QWidget* widget, bool pinned) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->setPinned(pinned);
+        };
+        info.clear = [](QWidget* widget) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->clearEditor();
+        };
+        info.snapshotParams = [](QWidget* widget) -> QVariantMap {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor ? editor->snapshotState() : QVariantMap{};
+        };
+        info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->restoreState(params);
+        };
+        registerStandaloneEditorType(QStringLiteral("ConversionEditor"), std::move(info));
     }
     {
         StandaloneEditorTypeInfo info;
@@ -3505,6 +3565,8 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
         connect(curve, &ExternalEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* effect = qobject_cast<EffectEditorPanel*>(editor))
         connect(effect, &EffectEditorPanel::pinToggled, this, onPinToggled);
+    else if (auto* conversion = qobject_cast<ConversionEditorPanel*>(editor))
+        connect(conversion, &ConversionEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* grid = qobject_cast<GridEditorPanel*>(editor))
         connect(grid, &GridEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* timeline = qobject_cast<TimelineEditorPanel*>(editor))

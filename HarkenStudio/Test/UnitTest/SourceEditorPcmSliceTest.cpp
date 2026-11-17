@@ -9,6 +9,7 @@
 #include "Core/ProjectManager.h"
 #include "RuntimeBridge/PlaybackBridge.h"
 #include "Widgets/SourceEditor/SourceEditorWidget.h"
+#include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "harken/Harken.h"
 #include "harken/HarkenDevelopment.h"
 
@@ -18,6 +19,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QFileInfo>
+#include <QLabel>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 
@@ -243,10 +245,20 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
     source.fadeOut.durationFrames = 4096;
     sound->sources.plain.entries = {source};
     sound->sources.plain.active = source.entryId;
-    VNX::SourceEditorWidget editor;
-    VNX::SourceEditorWidget library;
-    editor.bindSource(asset.sourceID, item->guid, source.entryId);
-    library.bindSource(asset.sourceID);
+    VNX::SourceEditorPanel panel;
+    VNX::SourceEditorPanel libraryPanel;
+    auto& editor = *panel.editorWidget();
+    auto& library = *libraryPanel.editorWidget();
+    panel.bindSource(asset.sourceID, item->guid, source.entryId);
+    libraryPanel.bindSource(asset.sourceID);
+    auto* filePath = panel.findChild<QLabel*>(QStringLiteral("sourceFilePath"));
+    auto* fileRate = panel.findChild<QLabel*>(QStringLiteral("sourceFileSampleRate"));
+    auto* libraryPath = libraryPanel.findChild<QLabel*>(QStringLiteral("sourceFilePath"));
+    ASSERT_NE(filePath, nullptr);
+    ASSERT_NE(fileRate, nullptr);
+    ASSERT_NE(libraryPath, nullptr);
+    EXPECT_TRUE(filePath->text().isEmpty());
+    EXPECT_EQ(libraryPath->text(), path);
     ASSERT_TRUE(library.startPreviewPlayhead());
     const auto libraryHandle = library.previewPlaybackHandle();
     const auto mapFrame = [&](uint64_t frame, uint32_t rate) {
@@ -262,6 +274,10 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
         for (const uint64_t start : {4105ull, 12007ull, 25120ull}) {
             SCOPED_TRACE(start);
             ASSERT_TRUE(editor.startPreviewPlayhead(start));
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            EXPECT_TRUE(QFileInfo::exists(filePath->text()));
+            EXPECT_NE(filePath->text(), path);
+            EXPECT_EQ(fileRate->text(), QStringLiteral("22050 Hz"));
             const auto windowStart = mapFrame(source.loopRegion->startFrame, 22050);
             const auto windowEnd = mapFrame(source.loopRegion->endFrame, 22050);
             const auto mediaStart = std::clamp(mapFrame(start, 22050), windowStart, windowEnd - 1);
@@ -294,6 +310,7 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
         EXPECT_FALSE(editor.isPreviewPlayheadActive());
         ASSERT_TRUE(editor.startPreviewPlayhead());
         modes.setMode(VNX::PreviewMediaMode::Original);
+        EXPECT_EQ(filePath->text(), path);
         EXPECT_FALSE(editor.isPreviewPlayheadActive());
         ASSERT_TRUE(editor.startPreviewPlayhead());
         const auto original = engine_->relocateRawPcmSlice(editor.previewSoundId(), 12007);
@@ -303,6 +320,7 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
         modes.setMode(VNX::PreviewMediaMode::Converted);
         ASSERT_TRUE(editor.startPreviewPlayhead());
         VNX::PlatformContextService::instance().setSelected({secondPlatform}, secondPlatform);
+        EXPECT_TRUE(filePath->text().isEmpty());
         EXPECT_FALSE(editor.isPreviewPlayheadActive());
         ASSERT_TRUE(editor.startPreviewPlayhead());
         const auto second = engine_->relocateRawPcmSlice(editor.previewSoundId(),
@@ -313,4 +331,8 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
         EXPECT_TRUE(library.isPreviewPlayheadActive());
         EXPECT_EQ(library.previewPlaybackHandle(), libraryHandle);
     }
+    panel.clearEditor();
+    EXPECT_TRUE(filePath->text().isEmpty());
+    EXPECT_TRUE(fileRate->text().isEmpty());
+    EXPECT_EQ(libraryPath->text(), path);
 }

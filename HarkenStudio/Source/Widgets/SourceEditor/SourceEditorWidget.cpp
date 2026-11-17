@@ -776,6 +776,7 @@ void SourceEditorWidget::refreshMetadata()
                               : !asset   ? tr("Audio source is unavailable")
                                          : tr("This audio reference no longer exists"));
     refreshAuditionControls();
+    emit sourceContextChanged();
     if (!hasAsset)
         return;
 

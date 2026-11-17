@@ -204,9 +204,23 @@ bool publishArtifact(MaterializedArtifact& artifact, const QString& outputDir, Q
         return false;
     }
     artifact.path = path;
+    emit MaterializationEvents::instance().artifactReady(path);
     return true;
 }
 
+}
+
+MaterializationEvents& MaterializationEvents::instance()
+{
+    static MaterializationEvents events;
+    return events;
+}
+
+std::optional<MaterializedArtifact> findCachedArtifact(const QString& key,
+    const QString& outputDir, ConversionFormat format)
+{
+    if (key.isEmpty()) return std::nullopt;
+    return loadArtifact(outputDir, key.toLatin1(), format);
 }
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,

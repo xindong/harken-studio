@@ -178,6 +178,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
             if (ip) {
                 if (placement) ip->showItemInspector(item, *placement);
                 else ip->showItemInspector(item);
+                ip->setConversionSelection(items);
             }
 
             for (GridEditorPanel* panel : host_->allGridEditorPanels()) {
@@ -317,6 +318,8 @@ void SelectionRouter::activateItem(ProjectItem* item, const PlacementContext* pl
         host_->openStandaloneEditor(QStringLiteral("TimelineEditor"), item);
     if (GridEditorPanel::acceptsItem(item))
         host_->openStandaloneEditor(QStringLiteral("GridEditor"), item);
+    if (item->type == ProjectItem::Type::Conversion)
+        host_->openStandaloneEditor(QStringLiteral("ConversionEditor"), item);
     auto* inspector = host_->openOrFocusInspectorForItem(item, placement);
     if (inspector && item->type == ProjectItem::Type::Effect)
         inspector->showEmbeddedEffectEditor();

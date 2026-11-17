@@ -485,6 +485,8 @@ void PropertyEditorEngine::releasePage()
     sectionBindings_.clear();
     groupBindings_.clear();
     groupPreviews_.clear();
+    conversionSelection_.clear();
+    conversionViews_.clear();
 }
 
 std::optional<PlayablePropertyLocatorV1>
@@ -1611,6 +1613,7 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
 {
     cancelGroupEdits(item == currentItem_);
     ProjectItem* previousItem = currentItem_;
+    if (item != previousItem) conversionSelection_.clear();
     for (auto& binding : bindings_)
     {
         if (binding.parameterBinding && binding.parameterBinding->isEditing())
@@ -1810,6 +1813,10 @@ bool PropertyEditorEngine::playablePropertyEventRelated(
 {
     if (owner && currentItem_
         && (field == QLatin1String("fieldGroups") || fieldGroup(field))) {
+        for (const auto& guid : conversionSelection_)
+            for (auto* ancestor = ProjectManager::instance().findItemByGuid(guid);
+                 ancestor; ancestor = ancestor->parent)
+                if (ancestor == owner) return true;
         for (auto* ancestor = currentItem_; ancestor; ancestor = ancestor->parent)
             if (ancestor == owner) return true;
         return false;

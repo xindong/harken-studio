@@ -10,6 +10,8 @@
 #include "Widgets/Shared/UiHiddenBucket.h"
 #include "Core/ActionStepUtils.h"
 #include "Core/AuthoringPolicy.h"
+#include "Core/ConversionResults.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Core/ItemTypeCatalog.h"
 #include "Core/ItemTypeIcons.h"
 #include "Core/NameValidator.h"
@@ -187,6 +189,26 @@ void ProjectTreePanel::initPanel()
             if (it.value()->type == ProjectItem::Type::Sound)
                 updateTreeItem(it.key(), it.value());
     }, Qt::QueuedConnection);
+
+    const auto refreshConversionStatus = [this]() {
+        for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
+            if (it.value()->type == ProjectItem::Type::Sound)
+                updateTreeItem(it.key(), it.value());
+    };
+    connect(&SoundSourceDerivative::MaterializationEvents::instance(),
+            &SoundSourceDerivative::MaterializationEvents::artifactReady,
+            this, refreshConversionStatus, Qt::QueuedConnection);
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, refreshConversionStatus);
+    connect(&ProjectManager::instance(), &ProjectManager::defaultConversionChanged,
+            this, refreshConversionStatus);
+    connect(&ProjectManager::instance(), &ProjectManager::itemMoved,
+            this, refreshConversionStatus);
+    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
+            this, [refreshConversionStatus](ProjectItem*, const QString& property) {
+        if (property == QStringLiteral("conversion") || property == QStringLiteral("fieldGroups"))
+            refreshConversionStatus();
+    });
 
     connect(&ProjectManager::instance(), &ProjectManager::busChanged,
             this, [this](uint32_t busID, const QString& propertyName, const QObject*) {
@@ -2247,6 +2269,15 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         switch (mediaStatus) {
             case MediaStatus::Available:
                 statusLabel = tr("Available");
+                if (const auto* project = ProjectManager::instance().currentProject(); project && asset) {
+                    const auto platform = PlatformContextService::instance().context().primary;
+                    const auto* source = SoundSourceEditing::activeSource(*projectItem, platform, language);
+                    const auto* sound = projectItem->comp<VSound>();
+                    if (source && sound && resolveConversion(*project, *projectItem, platform, *asset))
+                        statusLabel = ConversionResults::hasCachedSource(*project, *projectItem,
+                            *source, *asset, platform, sound->scheduleOffsetSec)
+                            ? tr("Converted") : tr("Not Converted");
+                }
                 break;
             case MediaStatus::Missing:
                 statusLabel = tr("Missing");
