@@ -276,7 +276,8 @@ Diagnostics validateView(const EditingContext& context,
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
             const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
             const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
-            for (const auto* result : {&output, &send, &spatial, &effects}) {
+            const auto conversion = resolver.Resolve(definition.guid, {}, FieldGroupId::Conversion);
+            for (const auto* result : {&output, &send, &spatial, &effects, &conversion}) {
                 appendGroupDiagnostics(diagnostics, context, result->diagnostics);
                 if (result->value)
                     appendGroupDiagnostics(diagnostics, context,
@@ -305,6 +306,12 @@ std::vector<FieldGroupScope> targetScopes(const ProjectData& project,
                                           Diagnostics& diagnostics)
 {
     std::vector<FieldGroupScope> scopes;
+    if (request.group == FieldGroupId::Conversion && !request.scopes.shared) {
+        addDiagnostic(diagnostics, EditCode::InvalidScopes,
+                      QStringLiteral("Conversion only supports Shared scope"),
+                      request.definition, request.group, {}, QStringLiteral("scopes"));
+        return {};
+    }
     bool valid = request.scopes.shared ? request.scopes.platforms.empty()
                                        : !request.scopes.platforms.empty();
     std::set<Guid> seen;
@@ -393,6 +400,11 @@ bool setField(EffectFieldGroup&, const SetFieldGroupField&, Guid)
     return false;
 }
 
+bool setField(ConversionFieldGroup&, const SetFieldGroupField&, Guid)
+{
+    return false;
+}
+
 template <typename Payload>
 Payload localPayload(const ResolvedFieldGroup& resolved, Guid definition,
                      std::map<QUuid, QUuid>& copiedIdentities)
@@ -446,9 +458,10 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
     const auto* clear = std::get_if<ClearFieldGroupFieldOverride>(&request.operation);
     const bool sendsEdit = std::holds_alternative<ReplaceFieldGroupSends>(request.operation);
     const bool effectsEdit = std::holds_alternative<ReplaceFieldGroupEffects>(request.operation);
-    if (field || sendsEdit || effectsEdit || clear) {
+    const bool conversionEdit = std::holds_alternative<SetConversionFieldGroup>(request.operation);
+    if (field || sendsEdit || effectsEdit || conversionEdit || clear) {
         auto inspected = scopes;
-        if (request.scopes.shared) {
+        if (request.scopes.shared && request.group != FieldGroupId::Conversion) {
             inspected.clear();
             for (const auto platform : context.platforms) inspected.push_back(platform);
         }
@@ -509,7 +522,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             }
             const auto property = field ? field->property
                 : effectsEdit ? Property::SignalGraph : Property::Sends;
-            const auto bit = FieldGroupFieldMask(property);
+            const auto bit = conversionEdit ? FieldGroupPropertyMask(FieldGroupId::Conversion)
+                                            : FieldGroupFieldMask(property);
             if (field) {
                 if (!setField(*next.localHistory, *field, context.masterBus)) {
                     addDiagnostic(diagnostics, EditCode::InvalidOperation,
@@ -521,6 +535,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
                 *next.localHistory = std::get<ReplaceFieldGroupSends>(request.operation).value;
             } else if constexpr (std::is_same_v<Payload, EffectFieldGroup>) {
                 *next.localHistory = std::get<ReplaceFieldGroupEffects>(request.operation).value;
+            } else if constexpr (std::is_same_v<Payload, ConversionFieldGroup>) {
+                *next.localHistory = std::get<SetConversionFieldGroup>(request.operation).value;
             }
             next.localFields |= bit;
             if (!scope)
@@ -588,6 +604,11 @@ FieldGroupEditResult prepareFieldGroupEdit(
         addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
                       QStringLiteral("An Effect replacement requires the Effect group"),
                       request.definition, request.group, {}, QStringLiteral("effects"));
+    if (std::holds_alternative<SetConversionFieldGroup>(request.operation)
+        && request.group != FieldGroupId::Conversion)
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("Conversion settings require the Conversion group"),
+                      request.definition, request.group, {}, QStringLiteral("settingsRef"));
     if (!result.diagnostics.empty()) return result;
     const auto context = buildContext(project);
     result.diagnostics = context.diagnostics;
@@ -632,6 +653,10 @@ FieldGroupEditResult prepareFieldGroupEdit(
     case FieldGroupId::Effect:
         editGroup(context, resolver, definition, canInherit, request, scopes,
                   result.before->effects, candidate.effects, result.diagnostics);
+        break;
+    case FieldGroupId::Conversion:
+        editGroup(context, resolver, definition, canInherit, request, scopes,
+                  result.before->conversion, candidate.conversion, result.diagnostics);
         break;
     }
     if (result.diagnostics.empty())

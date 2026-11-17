@@ -52,6 +52,8 @@
 #include "Core/LogService.h"
 #include "UndoCommands.h"
 #include "Components/VAttenuation.h"
+#include "Components/VConversion.h"
+#include "ConversionDefaults.h"
 #include "Components/VAudio.h"
 #include "Components/VMixNode.h"
 #include "Components/VSpatial.h"
@@ -407,6 +409,7 @@ QJsonObject writeS3PayloadByType(const ProjectItem& top, ProjectSerializer& seri
 {
     switch (top.type) {
     case ProjectItem::Type::Attenuation: return serializer.attenuationPackToJson(top);
+    case ProjectItem::Type::Conversion: return serializer.conversionPackToJson(top);
     case ProjectItem::Type::Effect:      return serializer.effectPackToJson(top);
     case ProjectItem::Type::Variable:    return serializer.variablePackToJson(top);
     default:
@@ -681,6 +684,25 @@ void ensureDefaultMasterBus(ProjectData& project)
 }
 
 namespace {
+
+void createDefaultConversion(ProjectData& project)
+{
+    auto item = std::make_shared<ProjectItem>(QStringLiteral("Default"), ProjectItem::Type::Conversion);
+    item->attachDefaultComponents();
+    item->objectID = project.generateObjectID();
+    item->guid = QUuid::createUuid();
+    for (const auto& platform : project.platforms) {
+        auto row = defaultConfigFor(platform.basePlatform);
+        row.platformId = platform.id;
+        item->comp<VConversion>()->platforms.push_back(std::move(row));
+    }
+    project.defaultConversionRef = item->guid;
+    ProjectFileBinding binding;
+    binding.parentFolder = QStringLiteral("Conversions");
+    binding.rootItem = item;
+    project.getBucketForType(ProjectItem::Type::Conversion)->push_back(std::move(binding));
+    project.setObjectFileLocation(item.get(), nullptr, {});
+}
 
 QString layerPackFileName(const ProjectItem& layer)
 {
@@ -1036,6 +1058,7 @@ QString ProjectManager::suggestUniqueName(ProjectItem::Type type,
     if (ns == NameNamespace::None) return baseName;
     const bool bucketUnique = ns == NameNamespace::Action || ns == NameNamespace::Variable;
     const auto sensitivity = ns == NameNamespace::Attenuation || ns == NameNamespace::Effect
+        || ns == NameNamespace::Conversion
         ? Qt::CaseInsensitive : Qt::CaseSensitive;
     const auto siblingConflict = [&](const QString& candidate) {
         const auto conflicts = [&](const ProjectItem* item) {
@@ -1280,6 +1303,30 @@ QStringList ProjectManager::getTargetPlatforms() const
     return m_currentProject->platformIds();
 }
 
+bool ProjectManager::setDefaultConversion(const QUuid& guid)
+{
+    if (!m_currentProject) return false;
+    if (!guid.isNull()) {
+        const auto* item = findItemByGuid(guid);
+        if (!item || item->type != ProjectItem::Type::Conversion) return false;
+    }
+    const auto before = m_currentProject->defaultConversionRef;
+    if (before == guid) return true;
+    const std::weak_ptr<ProjectData> lease = m_currentProject;
+    const auto apply = [this, lease](const QUuid& value) {
+        const auto project = lease.lock();
+        if (!project || project != m_currentProject) return;
+        project->defaultConversionRef = value;
+        emit defaultConversionChanged(value);
+    };
+    apply(guid);
+    UndoRedoManager::instance().push(new RuntimeActionCommand(
+        tr("Set Default Conversion"), [apply, before] { apply(before); },
+        [apply, guid] { apply(guid); }, 0, nullptr,
+        [this, lease] { return lease.lock() == m_currentProject; }));
+    return true;
+}
+
 void ProjectManager::setProjectPlatformsInternal(const QVector<ProjectPlatform>& value)
 {
     if (!m_currentProject) return;
@@ -1450,6 +1497,7 @@ bool validateProjectTemplate(const ProjectConfig& config, QString* error)
     ProjectData candidate;
     candidate.platforms = config.platforms;
     ensureDefaultMasterBus(candidate);
+    createDefaultConversion(candidate);
     return TemplateApplyService::seedTemplateInto(candidate, config.templateData, error);
 }
 
@@ -1587,6 +1635,7 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     }
 
     ProjectLoaderInternal::loadLayersPacksImpl(projectRoot, project, m_serializer, nullptr);
+    createDefaultConversion(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
         QString tmplErr;
@@ -1619,6 +1668,10 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     if (project.projectId.isEmpty())
         project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (!m_serializer.prepareReferenceWrite(project))
+        return false;
+    const auto* conversionSpec = findS3Spec(QStringLiteral("Conversions"));
+    if (!conversionSpec || !saveS3HierarchyBucket(projectRoot, project.projectId, project,
+            *conversionSpec, *project.getBucketForType(ProjectItem::Type::Conversion), m_serializer))
         return false;
     return m_serializer.saveProject(project.projectPath, project);
 }
@@ -1783,6 +1836,7 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
     project.sampleRate = config.sampleRate;
     project.channelConfig = config.channelConfig;
     ensureDefaultMasterBus(project);
+    createDefaultConversion(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
         QString templateError;
@@ -2602,6 +2656,8 @@ bool initializeRootFieldGroups(ProjectData& project, ProjectItem& item)
     if (!master || master->type != ProjectItem::Type::Bus || master->guid.isNull())
         return false;
     item.fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(master->guid));
+    item.fieldGroups.conversion.shared.localHistory->settingsRef =
+        toFieldGroupGuid(project.defaultConversionRef);
     return true;
 }
 
@@ -2863,6 +2919,13 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
 
     auto newItem = std::make_shared<ProjectItem>(createName, type);
     newItem->attachDefaultComponents();
+    if (auto* conversion = newItem->comp<VConversion>()) {
+        for (const auto& platform : m_currentProject->platforms) {
+            auto row = defaultConfigFor(platform.basePlatform);
+            row.platformId = platform.id;
+            conversion->platforms.push_back(std::move(row));
+        }
+    }
     if (auto* variable = newItem->comp<VVariable>())
         VariableSemantics::initializeNewVariable(*variable, variableKind);
     if (auto* selection = newItem->comp<VSelection>())
@@ -4767,6 +4830,10 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating)
         || !capture(authored.effects, result.effects, FieldGroupId::Effect))
         return fail(QStringLiteral("Cannot preserve the current field group values"));
+    const auto conversion = resolver.Resolve(identity, {}, FieldGroupId::Conversion);
+    if (!conversion.ok())
+        return fail(QStringLiteral("Cannot preserve the current Conversion settings"));
+    result.conversion.shared.localHistory = std::get<ConversionFieldGroup>(conversion.value->payload);
     return result;
 }
 
@@ -4994,6 +5061,9 @@ std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
                 state.localHistory->spatialAttenuationRef = {};
         };
         clearSpatialReference(after.spatialRating.shared);
+        if (after.conversion.shared.localHistory
+            && deleted.contains(after.conversion.shared.localHistory->settingsRef))
+            after.conversion.shared.localHistory->settingsRef = {};
         for (auto& [platform, state] : after.spatialRating.platforms)
             clearSpatialReference(state);
         VisitAuthoredEffectChains(after, [&](EffectChainLedger& ledger, FieldGroupScope) {
@@ -5233,9 +5303,14 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
 
 QJsonObject folderProjectReferences()
 {
+    const auto* project = ProjectManager::instance().currentProject();
     QJsonArray targeting;
     for (const auto& target : ProjectManager::instance().getActionPackTargeting()) targeting.append(target.toJson());
-    return {{QStringLiteral("actionPackTargeting"), targeting}};
+    return {{QStringLiteral("actionPackTargeting"), targeting},
+            {QStringLiteral("audio"), QJsonObject{{QStringLiteral("defaultConversion"),
+                project && !project->defaultConversionRef.isNull()
+                    ? QJsonValue(project->defaultConversionRef.toString(QUuid::WithoutBraces))
+                    : QJsonValue(QJsonValue::Null)}}}};
 }
 
 void applyFolderProjectReferences(const QJsonObject& state)
@@ -5244,6 +5319,11 @@ void applyFolderProjectReferences(const QJsonObject& state)
     for (const auto& target : state.value(QStringLiteral("actionPackTargeting")).toArray())
         targeting.push_back(ActionPackTargeting::fromJson(target.toObject()));
     ProjectManager::instance().setActionPackTargetingInternal(std::move(targeting));
+    if (auto* project = ProjectManager::instance().currentProject()) {
+        project->defaultConversionRef = QUuid(state.value(QStringLiteral("audio")).toObject()
+            .value(QStringLiteral("defaultConversion")).toString());
+        emit ProjectManager::instance().defaultConversionChanged(project->defaultConversionRef);
+    }
 }
 
 }
@@ -5548,7 +5628,7 @@ ProjectFileBinding* ProjectManager::findRootBinding(ProjectData* project, const 
     // inferring ownership from the root type.
     std::vector<ProjectFileBinding>* buckets[] = {
         &project->layers, &project->actions, &project->attenuationItems,
-        &project->busses, &project->variables, &project->effectItems };
+        &project->busses, &project->variables, &project->effectItems, &project->conversionItems };
     for (auto* bucket : buckets) {
         for (auto& binding : *bucket) {
             if (binding.rootItem.get() == item) return &binding;
@@ -5562,7 +5642,7 @@ bool ProjectManager::detachRootBinding(ProjectData* project, const ProjectItem* 
     if (!project || !item || !out) return false;
     std::vector<ProjectFileBinding>* buckets[] = {
         &project->layers, &project->actions, &project->attenuationItems,
-        &project->busses, &project->variables, &project->effectItems };
+        &project->busses, &project->variables, &project->effectItems, &project->conversionItems };
     for (auto* bucket : buckets) {
         for (size_t i = 0; i < bucket->size(); ++i) {
             if ((*bucket)[i].rootItem.get() == item) {

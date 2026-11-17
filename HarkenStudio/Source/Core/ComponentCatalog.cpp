@@ -20,6 +20,7 @@ constexpr ComponentFacts kComponentFacts[] = {
     { ComponentType::Segment,        "segmenttimeline" },
     { ComponentType::Sound,        "sound" },
     { ComponentType::Effect,       "effect" },
+    { ComponentType::Conversion,   "conversion" },
 };
 
 constexpr char kUnknownName[] = "unknown";
@@ -49,13 +50,14 @@ std::optional<ComponentType> parseComponentName(const QString& name)
     return std::nullopt;
 }
 
-const std::array<ComponentType, 12>& allComponentTypes()
+const std::array<ComponentType, 13>& allComponentTypes()
 {
-    static const std::array<ComponentType, 12> types = {
+    static const std::array<ComponentType, 13> types = {
         ComponentType::MixNode, ComponentType::Audio, ComponentType::Selection,
         ComponentType::Bus, ComponentType::Action, ComponentType::Variable,
         ComponentType::Attenuation, ComponentType::Spatial, ComponentType::Track,
         ComponentType::Segment, ComponentType::Sound, ComponentType::Effect,
+        ComponentType::Conversion,
     };
     return types;
 }

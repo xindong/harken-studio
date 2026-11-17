@@ -368,6 +368,9 @@
         "bus": {
           "$ref": "#/$defs/busComponent"
         },
+        "conversion": {
+          "$ref": "#/$defs/conversionComponent"
+        },
         "effect": {
           "$ref": "#/$defs/effectComponent"
         },
@@ -393,6 +396,91 @@
           "$ref": "#/$defs/variableComponent"
         }
       },
+      "type": "object"
+    },
+    "conversionComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "platforms": {
+          "items": {
+            "$ref": "#/$defs/conversionPlatformConfig"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "platforms"
+      ],
+      "type": "object"
+    },
+    "conversionPlatformConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "PCM",
+            "Vorbis"
+          ]
+        },
+        "platformId": {
+          "$ref": "#/$defs/projectPlatformId"
+        },
+        "sampleRateTiers": {
+          "items": {
+            "$ref": "#/$defs/conversionSampleRateTier"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "vorbisQuality": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "platformId",
+        "format",
+        "vorbisQuality",
+        "sampleRateTiers"
+      ],
+      "type": "object"
+    },
+    "conversionSampleRateTier": {
+      "additionalProperties": false,
+      "properties": {
+        "maxBytes": {
+          "oneOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sampleRate": {
+          "enum": [
+            0,
+            8000,
+            11025,
+            16000,
+            22050,
+            24000,
+            32000,
+            44100,
+            48000
+          ],
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxBytes",
+        "sampleRate"
+      ],
       "type": "object"
     },
     "definitionAudioComponent": {
@@ -565,6 +653,18 @@
           "type": "object"
         }
       ]
+    },
+    "fieldGroupConversionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "settingsRef": {
+          "$ref": "#/$defs/fieldGroupGuid"
+        }
+      },
+      "required": [
+        "settingsRef"
+      ],
+      "type": "object"
     },
     "fieldGroupEffectFields": {
       "additionalProperties": false,
@@ -751,6 +851,36 @@
       ],
       "type": "object"
     },
+    "fieldGroupSharedConversion": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupConversionPayload"
+        }
+      },
+      "required": [
+        "inherit"
+      ],
+      "then": {
+        "required": [
+          "values"
+        ]
+      },
+      "type": "object"
+    },
     "fieldGroupSharedEffect": {
       "additionalProperties": false,
       "if": {
@@ -784,6 +914,9 @@
     "fieldGroupSharedGroups": {
       "additionalProperties": false,
       "properties": {
+        "conversion": {
+          "$ref": "#/$defs/fieldGroupSharedConversion"
+        },
         "effect": {
           "$ref": "#/$defs/fieldGroupSharedEffect"
         },
@@ -801,7 +934,8 @@
         "output",
         "send",
         "spatialRating",
-        "effect"
+        "effect",
+        "conversion"
       ],
       "type": "object"
     },
@@ -1786,6 +1920,16 @@
           ],
           "type": "integer"
         },
+        "defaultConversion": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objectReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "renderSampleRate": {
           "type": "integer"
         }
@@ -1903,7 +2047,8 @@
           "enum": [
             "Variable",
             "Attenuation",
-            "Effect"
+            "Effect",
+            "Conversion"
           ]
         }
       },
@@ -3029,6 +3174,58 @@
     },
     {
       "pathPatterns": [
+        "Conversions/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 9,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.conversion",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.conversion"
+    },
+    {
+      "pathPatterns": [
         "Busses/**/*.vp"
       ],
       "required": false,
@@ -3359,7 +3556,8 @@
         "project.action",
         "project.variable",
         "project.attenuation",
-        "project.effect"
+        "project.effect",
+        "project.conversion"
       ],
       "rule": "documentIdMirrorsRoot"
     },
@@ -3633,6 +3831,31 @@
             "Container",
             "Track",
             "Segment"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "guid",
+          "path": [
+            "fieldGroups",
+            "shared",
+            "conversion",
+            "values",
+            "settingsRef"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "object",
+          "path": [
+            "audio",
+            "defaultConversion"
+          ],
+          "targetTypes": [
+            "Conversion"
           ]
         }
       ],

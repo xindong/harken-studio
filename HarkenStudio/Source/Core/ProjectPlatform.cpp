@@ -1,6 +1,7 @@
 #include "Core/Components/VSelection.h"
 #include "ProjectPlatform.h"
 #include "Components/VMixNode.h"
+#include "Components/VConversion.h"
 #include "FieldGroupProjectAdapter.h"
 
 #include "ProjectTypes.h"
@@ -115,7 +116,7 @@ bool readProfile(const QJsonValue& value, ProjectPlatformProfile* profile)
 class ReferenceValidator
 {
 public:
-    explicit ReferenceValidator(const QVector<ProjectPlatform>& platforms)
+    explicit ReferenceValidator(const QVector<ProjectPlatform>& platforms) : platforms_(platforms)
     {
         for (const auto& platform : platforms) ids_.insert(platform.id);
     }
@@ -177,6 +178,13 @@ public:
                         errors.append(QStringLiteral("Duplicate platform scope at %1").arg(rowPath));
                     keys.insert(key);
                 }
+            } else if (it.key() == QStringLiteral("conversion") && childPath.endsWith(QStringLiteral("/components/conversion"))) {
+                VConversion conversion;
+                QString error;
+                if (!it.value().isObject() || !conversion.fromJson(it.value().toObject())
+                    || !validateConversionPlatforms(conversion.platforms, platforms_, &error))
+                    errors.append(QStringLiteral("Invalid Conversion at %1: %2").arg(childPath,
+                        error.isEmpty() ? QStringLiteral("Invalid platform configuration") : error));
             } else if (it.key() == QStringLiteral("sources")) {
                 QString error;
                 const auto sources = it->isObject()
@@ -222,6 +230,7 @@ public:
     QStringList errors;
 
 private:
+    const QVector<ProjectPlatform>& platforms_;
     QSet<ProjectPlatformId> ids_;
 };
 
@@ -411,6 +420,9 @@ bool validateProject(const ProjectData& project, QString* error)
     QJsonObject root{{QStringLiteral("deployPlatforms"), platformsToJson(project.platforms)}};
     QMap<QString, QJsonObject> documents;
     for (const auto* item : referenceOwners(project)) {
+        if (const auto* conversion = item->comp<VConversion>();
+            conversion && !validateConversionPlatforms(conversion->platforms, project.platforms, error))
+            return false;
         QJsonObject json{{QStringLiteral("platformOverrides"), PlayablePropertyAuthoringV1::platformOverridesToJson(item->platformOverrides)}};
         QJsonObject fieldGroupPlatforms;
         const auto addGroups = [&](const auto& group) {

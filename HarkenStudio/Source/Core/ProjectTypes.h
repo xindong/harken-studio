@@ -92,7 +92,8 @@ enum class ProjectItemType {
     Action = 7,
     Variable = 8,
     Attenuation = 9,
-    Effect = 10
+    Effect = 10,
+    Conversion = 11
 };
 
 using SendMode = harkenprojectschema::SendMode;
@@ -829,6 +830,7 @@ struct ProjectData
     std::vector<ProjectFileBinding> actions;
     std::vector<ProjectFileBinding> attenuationItems;
     std::vector<ProjectFileBinding> effectItems;
+    std::vector<ProjectFileBinding> conversionItems;
     std::vector<ProjectFileBinding> busses;
     std::vector<ProjectFileBinding> variables;
     std::vector<ProjectFolderBinding> folders;
@@ -881,6 +883,7 @@ struct ProjectData
     QStringList platformIds() const { return ProjectPlatformSemantics::ids(platforms); }
     int                sampleRate         = 48000;
     AudioChannelConfig channelConfig      = AudioChannelConfig::Stereo_2_0;
+    QUuid defaultConversionRef;
 
     QString packBuildOutputDir;
     bool buildExportProjectData = false;
@@ -992,7 +995,7 @@ inline ObjectIdRepairResult ensureUniqueObjectIds(ProjectData& project)
         if (project.root) fn(project.root.get());
         std::vector<ProjectFileBinding>* buckets[] = {
             &project.busses, &project.actions,
-            &project.attenuationItems, &project.effectItems, &project.variables,
+            &project.attenuationItems, &project.effectItems, &project.conversionItems, &project.variables,
             &project.layers };
         for (auto* bucket : buckets)
             for (auto& binding : *bucket) {

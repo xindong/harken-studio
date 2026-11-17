@@ -30,6 +30,7 @@
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VAttenuation.h"
+#include "Components/VConversion.h"
 #include "Components/VEffect.h"
 
 #include <QFile>
@@ -1226,7 +1227,20 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
     root["audio"] = QJsonObject{
         {"renderSampleRate", project.sampleRate},
         {"channelConfig", static_cast<int>(project.channelConfig)},
+        {"defaultConversion", QJsonValue(QJsonValue::Null)},
     };
+    if (!project.defaultConversionRef.isNull()) {
+        const auto target = referencesByGuid_.constFind(project.defaultConversionRef);
+        if (target == referencesByGuid_.cend()) {
+            lastError_ = QStringLiteral("Default Conversion does not exist");
+            return {};
+        }
+        const auto reference = persistentReference(target->objectId, ProjectItem::Type::Conversion);
+        if (reference.isEmpty()) return {};
+        auto audio = root["audio"].toObject();
+        audio["defaultConversion"] = reference;
+        root["audio"] = audio;
+    }
     root["deployPlatforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
 
     emit progressChanged(20, tr("Saving project structure..."));
@@ -1578,6 +1592,14 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (!ProjectPlatformSemantics::platformsFromJson(root["deployPlatforms"], &project.platforms, &lastError_))
         return false;
     const QJsonObject audio = root["audio"].toObject();
+    project.defaultConversionRef = {};
+    const auto defaultConversion = audio.value(QStringLiteral("defaultConversion"));
+    if (!defaultConversion.isNull() && !defaultConversion.isUndefined()) {
+        uint32_t objectId = 0;
+        if (!transientReference(defaultConversion, ProjectItem::Type::Conversion, &objectId))
+            return false;
+        project.defaultConversionRef = QUuid(defaultConversion.toObject().value(QStringLiteral("id")).toString());
+    }
     if (audio.contains("renderSampleRate")) {
         project.sampleRate = audio["renderSampleRate"].toInt(project.sampleRate);
     }
@@ -1809,6 +1831,10 @@ QJsonObject ProjectSerializer::itemDocument(const ProjectItem& item,
     case ItemTypeCatalog::Bucket::Attenuations:
         content = attenuationPackToJson(item);
         type = QStringLiteral("project.attenuation");
+        break;
+    case ItemTypeCatalog::Bucket::Conversions:
+        content = conversionPackToJson(item);
+        type = QStringLiteral("project.conversion");
         break;
     case ItemTypeCatalog::Bucket::Effects:
         content = effectPackToJson(item);
@@ -2216,6 +2242,47 @@ bool ProjectSerializer::attenuationPackFromJson(const QJsonObject& json, Project
         }
     }
 
+    item.children.clear();
+    return true;
+}
+
+QJsonObject ProjectSerializer::conversionPackToJson(const ProjectItem& item) const
+{
+    if (item.type != ProjectItem::Type::Conversion) return {};
+    const auto* conversion = item.comp<VConversion>();
+    if (!conversion) return {};
+    QJsonObject obj;
+    writeS3RootIdentity(obj, item);
+    obj[QStringLiteral("parentRef")] = persistentParentReference(item);
+    if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
+    obj[QStringLiteral("components")] = QJsonObject{
+        {componentTypeName(ComponentType::Conversion), conversion->toJson()}};
+    return obj;
+}
+
+bool ProjectSerializer::conversionPackFromJson(const QJsonObject& json, ProjectItem& item) const
+{
+    if (!ProjectDocument::validateFieldGroupAuthoring(json, &lastError_)
+        || json.value(QStringLiteral("type")).toString() != QStringLiteral("Conversion"))
+        return false;
+    item.type = ProjectItem::Type::Conversion;
+    if (!readS3RootIdentity(json, item, "Conversion") || item.guid.isNull()) return false;
+    if (!referencesByGuid_.contains(item.guid)
+        && !registerReadGuid(item.guid, item.type, item.guid, item.name))
+        return false;
+    const auto registered = referencesByGuid_.constFind(item.guid);
+    if (registered == referencesByGuid_.cend() || registered->type != item.type) return false;
+    item.objectID = registered->objectId;
+    if (!json.value(QStringLiteral("parentRef")).isObject()
+        || !loadParentReference(json.value(QStringLiteral("parentRef")).toObject(), &item.parentRef))
+        return false;
+    item.attachDefaultComponents();
+    const auto components = json.value(QStringLiteral("components")).toObject();
+    const auto value = components.value(componentTypeName(ComponentType::Conversion));
+    if (!value.isObject() || !item.comp<VConversion>()->fromJson(value.toObject())) {
+        lastError_ = QStringLiteral("Invalid Conversion fields");
+        return false;
+    }
     item.children.clear();
     return true;
 }

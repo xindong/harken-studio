@@ -76,7 +76,8 @@ QStringList managedPackDirectories()
 {
     return {QStringLiteral("Actions"), QStringLiteral("Attenuations"),
             QStringLiteral("Busses"), QStringLiteral("Layers"),
-            QStringLiteral("Variables"), QStringLiteral("Effects")};
+            QStringLiteral("Variables"), QStringLiteral("Effects"),
+            QStringLiteral("Conversions")};
 }
 
 QString domainForFolder(const QString& folder)
@@ -93,6 +94,8 @@ QString domainForFolder(const QString& folder)
         return QStringLiteral("pack.attenuation");
     if (folder.compare(QStringLiteral("Effects"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.effect");
+    if (folder.compare(QStringLiteral("Conversions"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("pack.conversion");
     return {};
 }
 
@@ -110,6 +113,8 @@ QString documentTypeForFolder(const QString& folder)
         return QStringLiteral("project.attenuation");
     if (folder.compare(QStringLiteral("Effects"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("project.effect");
+    if (folder.compare(QStringLiteral("Conversions"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("project.conversion");
     return {};
 }
 
@@ -134,6 +139,8 @@ QString packDomain(const QJsonObject& object, int schemaVersion)
         return QStringLiteral("pack.attenuation");
     if (type.compare(QStringLiteral("Effect"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.effect");
+    if (type.compare(QStringLiteral("Conversion"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("pack.conversion");
     return {};
 }
 
@@ -330,7 +337,8 @@ QSet<QString> inheritedDocumentPaths(const QSet<QString>& references)
     for (const QString& path : references) {
         const QString domain = domainForFolder(path.section(QLatin1Char('/'), 0, 0));
         if (domain == QLatin1String("pack.bus") || domain == QLatin1String("pack.attenuation")
-            || domain == QLatin1String("pack.variable") || domain == QLatin1String("pack.effect"))
+            || domain == QLatin1String("pack.variable") || domain == QLatin1String("pack.effect")
+            || domain == QLatin1String("pack.conversion"))
             result.insert(path);
     }
     return result;
@@ -699,6 +707,9 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         }
         const QJsonObject components = object.value(QStringLiteral("components"))
                                             .toObject();
+        if (object.value(QStringLiteral("type")) == QStringLiteral("Conversion")
+            && !components.value(QStringLiteral("conversion")).isObject())
+            errors.append(QStringLiteral("Conversion component is missing in %1").arg(path));
         for (auto it = components.constBegin(); it != components.constEnd(); ++it) {
             if (!ComponentCatalog::parseComponentName(it.key()).has_value()
                 && !(schemaVersion < kCurrentProjectSchemaVersion
@@ -1032,6 +1043,10 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     };
     executor.referencesResolveCheck = [&](const QList<ProjectSchemaReferenceRule>& references) {
         for (const ProjectSchemaReferenceRule& reference : references) {
+            if (reference.kind == ProjectSchemaReferenceKind::Object) {
+                for (const auto& located : locatedValues(projectRoot, reference.path, rootRelativePath))
+                    validateReference(located.value, located.path, reference.targetTypes, reference.allowNull);
+            }
             for (const PackRecord& pack : packs) {
                 const QList<LocatedValue> values =
                     locatedValues(pack.object, reference.path, pack.path);
@@ -1065,6 +1080,9 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                             located.parent.value(reference.selectorField).toString());
                     }
                     if (reference.kind == ProjectSchemaReferenceKind::Guid) {
+                        if (reference.allowNull && located.value.isString()
+                            && located.value.toString() == QStringLiteral("00000000-0000-0000-0000-000000000000"))
+                            continue;
                         const QString playbackKind = reference.path.contains(QStringLiteral("selections"))
                             && reference.path.back() == QLatin1String("childGuid")
                             ? QStringLiteral("Selection occurrence")

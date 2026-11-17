@@ -256,7 +256,7 @@ def validate_project_source(source: dict[str, Any]) -> None:
         "project.variable",
         "project.attenuation",
     }
-    if not expected.issubset(seen_types) or seen_types - expected - {"project.effect"}:
+    if not expected.issubset(seen_types) or seen_types - expected - {"project.effect", "project.conversion"}:
         raise ValueError("project schema document type set is incomplete or unsupported")
     seen_rules: set[str] = set()
     for rule in rules:

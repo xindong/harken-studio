@@ -300,7 +300,7 @@ const QMap<QString, Contract>& contracts()
             {"value", number()}}, {"property", "value"});
         put({"set_container_property"}, containerProperty);
 
-        const auto scopeProperties = QJsonObject{{"definition_guid", uuid()}, {"group", choice({"output", "send", "spatialRating", "effect"})},
+        const auto scopeProperties = QJsonObject{{"definition_guid", uuid()}, {"group", choice({"output", "send", "spatialRating", "effect", "conversion"})},
             {"scope", choice({"Shared"})}, {"platform_ids", array(projectPlatformIdSchema(), 1, true)},
             {"expected_before", described({{"type", "object"}}, "Complete previous fieldGroups state for optimistic concurrency; validated by the field-group domain parser.")}};
         for (const auto* name : {"set_field_group_mode", "set_field_group_field", "clear_field_group_field_override",
@@ -310,7 +310,7 @@ const QMap<QString, Contract>& contracts()
             const QString command = QLatin1String(name);
             if (command == "set_field_group_mode") { fields.insert("mode", choice({"Local", "Inherit", "UseShared"})); required.append("mode"); }
             if (command == "set_field_group_field" || command == "clear_field_group_field_override") { fields.insert("field", text()); required.append("field"); }
-            if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master.")); required.append("value"); }
+            if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef/settingsRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master or clears settingsRef.")); required.append("value"); }
             if (command == "replace_field_group_sends") {
                 fields.insert("sends", array(object({{"targetBusID", uuid()}, {"sendLevel", number()},
                     {"mode", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 1, 2}}}},
@@ -324,11 +324,11 @@ const QMap<QString, Contract>& contracts()
             auto schema = object(fields, required);
             if (command == "set_field_group_field") {
                 schema.insert("allOf", QJsonArray{QJsonObject{{"oneOf", QJsonArray{
-                    QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef"})}, {"value", QJsonObject{{"anyOf", QJsonArray{uuid(), QJsonObject{{"type", "null"}}}}}}}}},
+                    QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef", "settingsRef"})}, {"value", QJsonObject{{"anyOf", QJsonArray{uuid(), QJsonObject{{"type", "null"}}}}}}}}},
                     QJsonObject{{"properties", QJsonObject{{"field", choice({"spatial.attenuationRef"})}, {"value", uuid()}}}},
                     QJsonObject{{"properties", QJsonObject{{"field", choice({"spatial.is3DEnabled"})}, {"value", boolean()}}}},
                     QJsonObject{{"properties", QJsonObject{{"field", text()}, {"value", number()}}},
-                        {"not", QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef", "spatial.attenuationRef", "spatial.is3DEnabled"})}}}}}}
+                        {"not", QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef", "settingsRef", "spatial.attenuationRef", "spatial.is3DEnabled"})}}}}}}
                 }}}});
             }
             schema.insert("oneOf", QJsonArray{QJsonObject{{"required", QJsonArray{"scope"}}}, QJsonObject{{"required", QJsonArray{"platform_ids"}}}});

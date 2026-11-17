@@ -22,10 +22,12 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VConversion.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VEffect.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionDefaults.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.cpp
@@ -117,10 +119,12 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VConversion.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VEffect.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionDefaults.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.h

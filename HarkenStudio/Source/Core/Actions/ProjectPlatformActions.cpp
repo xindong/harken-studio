@@ -8,6 +8,8 @@
 #include "../FieldGroupProjectAdapter.h"
 #include "../Components/VTrack.h"
 #include "../Components/VMixNode.h"
+#include "../Components/VConversion.h"
+#include "../ConversionDefaults.h"
 #include "../SoundSourceSemantics.h"
 
 namespace VNX {
@@ -35,6 +37,7 @@ struct OwnerState
     QMap<QUuid, PlatformOverrideLedgerV1> clips;
     std::optional<SelectionData> selections;
     std::optional<SoundSources> sources;
+    std::optional<std::vector<ConversionPlatformConfig>> conversions;
 
     bool operator==(const OwnerState&) const = default;
 };
@@ -66,6 +69,7 @@ OwnerState captureOwner(const ProjectItem& item)
             state.clips.insert(clip.clipGuid, clip.platformOverrides);
     }
     if (const auto* sound = item.comp<VSound>()) state.sources = sound->sources;
+    if (const auto* conversion = item.comp<VConversion>()) state.conversions = conversion->platforms;
     return state;
 }
 
@@ -78,6 +82,8 @@ void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
     owner.fieldGroups.spatialRating.platforms.erase(scope);
     owner.fieldGroups.effects.platforms.erase(scope);
     owner.effectPlatforms.erase(id);
+    if (owner.conversions)
+        std::erase_if(*owner.conversions, [&](const auto& row) { return row.platformId == id; });
     for (auto& ledger : owner.clips) ledger.erase(id);
     if (owner.selections) owner.selections->platforms.remove(Platforms::idString(id));
     if (owner.sources)
@@ -99,6 +105,7 @@ bool canApply(const ProjectManager& manager, const EditState& state)
         const auto* item = manager.findItemByGuid(owner.guid);
         if (!item) return false;
         if (owner.sources && !item->comp<VSound>()) return false;
+        if (owner.conversions && !item->comp<VConversion>()) return false;
         if (owner.selections && !item->comp<VSelection>()) return false;
         const auto* track = item->comp<VTrack>();
         for (auto it = owner.clips.begin(); it != owner.clips.end(); ++it) {
@@ -180,6 +187,7 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
             }
         }
         if (owner.sources) item->comp<VSound>()->sources = *owner.sources;
+        if (owner.conversions) item->comp<VConversion>()->platforms = *owner.conversions;
         item->markDirty();
         changed.append(item);
     }
@@ -202,11 +210,19 @@ ActionResult commitEdit(ProjectManager* manager, EditState before, EditState aft
     for (const auto& id : Platforms::ids(before.root.platforms))
         if (!Platforms::ids(after.root.platforms).contains(id)) removedIds.append(id);
     const bool membershipChanged = Platforms::ids(before.root.platforms) != Platforms::ids(after.root.platforms);
-    if (!removedIds.isEmpty()) {
+    if (membershipChanged) {
         for (const auto* item : Platforms::referenceOwners(*project)) {
             auto old = captureOwner(*item);
             auto removed = old;
             for (const auto& id : removedIds) removeReferences(removed, QUuid(id));
+            if (removed.conversions) {
+                for (const auto& platform : after.root.platforms) {
+                    if (Platforms::find(before.root.platforms, platform.id)) continue;
+                    auto row = defaultConfigFor(platform.basePlatform);
+                    row.platformId = platform.id;
+                    removed.conversions->push_back(std::move(row));
+                }
+            }
             if (old == removed) continue;
             before.owners.append(std::move(old));
             after.owners.append(std::move(removed));
