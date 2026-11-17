@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
-from script_loader import load_script_module
 
-
-SCRIPT = Path(__file__).resolve().parents[1] / "check_unity_integration_contract.py"
-MODULE = load_script_module("check_unity_integration_contract", SCRIPT)
-REPOSITORY = Path(__file__).resolve().parents[2]
+REPOSITORY = Path(__file__).resolve().parents[3]
+SPEC = importlib.util.spec_from_file_location(
+    "check_unity_integration_contract",
+    Path(__file__).resolve().with_name("check_unity_integration_contract.py"))
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
 
 
 class UnityIntegrationContractTest(unittest.TestCase):
@@ -98,6 +100,17 @@ class UnityIntegrationContractTest(unittest.TestCase):
             package["samples"] = [{"path": "Samples~/Demo"}]
             package_path.write_text(json.dumps(package), encoding="utf-8")
             with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_generated_binding_must_not_project_the_preview_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            binding = integration / "Runtime/Generated/HarkenNative.g.cs"
+            binding.write_text(
+                binding.read_text(encoding="utf-8") + "\n// VnPreview_PumpNullMixer\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SystemExit, "development preview surface"):
                 MODULE.verify(integration, False)
 
     def test_voice_wrapper_must_forward_to_the_matching_native_call(self) -> None:

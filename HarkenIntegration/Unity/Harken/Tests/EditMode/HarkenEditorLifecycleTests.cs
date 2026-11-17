@@ -111,40 +111,6 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator SuspendedSampleDoesNotClaimTheRuntimeSingleton()
-        {
-            string sampleScene = AssetDatabase.GUIDToAssetPath("df1e14712a3bfa646afce84f432ea5c9");
-            Assert.That(sampleScene, Is.Not.Empty, "Import PlayableDemo before running the sample suspension contract.");
-            EditorSceneManager.OpenScene(sampleScene, OpenSceneMode.Single);
-            yield return new EnterPlayMode();
-            HarkenAudioSystem sampleRuntime = Find<HarkenAudioSystem>();
-            Assert.That(sampleRuntime.gameObject.activeSelf, Is.False);
-            Assert.That(sampleRuntime.Session, Is.Null);
-            Assert.That(HarkenAudioSystem.Instance, Is.Null);
-            Assert.That(FindAll<HarkenAction>().All(action => !action.isActiveAndEnabled), Is.True);
-            Assert.That(Find<HarkenVariable>().isActiveAndEnabled, Is.False);
-            Assert.That(Find<HarkenEmitter>().isActiveAndEnabled, Is.False);
-            Assert.That(Find<HarkenListener>().enabled, Is.False);
-            yield return null;
-            var owner = new GameObject("Independent Runtime");
-            owner.SetActive(false);
-            try
-            {
-                var runtime = owner.AddComponent<HarkenAudioSystem>();
-                var serialized = new SerializedObject(runtime);
-                serialized.FindProperty("autoInitialize").boolValue = false;
-                serialized.FindProperty("persistAcrossScenes").boolValue = false;
-                serialized.ApplyModifiedPropertiesWithoutUndo();
-                owner.SetActive(true);
-                Assert.That(HarkenAudioSystem.Instance, Is.SameAs(runtime));
-                Assert.That(runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
-                Assert.That(runtime.Session, Is.Null);
-            }
-            finally { Object.DestroyImmediate(owner); }
-            yield return new ExitPlayMode();
-        }
-
-        [UnityTest]
         public IEnumerator PrefabUndoRedoAndPreviewOwnershipSurviveActualScriptAndPlayModeReloads()
         {
             HarkenEditorServiceTests.RequirePublicationTooling();

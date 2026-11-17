@@ -8,7 +8,6 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using Harken;
-using Harken.Generated;
 using Harken.Unity.Editor;
 using Object = UnityEngine.Object;
 
@@ -16,7 +15,16 @@ namespace Harken.Unity.Tests
 {
     public sealed class HarkenVariableCatalogTests
     {
-        private static VnObjectId Id(ulong value) => new VnObjectId(0x3da91a64b9474560UL, value);
+        private static class Symbols
+        {
+            public const ulong ExecutionCatalogFingerprint = 0x1111UL;
+            public const ulong CatalogFingerprint = 0x2222UL;
+            public static readonly VnObjectId VehicleRPM = VnObjectId.Parse("67e0c65b-f36e-40d9-80ee-75af00ecf712");
+        }
+
+        private static void RegisterSymbols() => Assert.That(
+            Values.RegisterGeneratedCatalog(Symbols.ExecutionCatalogFingerprint, Symbols.CatalogFingerprint,
+                typeof(Symbols)), Is.EqualTo(VnResult.VN_OK));
 
         [TearDown]
         public void TearDown()
@@ -26,34 +34,26 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void GeneratedConstantsMatchNativeVehicleRpm()
+        public void GuardComparesOnlyAgainstARegisteredCatalog()
         {
-            Assert.That(HarkenVariables.ExecutionCatalogFingerprint, Is.Not.EqualTo(0UL));
-            Assert.That(HarkenVariables.CatalogFingerprint, Is.Not.EqualTo(0UL));
-            if (TryGenerated("VehicleRPM", out VnObjectId id))
-                Assert.That(id, Is.EqualTo(VnObjectId.Parse("67e0c65b-f36e-40d9-80ee-75af00ecf712")));
-            else if (TryGenerated("Demo_Choice", out VnObjectId demo))
-                Assert.That(demo.IsNull, Is.False);
-            else
-                Assert.That(GeneratedVariableCount(), Is.EqualTo(0));
+            var live = new VnVariableCatalogInfoV1 { structSize = 24, executionCatalogFingerprint = 0x9999UL };
+            Assert.That(VariableCatalogGuard.Evaluate(in live), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(Values.RegisterGeneratedCatalog(1UL, 2UL, null), Is.EqualTo(VnResult.VN_INVALID_ARG));
+            RegisterSymbols();
+            Assert.That(VariableCatalogGuard.Evaluate(in live), Is.EqualTo(VnResult.VN_VARIABLE_CATALOG_MISMATCH));
+            live.executionCatalogFingerprint = Symbols.ExecutionCatalogFingerprint;
+            Assert.That(VariableCatalogGuard.Evaluate(in live), Is.EqualTo(VnResult.VN_OK));
         }
 
         [Test]
-        public void TypedRefAndDrawerResolveVehicleRpm()
+        public void DrawerResolvesOnlyRegisteredSymbols()
         {
-            bool resolved = HarkenVariableIdDrawer.TryResolve("VehicleRPM", out VnObjectId id);
-            if (TryGenerated("VehicleRPM", out VnObjectId generated))
-            {
-                Assert.That(resolved, Is.True);
-                Assert.That(id, Is.EqualTo(generated));
-                HarkenVariableId variable = Typed("VehicleRPM");
-                Assert.That(variable.stableId, Is.EqualTo(generated));
-                Assert.That(variable.codeName, Is.EqualTo("VehicleRPM"));
-            }
-            else Assert.That(resolved, Is.False);
+            Assert.That(HarkenVariableIdDrawer.TryResolve("VehicleRPM", out _), Is.False);
+            RegisterSymbols();
+            Assert.That(HarkenVariableIdDrawer.TryResolve("VehicleRPM", out VnObjectId id), Is.True);
+            Assert.That(id, Is.EqualTo(Symbols.VehicleRPM));
+            Assert.That(HarkenVariableIdDrawer.TryResolve("ExecutionCatalogFingerprint", out _), Is.False);
         }
-
-
 
         [Test]
         public void EmitterRequiresVariableRowsAndRejectsInvalidFields()
@@ -161,10 +161,11 @@ namespace Harken.Unity.Tests
         [Test]
         public void TypedGuardCallbackCannotWriteAcrossSessionReplacement()
         {
+            RegisterSymbols();
             VariableCatalogGuard.Query = (ref VnVariableCatalogInfoV1 info) =>
             {
-                info.executionCatalogFingerprint = HarkenVariables.ExecutionCatalogFingerprint;
-                info.sdkCatalogFingerprint = HarkenVariables.CatalogFingerprint ^ 1UL;
+                info.executionCatalogFingerprint = Symbols.ExecutionCatalogFingerprint;
+                info.sdkCatalogFingerprint = Symbols.CatalogFingerprint ^ 1UL;
                 return VnResult.VN_OK;
             };
             VariableCatalogGuard.DisplayMismatchHandler = (live, generated) =>
@@ -220,33 +221,9 @@ namespace Harken.Unity.Tests
                 new[] { typeof(string), typeof(Emitter), typeof(ActionFiring).MakeByRefType() }), Is.Not.Null);
         }
 
-        private static bool TryGenerated(string name, out VnObjectId id)
-        {
-            FieldInfo field = typeof(HarkenVariables).GetField(name, BindingFlags.Public | BindingFlags.Static);
-            if (field == null || field.FieldType != typeof(VnObjectId))
-            {
-                id = default;
-                return false;
-            }
-            id = (VnObjectId)field.GetValue(null);
-            return true;
-        }
-
-        private static int GeneratedVariableCount()
-        {
-            int count = 0;
-            foreach (FieldInfo field in typeof(HarkenVariables).GetFields(BindingFlags.Public | BindingFlags.Static))
-            {
-                if (field.FieldType == typeof(VnObjectId))
-                    count++;
-            }
-            return count;
-        }
-
         private static HarkenVariableId Typed(string name)
         {
-            VnObjectId id = TryGenerated(name, out VnObjectId generated) ? generated : Id(7);
-            return HarkenVariableId.FromGenerated(name, id);
+            return HarkenVariableId.FromGenerated(name, Symbols.VehicleRPM);
         }
     }
 }

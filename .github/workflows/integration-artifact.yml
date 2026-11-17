@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .temp/package/HarkenIntegration
-          tar -C HarkenIntegration -cf - API_SURFACE.md Unity \
+          tar -C HarkenIntegration -cf - Unity \
             | tar -C .temp/package/HarkenIntegration -xf -
           runtime_root=".temp/runtime"
           unity_plugins=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins"
@@ -98,7 +98,7 @@ jobs:
           print(f"Verified {len(manifest.get('required_files', []))} shared Unity Integration files")
           PY
 
-          python3 .scripts/check_unity_integration_contract.py \
+          python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py \
             --integration-root .temp/package/HarkenIntegration/Unity/Harken \
             --require-binaries
 

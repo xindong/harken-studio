@@ -6,7 +6,7 @@ namespace Harken.Unity.Editor
 {
     public static class HarkenVariableCatalogGenerator
     {
-        public const string GeneratedAssetPath = "Packages/com.harken.core/Runtime/Generated/HarkenVariables.g.cs";
+        public const string GeneratedAssetPath = "Assets/Harken/Generated/HarkenVariables.g.cs";
 
         /// <summary>Validates a publication's Variable catalog without writing assets.</summary>
         public static VnResult ValidatePublication(string json, string sourceLabel, out string error)
@@ -42,8 +42,7 @@ namespace Harken.Unity.Editor
                 if (asset.EndsWith("/HarkenVariables.g.cs"))
                     return Path.GetFullPath(asset);
             }
-            string package = Path.GetFullPath(GeneratedAssetPath);
-            return File.Exists(package) ? package : Path.GetFullPath("Assets/Harken/Generated/HarkenVariables.g.cs");
+            return Path.GetFullPath(GeneratedAssetPath);
         }
 
     }

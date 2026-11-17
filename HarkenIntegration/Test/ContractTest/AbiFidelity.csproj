@@ -12,7 +12,7 @@
     AOT toolchain build; that stays a Unity/device dependency).
 
     It compiles the SAME generated + managed API sources the Unity package ships (single
-    source, no copy); the Samples~ scene is intentionally excluded (UnityEngine).
+    source, no copy).
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

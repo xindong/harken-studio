@@ -12,7 +12,6 @@ using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.Profiling;
 using UnityEngine.TestTools;
-using Harken.Generated;
 using Object = UnityEngine.Object;
 
 namespace Harken.Unity.Tests
@@ -74,11 +73,7 @@ namespace Harken.Unity.Tests
                     VariableCatalogGuard.DisplayMismatchHandler = (live, generated) =>
                         Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
                     LogAssert.Expect(LogType.Warning, "Harken Variable API catalog is stale; write still proceeds.");
-                    FieldInfo rpm = typeof(HarkenVariables).GetField("VehicleRPM",
-                        BindingFlags.Public | BindingFlags.Static);
-                    VnObjectId rpmId = rpm != null && rpm.FieldType == typeof(VnObjectId)
-                        ? (VnObjectId)rpm.GetValue(null) : Id(7);
-                    HarkenVariableId variable = HarkenVariableId.FromGenerated("VehicleRPM", rpmId);
+                    HarkenVariableId variable = HarkenVariableId.FromGenerated("VehicleRPM", Id(7));
                     Assert.That(Values.SetValue(variable, 33), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
                     Assert.That(restarted, Is.True);
                     Assert.That(previous.IsActive, Is.False);
@@ -92,10 +87,11 @@ namespace Harken.Unity.Tests
 
         private static void InstallVariableDisplayMismatch()
         {
+            Values.RegisterGeneratedCatalog(0x1111UL, 0x2222UL, typeof(HarkenManagedPlaybackTests));
             VariableCatalogGuard.Query = (ref VnVariableCatalogInfoV1 info) =>
             {
-                info.executionCatalogFingerprint = HarkenVariables.ExecutionCatalogFingerprint;
-                info.sdkCatalogFingerprint = HarkenVariables.CatalogFingerprint ^ 1UL;
+                info.executionCatalogFingerprint = 0x1111UL;
+                info.sdkCatalogFingerprint = 0x2222UL ^ 1UL;
                 return VnResult.VN_OK;
             };
         }

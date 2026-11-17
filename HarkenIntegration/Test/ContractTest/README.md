@@ -18,7 +18,7 @@ authoritative and disables native-library search fallbacks.
 The native suite uses current companion fixtures under `UnityFixture/Data`.
 It covers Init-only startup, atomic Action preparation, language selection,
 failed refresh preservation, renaming, shared leases, asynchronous reads,
-cancellation, retries and restart isolation. Suspended PlayableDemo and retired
+cancellation, retries and restart isolation. Retired
 manifest/index publications are not validation inputs.
 
 To validate a real exported selected-platform directory independently:

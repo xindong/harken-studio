@@ -5,11 +5,10 @@ import json
 import re
 from pathlib import Path
 
-from check_integration_version import version
 
-
-REPOSITORY = Path(__file__).resolve().parents[1]
+REPOSITORY = Path(__file__).resolve().parents[3]
 DEFAULT_INTEGRATION = REPOSITORY / "HarkenIntegration" / "Unity" / "Harken"
+PREVIEW_TOKENS = ("VnPreview", "VN_PREVIEW_")
 FORBIDDEN_UNITY_ROOT_SUFFIXES = {".cpp", ".h", ".uplugin"}
 NATIVE_SUFFIXES = {".a", ".dll", ".dylib", ".lib", ".so"}
 NATIVE_PLUGIN_PATHS = {
@@ -209,12 +208,10 @@ def verify_layout(
                 "VERSION.meta",
                 "package.json.meta",
                 "harken-integration.json.meta",
-                "Samples~.meta",
             }
             allowed = (
                 normalized not in forbidden_meta
                 and (normalized.startswith("Runtime/Plugins/")
-                     or normalized.startswith("Samples~/")
                      or normalized.startswith("Tests/")
                      or normalized.endswith((".unity.meta", ".prefab.meta"))
                      or normalized.endswith((".cs.meta", ".asmdef.meta")))
@@ -251,7 +248,9 @@ def verify_manifests(integration: Path, errors: list[str]) -> None:
     )
     if package.get("name") != "com.harken.core":
         errors.append("package.json name must be com.harken.core")
-    expected_version = version()
+    expected_version = json.loads(
+        (DEFAULT_INTEGRATION / "package.json").read_text(encoding="utf-8")
+    ).get("version")
     if package.get("version") != expected_version:
         errors.append(f"package.json version must match the source checkout ({expected_version})")
     if "samples" in package:
@@ -278,26 +277,14 @@ def verify_manifests(integration: Path, errors: list[str]) -> None:
         errors.append("harken-integration.json native binary source is invalid")
 
 
-def verify_sample_scripts(integration: Path, errors: list[str]) -> None:
-    definitions: dict[str, list[Path]] = {}
-    for meta in integration.rglob("*.cs.meta"):
-        if not meta.with_suffix("").is_file():
-            continue
-        match = re.search(r"^guid: ([0-9a-f]{32})$", meta.read_text(encoding="utf-8"), re.MULTILINE)
-        if match:
-            definitions.setdefault(match.group(1), []).append(meta)
-
-    # Unity serializes MonoScript references as one flow-mapping line in scene/prefab YAML.
-    reference = re.compile(r"^\s*m_Script: \{[^\n}]*\bguid: ([0-9a-f]{32})\b[^\n}]*\}", re.MULTILINE)
-    for asset in (integration / "Samples~").rglob("*"):
-        if asset.suffix not in {".unity", ".prefab"}:
-            continue
-        for guid in set(reference.findall(asset.read_text(encoding="utf-8"))):
-            matches = definitions.get(guid, [])
-            if len(matches) != 1:
+def verify_generated_binding(integration: Path, errors: list[str]) -> None:
+    for path in sorted((integration / "Runtime/Generated").glob("*.g.cs")):
+        text = path.read_text(encoding="utf-8")
+        for token in PREVIEW_TOKENS:
+            if token in text:
                 errors.append(
-                    f"Sample script GUID must resolve to exactly one Integration Package source: "
-                    f"{asset.relative_to(integration).as_posix()}: {guid} has {len(matches)} definitions"
+                    f"Generated binding projects the development preview surface: "
+                    f"{path.relative_to(integration).as_posix()} names {token}"
                 )
 
 
@@ -333,14 +320,14 @@ def verify(integration: Path, require_binaries: bool) -> None:
         raise SystemExit(f"Unity Integration Package root does not exist: {integration}")
     verify_layout(integration, require_binaries, errors)
     verify_manifests(integration, errors)
-    verify_sample_scripts(integration, errors)
+    verify_generated_binding(integration, errors)
     verify_voice_wrappers(integration, errors)
     if errors:
         raise SystemExit("\n".join(errors))
     content = "source-only" if not require_binaries else "assembled"
     print(
-        f"Verified {content} Unity Integration Package layout, manifests, and native "
-        "binary provenance, including thin Voice forwarding."
+        f"Verified {content} Unity Integration Package layout, manifests, native "
+        "binary provenance, generated binding isolation, and thin Voice forwarding."
     )
 
 

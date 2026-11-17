@@ -2,12 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Globalization;
 using System.IO;
 using System.Diagnostics;
 using System.Threading;
 using Harken;
-using Harken.Generated;
 
 namespace Harken.Test
 {
@@ -19,23 +19,22 @@ namespace Harken.Test
             {
                 string catalog = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "VariableCatalog.json"));
                 Require(VariableCatalogEmitter.EmitCSharpFromJson(catalog, "contract", out string generated, out _));
-                Check(generated.Contains("ExecutionCatalogFingerprint = " +
-                    HarkenVariables.ExecutionCatalogFingerprint.ToString(CultureInfo.InvariantCulture) + "UL;"),
-                    "managed and tooling execution fingerprints match");
-                Check(generated.Contains("CatalogFingerprint = " +
-                    HarkenVariables.CatalogFingerprint.ToString(CultureInfo.InvariantCulture) + "UL;"),
-                    "managed and tooling display fingerprints match");
+                ulong execution = GeneratedConstant(generated, "ExecutionCatalogFingerprint");
+                ulong display = GeneratedConstant(generated, "CatalogFingerprint");
+                VnObjectId vehicleRpm = VnObjectId.Parse("67e0c65b-f36e-40d9-80ee-75af00ecf712");
+                Check(generated.Contains("Harken.Values.RegisterGeneratedCatalog(ExecutionCatalogFingerprint, " +
+                    "CatalogFingerprint, typeof(HarkenVariables))"), "generated catalog registers itself");
                 Check(generated.Contains("VehicleRPM = new VnObjectId(0x" +
-                    HarkenVariables.VehicleRPM.high.ToString("x16", CultureInfo.InvariantCulture) + "UL, 0x" +
-                    HarkenVariables.VehicleRPM.low.ToString("x16", CultureInfo.InvariantCulture) + "UL);"),
+                    vehicleRpm.high.ToString("x16", CultureInfo.InvariantCulture) + "UL, 0x" +
+                    vehicleRpm.low.ToString("x16", CultureInfo.InvariantCulture) + "UL);"),
                     "variable generation preserves both GUID halves");
-                string numericId = catalog.Replace("\"" + HarkenVariables.VehicleRPM + "\"", "7");
+                string numericId = catalog.Replace("\"" + vehicleRpm + "\"", "7");
                 Check(VariableCatalogEmitter.EmitCSharpFromJson(numericId, "contract", out _, out _) ==
                     VnResult.VN_BAD_PACK, "numeric variable identity is refused");
                 string numericReplacement = catalog.Replace("\"00000000-0000-0000-0000-000000000000\"", "7");
                 Check(VariableCatalogEmitter.EmitCSharpFromJson(numericReplacement, "contract", out _, out _) ==
                     VnResult.VN_BAD_PACK, "numeric replacement identity is refused");
-                var typed = HarkenVariableId.FromGenerated("VehicleRPM", HarkenVariables.VehicleRPM);
+                var typed = HarkenVariableId.FromGenerated("VehicleRPM", vehicleRpm);
                 var labelId = new VnObjectId(0, 721);
                 string labels = "[{\"anchor\":0,\"name\":\"class\",\"labelId\":\"00000000-0000-4000-8000-000000000001\"}," +
                     "{\"anchor\":1,\"name\":\"A-A\",\"labelId\":\"00000000-0000-4000-8000-000000000002\"}]";
@@ -43,7 +42,7 @@ namespace Harken.Test
                 Require(VariableCatalogEmitter.EmitCSharpFromJson(named, "labels", out string namedGenerated, out _));
                 Check(namedGenerated.Contains("Label_VehicleRPM_class_00000000000040008000000000000001"),
                     "Smooth labels generate stable identities with safe identifiers");
-                Check(namedGenerated.Contains("ExecutionCatalogFingerprint = " + HarkenVariables.ExecutionCatalogFingerprint + "UL;"),
+                Check(namedGenerated.Contains("ExecutionCatalogFingerprint = " + execution + "UL;"),
                     "Smooth labels do not become discrete execution anchors");
                 Check(VariableCatalogEmitter.EmitCSharpFromJson(named.Replace("A-A", "class"), "duplicates", out _, out _) ==
                     VnResult.VN_BAD_PACK, "duplicate label names refused");
@@ -55,7 +54,7 @@ namespace Harken.Test
                     "embedded null label names refused");
                 Check(Values.SetValue(typed, 1, default(Emitter)) == VnResult.VN_INVALID_ARG,
                     "explicit empty emitter never selects global");
-                Check(Values.SetValue(HarkenVariables.VehicleRPM, 1, default(Emitter)) == VnResult.VN_INVALID_ARG,
+                Check(Values.SetValue(vehicleRpm, 1, default(Emitter)) == VnResult.VN_INVALID_ARG,
                     "raw explicit empty emitter never selects global");
                 Check(typeof(Emitter).GetMethod("SetValue") == null &&
                     typeof(Emitter).GetMethod("SetValues") == null, "id-only emitter setters are not public");
@@ -96,7 +95,7 @@ namespace Harken.Test
                 VariableGameplay.GameThreadProbe = () => false;
                 VariableCatalogGuard.Query = (ref VnVariableCatalogInfoV1 info) =>
                     throw new InvalidOperationException("off-thread code reached native query");
-                Check(Values.SetValue(HarkenVariableId.FromGenerated("VehicleRPM", HarkenVariables.VehicleRPM), 1) ==
+                Check(Values.SetValue(HarkenVariableId.FromGenerated("VehicleRPM", vehicleRpm), 1) ==
                     VnResult.VN_INVALID_ARG, "thread guard precedes native entry");
                 Check(Values.SetValue(typed, labelId) == VnResult.VN_INVALID_ARG,
                     "label identity thread guard precedes native entry");
@@ -105,10 +104,11 @@ namespace Harken.Test
                 VariableCatalogGuard.Query = null;
                 VariableGameplay.GameThreadProbe = null;
 
+                Require(Values.RegisterGeneratedCatalog(execution, display, typeof(VariableApiContract)));
                 VnVariableCatalogInfoV1 live = new VnVariableCatalogInfoV1
                 {
                     structSize = 24,
-                    executionCatalogFingerprint = HarkenVariables.ExecutionCatalogFingerprint,
+                    executionCatalogFingerprint = execution,
                     sdkCatalogFingerprint = 1
                 };
                 Require(VariableCatalogGuard.Evaluate(in live));
@@ -129,7 +129,7 @@ namespace Harken.Test
 
                 VariableCatalogGuard.Query = (ref VnVariableCatalogInfoV1 info) =>
                 {
-                    info.executionCatalogFingerprint = HarkenVariables.ExecutionCatalogFingerprint;
+                    info.executionCatalogFingerprint = execution;
                     VariableGameplay.NotifySessionChanged();
                     return VnResult.VN_OK;
                 };
@@ -315,10 +315,17 @@ namespace Harken.Test
             var names = new PackCompanion
             {
                 ProjectId = new VnObjectId(0, 1),
-                Variables = new[] { new PackCompanion.Variable(HarkenVariables.VehicleRPM, "VehicleRPM") }
+                Variables = new[] { new PackCompanion.Variable(variable.stableId, "VehicleRPM") }
             };
             GameplayNames.Publish(GameplayNames.Prepare(names.ProjectId, names,
                 Array.Empty<KeyValuePair<string, GameplayNames.Action>>()));
+        }
+
+        private static ulong GeneratedConstant(string generated, string name)
+        {
+            Match match = Regex.Match(generated, @"\b" + name + @" = (\d+)UL;");
+            if (!match.Success) throw new InvalidOperationException(name + " is missing from generated code");
+            return ulong.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
         }
 
         private static void Require(VnResult result)

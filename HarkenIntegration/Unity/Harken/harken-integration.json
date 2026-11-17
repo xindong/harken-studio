@@ -68,7 +68,6 @@
     "Editor/HarkenPluginImporterSetup.cs",
     "Editor/HarkenProjectSettingsProvider.cs",
     "Editor/HarkenProjectSettingsProvider.cs.meta",
-    "Samples~/PlayableDemo/README.md",
     "Tests/EditMode/HarkenComponentTests.cs",
     "Tests/EditMode/HarkenEditorServiceTests.cs",
     "Tests/EditMode/HarkenEditorLifecycleTests.cs",

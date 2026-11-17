@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location(
     "api_surface", ROOT / "HarkenIntegration/Unity/Binding/api_surface.py")
 surface = importlib.util.module_from_spec(SPEC)

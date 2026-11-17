@@ -1,5 +1,4 @@
 using System;
-using Harken.Generated;
 
 namespace Harken
 {
@@ -11,17 +10,20 @@ namespace Harken
             {
                 return VnResult.VN_INVALID_ARG;
             }
-            if (live.executionCatalogFingerprint !=
-                HarkenVariables.ExecutionCatalogFingerprint)
+            if (GeneratedSymbols == null)
+            {
+                return VnResult.VN_OK;
+            }
+            if (live.executionCatalogFingerprint != GeneratedExecutionFingerprint)
             {
                 return VnResult.VN_VARIABLE_CATALOG_MISMATCH;
             }
             if (live.sdkCatalogFingerprint != 0 &&
-                live.sdkCatalogFingerprint != HarkenVariables.CatalogFingerprint)
+                live.sdkCatalogFingerprint != GeneratedCatalogFingerprint)
             {
                 DisplayMismatchCount++;
                 DisplayMismatchHandler?.Invoke(
-                    live.sdkCatalogFingerprint, HarkenVariables.CatalogFingerprint);
+                    live.sdkCatalogFingerprint, GeneratedCatalogFingerprint);
 #if UNITY_5_3_OR_NEWER
                 UnityEngine.Debug.LogWarning(
                     "Harken Variable API catalog is stale; write still proceeds.");
@@ -49,6 +51,19 @@ namespace Harken
                 ? result : VnResult.VN_NOT_INITIALIZED;
         }
 
+        public static void Register(ulong executionFingerprint, ulong catalogFingerprint, Type symbols)
+        {
+            GeneratedExecutionFingerprint = executionFingerprint;
+            GeneratedCatalogFingerprint = catalogFingerprint;
+            GeneratedSymbols = symbols;
+        }
+
+        public static Type GeneratedSymbols { get; private set; }
+
+        public static ulong GeneratedExecutionFingerprint { get; private set; }
+
+        public static ulong GeneratedCatalogFingerprint { get; private set; }
+
         public static int DisplayMismatchCount { get; private set; }
 
         public static Action<ulong, ulong> DisplayMismatchHandler;
@@ -58,6 +73,9 @@ namespace Harken
         public static void ResetTestState()
         {
             Query = null;
+            GeneratedSymbols = null;
+            GeneratedExecutionFingerprint = 0;
+            GeneratedCatalogFingerprint = 0;
             DisplayMismatchCount = 0;
             DisplayMismatchHandler = null;
         }

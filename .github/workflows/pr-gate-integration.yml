@@ -46,8 +46,8 @@ jobs:
       - name: Check Integration source contracts before compilation
         run: |
           python .scripts/check_integration_version.py
-          python .scripts/check_unity_integration_contract.py
-          python .scripts/tests/test_check_unity_integration_contract.py -v
+          python HarkenIntegration/Unity/Binding/check_unity_integration_contract.py
+          python HarkenIntegration/Unity/Binding/test_check_unity_integration_contract.py -v
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -127,10 +127,10 @@ jobs:
         run: python3 .scripts/check_integration_version.py
 
       - name: Check Unity Integration source contract
-        run: python3 .scripts/check_unity_integration_contract.py
+        run: python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py
 
       - name: Test Unity Integration source contract
-        run: python3 .scripts/tests/test_check_unity_integration_contract.py -v
+        run: python3 HarkenIntegration/Unity/Binding/test_check_unity_integration_contract.py -v
 
       - name: Install macOS build deps
         run: brew install ninja
