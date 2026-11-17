@@ -21,6 +21,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include <QTest>
 #include <QTimer>
 #include <QThread>
 #include <QScopeGuard>
@@ -295,7 +296,7 @@ TEST_F(HubCliTest, AutomaticPreferencesNotifyTheRunningServiceWithoutOpeningTheG
             EXPECT_TRUE(result["backgroundNotified"].toBool());
             EXPECT_EQ(result[key].toBool(), QString::fromLatin1(value) == "true");
         }
-    EXPECT_EQ(notifications, 4);
+    EXPECT_TRUE(QTest::qWaitFor([&] { return notifications == 4; }, 5000)) << notifications;
 }
 
 TEST_F(HubCliTest, UpdateApplicationRejectsActiveTransactionsAndUntrustedFilesBeforeConsentOrElevation)
