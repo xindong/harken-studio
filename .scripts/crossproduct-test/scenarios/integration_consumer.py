@@ -15,7 +15,7 @@ def run(ctx) -> None:
     code = run_bounded([str(ctx.args.dotnet), "run", "--project", str(HERE / "dotnet" / "HarkenCrossProductConsumer.csproj"),
                         "--configuration", "Release", "--artifacts-path", str(ctx.work / "dotnet"),
                         f"-p:HarkenPackageRoot={ctx.args.integration_package}", "--",
-                        str(native), str(exported["main"]), content.ACTIONS["tone"]],
+                        str(native), str(exported["main"]), content.ACTIONS["tone"], content.VARIABLE],
                        timeout=ctx.args.timeout, log=log)
     text = log.read_text(encoding="utf-8", errors="replace")
     ctx.details["consumer"] = text.strip().splitlines()[-1] if text.strip() else ""

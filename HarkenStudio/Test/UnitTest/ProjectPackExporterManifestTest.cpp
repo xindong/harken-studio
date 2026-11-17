@@ -425,27 +425,6 @@ void expectMediaMatchesDefinition(const QByteArray& bytes,
 }
 
 
-void preserveUnityFixture(const QString& sourceRoot)
-{
-    const QByteArray targetUtf8 = qgetenv("HARKEN_UNITY_FIXTURE_OUT");
-    if (targetUtf8.isEmpty())
-        return;
-    const QString targetRoot = QString::fromUtf8(targetUtf8);
-    QDir target(targetRoot);
-    if (target.exists())
-        ASSERT_TRUE(target.removeRecursively());
-    ASSERT_TRUE(QDir().mkpath(targetRoot));
-    QDirIterator files(sourceRoot, QDir::Files, QDirIterator::Subdirectories);
-    while (files.hasNext()) {
-        const QString source = files.next();
-        const QString relative = QDir(sourceRoot).relativeFilePath(source);
-        const QString destination = target.filePath(relative);
-        ASSERT_TRUE(QDir().mkpath(QFileInfo(destination).absolutePath()));
-        ASSERT_TRUE(QFile::copy(source, destination))
-            << destination.toStdString();
-    }
-}
-
 void expectCanonicalPackParsesWithPartition(const QString& path)
 {
     const QByteArray bytes = readFileBytes(path);
@@ -1830,7 +1809,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
     registry.clear();
 }
 
-TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
+TEST(EditorProjectPackExporterManifest, ExportsContainerAndVariableProjectDeterministically)
 {
     qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir sources;
@@ -1960,15 +1939,6 @@ TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
         const QByteArray bytes = readFileBytes(QDir(first.path()).filePath(relative));
         ASSERT_FALSE(bytes.isEmpty()) << relative.toStdString();
         ASSERT_EQ(bytes, readFileBytes(QDir(second.path()).filePath(relative))) << relative.toStdString();
-    }
-    const QString preserved = QString::fromUtf8(qgetenv("HARKEN_UNITY_FIXTURE_OUT"));
-    if (!preserved.isEmpty()) {
-        ASSERT_FALSE(QDir(preserved).exists());
-        for (const QString& relative : relativeFiles) {
-            const QString target = QDir(preserved).filePath(relative);
-            ASSERT_TRUE(QDir().mkpath(QFileInfo(target).absolutePath()));
-            ASSERT_TRUE(QFile::copy(QDir(first.path()).filePath(relative), target));
-        }
     }
 }
 

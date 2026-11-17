@@ -54,14 +54,6 @@ retries with a shortened descriptor. `HarkenAbi.CheckLayout()` alone is a
 managed-layout check, not a native capability probe; old gameplay calls can
 still work with the old library.
 
-For the focused Variable write-scope check, generate the native fixture and run:
-
-```powershell
-ctest --test-dir build-nc -C RelWithDebInfo -R '^PackComposition.VariableApiSetValuePreservesWriteScopeAndPublishesInitFixture$' --output-on-failure
-$env:HARKEN_VARIABLE_INIT = (Resolve-Path ".temp/variable-sdk-init.pack").Path
-dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- --variables-only
-```
-
 `--state-only-unavailable` verifies capability refusal against an older native
 library. Unity compilation, IL2CPP, device behavior and audible output require
 their corresponding environments; this runner covers managed/native contracts.

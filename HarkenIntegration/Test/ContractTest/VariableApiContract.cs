@@ -1,12 +1,8 @@
 using System;
-using System.Collections.Generic;
 using System.Reflection;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Globalization;
 using System.IO;
-using System.Diagnostics;
-using System.Threading;
 using Harken;
 
 namespace Harken.Test
@@ -140,9 +136,7 @@ namespace Harken.Test
                 Check(Values.SetValue(typed, "class") == VnResult.VN_NOT_INITIALIZED,
                     "catalog callbacks cannot submit label name writes into a replacement session");
                 VariableCatalogGuard.ResetTestState();
-                string nativeInit = Environment.GetEnvironmentVariable("HARKEN_VARIABLE_INIT");
-                if (!string.IsNullOrEmpty(nativeInit)) RunNative(nativeInit, typed);
-                Console.WriteLine("[Variable API] optional emitter, deprecation, session and catalog contracts PASS");
+                Console.WriteLine("[Variable API] optional emitter, session and catalog contracts PASS");
                 return true;
             }
             catch (InvalidOperationException error)
@@ -155,170 +149,6 @@ namespace Harken.Test
                 VariableGameplay.GameThreadProbe = null;
                 VariableCatalogGuard.ResetTestState();
             }
-        }
-
-        private static unsafe void RunNative(string path, HarkenVariableId variable)
-        {
-            VnConfig config = HarkenEngine.DefaultConfig();
-            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-            config.maxEmitters = 384;
-            Require(HarkenEngine.Init(config));
-            try
-            {
-                ActivateInit(path);
-                Require(Emitter.Create(out Emitter a));
-                Require(Emitter.Create(out Emitter b));
-                Check(Values.SetValue(variable, new VnObjectId(0, 721)) == VnResult.VN_NO_VARIABLE_LABEL,
-                    "matching catalog lets typed label identity writes reach native validation");
-                Check(Values.SetValue(variable, "Missing", a) == VnResult.VN_UNKNOWN_ID,
-                    "matching catalog lets typed label name writes reach native validation");
-                Require(Values.Resolve("VehicleRPM", out VnObjectId resolved));
-                Check(resolved == variable.stableId, "Variable name resolves the complete generated GUID");
-                Require(Values.SetValue(variable, 0.25f, a));
-                Require(Values.SetValue(variable, 0.5f));
-                Require(Values.SetValue(variable.stableId, 0.75f, b));
-                Require(a.QueryVariable(variable, out VnVariableQueryResultV1 query));
-                Check(query.pendingCount == 2, "local then global are both accepted synchronously");
-                Require(b.QueryVariable(variable, out query));
-                Check(query.pendingCount == 2, "global then local are both accepted synchronously");
-#pragma warning disable CS0618
-                Require(a.SetValue(variable, 0.25f));
-                Require(Values.ResetValues(variable));
-#pragma warning restore CS0618
-                Require(Values.SetValue(variable, 0.5f));
-                Require(Values.SetValue(variable, 0.5f, a));
-                long before = GC.GetAllocatedBytesForCurrentThread();
-                VnResult global = Values.SetValue(variable, 0.5f);
-                VnResult local = Values.SetValue(variable, 0.5f, a);
-                long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                Require(global);
-                Require(local);
-                Check(allocated == 0, "successful unified native setters allocate no managed memory");
-                Require(Values.SetValue("VehicleRPM", 0.5f));
-                Require(Values.SetValue("VehicleRPM", 0.5f, a));
-                before = GC.GetAllocatedBytesForCurrentThread();
-                global = Values.SetValue("VehicleRPM", 0.5f);
-                local = Values.SetValue("VehicleRPM", 0.5f, a);
-                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                Require(global);
-                Require(local);
-                Check(allocated == 0, "name writes allocate no managed memory");
-                Require(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000001", 0.5f));
-                Check(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000002", 0.5f) ==
-                    VnResult.VN_GAMEPLAY_WRONG_PROJECT, "project-qualified writes use the loaded Pack identity");
-                Check(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000001", "Missing") ==
-                    VnResult.VN_UNKNOWN_ID, "name-based label writes resolve the current Variable");
-                var emitters = new Emitter[320];
-                for (int index = 0; index < emitters.Length; ++index)
-                    Require(Emitter.Create(out emitters[index]));
-                before = GC.GetAllocatedBytesForCurrentThread();
-                for (int index = 0; index < emitters.Length; ++index)
-                    Require(Values.SetValue(variable, 0.75f, emitters[index]));
-                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                Check(allocated == 0, "320 scoped native writes allocate no managed memory");
-                foreach (Emitter emitter in emitters)
-                {
-                    Require(emitter.QueryVariable(variable, out query));
-                    Check(query.pendingCount > 0, "all 320 scoped writes are accepted before Update");
-                }
-                Require(emitters[0].QueryVariable(variable, out query));
-                uint pendingBefore = query.pendingCount;
-                before = GC.GetAllocatedBytesForCurrentThread();
-                for (int index = 0; index < 10000; ++index)
-                    Require(Values.SetValue(variable, (index & 1) == 0 ? 0.25f : 0.75f, emitters[0]));
-                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                Check(allocated == 0, "10000 replacements allocate no managed memory");
-                Require(emitters[0].QueryVariable(variable, out query));
-                Check(query.pendingCount == pendingBefore,
-                    "10000 unobserved replacements do not accumulate active writes");
-                foreach (Emitter emitter in emitters) Require(emitter.Destroy());
-                Require(a.Destroy());
-                Check(Values.SetValue(variable, 0, a) == VnResult.VN_STALE_HANDLE,
-                    "stale concrete emitter cannot fall back to global");
-                Check(Values.SetValue("VehicleRPM", 0, a) == VnResult.VN_STALE_HANDLE,
-                    "named stale concrete emitter cannot fall back to global");
-                Console.WriteLine("[Variable API native] scoped320/replacements10000, order, invalid emitter and zero-GC PASS");
-            }
-            finally { HarkenEngine.Term(); }
-            if (Environment.GetEnvironmentVariable("HARKEN_VARIABLE_REALTIME") == "1")
-                RunAppliedCapacity(path, variable);
-        }
-
-        private static void RunAppliedCapacity(string path, HarkenVariableId variable)
-        {
-            VnConfig config = HarkenEngine.DefaultConfig();
-            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_REAL;
-            config.maxEmitters = 384;
-            Require(HarkenEngine.Init(config));
-            try
-            {
-                ActivateInit(path);
-                var emitters = new Emitter[320];
-                for (int index = 0; index < emitters.Length; ++index)
-                    Require(Emitter.Create(out emitters[index]));
-                for (int index = 0; index < emitters.Length; ++index)
-                    Require(Values.SetValue(variable, 0.25f * (1 + index % 3), emitters[index]));
-                foreach (Emitter emitter in emitters)
-                {
-                    Require(emitter.QueryVariable(variable, out VnVariableQueryResultV1 query));
-                    Check(query.pendingCount != 0, "all 320 scoped writes remain pending before Update");
-                }
-                var deadline = Stopwatch.StartNew();
-                bool settled;
-                do
-                {
-                    Require(HarkenEngine.Update());
-                    settled = true;
-                    for (int index = 0; index < emitters.Length; ++index)
-                    {
-                        Require(emitters[index].QueryVariable(variable, out VnVariableQueryResultV1 query));
-                        if (query.pendingCount != 0) settled = false;
-                        else Check(query.currentValue == 0.25f * (1 + index % 3) && query.hasEmitterOverride != 0,
-                            "applied scoped values retain their emitter identity");
-                    }
-                    if (!settled) Thread.Sleep(1);
-                } while (!settled && deadline.ElapsedMilliseconds < 5000);
-                Check(settled, "all 320 scoped writes apply through normal device callbacks and Update");
-                foreach (Emitter emitter in emitters) Require(emitter.Destroy());
-                Console.WriteLine("[Variable API native] device callbacks applied scoped320 with distinct values PASS");
-            }
-            finally { HarkenEngine.Term(); }
-        }
-
-        private static unsafe void ActivateInit(string path)
-        {
-            byte[] utf8 = Encoding.UTF8.GetBytes(Path.GetFullPath(path) + "\0");
-            fixed (byte* p = utf8)
-            {
-                VnCanonicalPackSetMemberV2 member = default;
-                member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV2);
-                member.operation = VnConstants.VN_PACK_MEMBER_CONTENT;
-                member.source.structSize = (uint)sizeof(VnCanonicalPackSetMemberV1);
-                member.source.packStableId = 11;
-                member.source.packKind = VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT;
-                member.source.utf8Path = (IntPtr)p;
-                VnCanonicalPackSetMemberResultV1 row = default;
-                row.structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
-                VnCanonicalPackSetActivationDescV2 desc = default;
-                desc.structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV2);
-                desc.setRevision = 1;
-                desc.memberCount = 1;
-                desc.memberStructSize = member.structSize;
-                desc.members = (IntPtr)(&member);
-                desc.outputMemberCapacity = 1;
-                desc.outputMemberStructSize = row.structSize;
-                desc.outputMembers = (IntPtr)(&row);
-                VnCanonicalPackSetActivationReportV1 report = default;
-                report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
-                Require(HarkenNative.Vn_ActivateCanonicalPackSetV2(in desc, ref report));
-            }
-            var names = new PackCompanion
-            {
-                ProjectId = new VnObjectId(0, 1),
-                Variables = new[] { new PackCompanion.Variable(variable.stableId, "VehicleRPM") }
-            };
-            GameplayNames.Publish(GameplayNames.Prepare(names.ProjectId, names,
-                Array.Empty<KeyValuePair<string, GameplayNames.Action>>()));
         }
 
         private static ulong GeneratedConstant(string generated, string name)

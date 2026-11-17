@@ -38,16 +38,6 @@ namespace Harken.Test
                 InstallNativeResolver(true);
                 return RunAbiFidelity() && StreamSourceContract.Run() ? 0 : 1;
             }
-            if (args.Length == 1 && args[0] == "--variables-only")
-            {
-                InstallNativeResolver(true);
-                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HARKEN_VARIABLE_INIT")))
-                {
-                    Console.Error.WriteLine("--variables-only requires HARKEN_VARIABLE_INIT.");
-                    return 2;
-                }
-                return RunAbiFidelity() && VariableApiContract.Run() ? 0 : 1;
-            }
             if (args.Length == 1 && args[0] == "--state-only-unavailable")
             {
                 InstallNativeResolver(true);
