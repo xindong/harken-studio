@@ -12,6 +12,7 @@
 <p>标准输出为一个 UTF-8 JSON 对象，含 <code>schemaVersion</code> 和 <code>ok</code>。同时检查进程退出码。退出码 0 表示命令成功；2 为参数错误；3 为操作失败；4 表示需要检查清单并确认；5 表示需要接受协议。失败信息可能位于 <code>error</code>，也可能位于 <code>data.steps</code>，报告问题时保留完整结果。</p>
 <p>集成步骤的 <code>status</code>：0 待执行，1 执行中，2 成功，3 警告，4 失败，5 跳过。</p>
 <p>新建或打开工程会启动 Studio；Hub 更新可能只是交给更新桥接服务排队执行。上述返回成功不代表另一个进程已经完成。用返回的事务编号及 <code>updates status</code>、<code>diagnostics transactions</code> 继续核实结果。CLI 自身不打开 Hub 窗口；安装、修复或卸载版本可能出现操作系统的管理员授权提示。</p>
+<p>Unity 集成包以 <code>package.json</code> 识别。安装成功仅表示已审阅的文件操作完成；<code>integrations verify</code> 将已安装文件与安装记录比对。两者都不验证 Unity 编译、播放或目标平台支持，也不执行原生运行库的平台预检。这些能力需在 Unity 中测试。旧包管理、但新来源已不再提供的文件会列入删除清单，即使用户修改过也一样；确认前需让用户审阅并备份需要保留的修改。来源中不存在的非受管工程文件会保留。</p>
 <h2>确认流程</h2>
 <p>成功的工程响应可能包含 <code>data.warnings</code>，表示版本保留记录未能刷新；工程改动已提交，不要重复执行已完成的移除。修复计划的 <code>changes</code> 列出新增、替换、删除和保留项，包括非受管文件的删除。出现 <code>ReviewChanged</code> 错误时，去掉 <code>--confirm</code> 重新执行，并请用户审阅新计划。</p>
 <p>对于 <code>reviewBeforeApply</code> 命令，先不带 <code>--confirm</code> 执行，向用户展示返回的计划。用户同意后，以完全相同的参数加上 <code>--confirm TOKEN</code> 执行。文件或选项变化会使旧标识失效；不能自动接受新标识，必须重新检查计划。</p>

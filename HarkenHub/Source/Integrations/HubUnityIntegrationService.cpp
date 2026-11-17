@@ -141,6 +141,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     inspection.summary = QStringLiteral("The installation record is complete. File contents are checked in the next step.");
     auto& verification = result.steps[2];
     verification.artifacts << installation.path;
+    verification.details << QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
     auto& missing = result.missingFiles;
     auto& modified = result.modifiedFiles;
     auto& unreadable = result.unreadableFiles;
@@ -242,6 +243,8 @@ QString localizeUnityText(const QString& text)
     if (translatedText != text)
         return translatedText;
 
+    if (text == QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity."))
+        return QCoreApplication::translate("HarkenHub", "Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
     if (text == QStringLiteral("Validate Unity project"))
         return QCoreApplication::translate("HarkenHub", "Validate Unity project");
     if (text == QStringLiteral("Validate Harken Unity Integration Package source"))

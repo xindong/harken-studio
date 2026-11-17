@@ -9,9 +9,13 @@
     {
       "version": "0.2.4",
       "date": "2026-11-17",
-      "pullRequests": [277, 284, 320, 322, 328],
+      "pullRequests": [277, 284, 320, 322, 326, 328],
       "contributors": ["liuxin2-sys", "Probus-XD"],
       "changes": [
+        {
+          "category": "improved",
+          "text": "Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes."
+        },
         {
           "category": "added",
           "text": "Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window."

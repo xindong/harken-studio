@@ -2625,9 +2625,6 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     ASSERT_TRUE(service.run(request).success);
     EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
     EXPECT_EQ(readFile(installed + "/Runtime/Generated/HarkenNative.g.cs"), "updated implementation\n");
-    ASSERT_TRUE(QFile::remove(source + "/Runtime/Harken.Core.asmdef"));
-    request.checkOnly = true;
-    EXPECT_FALSE(service.run(request).success);
     ASSERT_TRUE(QFile::remove(installed + "/Runtime/Harken.Core.asmdef"));
     const auto missingRequired = VNH::HubUnityIntegrationService::run(verify);
     EXPECT_FALSE(missingRequired.success);

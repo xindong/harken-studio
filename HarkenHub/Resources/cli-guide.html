@@ -44,6 +44,8 @@ html{color-scheme:light dark}body{font:16px/1.7 system-ui,sans-serif;max-width:9
 <h2>4. Install or update a Unity integration</h2>
 <pre>./HarkenHub.exe --cli integrations install --path "D:/UnityGame" --source "D:/Integration/Harken"</pre>
 <p>Keep Unity closed during changes. Read the returned file list, then repeat the command with its confirmation token to install or update the selected integration package.</p>
+<p>Use a complete package from a trusted release. Hub identifies it using <code>package.json</code> and checks the file operation. A successful installation or <code>integrations verify</code> result does not mean the package has passed Unity compilation, playback or target-platform tests; run those checks in Unity.</p>
+<p>When updating, files owned by the old package and absent from the new package are listed for removal, including older documentation and examples. Edited package files can also be removed: back up any edits you need before confirming. Your own files outside package ownership are kept when they do not conflict with the new package.</p>
 <p>To remove an integration, use <code>integrations remove --path "D:/UnityGame" --backup "D:/Backups/Game-integration-01"</code>. Choose a new backup directory and keep that same path when confirming. Move and restoration commands follow the same review process; see the reference for their parameters.</p>
 <h2>5. Updates, agreements and errors</h2>
 <p>If you close the CLI before a Studio installer starts, the pending attempt may be canceled during recovery. Check <code>updates status</code>, then review and confirm the update again.</p>

@@ -2260,6 +2260,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         sourceVersion = packageVersion(result.integrationSourcePath);
         installedContentHashes = sourceHashes;
+        step.details << QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
         step.summary = QStringLiteral("Validated Integration Package %1: %2 file(s).")
                            .arg(sourceVersion, QString::number(sourceFiles.size()));
         step.artifacts << result.integrationSourcePath;

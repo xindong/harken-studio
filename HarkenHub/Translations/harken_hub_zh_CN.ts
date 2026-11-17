@@ -159,6 +159,7 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes.</source><translation>支持通过 package.json 识别、不再携带旧集成清单的 Unity 集成包；检查集成包文件，不再预检 Unity 各目标平台的运行库。</translation></message>
     <message>
         <source>Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window.</source>
         <translation>无需打开 Hub 窗口，即可通过命令行管理工程、Studio 版本、Unity 集成、设置和更新。</translation>
@@ -3821,6 +3822,7 @@ PACKAGE VERSION</source>
         <source>The installed Integration Package could not be compared because its ownership record is unreadable.</source>
         <translation>无法比较已安装的集成包，因为其所有权记录无法读取。</translation>
     </message>
+    <message><source>Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.</source><translation>Hub 检查的是集成包文件。Unity 编译、播放和目标平台支持情况需在 Unity 中测试。</translation></message>
     <message><source>Validated Integration Package %1: %2 file(s).</source><translation>已验证集成包 %1：共 %2 个文件。</translation></message>
         <message><source>The selected Unity Integration Package source is empty. The Unity project was not changed.</source><translation>所选 Unity 集成包来源为空。Unity 工程未被修改。</translation></message>
         <message><source>Choose or drop a complete Unity/Harken package, then run Check only again.</source><translation>请选择或拖入完整的 Unity/Harken 集成包，然后重新执行检查。</translation></message>
