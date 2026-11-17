@@ -3,6 +3,7 @@
 
 #include "../../Core/LanguageContextService.h"
 #include "../../Core/PlatformContextService.h"
+#include "../../Core/PreviewMediaModeService.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/QtControlSkin.h"
 
@@ -10,6 +11,7 @@
 #include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QSignalBlocker>
 #include <QStyleOptionToolButton>
 #include <QStylePainter>
 #include <QToolButton>
@@ -117,6 +119,24 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     languageCombo_->setToolTip(tr("Edit and Audition Language"));
     leadingLayout->addWidget(languageCombo_);
 
+    previewModeCombo_ = new QComboBox(leading);
+    previewModeCombo_->setObjectName(QStringLiteral("platformBarPreviewMode"));
+    previewModeCombo_->setAccessibleName(tr("Preview Media"));
+    previewModeCombo_->setToolTip(tr("Preview Media"));
+    previewModeCombo_->addItem(tr("Original"), static_cast<int>(PreviewMediaMode::Original));
+    previewModeCombo_->addItem(tr("Converted"), static_cast<int>(PreviewMediaMode::Converted));
+    leadingLayout->addWidget(previewModeCombo_);
+    connect(previewModeCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (!updating_ && index >= 0)
+            PreviewMediaModeService::instance().setMode(
+                static_cast<PreviewMediaMode>(previewModeCombo_->itemData(index).toInt()));
+    });
+    connect(&PreviewMediaModeService::instance(), &PreviewMediaModeService::modeChanged,
+            this, [this](PreviewMediaMode mode) {
+        const QSignalBlocker blocker(previewModeCombo_);
+        previewModeCombo_->setCurrentIndex(previewModeCombo_->findData(static_cast<int>(mode)));
+    });
+
     trailing_ = new QWidget(host_);
     auto* trailingLayout = new QHBoxLayout(trailing_);
     trailingLayout->setContentsMargins(0, 0, 0, 0);
@@ -194,6 +214,12 @@ void PlatformBar::rebuild()
     updating_ = false;
     applyContext(service_->context());
     rebuildLanguages();
+    {
+        const QSignalBlocker blocker(previewModeCombo_);
+        previewModeCombo_->setCurrentIndex(previewModeCombo_->findData(
+            static_cast<int>(PreviewMediaModeService::instance().mode())));
+        previewModeCombo_->setVisible(ProjectManager::instance().isProjectOpen());
+    }
     setVisible(ProjectManager::instance().isProjectOpen() || center_
                || leading_->layout()->count() != 0 || trailing_->layout()->count() != 0);
 }

@@ -151,6 +151,7 @@ InspectorPanel::InspectorPanel(QWidget* parent)
             this, [this](QStringList) {
         ProjectItem* current = currentContextItem();
         const std::optional<PlacementContext> placement = placementContext_;
+        const auto selection = conversionSelection_;
         d->invalidateBuiltPages();
         if (!current)
             return;
@@ -158,6 +159,10 @@ InspectorPanel::InspectorPanel(QWidget* parent)
             showItemInspector(current, *placement);
         else
             showItemInspector(current);
+        QList<ProjectItem*> items;
+        for (const auto& guid : selection)
+            if (auto* item = ProjectManager::instance().findItemByGuid(guid)) items.append(item);
+        setConversionSelection(items);
     });
 
     connect(&ProjectManager::instance(), &ProjectManager::itemCreated,
@@ -522,6 +527,7 @@ void InspectorPanelPrivate::setupEmptyPage()
 
 void InspectorPanel::showEmpty()
 {
+    conversionSelection_.clear();
     placementContext_.reset();
     d->clearItemBindings();
     d->updateContext(QString(), QString());
@@ -549,6 +555,7 @@ InspectorPanelPrivate::Page pageForItemType(ProjectItem::Type type)
 
 void InspectorPanel::showItemInspector(ProjectItem* item)
 {
+    conversionSelection_.clear();
     placementContext_.reset();
     showItemInspectorImpl(item);
 }
@@ -556,8 +563,19 @@ void InspectorPanel::showItemInspector(ProjectItem* item)
 void InspectorPanel::showItemInspector(ProjectItem* item,
                                        const PlacementContext& placement)
 {
+    conversionSelection_.clear();
     placementContext_ = placement;
     showItemInspectorImpl(item);
+}
+
+void InspectorPanel::setConversionSelection(const QList<ProjectItem*>& items)
+{
+    conversionSelection_.clear();
+    for (const auto* item : items)
+        if (item) conversionSelection_.append(item->guid);
+    for (auto* engine : {d->soundEngine_, d->layerEngine_, d->containerEngine_,
+                        d->trackEngine_, d->segmentEngine_})
+        if (engine && engine->currentItem()) engine->setConversionSelection(items);
 }
 
 void InspectorPanel::showItemInspectorImpl(ProjectItem* item)

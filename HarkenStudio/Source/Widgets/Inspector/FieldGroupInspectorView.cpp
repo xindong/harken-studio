@@ -79,6 +79,14 @@ FieldGroupInspectorFieldView FieldGroupInspectorView::field(const QString& field
 {
     FieldGroupInspectorFieldView result;
     if (!valid || perScope.empty()) return result;
+    if (group == FieldGroupId::Conversion) {
+        if (fieldName != QLatin1String("settingsRef")) return result;
+        result.uniform = true;
+        result.value = fromFieldGroupGuid(
+            std::get<ConversionFieldGroup>(perScope.front().resolved.payload).settingsRef);
+        result.perScope.append({std::nullopt, result.value});
+        return result;
+    }
     const auto* descriptor = PlayablePropertyAuthoringV1::fieldByName(fieldName);
     if (!descriptor && fieldName != QLatin1String("effects")) return result;
     const auto property = fieldName == QLatin1String("effects")
@@ -169,7 +177,9 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
         result.diagnostics.append(QStringLiteral("Select a valid definition and field group"));
         return result;
     }
-    if (!resolveEditScopes(project, context, result.editScopes)) {
+    if (group == FieldGroupId::Conversion) {
+        result.editScopes.shared = true;
+    } else if (!resolveEditScopes(project, context, result.editScopes)) {
         result.diagnostics.append(QStringLiteral("Select a valid project target platform"));
         return result;
     }
@@ -193,7 +203,9 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
     }
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     std::vector<FieldGroupScope> scopes;
-    if (result.editScopes.shared) {
+    if (group == FieldGroupId::Conversion) {
+        scopes.push_back(std::nullopt);
+    } else if (result.editScopes.shared) {
         for (const auto& platform : project.platforms)
             scopes.push_back(toFieldGroupGuid(platform.id));
     }

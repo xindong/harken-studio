@@ -384,6 +384,8 @@ const std::vector<CreationSpec>& creationSpecs()
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Effect,      "New_Effect",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
+        { T::Conversion,  "New_Conversion",
+          CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Variable,    "New_Variable",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Bus,         "New_Bus",

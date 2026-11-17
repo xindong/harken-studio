@@ -7,8 +7,10 @@
 #include <QWidget>
 
 #include <cstdint>
+#include <array>
 
 class QFocusEvent;
+class QLabel;
 
 namespace HarkenEditor {
 class AuditionManager;
@@ -57,10 +59,12 @@ protected:
 
 private:
     void installFocusFilterRecursively(QObject* root);
+    void refreshFileProperties();
 
     int panelId_ = 0;
     bool pinned_ = false;
     SourceEditorWidget* editor_ = nullptr;
+    std::array<QLabel*, 6> filePropertyValues_{};
 };
 
 }
