@@ -190,7 +190,7 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
         next.format = static_cast<ConversionFormat>(format_->currentData().toInt());
         commitConfig(next);
     });
-    connect(quality_, &QSpinBox::editingFinished, this, [this] {
+    connect(quality_, &QSpinBox::valueChanged, this, [this] {
         const auto* current = displayedConfig();
         if (!current) return;
         auto next = *current;
