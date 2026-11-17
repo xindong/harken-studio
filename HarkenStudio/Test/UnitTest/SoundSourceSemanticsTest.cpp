@@ -310,6 +310,7 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                     ASSERT_TRUE(retained) << error.toStdString();
                     EXPECT_TRUE(retained->cacheHit);
                     ASSERT_NO_FATAL_FAILURE(expectEquivalent(*reference, *retained));
+                    ASSERT_TRUE(QFile::remove(retained->path));
                     SoundSourceDerivative::MaterializationCache missingCache;
                     const auto regenerated = SoundSourceDerivative::materialize(
                         inputPath, definition, offset, platform, QFileInfo(warm->path).absolutePath(),
