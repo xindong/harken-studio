@@ -180,6 +180,7 @@ def call_model(
         {
             "model": DEFAULT_MODEL,
             "max_tokens": max_tokens,
+            "thinking": {"type": "disabled"},
             "system": system,
             "messages": [{"role": "user", "content": user}],
         }
@@ -223,6 +224,8 @@ def call_model(
         if text:
             return text
         last_error = "empty-model-text"
+        if data.get("stop_reason") == "max_tokens":
+            last_error = "max-tokens-without-text"
         if attempt < attempts:
             time.sleep(2)
     if last_error:
