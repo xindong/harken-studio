@@ -172,7 +172,7 @@ bool preparedSoundsAreCurrent(const Build::CurrentWorldSyncRequestPtr& request)
     }
     for (const auto& sound : preparation.sounds) {
         const auto revision = preparation.contentRevisions.find(sound.binding.soundId);
-        if (sound.samples.empty() && revision != preparation.contentRevisions.end()
+        if (sound.samples.empty() && !sound.media && revision != preparation.contentRevisions.end()
             && Bridge::registeredSoundRevision(sound.binding.soundId) != revision->second)
             return false;
     }
@@ -708,6 +708,22 @@ Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
     }
     return session_->registerRawPcmSlice(soundId, std::move(interleaved), channels,
                                         sampleRate, startFrame, frameCount, loops);
+}
+
+Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerPreviewMediaSlice(
+    harkenstudio::ObjectId soundId, const SoundSourceDerivative::MaterializedArtifact& artifact,
+    uint64_t startFrame, uint64_t frameCount, bool loops)
+{
+    if (!session_) {
+        Bridge::EngineSession::RawPcmSliceRegistration registration;
+        registration.soundId = soundId;
+        registration.startFrame = startFrame;
+        registration.frameCount = frameCount;
+        registration.loops = loops;
+        registration.result = Bridge::kEngineNotInit;
+        return registration;
+    }
+    return session_->registerPreviewMediaSlice(soundId, artifact, startFrame, frameCount, loops);
 }
 
 Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::relocateRawPcmSlice(

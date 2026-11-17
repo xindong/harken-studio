@@ -5,6 +5,8 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "FieldGroupProjectAdapter.h"
 #include "LanguageContextService.h"
+#include "PreviewMediaModeService.h"
+#include "ActionClosureSemantics.h"
 #include "PlatformContextService.h"
 #include "SoundSourceEditing.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
@@ -24,6 +26,7 @@
 #include "RuntimeBridge/PreviewBridge.h"
 #include "AssetPipeline/AssetTypes.h"
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/PathUtils.h"
 #include "Core/LogService.h"
 #include <QDateTime>
 #include <QDir>
@@ -34,6 +37,7 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QDebug>
+#include <QScopedValueRollback>
 #include <iterator>
 #include <algorithm>
 
@@ -86,10 +90,12 @@ void ProjectManager::initializeRuntimeSync()
     auto& assets = AssetRegistry::instance();
     connect(this, &ProjectManager::projectClosed, this, [this] {
         m_runtimeSoundPreparation.clear();
+        m_previewConversions.clear();
     });
     connect(this, &ProjectManager::itemDeleted, this, [this](ProjectItem* item) {
         const auto remove = [this](const ProjectItem* node, const auto& self) -> void {
             m_runtimeSoundPreparation.remove(node->runtimeId());
+            m_previewConversions.remove(node->runtimeId());
             for (const auto& child : node->children) self(child.get(), self);
         };
         if (item) remove(item, remove);
@@ -100,10 +106,27 @@ void ProjectManager::initializeRuntimeSync()
 
     connect(this, &ProjectManager::projectOpened, this,
             [this](ProjectData* project) {
+        bindPreviewMediaContext();
+        refreshPreviewConversions();
         m_pendingRuntimePreparation.reset();
         if (!runtimePrepared())
             syncProjectToRuntime(project);
     }, Qt::DirectConnection);
+
+    connect(this, &ProjectManager::itemPropertyChanged, this,
+            [this](ProjectItem* item, const QString& property) {
+        if (!item) return;
+        if (property == QStringLiteral("sources"))
+            m_runtimeSoundPreparation.remove(item->runtimeId());
+        else if (item->type == ProjectItem::Type::Conversion
+            || property == QStringLiteral("fieldGroups")
+            || property == QStringLiteral("pasteProperties"))
+            refreshPreviewConversions();
+    });
+    connect(this, &ProjectManager::itemMoved, this,
+            [this] { refreshPreviewConversions(); });
+    connect(this, &ProjectManager::itemCreated, this,
+            [this] { refreshPreviewConversions(); });
 
     const auto needsParentResync = [](ProjectItem* item) {
         return item != nullptr && item->type == ProjectItem::Type::Layer;
@@ -453,10 +476,14 @@ void ProjectManager::resyncRefreshedSourceToRuntime(uint32_t sourceId)
                 break;
             }
             const QFileInfo file(asset->absolutePath);
+            QString conversionError;
+            const auto conversion = PreviewMediaModeService::instance().mode() == PreviewMediaMode::Converted
+                ? resolveConversion(*manager.m_currentProject, *item, platform, *asset, &conversionError)
+                : std::nullopt;
             const RuntimeSoundPreparationKey key{
                 asset->absolutePath, asset->contentHash, file.size(),
-                file.lastModified().toMSecsSinceEpoch(), *source, sound->scheduleOffsetSec};
-            if (!file.isFile() || cached->key != key || cached->revision == 0
+                file.lastModified().toMSecsSinceEpoch(), *source, sound->scheduleOffsetSec, conversion};
+            if (!conversionError.isEmpty() || !file.isFile() || cached->key != key || cached->revision == 0
                 || Bridge::registeredSoundRevision(item->runtimeId()) != cached->revision
                 || !Bridge::runtimeObjectExists(item->runtimeId())) {
                 current = false;
@@ -486,8 +513,8 @@ void ProjectManager::resyncSourceToRuntime(uint32_t sourceId)
         for (const auto* set : SoundSourceSemantics::sourceSets(sound->sources)) {
             if (std::any_of(set->entries.begin(), set->entries.end(),
                     [sourceId](const auto& source) { return source.sourceId == sourceId; })) {
-                AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-                return;
+                emit manager.itemPropertyChanged(item, QStringLiteral("sources"), nullptr);
+                break;
             }
         }
     }
@@ -616,6 +643,74 @@ void ProjectManager::syncActionNameForPreview(ProjectItem* actionItem)
     qDebug() << "[PreviewActionName]" << actionItem->name << "-> stable id";
 }
 
+void ProjectManager::bindPreviewMediaContext()
+{
+    if (m_previewMediaContextBound) return;
+    m_previewMediaContextBound = true;
+    connect(&PreviewMediaModeService::instance(), &PreviewMediaModeService::modeChanged,
+            this, &ProjectManager::refreshPreviewConversions);
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, &ProjectManager::refreshPreviewConversions);
+    refreshPreviewConversions();
+}
+
+void ProjectManager::refreshPreviewConversions()
+{
+    if (!m_currentProject || m_closing || m_refreshingPreviewConversions) return;
+    QScopedValueRollback guard(m_refreshingPreviewConversions, true);
+    bindPreviewMediaContext();
+    const bool converted = PreviewMediaModeService::instance().mode() == PreviewMediaMode::Converted;
+    const auto platform = PlatformContextService::instance().context().primary;
+    const auto snapshot = std::make_shared<const FieldGroupEffectiveSnapshot>(
+        buildFieldGroupEffectiveSnapshot(*m_currentProject,
+            toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context()))));
+    QVector<ProjectItem*> changed;
+    for (auto* item : ProjectPlatformSemantics::referenceOwners(*m_currentProject)) {
+        if (item->type != ProjectItem::Type::Sound) continue;
+        PreviewConversionState next;
+        next.converted = converted;
+        next.platform = platform;
+        if (converted) {
+            const auto preset = captureConversionPreset(
+                ReferenceSlotResolution::buildResolutionScope(item, snapshot),
+                m_currentProject->platforms, &next.error);
+            if (preset && !preset->presetGuid.isNull()) {
+                next.presetGuid = preset->presetGuid;
+                const auto config = std::find_if(preset->platforms.begin(), preset->platforms.end(),
+                    [platform](const auto& value) { return value.platformId == platform; });
+                if (config != preset->platforms.end()) next.config = *config;
+            }
+        }
+        const auto previous = m_previewConversions.constFind(item->runtimeId());
+        if (previous != m_previewConversions.cend() && *previous != next)
+            changed.push_back(item);
+        m_previewConversions[item->runtimeId()] = std::move(next);
+    }
+    for (auto* item : changed)
+        emit itemPropertyChanged(item, QStringLiteral("sources"), nullptr);
+}
+
+QSet<harkenstudio::ObjectId> ProjectManager::prepareRuntimePreview(const ProjectItem& root)
+{
+    QSet<harkenstudio::ObjectId> requested;
+    if (!m_currentProject || m_closing) return requested;
+    refreshPreviewConversions();
+    const auto closure = ActionClosureSemantics::playbackContentReferences(
+        *m_currentProject, root.runtimeId(), PlatformContextService::instance().context().primary);
+    for (const auto& object : closure.objects)
+        if (object.type == ProjectItem::Type::Sound) requested.insert(object.stableId);
+    if (PreviewMediaModeService::instance().mode() != PreviewMediaMode::Converted
+        || requested.isEmpty()) return requested;
+    const auto snapshot = buildFieldGroupEffectiveSnapshot(*m_currentProject,
+        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    Bridge::CurrentWorldSoundPreparation preparation;
+    QString error;
+    if (!prepareRuntimeSounds(snapshot, preparation, &error, &requested))
+        LogService::logWarning(LogCategory::RuntimeSync, error);
+    AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+    return requested;
+}
+
 bool ProjectManager::prepareRuntimeSounds(const ProjectData& project,
     Bridge::CurrentWorldSoundPreparation& preparation, QString* error)
 {
@@ -625,18 +720,25 @@ bool ProjectManager::prepareRuntimeSounds(const ProjectData& project,
 }
 
 bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& snapshot,
-    Bridge::CurrentWorldSoundPreparation& preparation, QString* error)
+    Bridge::CurrentWorldSoundPreparation& preparation, QString* error,
+    const QSet<harkenstudio::ObjectId>* requested)
 {
     if (!snapshot.ok()) {
         if (error && !snapshot.diagnostics.empty())
             *error = snapshot.diagnostics.front().message;
         return false;
     }
+    auto& manager = instance();
+    manager.bindPreviewMediaContext();
     const auto platform = PlatformContextService::instance().context().primary;
+    const bool converted = PreviewMediaModeService::instance().mode() == PreviewMediaMode::Converted;
+    const auto effectiveGroups = converted
+        ? std::make_shared<const FieldGroupEffectiveSnapshot>(snapshot) : nullptr;
     preparation = {};
     for (const auto& [guid, item] : snapshot.objects) {
         if (item->type != ProjectItem::Type::Sound)
             continue;
+        if (requested && !requested->contains(item->runtimeId())) continue;
         auto& revision = preparation.contentRevisions[item->runtimeId()];
         const auto* sound = item->comp<VSound>();
         const auto* source = SoundSourceEditing::activeSource(
@@ -653,32 +755,63 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
         QString mediaError;
         const auto binding = soundDescriptor(item, {}, snapshot);
         if (sound && asset && binding && binding->sourceId != 0) {
+            std::optional<ResolvedConversion> conversion;
+            if (converted && manager.m_currentProject) {
+                const auto preset = captureConversionPreset(
+                    ReferenceSlotResolution::buildResolutionScope(item, effectiveGroups),
+                    manager.m_currentProject->platforms, &mediaError);
+                if (preset) conversion = resolveConversion(*preset, platform, *asset, &mediaError);
+                if (!mediaError.isEmpty()) {
+                    LogService::logWarning(LogCategory::RuntimeSync, mediaError);
+                    continue;
+                }
+            }
             const QFileInfo file(asset->absolutePath);
             const RuntimeSoundPreparationKey key{
                 asset->absolutePath, asset->contentHash, file.size(),
                 file.lastModified().toMSecsSinceEpoch(), *source,
-                sound->scheduleOffsetSec};
-            auto& cache = instance().m_runtimeSoundPreparation;
+                sound->scheduleOffsetSec, conversion};
+            auto& cache = manager.m_runtimeSoundPreparation;
             const auto cached = cache.constFind(item->runtimeId());
             if (file.isFile() && cached != cache.cend() && cached->key == key
-                && cached->revision != 0
-                && Bridge::registeredSoundRevision(item->runtimeId()) == cached->revision) {
+                && cached->revision != 0 && (cached->media
+                    || Bridge::registeredSoundRevision(item->runtimeId()) == cached->revision)) {
                 revision = cached->revision;
                 preparation.sounds.push_back({*binding, asset->absolutePath, {}});
+                preparation.sounds.back().media = cached->media;
                 continue;
             }
-            auto media = SoundSourceDerivative::prepare(
-                asset->absolutePath, *source, sound->scheduleOffsetSec,
-                std::nullopt, &mediaError);
-            if (media) {
-                revision = Bridge::soundPcmContentRevision(
-                    media->samples, media->channels, media->sampleRate,
-                    media->loopStartFrame, media->loopEndFrame);
-                if (revision != 0) {
-                    cache[item->runtimeId()] = {key, revision};
-                    preparation.sounds.push_back({*binding, asset->absolutePath,
-                        std::move(media->samples), media->channels, media->sampleRate,
-                        media->loopStartFrame, media->loopEndFrame});
+            if (conversion) {
+                if (!requested) continue;
+                const auto cacheDir = QDir(PathUtils::getDotCacheDir(
+                    QFileInfo(manager.m_currentProject->projectPath).absolutePath()))
+                    .filePath(QStringLiteral("pack/media"));
+                const auto artifact = SoundSourceDerivative::materialize(asset->absolutePath,
+                    *source, sound->scheduleOffsetSec, platform, cacheDir, conversion, &mediaError);
+                const auto prepared = artifact ? Bridge::preparePreviewMedia(*artifact, &mediaError)
+                    : std::nullopt;
+                if (prepared) {
+                    auto media = std::make_shared<const Bridge::PreparedPreviewMedia>(*prepared);
+                    revision = media->contentRevision;
+                    cache[item->runtimeId()] = {key, revision, media};
+                    preparation.sounds.push_back({*binding, asset->absolutePath, {}});
+                    preparation.sounds.back().media = std::move(media);
+                    continue;
+                }
+            } else {
+                auto media = SoundSourceDerivative::prepare(
+                    asset->absolutePath, *source, sound->scheduleOffsetSec,
+                    std::nullopt, &mediaError);
+                if (media) {
+                    revision = Bridge::soundPcmContentRevision(
+                        media->samples, media->channels, media->sampleRate,
+                        media->loopStartFrame, media->loopEndFrame);
+                    if (revision != 0) {
+                        cache[item->runtimeId()] = {key, revision};
+                        preparation.sounds.push_back({*binding, asset->absolutePath,
+                            std::move(media->samples), media->channels, media->sampleRate,
+                            media->loopStartFrame, media->loopEndFrame});
+                    }
                 }
             }
         }

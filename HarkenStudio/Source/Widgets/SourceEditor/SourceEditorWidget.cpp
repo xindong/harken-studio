@@ -3,9 +3,12 @@
 
 #include "SourceEditorWaveformView.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
+#include "Core/AssetPipeline/PathUtils.h"
 #include "Core/AudioEngine.h"
 #include "Core/Components/VSound.h"
 #include "Core/ProjectManager.h"
+#include "Core/PlatformContextService.h"
+#include "Core/PreviewMediaModeService.h"
 #include "Core/SoundSourceSemantics.h"
 #include "Core/AuditionManager.h"
 #include "Core/ThemeAssetCatalog.h"
@@ -14,6 +17,8 @@
 #include "Core/Build/PackagingBridge.h"
 
 #include <QFileInfo>
+#include <QDir>
+#include <QDebug>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -328,6 +333,20 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     }, Qt::QueuedConnection);
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
             this, &SourceEditorWidget::clearSource);
+    previewPlatform_ = PlatformContextService::instance().context().primary;
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, [this](const PlatformContext& context) {
+        if (previewPlatform_ == context.primary)
+            return;
+        previewPlatform_ = context.primary;
+        if (!soundGuid_.isNull())
+            stopPreviewPlayhead();
+    });
+    connect(&PreviewMediaModeService::instance(), &PreviewMediaModeService::modeChanged,
+            this, [this](PreviewMediaMode) {
+        if (!soundGuid_.isNull())
+            stopPreviewPlayhead();
+    });
 
     applyAuditionTheme();
     refreshMetadata();
@@ -380,6 +399,7 @@ void SourceEditorWidget::setAuditionManager(HarkenEditor::AuditionManager* audit
             previewSoundId_ = {};
         }
         preparedSource_.reset();
+        preparedMedia_.reset();
         waveformView_->stopPlayhead();
         refreshAuditionControls();
     });
@@ -453,6 +473,31 @@ std::optional<SoundSourceSemantics::PcmSlice> SourceEditorWidget::previewLoopPcm
     return slice;
 }
 
+std::optional<ResolvedConversion> SourceEditorWidget::previewConversion(
+    const AssetInfo& asset, QString* error) const
+{
+    if (PreviewMediaModeService::instance().mode() != PreviewMediaMode::Converted
+        || !boundSource())
+        return std::nullopt;
+    auto& projects = ProjectManager::instance();
+    const auto* project = projects.currentProject();
+    const auto* sound = projects.findItemByGuid(soundGuid_);
+    if (!project || !sound)
+        return std::nullopt;
+    return resolveConversion(*project, *sound,
+        PlatformContextService::instance().context().primary, asset, error);
+}
+
+QString SourceEditorWidget::previewConversionKey(const AssetInfo& asset,
+    const std::optional<ResolvedConversion>& conversion) const
+{
+    const auto* source = boundSource();
+    return conversion && source
+        ? SoundSourceDerivative::cacheKey(asset.contentHash,
+            SoundSourceSemantics::authoredView(*source, &asset), 0.0, conversion, asset.metadata)
+        : QString{};
+}
+
 bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
 {
     const auto slice = previewPcmSlice(startFrame);
@@ -462,6 +507,36 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         stopPreviewPlayhead();
         return false;
     }
+    QString conversionError;
+    const auto conversion = previewConversion(*asset, &conversionError);
+    if (!conversionError.isEmpty()) {
+        qWarning().noquote() << QStringLiteral("Source preview conversion failed: %1").arg(conversionError);
+        stopPreviewPlayhead();
+        return false;
+    }
+    const auto conversionKey = previewConversionKey(*asset, conversion);
+    auto playbackSlice = *slice;
+    const auto range = boundSource()
+        ? SoundSourceSemantics::effectiveRange(*boundSource(), asset) : std::nullopt;
+    const auto mapConvertedSlice = [&]() {
+        const auto& media = *preparedMedia_;
+        const uint64_t frames = media.encodedMedia ? media.encodedMedia->frameCount
+            : media.samples->size() / media.channels;
+        playbackSlice.channels = media.channels;
+        playbackSlice.sampleRate = media.sampleRate;
+        playbackSlice.loops = media.loopable;
+        playbackSlice.windowStartFrame = media.loopable ? media.loopStartFrame : 0;
+        playbackSlice.windowFrameCount = media.loopable
+            ? media.loopEndFrame - media.loopStartFrame : frames;
+        const uint64_t mapped = static_cast<uint64_t>(std::llround(
+            static_cast<long double>(slice->startFrame - range->trimStartFrame)
+                * media.sampleRate / slice->sampleRate));
+        playbackSlice.startFrame = startFrame == 0 ? playbackSlice.windowStartFrame
+            : std::clamp(mapped, playbackSlice.windowStartFrame,
+                playbackSlice.windowStartFrame + playbackSlice.windowFrameCount - 1);
+        playbackSlice.frameCount = playbackSlice.loops ? playbackSlice.windowFrameCount
+            : playbackSlice.windowStartFrame + playbackSlice.windowFrameCount - playbackSlice.startFrame;
+    };
 
     auto& engine = AudioEngine::instance();
     if (!engine.startOutput()) {
@@ -485,10 +560,13 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
     if (const SoundSourceDef* source = boundSource()) {
         bool prepareSource = !preparedSource_ || *preparedSource_ != *source
             || preparedSourcePath_ != asset->absolutePath
-            || preparedSourceContentHash_ != asset->contentHash;
+            || preparedSourceContentHash_ != asset->contentHash
+            || preparedConversionKey_ != conversionKey;
         if (!prepareSource) {
+            if (preparedMedia_)
+                mapConvertedSlice();
             registrationResult = engine.relocateRawPcmSlice(
-                previewSoundId_, slice->startFrame).result;
+                previewSoundId_, playbackSlice.startFrame).result;
             prepareSource = registrationResult == HarkenEditor::Bridge::kEngineUnknownId
                 || registrationResult == HarkenEditor::Bridge::kEngineNotInit;
             if (prepareSource) {
@@ -500,26 +578,47 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
             }
         }
         if (prepareSource) {
-            std::vector<float> samples;
-            int channels = 0;
-            int sampleRate = 0;
-            if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(
-                    asset->absolutePath, samples, channels, sampleRate)
-                || channels <= 0 || sampleRate <= 0
-                || samples.size() % static_cast<size_t>(channels) != 0) {
-                stopPreviewPlayhead();
-                return false;
+            preparedMedia_.reset();
+            if (conversion) {
+                const auto* project = ProjectManager::instance().currentProject();
+                const auto cacheDir = QDir(PathUtils::getDotCacheDir(
+                    QFileInfo(project->projectPath).absolutePath())).filePath(QStringLiteral("pack/media"));
+                preparedMedia_ = SoundSourceDerivative::materialize(asset->absolutePath,
+                    SoundSourceSemantics::authoredView(*source, asset), 0.0,
+                    PlatformContextService::instance().context().primary, cacheDir,
+                    conversion, &conversionError);
+                if (!preparedMedia_) {
+                    qWarning().noquote() << QStringLiteral("Source preview conversion failed: %1").arg(conversionError);
+                    stopPreviewPlayhead();
+                    return false;
+                }
+                mapConvertedSlice();
+                registrationResult = engine.registerPreviewMediaSlice(
+                    previewSoundId_, *preparedMedia_, playbackSlice.windowStartFrame,
+                    playbackSlice.windowFrameCount, playbackSlice.loops).result;
+            } else {
+                std::vector<float> samples;
+                int channels = 0;
+                int sampleRate = 0;
+                if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(
+                        asset->absolutePath, samples, channels, sampleRate)
+                    || channels <= 0 || sampleRate <= 0
+                    || samples.size() % static_cast<size_t>(channels) != 0) {
+                    stopPreviewPlayhead();
+                    return false;
+                }
+                SoundSourceSemantics::applyFadeEnvelope(
+                    samples, static_cast<uint32_t>(channels), *source,
+                    samples.size() / static_cast<size_t>(channels));
+                registrationResult = engine.registerRawPcmSlice(
+                    previewSoundId_, std::move(samples), channels, sampleRate,
+                    slice->windowStartFrame, slice->windowFrameCount, slice->loops).result;
             }
-            SoundSourceSemantics::applyFadeEnvelope(
-                samples, static_cast<uint32_t>(channels), *source,
-                samples.size() / static_cast<size_t>(channels));
-            registrationResult = engine.registerRawPcmSlice(
-                previewSoundId_, std::move(samples), channels, sampleRate,
-                slice->windowStartFrame, slice->windowFrameCount, slice->loops).result;
             if (registrationResult == HarkenEditor::Bridge::kEngineOk) {
                 preparedSource_ = *source;
                 preparedSourcePath_ = asset->absolutePath;
                 preparedSourceContentHash_ = asset->contentHash;
+                preparedConversionKey_ = conversionKey;
             }
         }
     } else {
@@ -532,13 +631,13 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         return false;
     }
 
-    const auto relocated = engine.relocateRawPcmSlice(previewSoundId_, slice->startFrame);
+    const auto relocated = engine.relocateRawPcmSlice(previewSoundId_, playbackSlice.startFrame);
     if (relocated.result != HarkenEditor::Bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
 
-    previewPlaybackHandle_ = engine.playRawPcm(previewSoundId_, slice->loops);
+    previewPlaybackHandle_ = engine.playRawPcm(previewSoundId_, playbackSlice.loops);
     if (previewPlaybackHandle_ == 0) {
         stopPreviewPlayhead();
         return false;
@@ -548,8 +647,11 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         return false;
     }
 
-    waveformView_->startPlayhead(slice->startFrame, slice->windowStartFrame,
-                                 slice->windowFrameCount, slice->sampleRate, slice->loops);
+    waveformView_->startPlayhead(playbackSlice.startFrame, playbackSlice.windowStartFrame,
+        playbackSlice.windowFrameCount, playbackSlice.sampleRate, playbackSlice.loops,
+        preparedMedia_ ? range->trimStartFrame : 0,
+        preparedMedia_ ? range->trimEndFrame : 0,
+        preparedMedia_ ? slice->sampleRate : 0);
     refreshAuditionControls();
     return waveformView_->isPlayheadActive();
 }
@@ -567,6 +669,7 @@ void SourceEditorWidget::stopPreviewPlayhead()
         previewSoundId_ = {};
     }
     preparedSource_.reset();
+    preparedMedia_.reset();
     waveformView_->stopPlayhead();
     refreshAuditionControls();
 }
@@ -636,10 +739,14 @@ void SourceEditorWidget::refreshMetadata()
     const SoundSourceDef* source = boundSource();
     const bool dangling = hasReferenceContext && !source;
     const bool hasAsset = asset != nullptr && !dangling;
+    QString conversionError;
+    const bool conversionChanged = preparedSource_ && source && asset
+        && (previewConversionKey(*asset, previewConversion(*asset, &conversionError))
+                != preparedConversionKey_ || !conversionError.isEmpty());
     if (dangling || (preparedSource_
         && (!source || !asset || *preparedSource_ != *source
             || preparedSourcePath_ != asset->absolutePath
-            || preparedSourceContentHash_ != asset->contentHash)))
+            || preparedSourceContentHash_ != asset->contentHash || conversionChanged)))
         stopPreviewPlayhead();
 
     refreshSourceIdentity(asset);

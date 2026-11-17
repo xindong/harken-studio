@@ -4,6 +4,7 @@
 #include "BusTopologySync.h"
 #include "DiagnosticsBridge.h"
 #include "MediaRegistry.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "RuntimeLink.h"
 
 #include <harken/Harken.h>
@@ -454,6 +455,17 @@ bool EngineSession::prepareMedia(uint32_t sourceId, const QString& absolutePath,
     return Detail::runtimePrepareMedia(sourceId);
 }
 
+std::optional<PreparedPreviewMedia> preparePreviewMedia(
+    const VNX::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error)
+{
+    return Detail::runtimePreparePreviewMedia(artifact, error);
+}
+
+EngineResult registerPreviewMedia(harkenstudio::ObjectId soundId, const PreparedPreviewMedia& media)
+{
+    return static_cast<EngineResult>(Detail::runtimeRegisterPreviewMedia(soundId, media));
+}
+
 bool EngineSession::swapMedia(uint32_t sourceId, const QString& newPath, uint64_t fileSize)
 {
     mediaRegistryRegister(sourceId, newPath, fileSize);
@@ -512,6 +524,23 @@ EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
         registration.sampleRate = static_cast<uint32_t>(sampleRate);
     }
     return registration;
+}
+
+EngineSession::RawPcmSliceRegistration EngineSession::registerPreviewMediaSlice(
+    harkenstudio::ObjectId soundId, const VNX::SoundSourceDerivative::MaterializedArtifact& artifact,
+    uint64_t startFrame, uint64_t frameCount, bool loops)
+{
+    QString error;
+    const auto prepared = preparePreviewMedia(artifact, &error);
+    if (!prepared) {
+        qWarning().noquote() << "[PlaybackRoute] Preview media preparation failed:" << error;
+        RawPcmSliceRegistration result;
+        result.soundId = soundId;
+        result.result = kEngineInvalidArg;
+        return result;
+    }
+    return registerRawPcmSlice(soundId, *prepared->samples, artifact.channels,
+        static_cast<int>(artifact.sampleRate), startFrame, frameCount, loops);
 }
 
 EngineSession::RawPcmSliceRegistration EngineSession::relocateRawPcmSlice(

@@ -10,12 +10,16 @@
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 #include "Core/SoundSourceSemantics.h"
+#include "RuntimeBridge/PlaybackBridge.h"
+#include "RuntimeBridge/ProjectSyncBridge.h"
+#include "RuntimeBridge/MediaServices.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
@@ -1170,5 +1174,64 @@ TEST(SoundSourceSemanticsTest, SharedMediaCanBePublishedToIndependentDestination
             if (destination == 0) expectedBytes = bytes;
             else EXPECT_EQ(bytes, expectedBytes);
         }
+    }
+}
+
+TEST(SoundSourceSemanticsTest, PreviewMediaPreparationPreservesDecodedChannelsFramesAndRevision)
+{
+    namespace Bridge = HarkenEditor::Bridge;
+    const auto previousServices = Bridge::mediaServices();
+    const auto restoreServices = qScopeGuard([&] { Bridge::setMediaServices(previousServices); });
+    Bridge::setMediaServices(Bridge::makeBuildMediaServices());
+    struct Case { uint16_t channels; uint32_t sampleRate; uint64_t frames; };
+    const Case cases[]{{1, 8000, 4097}, {2, 44100, 16397}, {6, 48000, 16397},
+        {8, 32000, 8193}, {2, 48000, 1}, {6, 48000, 127}};
+    for (const auto& item : cases) {
+        SCOPED_TRACE(::testing::Message() << item.channels << "/" << item.sampleRate << "/" << item.frames);
+        SoundSourceDerivative::MaterializedArtifact artifact;
+        artifact.channels = item.channels;
+        artifact.sampleRate = item.sampleRate;
+        artifact.samples = std::make_shared<const std::vector<float>>(
+            channelTones(item.frames, item.channels, item.sampleRate));
+        artifact.loopStartFrame = item.frames > 2 ? item.frames / 3 : 0;
+        artifact.loopEndFrame = item.frames > 2 ? item.frames - 1 : 0;
+        artifact.loopable = artifact.loopEndFrame != 0;
+        QString error;
+        const auto pcm = Bridge::preparePreviewMedia(artifact, &error);
+        ASSERT_TRUE(pcm) << error.toStdString();
+        ASSERT_TRUE(pcm->samples);
+        EXPECT_EQ(*pcm->samples, *artifact.samples);
+        EXPECT_EQ(pcm->contentRevision, Bridge::soundPcmContentRevision(*pcm->samples,
+            artifact.channels, artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame));
+        auto encoded = VorbisEncoder::encode(*artifact.samples, item.sampleRate, item.channels,
+            0.6f, artifact.loopStartFrame, artifact.loopEndFrame, &error);
+        ASSERT_TRUE(encoded) << error.toStdString();
+        const auto reference = decodeVorbisReference(*encoded);
+        ASSERT_TRUE(reference);
+        artifact.format = ConversionFormat::Vorbis;
+        artifact.samples.reset();
+        artifact.encodedMedia = std::make_shared<const VorbisEncoder::EncodedMedia>(std::move(*encoded));
+        const auto preview = Bridge::preparePreviewMedia(artifact, &error);
+        ASSERT_TRUE(preview) << error.toStdString();
+        ASSERT_TRUE(preview->samples);
+        ASSERT_EQ(preview->samples->size(), item.frames * item.channels);
+        ASSERT_EQ(preview->samples->size(), reference->size());
+        const int surround[]{0, 2, 1, 4, 5, 3};
+        const int surround71[]{0, 2, 1, 6, 7, 4, 5, 3};
+        for (uint16_t channel = 0; channel < item.channels; ++channel) {
+            const int outputChannel = item.channels == 6 ? surround[channel]
+                : item.channels == 8 ? surround71[channel] : channel;
+            float maximumDifference = 0.0f;
+            for (uint64_t frame = 0; frame < item.frames; ++frame)
+                maximumDifference = std::max(maximumDifference, std::abs(
+                    (*preview->samples)[frame * item.channels + outputChannel]
+                    - (*reference)[frame * item.channels + channel]));
+            EXPECT_FLOAT_EQ(maximumDifference, 0.0f) << "channel " << channel;
+        }
+        EXPECT_NE(preview->contentRevision, 0u);
+        EXPECT_EQ(preview->contentRevision, Bridge::soundPcmContentRevision(*preview->samples,
+            artifact.channels, artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame));
+        artifact.loopEndFrame = item.frames + 1;
+        EXPECT_FALSE(Bridge::preparePreviewMedia(artifact, &error));
     }
 }

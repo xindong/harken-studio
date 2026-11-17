@@ -2,6 +2,7 @@
 #include "AudioEngine.h"
 #include "CompileTargetProfileCatalog.h"
 #include "ActionManager.h"
+#include "ActionClosureSemantics.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/MediaPool.h"
@@ -9,8 +10,10 @@
 #include "Components/VAction.h"
 #include "Components/VTrack.h"
 #include "Components/VEffect.h"
+#include "Components/VConversion.h"
 #include "Components/VMixNode.h"
 #include "PlatformContextService.h"
+#include "PreviewMediaModeService.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -764,6 +767,138 @@ protected:
         return peak;
     }
 };
+
+TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAndInvalidatedBeforeReuse)
+{
+    makeLooping();
+    auto* project = projects.currentProject();
+    ASSERT_GE(project->platforms.size(), 2);
+    const auto primary = project->platforms.front().id;
+    const auto other = project->platforms[1].id;
+    VNX::PlatformContextService::instance().setSelected({primary}, primary);
+    auto* preset = projects.findItemByGuid(project->defaultConversionRef);
+    ASSERT_NE(preset, nullptr);
+    auto* conversion = preset->comp<VNX::VConversion>();
+    ASSERT_NE(conversion, nullptr);
+    for (auto& platform : conversion->platforms) {
+        platform.format = VNX::ConversionFormat::Vorbis;
+        platform.tiers = {{std::nullopt, 22050}};
+    }
+    auto& modes = VNX::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(VNX::PreviewMediaMode::Converted);
+    const QDir artifacts(QFileInfo(project->projectPath).dir().filePath(QStringLiteral(".cache/pack/media")));
+    const auto encodedFiles = [&] { return artifacts.entryList({QStringLiteral("*.vcm")}, QDir::Files); };
+    QString error;
+    HarkenEditor::Bridge::CurrentWorldSoundPreparation preparation;
+    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_TRUE(preparation.sounds.empty());
+    EXPECT_TRUE(encodedFiles().empty());
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_TRUE(encodedFiles().empty());
+
+    const auto playing = audition.playItem(*action);
+    ASSERT_NE(playing, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    const auto originalFiles = encodedFiles();
+    ASSERT_EQ(originalFiles.size(), 1);
+    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_EQ(preparation.sounds.front().binding.soundId, sounds[0]->runtimeId());
+    const auto preparedMedia = preparation.sounds.front().media;
+    ASSERT_TRUE(preparedMedia);
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
+
+    conversion->platformConfig(other)->vorbisQuality = 0.8f;
+    projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_EQ(preparation.sounds.front().media, preparedMedia);
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    EXPECT_EQ(audition.getAudition(playing).stopState, HarkenEditor::AuditionStopState::None);
+
+    conversion->platformConfig(primary)->vorbisQuality = 0.8f;
+    projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_TRUE(preparation.sounds.empty());
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    pump(128);
+    EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
+    const auto replay = audition.playItem(*action);
+    ASSERT_NE(replay, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    EXPECT_EQ(encodedFiles().size(), 2);
+    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_NE(preparation.sounds.front().media, preparedMedia);
+}
+
+TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPreview)
+{
+    auto* project = projects.currentProject();
+    const auto primary = project->platforms.front().id;
+    VNX::PlatformContextService::instance().setSelected({primary}, primary);
+    auto* preset = projects.findItemByGuid(project->defaultConversionRef);
+    ASSERT_NE(preset, nullptr);
+    auto* conversion = preset->comp<VNX::VConversion>();
+    ASSERT_NE(conversion, nullptr);
+    for (auto& platform : conversion->platforms) {
+        platform.format = VNX::ConversionFormat::Vorbis;
+        platform.tiers = {{std::nullopt, 22050}};
+    }
+    auto& modes = VNX::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(VNX::PreviewMediaMode::Converted);
+    auto* added = projects.createAudioItem(layer, QStringLiteral("NewConvertedSound"), paths[0], 930001);
+    ASSERT_NE(added, nullptr);
+    added->comp<VNX::VAudio>()->loopCount = 0;
+    const auto playing = audition.playItem(*added);
+    ASSERT_NE(playing, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    conversion->platformConfig(primary)->tiers = {{std::nullopt, 16000}};
+    projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+    HarkenEditor::Bridge::CurrentWorldSoundPreparation preparation;
+    QString error;
+    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_EQ(preparation.contentRevisions.at(added->runtimeId()), 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    pump(128);
+    EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
+}
+
+TEST_F(AuditionLifecycleTest, PlaybackMediaClosureExcludesControlAndQuantizationOnlyReferences)
+{
+    const auto platform = projects.currentProject()->platforms.front().id;
+    auto& steps = action->comp<VNX::VAction>()->steps;
+    steps.front().quantize.timing = VNX::QuantizeTiming::NextBeat;
+    steps.front().quantize.referenceObjectID = sounds[1]->objectID;
+    steps.front().quantize.referenceName = sounds[1]->name;
+    VNX::VActionStep stop;
+    stop.type = VNX::VActionStep::Type::Stop;
+    stop.targetObjectID = sounds[1]->objectID;
+    stop.targetName = sounds[1]->name;
+    steps.push_back(stop);
+    auto* parent = projects.createActionTargeting(action, VNX::VActionStep::Type::PostAction,
+        QStringLiteral("PlayNested"));
+    ASSERT_NE(parent, nullptr);
+    const auto closure = VNX::ActionClosureSemantics::playbackContentReferences(
+        *projects.currentProject(), parent->runtimeId(), platform);
+    QSet<harkenstudio::ObjectId> media;
+    for (const auto& object : closure.objects)
+        if (object.type == VNX::ProjectItem::Type::Sound)
+            media.insert(object.stableId);
+    EXPECT_EQ(media, QSet<harkenstudio::ObjectId>{sounds[0]->runtimeId()});
+}
 
 TEST_F(AuditionLifecycleTest, SilentScheduledTreesRemainControllableUntilTheyReallyEnd)
 {

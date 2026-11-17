@@ -3,6 +3,9 @@
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AudioEngine.h"
 #include "Core/Components/VSound.h"
+#include "Core/Components/VConversion.h"
+#include "Core/PlatformContextService.h"
+#include "Core/PreviewMediaModeService.h"
 #include "Core/ProjectManager.h"
 #include "RuntimeBridge/PlaybackBridge.h"
 #include "Widgets/SourceEditor/SourceEditorWidget.h"
@@ -12,6 +15,8 @@
 #include <gtest/gtest.h>
 
 #include <QDir>
+#include <QCoreApplication>
+#include <QEvent>
 #include <QFileInfo>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -180,4 +185,128 @@ TEST_F(SourceEditorPcmSliceTest, PreparedSourceRestartsImmediatelyAfterRuntimeRe
     EXPECT_TRUE(editor.startPreviewPlayhead(768));
     engine_->stopOutput();
     EXPECT_TRUE(editor.startPreviewPlayhead(1024));
+}
+
+TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibraryAuditionIndependent)
+{
+    auto& projects = VNX::ProjectManager::instance();
+    VNX::ProjectConfig config;
+    config.name = QStringLiteral("ConvertedSourceCoordinates");
+    config.location = directory_.path();
+    ASSERT_TRUE(projects.createProject(config));
+    const auto closeProject = qScopeGuard([&] { EXPECT_TRUE(projects.closeProject()); });
+    auto* project = projects.currentProject();
+    ASSERT_GE(project->platforms.size(), 2);
+    const auto firstPlatform = project->platforms[0].id;
+    const auto secondPlatform = project->platforms[1].id;
+    VNX::PlatformContextService::instance().setSelected({firstPlatform}, firstPlatform);
+    auto& modes = VNX::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(VNX::PreviewMediaMode::Converted);
+    auto* preset = projects.findItemByGuid(project->defaultConversionRef);
+    ASSERT_NE(preset, nullptr);
+    auto* settings = preset->comp<VNX::VConversion>();
+    ASSERT_NE(settings, nullptr);
+    for (auto& platform : settings->platforms) {
+        platform.format = VNX::ConversionFormat::PCM;
+        platform.tiers = {{std::nullopt, 22050}};
+    }
+    const QString path = QFileInfo(project->projectPath).dir().filePath(QStringLiteral("source.wav"));
+    std::vector<float> samples(32768);
+    for (size_t frame = 0; frame < samples.size(); ++frame)
+        samples[frame] = static_cast<float>(0.2 * std::sin(6.283185307179586 * 371.0 * frame / 48000.0));
+    ASSERT_TRUE(VNX::AssetConverter::writeFloatWav(path, samples, 1, 48000));
+    auto& assets = VNX::AssetRegistry::instance();
+    VNX::AssetInfo asset;
+    asset.sourceID = assets.allocateStableID();
+    asset.absolutePath = path;
+    asset.relativePath = QStringLiteral("source.wav");
+    asset.contentHash = VNX::AssetImporter::computeContentHash(path);
+    asset.metadata = VNX::AssetImporter().analyzeFile(path);
+    asset.metadata.loopInfo.enabled = true;
+    asset.metadata.loopInfo.loopStart = 0;
+    asset.metadata.loopInfo.loopEnd = samples.size() - 1;
+    ASSERT_TRUE(assets.registerAsset(asset));
+    auto* item = projects.createItem(nullptr, QStringLiteral("Sound"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(item, nullptr);
+    auto* sound = item->comp<VNX::VSound>();
+    ASSERT_NE(sound, nullptr);
+    VNX::SoundSourceDef source;
+    source.entryId = QUuid::createUuid();
+    source.sourceId = asset.sourceID;
+    source.rangeContentHash = asset.contentHash;
+    source.trimStartFrame = 1003;
+    source.trimEndFrame = 28117;
+    source.loopRegion = VNX::SoundLoopRegion{4105, 25121};
+    source.fadeIn.durationFrames = 2048;
+    source.fadeOut.durationFrames = 4096;
+    sound->sources.plain.entries = {source};
+    sound->sources.plain.active = source.entryId;
+    VNX::SourceEditorWidget editor;
+    VNX::SourceEditorWidget library;
+    editor.bindSource(asset.sourceID, item->guid, source.entryId);
+    library.bindSource(asset.sourceID);
+    ASSERT_TRUE(library.startPreviewPlayhead());
+    const auto libraryHandle = library.previewPlaybackHandle();
+    const auto mapFrame = [&](uint64_t frame, uint32_t rate) {
+        return static_cast<uint64_t>(std::llround(
+            static_cast<long double>(frame - source.trimStartFrame) * rate / 48000));
+    };
+    for (const auto format : {VNX::ConversionFormat::PCM, VNX::ConversionFormat::Vorbis}) {
+        SCOPED_TRACE(static_cast<int>(format));
+        settings->platformConfig(firstPlatform)->format = format;
+        settings->platformConfig(firstPlatform)->tiers = {{std::nullopt, 22050}};
+        emit projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        for (const uint64_t start : {4105ull, 12007ull, 25120ull}) {
+            ASSERT_TRUE(editor.startPreviewPlayhead(start));
+            const auto windowStart = mapFrame(source.loopRegion->startFrame, 22050);
+            const auto windowEnd = mapFrame(source.loopRegion->endFrame, 22050);
+            const auto mediaStart = std::clamp(mapFrame(start, 22050), windowStart, windowEnd - 1);
+            const auto registered = engine_->relocateRawPcmSlice(editor.previewSoundId(), mediaStart);
+            ASSERT_EQ(registered.result, kEngineOk);
+            EXPECT_EQ(registered.sampleRate, 22050u);
+            EXPECT_EQ(registered.windowStartFrame, windowStart);
+            EXPECT_EQ(registered.windowFrameCount, windowEnd - windowStart);
+            EXPECT_TRUE(registered.loops);
+            const auto playhead = editor.previewPlayheadFrame();
+            ASSERT_TRUE(playhead);
+            EXPECT_GE(*playhead, source.trimStartFrame);
+            EXPECT_LT(*playhead, *source.trimEndFrame);
+        }
+        settings->platformConfig(secondPlatform)->tiers = {{std::nullopt, 16000}};
+        emit projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        EXPECT_TRUE(editor.isPreviewPlayheadActive());
+        settings->platformConfig(firstPlatform)->tiers = {{std::nullopt, 24000}};
+        emit projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        EXPECT_FALSE(editor.isPreviewPlayheadActive());
+        ASSERT_TRUE(editor.startPreviewPlayhead());
+        sound->sources.plain.entries.front().fadeIn.durationFrames += 128;
+        emit projects.itemPropertyChanged(item, QStringLiteral("sources"));
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        EXPECT_FALSE(editor.isPreviewPlayheadActive());
+        ASSERT_TRUE(editor.startPreviewPlayhead());
+        modes.setMode(VNX::PreviewMediaMode::Original);
+        EXPECT_FALSE(editor.isPreviewPlayheadActive());
+        ASSERT_TRUE(editor.startPreviewPlayhead());
+        const auto original = engine_->relocateRawPcmSlice(editor.previewSoundId(), 12007);
+        ASSERT_EQ(original.result, kEngineOk);
+        EXPECT_EQ(original.sampleRate, asset.metadata.sampleRate);
+        EXPECT_EQ(original.windowStartFrame, source.loopRegion->startFrame);
+        modes.setMode(VNX::PreviewMediaMode::Converted);
+        ASSERT_TRUE(editor.startPreviewPlayhead());
+        VNX::PlatformContextService::instance().setSelected({secondPlatform}, secondPlatform);
+        EXPECT_FALSE(editor.isPreviewPlayheadActive());
+        ASSERT_TRUE(editor.startPreviewPlayhead());
+        const auto second = engine_->relocateRawPcmSlice(editor.previewSoundId(),
+            mapFrame(source.loopRegion->startFrame, 16000));
+        ASSERT_EQ(second.result, kEngineOk);
+        EXPECT_EQ(second.sampleRate, 16000u);
+        VNX::PlatformContextService::instance().setSelected({firstPlatform}, firstPlatform);
+        EXPECT_TRUE(library.isPreviewPlayheadActive());
+        EXPECT_EQ(library.previewPlaybackHandle(), libraryHandle);
+    }
 }

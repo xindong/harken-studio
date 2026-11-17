@@ -3,6 +3,7 @@
 #include "Utils/ObjectId.h"
 
 #include "Core/SoundSourceSemantics.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 
 #include <QPointer>
 #include <QUuid>
@@ -70,6 +71,10 @@ private:
     QString auditionObjectName(const AssetInfo* asset) const;
     void retireRawFileAudition();
     bool registerRawFileAudition(const AssetInfo* asset);
+    std::optional<ResolvedConversion> previewConversion(const AssetInfo& asset,
+                                                       QString* error = nullptr) const;
+    QString previewConversionKey(const AssetInfo& asset,
+                                  const std::optional<ResolvedConversion>& conversion) const;
 
     uint32_t sourceId_ = 0;
     QUuid soundGuid_;
@@ -79,6 +84,9 @@ private:
     std::optional<SoundSourceDef> preparedSource_;
     QString preparedSourcePath_;
     QString preparedSourceContentHash_;
+    QString preparedConversionKey_;
+    std::optional<SoundSourceDerivative::MaterializedArtifact> preparedMedia_;
+    ProjectPlatformId previewPlatform_;
     uint32_t auditionPlayingId_ = 0;
     QPointer<HarkenEditor::AuditionManager> audition_;
     bool refreshingDisplayedSource_ = false;

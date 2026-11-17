@@ -23,8 +23,11 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
+
+namespace VNX::SoundSourceDerivative { struct MaterializedArtifact; }
 
 namespace HarkenEditor {
 namespace Bridge {
@@ -64,6 +67,17 @@ inline constexpr EngineResult kEngineRuntimeRecreateRequired =
     static_cast<EngineResult>(-328);
 inline constexpr EngineResult kEngineDeviceError =
     static_cast<EngineResult>(-400);
+
+struct PreparedPreviewMedia
+{
+    std::shared_ptr<const VNX::SoundSourceDerivative::MaterializedArtifact> artifact;
+    std::shared_ptr<const std::vector<float>> samples;
+    uint64_t contentRevision = 0;
+};
+
+std::optional<PreparedPreviewMedia> preparePreviewMedia(
+    const VNX::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error = nullptr);
+EngineResult registerPreviewMedia(harkenstudio::ObjectId soundId, const PreparedPreviewMedia& media);
 
 //==============================================================================
 // Editor-owned mirror structs.
@@ -292,6 +306,9 @@ public:
                                                 int channels, int sampleRate,
                                                 uint64_t startFrame, uint64_t frameCount,
                                                 bool loops = false);
+    RawPcmSliceRegistration registerPreviewMediaSlice(harkenstudio::ObjectId soundId,
+        const VNX::SoundSourceDerivative::MaterializedArtifact& artifact,
+        uint64_t startFrame, uint64_t frameCount, bool loops = false);
     RawPcmSliceRegistration relocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                                 uint64_t startFrame);
     EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);

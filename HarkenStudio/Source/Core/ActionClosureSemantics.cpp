@@ -95,6 +95,7 @@ struct Builder
     BuildVariant variant;
     RuntimeCapabilityContext capabilityContext;
     bool contentReferencesOnly;
+    bool playbackReferencesOnly = false;
     std::shared_ptr<const Index> indexOwner;
     const Index& index;
     std::shared_ptr<const FieldGroupEffectiveSnapshot> effectiveGroups;
@@ -543,7 +544,8 @@ struct Builder
                     edge(action.runtimeId(), reference->runtimeId(),
                          ActionClosureEdgeReason::QuantizeReference,
                          field, referencePath);
-                    visitContent(*reference, referencePath, step.type == VActionStep::Type::Stop);
+                    visitContent(*reference, referencePath,
+                        playbackReferencesOnly || step.type == VActionStep::Type::Stop);
                 }
             }
             if (quantized)
@@ -626,8 +628,9 @@ struct Builder
         actionActive.erase(action.runtimeId());
     }
 
-    ActionClosurePlan build(harkenstudio::ObjectId actionStableId)
+    ActionClosurePlan build(harkenstudio::ObjectId actionStableId, bool allowContentRoot = false)
     {
+        playbackReferencesOnly = allowContentRoot;
         plan.rootActionStableId = actionStableId;
         if (!variant.platform.isEmpty()) {
             const auto id = ProjectPlatformSemantics::parseId(variant.platform);
@@ -640,7 +643,8 @@ struct Builder
         }
         const auto it = index.stable.find(actionStableId);
         if (harkenstudio::IsNull(actionStableId) || it == index.stable.end()
-            || !it->second || it->second->type != ProjectItem::Type::Action) {
+            || !it->second || (it->second->type != ProjectItem::Type::Action
+                && !(allowContentRoot && isContentType(it->second->type)))) {
             diagnostic(ActionClosureDiagnosticCode::MissingRootAction,
                        QStringLiteral("Action stable identity %1 does not resolve")
                            .arg(objectIdString(actionStableId)),
@@ -648,7 +652,10 @@ struct Builder
                        QStringLiteral("rootActionStableId"), {});
             return finish();
         }
-        visitAction(*it->second, {});
+        if (it->second->type == ProjectItem::Type::Action)
+            visitAction(*it->second, {});
+        else
+            visitContent(*it->second, {});
         return finish();
     }
 
@@ -875,6 +882,14 @@ ActionClosurePlan contentReferences(const ProjectData& project,
                                     harkenstudio::ObjectId actionStableId)
 {
     return Builder(project, {}, {}, true).build(actionStableId);
+}
+
+ActionClosurePlan playbackContentReferences(const ProjectData& project,
+    harkenstudio::ObjectId rootStableId, ProjectPlatformId platform)
+{
+    BuildVariant variant;
+    variant.platform = ProjectPlatformSemantics::idString(platform);
+    return Builder(project, variant, {}, true).build(rootStableId, true);
 }
 
 }

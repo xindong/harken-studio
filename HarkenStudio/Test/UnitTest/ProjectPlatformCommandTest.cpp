@@ -5,6 +5,7 @@
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/PlatformContextService.h"
+#include "Core/PreviewMediaModeService.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/UndoCommands.h"
@@ -97,6 +98,66 @@ TEST_F(ProjectPlatformCommand, OldCommandCannotReplayIntoReopenedProjectWithSame
     EXPECT_EQ(authoredState(), before);
     result.redoFn();
     EXPECT_EQ(authoredState(), before);
+}
+
+TEST_F(ProjectPlatformCommand, LocalPreviewModeFollowsProjectIdentityBeforeOpenedNotification)
+{
+    auto storage = std::make_unique<MemorySettingsStorage>();
+    auto* persisted = storage.get();
+    PreviewMediaModeService preview(std::move(storage));
+    const auto firstPath = project().projectPath;
+    const auto firstId = project().projectId;
+    const auto initial = authoredState();
+    preview.setMode(PreviewMediaMode::Converted);
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Converted);
+    EXPECT_EQ(authoredState(), initial);
+    ASSERT_TRUE(manager().saveProject());
+
+    ProjectConfig config;
+    config.name = QStringLiteral("SecondPreviewProject");
+    config.location = directory.path();
+    config.platforms = {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows}};
+    auto second = ProjectManager::prepareProject(config);
+    ASSERT_NE(second.project, nullptr) << second.error.toStdString();
+    const auto secondPath = second.project->projectPath;
+    const auto secondId = second.project->projectId;
+    ASSERT_TRUE(manager().commitPreparedProject(std::move(second)));
+    EXPECT_NE(secondId, firstId);
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Original);
+    preview.setMode(PreviewMediaMode::Converted);
+    preview.setMode(PreviewMediaMode::Original);
+    ASSERT_TRUE(manager().closeProject());
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Original);
+    const auto saved = *persisted;
+    preview.setMode(PreviewMediaMode::Converted);
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Original);
+    EXPECT_EQ(persisted->allKeys(), saved.allKeys());
+    for (const auto& key : saved.allKeys()) EXPECT_EQ(persisted->value(key), saved.value(key));
+
+    auto first = ProjectManager::prepareProject(firstPath);
+    ASSERT_NE(first.project, nullptr) << first.error.toStdString();
+    ASSERT_TRUE(manager().commitPreparedProject(std::move(first)));
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Converted);
+    manager().publishProjectOpened();
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Converted);
+    PreviewMediaModeService restored(std::make_unique<MemorySettingsStorage>(*persisted));
+    EXPECT_EQ(restored.mode(), PreviewMediaMode::Converted);
+
+    ASSERT_TRUE(manager().closeProject());
+    second = ProjectManager::prepareProject(secondPath);
+    ASSERT_NE(second.project, nullptr) << second.error.toStdString();
+    ASSERT_TRUE(manager().commitPreparedProject(std::move(second)));
+    preview.setMode(PreviewMediaMode::Converted);
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Converted);
+    ASSERT_TRUE(manager().closeProject());
+    first = ProjectManager::prepareProject(firstPath);
+    ASSERT_NE(first.project, nullptr) << first.error.toStdString();
+    ASSERT_TRUE(manager().commitPreparedProject(std::move(first)));
+    preview.setMode(PreviewMediaMode::Original);
+    EXPECT_EQ(preview.mode(), PreviewMediaMode::Original);
+    persisted->beginGroup(QStringLiteral("PreviewMedia/%1").arg(secondId));
+    EXPECT_EQ(persisted->value(QStringLiteral("mode")).toString(), QStringLiteral("Converted"));
+    persisted->endGroup();
 }
 
 TEST_F(ProjectPlatformCommand, PlatformMembershipEditsRoundTripAllAuthoredOwners)
