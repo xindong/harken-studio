@@ -545,6 +545,7 @@ public:
     void setBuildProjectDataExportInternal(bool enabled);
     void setBuildPackMetadataExportInternal(bool enabled);
     void setBuildWaveformSettingsInternal(bool enabled, const QString& directory);
+    bool setDefaultConversion(const QUuid& guid);
 
     PackExportSelection packExportSelection() const;
     void setPackExportSelectionInternal(PackExportSelection selection);
@@ -595,6 +596,7 @@ signals:
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
     void projectPublishSettingsChanged();
+    void defaultConversionChanged(const QUuid& guid);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void actionPackTargetingChanged();

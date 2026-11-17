@@ -76,6 +76,8 @@ public:
 
     QJsonObject attenuationPackToJson(const ProjectItem& item) const;
     bool        attenuationPackFromJson(const QJsonObject& json, ProjectItem& item) const;
+    QJsonObject conversionPackToJson(const ProjectItem& item) const;
+    bool        conversionPackFromJson(const QJsonObject& json, ProjectItem& item) const;
     QJsonObject effectPackToJson(const ProjectItem& item) const;
     bool        effectPackFromJson(const QJsonObject& json, ProjectItem& item) const;
 

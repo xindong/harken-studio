@@ -57,6 +57,7 @@ bool createFixture(ProjectManager& manager, const QString& outputDirectory)
              std::pair{QStringLiteral("Trigger"), ProjectItem::Type::Action},
              std::pair{QStringLiteral("Space"), ProjectItem::Type::Attenuation},
              std::pair{QStringLiteral("Limiter"), ProjectItem::Type::Effect},
+             std::pair{QStringLiteral("Mobile"), ProjectItem::Type::Conversion},
              std::pair{QStringLiteral("Intensity"), ProjectItem::Type::Variable},
          }) {
         if (!manager.createItem(nullptr, name, type)) return false;

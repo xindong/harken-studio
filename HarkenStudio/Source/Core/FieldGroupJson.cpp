@@ -445,7 +445,7 @@ bool CheckOccurrence(const JsonValue& value, const std::string& path,
     for (const auto& [name, member] : value.members) {
         const std::string memberPath = path + "." + name;
         if (name == "fieldGroups" || name == "sectionGroups" || name == "output" || name == "send"
-            || name == "spatialRating" || name == "effect" || name == "effects"
+            || name == "spatialRating" || name == "effect" || name == "effects" || name == "conversion"
             || name == "outputBusId" || name == "outputBusRef"
             || name == "outputBusOverride" || name == "overrideBits"
             || IsFieldGroupPropertyJsonKey(name))
@@ -481,8 +481,8 @@ bool ReadFieldGroupsJson(const std::string& text,
     if (!CheckMembers(root, "fieldGroups", {"shared", "platforms"}, {"shared"}, error))
         return false;
     const auto& shared = *root.Find("shared");
-    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating", "effect"},
-                      {"output", "send", "spatialRating", "effect"}, error))
+    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating", "effect", "conversion"},
+                      {"output", "send", "spatialRating", "effect", "conversion"}, error))
         return false;
     DefinitionFieldGroups parsed;
     if (!ReadState(*shared.Find("output"), parsed.output.shared,
@@ -492,7 +492,9 @@ bool ReadFieldGroupsJson(const std::string& text,
         || !ReadState(*shared.Find("spatialRating"), parsed.spatialRating.shared,
                       "fieldGroups.shared.spatialRating", error, true)
         || !ReadState(*shared.Find("effect"), parsed.effects.shared,
-                      "fieldGroups.shared.effect", error, true))
+                      "fieldGroups.shared.effect", error, true)
+        || !ReadState(*shared.Find("conversion"), parsed.conversion.shared,
+                      "fieldGroups.shared.conversion", error, true))
         return false;
     if (const auto* platforms = root.Find("platforms")) {
         if (platforms->kind != JsonValue::Kind::Object)
@@ -537,6 +539,8 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     WriteState(writer, groups.spatialRating.shared);
     writer.Key("effect");
     WriteState(writer, groups.effects.shared);
+    writer.Key("conversion");
+    WriteState(writer, groups.conversion.shared);
     writer.EndObject();
     if (!groups.output.platforms.empty() || !groups.send.platforms.empty()
         || !groups.spatialRating.platforms.empty() || !groups.effects.platforms.empty()) {

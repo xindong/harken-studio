@@ -255,8 +255,20 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
                                                           const QSet<QUuid>& guids)
 {
     cleanActions(content, QStringLiteral("actions"), guids);
+    editObject(content, QStringLiteral("audio"), [&](QJsonObject& audio) {
+        if (deleted(audio.value(QStringLiteral("defaultConversion")), guids))
+            audio.insert(QStringLiteral("defaultConversion"), QJsonValue::Null);
+    });
     editObject(content, QStringLiteral("playableProperties"), [&](auto& properties) { cleanPlayable(properties, guids); });
     editObject(content, QStringLiteral("fieldGroups"), [&](QJsonObject& groups) {
+        editObject(groups, QStringLiteral("shared"), [&](QJsonObject& shared) {
+            editObject(shared, QStringLiteral("conversion"), [&](QJsonObject& state) {
+                editObject(state, QStringLiteral("values"), [&](QJsonObject& values) {
+                    if (deleted(values.value(QStringLiteral("settingsRef")), guids))
+                        values.insert(QStringLiteral("settingsRef"), QUuid{}.toString(QUuid::WithoutBraces));
+                });
+            });
+        });
         const auto cleanEffectGroup = [&](QJsonObject& scoped) {
             editObject(scoped, QStringLiteral("effect"), [&](QJsonObject& state) {
                 editObject(state, QStringLiteral("values"), [&](QJsonObject& values) {
