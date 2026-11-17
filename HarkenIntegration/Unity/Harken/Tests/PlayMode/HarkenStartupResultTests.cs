@@ -297,7 +297,7 @@ namespace Harken.Unity.Tests
                     occupied.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                     occupied.Listen(1);
                     int port = ((IPEndPoint)occupied.LocalEndPoint).Port;
-                    settings.Configure("127.0.0.1", port);
+                    settings.Configure(port);
                     fixture.Activate();
                     LogAssert.Expect(LogType.Warning, new Regex("Harken remote Start: "));
                     Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
@@ -335,10 +335,9 @@ namespace Harken.Unity.Tests
                 original = JsonUtility.ToJson(settings);
             }
 
-            public void Configure(string address, int port)
+            public void Configure(int port)
             {
                 Set(settings, "enableCommunicationInBuilds", true);
-                Set(settings, "remoteBindAddress", address);
                 Set(settings, "remotePort", port);
                 Set(settings, "enableRemoteDiscovery", false);
             }
