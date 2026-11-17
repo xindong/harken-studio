@@ -10,9 +10,6 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -77,18 +74,8 @@ private slots:
         for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
             QVERIFY(QDir().mkpath(QDir(target.canonicalRoot).filePath(folder)));
         write(source + "/package.json", R"({"name":"com.harken.core","version":"1.0.0"})");
-        QJsonArray plugins;
-        QJsonObject expected;
-        for (const auto* platform : {"Windows", "macOS", "Linux"}) {
-            const QString runtime = QString("Runtime/Plugins/%1/runtime.bin").arg(platform);
-            write(source + '/' + runtime, "runtime");
-            plugins.append(QJsonObject{{"platform", platform}, {"alternatives", QJsonArray{runtime}}});
-            expected.insert(platform, QJsonArray{platform});
-        }
-        write(source + "/harken-integration.json", QJsonDocument(QJsonObject{
-            {"schema_version", 3}, {"package_name", "com.harken.core"},
-            {"supports_custom_install_path", true}, {"required_files", QJsonArray{"package.json"}},
-            {"expected_platforms_by_editor_host", expected}, {"native_plugins", plugins}}).toJson());
+        for (const auto* platform : {"Windows", "macOS", "Linux"})
+            write(source + '/' + QString("Runtime/Plugins/%1/runtime.bin").arg(platform), "runtime");
     }
 
     void cleanup()
@@ -107,9 +94,6 @@ private slots:
         QTest::addColumn<QByteArray>("damage");
         QTest::newRow("missing-package") << QString("package.json") << QByteArray();
         QTest::newRow("invalid-package") << QString("package.json") << QByteArray("invalid");
-        QTest::newRow("missing-manifest") << QString("harken-integration.json") << QByteArray();
-        QTest::newRow("invalid-manifest") << QString("harken-integration.json") << QByteArray("invalid");
-        QTest::newRow("wrong-manifest-schema") << QString("harken-integration.json") << QByteArray("{\"schema_version\":1}");
     }
 
     void damagedMetadataCanActuallyBeRepaired()

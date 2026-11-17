@@ -199,22 +199,9 @@ protected:
     {
         writeFile(QDir(integrationPath).filePath("package.json"),
                   R"({"name":"com.harken.core","version":"1.0.0"})");
-        QJsonArray plugins;
-        QJsonObject expected;
-        for (const auto* platform : {"Windows", "macOS", "Linux"}) {
-            const QString runtime = QString("Runtime/Plugins/%1/runtime.bin").arg(platform);
-            writeFile(QDir(integrationPath).filePath(runtime), "runtime");
-            plugins.append(QJsonObject{{"platform", platform},
-                                       {"alternatives", QJsonArray{runtime}}});
-            expected.insert(platform, QJsonArray{platform});
-        }
-        writeFile(QDir(integrationPath).filePath("harken-integration.json"),
-                  QJsonDocument(QJsonObject{
-                      {"schema_version", 3}, {"package_name", "com.harken.core"},
-                      {"supports_custom_install_path", true},
-                      {"required_files", QJsonArray{"package.json"}},
-                      {"expected_platforms_by_editor_host", expected},
-                      {"native_plugins", plugins}}).toJson());
+        writeFile(QDir(integrationPath).filePath("Runtime/Generated/HarkenAbi.g.cs"), "// abi");
+        for (const auto* platform : {"Windows", "macOS", "Linux"})
+            writeFile(QDir(integrationPath).filePath(QString("Runtime/Plugins/%1/runtime.bin").arg(platform)), "runtime");
     }
 
     QTemporaryDir dir{[]() {
@@ -1181,7 +1168,7 @@ TEST_F(EngineIntegrationsPageTest, QuickIntegrationChangePreservesSafetyAndHandl
     EXPECT_EQ(table->item(0, 3)->toolTip(), QCoreApplication::translate(
         "HarkenHub", "Current Integration Package installation path:\n%1").arg("Packages/com.harken.core"));
     EXPECT_EQ(read(QDir(installed).filePath(runtime)), "customized-runtime");
-    const QString manifestPath = installed + "/harken-integration.json";
+    const QString manifestPath = installed + "/Runtime/Generated/HarkenAbi.g.cs";
     const QByteArray manifest = read(manifestPath);
     ASSERT_TRUE(QFile::remove(manifestPath));
     inspectCurrentSource("Files modified and missing", "modified-and-missing");
@@ -2345,7 +2332,7 @@ TEST_F(EngineIntegrationsPageTest, FailedUnlinkKeepsRelationshipAndSourceChangeI
     EXPECT_FALSE(primary()->isEnabled());
     field("Runtime/Integration Package source path")->setText(integrationPath);
     EXPECT_TRUE(primary()->isEnabled());
-    ASSERT_TRUE(QFile::remove(QDir(integrationPath).filePath("harken-integration.json")));
+    ASSERT_TRUE(QFile::remove(QDir(integrationPath).filePath("package.json")));
     checkButton()->click();
     EXPECT_FALSE(primary()->isEnabled());
     makeIntegration();
@@ -2361,7 +2348,7 @@ TEST_F(EngineIntegrationsPageTest, SelectsFailureAndReplacesDetailsFromPreviousC
     checkButton()->click();
     auto* details = page->findChild<QPlainTextEdit*>(QStringLiteral("integrationDetails"));
     const QString firstResult = details->toPlainText();
-    ASSERT_TRUE(QFile::remove(QDir(integrationPath).filePath("harken-integration.json")));
+    ASSERT_TRUE(QFile::remove(QDir(integrationPath).filePath("package.json")));
     checkButton()->click();
     EXPECT_NE(details->toPlainText(), firstResult);
 }

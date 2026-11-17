@@ -49,7 +49,6 @@ bool isSafeRelativePath(const QString& relativePath)
 }
 
 constexpr auto kPackageName = "com.harken.core";
-constexpr auto kIntegrationManifest = "harken-integration.json";
 constexpr auto kInstalledState = ".harken-integration-state.json";
 constexpr int kIntegrationStateVersion = 1;
 
@@ -331,15 +330,6 @@ JsonRead readJsonObject(const QString& path)
     return {ReadStatus::Unreadable, {}};
 }
 
-bool existingArtifact(const QString& path)
-{
-    const QFileInfo info(path);
-    if (info.isFile()) return info.size() > 0;
-    if (!info.isDir()) return false;
-    QDirIterator files(path, QDir::Files, QDirIterator::Subdirectories);
-    return files.hasNext();
-}
-
 QString packageVersion(const QString& packageRoot)
 {
     return readJsonObject(QDir(packageRoot).filePath(QStringLiteral("package.json")))
@@ -447,48 +437,6 @@ bool prepareInstallation(const UnityIntegrationService::Request& request,
     return true;
 }
 
-QString hostPlatformName()
-{
-#if defined(Q_OS_WIN)
-    return QStringLiteral("Windows");
-#elif defined(Q_OS_MACOS)
-    return QStringLiteral("macOS");
-#elif defined(Q_OS_LINUX)
-    return QStringLiteral("Linux");
-#else
-    return {};
-#endif
-}
-
-QString runtimePurpose(const QString& platform)
-{
-    if (platform == QStringLiteral("Windows"))
-        return QStringLiteral("Unity includes this runtime in Windows games and uses it for Windows Editor play mode.");
-    if (platform == QStringLiteral("Linux"))
-        return QStringLiteral("Unity includes this runtime in Linux games built from the project.");
-    if (platform == QStringLiteral("Android"))
-        return QStringLiteral("Unity packages this runtime into Android APK or AAB builds so Harken audio can run on Android devices.");
-    if (platform == QStringLiteral("macOS"))
-        return QStringLiteral("Unity includes this runtime in macOS games and uses it for macOS Editor play mode.");
-    if (platform == QStringLiteral("iOS"))
-        return QStringLiteral("Unity adds this static runtime to the generated Xcode project for the final iOS application.");
-    return QStringLiteral("Unity includes this runtime when it builds games for this target platform.");
-}
-
-QString missingRuntimeDetail(const QString& integrationRoot, const QString& platform,
-                             const QStringList& alternatives)
-{
-    QStringList locations;
-    for (const QString& relative : alternatives)
-        locations << QDir::toNativeSeparators(QDir(integrationRoot).filePath(relative));
-    return QStringLiteral("Missing component: %1 game runtime\n"
-                          "Expected inside the selected Integration Package source: %2\n"
-                          "Purpose: %3\n"
-                          "What this means: This Integration Package source cannot safely prepare the Unity project for %1 builds until a verified runtime is restored.")
-        .arg(platform, locations.join(QStringLiteral(" or ")),
-             runtimePurpose(platform));
-}
-
 struct FileExplanation
 {
     QString key;
@@ -513,13 +461,6 @@ FileExplanation explainIntegrationFile(const QString& relative)
             QStringLiteral("Package identity and compatibility"),
             QStringLiteral("Describes the Harken package name, version, Unity compatibility, and optional samples to Unity Package Manager."),
             QStringLiteral("Unity will recognize and load the selected Harken Integration Package version with its current package settings.")};
-    }
-    if (path == QLatin1String(kIntegrationManifest)) {
-        return {
-            QStringLiteral("integration_safety"),
-            QStringLiteral("Integration safety rules"),
-            QStringLiteral("Defines which Integration Package files are mandatory and which Unity target runtimes should be available on each editor operating system."),
-            QStringLiteral("Future checks can detect an incomplete or damaged Harken Integration Package before changing project files.")};
     }
     if (path == QStringLiteral("Runtime/Harken.Core.asmdef") ||
         path == QStringLiteral("Runtime/Unity/Harken.Unity.asmdef")) {
@@ -910,19 +851,10 @@ bool validateMigration(const QString& project, const QString& from, const QStrin
         *error = QStringLiteral("A valid Integration Package ownership record is required for migration.");
         return false;
     }
-    const JsonRead manifest = readJsonObject(QDir(from).filePath(QLatin1String(kIntegrationManifest)));
     const JsonRead package = readJsonObject(QDir(from).filePath(QStringLiteral("package.json")));
-    if (manifest.status != ReadStatus::Ok || package.status != ReadStatus::Ok
-        || manifest.object.value(QStringLiteral("schema_version")).toInt() != 3
-        || manifest.object.value(QStringLiteral("package_name")).toString() != QLatin1String(kPackageName)
+    if (package.status != ReadStatus::Ok
         || package.object.value(QStringLiteral("name")).toString() != QLatin1String(kPackageName)) {
-        *error = QStringLiteral("The installed Integration Package identity or integration manifest is invalid.");
-        return false;
-    }
-    const QString relative = QDir(project).relativeFilePath(to);
-    if (relative != UnityInstallation::defaultRelativePath() && relative != QStringLiteral("Assets/HarkenSDK")
-        && !manifest.object.value(QStringLiteral("supports_custom_install_path")).toBool()) {
-        *error = QStringLiteral("This Integration Package version does not support a custom installation location.");
+        *error = QStringLiteral("The installed Integration Package identity is invalid.");
         return false;
     }
     const QJsonObject dependencies = package.object.value(QStringLiteral("dependencies")).toObject();
@@ -1067,29 +999,15 @@ QString harkenRuntimeIdentity(const QString& relative)
 
     QString fileName = normalized.mid(slash + 1).toCaseFolded();
     fileName.remove(QLatin1Char('_'));
-    if (fileName != QStringLiteral("harkencore.dll") &&
-        fileName != QStringLiteral("libharkencore.so") &&
-        fileName != QStringLiteral("libharkencore.dylib") &&
-        fileName != QStringLiteral("libharkencore.a")) {
-        return {};
-    }
+    static const QStringList kRuntimeNames{
+        QStringLiteral("harkencore.dll"), QStringLiteral("libharkencore.so"),
+        QStringLiteral("libharkencore.dylib"), QStringLiteral("libharkencore.a"),
+        QStringLiteral("harkenengine.dll"), QStringLiteral("libharkenengine.so"),
+        QStringLiteral("libharkenengine.dylib"), QStringLiteral("libharkenengine.a"),
+        QStringLiteral("harkenenginedev.dll"), QStringLiteral("libharkenenginedev.so"),
+        QStringLiteral("libharkenenginedev.dylib"), QStringLiteral("libharkenenginedev.a")};
+    if (!kRuntimeNames.contains(fileName)) return {};
     return normalized.left(slash + 1).toCaseFolded() + fileName;
-}
-
-bool matchesDeclaredArtifact(const QString& relative,
-                             const QSet<QString>& declaredArtifacts)
-{
-    const QString normalized = normalizePath(relative);
-    const Qt::CaseSensitivity sensitivity = integrationPathCaseSensitivity();
-    for (const QString& artifact : declaredArtifacts) {
-        const QString normalizedArtifact = normalizePath(artifact);
-        if (normalized.compare(normalizedArtifact, sensitivity) == 0 ||
-            normalized.startsWith(normalizedArtifact + QLatin1Char('/'),
-                                  sensitivity)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 QString joinedCountSummary(int added, int changed, int removed,
@@ -1539,8 +1457,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 return;
             }
             if (ownership.status != ReadStatus::Ok
-                || !ownership.managedFiles.contains(QStringLiteral("package.json"))
-                || !ownership.managedFiles.contains(QLatin1String(kIntegrationManifest))) {
+                || !ownership.managedFiles.contains(QStringLiteral("package.json"))) {
                 step.status = StepStatus::Failed;
                 step.summary = QStringLiteral("The installed package has no trustworthy Harken ownership record.");
                 step.cause = QDir(targetIntegration).filePath(QLatin1String(kInstalledState));
@@ -1555,27 +1472,18 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 return;
             }
             const QSet<QString> managed = comparisonPathKeys(ownership.managedFiles);
-            QSet<QString> declaredRuntimes;
-            const JsonRead manifest = readJsonObject(QDir(targetIntegration).filePath(QLatin1String(kIntegrationManifest)));
-            if (manifest.object.value(QStringLiteral("schema_version")).toInt() == 3
-                && manifest.object.value(QStringLiteral("package_name")).toString() == QLatin1String(kPackageName)) {
-                for (const auto& plugin : manifest.object.value(QStringLiteral("native_plugins")).toArray())
-                    for (const auto& alternative : plugin.toObject().value(QStringLiteral("alternatives")).toArray())
-                        if (alternative.isString() && isSafeRelativePath(alternative.toString()))
-                            declaredRuntimes.insert(normalizePath(alternative.toString()));
-            }
             installedFiles = inventory.value(QStringLiteral("files")).toObject().keys();
             QSet<QString> removeSet{QLatin1String(kInstalledState)};
             for (const QString& relative : installedFiles) {
                 if (discardableOsMetadata(relative) || managed.contains(comparisonPathKey(relative))
-                    || matchesDeclaredArtifact(relative, declaredRuntimes) || !harkenRuntimeIdentity(relative).isEmpty())
+                    || !harkenRuntimeIdentity(relative).isEmpty())
                     removeSet.insert(relative);
             }
             for (const QString& relative : installedFiles) {
                 if (!relative.endsWith(QStringLiteral(".meta"), Qt::CaseInsensitive)) continue;
                 const QString base = relative.left(relative.size() - 5);
                 if (removeSet.contains(base) || managed.contains(comparisonPathKey(base))
-                    || matchesDeclaredArtifact(base, declaredRuntimes)) removeSet.insert(relative);
+                    || !harkenRuntimeIdentity(base).isEmpty()) removeSet.insert(relative);
             }
             for (const QString& relative : installedFiles) {
                 if (!relative.endsWith(QStringLiteral(".meta"), Qt::CaseInsensitive) || removeSet.contains(relative)) continue;
@@ -2209,7 +2117,6 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     QMap<QString, QByteArray> sourceHashes;
     QMap<QString, QByteArray> sourceTextHashes;
     QMap<QString, QByteArray> installedContentHashes;
-    QSet<QString> declaredOptionalRuntimePaths;
     QString updateBackupRoot;
     bool installationActivated = false;
     bool retainedTarget = false;
@@ -2296,8 +2203,6 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
 
-        const QString sourceManifestPath = QDir(result.integrationSourcePath)
-                                               .filePath(QLatin1String(kIntegrationManifest));
         QString safetyError;
         if (!UnityInstallation::validateTree(result.integrationSourcePath, &safetyError)
             || UnityInstallation::containsPath(result.integrationSourcePath, targetIntegration)
@@ -2308,142 +2213,11 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 ? QStringLiteral("Integration Package source and target must be separate directories without containment.") : safetyError;
             return;
         }
-        const JsonRead manifestRead = readJsonObject(sourceManifestPath);
-        if (manifestRead.unreadable()) {
-            step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The selected Integration Package installation manifest could not be read.");
-            step.cause = QStringLiteral("%1 exists but cannot be opened.")
-                             .arg(sourceManifestPath);
-            step.remediation = QStringLiteral("Close any process holding this file and check the Integration Package folder permissions, then run Check only again.");
-            return;
-        }
-        const QJsonObject manifest = manifestRead.object;
-        if (result.integrationInstallPath != UnityInstallation::defaultRelativePath()
-            && result.integrationInstallPath != QStringLiteral("Assets/HarkenSDK")
-            && !manifest.value(QStringLiteral("supports_custom_install_path")).toBool()) {
-            step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("This Integration Package version does not support a custom installation location.");
-            step.remediation = QStringLiteral("Choose a newer Integration Package or install to Packages/com.harken.core or Assets/HarkenSDK.");
-            return;
-        }
-        if (manifest.value(QStringLiteral("schema_version")).toInt() != 3 ||
-            manifest.value(QStringLiteral("package_name")).toString() !=
-                QLatin1String(kPackageName)) {
-            step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("The selected Integration Package installation manifest is missing or invalid.");
-            step.cause = QStringLiteral("%1 does not declare the expected schema and package identity.")
-                             .arg(QDir(result.integrationSourcePath).filePath(QLatin1String(kIntegrationManifest)));
-            step.remediation = QStringLiteral("Choose a complete HarkenIntegration/Unity/Harken package, or repair the selected Integration Package source before integrating.");
-            return;
-        }
-
-        QStringList missing;
-        QStringList missingOptionalSourceFiles;
-        const QJsonArray required = manifest.value(QStringLiteral("required_files")).toArray();
-        for (const QJsonValue& value : required) {
-            const QString relative = value.toString();
-            if (!isSafeRelativePath(relative)) {
-                step.status = StepStatus::Failed;
-                step.summary = QStringLiteral("The Integration Package manifest contains an unsafe file path.");
-                step.cause = relative;
-                return;
-            }
-            if (relative.isEmpty() ||
-                !existingArtifact(QDir(result.integrationSourcePath).filePath(relative))) {
-                if (UnityInstallation::isDocumentationOrSample(relative))
-                    missingOptionalSourceFiles << relative;
-                else
-                    missing << relative;
-            }
-        }
-
-        const QString hostPlatform = hostPlatformName();
-        const QJsonObject expectedByHost =
-            manifest.value(QStringLiteral("expected_platforms_by_editor_host")).toObject();
-        QSet<QString> expectedPlatforms;
-        for (const QJsonValue& value : expectedByHost.value(hostPlatform).toArray()) {
-            const QString platform = value.toString();
-            if (!platform.isEmpty()) expectedPlatforms.insert(platform);
-        }
-        QStringList bundledPlatforms;
-        QStringList optionalMissingPlatforms;
-        QStringList missingExpectedPlatforms;
-        QStringList missingExpectedRuntimeDetails;
-        QStringList missingBlockingPlatforms;
-        QStringList missingBlockingRuntimeDetails;
-        QSet<QString> declaredPlatforms;
-        const QJsonArray plugins = manifest.value(QStringLiteral("native_plugins")).toArray();
-        for (const QJsonValue& value : plugins) {
-            const QJsonObject plugin = value.toObject();
-            const QString platform = plugin.value(QStringLiteral("platform")).toString();
-            const bool isExpectedPlatform = expectedPlatforms.contains(platform);
-            const bool isHostPlatform = platform == hostPlatform;
-            if (!platform.isEmpty()) declaredPlatforms.insert(platform);
-            bool found = false;
-            QStringList alternatives;
-            for (const QJsonValue& alternative :
-                 plugin.value(QStringLiteral("alternatives")).toArray()) {
-                const QString relative = alternative.toString();
-                if (!isSafeRelativePath(relative)) {
-                    step.status = StepStatus::Failed;
-                    step.summary = QStringLiteral("The Integration Package manifest contains an unsafe runtime path.");
-                    step.cause = relative;
-                    return;
-                }
-                alternatives << relative;
-                if (!isHostPlatform && !relative.isEmpty())
-                    declaredOptionalRuntimePaths.insert(relative);
-                if (existingArtifact(QDir(result.integrationSourcePath).filePath(relative)))
-                    found = true;
-            }
-            if (found) {
-                bundledPlatforms << platform;
-            } else if (isHostPlatform) {
-                missingBlockingPlatforms << platform;
-                missing << QStringLiteral("%1 native runtime (%2)")
-                               .arg(platform, alternatives.join(QStringLiteral(" or ")));
-                missingBlockingRuntimeDetails << missingRuntimeDetail(
-                    result.integrationSourcePath, platform, alternatives);
-            } else if (isExpectedPlatform) {
-                missingExpectedPlatforms << platform;
-                missingExpectedRuntimeDetails << missingRuntimeDetail(
-                    result.integrationSourcePath, platform, alternatives);
-            } else {
-                optionalMissingPlatforms << platform;
-            }
-        }
-        if (plugins.isEmpty()) missing << QStringLiteral("native platform declarations");
-        if (hostPlatform.isEmpty()) {
-            missing << QStringLiteral("supported editor host platform identity");
-        } else if (expectedPlatforms.isEmpty()) {
-            missing << QStringLiteral("expected Unity target policy for %1").arg(hostPlatform);
-        }
-        for (const QString& platform : expectedPlatforms) {
-            if (!declaredPlatforms.contains(platform))
-                missing << QStringLiteral("%1 native runtime declaration").arg(platform);
-        }
-
         sourceFiles = relativeFiles(result.integrationSourcePath);
-        if (sourceFiles.isEmpty()) missing << QStringLiteral("Integration Package file inventory");
-        if (!missing.isEmpty()) {
+        if (sourceFiles.isEmpty()) {
             step.status = StepStatus::Failed;
-            if (!missingBlockingPlatforms.isEmpty()) {
-                step.summary = QStringLiteral("The selected Integration Package source is missing the verified game runtime for: %1. The Unity project was not changed.")
-                                   .arg(missingBlockingPlatforms.join(QStringLiteral(", ")));
-                step.cause = QStringLiteral("These runtime files must come from the selected Integration Package source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an Integration Package assembled from incomplete source files.");
-                step.remediation = QStringLiteral("Choose or drop HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package. If this is the Integration Package bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.");
-                step.details = missingBlockingRuntimeDetails;
-                if (missing.size() > missingBlockingPlatforms.size()) {
-                    step.details << QStringLiteral("Other missing Harken Integration Package content: %1")
-                                        .arg(missing.join(QStringLiteral("; ")));
-                }
-            } else {
-                step.summary = QStringLiteral("The selected Unity Integration Package source is incomplete. The Unity project was not changed.");
-                step.cause = QStringLiteral("Required Harken Integration Package content is missing from the selected source: %1")
-                                 .arg(missing.join(QStringLiteral("; ")));
-                step.remediation = QStringLiteral("Choose or drop a complete Unity/Harken package, then run Check only again. This problem cannot be repaired inside the Unity project.");
-                step.details = missing;
-            }
+            step.summary = QStringLiteral("The selected Unity Integration Package source is empty. The Unity project was not changed.");
+            step.remediation = QStringLiteral("Choose or drop a complete Unity/Harken package, then run Check only again.");
             return;
         }
 
@@ -2464,36 +2238,8 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         sourceVersion = packageVersion(result.integrationSourcePath);
         installedContentHashes = sourceHashes;
-        step.summary = QStringLiteral("Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.")
-                           .arg(sourceVersion, QString::number(sourceFiles.size()),
-                                hostPlatform);
-        step.details << QStringLiteral("Native runtimes available in this Integration Package source: %1")
-                            .arg(bundledPlatforms.join(QStringLiteral(", ")));
-        if (!missingOptionalSourceFiles.isEmpty())
-            step.details << QStringLiteral("Missing documentation/sample files (does not block Integration Package updates):")
-                         << missingOptionalSourceFiles.join(QLatin1Char('\n'));
-        if (!missingExpectedPlatforms.isEmpty()) {
-            step.status = StepStatus::Warning;
-            step.summary += QStringLiteral(" Target runtimes not included: %1. Available platforms can still be integrated.")
-                                .arg(missingExpectedPlatforms.join(QStringLiteral(", ")));
-            step.cause = QStringLiteral("The %1 files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.")
-                             .arg(hostPlatform);
-            step.remediation = QStringLiteral("You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.");
-            step.details << missingExpectedRuntimeDetails;
-        }
-        if (!optionalMissingPlatforms.isEmpty()) {
-            step.status = StepStatus::Warning;
-            step.summary += QStringLiteral(" Runtimes that require another editor operating system are not included: %1.")
-                                .arg(optionalMissingPlatforms.join(QStringLiteral(", ")));
-            if (step.cause.isEmpty()) {
-                step.cause = QStringLiteral("Those targets cannot be completed on %1 under the Harken integration policy, so their missing runtimes do not block this integration.")
-                                 .arg(hostPlatform);
-            }
-            if (!step.remediation.isEmpty()) step.remediation += QLatin1Char('\n');
-            step.remediation += QStringLiteral("Before building targets that require another operating system, open the Unity project with Harken Studio there and run Check and integrate again. Apple targets must be completed on macOS.");
-            step.details << QStringLiteral("Target runtimes deferred to another operating system: %1")
-                                .arg(optionalMissingPlatforms.join(QStringLiteral(", ")));
-        }
+        step.summary = QStringLiteral("Validated Integration Package %1: %2 file(s).")
+                           .arg(sourceVersion, QString::number(sourceFiles.size()));
         step.artifacts << result.integrationSourcePath;
     });
 
@@ -2611,11 +2357,6 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 sourceRuntimePaths.insert(identity, relative);
             }
         }
-        QSet<QString> optionalRuntimeIdentities;
-        for (const QString& relative : declaredOptionalRuntimePaths) {
-            const QString identity = harkenRuntimeIdentity(relative);
-            if (!identity.isEmpty()) optionalRuntimeIdentities.insert(identity);
-        }
         QStringList unityMetadataFiles;
         QStringList optionalRuntimeFiles;
         QStringList projectSpecificFiles;
@@ -2695,9 +2436,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 changes.push_back({QStringLiteral("preserve"), relative});
                 if (relative.endsWith(QStringLiteral(".meta"), Qt::CaseInsensitive))
                     unityMetadataFiles << relative;
-                else if (matchesDeclaredArtifact(relative, declaredOptionalRuntimePaths) ||
-                         (!runtimeIdentity.isEmpty() &&
-                          optionalRuntimeIdentities.contains(runtimeIdentity)))
+                else if (!runtimeIdentity.isEmpty())
                     optionalRuntimeFiles << relative;
                 else
                     projectSpecificFiles << relative;

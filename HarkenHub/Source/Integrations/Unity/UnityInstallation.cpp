@@ -652,8 +652,7 @@ Discovery discover(const QString& projectRoot)
                     embeddedPackages.insert(identity);
             }
             dependencies(package, info.absolutePath());
-        } else if (name == QStringLiteral("harken-integration.json")
-                   || name == QStringLiteral(".harken-integration-state.json")) {
+        } else if (name == QStringLiteral(".harken-integration-state.json")) {
             add(info.absolutePath());
         } else if (name.endsWith(QStringLiteral(".asmdef"))) {
             if (name == QStringLiteral("Harken.Core.asmdef") || name == QStringLiteral("Harken.Unity.asmdef"))
@@ -773,7 +772,6 @@ Discovery discover(const QString& projectRoot)
             && state.value(QStringLiteral("managed_files")).toArray().isEmpty();
         if (item.removed) {
             item.removed = !QFileInfo::exists(QDir(item.path).filePath(QStringLiteral("package.json")))
-                && !QFileInfo::exists(QDir(item.path).filePath(QStringLiteral("harken-integration.json")))
                 && std::none_of(footprints.cbegin(), footprints.cend(), [&](const QString& file) {
                     return containsPath(item.path, file);
                 });

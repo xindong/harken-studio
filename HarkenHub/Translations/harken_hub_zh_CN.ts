@@ -674,12 +674,9 @@ Continue?</source>
     <message><source>Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.</source><translation>请选择 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包根目录，也可清空集成包来源以启用自动查找。</translation></message>
     <message><source>No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_INTEGRATION_PATH (legacy: HARKEN_UNITY_SDK_PATH).</source><translation>在 Harken Studio 所在目录、仓库上级目录以及 HARKEN_UNITY_INTEGRATION_PATH（兼容 HARKEN_UNITY_SDK_PATH）指定的位置均未找到有效的 com.harken.core 包。</translation></message>
     <message><source>Use the Integration Package source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.</source><translation>请在集成包来源栏选择或拖入 HarkenIntegration、Unity/Harken 或完整的外部 Unity 包根目录。</translation></message>
-    <message><source>Choose a complete HarkenIntegration/Unity/Harken package, or repair the selected Integration Package source before integrating.</source><translation>请选择完整的 HarkenIntegration/Unity/Harken 包，或修复所选集成包来源后再进行集成。</translation></message>
-    <message><source>Choose or drop HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package. If this is the Integration Package bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.</source><translation>请选择或拖入 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包。如果使用的是 Harken Studio 附带的集成包，请先修复或重新安装编辑器包。不要从已有 Unity 工程复制来源不明的运行库。</translation></message>
     <message><source>A selected Integration Package source file could not be read.</source><translation>无法读取所选集成包来源中的文件。</translation></message>
     <message><source>Check file locks and permissions, then retry. The existing Integration Package was not changed.</source><translation>请检查文件占用和权限后重试。已有集成包未被修改。</translation></message>
     <message><source>Check the selected Integration Package folder permissions and contents, then retry.</source><translation>请检查所选集成包文件夹的权限和内容后重试。</translation></message>
-    <message><source>Close any process holding this file and check the Integration Package folder permissions, then run Check only again.</source><translation>请关闭占用该文件的进程，检查集成包文件夹权限，然后重新执行检查。</translation></message>
     <message><source>Could not create an Integration Package staging directory.</source><translation>无法创建集成包暂存目录。</translation></message>
     <message><source>Could not detach the installed Harken Integration Package.</source><translation>无法移出已安装的 Harken 集成包。</translation></message>
     <message><source>Failed to stage the Unity Integration Package update.</source><translation>无法暂存 Unity 集成包更新。</translation></message>
@@ -689,18 +686,11 @@ Continue?</source>
     <message><source>No installed Unity Integration Package exists to verify.</source><translation>没有可供验证的已安装 Unity 集成包。</translation></message>
     <message><source>Repair or reselect the Integration Package source, check the storage device, then retry. The existing Unity Integration Package was not changed.</source><translation>请修复或重新选择集成包来源，检查存储设备后重试。已有 Unity 集成包未被修改。</translation></message>
     <message><source>Review this file list, then explicitly approve the update or cancel without changing the Integration Package.</source><translation>请查看文件列表，再确认更新；取消操作不会修改集成包。</translation></message>
-    <message><source>The selected Integration Package installation manifest could not be read.</source><translation>无法读取所选集成包的安装清单。</translation></message>
-    <message><source>The selected Integration Package installation manifest is missing or invalid.</source><translation>所选集成包的安装清单缺失或无效。</translation></message>
-    <message><source>The selected Unity Integration Package source is incomplete. The Unity project was not changed.</source><translation>所选 Unity 集成包来源不完整。Unity 工程未被修改。</translation></message>
     <message><source>The staged Unity Integration Package failed checksum verification.</source><translation>暂存的 Unity 集成包未通过校验。</translation></message>
-    <message><source>These runtime files must come from the selected Integration Package source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an Integration Package assembled from incomplete source files.</source><translation>运行库文件必须来自所选集成包来源，不能从 Unity 工程补取。Harken 无法验证由不完整来源拼装的集成包，因此已在复制任何文件之前停止集成。</translation></message>
     <message><source>Verification will run after the Integration Package update is approved.</source><translation>确认集成包更新后将执行验证。</translation></message>
     <message><source>%1 exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated.</source><translation>%1 存在但无法打开，因此无法列出 Harken 集成包声明的运行库文件。</translation></message>
     <message><source>%1 installed Integration Package file(s) could not be read, so the comparison is incomplete.</source><translation>无法读取 %1 个已安装的集成包文件，因此比较未完成。</translation></message>
-    <message><source>Other missing Harken Integration Package content: %1</source><translation>其他缺失的 Harken 集成包内容：%1</translation></message>
-    <message><source>Required Harken Integration Package content is missing from the selected source: %1</source><translation>所选来源缺少必要的 Harken 集成包内容：%1</translation></message>
     <message><source>The Harken integration cannot distinguish managed Integration Package files from project-specific files inside %1.</source><translation>Harken 无法区分 %1 中由集成包管理的文件和工程自有文件。</translation></message>
-    <message><source>The selected Integration Package source is missing the verified game runtime for: %1. The Unity project was not changed.</source><translation>所选集成包来源缺少以下平台的已验证游戏运行库：%1。Unity 工程未被修改。</translation></message>
     <message><source>These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source. Nothing was compared or changed.</source><translation>这些文件在 %1 中存在但无法打开，因此 Harken 无法判断其是否仍与集成包来源一致。尚未比较或修改任何文件。</translation></message>
 
     <message><source>Integration</source><translation>集成</translation></message>
@@ -2802,10 +2792,6 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>迁移需要有效的集成包文件归属记录。</translation>
     </message>
     <message>
-        <source>The installed Integration Package identity or integration manifest is invalid.</source>
-        <translation>已安装集成包的身份信息或集成清单无效。</translation>
-    </message>
-    <message>
         <source>The installed Integration Package has local package dependencies. Resolve them before migration.</source>
         <translation>已安装集成包存在本地包依赖，请先处理这些依赖再迁移。</translation>
     </message>
@@ -3018,22 +3004,6 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     <message>
         <source>Integration Package source and target must be separate directories without containment.</source>
         <translation>集成包源目录与安装目录必须独立，不能相同或相互包含。</translation>
-    </message>
-    <message>
-        <source>This Integration Package version does not support a custom installation location.</source>
-        <translation>该版本集成包不支持自定义安装位置。</translation>
-    </message>
-    <message>
-        <source>Choose a newer Integration Package or install to Packages/com.harken.core or Assets/HarkenSDK.</source>
-        <translation>请选择较新版本的集成包，或安装到 Packages/com.harken.core 或 Assets/HarkenSDK。</translation>
-    </message>
-    <message>
-        <source>The Integration Package manifest contains an unsafe file path.</source>
-        <translation>集成包清单中包含不安全的文件路径。</translation>
-    </message>
-    <message>
-        <source>The Integration Package manifest contains an unsafe runtime path.</source>
-        <translation>集成包清单中包含不安全的 Runtime 路径。</translation>
     </message>
     <message>
         <source>The installed Integration Package could not be compared because its ownership record is missing, invalid or unreadable.</source>
@@ -3810,22 +3780,10 @@ PACKAGE VERSION</source>
         <source>The installed Integration Package could not be compared because its ownership record is unreadable.</source>
         <translation>无法比较已安装的集成包，因为其所有权记录无法读取。</translation>
     </message>
-    <message>
-        <source>Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.</source>
-        <translation>已验证集成包 %1：共 %2 个文件；此编辑器所需的 %3 Runtime 已存在。</translation>
-    </message>
-    <message>
-        <source> Target runtimes not included: %1. Available platforms can still be integrated.</source>
-        <translation>未包含以下目标 Runtime：%1。仍可集成已有的平台。</translation>
-    </message>
-    <message>
-        <source> Runtimes that require another editor operating system are not included: %1.</source>
-        <translation>未包含需要其他编辑器操作系统的 Runtime：%1。</translation>
-    </message>
-    <message>
-        <source>Native runtimes available in this Integration Package source: %1</source>
-        <translation>此集成包源中可用的原生 Runtime：%1</translation>
-    </message>
+    <message><source>Validated Integration Package %1: %2 file(s).</source><translation>已验证集成包 %1：共 %2 个文件。</translation></message>
+        <message><source>The selected Unity Integration Package source is empty. The Unity project was not changed.</source><translation>所选 Unity 集成包来源为空。Unity 工程未被修改。</translation></message>
+        <message><source>Choose or drop a complete Unity/Harken package, then run Check only again.</source><translation>请选择或拖入完整的 Unity/Harken 集成包，然后重新执行检查。</translation></message>
+        <message><source>The installed Integration Package identity is invalid.</source><translation>已安装集成包的身份信息无效。</translation></message>
     <message>
         <source>Check found Integration Package differences: %1.</source>
         <translation>检查发现集成包差异：%1。</translation>
@@ -3845,36 +3803,6 @@ PACKAGE VERSION</source>
     <message>
         <source>The existing Integration Package differs from selected Integration Package source %1: %2.</source>
         <translation>现有集成包与所选集成包源 %1 存在差异：%2。</translation>
-    </message>
-    <message>
-        <source>Target runtimes deferred to another operating system: %1</source>
-        <translation>需在其他操作系统上处理的目标 Runtime：%1</translation>
-    </message>
-    <message>
-        <source>The %1 files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.</source>
-        <translation>所选集成包源中的 %1 文件完整，但列出的目标平台在此源中没有经过验证的 Runtime。每个目标相互独立，因此缺少这些 Runtime 不会阻止 %1 集成。</translation>
-    </message>
-    <message>
-        <source>Those targets cannot be completed on %1 under the Harken integration policy, so their missing runtimes do not block this integration.</source>
-        <translation>根据 Harken 集成策略，这些目标无法在 %1 上完成，因此缺少对应 Runtime 不会阻止本次集成。</translation>
-    </message>
-    <message>
-        <source>You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.</source>
-        <translation>你可以继续集成并使用已有平台。构建缺失目标前，请选择包含对应已验证 Runtime 的完整集成包源，然后再次执行“仅检查”。不要从其他 Unity 工程复制未知 Runtime 文件。</translation>
-    </message>
-    <message>
-        <source>Before building targets that require another operating system, open the Unity project with Harken Studio there and run Check and integrate again. Apple targets must be completed on macOS.</source>
-        <translation>构建需要其他操作系统的目标前，请在对应系统上使用 Harken Studio 打开 Unity 工程，并再次执行“检查并集成”。Apple 目标必须在 macOS 上完成。</translation>
-    </message>
-    <message>
-        <source>Missing component: %1 game runtime
-Expected inside the selected Integration Package source: %2
-Purpose: %3
-What this means: This Integration Package source cannot safely prepare the Unity project for %4 builds until a verified runtime is restored.</source>
-        <translation>缺少组件：%1 游戏 Runtime
-应位于所选集成包源中：%2
-用途：%3
-这意味着：在恢复经过验证的 Runtime 前，此集成包源无法安全地为 %4 构建准备 Unity 工程。</translation>
     </message>
     <message>
         <source>Unity includes this runtime in Windows games and uses it for Windows Editor play mode.</source>
@@ -4007,10 +3935,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
         <translation>软件包标识与兼容性</translation>
     </message>
     <message>
-        <source>Integration safety rules</source>
-        <translation>集成安全规则</translation>
-    </message>
-    <message>
         <source>Unity C# assembly settings</source>
         <translation>Unity C# 程序集设置</translation>
     </message>
@@ -4047,10 +3971,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
         <translation>向 Unity Package Manager 描述 Harken 软件包名称、版本、Unity 兼容性和可选示例。</translation>
     </message>
     <message>
-        <source>Defines which Integration Package files are mandatory and which Unity target runtimes should be available on each editor operating system.</source>
-        <translation>定义必要的集成包文件，以及各编辑器操作系统应提供的 Unity 目标 Runtime。</translation>
-    </message>
-    <message>
         <source>Tells Unity how to compile the Harken C# runtime and host-adapter assemblies and which dependencies they need.</source>
         <translation>指示 Unity 如何编译 Harken C# Runtime 和宿主适配程序集，以及它们需要的依赖项。</translation>
     </message>
@@ -4085,10 +4005,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
     <message>
         <source>Unity will recognize and load the selected Harken Integration Package version with its current package settings.</source>
         <translation>Unity 将使用当前软件包设置识别并加载所选 Harken 集成包版本。</translation>
-    </message>
-    <message>
-        <source>Future checks can detect an incomplete or damaged Harken Integration Package before changing project files.</source>
-        <translation>后续检查可在修改工程文件前发现不完整或损坏的 Harken 集成包。</translation>
     </message>
     <message>
         <source>Unity scripts can compile against the Harken API using the settings required by this Integration Package version.</source>
@@ -4893,7 +4809,7 @@ Uninstall Integration Package: %3</source><translation>更换集成包：%1
         <message><source>Installation record invalid</source><translation>集成包安装记录无效或无法读取</translation></message>
         <message><source>Restore this installation's ownership record from its own backup, then check again. Do not copy a record from another Integration Package or project. Without the record, Hub cannot distinguish Integration Package files from project-specific files; use the original installation tool if no backup exists.</source><translation>请从本次安装对应的备份恢复安装记录，再重新检查，不能借用其他集成包或工程的记录。缺少记录时，Hub 无法区分集成包文件与工程自定义文件；没有备份时，请使用原有安装工具处理。</translation></message>
         <message><source>Integration Package metadata needs repair</source><translation>集成包描述文件需要修复</translation></message>
-        <message><source>The installation record is available, but package.json or harken-integration.json is missing or invalid.</source><translation>安装记录有效，但 package.json 或 harken-integration.json 缺失或无效。</translation></message>
+        <message><source>The installation record is available, but package.json is missing or invalid.</source><translation>安装记录有效，但 package.json 缺失或无效。</translation></message>
         <message><source>Use Change Integration Package with a complete Integration Package source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change.</source><translation>可点击“更换集成包”，选择完整的集成包来源修复文件。迁移和卸载需要有效的包描述文件，请先修复。实际修改前仍须通过安全检查。</translation></message>
         <message><source>Installed; move and uninstall restricted by dependencies</source><translation>已安装；包依赖限制了迁移和卸载</translation></message>
         <message><source>The Integration Package is installed. Change Integration Package remains available. Before moving or uninstalling, resolve the Integration Package dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>集成包已安装，可继续更换或更新。如需迁移或卸载，请先处理 Unity Package Manager 和包清单中的集成包依赖，避免 Unity 加载另一份副本或丢失包引用。</translation></message>

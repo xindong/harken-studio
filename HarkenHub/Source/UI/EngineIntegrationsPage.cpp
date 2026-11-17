@@ -375,34 +375,11 @@ QString localizeIntegrationText(const QString& text)
     }
 
     static const QRegularExpression validatedIntegration(
-        QStringLiteral("^Validated Integration Package (.+): (\\d+) file\\(s\\); the "
-                       "(.+) runtime required for this editor is present\\.(.*)$"));
+        QStringLiteral("^Validated Integration Package (.+): (\\d+) file\\(s\\)\\.$"));
     const QRegularExpressionMatch validatedMatch = validatedIntegration.match(text);
-    if (validatedMatch.hasMatch()) {
-        QString result = hubTranslate(
-                             QStringLiteral("Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present."))
-                             .arg(validatedMatch.captured(1),
-                                  validatedMatch.captured(2),
-                                  validatedMatch.captured(3));
-        const QString suffix = validatedMatch.captured(4);
-        static const QRegularExpression expectedPlatforms(
-            QStringLiteral("^ Target runtimes not included: (.+)\\. Available platforms can still be integrated\\.$"));
-        static const QRegularExpression otherHost(
-            QStringLiteral("^ Runtimes that require another editor operating system are not included: (.+)\\.$"));
-        const QRegularExpressionMatch expectedMatch = expectedPlatforms.match(suffix);
-        if (expectedMatch.hasMatch()) {
-            result += hubTranslate(
-                          QStringLiteral(" Target runtimes not included: %1. Available platforms can still be integrated."))
-                          .arg(expectedMatch.captured(1));
-        } else {
-            const QRegularExpressionMatch otherMatch = otherHost.match(suffix);
-            if (otherMatch.hasMatch())
-                result += hubTranslate(
-                              QStringLiteral(" Runtimes that require another editor operating system are not included: %1."))
-                              .arg(otherMatch.captured(1));
-        }
-        return result;
-    }
+    if (validatedMatch.hasMatch())
+        return hubTranslate(QStringLiteral("Validated Integration Package %1: %2 file(s)."))
+            .arg(validatedMatch.captured(1), validatedMatch.captured(2));
 
     static const QRegularExpression countCheck(
         QStringLiteral("^Check found Integration Package differences: (.+)\\.$"));

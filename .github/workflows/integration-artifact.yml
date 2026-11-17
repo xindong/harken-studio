@@ -82,22 +82,6 @@ jobs:
             done
           done
 
-          python3 <<'PY'
-          import json
-          from pathlib import Path
-
-          integration = Path('.temp/package/HarkenIntegration/Unity/Harken')
-          manifest = json.loads((integration / 'harken-integration.json').read_text(encoding='utf-8'))
-          missing = []
-          for relative in manifest.get('required_files', []):
-              path = integration / relative
-              if not path.exists() or (path.is_file() and path.stat().st_size == 0):
-                  missing.append(relative)
-          if missing:
-              raise SystemExit('Missing required Unity Integration content: ' + ', '.join(missing))
-          print(f"Verified {len(manifest.get('required_files', []))} shared Unity Integration files")
-          PY
-
           python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py \
             --integration-root .temp/package/HarkenIntegration/Unity/Harken \
             --require-binaries

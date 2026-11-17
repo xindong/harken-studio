@@ -23,20 +23,18 @@ NATIVE_PLUGIN_PATHS = {
     "Runtime/Plugins/iOS/libHarkenEngine.a",
     "Runtime/Plugins/iOS/libHarkenEngineDev.a",
 }
-NATIVE_SOURCE_CONTRACT = {
-    "targets": ["harken_engine_release", "harken_engine_dev"],
-    "workflow": ".github/workflows/core-artifact.yml",
-    "windows_x86_64": ["Runtime/Plugins/x86_64/HarkenEngine.dll",
-                       "Runtime/Plugins/x86_64/HarkenEngineDev.dll"],
-    "linux_x86_64": ["Runtime/Plugins/x86_64/libHarkenEngine.so",
-                     "Runtime/Plugins/x86_64/libHarkenEngineDev.so"],
-    "macos_universal": ["Runtime/Plugins/macOS/libHarkenEngine.dylib",
-                        "Runtime/Plugins/macOS/libHarkenEngineDev.dylib"],
-    "android_arm64": ["Runtime/Plugins/Android/arm64-v8a/libHarkenEngine.so",
-                      "Runtime/Plugins/Android/arm64-v8a/libHarkenEngineDev.so"],
-    "ios_arm64": ["Runtime/Plugins/iOS/libHarkenEngine.a",
-                  "Runtime/Plugins/iOS/libHarkenEngineDev.a"],
-}
+REQUIRED_FILES = (
+    "package.json",
+    "README.md",
+    "LICENSE.md",
+    "NOTICE.md",
+    "Runtime/Harken.Core.asmdef",
+    "Runtime/Unity/Harken.Unity.asmdef",
+    "Editor/Harken.Unity.Editor.asmdef",
+    "Runtime/Generated/HarkenAbi.g.cs",
+    "Runtime/Generated/HarkenNative.g.cs",
+    "Runtime/Generated/HarkenTypes.g.cs",
+)
 VOICE_WRAPPER_CONTRACT = {
     "SetVolume": (
         "public VnResult SetVolume(float volumeDb, uint rampMs)",
@@ -207,7 +205,6 @@ def verify_layout(
                 "LICENSE.md.meta",
                 "VERSION.meta",
                 "package.json.meta",
-                "harken-integration.json.meta",
             }
             allowed = (
                 normalized not in forbidden_meta
@@ -241,11 +238,8 @@ def verify_layout(
         )
 
 
-def verify_manifests(integration: Path, errors: list[str]) -> None:
+def verify_package(integration: Path, errors: list[str]) -> None:
     package = json.loads((integration / "package.json").read_text(encoding="utf-8"))
-    manifest = json.loads(
-        (integration / "harken-integration.json").read_text(encoding="utf-8")
-    )
     if package.get("name") != "com.harken.core":
         errors.append("package.json name must be com.harken.core")
     expected_version = json.loads(
@@ -256,25 +250,10 @@ def verify_manifests(integration: Path, errors: list[str]) -> None:
     if "samples" in package:
         errors.append("package.json must not declare repository-owned Samples")
 
-    for relative in manifest.get("required_files", []):
+    for relative in REQUIRED_FILES:
         path = integration / relative
         if not path.is_file() or path.stat().st_size == 0:
             errors.append(f"Integration required file is missing: {relative}")
-
-    alternatives = {
-        alternative
-        for plugin in manifest.get("native_plugins", [])
-        for alternative in plugin.get("alternatives", [])
-    }
-    if alternatives != NATIVE_PLUGIN_PATHS:
-        errors.append(
-            "harken-integration.json native plugins differ from the release "
-            f"layout: missing={sorted(NATIVE_PLUGIN_PATHS - alternatives)}, "
-            f"extra={sorted(alternatives - NATIVE_PLUGIN_PATHS)}"
-        )
-    source = manifest.get("native_binary_source", {})
-    if source != NATIVE_SOURCE_CONTRACT:
-        errors.append("harken-integration.json native binary source is invalid")
 
 
 def verify_generated_binding(integration: Path, errors: list[str]) -> None:
@@ -319,15 +298,15 @@ def verify(integration: Path, require_binaries: bool) -> None:
     if not integration.is_dir():
         raise SystemExit(f"Unity Integration Package root does not exist: {integration}")
     verify_layout(integration, require_binaries, errors)
-    verify_manifests(integration, errors)
+    verify_package(integration, errors)
     verify_generated_binding(integration, errors)
     verify_voice_wrappers(integration, errors)
     if errors:
         raise SystemExit("\n".join(errors))
     content = "source-only" if not require_binaries else "assembled"
     print(
-        f"Verified {content} Unity Integration Package layout, manifests, native "
-        "binary provenance, generated binding isolation, and thin Voice forwarding."
+        f"Verified {content} Unity Integration Package layout, package identity, "
+        "required files, generated binding isolation, and thin Voice forwarding."
     )
 
 
