@@ -5,6 +5,7 @@
 #include "harken/media/PackMediaRange.h"
 #include <chrono>
 #include <thread>
+#include "AllocationProbe.h"
 
 namespace {
 bool PumpQuantum(harken::Engine& engine) {
@@ -173,13 +174,35 @@ TEST(VorbisPlayback, PreparedCancellationAndRapidStopsRecycleDecoderState) {
     }
 }
 
-TEST(VorbisPlayback, DecoderBudgetRefusalPublishesNoVoiceOrResourcePin) {
+TEST(VorbisPlayback, CompressedVoicesReachConfiguredCapacityAndReleaseIdleState) {
+    for (unsigned channels : {2u, 8u}) {
+        SCOPED_TRACE(channels);
+        const auto layout = channels == 2 ? VN_CHANNEL_LAYOUT_STEREO : VN_CHANNEL_LAYOUT_7_1;
+        auto config = harkentest::MakeNullConfigLayout(256, 64, 48000, layout, layout);
+        config.renderWorkerCount = 0;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto fixture = harken::test::MakeVorbisFixture(channels);
+        harken::VorbisPrepareResult status;
+        auto source = harken::VorbisResident::Prepare(engine.vorbis, fixture.media, 4 * 1024 * 1024, status);
+        ASSERT_NE(source, nullptr);
+        std::vector<VnVoiceHandle> voices(config.maxVoices);
+        for (auto& voice : voices) ASSERT_EQ(VN_OK, Start(engine, source->View(), 1.0, 1, 0, voice));
+        EXPECT_EQ(config.maxVoices, engine.voices.ActiveCount());
+        EXPECT_GT(engine.vorbis.states.ActiveBytes(), 2u * 1024 * 1024);
+        ASSERT_TRUE(PumpQuantum(engine));
+        for (auto voice : voices) Stop(engine, voice);
+        EXPECT_EQ(0u, engine.vorbis.states.ActiveBytes());
+        EXPECT_EQ(0u, engine.vorbis.states.Bytes());
+    }
+}
+
+TEST(VorbisPlayback, DecoderAllocationFailurePublishesNoVoiceOrResourcePin) {
     auto config = harkentest::MakeNullConfig(2, 64, 48000);
-    config.compressedDecoderBytes = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     auto& engine = *session.Engine();
-    EXPECT_EQ(engine.config.compressedDecoderBytes, 1u);
     const auto fixture = harken::test::MakeVorbisFixture(2);
     harken::VorbisPrepareResult status;
     auto source = harken::VorbisResident::Prepare(engine.vorbis, fixture.media, 4 * 1024 * 1024, status);
@@ -187,14 +210,26 @@ TEST(VorbisPlayback, DecoderBudgetRefusalPublishesNoVoiceOrResourcePin) {
     auto view = source->View();
     std::atomic<std::uint32_t> pins{0}; view.useCount = &pins;
     VnVoiceHandle voice = 123;
-    EXPECT_EQ(Start(engine, view, 1.0, 1, 0, voice), VN_NO_VOICE);
-    EXPECT_EQ(voice, 123u); EXPECT_EQ(pins.load(), 0u);
-    EXPECT_EQ(engine.voices.ActiveCount(), 0u); EXPECT_EQ(engine.vorbis.states.Bytes(), 0u);
+    for (std::size_t allocation : {1u, 2u}) {
+        allocation_probe::count = 0;
+        allocation_probe::failAt = allocation;
+        allocation_probe::enabled = true;
+        const auto failed = Start(engine, view, 1.0, 1, 0, voice);
+        allocation_probe::enabled = false;
+        allocation_probe::failAt = 0;
+        EXPECT_EQ(failed, VN_NO_VOICE);
+        EXPECT_EQ(voice, 123u); EXPECT_EQ(pins.load(), 0u);
+        EXPECT_EQ(engine.voices.ActiveCount(), 0u); EXPECT_EQ(engine.vorbis.states.Bytes(), 0u);
+    }
+    ASSERT_EQ(VN_OK, Start(engine, view, 1.0, 1, 0, voice));
+    Stop(engine, voice);
+    EXPECT_EQ(0u, pins.load());
+
 }
 
 TEST(VorbisPlayback, RegistryOwnsCompressedBytesAndRetiresPinnedGenerations) {
     const auto fixture = harken::test::MakeVorbisFixture(2);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::PCMRegistry registry;
     const auto sound = harkentest::ObjectId(712);
     harken::PCMRegistry::PreparedPackSamples samples;
@@ -263,7 +298,7 @@ TEST(VorbisPlayback, AudibilityParkReleasesDecoderAndReturnUsesAdvancedPosition)
 }
 TEST(VorbisPlayback, EncodedStorageNeverAliasesRawPcmComparisons) {
     const auto fixture = harken::test::MakeVorbisFixture(1);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::PCMRegistry registry;
     const auto sound = harkentest::ObjectId(714);
     harken::PCMRegistry::PreparedPackSamples encoded;

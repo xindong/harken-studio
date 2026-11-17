@@ -100,7 +100,7 @@ public:
         bool available = false;
         std::atomic<bool> retired{false};
     };
-    explicit VorbisStatePool(std::size_t budget) noexcept : budget_(budget) {}
+    VorbisStatePool() noexcept = default;
     ~VorbisStatePool();
     VorbisStatePool(const VorbisStatePool&) = delete;
     VorbisStatePool& operator=(const VorbisStatePool&) = delete;
@@ -115,14 +115,14 @@ private:
     State* all_ = nullptr;
     // Legal channel counts and power-of-two blocks determine the key domain.
     std::array<State*, 64> free_{};
-    std::size_t budget_ = 0, bytes_ = 0, activeBytes_ = 0, highWater_ = 0;
+    std::size_t bytes_ = 0, activeBytes_ = 0, highWater_ = 0;
 };
 
-// Engine lifetime owns tables, bounded reusable state and one workspace for
+// Engine lifetime owns tables, reusable state and one workspace for
 // each render thread. Resources own only compressed bytes and shared setup.
 class VorbisCodec {
 public:
-    VorbisCodec(std::size_t stateBudget, unsigned renderWorkers);
+    explicit VorbisCodec(unsigned renderWorkers);
     MediaDecoder* AcquireStream(std::shared_ptr<const VorbisSettings> settings);
     VorbisSettingsCache settings;
     VorbisStatePool states;

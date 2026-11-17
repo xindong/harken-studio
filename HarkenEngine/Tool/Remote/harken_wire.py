@@ -123,11 +123,13 @@ TABLE_JSON = r'''
           "maxBusTopologyOwners",
           "maxActionFirings",
           "maxCatalogEntries",
-          "maxActionCooldownRows",
-          "compressedDecoderBytes"
+          "maxActionCooldownRows"
         ],
         "missingFields": "engine-defaults",
-        "unknownSize": "reject"
+        "unknownSize": "reject",
+        "retiredTailBytes": [
+          8
+        ]
       },
       "VnSnapshot": {
         "mode": "exact-discrete-prefix",
@@ -699,10 +701,6 @@ TABLE_JSON = r'''
         [
           "reserved12",
           "u32"
-        ],
-        [
-          "compressedDecoderBytes",
-          "u64"
         ]
       ]
     },

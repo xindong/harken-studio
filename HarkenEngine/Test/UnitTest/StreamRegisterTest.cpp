@@ -278,7 +278,7 @@ VnResult PreparePcmRange(harken::StreamManager& streams,
     auto result = streams.ResolvePackSource(range, &facts);
     if (result != VN_OK) return result;
     if (!streams.AcquirePendingRef(facts.fileIndex)) return VN_BACKPRESSURE;
-    harken::VorbisCodec codec(0, 0);
+    harken::VorbisCodec codec(0);
     auto state = harken::StreamManager::PreparationState::Preparing;
     const bool settled = WaitUntil([&] {
         state = streams.PreparePackSource(facts.fileIndex, facts.sourceGeneration, codec, 1024 * 1024, &result);
@@ -384,7 +384,7 @@ TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
     config.maxStreams = 2;
     config.streamRingBytes = 64 * sizeof(float);
     Manager streams(config);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     auto first = std::make_shared<ControlledSource>();
     auto second = std::make_shared<ControlledSource>();
     first->bytes = MakeValidImage(harkentest::ObjectId(17300));
@@ -440,7 +440,7 @@ TEST(StreamRegister, SourceReadAndReleaseDoNotBlockPreparedSlotActivation) {
         config.maxStreams = 2;
         config.streamRingBytes = (64) * sizeof(float);
         Manager streams(config);
-        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::VorbisCodec codec(0);
         auto healthy = std::make_shared<ControlledSource>();
         StreamSpec spec;
         spec.soundId = harkentest::ObjectId(17336);
@@ -519,7 +519,7 @@ TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleas
     config.maxStreams = 3;
     config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     auto source = std::make_shared<ControlledSource>();
     StreamSpec spec;
     spec.soundId = harkentest::ObjectId(17303);
@@ -594,7 +594,7 @@ TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) 
     config.maxStreams = 2;
     config.streamRingBytes = (ringFrames) * sizeof(float);
     Manager streams(config);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     EXPECT_EQ(0u, streams.ReadWindowBytes());
     std::array<std::shared_ptr<ControlledSource>, 2> sources;
     std::array<std::vector<float>, 2> samples;
@@ -683,7 +683,7 @@ TEST(StreamRegister, OptionalReadAheadNeverRequiresFutureBytesOrRetriesCancellat
         config.maxStreams = 1;
         config.streamRingBytes = (64) * sizeof(float);
         Manager streams(config);
-        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::VorbisCodec codec(0);
         auto source = std::make_shared<OptionalSource>();
         StreamSpec spec;
         spec.soundId = harkentest::ObjectId(17322);
@@ -722,7 +722,7 @@ TEST(StreamRegister, CancelledSourceValidationRetainsLeaseUntilReadReturns) {
     config.maxStreams = 1;
     config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     const auto healthyId = harkentest::ObjectId(17305);
     auto healthySource = std::make_shared<ControlledSource>();
     healthySource->bytes = MakeValidImage(healthyId);
@@ -790,7 +790,7 @@ TEST(StreamRegister, SourceFailureAndTermBalanceOwnership) {
     config.maxStreams = 1;
     config.streamRingBytes = (64) * sizeof(float);
     const auto id = harkentest::ObjectId(17306);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     auto source = std::make_shared<ControlledSource>();
     source->bytes = MakeValidImage(id);
     source->maxRead = 0;
@@ -1999,7 +1999,7 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& streams = session.Engine()->streams;
         streams.SetThrottled(true);
-        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::VorbisCodec codec(0);
         auto source = std::make_shared<ObservedSource>();
         StreamSpec spec;
         spec.soundId = harkentest::ObjectId(17901);
@@ -2096,7 +2096,7 @@ TEST(StreamRegister, VorbisPackRangeFeedsVerifiedPacketsAcrossSeekAndLoop) {
         harken::EngineConfig config;
         config.maxStreams = 2;
         config.streamRingBytes = 8192;
-        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::VorbisCodec codec(0);
         harken::StreamManager streams(config);
         auto fixture = harken::test::MakeVorbisFixture(channels, true, 257, 1023);
         harken::VorbisMedia media;
@@ -2162,7 +2162,7 @@ TEST(StreamRegister, VorbisStreamRejectsChangedPositionMetadataBeforePublishingF
         harken::EngineConfig config;
         config.maxStreams = 1;
         config.streamRingBytes = 8192;
-        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::VorbisCodec codec(0);
         harken::StreamManager streams(config);
         auto fixture = harken::test::MakeVorbisFixture(1, true, 257, 1023);
         harken::VorbisMedia media;
@@ -2204,7 +2204,7 @@ TEST(StreamRegister, FullVorbisByteRingDoesNotBlockAnotherStreamAndTinyRingFails
     auto fixture = harken::test::MakeVorbisFixture(1, true);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult prepared;
     std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
     auto encoded = harken::VorbisStreamMedia::Prepare(codec, std::move(prefix), fixture.media.size(),
@@ -2341,7 +2341,7 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
     const auto image = harken::test::WrapVorbisStream(fixture.media);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult prepared;
     std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
     auto encoded = harken::VorbisStreamMedia::Prepare(codec, std::move(prefix), fixture.media.size(),
@@ -2457,7 +2457,7 @@ TEST(StreamRegister, ExternalVorbisDiscoversOnlyMetadataAndSharesPendingPreparat
     const auto image = harken::test::WrapVorbisStream(fixture.media);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::EngineConfig config;
     config.maxStreams = 2; config.streamRingBytes = 16384;
     harken::StreamManager streams(config);
@@ -2653,7 +2653,7 @@ TEST(StreamRegister, VorbisPrefetchStartsBeforeOpenAndVerifiesAcrossItsPacketBou
     ASSERT_LT(cut, media.seek[2].packetOffset);
     const auto prefixBytes = media.packetDataOffset + cut;
     const std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + prefixBytes);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult prepared;
     EXPECT_EQ(nullptr, harken::VorbisStreamMedia::Prepare(codec, prefix, fixture.media.size(),
         4 * 1024 * 1024, prepared));
@@ -2768,7 +2768,7 @@ TEST(StreamRegister, ExternalPcmMetadataUsesBoundedMediaCoordinatesAndPreservesL
     ASSERT_TRUE(harken::ComputeMediaStreamContentRevisionV1(semantic, checksums.data(), &revision));
     auto image = harken::test::WrapVorbisStream(pcm);
     harken::StoreLE16(image.data() + 6, 0);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::EngineConfig config;
     config.maxStreams = 2; config.streamRingBytes = 262144;
     harken::StreamManager streams(config);

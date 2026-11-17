@@ -100,7 +100,7 @@ TEST(CascadeProtocol, VorbisStreamDrainsZeroCoveragePrerollBeforeMoreSupply) {
     const auto fixture = harken::test::MakeVorbisFixture(1, true);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult result;
     auto settings = codec.settings.Prepare(media, 1024 * 1024, result);
     ASSERT_NE(settings, nullptr);
@@ -157,7 +157,7 @@ TEST(CascadeProtocol, VorbisStreamFailureOverridesProducerNaturalEnd) {
     const auto fixture = harken::test::MakeVorbisFixture(1, true);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult result;
     auto settings = codec.settings.Prepare(media, 1024 * 1024, result);
     ASSERT_NE(settings, nullptr);
@@ -197,7 +197,7 @@ TEST(CascadeProtocol, EncodedBytesAndProducerEndWaitForThePreparedDecoder) {
     const auto fixture = harken::test::MakeVorbisFixture(1, true);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult result;
     auto settings = codec.settings.Prepare(media, 1024 * 1024, result);
     ASSERT_NE(settings, nullptr);
