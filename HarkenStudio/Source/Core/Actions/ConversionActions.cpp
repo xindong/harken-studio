@@ -20,9 +20,26 @@
 namespace VNX {
 namespace {
 
+ActionResult success(const QJsonObject& data)
+{
+    ActionResult result{};
+    result.success = true;
+    result.data = data;
+    return result;
+}
+
+ActionResult failure(const QString& code, const QString& message, const QJsonObject& data = {})
+{
+    ActionResult result{};
+    result.data = data;
+    result.errorCode = code;
+    result.errorMessage = message;
+    return result;
+}
+
 ActionResult invalid(const QString& message)
 {
-    return {false, {}, QStringLiteral("INVALID_ARGUMENTS"), message};
+    return failure(QStringLiteral("INVALID_ARGUMENTS"), message);
 }
 
 QJsonObject describePreset(const ProjectData& project, const ProjectItem& item)
@@ -56,7 +73,7 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
     QString error;
     if (!validateCommandArguments(args, commandInputSchema(name), &error)) return invalid(error);
     auto* project = manager.currentProject();
-    if (!project) return {false, {}, QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is currently open")};
+    if (!project) return failure(QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is currently open"));
     const auto* originator = ActionManager::instance().executeOriginator();
     if (name == QStringLiteral("create_conversion")) {
         const auto requestedName = args.value(QStringLiteral("name")).toString();
@@ -69,12 +86,12 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         if (!folder.isEmpty() && !project->findFolderByPath(QStringLiteral("Conversions"), folder))
             return invalid(QStringLiteral("folder must identify an existing Conversions directory"));
         auto* item = manager.createItem(nullptr, requestedName, ProjectItem::Type::Conversion, folder);
-        if (!item) return {false, {}, QStringLiteral("CREATE_CONVERSION_FAILED"), QStringLiteral("Cannot create Conversion preset")};
-        return {true, describePreset(*project, *item)};
+        if (!item) return failure(QStringLiteral("CREATE_CONVERSION_FAILED"), QStringLiteral("Cannot create Conversion preset"));
+        return success(describePreset(*project, *item));
     }
     if (name == QStringLiteral("set_default_conversion") && args.value(QStringLiteral("conversion")).isNull()) {
         if (!manager.setDefaultConversion({})) return invalid(QStringLiteral("Cannot set default Conversion"));
-        return {true, {{"conversion", QJsonValue(QJsonValue::Null)}}};
+        return success({{"conversion", QJsonValue(QJsonValue::Null)}});
     }
     const bool objectCommand = name == QStringLiteral("set_object_conversion")
         || name == QStringLiteral("get_effective_conversion");
@@ -82,13 +99,13 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         args.value(objectCommand ? QStringLiteral("object") : QStringLiteral("conversion")).toString(),
         objectCommand ? std::nullopt : std::optional{ProjectItem::Type::Conversion});
     if (!selected.ok)
-        return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
+        return failure(selected.errorCode, selected.errorMessage, {{"candidates", selected.candidates}});
     auto* item = selected.item;
     if (objectCommand && !PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
         return invalid(QStringLiteral("Object does not support Conversion settings"));
     if (name == QStringLiteral("set_default_conversion")) {
         if (!manager.setDefaultConversion(item->guid)) return invalid(QStringLiteral("Cannot set default Conversion"));
-        return {true, {{"conversion", item->guid.toString(QUuid::WithoutBraces)}}};
+        return success({{"conversion", item->guid.toString(QUuid::WithoutBraces)}});
     }
     if (name == QStringLiteral("set_object_conversion")) {
         std::optional<QUuid> settings;
@@ -98,7 +115,7 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
                 const auto preset = resolveProjectSelector(project, args.value(QStringLiteral("settings")).toString(),
                     ProjectItem::Type::Conversion);
                 if (!preset.ok)
-                    return {false, {{"candidates", preset.candidates}}, preset.errorCode, preset.errorMessage};
+                    return failure(preset.errorCode, preset.errorMessage, {{"candidates", preset.candidates}});
                 settings = preset.item->guid;
             }
         }
@@ -107,10 +124,10 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         const auto& group = item->fieldGroups.conversion.shared;
         const auto local = group.localHistory
             ? group.localHistory->settingsRef : harkenprojectschema::AuthoringGuid{};
-        return {true, {{"object", item->guid.toString(QUuid::WithoutBraces)},
+        return success({{"object", item->guid.toString(QUuid::WithoutBraces)},
             {"inherit", group.mode == FieldGroupMode::Inherit},
             {"settings", harkenprojectschema::IsNull(local) ? QJsonValue(QJsonValue::Null)
-                : QJsonValue(fromFieldGroupGuid(local).toString(QUuid::WithoutBraces))}}};
+                : QJsonValue(fromFieldGroupGuid(local).toString(QUuid::WithoutBraces))}});
     }
     if (name == QStringLiteral("set_conversion_fields")) {
         QSet<ProjectPlatformId> platforms;
@@ -147,7 +164,7 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         }
         if (!ConversionEditing::setPlatforms(manager, item->guid, replacement, before, originator, &error))
             return invalid(error);
-        return {true, describePreset(*project, *item)};
+        return success(describePreset(*project, *item));
     }
     const auto platform = platformFor(*project, args);
     if (!platform) return invalid(QStringLiteral("Unknown project platform ID"));
@@ -175,7 +192,7 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
                 result.insert(QStringLiteral("source_entry_id"), source->entryId.toString(QUuid::WithoutBraces));
             }
         }
-        return {true, result};
+        return success(result);
     }
     QJsonObject result{{"conversion", item->guid.toString(QUuid::WithoutBraces)},
         {"platform_id", ProjectPlatformSemantics::idString(*platform)}};
@@ -187,14 +204,14 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         const auto rows = ConversionResults::query(*project, item->guid, *platform, &error);
         result.insert(QStringLiteral("sources"), ConversionResults::toJson(rows));
         if (!converted.errors.isEmpty() || !error.isEmpty())
-            return {false, result, QStringLiteral("CONVERSION_FAILED"),
-                error.isEmpty() ? converted.errors.join(QLatin1Char('\n')) : error};
-        return {true, result};
+            return failure(QStringLiteral("CONVERSION_FAILED"),
+                error.isEmpty() ? converted.errors.join(QLatin1Char('\n')) : error, result);
+        return success(result);
     }
     const auto rows = ConversionResults::query(*project, item->guid, *platform, &error);
     if (!error.isEmpty()) return invalid(error);
     result.insert(QStringLiteral("sources"), ConversionResults::toJson(rows));
-    return {true, result};
+    return success(result);
 }
 
 }
@@ -214,7 +231,7 @@ void registerConversionActions(ActionManager& manager, ProjectManager* projectMa
         action.paramSchema = commandInputSchema(action.id);
         action.handler = [projectManager, id = action.id](const QJsonObject& args) {
             if (!projectManager)
-                return ActionResult{false, {}, QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is currently open")};
+                return failure(QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is currently open"));
             return execute(*projectManager, id, args);
         };
         manager.registerAction(action);
