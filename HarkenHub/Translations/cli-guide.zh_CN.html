@@ -41,6 +41,8 @@
 <h2>第四步：安装或更新 Unity 集成包</h2>
 <pre>.\HarkenHub.exe --cli integrations install --path "D:\UnityGame" --source "D:\Integration\Harken"</pre>
 <p>修改前请关闭 Unity。阅读返回的文件变更清单，再使用相同参数加上确认标识执行，安装或更新所选集成包。</p>
+<p>请使用可信发布来源的完整集成包。Hub 通过 <code>package.json</code> 识别包并检查文件操作；安装成功或 <code>integrations verify</code> 通过，不代表 Unity 编译、播放和目标平台测试已通过，这些仍需在 Unity 中验证。</p>
+<p>升级时，旧包管理、但新包已不再提供的文件会列入删除清单，包括旧版文档和示例。改过的受管文件也可能被删除，请在确认前备份需要保留的修改。由你自行添加、且不与新包冲突的非受管文件会保留。</p>
 <p>移除整个集成包可用 <code>integrations remove --path "D:\UnityGame" --backup "D:\Backups\Game-integration-01"</code>。备份位置必须是尚不存在的新目录，确认时保持同一路径。迁移、还原也采用先检查再确认的方式，完整参数见命令参考。</p>
 <h2>更新、协议与出错后的处理</h2>
 <p>如果在 Studio 安装程序开始前关闭 CLI，恢复流程可能取消这次待执行的安装。请查看 <code>updates status</code>，再重新审阅并确认更新。</p>

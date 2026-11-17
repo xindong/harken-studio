@@ -5,6 +5,14 @@ namespace Harken
 {
     public static class Values
     {
+        public static VnResult RegisterGeneratedCatalog(ulong executionFingerprint,
+            ulong catalogFingerprint, Type symbols)
+        {
+            if (symbols == null) return VnResult.VN_INVALID_ARG;
+            VariableCatalogGuard.Register(executionFingerprint, catalogFingerprint, symbols);
+            return VnResult.VN_OK;
+        }
+
         public static unsafe VnResult SetValue(string variableName, string projectId,
             float value, Emitter? emitter = null)
         {

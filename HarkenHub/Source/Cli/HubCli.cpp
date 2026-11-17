@@ -56,7 +56,7 @@ const Command commands[] = {
     {"integrations link", "engine path! project! source confirm", "Associate an engine project with a Harken project."},
     {"integrations unlink", "id! confirm", "Remove an association without removing integration files."},
     {"integrations locate", "engine path! location!", "Rediscover and save an installed integration location."},
-    {"integrations verify", "engine path! location", "Inspect installed integration integrity."},
+    {"integrations verify", "engine path! location", "Compare installed integration files with their installation record; does not test Unity or target-platform support."},
     {"integrations install", "engine path! source! location preserve-unowned confirm", "Review or apply an integration installation/update."},
     {"integrations remove", "engine path! location backup! confirm", "Review or remove managed integration files with a backup."},
     {"integrations move", "engine path! location destination! backup! confirm", "Review or migrate an installed integration."},

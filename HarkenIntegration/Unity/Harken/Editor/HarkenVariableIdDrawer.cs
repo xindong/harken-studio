@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
-using Harken.Generated;
 
 namespace Harken.Unity.Editor
 {
@@ -65,7 +64,7 @@ namespace Harken.Unity.Editor
             {
                 return false;
             }
-            FieldInfo field = typeof(HarkenVariables).GetField(VariableCatalogEmitter.SymbolName(codeName),
+            FieldInfo field = VariableCatalogGuard.GeneratedSymbols?.GetField(VariableCatalogEmitter.SymbolName(codeName),
                 BindingFlags.Public | BindingFlags.Static);
             if (field == null || field.FieldType != typeof(VnObjectId) ||
                 IsFingerprint(field.Name))
@@ -80,8 +79,9 @@ namespace Harken.Unity.Editor
         {
             var names = new List<string> { "(None)" };
             var values = new List<VnObjectId> { default };
-            foreach (FieldInfo field in typeof(HarkenVariables).GetFields(
-                BindingFlags.Public | BindingFlags.Static))
+            FieldInfo[] fields = VariableCatalogGuard.GeneratedSymbols?.GetFields(
+                BindingFlags.Public | BindingFlags.Static) ?? new FieldInfo[0];
+            foreach (FieldInfo field in fields)
             {
                 if (field.FieldType != typeof(VnObjectId) || IsFingerprint(field.Name))
                 {

@@ -262,16 +262,12 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.remediation = hubTranslate(QStringLiteral("Restore this installation's ownership record from its own backup, then check again. Do not copy a record from another Integration Package or project. Without the record, Hub cannot distinguish Integration Package files from project-specific files; use the original installation tool if no backup exists."));
             return result;
         }
-        bool manifestOk = false;
-        const auto manifest = jsonObject(QDir(packageRoot).filePath(QStringLiteral("harken-integration.json")), &manifestOk);
         result.canChangeIntegration = true;
         result.canRemoveIntegration = discovery.integrationReferences.isEmpty();
-        if (!packageOk || package.value(QStringLiteral("name")).toString() != QStringLiteral("com.harken.core")
-            || !manifestOk || manifest.value(QStringLiteral("schema_version")).toInt() != 3
-            || manifest.value(QStringLiteral("package_name")).toString() != QStringLiteral("com.harken.core")) {
+        if (!packageOk || package.value(QStringLiteral("name")).toString() != QStringLiteral("com.harken.core")) {
             result.health = EngineTargetHealth::Incomplete;
             result.status = hubTranslate(QStringLiteral("Integration Package metadata needs repair"));
-            result.error = hubTranslate(QStringLiteral("The installation record is available, but package.json or harken-integration.json is missing or invalid."));
+            result.error = hubTranslate(QStringLiteral("The installation record is available, but package.json is missing or invalid."));
             result.remediation = hubTranslate(QStringLiteral("Use Change Integration Package with a complete source to repair it, or Uninstall Integration Package to back up and remove the recorded files. Repair the package metadata before moving it."));
             return result;
         }

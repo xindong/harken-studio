@@ -12,7 +12,7 @@
     AOT toolchain build; that stays a Unity/device dependency).
 
     It compiles the SAME generated + managed API sources the Unity package ships (single
-    source, no copy); the Samples~ scene is intentionally excluded (UnityEngine).
+    source, no copy).
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -38,14 +38,9 @@
     <Compile Include="VariableApiContract.cs" />
     <Compile Include="RemoteCommunicationContract.cs" />
     <Compile Include="RepositoryPublicationContract.cs" />
-    <Compile Include="CompanionDirectoryContract.cs" />
-    <Compile Include="CompanionSourceContract.cs" />
+    <Compile Include="CompanionVersionContract.cs" />
     <Compile Include="StreamSourceContract.cs" />
     <Content Include="Fixtures/StreamSource.stream" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\UnityFixture\Data\CompanionPacks\**\*.json;..\UnityFixture\Data\CompanionPacks\**\*.bytes"
-             Link="NativePublications\UnityFixture\CompanionPacks\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\UnityFixture\Data\U4Original\**\*.json;..\UnityFixture\Data\U4Original\**\*.bytes"
-             Link="NativePublications\UnityFixture\U4Original\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures/VariableCatalog.json" Link="VariableCatalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

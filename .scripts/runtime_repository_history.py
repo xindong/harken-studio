@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import platform
 import re
 import shutil
@@ -663,29 +662,8 @@ def rebuild_client(
     }
 
 
-def expected_managed_project(old_root: Path) -> Path:
-    return (
-        old_root / "HarkenTest/Binding/AbiFidelity.csproj"
-    ).resolve()
-
-
-def managed_output_index(output: Path) -> dict[str, Any]:
-    if not output.is_dir():
-        fail("managed output directory does not exist: %s" % output)
-    files = sorted(path for path in output.iterdir() if path.is_file())
-    if not files:
-        fail("managed output directory is empty: %s" % output)
-    return {
-        path.name: file_record(path)
-        for path in files
-    }
-
-
 def verify_generators(root: Path, *, include_manifest: bool) -> list[str]:
     scripts = [
-        Path(
-            "HarkenIntegration/Unity/Binding/gen_binding.py"
-        ),
         Path(
             "HarkenEngine/Tool/HostControl/wire/gen_wire.py"
         ),
@@ -718,9 +696,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--configuration", default="Release")
     parser.add_argument("--old-commit", required=True)
     parser.add_argument("--current-commit", required=True)
-    parser.add_argument(
-        "--old-managed-project", type=Path, required=True
-    )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -734,16 +709,8 @@ def main() -> int:
     current_build = args.current_build.resolve()
     old_client = args.old_client.resolve()
     current_client = args.current_client.resolve()
-    old_managed_project = args.old_managed_project.resolve()
     if args.configuration != "Release":
         fail("repository-history fixture requires Release configuration")
-    required_managed_project = expected_managed_project(old_root)
-    if old_managed_project != required_managed_project:
-        fail(
-            "old managed project must be %s"
-            % required_managed_project
-        )
-    file_record(old_managed_project)
 
     old_git = git_info(old_root)
     current_git = git_info(current_root)
@@ -893,64 +860,6 @@ def main() -> int:
         ]
     )
 
-    # The historical managed client predates the artifact rename. Give only
-    # that ABI fixture the new binary under its original loading contract.
-    managed_native_dir = current_build / "history-managed-native"
-    managed_native_dir.mkdir(parents=True, exist_ok=True)
-    managed_native = managed_native_dir / "HarkenCore.dll"
-    shutil.copyfile(current_dll, managed_native)
-    environment = os.environ.copy()
-    environment["HARKEN_NATIVE_DIR"] = str(managed_native_dir)
-    managed_build_command = [
-        "dotnet",
-        "build",
-        str(old_managed_project),
-        "-c",
-        config,
-        "--nologo",
-        "--no-incremental",
-    ]
-    managed_build = run(
-        managed_build_command,
-        cwd=old_root,
-        env=environment,
-    )
-    managed_output_dir = (
-        old_managed_project.parent
-        / "bin"
-        / config
-        / "net9.0"
-    )
-    managed_assembly = (
-        managed_output_dir / "HarkenAbiFidelity.dll"
-    ).resolve()
-    managed_run_command = [
-        "dotnet",
-        str(managed_assembly),
-        "--require-native",
-    ]
-    managed_run = run(
-        managed_run_command,
-        cwd=old_root,
-        env=environment,
-    )
-    managed = {
-        "result": "PASS",
-        "project": file_record(old_managed_project),
-        "sourceRoot": str(old_root),
-        "relevantEnvironment": {
-            "HARKEN_NATIVE_DIR": str(managed_native_dir),
-        },
-        "historicalFilenameAlias": file_record(managed_native),
-        "build": command_record(
-            managed_build_command, old_root, managed_build
-        ),
-        "run": command_record(
-            managed_run_command, old_root, managed_run
-        ),
-        "outputs": managed_output_index(managed_output_dir),
-    }
-
     report = {
         "kind": "harken-runtime-repository-history-compatibility",
         "schemaVersion": 2,
@@ -1029,7 +938,6 @@ def main() -> int:
                 "downlevelResult": "PASS",
                 "stdout": current_to_old.stdout.strip(),
             },
-            "oldManagedSdkToCurrentRuntime": managed,
         },
         "releaseProvenance": {
             "status": "EXTERNAL_BLOCKED",
@@ -1045,15 +953,6 @@ def main() -> int:
                 ).stdout.splitlines()[0],
                 "binary": file_record(
                     Path(shutil.which("cmake") or "").resolve()
-                ),
-            },
-            "dotnet": {
-                "version": run(
-                    ["dotnet", "--version"]
-                ).stdout.strip(),
-                "info": run(["dotnet", "--info"]).stdout,
-                "binary": file_record(
-                    Path(shutil.which("dotnet") or "").resolve()
                 ),
             },
             "dumpbin": file_record(dumpbin),

@@ -27657,7 +27657,7 @@ bool LoadInitPack(const std::vector<std::uint8_t>& bytes, const char* name,
                                                  handle) == VN_OK;
 }
 
-TEST(PackComposition, VariableApiSetValuePreservesWriteScopeAndPublishesInitFixture) {
+TEST(PackComposition, VariableApiSetValuePreservesWriteScope) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();

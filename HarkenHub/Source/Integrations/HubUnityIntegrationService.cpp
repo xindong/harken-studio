@@ -133,8 +133,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
             return finish();
         }
     }
-    if (!managedFiles.contains(QStringLiteral("package.json"))
-        || !managedFiles.contains(QStringLiteral("harken-integration.json"))) {
+    if (!managedFiles.contains(QStringLiteral("package.json"))) {
         inspection.summary = QStringLiteral("The installed Integration Package has incomplete or invalid verification data.");
         return finish();
     }
@@ -142,6 +141,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     inspection.summary = QStringLiteral("The installation record is complete. File contents are checked in the next step.");
     auto& verification = result.steps[2];
     verification.artifacts << installation.path;
+    verification.details << QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
     auto& missing = result.missingFiles;
     auto& modified = result.modifiedFiles;
     auto& unreadable = result.unreadableFiles;
@@ -243,6 +243,8 @@ QString localizeUnityText(const QString& text)
     if (translatedText != text)
         return translatedText;
 
+    if (text == QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity."))
+        return QCoreApplication::translate("HarkenHub", "Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
     if (text == QStringLiteral("Validate Unity project"))
         return QCoreApplication::translate("HarkenHub", "Validate Unity project");
     if (text == QStringLiteral("Validate Harken Unity Integration Package source"))
@@ -330,14 +332,8 @@ QString localizeUnityText(const QString& text)
          QT_TRANSLATE_NOOP("HarkenHub", "%1 exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated.")},
         {QRegularExpression(QStringLiteral(R"(^(.*) installed Integration Package file\(s\) could not be read, so the comparison is incomplete\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "%1 installed Integration Package file(s) could not be read, so the comparison is incomplete.")},
-        {QRegularExpression(QStringLiteral(R"(^Other missing Harken Integration Package content: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Other missing Harken Integration Package content: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Required Harken Integration Package content is missing from the selected source: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Required Harken Integration Package content is missing from the selected source: %1")},
         {QRegularExpression(QStringLiteral(R"(^The Harken integration cannot distinguish managed Integration Package files from project\-specific files inside (.*)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "The Harken integration cannot distinguish managed Integration Package files from project-specific files inside %1.")},
-        {QRegularExpression(QStringLiteral(R"(^The selected Integration Package source is missing the verified game runtime for: (.*)\. The Unity project was not changed\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "The selected Integration Package source is missing the verified game runtime for: %1. The Unity project was not changed.")},
         {QRegularExpression(QStringLiteral(R"(^These files exist inside (.*) but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source\. Nothing was compared or changed\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source. Nothing was compared or changed.")},
         {QRegularExpression(QStringLiteral(R"(^Cannot check whether this Unity project is open: (.*) \(system error ([0-9]+)\)\. Check project permissions and try again\.$)")),
@@ -443,47 +439,10 @@ QString localizeUnityText(const QString& text)
     }
 
     const QString validatedIntegration = translateMatch(
-        QRegularExpression(
-            QStringLiteral(R"(^Validated Integration Package (.*): ([0-9]+) file\(s\); the (.*) runtime required for this editor is present\.(.*)$)")),
-        "Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.");
-    if (!validatedIntegration.isEmpty()) {
-        const QRegularExpressionMatch match = QRegularExpression(
-            QStringLiteral(R"(^Validated Integration Package (.*): ([0-9]+) file\(s\); the (.*) runtime required for this editor is present\.(.*)$)"))
-            .match(text);
-        QString result = QCoreApplication::translate(
-            "HarkenHub",
-            "Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.")
-                             .arg(match.captured(1), match.captured(2), match.captured(3));
-        QString suffix = match.captured(4);
-        const auto appendMatch = [&suffix, &result](const QRegularExpression& expression,
-                                                      const char* source) {
-            const QRegularExpressionMatch match = expression.match(suffix);
-            if (!match.hasMatch())
-                return false;
-            QString translated = QCoreApplication::translate("HarkenHub", source);
-            for (int index = 1; index <= match.lastCapturedIndex(); ++index)
-                translated = translated.arg(match.captured(index));
-            result += translated;
-            suffix = suffix.mid(match.capturedLength());
-            return true;
-        };
-        appendMatch(
-            QRegularExpression(QStringLiteral(
-                R"(^ Target runtimes not included: (.*)\. Available platforms can still be integrated\.)")),
-            " Target runtimes not included: %1. Available platforms can still be integrated.");
-        appendMatch(
-            QRegularExpression(QStringLiteral(
-                R"(^ Runtimes that require another editor operating system are not included: (.*)\.)")),
-            " Runtimes that require another editor operating system are not included: %1.");
-        return result + suffix;
-    }
-
-    const QString availableRuntimes = translateMatch(
-        QRegularExpression(
-            QStringLiteral(R"(^Native runtimes available in this Integration Package source: (.*)$)")),
-        "Native runtimes available in this Integration Package source: %1");
-    if (!availableRuntimes.isEmpty())
-        return availableRuntimes;
+        QRegularExpression(QStringLiteral(R"(^Validated Integration Package (.*): ([0-9]+) file\(s\)\.$)")),
+        "Validated Integration Package %1: %2 file(s).");
+    if (!validatedIntegration.isEmpty())
+        return validatedIntegration;
 
     const QRegularExpressionMatch integrationDifferences = QRegularExpression(
         QStringLiteral(R"(^Check found Integration Package differences: (.*)\.$)"))
@@ -543,52 +502,6 @@ QString localizeUnityText(const QString& text)
             .arg(managedDiffers.captured(1),
                  localizeCountSummary(managedDiffers.captured(2)));
 
-    const QString targetRuntimes = translateMatch(
-        QRegularExpression(
-            QStringLiteral(R"(^Target runtimes deferred to another operating system: (.*)$)")),
-        "Target runtimes deferred to another operating system: %1");
-    if (!targetRuntimes.isEmpty())
-        return targetRuntimes;
-
-    const QString missingTargetCause = translateMatch(
-        QRegularExpression(QStringLiteral(
-            R"(^The (.*) files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source\. Each target is independent, so their absence does not prevent (.*) integration\.$)")),
-        "The %1 files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.");
-    if (!missingTargetCause.isEmpty())
-        return missingTargetCause;
-
-    const QString missingTargetPolicy = translateMatch(
-        QRegularExpression(QStringLiteral(
-            R"(^Those targets cannot be completed on (.*) under the Harken integration policy, so their missing runtimes do not block this integration\.$)")),
-        "Those targets cannot be completed on %1 under the Harken integration policy, so their missing runtimes do not block this integration.");
-    if (!missingTargetPolicy.isEmpty())
-        return missingTargetPolicy;
-
-    if (text == QStringLiteral(
-            "You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.");
-    if (text == QStringLiteral(
-            "Before building targets that require another operating system, open the Unity project with Harken Studio there and run Check and integrate again. Apple targets must be completed on macOS."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Before building targets that require another operating system, open the Unity project with Harken Studio there and run Check and integrate again. Apple targets must be completed on macOS.");
-
-    const QRegularExpression missingRuntimeExpression(QStringLiteral(
-        R"(^Missing component: (.*) game runtime\nExpected inside the selected Integration Package source: (.*)\nPurpose: (.*)\nWhat this means: This Integration Package source cannot safely prepare the Unity project for (.*) builds until a verified runtime is restored\.$)"));
-    const QRegularExpressionMatch missingRuntimeMatch =
-        missingRuntimeExpression.match(text);
-    if (missingRuntimeMatch.hasMatch()) {
-        QString translated = QCoreApplication::translate(
-            "HarkenHub",
-            "Missing component: %1 game runtime\nExpected inside the selected Integration Package source: %2\nPurpose: %3\nWhat this means: This Integration Package source cannot safely prepare the Unity project for %4 builds until a verified runtime is restored.");
-        return translated.arg(
-            missingRuntimeMatch.captured(1), missingRuntimeMatch.captured(2),
-            localizeUnityText(missingRuntimeMatch.captured(3)),
-            missingRuntimeMatch.captured(4));
-    }
-
     if (text.contains(QLatin1Char('\n'))) {
         const QStringList lines = text.split(QLatin1Char('\n'));
         QStringList localizedLines;
@@ -602,13 +515,6 @@ QString localizeUnityText(const QString& text)
         if (changed)
             return localizedLines.join(QLatin1Char('\n'));
     }
-
-    const QString missingRuntime = translateMatch(
-        QRegularExpression(QStringLiteral(
-            R"(^Missing component: (.*) game runtime\nExpected inside the selected Integration Package source: (.*)\nPurpose: (.*)\nWhat this means: This Integration Package source cannot safely prepare the Unity project for (.*) builds until a verified runtime is restored\.$)")),
-        "Missing component: %1 game runtime\nExpected inside the selected Integration Package source: %2\nPurpose: %3\nWhat this means: This Integration Package source cannot safely prepare the Unity project for %4 builds until a verified runtime is restored.");
-    if (!missingRuntime.isEmpty())
-        return missingRuntime;
 
     return text;
 }
