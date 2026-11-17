@@ -390,7 +390,7 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
         assert effective["conversion"] == conversion and effective["sample_rate"] == 24000, effective
         readback = execute("get_item_info", {"path": "tone"})["result"]
-        assert readback["conversion"] == readback["fieldGroups"]["conversion"], readback
+        assert readback["conversion"] == readback["fieldGroups"]["shared"]["conversion"], readback
         conversion_args = {"conversion": conversion, "platform_id": platform}
         before_convert = authored_contents()
         queried = execute("get_conversion_results", conversion_args)["result"]["sources"]
