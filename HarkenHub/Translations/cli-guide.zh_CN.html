@@ -43,6 +43,7 @@
 <p>修改前请关闭 Unity。阅读返回的文件变更清单，再使用相同参数加上确认标识执行，安装或更新所选集成包。</p>
 <p>移除整个集成包可用 <code>integrations remove --path "D:\UnityGame" --backup "D:\Backups\Game-integration-01"</code>。备份位置必须是尚不存在的新目录，确认时保持同一路径。迁移、还原也采用先检查再确认的方式，完整参数见命令参考。</p>
 <h2>更新、协议与出错后的处理</h2>
+<p>如果在 Studio 安装程序开始前关闭 CLI，恢复流程可能取消这次待执行的安装。请查看 <code>updates status</code>，再重新审阅并确认更新。</p>
 <p>工程命令成功但包含 <code>data.warnings</code> 时，工程改动已经保存，请阅读警告，不要重复移除。修改语言也会通知正在运行的后台服务。新建工程时，父目录必须已经存在。</p>
 <p>先用 <code>updates download --product hub</code> 下载，再用 <code>updates apply --product hub</code> 查看更新计划。更新 Studio 时改用 <code>studio</code>。确认后，Hub 自身更新会关闭已运行的 Hub 窗口和后台服务，再通过更新桥接安装并重启后台服务；返回“已排队”不代表安装完成，请继续查看 <code>updates status</code> 和 <code>diagnostics transactions</code>。</p>
 <p>需要接受协议时，先运行 <code>legal show --product studio</code>（Hub 协议使用 <code>hub</code>），阅读完整内容。只有在你同意后，才运行 <code>legal accept --product studio</code>，核对返回内容并带确认标识再次执行。</p>

@@ -108,8 +108,10 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
     const bool failed = std::any_of(result.steps.begin(), result.steps.end(), [](const auto& step) { return step.status == UnityIntegrationStepStatus::Failed; });
     if (failed || (!result.success && !result.requiresConfirmation))
         return {3, {{"ok", false}, {"data", unityJson(result)}}};
-    require(!request.restoreIntegration || request.recoverRestore || result.conflictingFiles.isEmpty() || request.confirmUnownedConflicts,
-        "Restoration conflicts require --accept-conflicts true. Review the new plan before confirming.", "ConflictApprovalRequired");
+    if (request.restoreIntegration && !request.recoverRestore && !result.conflictingFiles.isEmpty() && !request.confirmUnownedConflicts)
+        return {3, {{"ok", false}, {"error", QJsonObject{{"code", "ConflictApprovalRequired"},
+            {"message", "Restoration conflicts require --accept-conflicts true. Review the new plan before confirming."}}},
+            {"data", unityJson(result)}}};
     auto plan = unityJson(result);
     plan.remove("report");
     plan.remove("steps");
