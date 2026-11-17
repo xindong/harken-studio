@@ -63,7 +63,6 @@ namespace ProjectPackExporterInternal {
         QString currentWorldOutputPath;
         QString waveformOutputDir;
         QString language;
-        bool    debugStrings = true;
         bool    deferBindings = false;
         bool    forceReexport = false;
         bool    selfCleaning = false;
@@ -115,6 +114,7 @@ public:
         int     actionCount  = 0;
         QString error;
         QStringList warnings;
+        QStringList globalWarnings;
         int     mediaCacheHits = 0;
         int     mediaConversions = 0;
         uint64_t currentWorldSemanticFingerprint = 0;
@@ -126,6 +126,12 @@ public:
         int removedPackCount = 0;
         QVector<PackArtifactMetadata> artifacts;
         QJsonArray outputs;
+
+        void addGlobalWarnings(const QStringList& messages)
+        {
+            globalWarnings.append(messages);
+            warnings.append(messages);
+        }
     };
 
     struct PackBuildRecord

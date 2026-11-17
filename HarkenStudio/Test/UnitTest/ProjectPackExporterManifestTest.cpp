@@ -2994,6 +2994,7 @@ TEST(EditorProjectPackExporterManifest, BusyWaveformOutputFailsWithoutRetry)
             context.root, context.project, {context.platform}, true, {{context.platform, disabled.outputs}});
         EXPECT_TRUE(cleaned.success) << cleaned.error.toStdString();
         if (location != 0) EXPECT_FALSE(cleaned.warnings.isEmpty());
+        EXPECT_EQ(cleaned.globalWarnings, cleaned.warnings);
         EXPECT_EQ(readFileBytes(otherWaveform), QByteArray("other build waveform"));
         competingBuild.unlock();
         context.project.buildExportWaveforms = true;
@@ -3555,6 +3556,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
     ASSERT_NO_FATAL_FAILURE(context.setup(true));
     auto actions = std::move(context.project.actions.front().rootItem->children);
     actions.push_back(makeItem(QStringLiteral("Empty"), VNX::ProjectItem::Type::Action, 55));
+    actions.push_back(makeItem(QStringLiteral("OtherEmpty"), VNX::ProjectItem::Type::Action, 56));
     context.project.actions.clear();
     for (auto& action : actions) {
         action->parent = nullptr;
@@ -3584,6 +3586,8 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
     ASSERT_EQ(initial.platforms.size(), 1u);
     ASSERT_TRUE(compiled);
     ASSERT_FALSE(initial.platforms.front().result.warnings.isEmpty());
+    EXPECT_EQ(initial.platforms.front().result.warnings.size(), 2);
+    EXPECT_TRUE(initial.platforms.front().result.globalWarnings.isEmpty());
     QMap<QString, QByteArray> expected;
     for (const auto& path : publicationFiles(context.live.path()))
         expected.insert(path, readFileBytes(context.live.filePath(path)));
@@ -3641,6 +3645,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
         EXPECT_EQ(platform.result.mediaCount, previous.result.mediaCount);
         EXPECT_EQ(platform.result.actionCount, previous.result.actionCount);
         EXPECT_EQ(platform.result.warnings, previous.result.warnings);
+        EXPECT_EQ(platform.result.globalWarnings, previous.result.globalWarnings);
     }
     ASSERT_EQ(reused.platforms.front().records.size(), initial.platforms.front().records.size());
     for (const auto& record : reused.platforms.front().records) {
@@ -3650,6 +3655,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
             });
         ASSERT_NE(prior, initial.platforms.front().records.end());
         EXPECT_EQ(record.omitted, prior->omitted);
+        EXPECT_EQ(record.warnings, prior->warnings);
         EXPECT_TRUE(record.success);
         if (record.source == VNX::ProjectPackExporter::PackBuildRecord::Source::Action) {
             const auto action = std::find_if(reloaded.actions.begin(),

@@ -167,12 +167,19 @@ QJsonObject runSavedProjectBuild(const QCommandLineParser& parser,
         QTextStream(stderr) << message << Qt::endl;
     };
     request.platformFinished = [](const VNX::ProjectPackBuildService::PlatformResult& platform) {
-        for (const auto& warning : platform.result.warnings) QTextStream(stderr) << warning << Qt::endl;
+        for (const auto& warning : platform.result.globalWarnings)
+            QTextStream(stderr) << '[' << platform.definition.name << "] " << warning << Qt::endl;
         if (!platform.result.success) QTextStream(stderr) << platform.result.error << Qt::endl;
         for (const auto& record : platform.records) {
-            QTextStream(stderr) << '[' << platform.definition.name << "] " << record.packName
+            const QString context = QStringLiteral("[%1%2] %3")
+                .arg(platform.definition.name,
+                    record.language.isEmpty() ? QString() : QStringLiteral(", ") + record.language,
+                    record.packName);
+            QTextStream(stderr) << context
                 << ": " << (record.omitted ? "Omitted" : record.skipped ? "Up to date" : record.success ? "Built" : "Failed")
                 << Qt::endl;
+            for (const auto& warning : record.warnings)
+                QTextStream(stderr) << context << ": " << warning << Qt::endl;
         }
     };
     const auto built = VNX::ProjectPackBuildService::run(request);
@@ -202,6 +209,7 @@ QJsonObject runSavedProjectBuild(const QCommandLineParser& parser,
             {QStringLiteral("canceled"), result.canceled},
             {QStringLiteral("error"), result.error},
             {QStringLiteral("warnings"), QJsonArray::fromStringList(result.warnings)},
+            {QStringLiteral("global_warnings"), QJsonArray::fromStringList(result.globalWarnings)},
             {QStringLiteral("built_pack_count"), result.builtPackCount},
             {QStringLiteral("skipped_pack_count"), result.skippedPackCount},
             {QStringLiteral("removed_pack_count"), result.removedPackCount},
