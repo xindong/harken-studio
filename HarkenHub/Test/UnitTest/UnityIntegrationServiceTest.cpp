@@ -2809,6 +2809,8 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     for (const auto& path : optional) ASSERT_TRUE(QFile::remove(source + "/" + path));
     writeFile(source + "/Runtime/Generated/HarkenNative.g.cs", "updated implementation\n");
     request.checkOnly = true;
+    EXPECT_FALSE(service.run(request).success);
+    request.documentation = request.samples = VNX::UnityInstallation::ContentAction::Keep;
     auto review = service.run(request);
     ASSERT_TRUE(review.success) << review.steps[1].cause.toStdString();
     EXPECT_TRUE(review.missingFiles.isEmpty());
