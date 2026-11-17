@@ -142,6 +142,7 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
     QVector<FieldGroupDefinitionSnapshot> before;
     QVector<FieldGroupDefinitionSnapshot> after;
     QSet<QUuid> visited;
+    const auto mode = inherit.value_or(false) ? FieldGroupMode::Inherit : FieldGroupMode::Local;
     for (const auto& object : objects) {
         if (visited.contains(object)) continue;
         visited.insert(object);
@@ -151,7 +152,7 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
         request.definition = object;
         request.group = FieldGroupId::Conversion;
         request.scopes.shared = true;
-        request.operation = SetFieldGroupMode{inherit.value_or(false) ? FieldGroupMode::Inherit : FieldGroupMode::Local};
+        request.operation = SetFieldGroupMode{mode};
         if (!expectedBefore.empty()) {
             const auto expected = std::find_if(expectedBefore.begin(), expectedBefore.end(),
                 [&](const auto& value) { return value.definition == object; });
@@ -159,7 +160,9 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
                 return fail(error, QStringLiteral("Expected Conversion state does not include every object"));
             request.expectedBefore = expected->groups;
         }
-        const auto prepared = prepareFieldGroupEdit(*project, request);
+        const auto prepared = item->fieldGroups.conversion.shared.mode == mode
+            ? prepareFieldGroupRestore(*project, object, item->fieldGroups, request.expectedBefore)
+            : prepareFieldGroupEdit(*project, request);
         if (!prepared.ok()) return fail(error, prepared.diagnostics.front().message);
         auto replacement = *prepared.after;
         if (settings)
