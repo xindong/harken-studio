@@ -145,13 +145,17 @@ AuditionManager::AuditionManager(VNX::AudioEngine* engine, QObject* parent)
     connect(&previewRevisionTimeoutTimer_, &QTimer::timeout,
             this, &AuditionManager::expirePendingRevisionStarts);
 
-    connect(&VNX::ProjectManager::instance(), &VNX::ProjectManager::itemPropertyChanged,
-            this, [this](VNX::ProjectItem* item, const QString& property) {
-        if (!item || property != QStringLiteral("sources")) return;
+    const auto invalidateMedia = [this](const QUuid& soundGuid) {
         const auto active = getActiveAuditions();
         for (const auto& audition : active)
-            if (audition.previewSounds.contains(item->runtimeId()))
+            if (audition.previewSounds.contains(VNX::runtimeObjectId(soundGuid)))
                 stop(audition.playingId);
+    };
+    connect(&VNX::ProjectManager::instance(), &VNX::ProjectManager::previewMediaInvalidated,
+            this, invalidateMedia);
+    connect(&VNX::ProjectManager::instance(), &VNX::ProjectManager::itemPropertyChanged,
+            this, [invalidateMedia](VNX::ProjectItem* item, const QString& property) {
+        if (item && property == QStringLiteral("sources")) invalidateMedia(item->guid);
     });
 
     if (engine_) {

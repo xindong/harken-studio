@@ -318,6 +318,10 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     });
     connect(&ProjectManager::instance(), &ProjectManager::projectOpened,
             this, [this](ProjectData*) { refreshMetadata(); }, Qt::QueuedConnection);
+    connect(&ProjectManager::instance(), &ProjectManager::previewMediaInvalidated,
+            this, [this](const QUuid& soundGuid) {
+        if (!soundGuid_.isNull() && soundGuid == soundGuid_) refreshMetadata();
+    }, Qt::QueuedConnection);
     connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
             this, [this](ProjectItem* item, const QString& property, const QObject*) {
         if ((property == QStringLiteral("sources") || property == QStringLiteral("distinguishLanguage"))
