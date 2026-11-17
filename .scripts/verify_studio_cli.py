@@ -232,7 +232,9 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
     human_schema = run(cli, ["exec", "open_project", "--help", "--project", "missing.hsp"], environment)
     assert human_schema.returncode == 0 and b"path" in human_schema.stdout and b"[required]" in human_schema.stdout
     names = {entry["command"] for entry in catalog}
-    assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack"} <= names
+    assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack",
+        "create_conversion", "set_conversion_fields", "set_object_conversion", "set_default_conversion",
+        "get_effective_conversion", "get_conversion_results", "convert"} <= names
     for entry in catalog:
         assert entry["registered"] and entry["inputSchema"]["type"] == "object", entry
         assert entry["schemaSource"] == "declared" and entry["inputSchema"]["additionalProperties"] is False, entry
@@ -364,8 +366,7 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
                                        for i in range(24000)))
         imported = execute("import_audio", {"path": str(audio)}, save=True)["result"]
         tone_guid = execute("get_item_info", {"path": "tone"})["result"]["runtime_stable_id"]
-        execute("set_field_group_field", {"definition_guid": tone_guid, "group": "conversion",
-            "scope": "Shared", "field": "settingsRef", "value": None}, save=True)
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": None}, save=True)
         assert "languages" in execute("list_project_languages")["result"]
         states = call("run", "--project", str(project), "--input", "-", data=[
             {"cmd": "get_project_state"},
@@ -379,6 +380,43 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         assert [states[i]["result"]["is_dirty"] for i in (0, 2, 4, 7)] == [False, True, False, False], states
         platforms = execute("list_project_platforms")["result"]["platforms"]
         platform = platforms[0]["id"]
+        previous_default = execute("get_project_info")["result"]["default_conversion"]
+        execute("create_folder", {"path": "Conversions/CLI"}, save=True)
+        preset = execute("create_conversion", {"name": "CLIConversion", "folder": "Conversions/CLI"}, save=True)["result"]
+        conversion = preset["guid"]
+        execute("set_conversion_fields", {"conversion": conversion, "all_platforms": True,
+            "format": "PCM", "sample_rate_tiers": [{"max_bytes": None, "sample_rate": 24000}]}, save=True)
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": conversion}, save=True)
+        effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
+        assert effective["conversion"] == conversion and effective["sample_rate"] == 24000, effective
+        readback = execute("get_item_info", {"path": "tone"})["result"]
+        assert readback["conversion"] == readback["fieldGroups"]["conversion"], readback
+        conversion_args = {"conversion": conversion, "platform_id": platform}
+        before_convert = authored_contents()
+        queried = execute("get_conversion_results", conversion_args)["result"]["sources"]
+        assert len(queried) == 1 and queried[0]["converted"] is None, queried
+        pcm = execute("convert", conversion_args)["result"]
+        assert pcm["sources"][0]["converted"]["format"] == "PCM", pcm
+        assert pcm["sources"][0]["converted"]["sample_rate"] == 24000, pcm
+        assert authored_contents() == before_convert
+        invalid = {"conversion": conversion, "platform_ids": [platform], "all_platforms": True, "format": "Vorbis"}
+        execute("set_conversion_fields", invalid, exit_code=2)
+        execute("set_conversion_fields", {"conversion": conversion, "platform_ids": [platform],
+            "format": "Vorbis", "quality": 57}, save=True)
+        encoded = execute("convert", conversion_args)["result"]
+        encoded_file = encoded["sources"][0]["converted"]
+        assert encoded_file["format"] == "Vorbis" and encoded_file["bytes"] > 0, encoded
+        repeated = execute("convert", conversion_args)["result"]
+        assert repeated["conversion_result"]["cached"] == 1, repeated
+        assert repeated["sources"] == encoded["sources"], (repeated, encoded)
+        execute("set_default_conversion", {"conversion": conversion}, save=True)
+        defaults = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "set_default_conversion", "args": {"conversion": None}},
+            {"cmd": "get_project_info"}, {"cmd": "undo"}, {"cmd": "get_project_info"},
+            {"cmd": "redo"}, {"cmd": "get_project_info"}])["results"]
+        assert [defaults[index]["result"]["default_conversion"] for index in (1, 3, 5)] == [None, conversion, None], defaults
+        execute("set_default_conversion", {"conversion": previous_default}, save=True)
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": None}, save=True)
         saved = authored_contents()
         targets = call("list-targets", "--project", str(project))["result"]
         assert any(value["id"] == platform for value in targets["platforms"]), targets

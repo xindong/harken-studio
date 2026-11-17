@@ -220,6 +220,35 @@ const QMap<QString, Contract>& contracts()
                                 "rescan_media_sources"})
             put({name}, projectPlatformCommandSchema(QLatin1String(name)));
 
+        const auto conversionSelector = described(text(), "Conversion preset GUID or unambiguous project path or name.");
+        const auto nullableConversion = QJsonObject{{"anyOf", QJsonArray{conversionSelector, QJsonObject{{"type", "null"}}}}};
+        put({"create_conversion"}, object({{"name", text()}, {"folder", described(text(),
+            "Existing directory in Conversions, relative to that bucket or prefixed with Conversions/.")}}, {"name"}));
+        auto tierLimit = integer(0, 9223372036854775807.0);
+        const auto tier = object({{"max_bytes", QJsonObject{{"anyOf", QJsonArray{tierLimit, QJsonObject{{"type", "null"}}}}}},
+            {"sample_rate", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000}}}}},
+            {"max_bytes", "sample_rate"});
+        auto conversionFields = requireAny(object({{"conversion", conversionSelector},
+            {"platform_ids", array(projectPlatformIdSchema(), 1, true)},
+            {"all_platforms", QJsonObject{{"type", "boolean"}, {"enum", QJsonArray{true}}}},
+            {"format", choice({"PCM", "Vorbis"})},
+            {"quality", QJsonObject{{"type", "number"}, {"minimum", 0}, {"maximum", 100}}},
+            {"sample_rate_tiers", described(array(tier, 1),
+                "Complete ordered tiers. Limits must increase; only the final max_bytes is null (Infinite). sample_rate 0 preserves the original rate.")}}, {"conversion"}),
+            {"format", "quality", "sample_rate_tiers"});
+        conversionFields.insert("oneOf", QJsonArray{
+            QJsonObject{{"required", QJsonArray{"platform_ids"}}, {"not", QJsonObject{{"required", QJsonArray{"all_platforms"}}}}},
+            QJsonObject{{"required", QJsonArray{"all_platforms"}}, {"not", QJsonObject{{"required", QJsonArray{"platform_ids"}}}}}});
+        put({"set_conversion_fields"}, conversionFields);
+        put({"set_object_conversion"}, object({{"object", text()}, {"inherit", boolean()},
+            {"settings", described(nullableConversion, "Local preset reference, or null for no conversion. Omit to retain local history; unavailable when inherit is true.")}},
+            {"object", "inherit"}));
+        put({"set_default_conversion"}, object({{"conversion", nullableConversion}}, {"conversion"}));
+        put({"get_effective_conversion"}, object({{"object", text()}, {"platform_id", projectPlatformIdSchema()}}, {"object"}), true);
+        const auto conversionQuery = object({{"conversion", conversionSelector}, {"platform_id", projectPlatformIdSchema()}}, {"conversion"});
+        put({"get_conversion_results"}, conversionQuery, true);
+        put({"convert"}, conversionQuery);
+
         auto platformRows = projectPlatformCommandSchema("apply_project_platforms").value("properties").toObject().value("platforms").toObject();
         auto platformRow = platformRows.value("items").toObject();
         platformRow.insert("required", QJsonArray{"id", "name", "basePlatform"});

@@ -406,6 +406,8 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
         {"packs", packs},
         {"actions", actions},
         {"platforms", platformsArr},
+        {"default_conversion", project->defaultConversionRef.isNull() ? QJsonValue(QJsonValue::Null)
+            : QJsonValue(project->defaultConversionRef.toString(QUuid::WithoutBraces))},
         {"sample_rate", project->sampleRate},
         {"channel_config", static_cast<int>(project->channelConfig)}
     });
@@ -850,8 +852,9 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
         std::string error;
         if (!WriteFieldGroupsJson(item->fieldGroups, fieldGroups, error))
             return errorResponse("INVALID_FIELD_GROUPS", QString::fromStdString(error));
-        info.insert("fieldGroups", QJsonDocument::fromJson(
-            QByteArray::fromStdString(fieldGroups)).object());
+        const auto groups = QJsonDocument::fromJson(QByteArray::fromStdString(fieldGroups)).object();
+        info.insert("fieldGroups", groups);
+        info.insert("conversion", groups.value(QStringLiteral("conversion")));
     }
 
     return successResponse(info);

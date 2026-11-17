@@ -1,5 +1,6 @@
 #include "Core/ActionManager.h"
 #include "Core/Components/VConversion.h"
+#include "Core/ConversionEditing.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
@@ -98,6 +99,91 @@ TEST_F(ProjectPlatformCommand, OldCommandCannotReplayIntoReopenedProjectWithSame
     EXPECT_EQ(authoredState(), before);
     result.redoFn();
     EXPECT_EQ(authoredState(), before);
+}
+
+TEST_F(ProjectPlatformCommand, ConversionCommandsValidateAtomicallyAndReplayWithAuthoredState)
+{
+    auto& actions = ActionManager::instance();
+    const auto created = actions.execute("create_conversion", {{"name", "CommandPreset"}}, ActionSource::IPC);
+    ASSERT_TRUE(created.success) << created.errorMessage.toStdString();
+    const auto guid = QUuid(created.data.value("guid").toString());
+    auto* preset = manager().findItemByGuid(guid);
+    ASSERT_NE(preset, nullptr);
+    const auto initial = preset->comp<VConversion>()->platforms;
+    const auto platform = Platforms::idString(project().platforms.front().id);
+    const QJsonObject edit{{"conversion", guid.toString(QUuid::WithoutBraces)},
+        {"platform_ids", QJsonArray{platform}}, {"format", "Vorbis"}, {"quality", 57},
+        {"sample_rate_tiers", QJsonArray{QJsonObject{{"max_bytes", QJsonValue(QJsonValue::Null)}, {"sample_rate", 24000}}}}};
+    undo().clear();
+    const auto changed = actions.execute("set_conversion_fields", edit, ActionSource::IPC);
+    ASSERT_TRUE(changed.success) << changed.errorMessage.toStdString();
+    const auto updated = preset->comp<VConversion>()->platforms;
+    EXPECT_NE(updated, initial);
+    EXPECT_EQ(undo().undoStack()->count(), 1);
+    auto invalid = edit;
+    invalid.insert("all_platforms", true);
+    EXPECT_FALSE(actions.execute("set_conversion_fields", invalid, ActionSource::IPC).success);
+    invalid = edit;
+    invalid.insert("sample_rate_tiers", QJsonArray{QJsonObject{{"max_bytes", 1024}, {"sample_rate", 24000}}});
+    EXPECT_FALSE(actions.execute("set_conversion_fields", invalid, ActionSource::IPC).success);
+    EXPECT_EQ(preset->comp<VConversion>()->platforms, updated);
+    EXPECT_EQ(undo().undoStack()->count(), 1);
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(preset->comp<VConversion>()->platforms, initial);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(preset->comp<VConversion>()->platforms, updated);
+    preset->comp<VConversion>()->platforms.front().vorbisQuality = 0.9f;
+    const auto externallyChanged = preset->comp<VConversion>()->platforms;
+    EXPECT_FALSE(undo().undo());
+    EXPECT_EQ(preset->comp<VConversion>()->platforms, externallyChanged);
+    preset->comp<VConversion>()->platforms = updated;
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(preset->comp<VConversion>()->platforms, initial);
+    ASSERT_TRUE(undo().redo());
+    ASSERT_TRUE(manager().saveProject());
+    reopen();
+    ASSERT_NE(manager().findItemByGuid(guid), nullptr);
+    EXPECT_EQ(manager().findItemByGuid(guid)->comp<VConversion>()->platforms, updated);
+}
+
+TEST_F(ProjectPlatformCommand, ConversionBatchEditsRejectStaleMembersWithoutPartialWrites)
+{
+    auto* layer = manager().createItem(nullptr, "ConversionLayer", ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    auto* first = manager().createItem(layer, "First", ProjectItem::Type::Sound);
+    auto* second = manager().createItem(layer, "Second", ProjectItem::Type::Sound);
+    auto* preset = manager().createItem(nullptr, "BatchPreset", ProjectItem::Type::Conversion);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(preset, nullptr);
+    const QVector<QUuid> definitions{first->guid, second->guid};
+    const QVector<FieldGroupDefinitionSnapshot> before{{first->guid, first->fieldGroups}, {second->guid, second->fieldGroups}};
+    undo().clear();
+    QString error;
+    ASSERT_TRUE(ConversionEditing::setObjects(manager(), definitions, false, preset->guid, before, nullptr, &error))
+        << error.toStdString();
+    const auto changed = authoredState();
+    EXPECT_EQ(undo().undoStack()->count(), 1);
+    EXPECT_FALSE(ConversionEditing::setObjects(manager(), definitions, true, {}, before, nullptr, &error));
+    EXPECT_EQ(authoredState(), changed);
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(first->fieldGroups, before.front().groups);
+    EXPECT_EQ(second->fieldGroups, before.back().groups);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(authoredState(), changed);
+    EXPECT_FALSE(ConversionEditing::setObjects(manager(), {first->guid, preset->guid}, false,
+        QUuid{}, {}, nullptr, &error));
+    EXPECT_EQ(authoredState(), changed);
+    auto& actions = ActionManager::instance();
+    const auto effective = actions.execute("get_effective_conversion", {{"object", first->guid.toString(QUuid::WithoutBraces)}});
+    ASSERT_TRUE(effective.success) << effective.errorMessage.toStdString();
+    EXPECT_EQ(effective.data.value("conversion").toString(), preset->guid.toString(QUuid::WithoutBraces));
+    const auto previousDefault = project().defaultConversionRef;
+    ASSERT_TRUE(actions.execute("set_default_conversion", {{"conversion", preset->guid.toString(QUuid::WithoutBraces)}}).success);
+    ASSERT_TRUE(undo().undo());
+    EXPECT_EQ(project().defaultConversionRef, previousDefault);
+    ASSERT_TRUE(undo().redo());
+    EXPECT_EQ(project().defaultConversionRef, preset->guid);
 }
 
 TEST_F(ProjectPlatformCommand, LocalPreviewModeFollowsProjectIdentityBeforeOpenedNotification)
