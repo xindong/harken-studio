@@ -21,11 +21,51 @@
 #include <QTimer>
 #include <QUuid>
 
+#ifndef Q_OS_WIN
+#include <errno.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 constexpr qint64 maxRequestBytes = 16 * 1024 * 1024;
 constexpr qint64 maxResponseBytes = 64 * 1024 * 1024;
 constexpr int protocolVersion = 1;
+
+#ifndef Q_OS_WIN
+bool endpointDefinitelyStale(QLocalSocket& probe, const QString& path)
+{
+    probe.connectToServer(path);
+    const bool reachable = probe.waitForConnected(400);
+    const auto error = probe.error();
+    probe.abort();
+    if (reachable)
+        return false;
+    // Only a missing or refusing listener proves the endpoint is stale; a
+    // timeout or an access error may simply mean the peer is busy or busy-backlogged.
+    return error == QLocalSocket::ServerNotFoundError
+        || error == QLocalSocket::ConnectionRefusedError;
+}
+
+bool instanceOwnerAlive(const QString& directory, const QString& idPrefix)
+{
+    for (const auto& record : QDir(directory).entryInfoList({QStringLiteral("*.json")},
+                                                           QDir::Files)) {
+        if (!record.completeBaseName().startsWith(idPrefix))
+            continue;
+        QFile file(record.absoluteFilePath());
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        const auto pid = QJsonDocument::fromJson(file.readAll())
+                             .object().value(QStringLiteral("pid")).toInteger();
+        if (pid > 0 && ::kill(static_cast<pid_t>(pid), 0) == 0)
+            return true;
+    }
+    return false;
+}
+#endif
 
 QString version()
 {
@@ -282,12 +322,109 @@ bool StudioInstanceServer::start(QString* error)
         if (error) *error = QStringLiteral("Cannot create the Studio instance registry: %1").arg(directory);
         return false;
     }
-    const auto user = QCryptographicHash::hash(directory.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
-    state_->endpoint = QStringLiteral("harken-studio-%1-%2").arg(QString::fromLatin1(user), state_->id);
+    // UNIX socket names must stay short: sun_path is capped at 104 bytes on
+    // macOS and the per-user TMPDIR prefix is already long, so a longer name
+    // gets truncated to the same path across launches.
+    const auto user = QCryptographicHash::hash(directory.toUtf8(), QCryptographicHash::Sha256).toHex().left(8);
+#if defined(Q_OS_WIN)
+    state_->endpoint = QStringLiteral("hs-%1-%2").arg(QString::fromLatin1(user), state_->id.left(8));
     if (!state_->server.listen(state_->endpoint)) {
         if (error) *error = state_->server.errorString();
         return false;
     }
+#else
+    // A UNIX socket path must fit sun_path (104 bytes on macOS, 108 on Linux).
+    // The instance registry lives under a path the operator controls (HOME,
+    // XDG_DATA_HOME), so sockets go into a fixed short directory instead.
+    Q_UNUSED(user);
+    const auto prepareSocketDirectory = [](const QString& path) {
+        const QByteArray raw = QFile::encodeName(path);
+        struct stat info {};
+        // lstat/mkdir keep a pre-created symlink from being followed: another
+        // local user must never steer the chmod or the sweep into a directory
+        // that merely happens to be owned by this user.
+        if (::lstat(raw.constData(), &info) == 0) {
+            if (!S_ISDIR(info.st_mode) || info.st_uid != ::getuid())
+                return false;
+        } else if (::mkdir(raw.constData(), 0700) != 0 && errno != EEXIST) {
+            return false;
+        }
+        if (::lstat(raw.constData(), &info) != 0 || !S_ISDIR(info.st_mode)
+            || info.st_uid != ::getuid())
+            return false;
+        return ::chmod(raw.constData(), 0700) == 0;
+    };
+    QString socketDirectory = QStringLiteral("/tmp/harken-studio-%1").arg(::getuid());
+    if (!prepareSocketDirectory(socketDirectory)) {
+        socketDirectory = QStringLiteral("/tmp/harken-studio-%1-%2")
+                              .arg(::getuid())
+                              .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
+        if (!prepareSocketDirectory(socketDirectory)) {
+            if (error) *error = QStringLiteral("Cannot create the Studio socket directory: %1")
+                                    .arg(socketDirectory);
+            return false;
+        }
+    }
+    const QString socketStem = QStringLiteral("hs-%1").arg(state_->id.left(8));
+    state_->endpoint = QDir(socketDirectory).filePath(socketStem + QStringLiteral(".sock"));
+    const QString ownerRecord = QDir(socketDirectory).filePath(socketStem + QStringLiteral(".pid"));
+    if (!state_->server.listen(state_->endpoint)) {
+        // The same name can survive an unclean exit. Treat the endpoint as live
+        // whenever a peer answers; a full backlog or access error must never
+        // make a running Studio unreachable.
+        QFile ownerRecordFile(ownerRecord);
+        bool ownerAlive = false;
+        if (ownerRecordFile.open(QIODevice::ReadOnly)) {
+            const auto pid = ownerRecordFile.readAll().trimmed().toLongLong();
+            ownerAlive = pid > 0 && ::kill(static_cast<pid_t>(pid), 0) == 0;
+        }
+        QLocalSocket probe;
+        if (ownerAlive || !endpointDefinitelyStale(probe, state_->endpoint)) {
+            if (error) *error = state_->server.errorString();
+            return false;
+        }
+        QLocalServer::removeServer(state_->endpoint);
+        if (!state_->server.listen(state_->endpoint)) {
+            if (error) *error = state_->server.errorString();
+            return false;
+        }
+    }
+    {
+        QFile owner(ownerRecord);
+        if (owner.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            owner.write(QByteArray::number(QCoreApplication::applicationPid()));
+            owner.close();
+            QFile::setPermissions(ownerRecord, QFile::ReadOwner | QFile::WriteOwner);
+        }
+    }
+    // Each launch uses a fresh id, so a socket left by an exited instance never
+    // collides with the new one; sweep those whose owning process is gone
+    // instead of letting them pile up.
+    for (const auto& entry : QDir(socketDirectory).entryInfoList({QStringLiteral("*.sock")},
+                                                                QDir::Files | QDir::System)) {
+        if (entry.absoluteFilePath() == state_->endpoint)
+            continue;
+        const QString stem = entry.completeBaseName();
+        const QString ownerFile = QDir(socketDirectory).filePath(stem + QStringLiteral(".pid"));
+        bool maybeAlive = false;
+        QFile owner(ownerFile);
+        if (owner.open(QIODevice::ReadOnly)) {
+            const auto pid = owner.readAll().trimmed().toLongLong();
+            maybeAlive = pid > 0 && ::kill(static_cast<pid_t>(pid), 0) == 0;
+        } else {
+            maybeAlive = instanceOwnerAlive(directory, stem.mid(3));
+        }
+        // Ownership may live in a different registry root, so an inconclusive
+        // record never justifies unlinking: probe the endpoint itself.
+        if (maybeAlive)
+            continue;
+        QLocalSocket probe;
+        if (!endpointDefinitelyStale(probe, entry.absoluteFilePath()))
+            continue;
+        QFile::remove(entry.absoluteFilePath());
+        QFile::remove(ownerFile);
+    }
+#endif
     state_->registry = registryFile(state_->id);
     QSaveFile file(state_->registry);
     const auto bytes = QJsonDocument(descriptor()).toJson(QJsonDocument::Compact);
@@ -305,6 +442,11 @@ void StudioInstanceServer::stop()
 {
     if (!state_->registry.isEmpty()) QFile::remove(state_->registry);
     state_->registry.clear();
+#if !defined(Q_OS_WIN)
+    if (!state_->endpoint.isEmpty())
+        QFile::remove(QFileInfo(state_->endpoint).absolutePath() + QStringLiteral("/hs-")
+                      + state_->id.left(8) + QStringLiteral(".pid"));
+#endif
     const auto clients = state_->clients;
     for (auto* client : clients) {
         disconnect(client, nullptr, this, nullptr);
