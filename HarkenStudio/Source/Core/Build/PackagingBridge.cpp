@@ -3,6 +3,7 @@
 #include "Utils/AudioFileReader.h"
 #include "Tooling/Harkenizer/ResourceCompilerClient.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
+#include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
 
@@ -1445,7 +1446,14 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
             input.loopable = source.loopable;
             input.loopStartFrame = source.loopStartFrame;
             input.loopEndFrame = source.loopEndFrame;
-            if (source.interleavedSamples) {
+            if (source.format == PackMediaFormat::Vorbis) {
+                if (!source.encodedMedia) {
+                    impl_->lastError = QStringLiteral("Encoded build input is unavailable: %1").arg(source.sourcePath);
+                    return false;
+                }
+                input.encodedMedia = source.encodedMedia;
+                input.frameCount = source.encodedMedia->frameCount;
+            } else if (source.interleavedSamples) {
                 input.samplesOwner = source.interleavedSamples;
                 input.interleavedSamples = source.interleavedSamples->data();
                 input.sampleCount = source.interleavedSamples->size();
@@ -1524,7 +1532,14 @@ QString PackBuildSession::inputFingerprint()
                 {QStringLiteral("loopStartFrame"), static_cast<qint64>(source.loopStartFrame)},
                 {QStringLiteral("loopEndFrame"), static_cast<qint64>(source.loopEndFrame)}};
             hash.addData(QJsonDocument(identity).toJson(QJsonDocument::Compact));
-            if (source.interleavedSamples) {
+            if (source.format == PackMediaFormat::Vorbis) {
+                if (!source.encodedMedia || source.contentHash.isEmpty()) {
+                    impl_->lastError = QStringLiteral("Encoded build input is unavailable: %1").arg(source.sourcePath);
+                    return {};
+                }
+                hash.addData(QByteArrayView("vorbis\0", 7));
+                hash.addData(source.contentHash.toLatin1());
+            } else if (source.interleavedSamples) {
                 const auto byteCount = source.interleavedSamples->size() * sizeof(float);
                 hash.addData(QByteArray::number(byteCount) + '\0');
                 if (!source.contentHash.isEmpty()) {

@@ -523,6 +523,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 {"media_count", result.mediaCount},
                 {"media_cache_hits", result.mediaCacheHits},
                 {"media_conversions", result.mediaConversions},
+                {"media", result.media},
                 {"warnings", QJsonArray::fromStringList(result.warnings)}
             };
             if (!result.success)

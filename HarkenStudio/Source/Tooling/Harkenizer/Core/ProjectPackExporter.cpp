@@ -294,6 +294,7 @@ void ProjectPackExporter::ApplyMediaCollectionStats(ExportResult& result,
 {
     result.mediaCacheHits += stats.cacheHits;
     result.mediaConversions += stats.conversions;
+    for (const auto& media : stats.media) result.media.append(media);
     result.warnings.append(stats.warnings);
     result.soundContentRevisions.insert(
         stats.soundContentRevisions.begin(), stats.soundContentRevisions.end());
@@ -1323,19 +1324,30 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         if (stats) {
             if (artifact->cacheHit) ++stats->cacheHits;
             else ++stats->conversions;
+            stats->media.append(QJsonObject{
+                {QStringLiteral("soundId"), VNX::objectIdString(soundId)},
+                {QStringLiteral("sourceId"), static_cast<qint64>(result.source.sourceId)},
+                {QStringLiteral("sourceEntryId"), result.source.entryId.toString(QUuid::WithoutBraces)},
+                {QStringLiteral("language"), options.language},
+                {QStringLiteral("format"), artifact->format == ConversionFormat::Vorbis
+                    ? QStringLiteral("Vorbis") : QStringLiteral("PCM")},
+                {QStringLiteral("originalBytes"), static_cast<qint64>(result.conversion->asset.metadata.fileSize)},
+                {QStringLiteral("outputBytes"), static_cast<qint64>(artifact->outputBytes)}});
         }
         Bridge::PackMediaDesc desc;
         desc.sourceId = soundId;
         desc.authoringSourceId = result.source.sourceId;
         desc.sourcePath = result.conversion->asset.absolutePath;
         desc.interleavedSamples = artifact->samples;
+        desc.encodedMedia = artifact->encodedMedia;
         desc.contentHash = artifact->contentHash;
         desc.sampleRate = artifact->sampleRate;
         desc.channels = artifact->channels;
         desc.loopable = artifact->loopable;
         desc.loopStartFrame = artifact->loopStartFrame;
         desc.loopEndFrame = artifact->loopEndFrame;
-        desc.format = Bridge::PackMediaFormat::PcmFloat;
+        desc.format = artifact->format == ConversionFormat::Vorbis
+            ? Bridge::PackMediaFormat::Vorbis : Bridge::PackMediaFormat::PcmFloat;
         if (publish) builder.addMedia(desc);
         if (!publish || options.buildPlan) {
             const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);

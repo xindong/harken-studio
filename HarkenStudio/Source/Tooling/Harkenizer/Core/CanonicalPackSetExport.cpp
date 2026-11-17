@@ -2796,6 +2796,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (meta.current) {
             unit.success = true;
             unit.reusedResources = true;
+            unit.media = request.options.packBuildState->mediaResults(meta.fileName);
             unit.outputPath = liveDir.filePath(meta.fileName);
             if (!appendResources(unit, {})) unit.success = false;
             meta.resourceFingerprint = meta.previousResourceFingerprint;
@@ -2817,6 +2818,17 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         } else {
             ProjectPackExporter::ExportOptions contentOpts = resourceOptions;
             contentOpts.language = meta.language;
+            std::set<std::tuple<QString, QString, QString>> mediaIdentities;
+            const auto appendMedia = [&](const QJsonArray& media) {
+                for (const auto& value : media) {
+                    const auto row = value.toObject();
+                    if (mediaIdentities.emplace(
+                            row.value(QStringLiteral("soundId")).toString(),
+                            row.value(QStringLiteral("sourceEntryId")).toString(),
+                            row.value(QStringLiteral("language")).toString()).second)
+                        unit.media.append(row);
+                }
+            };
             for (harkenstudio::ObjectId actionId : meta.actionStableIds) {
                 const ProjectItem* action = actionFor(actionId);
                 if (!action) {
@@ -2830,7 +2842,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         project, *action, path, contentOpts, nullptr, nullptr, &entries)
                     : exporter.ExportActionPack(
                         project, action->name, path, contentOpts, nullptr, nullptr, &entries);
-                if (!member.success) return member;
+                appendMedia(member.media);
+                if (!member.success) {
+                    member.media = std::move(unit.media);
+                    return member;
+                }
                 for (const auto& [soundId, revision] : member.soundContentRevisions) {
                     const auto [found, inserted] = meta.soundContentRevisions.emplace(soundId, revision);
                     if (!inserted && found->second != revision) {
@@ -2974,6 +2990,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.elapsedNanoseconds += timer.nsecsElapsed();
             result.mediaCacheHits += pack.mediaResult.mediaCacheHits;
             result.mediaConversions += pack.mediaResult.mediaConversions;
+            for (const auto& value : pack.mediaResult.media) {
+                auto media = value.toObject();
+                media.insert(QStringLiteral("pack"), pack.fileName);
+                result.media.append(media);
+            }
             if (!pack.mediaResult.success) {
                 recordFailure(pack, pack.mediaResult.error);
                 continue;
@@ -3608,6 +3629,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     auto writeUnit = [&](PackMeta& meta) -> ProjectPackExporter::ExportResult {
         const QString path = liveDir.filePath(meta.fileName);
         auto unit = std::move(meta.mediaResult);
+        if (meta.retained && request.options.packBuildState)
+            unit.media = request.options.packBuildState->mediaResults(meta.fileName);
         const auto reuse = [&] {
             unit.success = true;
             meta.skipped = true;
@@ -3911,7 +3934,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             else ++result.builtPackCount;
         }
         QJsonObject output{{QStringLiteral("key"), pack.unitKey},
-                           {QStringLiteral("path"), pack.fileName}};
+                           {QStringLiteral("path"), pack.fileName},
+                           {QStringLiteral("media"), unit.media}};
         if (pack.companion.contains(QStringLiteral("waveforms")))
             output.insert(QStringLiteral("companion"), QJsonObject{
                 {QStringLiteral("waveforms"), pack.companion.value(QStringLiteral("waveforms"))}});

@@ -321,6 +321,7 @@ bool PackBuildState::isCurrent(const QString& path) const
         const auto input = inputs_.value(path);
         const auto row = packs_.value(path).toObject();
         if (input.isEmpty() || row.value(QStringLiteral("input")).toString() != input) return false;
+        if (!row.value(QStringLiteral("media")).isArray()) return false;
         if (!savedPackMatches(path)
             || !savedCompanionMatches(path)) return false;
         for (const auto& waveform : row.value(QStringLiteral("waveforms")).toArray())
@@ -393,11 +394,18 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
             ++restored.skippedPackCount;
         const auto path = QDir(outputDirectory_).relativeFilePath(record.outputPath);
         const auto row = packs_.value(path).toObject();
+        const auto media = row.value(QStringLiteral("media")).toArray();
+        for (const auto& value : media) {
+            auto entry = value.toObject();
+            entry.insert(QStringLiteral("pack"), path);
+            restored.media.append(entry);
+        }
         QJsonArray waveforms;
         for (const auto& path : row.value(QStringLiteral("waveforms")).toArray())
             waveforms.append(QJsonObject{{QStringLiteral("file"), path}});
         restored.outputs.append(QJsonObject{{QStringLiteral("path"), path},
             {QStringLiteral("key"), record.unitKey},
+            {QStringLiteral("media"), media},
             {QStringLiteral("companion"), QJsonObject{{QStringLiteral("waveforms"), waveforms}}}});
     }
     if (emptyActionCount_ != 0)
@@ -417,6 +425,12 @@ QString PackBuildState::resourceFingerprint(const QString& path) const
     return savedPackMatches(path)
         && savedCompanionMatches(path)
         ? row.value(QStringLiteral("resourceFingerprint")).toString() : QString();
+}
+
+QJsonArray PackBuildState::mediaResults(const QString& path) const
+{
+    return savedPackMatches(path) && savedCompanionMatches(path)
+        ? packs_.value(path).toObject().value(QStringLiteral("media")).toArray() : QJsonArray{};
 }
 
 void PackBuildState::setResourceFingerprint(const QString& path, const QString& fingerprint)
@@ -440,6 +454,7 @@ void PackBuildState::save(const ExportResult& result, const std::vector<BuildRec
         const auto previous = packs_.value(path).toObject();
         QJsonObject row;
         row.insert(QStringLiteral("key"), output.value(QStringLiteral("key")));
+        row.insert(QStringLiteral("media"), output.value(QStringLiteral("media")));
         row.insert(QStringLiteral("state"), fileState(directory.filePath(path)));
         const bool unchanged = previous.value(QStringLiteral("state")) == row.value(QStringLiteral("state"));
         row.insert(QStringLiteral("input"), path == QStringLiteral("Init.bytes") && !result.success
