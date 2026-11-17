@@ -19,6 +19,7 @@
 #include <QThread>
 #include <QLockFile>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QScopeGuard>
 #include <QStringEncoder>
 
@@ -3479,12 +3480,31 @@ TEST_F(UnityRestorationTest, RecoversBothRenameBoundariesAndBlocksOtherMutations
         EXPECT_FALSE(service.run(other).success);
         other.removeIntegration = true;
         EXPECT_FALSE(service.run(other).success);
+        if (boundary == 1) {
+            QProcess cli;
+            auto environment = QProcessEnvironment::systemEnvironment();
+            environment.insert("HARKEN_HUB_USER_ROOT", dir.filePath("cli-user"));
+            environment.insert("HARKEN_HUB_MACHINE_ROOT", dir.filePath("cli-machine"));
+            environment.insert("HARKEN_HUB_VERSIONS_ROOT", dir.filePath("cli-versions"));
+            cli.setProcessEnvironment(environment);
+            cli.start(QString::fromUtf8(HARKEN_HUB_CLI_FIXTURE), {"--cli", "integrations", "recover-restore", "--path", project});
+            ASSERT_TRUE(cli.waitForFinished(15000));
+            EXPECT_EQ(cli.exitCode(), 4) << cli.readAllStandardOutput().toStdString();
+        }
         request.recoverRestore = true;
         request.checkOnly = true;
         auto plan = service.run(request);
         ASSERT_TRUE(plan.success) << boundary << plan.steps.back().summary.toStdString() << plan.steps.back().cause.toStdString();
         request.approvedPlanHash = plan.planHash;
         request.checkOnly = false;
+        if (boundary == 0) {
+            ASSERT_TRUE(QDir().rename(installed, staged));
+            const auto changed = service.run(request);
+            EXPECT_FALSE(changed.success);
+            EXPECT_TRUE(changed.requiresConfirmation);
+            EXPECT_FALSE(QFileInfo::exists(installed));
+            ASSERT_TRUE(QDir().rename(staged, installed));
+        }
         const auto recovered = service.run(request);
         ASSERT_TRUE(recovered.success) << recovered.steps.back().cause.toStdString();
         EXPECT_FALSE(VNX::UnityInstallation::hasPendingRestore(project));

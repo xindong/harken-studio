@@ -84,6 +84,20 @@ protected:
 
 }
 
+TEST_F(ProjectIntakeConsumerTest, AbandonedCreationCannotPinAProjectCreatedByADifferentBuild)
+{
+    const auto path = writeProjectFile("Reused");
+    QString error;
+    ASSERT_TRUE(ProjectIntakeConsumer::rememberCreationBuild(path, "local-user-old", "old-build", &error));
+    writeIntakeRecord("reused.json", {{"projectPath", path}, {"buildId", "new-build"},
+        {"openedAt", QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs)}});
+    ProjectIntakeConsumer consumer(&store);
+    ASSERT_TRUE(consumer.consumeAll());
+    ASSERT_EQ(store.listProjects().size(), 1);
+    EXPECT_TRUE(store.listProjects().front().preferredStudioBuildId.isEmpty());
+    EXPECT_TRUE(QDir(dir.filePath("project-creation")).entryList({"*.json"}, QDir::Files).isEmpty());
+}
+
 TEST_F(ProjectIntakeConsumerTest, RegistersUnknownProject)
 {
     const QString projectPath = writeProjectFile(QStringLiteral("Alpha"));

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Harken Hub CLI 使用指南</title>
+<style>html{color-scheme:light dark}body{font:16px/1.8 system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 24px 60px}a{color:light-dark(#006b82,#5edce9)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:light-dark(#eef2f5,#1d2430);padding:16px;border-radius:8px}code{font-family:ui-monospace,Consolas,monospace}table{border-collapse:collapse;width:100%}td,th{overflow-wrap:anywhere;text-align:left;padding:10px;border-bottom:1px solid #8886}h2{margin-top:40px}.note{border-left:3px solid #d98c24;padding-left:16px}</style>
+<nav>用户指南 · <a href="ai-reference.html">AI 命令参考</a> · <a href="command-reference.json">JSON 命令契约</a></nav>
+<h1>用命令行操作 Harken Hub</h1>
+<p>CLI 让你不用打开 Hub 窗口，就能管理工程、Studio 版本和 Unity 集成包。它和 Hub 共用工程列表与设置。打开或创建工程时，仍会启动 Studio。</p>
+<h2>第一步：运行一条命令</h2>
+<p>在包含 <code>HarkenHub.exe</code> 的文件夹中打开 PowerShell，输入：</p>
+<pre>.\HarkenHub.exe --cli projects list | Out-String</pre>
+<p>返回内容是 JSON，一种便于人和程序读取的结构化文字。<code>ok: true</code> 表示命令成功，具体结果在 <code>data</code> 中。如果不在安装文件夹，请写出程序的完整路径；路径有空格时要加引号。</p>
+<pre>&amp; "C:\你的安装路径\HarkenHub.exe" --cli help</pre>
+<p>macOS 用户可在终端中运行 Hub 应用包内部的可执行文件，后面的命令和参数相同。<code>help</code> 会列出当前版本真正支持的命令。</p>
+<p>在交互式 PowerShell 窗口中，命令末尾加上 <code>| Out-String</code>，可以等待这个 Windows 桌面程序执行完并显示完整结果。脚本也应先等待进程退出，再读取退出码；PowerShell 中请在管道执行完后读取 <code>$LASTEXITCODE</code>。</p>
+<h2>第二步：找到你要做的事</h2>
+<table><tr><th>想做什么</th><th>命令</th></tr>
+<tr><td>查看工程列表</td><td><code>projects list</code></td></tr>
+<tr><td>添加已有工程</td><td><code>projects add --path "D:\Audio\Game.hsp"</code></td></tr>
+<tr><td>打开已登记的工程</td><td><code>projects open --path "D:\Audio\Game.hsp"</code></td></tr>
+<tr><td>查看 Studio 版本与构建编号</td><td><code>versions list</code></td></tr>
+<tr><td>为工程选择 Studio 版本</td><td><code>projects select-version --path "D:\Audio\Game.hsp" --build BUILD_ID</code></td></tr>
+<tr><td>新建工程</td><td><code>projects create --build BUILD_ID --name GameAudio --location "D:\Audio"</code></td></tr>
+<tr><td>查看工程模板</td><td><code>projects templates --build BUILD_ID</code></td></tr>
+<tr><td>查看服务器版本</td><td><code>versions server</code></td></tr>
+<tr><td>下载指定版本</td><td><code>versions download --build BUILD_ID</code></td></tr>
+<tr><td>登记本地 Studio 构建</td><td><code>versions add-local --path "D:\Build\HarkenStudio.exe"</code></td></tr>
+<tr><td>查看工程集成关系</td><td><code>integrations list</code></td></tr>
+<tr><td>校验已安装的 Unity 集成包</td><td><code>integrations verify --path "D:\UnityGame"</code></td></tr>
+<tr><td>切换主题</td><td><code>settings set --key theme --value dark</code>；浅色为 <code>light</code>，跟随系统为 <code>system</code></td></tr>
+<tr><td>检查更新</td><td><code>updates check --product hub</code>；检查 Studio 时改用 <code>studio</code></td></tr>
+<tr><td>读取最近活动日志</td><td><code>diagnostics logs --lines 100</code></td></tr>
+</table>
+<p>表中每条命令前都要加上 <code>.\HarkenHub.exe --cli</code>。<code>BUILD_ID</code> 要替换为版本列表返回的构建编号。CLI 修改设置后会保存；已经打开的 Hub 窗口需要重新打开才能读取界面与语言改动。自动更新选项会立即通知后台服务；开启时若服务未运行，会启动后台服务，不打开 Hub 窗口。</p>
+<h2>第三步：先看清单，再确认改动</h2>
+<p>安装、修复、移除文件分两步。第一次运行命令，Hub 返回变更计划和 <code>confirmation</code> 确认标识。读完计划，确认无误后，在原命令后补上 <code>--confirm TOKEN</code> 再执行。</p>
+<pre>.\HarkenHub.exe --cli versions install --package "D:\Downloads\Studio.zip" --manifest "D:\Downloads\release.manifest"
+.\HarkenHub.exe --cli versions install --package "D:\Downloads\Studio.zip" --manifest "D:\Downloads\release.manifest" --confirm TOKEN</pre>
+<p>安装包和清单路径请使用下载命令实际返回的路径。<code>TOKEN</code> 要换成刚收到的确认标识。文件或选项变化后，旧标识会失效；请重新阅读新计划。安装、修复、卸载 Studio 时，Windows 可能弹出系统管理员授权提示。</p>
+<p><code>projects remove</code> 只把工程移出 Hub 列表，<code>versions remove-local</code> 只移除本地构建登记，都不删除对应文件。<code>versions uninstall</code> 则会卸载已安装的 Studio 版本。修复损坏版本会替换安装目录，请先查看计划中的 <code>changes</code> 清单，特别注意标为 <code>remove</code>、将被删除的个人文件。</p>
+<h2>第四步：安装或更新 Unity 集成包</h2>
+<pre>.\HarkenHub.exe --cli integrations install --path "D:\UnityGame" --source "D:\Integration\Harken"</pre>
+<p>修改前请关闭 Unity。阅读返回的文件变更清单，再使用相同参数加上确认标识执行，安装或更新所选集成包。</p>
+<p>移除整个集成包可用 <code>integrations remove --path "D:\UnityGame" --backup "D:\Backups\Game-integration-01"</code>。备份位置必须是尚不存在的新目录，确认时保持同一路径。迁移、还原也采用先检查再确认的方式，完整参数见命令参考。</p>
+<h2>更新、协议与出错后的处理</h2>
+<p>如果在 Studio 安装程序开始前关闭 CLI，恢复流程可能取消这次待执行的安装。请查看 <code>updates status</code>，再重新审阅并确认更新。</p>
+<p>工程命令成功但包含 <code>data.warnings</code> 时，工程改动已经保存，请阅读警告，不要重复移除。修改语言也会通知正在运行的后台服务。新建工程时，父目录必须已经存在。</p>
+<p>先用 <code>updates download --product hub</code> 下载，再用 <code>updates apply --product hub</code> 查看更新计划。更新 Studio 时改用 <code>studio</code>。确认后，Hub 自身更新会关闭已运行的 Hub 窗口和后台服务，再通过更新桥接安装并重启后台服务；返回“已排队”不代表安装完成，请继续查看 <code>updates status</code> 和 <code>diagnostics transactions</code>。</p>
+<p>需要接受协议时，先运行 <code>legal show --product studio</code>（Hub 协议使用 <code>hub</code>），阅读完整内容。只有在你同意后，才运行 <code>legal accept --product studio</code>，核对返回内容并带确认标识再次执行。</p>
+<table><tr><th>退出码</th><th>该怎么做</th></tr><tr><td>0</td><td>命令成功，查看返回结果。</td></tr><tr><td>2</td><td>命令或参数有误，对照帮助修改。</td></tr><tr><td>3</td><td>操作失败，阅读错误和操作步骤，排除原因后重试。</td></tr><tr><td>4</td><td>需要阅读计划并确认。</td></tr><tr><td>5</td><td>需要阅读当前协议并决定是否接受。</td></tr></table>
+<p class="note">不要让脚本自动拿到新确认标识就继续执行。新计划需要重新审阅。自动化使用方式见 <a href="ai-reference.html">AI 命令参考</a>，可供程序读取的定义见 <a href="command-reference.json">JSON 命令契约</a>。</p>
+</html>

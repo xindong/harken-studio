@@ -30,10 +30,10 @@ void TitleBarButton::setButtonKind(TitleBarButtonKind kind)
 QColor TitleBarButton::iconColor() const
 {
     if (!isEnabled())
-        return QColor(0x55, 0x5B, 0x66);
-    if (underMouse() || isDown())
-        return QColor(0xFF, 0xFF, 0xFF);
-    return QColor(0xAA, 0xB0, 0xBA);
+        return palette().color(QPalette::Disabled, QPalette::ButtonText);
+    if (kind_ == TitleBarButtonKind::Close && (underMouse() || isDown()))
+        return Qt::white;
+    return palette().color(QPalette::ButtonText);
 }
 
 void TitleBarButton::paintEvent(QPaintEvent* event)

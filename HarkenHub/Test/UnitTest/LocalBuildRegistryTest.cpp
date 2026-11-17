@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QLockFile>
+#include <QElapsedTimer>
 #include <atomic>
 #include <thread>
 
@@ -59,6 +61,18 @@ TEST_F(LocalBuildRegistryTest, SavesUpdatesAndRemovesLocalBuild)
     QString error;
     ASSERT_TRUE(LocalBuildRegistry::upsert(record(executable), &error))
         << error.toStdString();
+
+    {
+        QLockFile writer(LocalBuildRegistry::filePath() + ".lock");
+        ASSERT_TRUE(writer.tryLock(0));
+        QElapsedTimer timer;
+        timer.start();
+        const auto committed = LocalBuildRegistry::load(&error);
+        EXPECT_LT(timer.elapsed(), 1000);
+        EXPECT_TRUE(error.isEmpty());
+        ASSERT_EQ(committed.size(), 1u);
+        EXPECT_EQ(committed.front().reportedBuildId, "local.aaaa1111");
+    }
 
     auto records = LocalBuildRegistry::load(&error);
     ASSERT_EQ(records.size(), 1u);

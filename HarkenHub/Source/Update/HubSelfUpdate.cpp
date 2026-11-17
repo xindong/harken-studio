@@ -541,9 +541,14 @@ bool HubSelfUpdate::approve(QString* error, const QDateTime& now)
 }
 
 bool HubSelfUpdate::approveViaBridge(const QString& restartMode,
-                                          QString* error, const QDateTime& now)
+                                          QString* error, const QDateTime& now,
+                                          const UpdateStateRecord* reviewedState)
 {
     UpdateStateRecord record = UpdateStateStore::load(kProduct);
+    if (reviewedState && record != *reviewedState) {
+        *error = QStringLiteral("The update state changed; review the update again");
+        return false;
+    }
     const auto expected = record;
     if (!record.found ||
         (record.state != QStringLiteral("AwaitingRestart") &&

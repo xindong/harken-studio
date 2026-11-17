@@ -160,6 +160,30 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window.</source>
+        <translation>无需打开 Hub 窗口，即可通过命令行管理工程、Studio 版本、Unity 集成、设置和更新。</translation>
+    </message>
+    <message>
+        <source>Open the offline CLI user guide and AI command reference from Settings in English or Simplified Chinese.</source>
+        <translation>在设置菜单中打开离线 CLI 用户指南和 AI 命令参考，支持英文和简体中文。</translation>
+    </message>
+    <message>
+        <source>Choose Follow System, Light or Dark in Settings and apply the theme immediately.</source>
+        <translation>在设置菜单中选择跟随系统、浅色或深色主题，切换后立即生效。</translation>
+    </message>
+    <message>
+        <source>Show the current project filename after a renamed project is added again.</source>
+        <translation>工程改名后重新加入 Hub，列表会显示当前文件名。</translation>
+    </message>
+    <message>
+        <source>Preserve independent settings when the Hub window and command-line tools save preferences at the same time.</source>
+        <translation>Hub 窗口与命令行同时保存设置时，保留双方各自修改的选项。</translation>
+    </message>
+    <message>
+        <source>Review complete CLI repair and removal file lists, reject changed installation approvals, and recover interrupted Studio update attempts.</source>
+        <translation>CLI 修复和卸载前展示完整文件清单，安装内容变化后要求重新确认，并可恢复中断的 Studio 更新流程。</translation>
+    </message>
+    <message>
         <source>Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer.</source>
         <translation>Windows 安装程序会先处理占用 Harken Hub 文件的应用程序，再继续安装，不再询问是否重启电脑。</translation>
     </message>
@@ -490,6 +514,15 @@ Continue?</source>
         <source>Engine Integrations</source>
         <translation>引擎集成</translation>
     </message>
+    <message><source>Theme</source><translation>主题</translation></message>
+    <message><source>Follow System</source><translation>跟随系统</translation></message>
+    <message><source>Light</source><translation>浅色</translation></message>
+    <message><source>Dark</source><translation>深色</translation></message>
+    <message><source>The theme setting could not be saved.</source><translation>无法保存主题设置。</translation></message>
+    <message><source>CLI Guide</source><translation>CLI 使用指南</translation></message>
+    <message><source>The CLI guide could not be opened.
+%1</source><translation>无法打开 CLI 使用指南。
+%1</translation></message>
 </context>
 <context>
     <name>VNH::LogConsoleDialog</name>

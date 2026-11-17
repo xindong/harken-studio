@@ -29,6 +29,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QColor>
+#include "UI/HubTheme.h"
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -831,13 +832,13 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     auto* associationLabel = new QLabel(associationHint, formPanel);
     associationLabel->setObjectName(QStringLiteral("projectAssociationHint"));
     associationLabel->setWordWrap(true);
-    associationLabel->setStyleSheet(QStringLiteral("color: #AAB2C0; font-size: 12px;"));
+    associationLabel->setStyleSheet(QStringLiteral("color: palette(placeholder-text); font-size: 12px;"));
     form->addWidget(associationLabel);
     linkProjectsButton_->setToolTip(QCoreApplication::translate("HarkenHub", "Add this project pair to Engine Integrations. No project or Integration Package files are changed."));
     unlinkProjectsButton_->setToolTip(QCoreApplication::translate("HarkenHub", "Remove this project pair from Engine Integrations. Project files and the installed Integration Package are kept."));
 
     form->addSpacing(8);
-    const QString separatorStyle = QStringLiteral("background-color: #313848; border: none;");
+    const QString separatorStyle = QStringLiteral("background-color: palette(mid); border: none;");
     auto* separator = new QFrame(formPanel);
     separator->setObjectName(QStringLiteral("integrationAssociationSeparator"));
     separator->setFrameShape(QFrame::NoFrame);
@@ -884,7 +885,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     integrationIssueLabel_ = new QLabel(integrationIssueRow_);
     integrationIssueLabel_->setObjectName(QStringLiteral("integrationIssueHint"));
     integrationIssueLabel_->setWordWrap(true);
-    integrationIssueLabel_->setStyleSheet(QStringLiteral("color: #F0C36A;"));
+    HubTheme::setTone(integrationIssueLabel_, HubTheme::Tone::Warning);
     issueLayout->addWidget(integrationIssueLabel_, 1);
     integrationResolutionButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "View Resolution..."), integrationIssueRow_);
     integrationResolutionButton_->setObjectName(QStringLiteral("integrationResolution"));
@@ -1026,7 +1027,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     dialogLayout->addWidget(integrationResultsTabs_, 1);
     integrationSafetyHint_ = new DialogTextView(integrationSelectionDialog_);
     integrationSafetyHint_->setObjectName(QStringLiteral("integrationEngineRunningHint"));
-    integrationSafetyHint_->setStyleSheet(QStringLiteral("color: #FF6B6B;"));
+    HubTheme::setTone(integrationSafetyHint_, HubTheme::Tone::Error);
     integrationSafetyHint_->hide();
     engineStatusTimer_ = new QTimer(this);
     engineStatusTimer_->setInterval(1000);
@@ -1178,6 +1179,20 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     highlightTimer_->setInterval(350);
     connect(highlightTimer_, &QTimer::timeout, this,
             &EngineIntegrationsPage::advanceHighlight);
+    HubTheme::observe(this, [this] {
+        const int tab = integrationResultsTabs_->currentIndex();
+        updateIntegrationCheckResults();
+        integrationResultsTabs_->setCurrentIndex(tab);
+        if (!operationRunning_) populateList();
+        for (int row = 0; row < resultSteps_.size(); ++row) {
+            const auto status = resultSteps_[row].status;
+            const auto color = HubTheme::color(status == ResultStatus::Failed ? HubTheme::Tone::Error
+                : status == ResultStatus::Warning ? HubTheme::Tone::Warning
+                : status == ResultStatus::Succeeded ? HubTheme::Tone::Success : HubTheme::Tone::Text);
+            for (int column = 0; column < stepsTable_->columnCount(); ++column)
+                if (auto* item = stepsTable_->item(row, column)) item->setForeground(color);
+        }
+    });
     refresh();
 }
 
@@ -1376,7 +1391,7 @@ void EngineIntegrationsPage::populateList()
             if (observation.integrationContentState != IntegrationContentState::NotChecked
                 && observation.integrationContentState != IntegrationContentState::OptionalFilesMissing
                 && observation.integrationContentState != IntegrationContentState::MatchesInstallation)
-                statusItem->setForeground(QColor(QStringLiteral("#E3B341")));
+                statusItem->setForeground(HubTheme::color(HubTheme::Tone::Warning));
             table_->setItem(row, kIntegrationStatusColumn, statusItem);
             const auto& sources = target->engineKind == EngineKind::Unity ? unitySources : unrealSources;
             QString versionText = observation.integrationVersion;
@@ -1397,7 +1412,7 @@ void EngineIntegrationsPage::populateList()
                 versionText += QLatin1Char('\n') + QCoreApplication::translate(
                     "HarkenHub", "Update available: %1").arg(newestVersion);
             auto* versionItem = new QTableWidgetItem(versionText);
-            if (newer) versionItem->setForeground(QColor(QStringLiteral("#00D9EF")));
+            if (newer) versionItem->setForeground(HubTheme::color(HubTheme::Tone::Accent));
             if (newer)
                 versionItem->setToolTip(QCoreApplication::translate(
                     "HarkenHub", "Latest local Integration Package version: %1").arg(newestVersion));
@@ -2343,8 +2358,7 @@ void EngineIntegrationsPage::updatePrimaryAction()
     relationshipLabel_->setText(linked
         ? QCoreApplication::translate("HarkenHub", "Projects linked")
         : QCoreApplication::translate("HarkenHub", "Projects not linked"));
-    relationshipLabel_->setStyleSheet(QStringLiteral("font-size: 12px; font-weight: 400; color: %1;")
-        .arg(linked ? QStringLiteral("#69D391") : QStringLiteral("#FF6B6B")));
+    HubTheme::setTone(relationshipLabel_, linked ? HubTheme::Tone::Success : HubTheme::Tone::Error);
     linkProjectsButton_->setVisible(!linked);
     linkProjectsButton_->setEnabled(!operationRunning_ && !selecting && !versionResolutionPending_
         && !selectedHarkenProjectPath_.isEmpty() && !selectedEngineTargetId_.isEmpty());
@@ -2514,8 +2528,8 @@ void EngineIntegrationsPage::updateRemovalButtonState(bool recoverLocation)
         }
     }
     integrationIssueLabel_->setText(issue);
-    integrationIssueLabel_->setStyleSheet(observation.dependencyRestricted
-        ? QStringLiteral("color: #9AA4B5;") : QStringLiteral("color: #F0C36A;"));
+    HubTheme::setTone(integrationIssueLabel_, observation.dependencyRestricted
+        ? HubTheme::Tone::Muted : HubTheme::Tone::Warning);
     integrationResolutionButton_->setText(observation.dependencyRestricted
         ? QCoreApplication::translate("HarkenHub", "View Dependencies...")
         : QCoreApplication::translate("HarkenHub", "View Resolution..."));
@@ -2697,9 +2711,8 @@ void EngineIntegrationsPage::setOperationRunning(bool running)
 
 void EngineIntegrationsPage::setSummaryText(const QString& text, bool succeeded)
 {
-    const QString style = succeeded ? QStringLiteral("color: #69D391;") : QString();
-    summaryLabel_->setStyleSheet(style);
-    integrationSelectionSummary_->setStyleSheet(style);
+    HubTheme::setTone(summaryLabel_, succeeded ? HubTheme::Tone::Success : HubTheme::Tone::Text);
+    HubTheme::setTone(integrationSelectionSummary_, succeeded ? HubTheme::Tone::Success : HubTheme::Tone::Text);
     showingIdleSummary_ = text == QCoreApplication::translate(
         "HarkenHub", "No integration check has run.");
     if (showingIdleSummary_)
@@ -2736,6 +2749,8 @@ void EngineIntegrationsPage::clearResults()
 {
     summaryLabel_->setStyleSheet(QString());
     integrationSelectionSummary_->setStyleSheet(QString());
+    HubTheme::setTone(summaryLabel_, HubTheme::Tone::Text);
+    HubTheme::setTone(integrationSelectionSummary_, HubTheme::Tone::Text);
     reviewedUnrealPlan_.reset();
     reviewedIntegrationHash_.clear();
     integrationReportPath_.clear();
@@ -3719,11 +3734,11 @@ void EngineIntegrationsPage::showResults(
         for (int column = 0; column < values.size(); ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             if (step.status == ResultStatus::Failed)
-                item->setForeground(QColor(QStringLiteral("#FF6B6B")));
+                item->setForeground(HubTheme::color(HubTheme::Tone::Error));
             else if (step.status == ResultStatus::Warning)
-                item->setForeground(QColor(QStringLiteral("#F0C36A")));
+                item->setForeground(HubTheme::color(HubTheme::Tone::Warning));
             else if (step.status == ResultStatus::Succeeded)
-                item->setForeground(QColor(QStringLiteral("#69D391")));
+                item->setForeground(HubTheme::color(HubTheme::Tone::Success));
             stepsTable_->setItem(row, column, item);
         }
         if (step.status == ResultStatus::Failed
@@ -3782,7 +3797,7 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
     });
     QString log;
     for (const auto* step : logSteps) log += formatStepHtml(*step);
-    integrationSelectionDetails_->setHtml(log);
+    integrationSelectionDetails_->setHtml(HubTheme::html(log));
     integrationResultsTabs_->setTabText(1, integrationPhase_ == IntegrationPhase::Applying
         ? QCoreApplication::translate("HarkenHub", "Results and Logs")
         : warnings > 0 ? QCoreApplication::translate("HarkenHub", "Check Log (review recommended: %1)").arg(warnings)
@@ -3811,7 +3826,7 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         const QString title = QCoreApplication::translate("HarkenHub", label).arg(affected.size());
         summary << QStringLiteral("<span style='color:#F0C36A'><b>%1</b></span>").arg(title.toHtmlEscaped());
         auto* section = new QTreeWidgetItem(integrationDiffTree_, {title});
-        section->setForeground(0, QColor(QStringLiteral("#F0C36A")));
+        section->setForeground(0, HubTheme::color(HubTheme::Tone::Warning));
         for (const auto& path : affected) new QTreeWidgetItem(section, {path});
         section->setExpanded(true);
     };
@@ -3855,7 +3870,9 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         QFont font = section->font(0);
         font.setBold(true);
         section->setFont(0, font);
-        section->setForeground(0, QColor(QLatin1String(group.color)));
+        section->setForeground(0, HubTheme::color(action == QStringLiteral("add") ? HubTheme::Tone::Success
+            : action == QStringLiteral("replace") ? HubTheme::Tone::Info
+            : action == QStringLiteral("remove") ? HubTheme::Tone::Error : HubTheme::Tone::Muted));
         for (const auto& path : paths) {
             auto* item = new QTreeWidgetItem(section, {path});
             item->setToolTip(0, path);
@@ -3873,7 +3890,7 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         summary << QStringLiteral("<a href='log' style='color:#F0C36A'>%1</a>").arg(
             QCoreApplication::translate("HarkenHub", "Review recommended for %1 item(s). View check log.")
                 .arg(warnings).toHtmlEscaped());
-    integrationDiffSummary_->setText(summary.join(QStringLiteral("<br>")));
+    integrationDiffSummary_->setText(HubTheme::html(summary.join(QStringLiteral("<br>"))));
 }
 
 QString EngineIntegrationsPage::formatStepHtml(const ResultStep& step) const

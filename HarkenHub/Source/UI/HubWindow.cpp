@@ -15,6 +15,8 @@
 #include "UI/ConsentDialog.h"
 #include "UI/EngineIntegrationsPage.h"
 #include "UI/HubIcons.h"
+#include "UI/HubTheme.h"
+#include "Cli/HubCli.h"
 #include "UI/LogConsoleDialog.h"
 #include "UI/ButtonPulseAnimator.h"
 #include "UI/ProjectsPage.h"
@@ -39,6 +41,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QDesktopServices>
 #include <QListWidget>
 #include <QMenu>
 #include <QCloseEvent>
@@ -71,8 +74,8 @@ namespace {
 QString hubUpdateButtonStyle()
 {
     return QStringLiteral(
-        "QToolButton#hubUpdateButton { background-color: #00F0FF; "
-        "border: 1px solid #00F0FF; color: #000000; font-weight: 600; "
+        "QToolButton#hubUpdateButton { background-color: palette(highlight); "
+        "border: 1px solid palette(highlight); color: palette(highlighted-text); font-weight: 600; "
         "padding: 4px 12px; }");
 }
 
@@ -163,6 +166,27 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                     tr("The language change will take effect after restarting "
                        "Harken Hub."));
             });
+    auto* themeMenu = settingsMenu->addMenu(tr("Theme"));
+    themeMenu->setObjectName(QStringLiteral("themeMenu"));
+    auto* themeGroup = new QActionGroup(themeMenu);
+    themeGroup->setExclusive(true);
+    for (const auto& entry : {std::pair{"system", QT_TR_NOOP("Follow System")},
+            std::pair{"light", QT_TR_NOOP("Light")}, std::pair{"dark", QT_TR_NOOP("Dark")}}) {
+        auto* action = themeMenu->addAction(tr(entry.second));
+        action->setCheckable(true);
+        action->setData(QString::fromLatin1(entry.first));
+        action->setChecked(action->data().toString() == HubSettings::themePreference());
+        themeGroup->addAction(action);
+    }
+    connect(themeGroup, &QActionGroup::triggered, this, [this, themeGroup](QAction* action) {
+        if (!HubSettings::setThemePreference(action->data().toString())) {
+            for (auto* candidate : themeGroup->actions())
+                candidate->setChecked(candidate->data().toString() == HubSettings::themePreference());
+            MessageDialog::warning(this, tr("Harken Hub"), tr("The theme setting could not be saved."));
+            return;
+        }
+        HubTheme::applyPreference();
+    });
     settingsMenu->addSeparator();
     QMenu* autoHubUpdateMenu =
         settingsMenu->addMenu(tr("Automatically Check and Silently Update Hub"));
@@ -222,6 +246,13 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     QAction* logAction = settingsMenu->addAction(tr("Activity Log"));
     connect(logAction, &QAction::triggered, this,
             &HubWindow::showLogConsole);
+    auto* cliGuide = settingsMenu->addAction(tr("CLI Guide"));
+    connect(cliGuide, &QAction::triggered, this, [this] {
+        QString error;
+        const QString path = Cli::writeGuides(&error);
+        if (path.isEmpty() || !QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+            MessageDialog::warning(this, tr("Harken Hub"), tr("The CLI guide could not be opened.\n%1").arg(error));
+    });
     settingsMenu->addSeparator();
     QAction* legalDocumentsAction = settingsMenu->addAction(
         tr("License Agreement && Privacy Policy"));
@@ -279,6 +310,11 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
             "style=\"color:#00F0FF;\">Harken Studio Repository</a>"),
         this);
     sidebarLinks->setObjectName(QStringLiteral("sidebarLinks"));
+    const QString linksText = sidebarLinks->text();
+    sidebarLinks->setText(HubTheme::html(linksText));
+    HubTheme::observe(sidebarLinks, [sidebarLinks, linksText] {
+        sidebarLinks->setText(HubTheme::html(linksText));
+    });
     sidebarLinks->setOpenExternalLinks(true);
     sidebarLinks->setTextInteractionFlags(Qt::TextBrowserInteraction);
     auto* linksRow = new QHBoxLayout();
@@ -847,9 +883,9 @@ void HubWindow::flushPendingWindowGeometry()
     if (windowSizeSaveTimer_ && windowSizeSaveTimer_->isActive())
         windowSizeSaveTimer_->stop();
     if (isMaximized() || isFullScreen())
-        persistNormalGeometry(normalGeometry());
+        persistNormalGeometry(normalGeometry(), 1000);
     else if (!isMinimized())
-        persistWindowGeometry();
+        persistNormalGeometry(QRect(pos(), size()), 1000);
 }
 
 void HubWindow::persistWindowGeometry()
@@ -859,12 +895,14 @@ void HubWindow::persistWindowGeometry()
     persistNormalGeometry(QRect(pos(), size()));
 }
 
-void HubWindow::persistNormalGeometry(const QRect& geometry)
+void HubWindow::persistNormalGeometry(const QRect& geometry, int timeoutMs)
 {
     if (!geometry.isValid())
         return;
-    HubSettings::setWindowSize(geometry.size());
-    HubSettings::setWindowPosition(geometry.topLeft());
+    if (!HubSettings::setWindowGeometry(geometry, timeoutMs)) {
+        qWarning() << "Window geometry could not be saved";
+        if (timeoutMs == 0 && windowSizeSaveTimer_) windowSizeSaveTimer_->start();
+    }
 }
 
 void HubWindow::restoreWindowGeometry()

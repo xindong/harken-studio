@@ -38,6 +38,7 @@ public:
     void setAutomaticDownloadEnabled(bool enabled);
     bool isDownloading() const;
     UpdateStateRecord currentState() const;
+    static void reconcileElevation(const QDateTime& now);
 
     void handleCheckResult(const UpdateCheckResult& result,
                            const QDateTime& now);

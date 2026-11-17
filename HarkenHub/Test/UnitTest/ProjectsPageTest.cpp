@@ -192,14 +192,14 @@ TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
     const QString currentPath = table->item(table->currentRow(), 0)->data(Qt::UserRole + 1).toString();
     ASSERT_TRUE(store.recordSuccessfulOpen(paths[2], {}, QStringLiteral("Aardvark"), 1, {}, {}));
     page->refresh();
-    EXPECT_EQ(table->item(0, 0)->data(Qt::UserRole + 1).toString(), paths[2]);
+    EXPECT_EQ(table->item(0, 0)->data(Qt::UserRole + 1).toString(), paths[0]);
     EXPECT_EQ(selectedPaths(), selected);
     EXPECT_EQ(table->item(table->currentRow(), 0)->data(Qt::UserRole + 1).toString(), currentPath);
     ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(5000));
     QCoreApplication::processEvents();
     EXPECT_EQ(selectedPaths(), selected);
     const std::vector<std::pair<int, QStringList>> orders{
-        {0, {paths[1], paths[0], paths[2]}},
+        {0, {paths[2], paths[1], paths[0]}},
         {1, {paths[0], paths[1], paths[2]}},
         {1, {paths[1], paths[0], paths[2]}},
         {2, {paths[1], paths[0], paths[2]}},

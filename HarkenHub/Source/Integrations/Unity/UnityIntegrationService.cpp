@@ -124,8 +124,11 @@ QString safePathSegment(const QString& value)
 
 QString defaultIntegrationBackupPath(const QString& unityProjectPath)
 {
-    const QString appData = QStandardPaths::writableLocation(
-        QStandardPaths::AppDataLocation);
+    const QString appData =
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+        qEnvironmentVariableIsSet("HARKEN_HUB_USER_ROOT") ? VNH::userDataDir() :
+#endif
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (appData.isEmpty()) return {};
     const QString timestamp = QDateTime::currentDateTime().toString(
         QStringLiteral("yyyy-MM-dd_HH-mm-ss-zzz"));
@@ -1286,6 +1289,12 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
             {QStringLiteral("root_meta_sha256"), QString::fromLatin1(metaHash)},
             {QStringLiteral("target_existed"), QDir(to).exists()}};
     }
+    const auto migrationFiles = record.value(QStringLiteral("inventory")).toObject().value(QStringLiteral("files")).toObject();
+    for (auto it = migrationFiles.constBegin(); it != migrationFiles.constEnd(); ++it)
+        result.fileChanges.push_back({request.recoverMigration ? QStringLiteral("restore") : QStringLiteral("move"), it.key()});
+    if (!record.value(QStringLiteral("root_meta_sha256")).toString().isEmpty())
+        result.fileChanges.push_back({request.recoverMigration ? QStringLiteral("restore") : QStringLiteral("move"),
+            QStringLiteral("../") + QFileInfo(result.integrationInstallPath).fileName() + QStringLiteral(".meta")});
     result.integrationFound = true;
     result.targetInstalled = true;
     const QByteArray recordBytes = QJsonDocument(record).toJson(QJsonDocument::Indented);
@@ -1616,7 +1625,9 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         }
         const QJsonObject currentFiles = reviewSnapshot.value(QStringLiteral("files")).toObject();
         for (auto it = currentFiles.begin(); it != currentFiles.end(); ++it) {
-            if (removalFiles.contains(it.key())) filesToChange << QDir(targetIntegration).filePath(it.key());
+            const bool removed = removalFiles.contains(it.key());
+            result.fileChanges.push_back({removed ? QStringLiteral("remove") : QStringLiteral("preserve"), it.key()});
+            if (removed) filesToChange << QDir(targetIntegration).filePath(it.key());
             else preservedFiles << it.key();
         }
         const qsizetype pendingFiles = filesToChange.size();
@@ -1627,7 +1638,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                 return relative.startsWith(prefix);
             });
         });
-        if (preservedFiles.isEmpty() && !preservedDirectory) filesToChange << targetIntegration + QStringLiteral(".meta");
+        if (preservedFiles.isEmpty() && !preservedDirectory) {
+            const QString rootMeta = targetIntegration + QStringLiteral(".meta");
+            filesToChange << rootMeta;
+            if (QFileInfo::exists(rootMeta))
+                result.fileChanges.push_back({QStringLiteral("remove"), QDir(targetIntegration).relativeFilePath(rootMeta)});
+        }
         if (!VNH::checkIntegrationFilesWritable(filesToChange, &error)
             || !VNH::checkIntegrationDirectoryChanges({targetIntegration}, {targetIntegration}, &error)) {
             step.status = StepStatus::Failed;
@@ -1995,7 +2011,13 @@ UnityIntegrationService::Result UnityIntegrationService::restoreIntegration(cons
         const bool displaced = !targetExists && originalExists && originalSnapshot == before;
         if (!activated && !untouched && !displaced)
             return finish(false, QStringLiteral("Files changed after the restoration stopped. Preserve the listed folders and resolve the conflict before recovery."));
-        result.planHash = QCryptographicHash::hash(QJsonDocument(record).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+        const auto reviewedFiles = (displaced ? before : current).value(QStringLiteral("files")).toObject();
+        for (auto it = reviewedFiles.constBegin(); it != reviewedFiles.constEnd(); ++it)
+            result.fileChanges.push_back({displaced ? QStringLiteral("restore") : QStringLiteral("preserve"), it.key()});
+        const QJsonObject recovery{{QStringLiteral("journal"), record}, {QStringLiteral("targetExists"), targetExists},
+            {QStringLiteral("target"), current}, {QStringLiteral("originalExists"), originalExists},
+            {QStringLiteral("original"), originalSnapshot}};
+        result.planHash = QCryptographicHash::hash(QJsonDocument(recovery).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
         step.artifacts << target << work;
         if (request.checkOnly)
             return finish(true, QStringLiteral("The interrupted restoration is ready to recover. Existing files will be preserved."));

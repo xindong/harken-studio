@@ -3,6 +3,7 @@
 #include "UI/MessageDialog.h"
 
 #include "Legal/ConsentStore.h"
+#include "Legal/LegalDocuments.h"
 #include "Localization/HubLocalization.h"
 
 #include <QCoreApplication>
@@ -17,33 +18,6 @@
 
 namespace VNH {
 
-namespace {
-
-QStringList consentDocuments()
-{
-    const QString overridePath =
-        qEnvironmentVariable("HARKEN_HUB_EULA_FILE");
-    if (!overridePath.isEmpty()) {
-        QFile file(overridePath);
-        if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-            return {QString::fromUtf8(file.readAll())};
-    }
-    const QString suffix =
-        HubLocalization::effectiveLanguage() ==
-                HubLocalization::simplifiedChinesePreference()
-            ? QStringLiteral(".zh-CN.txt")
-            : QStringLiteral(".txt");
-    QFile agreement(QStringLiteral(":/Resources/legal/USER_AGREEMENT") + suffix);
-    QFile privacy(QStringLiteral(":/Resources/legal/PRIVACY_POLICY") + suffix);
-    if (!agreement.open(QIODevice::ReadOnly | QIODevice::Text) ||
-        !privacy.open(QIODevice::ReadOnly | QIODevice::Text))
-        return {};
-    return {QString::fromUtf8(agreement.readAll()),
-            QString::fromUtf8(privacy.readAll())};
-}
-
-}
-
 QString ConsentDialog::hubDocumentId()
 {
     return QStringLiteral("hub-eula");
@@ -56,7 +30,7 @@ QString ConsentDialog::studioDocumentId()
 
 QString ConsentDialog::documentVersion()
 {
-    return QStringLiteral("2026-10-28");
+    return LegalDocuments::version();
 }
 
 ConsentDialog::ConsentDialog(const QString& documentId,
@@ -96,8 +70,8 @@ ConsentDialog::ConsentDialog(const QString& documentId,
         text->setReadOnly(true);
         text->setPlainText(documentTexts.at(i));
         text->setStyleSheet(QStringLiteral(
-            "QPlainTextEdit { background-color: #171C28; border: 1px solid "
-            "#313848; border-radius: 0; padding: 8px; color: #CCCCCC; }"));
+            "QPlainTextEdit { background-color: palette(alternate-base); border: 1px solid "
+            "palette(mid); border-radius: 0; padding: 8px; color: palette(window-text); }"));
         column->addWidget(text, 1);
         documents->addLayout(column, 1);
     }
@@ -125,7 +99,7 @@ ConsentDialog::ConsentDialog(const QString& documentId,
 
 bool ConsentDialog::requestConsent(QWidget* parent, const QString& documentId)
 {
-    const QStringList documentTexts = consentDocuments();
+    const QStringList documentTexts = LegalDocuments::texts();
     const QString documentText = documentTexts.join(QStringLiteral("\n\n"));
     if (documentText.isEmpty()) {
         MessageDialog::warning(
@@ -159,7 +133,7 @@ bool ConsentDialog::requestConsent(QWidget* parent, const QString& documentId)
 
 void ConsentDialog::showDocuments(QWidget* parent)
 {
-    const QStringList documentTexts = consentDocuments();
+    const QStringList documentTexts = LegalDocuments::texts();
     if (documentTexts.join(QStringLiteral("\n\n")).isEmpty()) {
         MessageDialog::warning(
             parent, tr("Harken Hub"),

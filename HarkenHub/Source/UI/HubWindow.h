@@ -73,7 +73,7 @@ private:
     void showLogConsole();
     bool showReleaseNotes();
     void persistWindowGeometry();
-    void persistNormalGeometry(const QRect& geometry);
+    void persistNormalGeometry(const QRect& geometry, int timeoutMs = 0);
     void flushPendingWindowGeometry();
     void restoreWindowGeometry();
     QScreen* visibleScreenFor(const QRect& frame) const;
