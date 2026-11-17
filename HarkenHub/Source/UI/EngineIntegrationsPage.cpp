@@ -4003,7 +4003,9 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         QFont font = section->font(0);
         font.setBold(true);
         section->setFont(0, font);
-        section->setForeground(0, QColor(HubTheme::html(QLatin1String(group.color))));
+        section->setForeground(0, HubTheme::color(action == QStringLiteral("add") ? HubTheme::Tone::Success
+            : action == QStringLiteral("replace") ? HubTheme::Tone::Info
+            : action == QStringLiteral("remove") ? HubTheme::Tone::Error : HubTheme::Tone::Muted));
         for (const auto& path : paths) {
             auto* item = new QTreeWidgetItem(section, {path});
             item->setToolTip(0, path);

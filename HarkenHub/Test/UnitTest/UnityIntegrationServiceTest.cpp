@@ -19,6 +19,7 @@
 #include <QThread>
 #include <QLockFile>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QScopeGuard>
 #include <QStringEncoder>
 
@@ -2810,7 +2811,7 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     writeFile(source + "/Runtime/Generated/HarkenNative.g.cs", "updated implementation\n");
     request.checkOnly = true;
     EXPECT_FALSE(service.run(request).success);
-    request.documentation = request.samples = VNX::UnityInstallation::ContentAction::Keep;
+    request.documentation = request.samples = VNX::UnityInstallation::ContentAction::Ask;
     auto review = service.run(request);
     ASSERT_TRUE(review.success) << review.steps[1].cause.toStdString();
     EXPECT_TRUE(review.missingFiles.isEmpty());
@@ -2821,6 +2822,10 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     ASSERT_TRUE(service.run(request).success);
     EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
     EXPECT_EQ(readFile(installed + "/Runtime/Generated/HarkenNative.g.cs"), "updated implementation\n");
+    const auto kept = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
+    EXPECT_EQ(kept["optional_content"].toObject()["documentation"].toString(), "keep");
+    EXPECT_EQ(kept["optional_content"].toObject()["samples"].toString(), "keep");
+    EXPECT_TRUE(kept["managed_files"].toArray().contains(optional[0]));
     ASSERT_TRUE(QFile::remove(source + "/Runtime/Harken.Core.asmdef"));
     request.checkOnly = true;
     EXPECT_FALSE(service.run(request).success);
@@ -2927,6 +2932,8 @@ TEST(UnityIntegrationService, ComponentDecisionsRemainBoundToReviewAndPreserveOw
     EXPECT_EQ(retained["sha256"].toObject()[retainedDocument], before["sha256"].toObject()[document]);
     EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).missingOptionalFiles.contains(retainedDocument));
     ASSERT_TRUE(QDir(source + "/Documentation~").removeRecursively());
+    writeFile(source + "/README.md", "package description only");
+    writeFile(source + "/Documentation~.meta", "folder metadata only");
     request.documentation = Action::Update;
     request.approvedPlanHash.clear();
     request.checkOnly = true;
@@ -3641,6 +3648,17 @@ TEST_F(UnityRestorationTest, RecoversBothRenameBoundariesAndBlocksOtherMutations
         EXPECT_FALSE(service.run(other).success);
         other.removeIntegration = true;
         EXPECT_FALSE(service.run(other).success);
+        if (boundary == 1) {
+            QProcess cli;
+            auto environment = QProcessEnvironment::systemEnvironment();
+            environment.insert("HARKEN_HUB_USER_ROOT", dir.filePath("cli-user"));
+            environment.insert("HARKEN_HUB_MACHINE_ROOT", dir.filePath("cli-machine"));
+            environment.insert("HARKEN_HUB_VERSIONS_ROOT", dir.filePath("cli-versions"));
+            cli.setProcessEnvironment(environment);
+            cli.start(QString::fromUtf8(HARKEN_HUB_CLI_FIXTURE), {"--cli", "integrations", "recover-restore", "--path", project});
+            ASSERT_TRUE(cli.waitForFinished(15000));
+            EXPECT_EQ(cli.exitCode(), 4) << cli.readAllStandardOutput().toStdString();
+        }
         request.recoverRestore = true;
         request.checkOnly = true;
         auto plan = service.run(request);

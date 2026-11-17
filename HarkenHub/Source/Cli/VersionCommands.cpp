@@ -14,6 +14,7 @@
 #include "Transactions/InstallRequest.h"
 #include "Transactions/TransactionDiagnostics.h"
 #include "Update/HubSelfUpdate.h"
+#include "Update/BridgeDispatcher.h"
 #include "Update/ServerEndpoints.h"
 #include "Update/ServerVersionCatalog.h"
 #include "Update/UpdateChecker.h"
@@ -29,6 +30,8 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QSaveFile>
+#include <QProcess>
+#include <QScopeGuard>
 #include <QTimer>
 #include <algorithm>
 
@@ -185,11 +188,11 @@ UpdateCheckResult checkUpdate(const QString& product)
     return result;
 }
 
-QJsonObject installPackage(const QString& package, const QString& manifest, bool allowExpired)
+QJsonObject installPackage(const QString& package, const QString& manifest, bool allowExpired, const QJsonObject& review)
 {
     const auto preparation = InstallRequest::prepare(package, manifest, TrustAnchors::manifestPublicKey(), QDateTime::currentDateTimeUtc(), allowExpired);
     require(preparation.ok, preparation.error);
-    const auto launch = launchElevatedInstall(preparation.transactionId, true);
+    const auto launch = launchElevatedInstall(preparation.transactionId, true, review["destination"].toString(), review["index"].toString());
     if (!launch.ok) HandoffArea::discard(preparation.transactionId);
     waitForElevated(launch, preparation.transactionId);
     return {{"buildId", preparation.buildId}, {"version", preparation.version}, {"transactionId", preparation.transactionId}};
@@ -269,10 +272,11 @@ Reply versions(const Arguments& args)
         require(verified.manifest.product == "HarkenStudio", "Use updates apply for a Hub update");
         const auto hash = fileHash(package);
         require(hash.compare(verified.manifest.sha256Hex, Qt::CaseInsensitive) == 0, "Package hash does not match the signed manifest");
+        const auto installation = packageReview(package, verified.manifest);
         confirm(args, {{"release", manifestJson(verified.manifest)}, {"package", package}, {"sha256", hash},
-            {"installation", packageReview(package, verified.manifest)}});
+            {"installation", installation}});
         requireConsent("studio");
-        return success(installPackage(package, manifest, allowExpired));
+        return success(installPackage(package, manifest, allowExpired, installation));
     }
     const QString build = args.required("build");
     const auto available = VersionScanner::scanAvailable();
@@ -353,7 +357,8 @@ Reply updates(const Arguments& args)
                 require(false, "The update state changed; review the update again");
             }
             try {
-                const auto launch = launchElevatedInstall(prepared.transactionId, false);
+                const auto installation = plan["installation"].toObject();
+                const auto launch = launchElevatedInstall(prepared.transactionId, false, installation["destination"].toString(), installation["index"].toString());
                 if (!launch.ok) HandoffArea::discard(prepared.transactionId);
                 waitForElevated(launch, prepared.transactionId);
             } catch (const Reply& failure) {
@@ -374,7 +379,15 @@ Reply updates(const Arguments& args)
         options.currentVersion = QCoreApplication::applicationVersion();
         updater.configure(options);
         QString error;
-        for (const auto& server : {SingleInstanceGuard::guiServerName(), SingleInstanceGuard::backgroundServerName()}) {
+        require(HubSelfUpdate::selfUpdateEnabled() && BridgeDispatcher::available(), "The Hub update bridge is unavailable");
+        bool stoppedBackground = false;
+        bool dispatched = false;
+        const auto resumeOnFailure = qScopeGuard([&] {
+            if (!dispatched && stoppedBackground
+                && !QProcess::startDetached(QCoreApplication::applicationFilePath(), {"--background"}))
+                qWarning() << "Could not restart the Hub background service after the update failed";
+        });
+        for (const auto& server : {SingleInstanceGuard::backgroundServerName(), SingleInstanceGuard::guiServerName()}) {
             if (!SingleInstanceGuard::isServerActive(server)) continue;
             require(SingleInstanceGuard::sendTo(server, {"--quit"}), "Close Hub and its background service, then retry the update");
             QEventLoop waiting;
@@ -387,8 +400,10 @@ Reply updates(const Arguments& args)
             deadline.start(5000);
             waiting.exec();
             require(!SingleInstanceGuard::isServerActive(server), "Hub is still running; close it before applying the update", "HubStillRunning");
+            if (server == SingleInstanceGuard::backgroundServerName()) stoppedBackground = true;
         }
         require(updater.approveViaBridge("background", &error, now, &before), error);
+        dispatched = true;
         return success(stateJson(UpdateStateStore::load(identity)));
     }
     const auto result = checkUpdate(product == "studio" ? "harken" : "hub");

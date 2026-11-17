@@ -168,6 +168,23 @@ QByteArray readAll(const QString& path)
 
 }
 
+TEST_F(InstallExecutorTest, ApprovedDestinationAndIndexMustStillMatchAfterElevation)
+{
+    const auto rejectedIndex = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
+        false, targetPath(), QStringLiteral("changed-index"));
+    EXPECT_EQ(rejectedIndex.failureCode, "ReviewChanged");
+    ASSERT_TRUE(QDir().mkpath(targetPath()));
+    const auto occupied = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
+        false, targetPath(), PackageReader::fileSha256Hex(InstallIndex::filePath()));
+    EXPECT_EQ(occupied.failureCode, "ReviewChanged");
+    EXPECT_FALSE(QDir(targetPath() + "-2").exists());
+    ASSERT_TRUE(QDir().rmdir(targetPath()));
+    const auto installed = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
+        false, targetPath(), PackageReader::fileSha256Hex(InstallIndex::filePath()));
+    EXPECT_TRUE(installed.ok) << installed.error.toStdString();
+    EXPECT_EQ(installed.installPath, targetPath());
+}
+
 TEST_F(InstallExecutorTest, HappyPathInstallsAndCommits)
 {
     const QString transactionId = placeHandoff(payloadForArchive());

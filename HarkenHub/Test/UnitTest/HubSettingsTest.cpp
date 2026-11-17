@@ -239,14 +239,18 @@ TEST_F(HubSettingsTest, ConcurrentProcessesPreserveIndependentPreferencesAndWind
 TEST_F(HubSettingsTest, InteractiveSavesStayResponsiveAndFinalSavesWaitForBriefContention)
 {
     ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(1, 2, 800, 600)));
+    ASSERT_TRUE(HubSettings::setAutoDownloadStudio(false));
+    ASSERT_TRUE(HubSettings::setAutoSilentlyUpdateHub(false));
     std::promise<bool> locked;
     auto ready = locked.get_future();
     auto owner = std::async(std::launch::async, [&] {
         QLockFile lock(HubSettings::filePath() + QStringLiteral(".lock"));
         locked.set_value(lock.tryLock(0));
-        QThread::msleep(150);
+        QThread::msleep(300);
     });
     ASSERT_TRUE(ready.get());
+    EXPECT_FALSE(HubSettings::autoDownloadStudio());
+    EXPECT_FALSE(HubSettings::autoSilentlyUpdateHub());
     QElapsedTimer timer;
     timer.start();
     EXPECT_FALSE(HubSettings::setWindowGeometry(QRect(3, 4, 900, 700), 0));

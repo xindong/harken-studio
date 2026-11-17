@@ -34,7 +34,9 @@ QJsonObject readRoot()
     QFile file(HubSettings::filePath());
     if (!file.open(QIODevice::ReadOnly))
         return QJsonObject();
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    const auto bytes = file.readAll();
+    file.close();
+    const QJsonDocument document = QJsonDocument::fromJson(bytes);
     return document.isObject() ? document.object() : QJsonObject();
 }
 
@@ -43,7 +45,7 @@ QJsonObject loadRoot()
     const auto path = HubSettings::filePath();
     if (!QFileInfo::exists(path)) return {};
     QLockFile lock(path + QStringLiteral(".lock"));
-    if (!lockSettings(lock, true)) return {};
+    lockSettings(lock, true);
     return readRoot();
 }
 

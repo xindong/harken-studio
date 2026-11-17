@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QEvent>
 #include <QPalette>
+#include <QRegularExpression>
 #include <QStyle>
 #include <QStyleHints>
 #include <QTimer>
@@ -67,11 +68,19 @@ void setTone(QWidget* widget, Tone tone)
 
 QString html(QString text)
 {
-    for (const auto& entry : {std::pair{"#F0C36A", Tone::Warning}, {"#FFB454", Tone::Warning},
-            {"#E3B341", Tone::Warning}, {"#FF6B6B", Tone::Error}, {"#FF8B8B", Tone::Error},
-            {"#69D391", Tone::Success}, {"#83B9FF", Tone::Info}, {"#9AA6B8", Tone::Muted},
-            {"#9AA4B5", Tone::Muted}, {"#00F0FF", Tone::Accent}, {"#00D9EF", Tone::Accent}})
-        text.replace(QLatin1String(entry.first), color(entry.second).name(), Qt::CaseInsensitive);
+    static const QRegularExpression styles(QStringLiteral("<[^>]*?\\bstyle\\s*=\\s*(['\"])(.*?)\\1"), QRegularExpression::CaseInsensitiveOption);
+    auto matches = styles.globalMatch(text);
+    QVector<QRegularExpressionMatch> found;
+    while (matches.hasNext()) found.push_back(matches.next());
+    for (auto it = found.crbegin(); it != found.crend(); ++it) {
+        QString style = it->captured(2);
+        for (const auto& entry : {std::pair{"#F0C36A", Tone::Warning}, {"#FFB454", Tone::Warning},
+                {"#E3B341", Tone::Warning}, {"#FF6B6B", Tone::Error}, {"#FF8B8B", Tone::Error},
+                {"#69D391", Tone::Success}, {"#83B9FF", Tone::Info}, {"#9AA6B8", Tone::Muted},
+                {"#9AA4B5", Tone::Muted}, {"#00F0FF", Tone::Accent}, {"#00D9EF", Tone::Accent}})
+            style.replace(QLatin1String(entry.first), color(entry.second).name(), Qt::CaseInsensitive);
+        text.replace(it->capturedStart(2), it->capturedLength(2), style);
+    }
     return text;
 }
 

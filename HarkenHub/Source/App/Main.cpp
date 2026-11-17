@@ -291,14 +291,18 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--install-package") == 0) {
             QCoreApplication app(argc, argv);
             bool explicitInstall = false;
+            QString reviewedDestination;
+            QString reviewedIndexHash;
             for (int j = 1; j < argc; ++j) {
+                if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-destination") == 0) reviewedDestination = app.arguments().value(j + 1);
+                if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-index") == 0) reviewedIndexHash = QString::fromLatin1(argv[j + 1]);
                 if (qstrcmp(argv[j], "--explicit-install") == 0)
                     explicitInstall = true;
             }
             const auto outcome = VNH::InstallExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
                 VNH::TrustAnchors::manifestPublicKey(),
-                QDateTime::currentDateTimeUtc(), explicitInstall);
+                QDateTime::currentDateTimeUtc(), explicitInstall, reviewedDestination, reviewedIndexHash);
             if (!outcome.ok) {
                 qCritical().noquote()
                     << "Install failed:" << outcome.failureCode << outcome.error;

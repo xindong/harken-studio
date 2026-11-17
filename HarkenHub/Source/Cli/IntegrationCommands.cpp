@@ -62,7 +62,8 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
     UnityIntegrationRequest request;
     request.unityProjectPath = target.canonicalRoot;
     const auto discovery = VNX::UnityInstallation::discover(target.canonicalRoot);
-    require(discovery.errors.isEmpty(), discovery.errors.join('\n'));
+    if (args.operation != "recover-restore" && args.operation != "recover-move")
+        require(discovery.errors.isEmpty(), discovery.errors.join('\n'));
     if (target.integrationInstallPath.isEmpty() && discovery.installations.size() == 1)
         target.integrationInstallPath = QDir(target.canonicalRoot).relativeFilePath(discovery.installations.front().path);
     if (args.options.contains("location") && (args.operation == "verify" || args.operation == "locate")) {

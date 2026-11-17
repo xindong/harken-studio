@@ -184,7 +184,8 @@ bool InstallExecutor::isTransactionActive()
 InstallOutcome InstallExecutor::run(const QString& transactionId,
                                     const QByteArray& manifestPublicKey,
                                     const QDateTime& now,
-                                    bool explicitInstall)
+                                    bool explicitInstall, const QString& reviewedDestination,
+                                    const QString& reviewedIndexHash)
 {
     InstallOutcome outcome;
 
@@ -204,6 +205,11 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
         return fail(transactionId, {}, QStringLiteral("InstallBusy"),
                     QStringLiteral("Another install transaction is running"));
     }
+
+    if (!reviewedDestination.isEmpty()
+        && PackageReader::fileSha256Hex(InstallIndex::filePath()) != reviewedIndexHash)
+        return fail(transactionId, {}, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("The installation index changed; review the installation again"));
 
     sweepStaleStaging(transactionId);
 
@@ -321,6 +327,9 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
     QString targetDir = targetBase;
     for (int suffix = 2; occupied(targetDir); ++suffix)
         targetDir = targetBase + QStringLiteral("-%1").arg(suffix);
+    if (!reviewedDestination.isEmpty() && targetDir != reviewedDestination)
+        return fail(transactionId, manifest.buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("The installation destination changed; review the installation again"));
 
     cleanup.extractDir = versionsRoot + QStringLiteral("/.staging-") +
                          transactionId;

@@ -3,11 +3,14 @@
 namespace VNH {
 
 ElevationLaunchResult launchElevatedInstall(const QString& transactionId,
-                                            bool explicitInstall)
+                                            bool explicitInstall, const QString& reviewedDestination, const QString& reviewedIndexHash)
 {
     QStringList arguments{QStringLiteral("--install-package"), transactionId};
     if (explicitInstall)
         arguments.append(QStringLiteral("--explicit-install"));
+    if (!reviewedDestination.isEmpty())
+        arguments << QStringLiteral("--reviewed-destination") << reviewedDestination;
+    if (!reviewedIndexHash.isEmpty()) arguments << QStringLiteral("--reviewed-index") << reviewedIndexHash;
     return launchElevatedCommand(arguments);
 }
 

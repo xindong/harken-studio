@@ -17,7 +17,8 @@ ElevationLaunchResult launchElevatedCommand(const QStringList& arguments);
 bool startInstallerDetached(const QString& program,
                             const QStringList& arguments, QString* error);
 ElevationLaunchResult launchElevatedInstall(const QString& transactionId,
-                                            bool explicitInstall = false);
+                                            bool explicitInstall = false, const QString& reviewedDestination = {},
+                                            const QString& reviewedIndexHash = {});
 ElevationLaunchResult launchElevatedUninstall(const QString& buildId, const QString& reviewedSnapshot = {});
 ElevationLaunchResult launchElevatedRepair(const QString& buildId, const QString& transactionId, const QString& reviewedSnapshot = {});
 bool pollElevatedInstall(void* processHandle, int* exitCode);

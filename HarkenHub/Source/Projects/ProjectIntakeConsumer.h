@@ -17,7 +17,7 @@ class ProjectIntakeConsumer : public QObject
 
 public:
     static QString intakeDir();
-    static bool rememberCreationBuild(const QString& projectPath, const QString& buildId, QString* error);
+    static bool rememberCreationBuild(const QString& projectPath, const QString& buildId, const QString& expectedBuildId, QString* error);
     static void forgetCreationBuild(const QString& projectPath);
 
     explicit ProjectIntakeConsumer(ProjectStore* store,

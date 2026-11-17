@@ -957,6 +957,10 @@ TEST_F(EngineIntegrationsPageTest, AppearanceChangesPreservePendingContentDecisi
         EXPECT_TRUE(keep->isChecked());
         EXPECT_TRUE(remove->isChecked());
         EXPECT_TRUE(primary()->isEnabled());
+        const QString filename = QStringLiteral("#69D391/style='color:#69D391'.cs").toHtmlEscaped();
+        const auto formatted = VNH::HubTheme::html(QStringLiteral("<span style='color:#69D391'>%1</span>").arg(filename));
+        EXPECT_TRUE(formatted.contains(filename));
+        EXPECT_TRUE(formatted.startsWith(QStringLiteral("<span style='color:%1'>").arg(VNH::HubTheme::color(VNH::HubTheme::Tone::Success).name())));
         const auto warning = VNH::HubTheme::color(VNH::HubTheme::Tone::Warning);
         EXPECT_GT(warning.red(), warning.blue());
         EXPECT_EQ(qApp->palette().color(QPalette::Window).lightness() < 128, QString::fromLatin1(mode) == "dark");

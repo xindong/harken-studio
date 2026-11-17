@@ -97,7 +97,7 @@ Reply projects(const Arguments& args)
         }
         QString error;
         const QString projectPath = QDir(request.location).filePath(request.name + '/' + request.name + ".hsp");
-        require(ProjectIntakeConsumer::rememberCreationBuild(projectPath, request.version.buildId, &error), error);
+        require(ProjectIntakeConsumer::rememberCreationBuild(projectPath, request.version.buildId, request.version.expectedBuildId(), &error), error);
         if (!ProjectCreateFlow::create(request, &error)) {
             ProjectIntakeConsumer::forgetCreationBuild(projectPath);
             require(false, error);

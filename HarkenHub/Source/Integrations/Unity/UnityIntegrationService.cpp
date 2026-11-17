@@ -1293,6 +1293,12 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
             {QStringLiteral("root_meta_sha256"), QString::fromLatin1(metaHash)},
             {QStringLiteral("target_existed"), QDir(to).exists()}};
     }
+    const auto migrationFiles = record.value(QStringLiteral("inventory")).toObject().value(QStringLiteral("files")).toObject();
+    for (auto it = migrationFiles.constBegin(); it != migrationFiles.constEnd(); ++it)
+        result.fileChanges.push_back({request.recoverMigration ? QStringLiteral("restore") : QStringLiteral("move"), it.key()});
+    if (!record.value(QStringLiteral("root_meta_sha256")).toString().isEmpty())
+        result.fileChanges.push_back({request.recoverMigration ? QStringLiteral("restore") : QStringLiteral("move"),
+            QStringLiteral("../") + QFileInfo(result.integrationInstallPath).fileName() + QStringLiteral(".meta")});
     result.integrationFound = true;
     result.targetInstalled = true;
     const QByteArray recordBytes = QJsonDocument(record).toJson(QJsonDocument::Indented);
@@ -2009,6 +2015,9 @@ UnityIntegrationService::Result UnityIntegrationService::restoreIntegration(cons
         const bool displaced = !targetExists && originalExists && originalSnapshot == before;
         if (!activated && !untouched && !displaced)
             return finish(false, QStringLiteral("Files changed after the restoration stopped. Preserve the listed folders and resolve the conflict before recovery."));
+        const auto reviewedFiles = (displaced ? before : current).value(QStringLiteral("files")).toObject();
+        for (auto it = reviewedFiles.constBegin(); it != reviewedFiles.constEnd(); ++it)
+            result.fileChanges.push_back({displaced ? QStringLiteral("restore") : QStringLiteral("preserve"), it.key()});
         result.planHash = QCryptographicHash::hash(QJsonDocument(record).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
         step.artifacts << target << work;
         if (request.checkOnly)
@@ -2265,7 +2274,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         return ContentAction::Ask;
     };
-    const QJsonObject optionalContent{
+    QJsonObject optionalContent{
         {QStringLiteral("documentation"), UnityInstallation::contentActionName(request.documentation)},
         {QStringLiteral("samples"), UnityInstallation::contentActionName(request.samples)}};
 
@@ -2518,7 +2527,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         for (const auto component : {ContentComponent::Documentation, ContentComponent::Samples}) {
             const auto action = component == ContentComponent::Documentation ? request.documentation : request.samples;
             if (action == ContentAction::Update && std::none_of(sourceFiles.begin(), sourceFiles.end(),
-                [&](const auto& path) { return UnityInstallation::contentComponent(path) == component; })) {
+                [&](const auto& path) {
+                    const auto prefix = component == ContentComponent::Documentation ? QStringLiteral("Documentation~/") : QStringLiteral("Samples~/");
+                    return path.startsWith(prefix, Qt::CaseInsensitive) && !path.endsWith(QStringLiteral(".meta"), Qt::CaseInsensitive);
+                })) {
                 step.status = StepStatus::Failed;
                 step.summary = QStringLiteral("The selected source does not include the requested documentation or samples.");
                 step.remediation = QStringLiteral("Keep or remove the existing content, or select a source that includes the content to update.");
@@ -2564,6 +2576,13 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     });
 
     runStep([&](StepResult& step) {
+        const auto previous = previousManagedFiles(targetIntegration);
+        for (const auto& path : previous.managedFiles) {
+            if (contentAction(path) != ContentAction::Ask) continue;
+            const auto component = UnityInstallation::contentComponent(path);
+            if (component != ContentComponent::Core)
+                optionalContent[component == ContentComponent::Documentation ? QStringLiteral("documentation") : QStringLiteral("samples")] = QStringLiteral("keep");
+        }
         QJsonObject targetSnapshot;
         QString snapshotError;
         result.planHash = integrationChangeFingerprint(result.unityProjectPath, result.integrationSourcePath,

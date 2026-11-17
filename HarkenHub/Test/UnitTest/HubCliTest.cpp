@@ -124,6 +124,7 @@ TEST_F(HubCliTest, EveryPublishedCommandRejectsMalformedInputBeforeExecutionWith
     }
     EXPECT_FALSE(QFileInfo::exists(directory.filePath("user/settings.json")));
     EXPECT_FALSE(QFileInfo::exists(directory.filePath("user/consents.json")));
+
 }
 
 TEST_F(HubCliTest, PersistentChoicesAndRegistrationRemovalDoNotModifyProjectFiles)
@@ -229,7 +230,7 @@ TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStu
     write(project, R"({"harkenDocument":{"type":"project.root"},"metadata":{"name":"Old name"}})");
     const auto intakePath = directory.filePath("user/project-intake/created.json");
     const auto openedAt = QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs);
-    write(intakePath, QJsonDocument(QJsonObject{{"projectPath", project}, {"buildId", version}, {"openedAt", openedAt}}).toJson());
+    write(intakePath, QJsonDocument(QJsonObject{{"projectPath", project}, {"buildId", "run1.aaaa1111"}, {"openedAt", openedAt}}).toJson());
     const auto projects = run({"projects", "list"})["data"].toObject()["projects"].toArray();
     ASSERT_EQ(projects.size(), 1);
     EXPECT_EQ(projects[0].toObject()["name"].toString(), "Demo");
@@ -335,6 +336,27 @@ TEST_F(HubCliTest, UpdateApplicationRejectsActiveTransactionsAndUntrustedFilesBe
     write(manifestPath, HarkenHubTest::signEnvelope(QJsonDocument(payload).toJson(QJsonDocument::Compact), HarkenHubTest::makeKeypair(1)));
     run({"updates", "apply", "--product", "studio"}, 3);
     EXPECT_FALSE(QFileInfo::exists(directory.filePath("user/consents.json")));
+    payload["product"] = "HarkenHub";
+    write(manifestPath, HarkenHubTest::signEnvelope(QJsonDocument(payload).toJson(QJsonDocument::Compact), keys));
+    state["state"] = "AwaitingRestart";
+    write(statePath, QJsonDocument(QJsonObject{{"HarkenHub", state}}).toJson());
+    approve({"legal", "accept", "--product", "hub"});
+    environment.insert("HARKEN_HUB_BRIDGE_DISABLE", "1");
+    const auto previousRoot = qgetenv("HARKEN_HUB_USER_ROOT");
+    qputenv("HARKEN_HUB_USER_ROOT", directory.filePath("user").toUtf8());
+    const auto reset = qScopeGuard([&] {
+        if (previousRoot.isNull()) qunsetenv("HARKEN_HUB_USER_ROOT");
+        else qputenv("HARKEN_HUB_USER_ROOT", previousRoot);
+    });
+    VNH::SingleInstanceGuard background(VNH::SingleInstanceGuard::backgroundServerName());
+    ASSERT_TRUE(background.isPrimary());
+    int messages = 0;
+    QObject::connect(&background, &VNH::SingleInstanceGuard::activationRequested, &background, [&](const QStringList&) { ++messages; });
+    const QStringList apply{"updates", "apply", "--product", "hub"};
+    const auto review = run(apply, 4);
+    const auto failed = run(apply + QStringList{"--confirm", review["confirmation"].toString()}, 3);
+    EXPECT_TRUE(failed["error"].toObject()["message"].toString().contains("bridge"));
+    EXPECT_EQ(messages, 0);
 }
 
 TEST_F(HubCliTest, NetworkDownloadsRequireBothSignedIdentityAndValidArchiveContents)
@@ -439,6 +461,7 @@ TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFi
     EXPECT_EQ(read(installed + "/Documentation~/Reference.md"), "original docs");
     EXPECT_FALSE(QFileInfo::exists(installed + "/Samples~/Example.cs"));
     EXPECT_EQ(read(installed + "/Samples~/Custom.cs"), "my own content");
+    EXPECT_FALSE(run({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")}, 4)["plan"].toObject()["files"].toArray().isEmpty());
     approve({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")});
     run({"integrations", "verify", "--path", game, "--location", "Assets/Wrong"}, 3);
     run({"integrations", "locate", "--path", game, "--location", "Assets/Wrong"}, 3);

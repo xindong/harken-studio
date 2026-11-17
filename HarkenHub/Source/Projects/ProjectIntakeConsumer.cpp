@@ -56,7 +56,7 @@ QString ProjectIntakeConsumer::intakeDir()
     return userDataDir() + QStringLiteral("/project-intake");
 }
 
-bool ProjectIntakeConsumer::rememberCreationBuild(const QString& path, const QString& buildId, QString* error)
+bool ProjectIntakeConsumer::rememberCreationBuild(const QString& path, const QString& buildId, const QString& expectedBuildId, QString* error)
 {
     const QString destination = creationBuildPath(path);
     if (!QDir().mkpath(QFileInfo(destination).absolutePath())) {
@@ -64,7 +64,7 @@ bool ProjectIntakeConsumer::rememberCreationBuild(const QString& path, const QSt
         return false;
     }
     QSaveFile file(destination);
-    const auto bytes = QJsonDocument(QJsonObject{{"buildId", buildId},
+    const auto bytes = QJsonDocument(QJsonObject{{"buildId", buildId}, {"expectedBuildId", expectedBuildId},
         {"requestedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}}).toJson();
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
         *error = file.errorString();
@@ -155,8 +155,14 @@ ProjectIntakeConsumer::applyRecord(const QJsonObject& record)
     if (intent.open(QIODevice::ReadOnly) && intent.size() <= kMaxRecordBytes) {
         const auto selection = QJsonDocument::fromJson(intent.readAll()).object();
         const auto requested = QDateTime::fromString(selection["requestedAt"].toString(), Qt::ISODateWithMs);
-        if (requested.isValid() && timestamp >= requested && isSafeBuildId(selection["buildId"].toString()))
-            preferredBuild = selection["buildId"].toString();
+        if (requested.isValid() && timestamp >= requested) {
+            if (buildId == selection["expectedBuildId"].toString() && isSafeBuildId(selection["buildId"].toString()))
+                preferredBuild = selection["buildId"].toString();
+            else {
+                intent.close();
+                forgetCreationBuild(probe.canonicalPath);
+            }
+        }
     }
     intent.close();
     const auto completed = [&](bool applied) {
