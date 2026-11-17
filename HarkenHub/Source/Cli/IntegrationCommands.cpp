@@ -108,6 +108,8 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
     const bool failed = std::any_of(result.steps.begin(), result.steps.end(), [](const auto& step) { return step.status == UnityIntegrationStepStatus::Failed; });
     if (failed || (!result.success && !result.requiresConfirmation))
         return {3, {{"ok", false}, {"data", unityJson(result)}}};
+    require(!request.restoreIntegration || request.recoverRestore || result.conflictingFiles.isEmpty() || request.confirmUnownedConflicts,
+        "Restoration conflicts require --accept-conflicts true. Review the new plan before confirming.", "ConflictApprovalRequired");
     auto plan = unityJson(result);
     plan.remove("report");
     plan.remove("steps");
@@ -122,7 +124,10 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
     request.migrationPlanHash = result.migrationPlanHash;
     result = HubUnityIntegrationService::run(request);
     target.integrationInstallPath = result.integrationMigrated ? result.migrationTargetPath : result.integrationInstallPath;
-    return {result.success ? 0 : result.requiresConfirmation ? 4 : 3, {{"ok", result.success}, {"data", unityJson(result)}}};
+    if (result.requiresConfirmation)
+        return {3, {{"ok", false}, {"error", QJsonObject{{"code", "ReviewChanged"},
+            {"message", "The integration plan changed while applying it. Run the command without --confirm to review again."}}}, {"data", unityJson(result)}}};
+    return {result.success ? 0 : 3, {{"ok", result.success}, {"data", unityJson(result)}}};
 }
 
 

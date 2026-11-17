@@ -13,6 +13,7 @@
 <p>集成步骤的 <code>status</code>：0 待执行，1 执行中，2 成功，3 警告，4 失败，5 跳过。</p>
 <p>新建或打开工程会启动 Studio；Hub 更新可能只是交给更新桥接服务排队执行。上述返回成功不代表另一个进程已经完成。用返回的事务编号及 <code>updates status</code>、<code>diagnostics transactions</code> 继续核实结果。CLI 自身不打开 Hub 窗口；安装、修复或卸载版本可能出现操作系统的管理员授权提示。</p>
 <h2>确认流程</h2>
+<p>成功的工程响应可能包含 <code>data.warnings</code>，表示版本保留记录未能刷新；工程改动已提交，不要重复执行已完成的移除。修复计划的 <code>changes</code> 列出新增、替换、删除和保留项，包括非受管文件的删除。出现 <code>ReviewChanged</code> 错误时，去掉 <code>--confirm</code> 重新执行，并请用户审阅新计划。</p>
 <p>对于 <code>reviewBeforeApply</code> 命令，先不带 <code>--confirm</code> 执行，向用户展示返回的计划。用户同意后，以完全相同的参数加上 <code>--confirm TOKEN</code> 执行。文件或选项变化会使旧标识失效；不能自动接受新标识，必须重新检查计划。</p>
 <p>修改集成前请关闭 Unity。</p>
 <p><code>--backup</code> 应指定新的备份目录，确认时重复同一路径。恢复中断操作时使用该操作原来的备份。还原会校验原始官方发布包；<code>--accept-conflicts true</code> 另外允许备份并替换冲突的非受管路径。</p>

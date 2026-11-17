@@ -28,7 +28,7 @@ public:
                               const QByteArray& manifestPublicKey,
                               const QDateTime& now,
                               bool explicitInstall = false, const QString& reviewedDestination = {},
-                              const QString& reviewedIndexHash = {});
+                              const QString& reviewedIndexHash = {}, const QString& reviewedManifestHash = {});
 };
 
 }

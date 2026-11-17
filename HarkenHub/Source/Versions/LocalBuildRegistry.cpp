@@ -16,6 +16,8 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QLockFile>
+#include <QDeadlineTimer>
+#include <QThread>
 
 #include <algorithm>
 
@@ -24,6 +26,7 @@ namespace VNH {
 namespace {
 
 QMutex registryMutex;
+QMutex registryIoMutex;
 
 QString normalizedPath(const QString& path)
 {
@@ -124,15 +127,19 @@ bool LocalBuildRegistry::contains(const QString& executablePath,
 
 static std::vector<LocalBuildRecord> loadRecords(QString* error)
 {
+    const QMutexLocker io(&registryIoMutex);
     if (error)
         error->clear();
     QFile file(LocalBuildRegistry::filePath());
     if (!file.exists())
         return {};
-    if (!file.open(QIODevice::ReadOnly)) {
-        if (error)
-            *error = file.errorString();
-        return {};
+    QDeadlineTimer deadline(50);
+    while (!file.open(QIODevice::ReadOnly)) {
+        if (deadline.hasExpired()) {
+            if (error) *error = file.errorString();
+            return {};
+        }
+        QThread::msleep(1);
     }
 
     QJsonParseError parseError;
@@ -161,19 +168,13 @@ static std::vector<LocalBuildRecord> loadRecords(QString* error)
 
 std::vector<LocalBuildRecord> LocalBuildRegistry::load(QString* error)
 {
-    const QMutexLocker lock(&registryMutex);
-    QDir().mkpath(QFileInfo(filePath()).absolutePath());
-    QLockFile processLock(filePath() + QStringLiteral(".lock"));
-    if (!processLock.tryLock(5000)) {
-        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
-        return {};
-    }
     return loadRecords(error);
 }
 
 static bool saveRecords(const std::vector<LocalBuildRecord>& records,
                         QString* error)
 {
+    const QMutexLocker io(&registryIoMutex);
     QJsonArray entries;
     for (const auto& record : records)
         entries.append(toJson(record));

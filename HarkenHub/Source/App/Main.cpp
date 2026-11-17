@@ -26,6 +26,7 @@
 #include "Platform/AclHardening.h"
 #include "Platform/LoginLaunch.h"
 #include "Platform/PlatformPaths.h"
+#include "Platform/ProcessScan.h"
 #include "Platform/UpdateBridgeDeployment.h"
 #include "Platform/UpdateBridgeTask.h"
 #include "Projects/ProjectStore.h"
@@ -54,6 +55,7 @@
 #include "Versions/VersionScanner.h"
 
 #include <QFileSystemWatcher>
+#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -293,16 +295,18 @@ int main(int argc, char* argv[])
             bool explicitInstall = false;
             QString reviewedDestination;
             QString reviewedIndexHash;
+            QString reviewedManifestHash;
             for (int j = 1; j < argc; ++j) {
                 if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-destination") == 0) reviewedDestination = app.arguments().value(j + 1);
                 if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-index") == 0) reviewedIndexHash = QString::fromLatin1(argv[j + 1]);
+                if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-manifest") == 0) reviewedManifestHash = QString::fromLatin1(argv[j + 1]);
                 if (qstrcmp(argv[j], "--explicit-install") == 0)
                     explicitInstall = true;
             }
             const auto outcome = VNH::InstallExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
                 VNH::TrustAnchors::manifestPublicKey(),
-                QDateTime::currentDateTimeUtc(), explicitInstall, reviewedDestination, reviewedIndexHash);
+                QDateTime::currentDateTimeUtc(), explicitInstall, reviewedDestination, reviewedIndexHash, reviewedManifestHash);
             if (!outcome.ok) {
                 qCritical().noquote()
                     << "Install failed:" << outcome.failureCode << outcome.error;
@@ -331,14 +335,16 @@ int main(int argc, char* argv[])
             QCoreApplication app(argc, argv);
             QString transactionId;
             QString reviewedSnapshot;
+            QString reviewedManifestHash;
             for (int j = 1; j + 1 < argc; ++j) {
                 if (qstrcmp(argv[j], "--reviewed-snapshot") == 0) reviewedSnapshot = QString::fromLatin1(argv[j + 1]);
+                if (qstrcmp(argv[j], "--reviewed-manifest") == 0) reviewedManifestHash = QString::fromLatin1(argv[j + 1]);
                 if (qstrcmp(argv[j], "--transaction-id") == 0)
                     transactionId = QString::fromLatin1(argv[j + 1]);
             }
             const auto outcome = VNH::RepairExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc(), transactionId, reviewedSnapshot);
+                QDateTime::currentDateTimeUtc(), transactionId, reviewedSnapshot, reviewedManifestHash);
             if (!outcome.ok) {
                 qCritical().noquote() << "Repair failed:"
                                       << outcome.failureCode << outcome.error;
@@ -498,6 +504,20 @@ int main(int argc, char* argv[])
             VNH::HubLocalization::install(&app);
             app.setQuitOnLastWindowClosed(false);
 
+            const int resumeIndex = app.arguments().indexOf(QStringLiteral("--resume-after-pid"));
+            if (resumeIndex >= 0) {
+                const qint64 previousPid = app.arguments().value(resumeIndex + 1).toLongLong();
+                if (previousPid <= 0 || previousPid == QCoreApplication::applicationPid()) return 2;
+                if (VNH::isProcessRunning(previousPid)) {
+                    QEventLoop waiting;
+                    QTimer poll;
+                    QObject::connect(&poll, &QTimer::timeout, &waiting, [&] {
+                        if (!VNH::isProcessRunning(previousPid)) waiting.quit();
+                    });
+                    poll.start(250);
+                    waiting.exec();
+                }
+            }
             VNH::SingleInstanceGuard guard(
                 VNH::SingleInstanceGuard::backgroundServerName());
             if (!guard.isPrimary()) {

@@ -25,6 +25,8 @@
 #include <QJsonObject>
 #include <QLockFile>
 #include <QTemporaryDir>
+#include <QProcess>
+#include "Versions/IntegrityChecker.h"
 
 #include <algorithm>
 #include <memory>
@@ -170,6 +172,15 @@ QByteArray readAll(const QString& path)
 
 TEST_F(InstallExecutorTest, ApprovedDestinationAndIndexMustStillMatchAfterElevation)
 {
+    const auto reviewedTransaction = placeHandoff(payloadForArchive());
+    const auto reviewedManifest = PackageReader::fileSha256Hex(VNH::HandoffArea::manifestPath(reviewedTransaction));
+    ASSERT_TRUE(VNH::HandoffArea::discard(reviewedTransaction));
+    auto substituted = payloadForArchive();
+    substituted["releaseSequence"] = 8;
+    const auto changed = InstallExecutor::run(placeHandoff(substituted), keys.publicKey, kNow,
+        false, targetPath(), PackageReader::fileSha256Hex(InstallIndex::filePath()), reviewedManifest);
+    EXPECT_EQ(changed.failureCode, "ReviewChanged");
+    EXPECT_FALSE(QFileInfo::exists(targetPath()));
     const auto rejectedIndex = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
         false, targetPath(), QStringLiteral("changed-index"));
     EXPECT_EQ(rejectedIndex.failureCode, "ReviewChanged");
@@ -235,8 +246,30 @@ TEST_F(InstallExecutorTest, RepairRestoresTamperedInstallFromVerifiedCache)
 
     const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY",
                                QString::fromLatin1(keys.publicKey.toHex()));
+    QFile unowned(targetPath() + "/user.txt");
+    ASSERT_TRUE(unowned.open(QIODevice::WriteOnly));
+    unowned.write("user data");
+    unowned.close();
+    const auto snapshot = VNH::IntegrityChecker::snapshot(targetPath());
+    const auto source = VNH::RepairExecutor::verifySource("run12.abcd1234", kNow.addDays(90));
+    ASSERT_TRUE(source.ok) << source.error.toStdString();
+    const auto rejected = VNH::RepairExecutor::run("run12.abcd1234", kNow.addDays(90), QString(), snapshot.hash, "changed-manifest");
+    EXPECT_EQ(rejected.failureCode, "ReviewChanged");
+    EXPECT_EQ(readAll(unowned.fileName()), "user data");
+    {
+        const EnvGuard userRoot("HARKEN_HUB_USER_ROOT", dir.filePath("cli-user"));
+        QProcess cli;
+        cli.start(QString::fromUtf8(HARKEN_HUB_CLI_FIXTURE), {"--cli", "versions", "repair", "--build", "run12.abcd1234"});
+        ASSERT_TRUE(cli.waitForFinished(15000));
+        const auto output = cli.readAllStandardOutput();
+        ASSERT_EQ(cli.exitCode(), 4) << output.toStdString();
+        const auto plan = QJsonDocument::fromJson(output).object()["plan"].toObject();
+        EXPECT_TRUE(plan["changes"].toArray().contains(QJsonObject{{"path", "user.txt"}, {"action", "remove"}}));
+        EXPECT_TRUE(plan["changes"].toArray().contains(QJsonObject{{"path", "data/asset.bin"}, {"action", "replace"}}));
+        EXPECT_EQ(plan["manifestSha256"].toString(), source.manifestHash);
+    }
     const auto repaired = VNH::RepairExecutor::run(
-        QStringLiteral("run12.abcd1234"), kNow.addDays(90));
+        QStringLiteral("run12.abcd1234"), kNow.addDays(90), QString(), snapshot.hash, source.manifestHash);
     ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
     EXPECT_EQ(readAll(targetPath() + QStringLiteral("/data/asset.bin")),
               QByteArrayLiteral("payload-data"));

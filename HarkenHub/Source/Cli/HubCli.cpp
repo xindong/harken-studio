@@ -15,6 +15,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QProcess>
@@ -171,9 +172,9 @@ Reply execute(const Arguments& args)
         }
         require(saved, "Could not save the setting");
         auto result = settings();
-        if (automatic) {
+        if (automatic || key == "language") {
             const bool notified = SingleInstanceGuard::sendTo(SingleInstanceGuard::backgroundServerName(), {"--settings-changed"});
-            if (value == "true" && !notified)
+            if (automatic && value == "true" && !notified)
                 require(QProcess::startDetached(QCoreApplication::applicationFilePath(), {"--background"}),
                     "The setting was saved, but the background service could not be started");
             result["backgroundNotified"] = notified;
@@ -216,7 +217,7 @@ Reply execute(const Arguments& args)
             }
             return success({{"logs", logs}});
         }
-        const QString path = args.required("path");
+        const QString path = QFileInfo(args.required("path")).absoluteFilePath();
         confirm(args, {{"path", path}, {"existingSha256", fileHash(path)}});
         QString error;
         require(LogExporter::exportDiagnostics(path, &error), error);

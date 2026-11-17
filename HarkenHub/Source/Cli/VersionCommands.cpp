@@ -4,6 +4,7 @@
 #include "App/SingleInstanceGuard.h"
 #include "Projects/ProjectStore.h"
 #include "Packaging/PackageVerifier.h"
+#include "Packaging/PackageReader.h"
 #include "Platform/Elevation.h"
 #include "Platform/PlatformPaths.h"
 #include "ReleaseNotes/VersionReleaseNotes.h"
@@ -12,18 +13,21 @@
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
 #include "Transactions/InstallRequest.h"
+#include "Transactions/RepairExecutor.h"
 #include "Transactions/TransactionDiagnostics.h"
 #include "Update/HubSelfUpdate.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/ServerEndpoints.h"
 #include "Update/ServerVersionCatalog.h"
 #include "Update/UpdateChecker.h"
+#include "Update/UpdateCoordinator.h"
 #include "Update/UpdateStateStore.h"
 #include "Versions/IntegrityChecker.h"
 #include "Versions/LocalBuildRegistry.h"
 #include "Versions/VersionScanner.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QEventLoop>
@@ -68,6 +72,12 @@ QJsonObject packageReview(const QString& path, const ReleaseManifest& manifest)
     QJsonObject files;
     for (auto it = verified.fileSha256ByPath.cbegin(); it != verified.fileSha256ByPath.cend(); ++it)
         files[it.key()] = it.value();
+    for (const auto* name : {"package-manifest.json", "capabilities.json"}) {
+        QByteArray bytes;
+        QString error;
+        require(PackageReader::readEntry(path, name, &bytes, &error), error);
+        files[name] = QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+    }
     const QString base = QDir(studioVersionsRoot()).filePath(QStringLiteral("%1-%2-%3-%4")
         .arg(manifest.version, manifest.channel, manifest.platform.toLower(), manifest.architecture.toLower()));
     const auto index = InstallIndex::snapshot();
@@ -188,11 +198,12 @@ UpdateCheckResult checkUpdate(const QString& product)
     return result;
 }
 
-QJsonObject installPackage(const QString& package, const QString& manifest, bool allowExpired, const QJsonObject& review)
+QJsonObject installPackage(const QString& package, const QString& manifest, bool allowExpired, const QJsonObject& review,
+                           const QString& manifestHash)
 {
     const auto preparation = InstallRequest::prepare(package, manifest, TrustAnchors::manifestPublicKey(), QDateTime::currentDateTimeUtc(), allowExpired);
     require(preparation.ok, preparation.error);
-    const auto launch = launchElevatedInstall(preparation.transactionId, true, review["destination"].toString(), review["index"].toString());
+    const auto launch = launchElevatedInstall(preparation.transactionId, true, review["destination"].toString(), review["index"].toString(), manifestHash);
     if (!launch.ok) HandoffArea::discard(preparation.transactionId);
     waitForElevated(launch, preparation.transactionId);
     return {{"buildId", preparation.buildId}, {"version", preparation.version}, {"transactionId", preparation.transactionId}};
@@ -267,16 +278,18 @@ Reply versions(const Arguments& args)
         const QString package = QFileInfo(args.required("package")).absoluteFilePath();
         const QString manifest = args.value("manifest", InstallRequest::manifestPathForPackage(package));
         const bool allowExpired = args.flag("allow-expired");
-        const auto verified = ManifestVerifier::verify(readFile(manifest), key, now, allowExpired);
+        const auto envelope = readFile(manifest);
+        const auto manifestHash = QString::fromLatin1(QCryptographicHash::hash(envelope, QCryptographicHash::Sha256).toHex());
+        const auto verified = ManifestVerifier::verify(envelope, key, now, allowExpired);
         require(verified.ok, verified.error);
         require(verified.manifest.product == "HarkenStudio", "Use updates apply for a Hub update");
         const auto hash = fileHash(package);
         require(hash.compare(verified.manifest.sha256Hex, Qt::CaseInsensitive) == 0, "Package hash does not match the signed manifest");
         const auto installation = packageReview(package, verified.manifest);
         confirm(args, {{"release", manifestJson(verified.manifest)}, {"package", package}, {"sha256", hash},
-            {"installation", installation}});
+            {"manifestSha256", manifestHash}, {"installation", installation}});
         requireConsent("studio");
-        return success(installPackage(package, manifest, allowExpired, installation));
+        return success(installPackage(package, manifest, allowExpired, installation, manifestHash));
     }
     const QString build = args.required("build");
     const auto available = VersionScanner::scanAvailable();
@@ -292,11 +305,39 @@ Reply versions(const Arguments& args)
                 {"missing", QJsonArray::fromStringList(integrity.missingFiles)}, {"modified", QJsonArray::fromStringList(integrity.mismatchedFiles)}}}}};
         const auto snapshot = IntegrityChecker::snapshot(record->installPath);
         require(snapshot.error.isEmpty(), snapshot.error);
-        confirm(args, {{"buildId", build}, {"path", record->installPath}, {"index", fileHash(InstallIndex::filePath())},
+        QJsonObject plan{{"buildId", build}, {"path", record->installPath}, {"index", fileHash(InstallIndex::filePath())},
             {"files", snapshot.files}, {"snapshot", snapshot.hash}, {"affectedProjects", affectedProjects(build)},
-            {"missing", QJsonArray::fromStringList(integrity.missingFiles)}, {"modified", QJsonArray::fromStringList(integrity.mismatchedFiles)}});
+            {"missing", QJsonArray::fromStringList(integrity.missingFiles)}, {"modified", QJsonArray::fromStringList(integrity.mismatchedFiles)}};
+        RepairSource source;
+        if (args.operation == "repair" && !integrity.ok) {
+            source = RepairExecutor::verifySource(build, now);
+            require(source.ok, source.error);
+            QJsonObject files;
+            for (auto it = source.files.cbegin(); it != source.files.cend(); ++it) files[it.key()] = it.value();
+            plan["repairFiles"] = files;
+            plan["manifestSha256"] = source.manifestHash;
+        }
+        QJsonArray changes;
+        for (auto it = snapshot.files.begin(); it != snapshot.files.end(); ++it) {
+            QString action = "remove";
+            if (args.operation == "repair") {
+                const bool directory = it.value().toObject()["directory"].toBool();
+                const bool retainedDirectory = directory && std::any_of(source.files.keyBegin(), source.files.keyEnd(),
+                    [&](const auto& path) { return path.startsWith(it.key() + '/'); });
+                if (integrity.ok || retainedDirectory) action = "preserve";
+                else if (source.files.contains(it.key()))
+                    action = it.value().toObject()["sha256"].toString() == source.files.value(it.key()) ? "preserve" : "replace";
+            }
+            changes.append(QJsonObject{{"path", it.key()}, {"action", action}});
+        }
+        auto repairPaths = source.files.keys();
+        repairPaths.sort();
+        for (const auto& path : repairPaths)
+            if (!snapshot.files.contains(path)) changes.append(QJsonObject{{"path", path}, {"action", "add"}});
+        plan["changes"] = changes;
+        confirm(args, plan);
         const QString transaction = HandoffArea::newTransactionId();
-        waitForElevated(args.operation == "repair" ? launchElevatedRepair(build, transaction, snapshot.hash) : launchElevatedUninstall(build, snapshot.hash), args.operation == "repair" ? transaction : QString());
+        waitForElevated(args.operation == "repair" ? launchElevatedRepair(build, transaction, snapshot.hash, source.manifestHash) : launchElevatedUninstall(build, snapshot.hash), args.operation == "repair" ? transaction : QString());
         return success({{"buildId", build}, {"operation", args.operation}});
     }
     require(version != available.end(), "Unknown build id");
@@ -313,6 +354,7 @@ Reply versions(const Arguments& args)
 
 Reply updates(const Arguments& args)
 {
+    UpdateCoordinator::reconcileElevation(QDateTime::currentDateTimeUtc());
     if (args.operation == "status") return success({{"hub", stateJson(UpdateStateStore::load("HarkenHub"))}, {"studio", stateJson(UpdateStateStore::load("HarkenStudio"))}});
     const QString product = args.required("product");
     require(product == "hub" || product == "studio", "--product must be hub or studio", "InvalidArguments");
@@ -325,7 +367,9 @@ Reply updates(const Arguments& args)
     if (args.operation == "apply") {
         require(before.found && !before.downloadPath.isEmpty()
             && QStringList{"Verified", "AwaitingRestart", "AwaitingUserApproval", "AwaitingUserInstall", "InstallFailed"}.contains(before.state), "No downloaded update is ready");
-        const auto verified = ManifestVerifier::verify(readFile(before.manifestEnvelopePath), TrustAnchors::manifestPublicKey(), now);
+        const auto envelope = readFile(before.manifestEnvelopePath);
+        const auto manifestHash = QString::fromLatin1(QCryptographicHash::hash(envelope, QCryptographicHash::Sha256).toHex());
+        const auto verified = ManifestVerifier::verify(envelope, TrustAnchors::manifestPublicKey(), now);
         require(verified.ok, verified.error);
         const auto& manifest = verified.manifest;
         require(manifest.product == identity && manifest.buildId == before.buildId && manifest.version == before.version
@@ -335,7 +379,7 @@ Reply updates(const Arguments& args)
         const auto hash = fileHash(before.downloadPath);
         require(hash.compare(manifest.sha256Hex, Qt::CaseInsensitive) == 0, "Downloaded update hash does not match its signed release");
         QJsonObject plan{{"update", stateJson(before)}, {"release", manifestJson(manifest)}, {"packageSha256", hash},
-            {"manifestSha256", fileHash(before.manifestEnvelopePath)}};
+            {"manifestSha256", manifestHash}};
         if (product == "studio") plan["installation"] = packageReview(before.downloadPath, manifest);
         else plan["closeHubWindowsAndBackgroundService"] = true;
         confirm(args, plan);
@@ -358,7 +402,7 @@ Reply updates(const Arguments& args)
             }
             try {
                 const auto installation = plan["installation"].toObject();
-                const auto launch = launchElevatedInstall(prepared.transactionId, false, installation["destination"].toString(), installation["index"].toString());
+                const auto launch = launchElevatedInstall(prepared.transactionId, false, installation["destination"].toString(), installation["index"].toString(), manifestHash);
                 if (!launch.ok) HandoffArea::discard(prepared.transactionId);
                 waitForElevated(launch, prepared.transactionId);
             } catch (const Reply& failure) {
@@ -380,16 +424,22 @@ Reply updates(const Arguments& args)
         updater.configure(options);
         QString error;
         require(HubSelfUpdate::selfUpdateEnabled() && BridgeDispatcher::available(), "The Hub update bridge is unavailable");
-        bool stoppedBackground = false;
+        qint64 stoppingBackground = 0;
         bool dispatched = false;
         const auto resumeOnFailure = qScopeGuard([&] {
-            if (!dispatched && stoppedBackground
-                && !QProcess::startDetached(QCoreApplication::applicationFilePath(), {"--background"}))
+            if (!dispatched && stoppingBackground > 0
+                && !QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                    {"--background", "--resume-after-pid", QString::number(stoppingBackground)}))
                 qWarning() << "Could not restart the Hub background service after the update failed";
         });
         for (const auto& server : {SingleInstanceGuard::backgroundServerName(), SingleInstanceGuard::guiServerName()}) {
             if (!SingleInstanceGuard::isServerActive(server)) continue;
+            SingleInstanceGuard observed(server);
+            if (observed.isPrimary()) continue;
+            const auto processId = observed.primaryProcessId();
+            require(processId > 0, "Could not identify the running Hub process; close it before applying the update");
             require(SingleInstanceGuard::sendTo(server, {"--quit"}), "Close Hub and its background service, then retry the update");
+            if (server == SingleInstanceGuard::backgroundServerName()) stoppingBackground = processId;
             QEventLoop waiting;
             QTimer poll;
             QTimer deadline;
@@ -400,7 +450,6 @@ Reply updates(const Arguments& args)
             deadline.start(5000);
             waiting.exec();
             require(!SingleInstanceGuard::isServerActive(server), "Hub is still running; close it before applying the update", "HubStillRunning");
-            if (server == SingleInstanceGuard::backgroundServerName()) stoppedBackground = true;
         }
         require(updater.approveViaBridge("background", &error, now, &before), error);
         dispatched = true;

@@ -185,7 +185,7 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
                                     const QByteArray& manifestPublicKey,
                                     const QDateTime& now,
                                     bool explicitInstall, const QString& reviewedDestination,
-                                    const QString& reviewedIndexHash)
+                                    const QString& reviewedIndexHash, const QString& reviewedManifestHash)
 {
     InstallOutcome outcome;
 
@@ -255,6 +255,10 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
     TransactionJournal::append(transactionId, kProduct, QString(),
                                QStringLiteral("Verifying"), QString(),
                                QDateTime::currentDateTimeUtc());
+
+    if (!reviewedManifestHash.isEmpty() && PackageReader::fileSha256Hex(stagedManifest) != reviewedManifestHash)
+        return fail(transactionId, {}, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("The signed release changed; review the installation again"));
 
     const ManifestVerifyResult manifestResult =
         ManifestVerifier::verify(readAll(stagedManifest), manifestPublicKey,

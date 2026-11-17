@@ -47,11 +47,11 @@ protected:
         ASSERT_EQ(paths["data"].toObject()["user"].toString(), directory.filePath("user"));
     }
 
-    QJsonObject run(const QStringList& arguments, int expected = 0)
+    QJsonObject run(const QStringList& arguments, int expected = 0, const QString& workingDirectory = {})
     {
         QProcess process;
         process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(directory.path());
+        process.setWorkingDirectory(workingDirectory.isEmpty() ? directory.path() : workingDirectory);
         QEventLoop loop;
         QTimer timeout;
         timeout.setSingleShot(true);
@@ -137,7 +137,11 @@ TEST_F(HubCliTest, PersistentChoicesAndRegistrationRemovalDoNotModifyProjectFile
     const auto entries = run({"projects", "list"})["data"].toObject()["projects"].toArray();
     ASSERT_EQ(entries.size(), 1);
     EXPECT_EQ(entries[0].toObject()["name"].toString(), "Renamed project");
-    approve({"projects", "remove", "--path", project});
+    const auto blockedMachine = directory.filePath("blocked-machine");
+    write(blockedMachine, "file");
+    environment.insert("HARKEN_HUB_MACHINE_ROOT", blockedMachine);
+    const auto removed = approve({"projects", "remove", "--path", project});
+    EXPECT_FALSE(removed["data"].toObject()["warnings"].toArray().isEmpty());
     EXPECT_EQ(read(project), contents);
     EXPECT_TRUE(run({"projects", "list"})["data"].toObject()["projects"].toArray().isEmpty());
     run({"settings", "set", "--key", "theme", "--value", "dark"});
@@ -201,6 +205,18 @@ TEST_F(HubCliTest, LogTailCountsRecordsWithAndWithoutATerminatingNewline)
     EXPECT_EQ(logs[1].toObject()["lines"].toArray(), QJsonArray{"update completed"});
 }
 
+TEST_F(HubCliTest, FileReviewCannotBeReusedFromAnotherWorkingDirectory)
+{
+    const QStringList command{"diagnostics", "export", "--path", "logs.zip"};
+    const auto original = run(command, 4);
+    ASSERT_TRUE(QDir().mkpath(directory.filePath("other")));
+    const auto changed = run(command + QStringList{"--confirm", original["confirmation"].toString()}, 4, directory.filePath("other"));
+    EXPECT_NE(original["confirmation"], changed["confirmation"]);
+    EXPECT_FALSE(QFileInfo::exists(directory.filePath("logs.zip")));
+    EXPECT_FALSE(QFileInfo::exists(directory.filePath("other/logs.zip")));
+    EXPECT_EQ(changed["plan"].toObject()["path"].toString(), directory.filePath("other/logs.zip"));
+}
+
 TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStudioIntake)
 {
     const auto version = run({"versions", "add-local", "--path", QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE)})["data"].toObject()["buildId"].toString();
@@ -210,6 +226,10 @@ TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStu
     const auto templates = run({"projects", "templates", "--build", version})["data"].toObject()["templates"].toArray();
     ASSERT_EQ(templates.size(), 1);
     approve({"legal", "accept", "--product", "studio"});
+    for (const auto& parent : {directory.filePath("missing"), templatePath}) {
+        run({"projects", "create", "--build", version, "--name", "Demo", "--location", parent}, 2);
+        EXPECT_FALSE(QFileInfo::exists(parent + "/Demo"));
+    }
     const QStringList create{"projects", "create", "--build", version, "--name", "Demo", "--location", directory.path()};
     run(create + QStringList{"--template", "missing"}, 2);
     EXPECT_FALSE(QFileInfo::exists(directory.filePath("Demo")));
@@ -296,7 +316,9 @@ TEST_F(HubCliTest, AutomaticPreferencesNotifyTheRunningServiceWithoutOpeningTheG
             EXPECT_TRUE(result["backgroundNotified"].toBool());
             EXPECT_EQ(result[key].toBool(), QString::fromLatin1(value) == "true");
         }
-    EXPECT_TRUE(QTest::qWaitFor([&] { return notifications == 4; }, 5000)) << notifications;
+    const auto language = run({"settings", "set", "--key", "language", "--value", "zh_CN"});
+    EXPECT_TRUE(language["data"].toObject()["backgroundNotified"].toBool());
+    EXPECT_TRUE(QTest::qWaitFor([&] { return notifications == 5; }, 5000)) << notifications;
 }
 
 TEST_F(HubCliTest, UpdateApplicationRejectsActiveTransactionsAndUntrustedFilesBeforeConsentOrElevation)

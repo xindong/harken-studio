@@ -77,6 +77,7 @@ Reply projects(const Arguments& args)
         }
         request.name = args.required("name").trimmed();
         request.location = QFileInfo(args.required("location")).absoluteFilePath();
+        require(QFileInfo(request.location).isDir(), "The project location must be an existing directory", "InvalidArguments");
         request.templateId = args.value("template");
         request.templatePath = args.value("template-file");
         require(!request.name.contains(QRegularExpression("[<>:\"/\\\\|?*\\x00-\\x1f]")) && request.name != "." && request.name != ".." && !request.name.endsWith('.'), "Invalid project name", "InvalidArguments");
@@ -106,23 +107,30 @@ Reply projects(const Arguments& args)
     }
     ProjectStore store;
     requireStore(store, store.open(userDataDir() + "/projects.db"));
-    ProjectIntakeConsumer intake(&store);
-    if (intake.consumeAll()) {
+    QJsonArray warnings;
+    const auto refreshPins = [&] {
         QString error;
-        require(BuildPinRegistry::refreshFromProjects(store, &error), error);
-    }
+        if (!BuildPinRegistry::refreshFromProjects(store, &error))
+            warnings.append(QJsonObject{{"code", "BuildPinsNotRefreshed"}, {"message", error}});
+    };
+    const auto complete = [&](QJsonObject data) {
+        if (!warnings.isEmpty()) data["warnings"] = warnings;
+        return success(data);
+    };
+    ProjectIntakeConsumer intake(&store);
+    if (intake.consumeAll()) refreshPins();
     if (args.operation == "list") {
         QJsonArray projects;
         for (const auto& project : store.listProjects()) projects.append(projectJson(project));
         requireStore(store, store.lastError().isEmpty());
-        return success({{"projects", projects}});
+        return complete({{"projects", projects}});
     }
     QString path = QDir::cleanPath(QFileInfo(args.required("path")).absoluteFilePath());
     if (args.operation == "add") {
         QString error;
         require(ProjectOpenFlow::ensureRegistered(&store, path, &path, &error), error);
         for (const auto& project : store.listProjects())
-            if (project.canonicalPath == path) return success(projectJson(project));
+            if (project.canonicalPath == path) return complete(projectJson(project));
         requireStore(store, false);
     }
     const auto probe = ProjectProbe::probe(path);
@@ -147,11 +155,10 @@ Reply projects(const Arguments& args)
         require(decision.verdict == LaunchVerdict::Ready, decision.reason, decision.blockCode);
         QString error;
         require(StudioLauncher::start({decision.version.installPath, decision.version.executablePath, path}, &error), error);
-        return success({{"started", true}, {"path", path}, {"buildId", decision.version.buildId}});
+        return complete({{"started", true}, {"path", path}, {"buildId", decision.version.buildId}});
     }
-    QString error;
-    require(BuildPinRegistry::refreshFromProjects(store, &error), error);
-    return success({{"path", path}, {"operation", args.operation}});
+    refreshPins();
+    return complete({{"path", path}, {"operation", args.operation}});
 }
 
 }

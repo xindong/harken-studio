@@ -180,6 +180,10 @@
         <translation>Hub 窗口与命令行同时保存设置时，保留双方各自修改的选项。</translation>
     </message>
     <message>
+        <source>Review complete CLI repair and removal file lists, reject changed installation approvals, and recover interrupted Studio update attempts.</source>
+        <translation>CLI 修复和卸载前展示完整文件清单，安装内容变化后要求重新确认，并可恢复中断的 Studio 更新流程。</translation>
+    </message>
+    <message>
         <source>Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer.</source>
         <translation>Windows 安装程序会先处理占用 Harken Hub 文件的应用程序，再继续安装，不再询问是否重启电脑。</translation>
     </message>

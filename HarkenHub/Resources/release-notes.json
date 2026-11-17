@@ -34,6 +34,10 @@
         },
         {
           "category": "improved",
+          "text": "Review complete CLI repair and removal file lists, reject changed installation approvals, and recover interrupted Studio update attempts."
+        },
+        {
+          "category": "improved",
           "text": "Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer."
         },
         {

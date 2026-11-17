@@ -234,7 +234,7 @@ bool HubSettings::setPendingUpdateNotesVersion(const QString& version)
         else
             root[QStringLiteral("pendingUpdateNotesVersion")] = value;
         return true;
-    });
+    }, 5000);
 }
 
 bool HubSettings::clearPendingUpdateNotesVersion(const QString& version)

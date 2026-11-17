@@ -2014,7 +2014,10 @@ UnityIntegrationService::Result UnityIntegrationService::restoreIntegration(cons
         const auto reviewedFiles = (displaced ? before : current).value(QStringLiteral("files")).toObject();
         for (auto it = reviewedFiles.constBegin(); it != reviewedFiles.constEnd(); ++it)
             result.fileChanges.push_back({displaced ? QStringLiteral("restore") : QStringLiteral("preserve"), it.key()});
-        result.planHash = QCryptographicHash::hash(QJsonDocument(record).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
+        const QJsonObject recovery{{QStringLiteral("journal"), record}, {QStringLiteral("targetExists"), targetExists},
+            {QStringLiteral("target"), current}, {QStringLiteral("originalExists"), originalExists},
+            {QStringLiteral("original"), originalSnapshot}};
+        result.planHash = QCryptographicHash::hash(QJsonDocument(recovery).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
         step.artifacts << target << work;
         if (request.checkOnly)
             return finish(true, QStringLiteral("The interrupted restoration is ready to recover. Existing files will be preserved."));

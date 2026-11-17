@@ -3497,6 +3497,14 @@ TEST_F(UnityRestorationTest, RecoversBothRenameBoundariesAndBlocksOtherMutations
         ASSERT_TRUE(plan.success) << boundary << plan.steps.back().summary.toStdString() << plan.steps.back().cause.toStdString();
         request.approvedPlanHash = plan.planHash;
         request.checkOnly = false;
+        if (boundary == 0) {
+            ASSERT_TRUE(QDir().rename(installed, staged));
+            const auto changed = service.run(request);
+            EXPECT_FALSE(changed.success);
+            EXPECT_TRUE(changed.requiresConfirmation);
+            EXPECT_FALSE(QFileInfo::exists(installed));
+            ASSERT_TRUE(QDir().rename(staged, installed));
+        }
         const auto recovered = service.run(request);
         ASSERT_TRUE(recovered.success) << recovered.steps.back().cause.toStdString();
         EXPECT_FALSE(VNX::UnityInstallation::hasPendingRestore(project));
