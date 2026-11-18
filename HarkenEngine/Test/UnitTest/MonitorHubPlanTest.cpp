@@ -725,6 +725,7 @@ TEST(MonitorHubPlan, DrainExceptionsStopCaptureReportOnceAndAllowEngineTeardown)
         auto config = harkentest::MakeNullConfig();
         config.logUserData = &reports;
         config.logCallback = [](void* context, std::uint32_t level, std::uint32_t code, const char* text) {
+            EXPECT_NE(VN_LOG_RUNTIME_RECREATE_REQUIRED, code);
             if (code != harken::kLogCodeMonitorDrainFailed) return;
             EXPECT_EQ(VN_LOG_ERROR, level);
             EXPECT_NE(nullptr, std::strstr(text, "monitor capture stopped"));

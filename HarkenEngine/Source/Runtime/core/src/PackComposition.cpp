@@ -4662,11 +4662,6 @@ std::uint32_t LookupCatalogVoiceBindings(
         if (catalog->first[i].objectId != objectId) {
             continue;
         }
-        bool duplicate = false;
-        for (std::uint32_t j = 0; j < i; ++j)
-            duplicate = duplicate || (catalog->first[j].objectId == objectId &&
-                catalog->first[j].bindingId == catalog->first[i].bindingId);
-        if (duplicate) continue;
         if (out != nullptr && count < capacity) {
             out[count] = &catalog->first[i];
         }
@@ -4689,19 +4684,19 @@ std::uint32_t CollectCutVoiceBindingsWithLookup(
     if (lookup == nullptr || (pathCount != 0 && path == nullptr)) {
         return 0;
     }
-    VnObjectId chosenObject{};
-    bool chosen = false;
-    for (std::uint32_t i = 0; i < pathCount; ++i) {
-        if (lookup(ctx, path[i].stableId, nullptr, 0) != 0) {
-            chosenObject = path[i].stableId;
-            chosen = true;
+    for (std::uint32_t i = pathCount; i != 0; --i) {
+        const PackVoiceBinding* first = nullptr;
+        const auto object = path[i - 1].stableId;
+        const auto count = lookup(ctx, object, &first, 1);
+        if (count == 0) continue;
+        if (count == 1 && first->bindingId == VnObjectId{}) return 0;
+        if (out != nullptr && capacity != 0) {
+            if (count == 1 || capacity == 1) out[0] = first;
+            else lookup(ctx, object, out, capacity);
         }
+        return count;
     }
-    if (!chosen) return 0;
-    const PackVoiceBinding* first = nullptr;
-    const auto count = lookup(ctx, chosenObject, &first, 1);
-    if (count == 1 && first != nullptr && first->bindingId == VnObjectId{}) return 0;
-    return lookup(ctx, chosenObject, out, capacity);
+    return 0;
 }
 
 } // namespace

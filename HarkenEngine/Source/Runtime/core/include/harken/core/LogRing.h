@@ -169,7 +169,7 @@ inline constexpr std::uint32_t kLogCodePackContentConflict = 32;
 // in the low byte and resource in the next byte; arg1 is the requested count.
 inline constexpr std::uint32_t kLogCodeSelectionStorageRefused = 33;
 // Monitor worker failed; capture stops while audio playback continues.
-inline constexpr std::uint32_t kLogCodeMonitorDrainFailed = 34;
+inline constexpr std::uint32_t kLogCodeMonitorDrainFailed = 35;
 
 // Binding pools named by kLogCodeBindingPoolExhausted's arg0. Log
 // vocabulary only, never wire or ABI state.
