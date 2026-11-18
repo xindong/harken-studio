@@ -11,6 +11,8 @@
 #include "Components/VTrack.h"
 #include "Components/VEffect.h"
 #include "Components/VConversion.h"
+#include "ConversionEditing.h"
+#include "PlayablePropertyAuthoringV1.h"
 #include "Components/VMixNode.h"
 #include "PlatformContextService.h"
 #include "PreviewMediaModeService.h"
@@ -733,6 +735,23 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     }
 }
 
+VNX::ProjectItem* bindRootConversion(VNX::ProjectManager& projects, VNX::ProjectItem* item,
+    const VNX::ProjectPlatformId& platform, const QString& name)
+{
+    auto* root = item;
+    for (auto* ancestor = item; ancestor; ancestor = ancestor->parent)
+        if (VNX::PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(ancestor->type)) root = ancestor;
+    auto* preset = projects.createItem(nullptr, name, VNX::ProjectItem::Type::Conversion);
+    if (!preset) return nullptr;
+    preset->comp<VNX::VConversion>()->config = {VNX::ConversionFormat::Vorbis, 0.4f, {{std::nullopt, 22050}}};
+    QString error;
+    if (!VNX::ConversionEditing::setObject(projects, root->guid, false, preset->guid, platform, nullptr, &error)) {
+        ADD_FAILURE() << error.toStdString();
+        return nullptr;
+    }
+    return preset;
+}
+
 class AuditionLifecycleTest : public AudioPlaybackRegression {
 protected:
     HarkenEditor::AuditionManager audition{&engine};
@@ -776,14 +795,10 @@ TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAn
     const auto primary = project->platforms.front().id;
     const auto other = project->platforms[1].id;
     VNX::PlatformContextService::instance().setSelected({primary}, primary);
-    auto* preset = projects.findItemByGuid(project->defaultConversionRef);
+    auto* preset = bindRootConversion(projects, sounds[0], primary, QStringLiteral("PrimaryConversion"));
     ASSERT_NE(preset, nullptr);
-    auto* conversion = preset->comp<VNX::VConversion>();
-    ASSERT_NE(conversion, nullptr);
-    for (auto& platform : conversion->platforms) {
-        platform.format = VNX::ConversionFormat::Vorbis;
-        platform.tiers = {{std::nullopt, 22050}};
-    }
+    auto* otherPreset = bindRootConversion(projects, sounds[0], other, QStringLiteral("OtherConversion"));
+    ASSERT_NE(otherPreset, nullptr);
     auto& modes = VNX::PreviewMediaModeService::instance();
     const auto previousMode = modes.mode();
     const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
@@ -813,16 +828,16 @@ TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAn
     ASSERT_TRUE(preparedMedia);
     EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
 
-    conversion->platformConfig(other)->vorbisQuality = 0.8f;
-    projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+    otherPreset->comp<VNX::VConversion>()->config.vorbisQuality = 0.8f;
+    projects.itemPropertyChanged(otherPreset, QStringLiteral("conversion"));
     ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
     ASSERT_EQ(preparation.sounds.size(), 1u);
     EXPECT_EQ(preparation.sounds.front().media, preparedMedia);
     EXPECT_EQ(encodedFiles(), originalFiles);
     EXPECT_EQ(audition.getAudition(playing).stopState, HarkenEditor::AuditionStopState::None);
 
-    conversion->platformConfig(primary)->vorbisQuality = 0.8f;
-    projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+    preset->comp<VNX::VConversion>()->config.vorbisQuality = 0.8f;
+    projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
     ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
     EXPECT_TRUE(preparation.sounds.empty());
     EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
@@ -846,14 +861,8 @@ TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPr
     auto* project = projects.currentProject();
     const auto primary = project->platforms.front().id;
     VNX::PlatformContextService::instance().setSelected({primary}, primary);
-    auto* preset = projects.findItemByGuid(project->defaultConversionRef);
+    auto* preset = bindRootConversion(projects, layer, primary, QStringLiteral("PrimaryConversion"));
     ASSERT_NE(preset, nullptr);
-    auto* conversion = preset->comp<VNX::VConversion>();
-    ASSERT_NE(conversion, nullptr);
-    for (auto& platform : conversion->platforms) {
-        platform.format = VNX::ConversionFormat::Vorbis;
-        platform.tiers = {{std::nullopt, 22050}};
-    }
     auto& modes = VNX::PreviewMediaModeService::instance();
     const auto previousMode = modes.mode();
     const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
@@ -865,8 +874,8 @@ TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPr
     ASSERT_NE(playing, 0u);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     EXPECT_GT(pump(64), 0.0f);
-    conversion->platformConfig(primary)->tiers = {{std::nullopt, 16000}};
-    projects.itemPropertyChanged(preset, QStringLiteral("platforms"));
+    preset->comp<VNX::VConversion>()->config.tiers = {{std::nullopt, 16000}};
+    projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
     HarkenEditor::Bridge::CurrentWorldSoundPreparation preparation;
     QString error;
     ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../ProjectPlatform.h"
 #include "../PropertyDescriptor.h"
 
 #include <array>
@@ -24,26 +23,22 @@ struct SampleRateTier
     bool operator==(const SampleRateTier&) const = default;
 };
 
-struct ConversionPlatformConfig
+struct ConversionConfig
 {
-    ProjectPlatformId platformId;
     ConversionFormat format = ConversionFormat::PCM;
     float vorbisQuality = 0.4f;
     std::vector<SampleRateTier> tiers{{}};
 
     QJsonObject toJson() const;
-    static std::optional<ConversionPlatformConfig> fromJson(const QJsonObject& json,
-                                                          QString* error = nullptr);
-    bool operator==(const ConversionPlatformConfig&) const = default;
+    static std::optional<ConversionConfig> fromJson(const QJsonObject& json,
+                                                    QString* error = nullptr);
+    bool operator==(const ConversionConfig&) const = default;
 };
 
 bool validateSampleRateTiers(const std::vector<SampleRateTier>& tiers,
                             QString* error = nullptr);
-bool validateConversionConfig(const ConversionPlatformConfig& config,
+bool validateConversionConfig(const ConversionConfig& config,
                               QString* error = nullptr);
-bool validateConversionPlatforms(const std::vector<ConversionPlatformConfig>& configs,
-                                 const QVector<ProjectPlatform>& projectPlatforms,
-                                 QString* error = nullptr);
 
 class VConversion : public ReflectedComponent<VConversion>
 {
@@ -52,12 +47,8 @@ public:
     ComponentType getType() const override { return kType; }
     static const PropertySchema& schema();
 
-    std::vector<ConversionPlatformConfig> platforms;
+    ConversionConfig config;
 
-    const ConversionPlatformConfig* platformConfig(ProjectPlatformId id) const;
-    ConversionPlatformConfig* platformConfig(ProjectPlatformId id);
-    bool setPlatforms(const QJsonArray& rows, const QVector<ProjectPlatform>& projectPlatforms,
-                      QString* error = nullptr);
     QJsonObject toJson() const override;
     bool fromJson(const QJsonObject& json) override;
 };

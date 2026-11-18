@@ -144,13 +144,12 @@ TEST(FieldGroupProjectAdapter, TemplateInstancesUseDestinationDefaultsThroughout
     }
     master->name = QStringLiteral("Master Bus");
     project.busses.push_back({master, {}});
+    const auto platform = project.platforms.front().id;
     for (const auto& preset : {original, destination}) {
-        auto config = defaultConfigFor(project.platforms.front().basePlatform);
-        config.platformId = project.platforms.front().id;
-        preset->comp<VConversion>()->platforms.push_back(config);
+        preset->comp<VConversion>()->config = ConversionDefaults::newPreset();
         project.conversionItems.push_back({preset, {}});
     }
-    project.defaultConversionRef = original->guid;
+    project.defaultConversionRefs.insert(platform, original->guid);
     layer->fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(master->guid));
     layer->fieldGroups.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(original->guid)};
     own(layer, sound);
@@ -167,7 +166,8 @@ TEST(FieldGroupProjectAdapter, TemplateInstancesUseDestinationDefaultsThroughout
     project.layers.clear();
     for (const auto& defaultRef : {destination->guid, QUuid{}}) {
         SCOPED_TRACE(defaultRef.toString().toStdString());
-        project.defaultConversionRef = defaultRef;
+        project.defaultConversionRefs.clear();
+        if (!defaultRef.isNull()) project.defaultConversionRefs.insert(platform, defaultRef);
         QString error;
         ASSERT_TRUE(TemplateApplyService::seedTemplateInto(project, data, &error)) << error.toStdString();
         ASSERT_EQ(project.layers.size(), 1u);
@@ -176,7 +176,7 @@ TEST(FieldGroupProjectAdapter, TemplateInstancesUseDestinationDefaultsThroughout
         ASSERT_EQ(root->children.size(), 1u);
         EXPECT_NE(root->guid, layer->guid);
         const auto effective = std::make_shared<const FieldGroupEffectiveSnapshot>(
-            buildFieldGroupEffectiveSnapshot(project, {}));
+            buildFieldGroupEffectiveSnapshot(project, toFieldGroupGuid(platform)));
         ASSERT_TRUE(effective->ok());
         for (const auto* instance : {root.get(), root->children.front().get()}) {
             const auto resolved = ReferenceSlotResolution::resolveEffectiveConversion(

@@ -687,16 +687,14 @@ namespace {
 
 void createDefaultConversion(ProjectData& project)
 {
-    auto item = std::make_shared<ProjectItem>(QStringLiteral("Default"), ProjectItem::Type::Conversion);
+    auto item = std::make_shared<ProjectItem>(ConversionDefaults::lowQualityName(), ProjectItem::Type::Conversion);
     item->attachDefaultComponents();
     item->objectID = project.generateObjectID();
     item->guid = QUuid::createUuid();
-    for (const auto& platform : project.platforms) {
-        auto row = defaultConfigFor(platform.basePlatform);
-        row.platformId = platform.id;
-        item->comp<VConversion>()->platforms.push_back(std::move(row));
-    }
-    project.defaultConversionRef = item->guid;
+    item->comp<VConversion>()->config = ConversionDefaults::lowQuality();
+    for (const auto& platform : project.platforms)
+        if (ConversionDefaults::usesLowQuality(platform.basePlatform))
+            project.defaultConversionRefs.insert(platform.id, item->guid);
     ProjectFileBinding binding;
     binding.parentFolder = QStringLiteral("Conversions");
     binding.rootItem = item;
@@ -1303,21 +1301,22 @@ QStringList ProjectManager::getTargetPlatforms() const
     return m_currentProject->platformIds();
 }
 
-bool ProjectManager::setDefaultConversion(const QUuid& guid)
+bool ProjectManager::setDefaultConversion(const ProjectPlatformId& platform, const QUuid& guid)
 {
-    if (!m_currentProject) return false;
+    if (!m_currentProject || !ProjectPlatformSemantics::find(m_currentProject->platforms, platform)) return false;
     if (!guid.isNull()) {
         const auto* item = findItemByGuid(guid);
         if (!item || item->type != ProjectItem::Type::Conversion) return false;
     }
-    const auto before = m_currentProject->defaultConversionRef;
+    const auto before = m_currentProject->defaultConversionFor(platform);
     if (before == guid) return true;
     const std::weak_ptr<ProjectData> lease = m_currentProject;
-    const auto apply = [this, lease](const QUuid& value) {
+    const auto apply = [this, lease, platform](const QUuid& value) {
         const auto project = lease.lock();
         if (!project || project != m_currentProject) return;
-        project->defaultConversionRef = value;
-        emit defaultConversionChanged(value);
+        if (value.isNull()) project->defaultConversionRefs.remove(platform);
+        else project->defaultConversionRefs.insert(platform, value);
+        emit defaultConversionChanged(platform, value);
     };
     apply(guid);
     UndoRedoManager::instance().push(new RuntimeActionCommand(
@@ -2655,8 +2654,7 @@ bool initializeRootFieldGroups(ProjectData& project, ProjectItem& item)
     if (!master || master->type != ProjectItem::Type::Bus || master->guid.isNull())
         return false;
     item.fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(master->guid));
-    item.fieldGroups.conversion.shared.localHistory->settingsRef =
-        toFieldGroupGuid(project.defaultConversionRef);
+    ConversionDefaults::applyRootDefaults(project, item.fieldGroups.conversion);
     return true;
 }
 
@@ -2918,13 +2916,8 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
 
     auto newItem = std::make_shared<ProjectItem>(createName, type);
     newItem->attachDefaultComponents();
-    if (auto* conversion = newItem->comp<VConversion>()) {
-        for (const auto& platform : m_currentProject->platforms) {
-            auto row = defaultConfigFor(platform.basePlatform);
-            row.platformId = platform.id;
-            conversion->platforms.push_back(std::move(row));
-        }
-    }
+    if (auto* conversion = newItem->comp<VConversion>())
+        conversion->config = ConversionDefaults::newPreset();
     if (auto* variable = newItem->comp<VVariable>())
         VariableSemantics::initializeNewVariable(*variable, variableKind);
     if (auto* selection = newItem->comp<VSelection>())
@@ -4827,12 +4820,9 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
     if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating)
-        || !capture(authored.effects, result.effects, FieldGroupId::Effect))
+        || !capture(authored.effects, result.effects, FieldGroupId::Effect)
+        || !capture(authored.conversion, result.conversion, FieldGroupId::Conversion))
         return fail(QStringLiteral("Cannot preserve the current field group values"));
-    const auto conversion = resolver.Resolve(identity, {}, FieldGroupId::Conversion);
-    if (!conversion.ok())
-        return fail(QStringLiteral("Cannot preserve the current Conversion settings"));
-    result.conversion.shared.localHistory = std::get<ConversionFieldGroup>(conversion.value->payload);
     return result;
 }
 
@@ -5060,9 +5050,13 @@ std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
                 state.localHistory->spatialAttenuationRef = {};
         };
         clearSpatialReference(after.spatialRating.shared);
-        if (after.conversion.shared.localHistory
-            && deleted.contains(after.conversion.shared.localHistory->settingsRef))
-            after.conversion.shared.localHistory->settingsRef = {};
+        const auto clearConversionReference = [&](auto& state) {
+            if (state.localHistory && deleted.contains(state.localHistory->settingsRef))
+                state.localHistory->settingsRef = {};
+        };
+        clearConversionReference(after.conversion.shared);
+        for (auto& [platform, state] : after.conversion.platforms)
+            clearConversionReference(state);
         for (auto& [platform, state] : after.spatialRating.platforms)
             clearSpatialReference(state);
         VisitAuthoredEffectChains(after, [&](EffectChainLedger& ledger, FieldGroupScope) {
@@ -5303,13 +5297,14 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
 QJsonObject folderProjectReferences()
 {
     const auto* project = ProjectManager::instance().currentProject();
+    QJsonObject defaults;
+    if (project)
+        for (auto it = project->defaultConversionRefs.cbegin(); it != project->defaultConversionRefs.cend(); ++it)
+            defaults.insert(ProjectPlatformSemantics::idString(it.key()), it.value().toString(QUuid::WithoutBraces));
     QJsonArray targeting;
     for (const auto& target : ProjectManager::instance().getActionPackTargeting()) targeting.append(target.toJson());
     return {{QStringLiteral("actionPackTargeting"), targeting},
-            {QStringLiteral("audio"), QJsonObject{{QStringLiteral("defaultConversion"),
-                project && !project->defaultConversionRef.isNull()
-                    ? QJsonValue(project->defaultConversionRef.toString(QUuid::WithoutBraces))
-                    : QJsonValue(QJsonValue::Null)}}}};
+            {QStringLiteral("audio"), QJsonObject{{QStringLiteral("defaultConversions"), defaults}}}};
 }
 
 void applyFolderProjectReferences(const QJsonObject& state)
@@ -5319,9 +5314,19 @@ void applyFolderProjectReferences(const QJsonObject& state)
         targeting.push_back(ActionPackTargeting::fromJson(target.toObject()));
     ProjectManager::instance().setActionPackTargetingInternal(std::move(targeting));
     if (auto* project = ProjectManager::instance().currentProject()) {
-        project->defaultConversionRef = QUuid(state.value(QStringLiteral("audio")).toObject()
-            .value(QStringLiteral("defaultConversion")).toString());
-        emit ProjectManager::instance().defaultConversionChanged(project->defaultConversionRef);
+        const auto defaults = state.value(QStringLiteral("audio")).toObject()
+            .value(QStringLiteral("defaultConversions")).toObject();
+        QMap<ProjectPlatformId, QUuid> restored;
+        for (auto it = defaults.begin(); it != defaults.end(); ++it) {
+            const QUuid guid(it.value().toString());
+            if (const auto platform = ProjectPlatformSemantics::parseId(it.key()); platform && !guid.isNull())
+                restored.insert(*platform, guid);
+        }
+        const auto previous = project->defaultConversionRefs;
+        project->defaultConversionRefs = restored;
+        for (const auto& platform : project->platforms)
+            if (previous.value(platform.id) != restored.value(platform.id))
+                emit ProjectManager::instance().defaultConversionChanged(platform.id, restored.value(platform.id));
     }
 }
 

@@ -397,6 +397,9 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
     }
 
     const QJsonArray platformsArr = ProjectPlatformSemantics::platformsToJson(project->platforms);
+    QJsonObject defaultConversions;
+    for (auto it = project->defaultConversionRefs.cbegin(); it != project->defaultConversionRefs.cend(); ++it)
+        defaultConversions.insert(ProjectPlatformSemantics::idString(it.key()), it.value().toString(QUuid::WithoutBraces));
 
     return successResponse(QJsonObject{
         {"project_open", true},
@@ -406,8 +409,7 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
         {"packs", packs},
         {"actions", actions},
         {"platforms", platformsArr},
-        {"default_conversion", project->defaultConversionRef.isNull() ? QJsonValue(QJsonValue::Null)
-            : QJsonValue(project->defaultConversionRef.toString(QUuid::WithoutBraces))},
+        {"default_conversions", defaultConversions},
         {"sample_rate", project->sampleRate},
         {"channel_config", static_cast<int>(project->channelConfig)}
     });

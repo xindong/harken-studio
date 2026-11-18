@@ -18,12 +18,11 @@ bool fail(QString* error, const QString& message)
     return false;
 }
 
-class PlatformEdit final : public TransactionalUndoCommand
+class ConfigEdit final : public TransactionalUndoCommand
 {
 public:
-    PlatformEdit(ProjectManager& manager, const QUuid& guid,
-        std::vector<ConversionPlatformConfig> before,
-        std::vector<ConversionPlatformConfig> after, const QObject* originator)
+    ConfigEdit(ProjectManager& manager, const QUuid& guid, ConversionConfig before,
+        ConversionConfig after, const QObject* originator)
         : TransactionalUndoCommand(QStringLiteral("Edit Conversion"), nullptr, false),
           manager_(manager), project_(manager.currentProjectLease()), guid_(guid),
           before_(std::move(before)), after_(std::move(after)), originator_(originator) {}
@@ -37,9 +36,9 @@ private:
         auto* conversion = item ? item->comp<VConversion>() : nullptr;
         const auto& expected = redo ? before_ : after_;
         const auto& replacement = redo ? after_ : before_;
-        if (!conversion || conversion->platforms != expected
-            || !validateConversionPlatforms(replacement, project->platforms)) return false;
-        conversion->platforms = replacement;
+        if (!conversion || conversion->config != expected || !validateConversionConfig(replacement))
+            return false;
+        conversion->config = replacement;
         item->markDirty();
         emit manager_.itemPropertyChanged(item, QStringLiteral("conversion"), originator_);
         originator_ = nullptr;
@@ -49,8 +48,8 @@ private:
     ProjectManager& manager_;
     std::weak_ptr<ProjectData> project_;
     QUuid guid_;
-    std::vector<ConversionPlatformConfig> before_;
-    std::vector<ConversionPlatformConfig> after_;
+    ConversionConfig before_;
+    ConversionConfig after_;
     const QObject* originator_;
 };
 
@@ -98,11 +97,17 @@ private:
     const QObject* originator_;
 };
 
+FieldGroupMode currentMode(const AuthoredGroup<ConversionFieldGroup>& group, const PlatformScope& platform)
+{
+    if (!platform) return group.shared.mode;
+    const auto found = group.platforms.find(toFieldGroupGuid(*platform));
+    return found == group.platforms.end() ? FieldGroupMode::UseShared : found->second.mode;
 }
 
-bool setPlatforms(ProjectManager& manager, const QUuid& conversion,
-    const std::vector<ConversionPlatformConfig>& replacement,
-    const std::optional<std::vector<ConversionPlatformConfig>>& expectedBefore,
+}
+
+bool setConfig(ProjectManager& manager, const QUuid& conversion,
+    const ConversionConfig& replacement, const std::optional<ConversionConfig>& expectedBefore,
     const QObject* originator, QString* error)
 {
     PropertyEditSession::finishAllActive(true);
@@ -110,12 +115,11 @@ bool setPlatforms(ProjectManager& manager, const QUuid& conversion,
     auto* item = project ? manager.findItemByGuid(conversion) : nullptr;
     const auto* component = item ? item->comp<VConversion>() : nullptr;
     if (!component) return fail(error, QStringLiteral("Conversion preset is unavailable"));
-    if (expectedBefore && component->platforms != *expectedBefore)
+    if (expectedBefore && component->config != *expectedBefore)
         return fail(error, QStringLiteral("Conversion settings changed before commit"));
-    if (!validateConversionPlatforms(replacement, project->platforms, error)) return false;
-    if (component->platforms == replacement) return true;
-    auto command = std::make_unique<PlatformEdit>(manager, conversion,
-        component->platforms, replacement, originator);
+    if (!validateConversionConfig(replacement, error)) return false;
+    if (component->config == replacement) return true;
+    auto command = std::make_unique<ConfigEdit>(manager, conversion, component->config, replacement, originator);
     if (!command->tryReplay(true))
         return fail(error, QStringLiteral("Conversion settings changed before commit"));
     UndoRedoManager::instance().push(command.release());
@@ -123,19 +127,22 @@ bool setPlatforms(ProjectManager& manager, const QUuid& conversion,
 }
 
 bool setObject(ProjectManager& manager, const QUuid& object, bool inherit,
-    const std::optional<QUuid>& settings, const QObject* originator, QString* error)
+    const std::optional<QUuid>& settings, const PlatformScope& platform,
+    const QObject* originator, QString* error)
 {
-    return setObjects(manager, {object}, inherit, settings, {}, originator, error);
+    return setObjects(manager, {object}, inherit, settings, platform, {}, originator, error);
 }
 
 bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
-    std::optional<bool> inherit, const std::optional<QUuid>& settings,
+    std::optional<bool> inherit, const std::optional<QUuid>& settings, const PlatformScope& platform,
     const QVector<FieldGroupDefinitionSnapshot>& expectedBefore,
     const QObject* originator, QString* error)
 {
     PropertyEditSession::finishAllActive(true);
     auto* project = manager.currentProject();
     if (!project || objects.isEmpty()) return fail(error, QStringLiteral("Object is unavailable"));
+    if (platform && !ProjectPlatformSemantics::find(project->platforms, *platform))
+        return fail(error, QStringLiteral("Conversion platform does not belong to the project"));
     if (inherit.value_or(false) && settings)
         return fail(error, QStringLiteral("Inherited Conversion cannot specify local settings"));
     if (!inherit && !settings) return fail(error, QStringLiteral("No Conversion edit was specified"));
@@ -151,7 +158,8 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
         FieldGroupEditRequest request;
         request.definition = object;
         request.group = FieldGroupId::Conversion;
-        request.scopes.shared = true;
+        if (platform) request.scopes.platforms.push_back(toFieldGroupGuid(*platform));
+        else request.scopes.shared = true;
         request.operation = SetFieldGroupMode{mode};
         if (!expectedBefore.empty()) {
             const auto expected = std::find_if(expectedBefore.begin(), expectedBefore.end(),
@@ -160,13 +168,21 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
                 return fail(error, QStringLiteral("Expected Conversion state does not include every object"));
             request.expectedBefore = expected->groups;
         }
-        const auto prepared = item->fieldGroups.conversion.shared.mode == mode
+        const bool root = !item->parent;
+        const auto prepared = currentMode(item->fieldGroups.conversion, platform) == mode
+            || (root && mode == FieldGroupMode::Local)
             ? prepareFieldGroupRestore(*project, object, item->fieldGroups, request.expectedBefore)
             : prepareFieldGroupEdit(*project, request);
         if (!prepared.ok()) return fail(error, prepared.diagnostics.front().message);
         auto replacement = *prepared.after;
-        if (settings)
-            replacement.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(*settings)};
+        if (settings) {
+            auto& state = platform ? replacement.conversion.platforms[toFieldGroupGuid(*platform)]
+                                   : replacement.conversion.shared;
+            state.mode = FieldGroupMode::Local;
+            state.localHistory = ConversionFieldGroup{toFieldGroupGuid(*settings)};
+            state.localFields = FieldGroupPropertyMask(FieldGroupId::Conversion);
+            if (!platform) replacement.conversion.platforms.clear();
+        }
         const auto validated = prepareFieldGroupRestore(*project, object, replacement, prepared.before);
         if (!validated.ok()) return fail(error, validated.diagnostics.front().message);
         if (!validated.changed) continue;

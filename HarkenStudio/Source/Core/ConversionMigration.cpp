@@ -34,9 +34,23 @@ quint32 closestRate(quint32 rate)
 
 QJsonObject conversionGroup(const QString& id)
 {
-    if (id.isEmpty()) return {{QStringLiteral("inherit"), true}};
     return {{QStringLiteral("inherit"), false},
-            {QStringLiteral("values"), QJsonObject{{QStringLiteral("settingsRef"), id}}}};
+            {QStringLiteral("values"), QJsonObject{{QStringLiteral("settingsRef"),
+                id.isEmpty() ? QUuid().toString(QUuid::WithoutBraces) : id}}}};
+}
+
+QJsonObject pcmConfig(const QJsonArray& tiers)
+{
+    return {{QStringLiteral("format"), QStringLiteral("PCM")},
+            {QStringLiteral("vorbisQuality"), static_cast<double>(0.4f)},
+            {QStringLiteral("sampleRateTiers"), tiers}};
+}
+
+bool preservesOriginal(const QJsonArray& tiers)
+{
+    return std::all_of(tiers.begin(), tiers.end(), [](const QJsonValue& tier) {
+        return tier.toObject().value(QStringLiteral("sampleRate")).toInteger() == 0;
+    });
 }
 
 QJsonArray singleTier(quint32 rate)
@@ -137,26 +151,22 @@ bool prepareConversionMigration(const QString& sourceDirectory,
     const auto assets = registry.value(QStringLiteral("assets")).toObject();
     const auto overrides = registry.value(QStringLiteral("fileOverrides")).toObject();
     QJsonObject sourcePaths = root.value(QStringLiteral("sourceAssets")).toObject();
-    QJsonArray defaults;
+    QVector<QJsonObject> defaults;
     for (const auto& value : platforms) {
-        const auto platform = value.toObject();
-        const auto profile = platform.value(QStringLiteral("profile")).toObject();
-        QJsonArray tiers;
-        if (profile.value(QStringLiteral("performResample")).toBool()) {
-            for (const auto& policyValue : profile.value(QStringLiteral("sizePolicies")).toArray()) {
-                const auto policy = policyValue.toObject();
-                const auto rate = static_cast<quint32>(policy.value(QStringLiteral("config")).toObject()
-                    .value(QStringLiteral("targetSampleRate")).toInteger(48000));
-                tiers.append(QJsonObject{{QStringLiteral("maxBytes"), policy.value(QStringLiteral("maxBytes"))},
-                    {QStringLiteral("sampleRate"), static_cast<qint64>(closestRate(rate))}});
-            }
-        } else {
-            tiers = singleTier(0);
+        const auto profile = value.toObject().value(QStringLiteral("profile")).toObject();
+        if (!profile.value(QStringLiteral("performResample")).toBool()) {
+            defaults.append(QJsonObject{});
+            continue;
         }
-        defaults.append(QJsonObject{{QStringLiteral("platformId"), platform.value(QStringLiteral("id"))},
-            {QStringLiteral("format"), QStringLiteral("PCM")},
-            {QStringLiteral("vorbisQuality"), static_cast<double>(0.4f)},
-            {QStringLiteral("sampleRateTiers"), tiers}});
+        QJsonArray tiers;
+        for (const auto& policyValue : profile.value(QStringLiteral("sizePolicies")).toArray()) {
+            const auto policy = policyValue.toObject();
+            const auto rate = static_cast<quint32>(policy.value(QStringLiteral("config")).toObject()
+                .value(QStringLiteral("targetSampleRate")).toInteger(48000));
+            tiers.append(QJsonObject{{QStringLiteral("maxBytes"), policy.value(QStringLiteral("maxBytes"))},
+                {QStringLiteral("sampleRate"), static_cast<qint64>(closestRate(rate))}});
+        }
+        defaults.append(pcmConfig(tiers));
     }
 
     QSet<QString> names;
@@ -165,11 +175,11 @@ bool prepareConversionMigration(const QString& sourceDirectory,
             names.insert(document.value().value(QStringLiteral("content")).toObject()
                              .value(QStringLiteral("name")).toString().toCaseFolded());
     QMap<QByteArray, QString> presets;
-    const auto addPreset = [&](const QString& base, const QJsonArray& configs) {
-        const auto key = QJsonDocument(configs).toJson(QJsonDocument::Compact);
+    const auto addPreset = [&](const QJsonObject& config) {
+        const auto key = QJsonDocument(config).toJson(QJsonDocument::Compact);
         const auto found = presets.constFind(key);
         if (found != presets.cend()) return found.value();
-        const QString name = NameValidator::makeUniqueName(base, [&](const QString& candidate) {
+        const QString name = NameValidator::makeUniqueName(QStringLiteral("Conversion"), [&](const QString& candidate) {
             return !names.contains(candidate.toCaseFolded());
         });
         names.insert(name.toCaseFolded());
@@ -180,20 +190,20 @@ bool prepareConversionMigration(const QString& sourceDirectory,
         const QJsonObject content{{QStringLiteral("type"), QStringLiteral("Conversion")},
             {QStringLiteral("guid"), id}, {QStringLiteral("name"), name},
             {QStringLiteral("parentRef"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("root")}}},
-            {QStringLiteral("components"), QJsonObject{{QStringLiteral("conversion"),
-                QJsonObject{{QStringLiteral("platforms"), configs}}}}}};
+            {QStringLiteral("components"), QJsonObject{{QStringLiteral("conversion"), config}}}};
         documents.insert(path, ProjectDocument::create(QStringLiteral("project.conversion"), id, projectId, content));
         presets.insert(key, id);
         return id;
     };
-    const QString defaultId = addPreset(QStringLiteral("Default"), defaults);
+    QStringList defaultIds;
+    for (const auto& config : defaults) defaultIds.append(config.isEmpty() ? QString{} : addPreset(config));
     QJsonArray differences;
     QMap<QString, QJsonObject> metadataBySource;
     AssetImporter importer;
     bool metadataValid = true;
     std::function<void(QJsonObject&, bool)> migrateNode;
     migrateNode = [&](QJsonObject& node, bool rootNode) {
-        QString presetId;
+        QMap<QString, QJsonObject> platformGroups;
         const auto sound = node.value(QStringLiteral("components")).toObject().value(QStringLiteral("sound")).toObject();
         if (node.value(QStringLiteral("type")) == QStringLiteral("Sound")) {
             QVector<Source> sources;
@@ -259,17 +269,14 @@ bool prepareConversionMigration(const QString& sourceDirectory,
             for (auto language = localized.begin(); language != localized.end(); ++language)
                 appendSet(language.value().toObject(), language.key());
             if (!metadataValid) return;
-            QJsonArray configs = defaults;
-            bool changed = false;
             for (qsizetype index = 0; index < platforms.size() && !sources.isEmpty(); ++index) {
                 const auto platform = platforms[index].toObject();
                 const QString platformId = platform.value(QStringLiteral("id")).toString();
-                auto config = configs[index].toObject();
+                const auto& config = defaults[index];
                 bool matches = true;
                 for (const auto& source : sources)
                     matches = matches && oldRate(source, platform, overrides) == newRate(source, config);
                 if (matches) continue;
-                changed = true;
                 const Source* selected = &sources.first();
                 for (const auto& source : sources) {
                     const auto platformOverrides = source.set.value(QStringLiteral("platforms")).toObject();
@@ -313,11 +320,11 @@ bool prepareConversionMigration(const QString& sourceDirectory,
                     }
                 }
                 if (conflict) tiers = singleTier(mappedRate(*selected));
-                config.insert(QStringLiteral("sampleRateTiers"), tiers);
-                configs[index] = config;
+                const auto replacement = preservesOriginal(tiers) ? QJsonObject{} : pcmConfig(tiers);
+                platformGroups.insert(platformId, conversionGroup(replacement.isEmpty() ? QString{} : addPreset(replacement)));
                 for (const auto& source : sources) {
                     const quint32 previous = oldRate(source, platform, overrides);
-                    const quint32 current = newRate(source, config);
+                    const quint32 current = newRate(source, replacement);
                     if (previous == current) continue;
                     QJsonArray reasons;
                     if (conflict)
@@ -339,14 +346,28 @@ bool prepareConversionMigration(const QString& sourceDirectory,
                         {QStringLiteral("reasons"), reasons}});
                 }
             }
-            if (changed) presetId = addPreset(QStringLiteral("Conversion"), configs);
         }
+        if (rootNode)
+            for (qsizetype index = 0; index < platforms.size(); ++index) {
+                const auto platformId = platforms[index].toObject().value(QStringLiteral("id")).toString();
+                if (!defaultIds[index].isEmpty() && !platformGroups.contains(platformId))
+                    platformGroups.insert(platformId, conversionGroup(defaultIds[index]));
+            }
         if (node.value(QStringLiteral("fieldGroups")).isObject()) {
             auto groups = node.value(QStringLiteral("fieldGroups")).toObject();
             auto shared = groups.value(QStringLiteral("shared")).toObject();
-            shared.insert(QStringLiteral("conversion"), conversionGroup(
-                presetId.isEmpty() && rootNode ? defaultId : presetId));
+            shared.insert(QStringLiteral("conversion"), rootNode ? conversionGroup({})
+                : QJsonObject{{QStringLiteral("inherit"), true}});
             groups.insert(QStringLiteral("shared"), shared);
+            if (!platformGroups.isEmpty()) {
+                auto overrides = groups.value(QStringLiteral("platforms")).toObject();
+                for (auto group = platformGroups.cbegin(); group != platformGroups.cend(); ++group) {
+                    auto platform = overrides.value(group.key()).toObject();
+                    platform.insert(QStringLiteral("conversion"), group.value());
+                    overrides.insert(group.key(), platform);
+                }
+                groups.insert(QStringLiteral("platforms"), overrides);
+            }
             node.insert(QStringLiteral("fieldGroups"), groups);
         }
         if (node.value(QStringLiteral("children")).isArray()) {
@@ -380,8 +401,13 @@ bool prepareConversionMigration(const QString& sourceDirectory,
     }
     root.insert(QStringLiteral("deployPlatforms"), currentPlatforms);
     auto audio = root.value(QStringLiteral("audio")).toObject();
-    audio.insert(QStringLiteral("defaultConversion"), QJsonObject{
-        {QStringLiteral("id"), defaultId}, {QStringLiteral("documentId"), defaultId}});
+    QJsonObject defaultConversions;
+    for (qsizetype index = 0; index < platforms.size(); ++index)
+        if (!defaultIds[index].isEmpty())
+            defaultConversions.insert(platforms[index].toObject().value(QStringLiteral("id")).toString(),
+                QJsonObject{{QStringLiteral("id"), defaultIds[index]}, {QStringLiteral("documentId"), defaultIds[index]}});
+    if (!defaultConversions.isEmpty())
+        audio.insert(QStringLiteral("defaultConversions"), defaultConversions);
     root.insert(QStringLiteral("audio"), audio);
     rootDocument.insert(QStringLiteral("content"), root);
     documents.insert(projectFile, rootDocument);

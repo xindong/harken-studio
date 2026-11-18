@@ -23,9 +23,9 @@ v7/v8 工程升级时同步转换历史输出路由字段及效果条目结构�
 
 ## Conversion（Part A）
 
-Conversion 预设位于 `Conversions/`，为每个工程平台保存 PCM／Vorbis、Vorbis quality 和按源文件大小分档的采样率。Sound、Container、Layer、Track、Segment 的 Shared Conversion 字段组沿层级解析 Settings 引用；空引用表示不转换，Bus／Action 不适用。项目 Default Conversion 只决定新根对象的初始引用。
+Conversion 预设位于 `Conversions/`，保存一份 PCM／Vorbis、Vorbis quality 和按源文件大小分档的采样率。Sound、Container、Layer、Track、Segment 的 Conversion 字段组按目标平台（Shared 加平台覆写）沿层级解析 Settings 引用；空引用表示不转换，仍以原始采样率导出 PCM，Bus／Action 不适用。各平台 Default Conversion 只决定新根对象的初始平台覆写。
 
-PCM 预设可正常导出。Vorbis 已能编码、缓存及在 Studio 中试听；Pack 媒体写入处仍明确报错，相关包失败，不写入半成品，也不回退 PCM。Android／iOS 的初始预设为 Vorbis，因此 Part A 默认不能为其完成含媒体的包。Engine Pack 布局、Engine Vorbis 解码及 Integration 按平台混音采样率属于 Part B。
+PCM 预设可正常导出。Vorbis 已能编码、缓存及在 Studio 中试听；Pack 媒体写入处仍明确报错，相关包失败，不写入半成品，也不回退 PCM。默认工程中 Android／iOS 的新根对象使用 Vorbis 预设 Low Quality，因此 Part A 默认不能为其完成含媒体的包。Engine Pack 布局、Engine Vorbis 解码及 Integration 按平台混音采样率属于 Part B。
 
 CLI 构建结果的每个媒体包含 `format`、`originalBytes`、`outputBytes`；Vorbis 的产物大小只计编码块，不计 `.vcm` 缓存头及摘要。这些字段不进入包伴随 JSON；`builds.json` 保存成功包的媒体结果以恢复 Skipped／部分发布报告，区分未记录结果与已知空媒体列表。
 

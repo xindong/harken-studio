@@ -82,9 +82,15 @@ FieldGroupInspectorFieldView FieldGroupInspectorView::field(const QString& field
     if (group == FieldGroupId::Conversion) {
         if (fieldName != QLatin1String("settingsRef")) return result;
         result.uniform = true;
-        result.value = fromFieldGroupGuid(
-            std::get<ConversionFieldGroup>(perScope.front().resolved.payload).settingsRef);
-        result.perScope.append({std::nullopt, result.value});
+        for (const auto& target : perScope) {
+            const QVariant value = fromFieldGroupGuid(
+                std::get<ConversionFieldGroup>(target.resolved.payload).settingsRef);
+            if (result.perScope.isEmpty())
+                result.value = value;
+            else if (result.value != value)
+                result.uniform = false;
+            result.perScope.append({target.scope, value});
+        }
         return result;
     }
     const auto* descriptor = PlayablePropertyAuthoringV1::fieldByName(fieldName);
@@ -177,9 +183,7 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
         result.diagnostics.append(QStringLiteral("Select a valid definition and field group"));
         return result;
     }
-    if (group == FieldGroupId::Conversion) {
-        result.editScopes.shared = true;
-    } else if (!resolveEditScopes(project, context, result.editScopes)) {
+    if (!resolveEditScopes(project, context, result.editScopes)) {
         result.diagnostics.append(QStringLiteral("Select a valid project target platform"));
         return result;
     }
@@ -203,9 +207,7 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
     }
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     std::vector<FieldGroupScope> scopes;
-    if (group == FieldGroupId::Conversion) {
-        scopes.push_back(std::nullopt);
-    } else if (result.editScopes.shared) {
+    if (result.editScopes.shared) {
         for (const auto& platform : project.platforms)
             scopes.push_back(toFieldGroupGuid(platform.id));
     }

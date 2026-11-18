@@ -118,7 +118,7 @@
 
 表注：多选候选取并集，仍须全部为同父级兄弟并满足结构约束，不通过剔除后代改变分组。
 
-Conversion 预设沿用资源的创建、改名、移动、复制和删除入口；双击打开独立 Conversion Editor。删除预设同时清空所有对象（含休眠本地历史）和项目 Default Conversion 引用，撤销恢复预设及这些引用。
+Conversion 预设沿用资源的创建、改名、移动、复制和删除入口；双击打开独立 Conversion Editor。删除预设同时清空所有对象（含休眠本地历史）和各平台 Default Conversion 引用，撤销恢复预设及这些引用。
 
 ### New Action
 

@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QList>
+#include <QMap>
 #include <QSet>
 #include <QUuid>
 #include <QVariantMap>
@@ -883,7 +884,8 @@ struct ProjectData
     QStringList platformIds() const { return ProjectPlatformSemantics::ids(platforms); }
     int                sampleRate         = 48000;
     AudioChannelConfig channelConfig      = AudioChannelConfig::Stereo_2_0;
-    QUuid defaultConversionRef;
+    QMap<ProjectPlatformId, QUuid> defaultConversionRefs;
+    QUuid defaultConversionFor(const ProjectPlatformId& platform) const { return defaultConversionRefs.value(platform); }
 
     QString packBuildOutputDir;
     bool buildExportProjectData = false;

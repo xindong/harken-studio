@@ -124,6 +124,17 @@ void removeConversionGroup(QJsonObject& content)
         auto shared = groups.value(QStringLiteral("shared")).toObject();
         shared.remove(QStringLiteral("conversion"));
         groups.insert(QStringLiteral("shared"), shared);
+        if (groups.value(QStringLiteral("platforms")).isObject()) {
+            auto platforms = groups.value(QStringLiteral("platforms")).toObject();
+            for (const auto& key : platforms.keys()) {
+                auto platform = platforms.value(key).toObject();
+                platform.remove(QStringLiteral("conversion"));
+                if (platform.isEmpty()) platforms.remove(key);
+                else platforms.insert(key, platform);
+            }
+            if (platforms.isEmpty()) groups.remove(QStringLiteral("platforms"));
+            else groups.insert(QStringLiteral("platforms"), platforms);
+        }
         content.insert(QStringLiteral("fieldGroups"), groups);
     }
     if (content.value(QStringLiteral("children")).isArray()) {
@@ -543,7 +554,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             removeConversionGroup(content);
             if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
                 auto audio = content.value(QStringLiteral("audio")).toObject();
-                audio.remove(QStringLiteral("defaultConversion"));
+                audio.remove(QStringLiteral("defaultConversions"));
                 content.insert(QStringLiteral("audio"), audio);
                 auto legacyPlatforms = content.value(QStringLiteral("deployPlatforms")).toArray();
                 for (qsizetype index = 0; index < legacyPlatforms.size(); ++index) {
@@ -751,22 +762,25 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     UndoRedoManager::instance().clearHistory();
     expectModelMetadata(*manager.currentProject());
     if (version == 9) {
-        const auto snapshot = buildFieldGroupEffectiveSnapshot(*manager.currentProject(), {});
+        const auto snapshot = buildFieldGroupEffectiveSnapshot(*manager.currentProject(),
+            toFieldGroupGuid(QUuid(platformId.toString())));
         ASSERT_TRUE(snapshot.ok());
         QSet<QString> expectedDifferences;
         for (auto sound = expectedRates.cbegin(); sound != expectedRates.cend(); ++sound) {
             const auto effective = snapshot.definitions.find(toFieldGroupGuid(QUuid(sound.key())));
             ASSERT_NE(effective, snapshot.definitions.end());
-            const auto preset = snapshot.objects.find(effective->second.conversion.settingsRef);
-            ASSERT_NE(preset, snapshot.objects.end());
-            const auto* conversion = preset->second->comp<VConversion>();
-            ASSERT_NE(conversion, nullptr);
-            const auto* config = conversion->platformConfig(QUuid(platformId.toString()));
-            ASSERT_NE(config, nullptr);
+            std::vector<SampleRateTier> tiers;
+            if (!harkenprojectschema::IsNull(effective->second.conversion.settingsRef)) {
+                const auto preset = snapshot.objects.find(effective->second.conversion.settingsRef);
+                ASSERT_NE(preset, snapshot.objects.end());
+                const auto* conversion = preset->second->comp<VConversion>();
+                ASSERT_NE(conversion, nullptr);
+                tiers = conversion->config.tiers;
+            }
             for (auto source = sound->cbegin(); source != sound->cend(); ++source) {
                 const auto metadata = sourceMetadata.value(source.key());
                 quint32 rate = metadata.first;
-                for (const auto& tier : config->tiers) {
+                for (const auto& tier : tiers) {
                     if (tier.maxBytes && static_cast<quint64>(metadata.second) > *tier.maxBytes) continue;
                     if (tier.sampleRate != 0) rate = (std::min)(rate, tier.sampleRate);
                     break;
@@ -828,7 +842,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     }
     EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
     if (version != 9)
-        EXPECT_EQ(allSavedPaths.size(), documentsById_.size() + (analysis.upgradeRequired ? 1 : 0));
+        EXPECT_EQ(allSavedPaths.size(), documentsById_.size());
     else
         EXPECT_GT(allSavedPaths.size(), documentsById_.size());
     for (auto it = savedPaths.cbegin(); it != savedPaths.cend(); ++it) {
@@ -838,11 +852,9 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         const auto content = HarkenTest::projectContent(document);
         const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
         if (expectedGroups.contains(it.key())) {
-            auto groups = content.value(QStringLiteral("fieldGroups")).toObject();
-            auto shared = groups.value(QStringLiteral("shared")).toObject();
-            shared.remove(QStringLiteral("conversion"));
-            groups.insert(QStringLiteral("shared"), shared);
-            EXPECT_EQ(groups, expectedGroups.value(it.key()));
+            auto stripped = content;
+            removeConversionGroup(stripped);
+            EXPECT_EQ(stripped.value(QStringLiteral("fieldGroups")).toObject(), expectedGroups.value(it.key()));
         }
         if (expectedProperties.contains(it.key())) {
             EXPECT_EQ(content.value(QStringLiteral("playableProperties")),
@@ -865,11 +877,11 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
                 EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
             auto actualAudio = content.value(QStringLiteral("audio")).toObject();
             auto expectedAudio = original.value(QStringLiteral("audio")).toObject();
-            EXPECT_TRUE(allSavedPaths.contains(actualAudio.value(QStringLiteral("defaultConversion"))
-                .toObject().value(QStringLiteral("id")).toString()));
+            for (const auto& reference : actualAudio.value(QStringLiteral("defaultConversions")).toObject())
+                EXPECT_TRUE(allSavedPaths.contains(reference.toObject().value(QStringLiteral("id")).toString()));
             if (analysis.upgradeRequired) {
-                actualAudio.remove(QStringLiteral("defaultConversion"));
-                expectedAudio.remove(QStringLiteral("defaultConversion"));
+                actualAudio.remove(QStringLiteral("defaultConversions"));
+                expectedAudio.remove(QStringLiteral("defaultConversions"));
             }
             EXPECT_EQ(actualAudio, expectedAudio);
         }

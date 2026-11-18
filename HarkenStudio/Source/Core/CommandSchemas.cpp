@@ -228,22 +228,18 @@ const QMap<QString, Contract>& contracts()
         const auto tier = object({{"max_bytes", QJsonObject{{"anyOf", QJsonArray{tierLimit, QJsonObject{{"type", "null"}}}}}},
             {"sample_rate", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000}}}}},
             {"max_bytes", "sample_rate"});
-        auto conversionFields = requireAny(object({{"conversion", conversionSelector},
-            {"platform_ids", array(projectPlatformIdSchema(), 1, true)},
-            {"all_platforms", QJsonObject{{"type", "boolean"}, {"enum", QJsonArray{true}}}},
+        put({"set_conversion_fields"}, requireAny(object({{"conversion", conversionSelector},
             {"format", choice({"PCM", "Vorbis"})},
             {"quality", QJsonObject{{"type", "number"}, {"minimum", 0}, {"maximum", 100}}},
             {"sample_rate_tiers", described(array(tier, 1),
                 "Complete ordered tiers. Limits must increase; only the final max_bytes is null (Infinite). sample_rate 0 preserves the original rate.")}}, {"conversion"}),
-            {"format", "quality", "sample_rate_tiers"});
-        conversionFields.insert("oneOf", QJsonArray{
-            QJsonObject{{"required", QJsonArray{"platform_ids"}}, {"not", QJsonObject{{"required", QJsonArray{"all_platforms"}}}}},
-            QJsonObject{{"required", QJsonArray{"all_platforms"}}, {"not", QJsonObject{{"required", QJsonArray{"platform_ids"}}}}}});
-        put({"set_conversion_fields"}, conversionFields);
+            {"format", "quality", "sample_rate_tiers"}));
         put({"set_object_conversion"}, object({{"object", text()}, {"inherit", boolean()},
-            {"settings", described(nullableConversion, "Local preset reference, or null for no conversion. Omit to retain local history; unavailable when inherit is true.")}},
+            {"settings", described(nullableConversion, "Local preset reference, or null for no conversion. Omit to retain local history; unavailable when inherit is true.")},
+            {"platform_id", described(projectPlatformIdSchema(), "Platform override to edit. Omit to edit Shared.")}},
             {"object", "inherit"}));
-        put({"set_default_conversion"}, object({{"conversion", nullableConversion}}, {"conversion"}));
+        put({"set_default_conversion"}, object({{"platform_id", projectPlatformIdSchema()}, {"conversion", nullableConversion}},
+            {"platform_id", "conversion"}));
         put({"get_effective_conversion"}, object({{"object", text()}, {"platform_id", projectPlatformIdSchema()}}, {"object"}), true);
         const auto conversionQuery = object({{"conversion", conversionSelector}, {"platform_id", projectPlatformIdSchema()}}, {"conversion"});
         put({"get_conversion_results"}, conversionQuery, true);

@@ -8,8 +8,6 @@
 #include "../FieldGroupProjectAdapter.h"
 #include "../Components/VTrack.h"
 #include "../Components/VMixNode.h"
-#include "../Components/VConversion.h"
-#include "../ConversionDefaults.h"
 #include "../SoundSourceSemantics.h"
 
 namespace VNX {
@@ -26,6 +24,7 @@ struct RootState
     QStringList selected;
     std::vector<ActionPackTargeting> targeting;
     PlatformContext context;
+    QMap<ProjectPlatformId, QUuid> defaultConversions;
 };
 
 struct OwnerState
@@ -37,7 +36,6 @@ struct OwnerState
     QMap<QUuid, PlatformOverrideLedgerV1> clips;
     std::optional<SelectionData> selections;
     std::optional<SoundSources> sources;
-    std::optional<std::vector<ConversionPlatformConfig>> conversions;
 
     bool operator==(const OwnerState&) const = default;
 };
@@ -53,7 +51,7 @@ RootState captureRoot(const ProjectData& project)
     const auto selection = ProjectManager::instance().packExportSelection();
     return {project.platforms, selection.currentPlatformId,
             selection.selectedPlatformIds, selection.actionTargeting,
-            PlatformContextService::instance().context()};
+            PlatformContextService::instance().context(), project.defaultConversionRefs};
 }
 
 OwnerState captureOwner(const ProjectItem& item)
@@ -69,7 +67,6 @@ OwnerState captureOwner(const ProjectItem& item)
             state.clips.insert(clip.clipGuid, clip.platformOverrides);
     }
     if (const auto* sound = item.comp<VSound>()) state.sources = sound->sources;
-    if (const auto* conversion = item.comp<VConversion>()) state.conversions = conversion->platforms;
     return state;
 }
 
@@ -81,9 +78,8 @@ void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
     owner.fieldGroups.send.platforms.erase(scope);
     owner.fieldGroups.spatialRating.platforms.erase(scope);
     owner.fieldGroups.effects.platforms.erase(scope);
+    owner.fieldGroups.conversion.platforms.erase(scope);
     owner.effectPlatforms.erase(id);
-    if (owner.conversions)
-        std::erase_if(*owner.conversions, [&](const auto& row) { return row.platformId == id; });
     for (auto& ledger : owner.clips) ledger.erase(id);
     if (owner.selections) owner.selections->platforms.remove(Platforms::idString(id));
     if (owner.sources)
@@ -105,7 +101,6 @@ bool canApply(const ProjectManager& manager, const EditState& state)
         const auto* item = manager.findItemByGuid(owner.guid);
         if (!item) return false;
         if (owner.sources && !item->comp<VSound>()) return false;
-        if (owner.conversions && !item->comp<VConversion>()) return false;
         if (owner.selections && !item->comp<VSelection>()) return false;
         const auto* track = item->comp<VTrack>();
         for (auto it = owner.clips.begin(); it != owner.clips.end(); ++it) {
@@ -124,6 +119,8 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
     auto& project = *manager.currentProject();
     const auto previousPlatformIds = project.platformIds();
     project.platforms = state.root.platforms;
+    const auto previousDefaults = project.defaultConversionRefs;
+    project.defaultConversionRefs = state.root.defaultConversions;
     if (membershipChanged) {
         auto selection = manager.packExportSelection();
         const auto nextPlatformIds = project.platformIds();
@@ -187,7 +184,6 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
             }
         }
         if (owner.sources) item->comp<VSound>()->sources = *owner.sources;
-        if (owner.conversions) item->comp<VConversion>()->platforms = *owner.conversions;
         item->markDirty();
         changed.append(item);
     }
@@ -196,6 +192,13 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
         PlatformContextService::instance().setSelected(context.selected, context.primary, context.all);
     }
     manager.notifyProjectPlatformEdits(changed, platformIds);
+    QSet<ProjectPlatformId> defaultPlatforms;
+    for (auto it = previousDefaults.cbegin(); it != previousDefaults.cend(); ++it) defaultPlatforms.insert(it.key());
+    for (auto it = project.defaultConversionRefs.cbegin(); it != project.defaultConversionRefs.cend(); ++it)
+        defaultPlatforms.insert(it.key());
+    for (const auto& platform : defaultPlatforms)
+        if (previousDefaults.value(platform) != project.defaultConversionRefs.value(platform))
+            emit manager.defaultConversionChanged(platform, project.defaultConversionRefs.value(platform));
 }
 
 ActionResult commitEdit(ProjectManager* manager, EditState before, EditState after,
@@ -210,19 +213,22 @@ ActionResult commitEdit(ProjectManager* manager, EditState before, EditState aft
     for (const auto& id : Platforms::ids(before.root.platforms))
         if (!Platforms::ids(after.root.platforms).contains(id)) removedIds.append(id);
     const bool membershipChanged = Platforms::ids(before.root.platforms) != Platforms::ids(after.root.platforms);
+    after.root.defaultConversions = before.root.defaultConversions;
+    for (const auto& id : removedIds) after.root.defaultConversions.remove(QUuid(id));
+    for (const auto& platform : after.root.platforms) {
+        if (Platforms::find(before.root.platforms, platform.id)) continue;
+        for (const auto& existing : before.root.platforms) {
+            const auto reused = before.root.defaultConversions.value(existing.id);
+            if (existing.basePlatform != platform.basePlatform || reused.isNull()) continue;
+            after.root.defaultConversions.insert(platform.id, reused);
+            break;
+        }
+    }
     if (membershipChanged) {
         for (const auto* item : Platforms::referenceOwners(*project)) {
             auto old = captureOwner(*item);
             auto removed = old;
             for (const auto& id : removedIds) removeReferences(removed, QUuid(id));
-            if (removed.conversions) {
-                for (const auto& platform : after.root.platforms) {
-                    if (Platforms::find(before.root.platforms, platform.id)) continue;
-                    auto row = defaultConfigFor(platform.basePlatform);
-                    row.platformId = platform.id;
-                    removed.conversions->push_back(std::move(row));
-                }
-            }
             if (old == removed) continue;
             before.owners.append(std::move(old));
             after.owners.append(std::move(removed));

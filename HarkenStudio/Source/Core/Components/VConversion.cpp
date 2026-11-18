@@ -1,7 +1,6 @@
 #include "VConversion.h"
 
 #include <QJsonArray>
-#include <QSet>
 
 #include <algorithm>
 #include <cmath>
@@ -15,31 +14,6 @@ bool fail(QString* error, const QString& message)
 {
     if (error) *error = message;
     return false;
-}
-
-bool validateConfigs(const std::vector<ConversionPlatformConfig>& configs, QString* error)
-{
-    if (configs.empty()) return fail(error, QStringLiteral("At least one conversion platform is required"));
-    QSet<ProjectPlatformId> ids;
-    for (const auto& config : configs) {
-        if (!validateConversionConfig(config, error)) return false;
-        if (ids.contains(config.platformId))
-            return fail(error, QStringLiteral("Conversion platform IDs must be unique"));
-        ids.insert(config.platformId);
-    }
-    return true;
-}
-
-bool readPlatforms(const QJsonArray& rows, std::vector<ConversionPlatformConfig>& configs,
-                   QString* error)
-{
-    for (const auto& row : rows) {
-        if (!row.isObject()) return fail(error, QStringLiteral("Conversion platforms must be objects"));
-        auto config = ConversionPlatformConfig::fromJson(row.toObject(), error);
-        if (!config) return false;
-        configs.push_back(std::move(*config));
-    }
-    return validateConfigs(configs, error);
 }
 
 }
@@ -69,10 +43,8 @@ bool validateSampleRateTiers(const std::vector<SampleRateTier>& tiers, QString* 
     return true;
 }
 
-bool validateConversionConfig(const ConversionPlatformConfig& config, QString* error)
+bool validateConversionConfig(const ConversionConfig& config, QString* error)
 {
-    if (config.platformId.isNull())
-        return fail(error, QStringLiteral("Conversion platform ID must not be empty"));
     if (config.format != ConversionFormat::PCM && config.format != ConversionFormat::Vorbis)
         return fail(error, QStringLiteral("Conversion format must be PCM or Vorbis"));
     if (!std::isfinite(config.vorbisQuality) || config.vorbisQuality < 0.0f || config.vorbisQuality > 1.0f)
@@ -80,48 +52,29 @@ bool validateConversionConfig(const ConversionPlatformConfig& config, QString* e
     return validateSampleRateTiers(config.tiers, error);
 }
 
-bool validateConversionPlatforms(const std::vector<ConversionPlatformConfig>& configs,
-                                 const QVector<ProjectPlatform>& projectPlatforms, QString* error)
-{
-    if (!validateConfigs(configs, error)) return false;
-    if (configs.size() != static_cast<std::size_t>(projectPlatforms.size()))
-        return fail(error, QStringLiteral("Conversion settings must contain every project platform exactly once"));
-    for (const auto& platform : projectPlatforms) {
-        if (std::none_of(configs.begin(), configs.end(), [&](const auto& config) {
-                return config.platformId == platform.id;
-            }))
-            return fail(error, QStringLiteral("Conversion settings are missing a project platform"));
-    }
-    return true;
-}
-
-QJsonObject ConversionPlatformConfig::toJson() const
+QJsonObject ConversionConfig::toJson() const
 {
     QJsonArray rows;
     for (const auto& tier : tiers)
         rows.append(QJsonObject{{"maxBytes", tier.maxBytes ? QJsonValue(static_cast<qint64>(*tier.maxBytes))
                                                          : QJsonValue(QJsonValue::Null)},
                                 {"sampleRate", static_cast<qint64>(tier.sampleRate)}});
-    return {{"platformId", ProjectPlatformSemantics::idString(platformId)},
-            {"format", format == ConversionFormat::Vorbis ? "Vorbis" : "PCM"},
+    return {{"format", format == ConversionFormat::Vorbis ? "Vorbis" : "PCM"},
             {"vorbisQuality", vorbisQuality}, {"sampleRateTiers", rows}};
 }
 
-std::optional<ConversionPlatformConfig> ConversionPlatformConfig::fromJson(const QJsonObject& json,
-                                                                          QString* error)
+std::optional<ConversionConfig> ConversionConfig::fromJson(const QJsonObject& json, QString* error)
 {
-    ConversionPlatformConfig config;
-    const auto platform = ProjectPlatformSemantics::parseId(json.value("platformId").toString());
+    ConversionConfig config;
     const auto format = json.value("format").toString();
     const auto quality = json.value("vorbisQuality");
-    if (!platform || (format != QLatin1String("PCM") && format != QLatin1String("Vorbis"))
+    if ((format != QLatin1String("PCM") && format != QLatin1String("Vorbis"))
         || !quality.isDouble() || !std::isfinite(quality.toDouble())
         || quality.toDouble() < 0.0 || quality.toDouble() > 1.0
         || !json.value("sampleRateTiers").isArray()) {
-        fail(error, QStringLiteral("Invalid conversion platform configuration"));
+        fail(error, QStringLiteral("Invalid conversion configuration"));
         return std::nullopt;
     }
-    config.platformId = *platform;
     config.format = format == QLatin1String("Vorbis") ? ConversionFormat::Vorbis : ConversionFormat::PCM;
     config.vorbisQuality = static_cast<float>(quality.toDouble());
     config.tiers.clear();
@@ -155,42 +108,16 @@ const PropertySchema& VConversion::schema()
     return fields;
 }
 
-const ConversionPlatformConfig* VConversion::platformConfig(ProjectPlatformId id) const
-{
-    const auto found = std::find_if(platforms.begin(), platforms.end(), [&](const auto& config) {
-        return config.platformId == id;
-    });
-    return found == platforms.end() ? nullptr : &*found;
-}
-
-ConversionPlatformConfig* VConversion::platformConfig(ProjectPlatformId id)
-{
-    return const_cast<ConversionPlatformConfig*>(std::as_const(*this).platformConfig(id));
-}
-
-bool VConversion::setPlatforms(const QJsonArray& rows, const QVector<ProjectPlatform>& projectPlatforms,
-                               QString* error)
-{
-    std::vector<ConversionPlatformConfig> parsed;
-    if (!readPlatforms(rows, parsed, error)
-        || !validateConversionPlatforms(parsed, projectPlatforms, error)) return false;
-    platforms = std::move(parsed);
-    return true;
-}
-
 QJsonObject VConversion::toJson() const
 {
-    QJsonArray rows;
-    for (const auto& config : platforms) rows.append(config.toJson());
-    return {{"platforms", rows}};
+    return config.toJson();
 }
 
 bool VConversion::fromJson(const QJsonObject& json)
 {
-    if (!json.value("platforms").isArray()) return false;
-    std::vector<ConversionPlatformConfig> parsed;
-    if (!readPlatforms(json.value("platforms").toArray(), parsed, nullptr)) return false;
-    platforms = std::move(parsed);
+    auto parsed = ConversionConfig::fromJson(json);
+    if (!parsed) return false;
+    config = std::move(*parsed);
     return true;
 }
 

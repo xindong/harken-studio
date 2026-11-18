@@ -489,7 +489,7 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
     }
     if (const auto* project = ProjectManager::instance().currentProject()) {
         QString tooltip = view.sourceTooltip(*project, binding.field);
-        if (mixed) tooltip.prepend(*group == FieldGroupId::Conversion
+        if (mixed) tooltip.prepend(*group == FieldGroupId::Conversion && conversionViews_.size() > 1
             ? tr("Mixed values across selected objects.\n") : *group == FieldGroupId::Send
             ? tr("Mixed table. Select a single platform to edit.\n") : tr("Mixed values across platforms.\n"));
         binding.mixedTooltip = tooltip;
@@ -600,10 +600,12 @@ void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString&
             : std::nullopt;
         const auto settings = action == QLatin1String("set_field_group_field")
             ? std::optional<QUuid>(QUuid(args.value(QStringLiteral("value")).toString())) : std::nullopt;
+        const auto platform = view.editScopes.shared ? PlatformScope{}
+            : PlatformScope{fromFieldGroupGuid(view.editScopes.platforms.front())};
         cancelGroupEdits();
         QString error;
         const bool changed = ConversionEditing::setObjects(ProjectManager::instance(),
-            definitions, inherit, settings, expected, this, &error);
+            definitions, inherit, settings, platform, expected, this, &error);
         groupBindings_.at(group).error = error;
         refreshFieldGroups();
         if (changed) emit fieldGroupChanged();

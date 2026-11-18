@@ -30,7 +30,9 @@
 #include <QLocale>
 #include <QRegularExpressionValidator>
 #include <QScopedValueRollback>
+#include <QScrollArea>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QToolButton>
@@ -94,33 +96,6 @@ QComboBox* sampleRates(QWidget* parent, uint32_t selected)
     return rate;
 }
 
-QWidget* sizeInput(QWidget* parent, QLineEdit*& value, QComboBox*& unit, std::optional<uint64_t> bytes)
-{
-    auto* limit = new QWidget(parent);
-    auto* layout = new QHBoxLayout(limit);
-    layout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Tight);
-    const int unitIndex = bytes && *bytes >= unitScale(1) && *bytes % unitScale(1) == 0 ? 1 : 0;
-    value = new QLineEdit(bytes ? sizeValue(*bytes, unitIndex) : QString(), limit);
-    value->setMaxLength(64);
-    value->setValidator(new QRegularExpressionValidator(
-        QRegularExpression(QStringLiteral("[0-9]+(?:\\.[0-9]+)?")), value));
-    unit = new QComboBox(limit);
-    unit->addItems({QStringLiteral("KB"), QStringLiteral("MB")});
-    unit->setCurrentIndex(unitIndex);
-    unit->setProperty("previousUnit", unitIndex);
-    auto* text = value;
-    auto* units = unit;
-    QObject::connect(unit, &QComboBox::currentIndexChanged, limit, [text, units](int next) {
-        const auto converted = sizeBytes(text->text(), units->property("previousUnit").toInt());
-        units->setProperty("previousUnit", next);
-        if (converted) text->setText(sizeValue(*converted, next));
-    });
-    layout->addWidget(value, 1);
-    layout->addWidget(unit);
-    return limit;
-}
-
 void sortTiers(std::vector<SampleRateTier>& tiers)
 {
     std::sort(tiers.begin(), tiers.end(), [](const auto& first, const auto& second) {
@@ -144,24 +119,40 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     auto* splitter = new QSplitter(Qt::Vertical, this);
     layout->addWidget(splitter);
-    platforms_ = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, splitter);
-    platforms_->setObjectName(QStringLiteral("conversionPlatforms"));
-    platforms_->setColumns(QStringLiteral("ConversionPlatforms"), {
-        {QStringLiteral("Format"), tr("Format"), 220},
-        {QStringLiteral("Quality"), tr("Quality"), 180},
-        {QStringLiteral("UpperLimit"), tr("Upper limit"), 320},
-        {QStringLiteral("SampleRate"), tr("Sample rate"), 280}
-    });
-    platforms_->setSelectionClearHandler([this] {
-        selectedPlatform_ = QUuid{};
-        selectedTier_ = -1;
-        refreshSelection();
-    });
-    platforms_->setRowSelectionHandler([this](QWidget* row) {
-        selectedPlatform_ = row->property("platformId").toUuid();
-        selectedTier_ = row->property("tierIndex").toInt();
-        refreshSelection();
-    });
+    auto* upper = new QWidget(splitter);
+    auto* upperLayout = new QVBoxLayout(upper);
+    upperLayout->setContentsMargins(0, 0, 0, 0);
+    ThemeLayout::spacing(upperLayout, ThemeLayout::Space::Control);
+    auto* scroll = new QScrollArea(upper);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    fields_ = new QWidget(scroll);
+    auto* fieldsLayout = new QVBoxLayout(fields_);
+    fieldsLayout->setContentsMargins(0, 0, 0, 0);
+    ThemeLayout::spacing(fieldsLayout, ThemeLayout::Space::Control);
+    auto* form = new DialogFormLayout;
+    format_ = new QComboBox(fields_);
+    format_->setObjectName(QStringLiteral("conversionFormat"));
+    format_->addItem(QStringLiteral("PCM"), static_cast<int>(ConversionFormat::PCM));
+    format_->addItem(QStringLiteral("Vorbis"), static_cast<int>(ConversionFormat::Vorbis));
+    form->addRow(tr("Format:"), format_);
+    quality_ = new QSpinBox(fields_);
+    quality_->setObjectName(QStringLiteral("conversionQuality"));
+    quality_->setRange(0, 100);
+    quality_->setSuffix(QStringLiteral("%"));
+    quality_->setKeyboardTracking(false);
+    form->addRow(tr("Quality:"), quality_);
+    fieldsLayout->addLayout(form);
+    tiersTable_ = new TableWidget(fields_);
+    tiers_ = tiersTable_->createItemView(QStringLiteral("conversionSampleRateTiers"),
+        {tr("Upper limit"), tr("Sample rate")}, {600, 400});
+    tiers_->setRootIsDecorated(false);
+    tiers_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tiers_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    fieldsLayout->addWidget(tiersTable_);
+    fieldsLayout->addStretch();
+    scroll->setWidget(fields_);
+    upperLayout->addWidget(scroll);
     auto* resultsTable = new TableWidget(TableOptions::display(), splitter);
     results_ = resultsTable->createItemView(QStringLiteral("conversionResults"),
         {tr("Sound"), tr("Source"), tr("Language"), tr("Original format"), tr("Original rate"),
@@ -182,6 +173,25 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     auto* cancel = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     cancel->setContext(Qt::WidgetWithChildrenShortcut);
     connect(cancel, &QShortcut::activated, this, &ConversionEditorPanel::cancelConversion);
+    connect(format_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!displayed_) return;
+        auto next = *displayed_;
+        next.format = static_cast<ConversionFormat>(format_->currentData().toInt());
+        commitConfig(next);
+    });
+    connect(quality_, &QSpinBox::valueChanged, this, [this] {
+        if (!displayed_) return;
+        auto next = *displayed_;
+        next.vorbisQuality = static_cast<float>(quality_->value()) / 100.0f;
+        commitConfig(next);
+    });
+    connect(tiersTable_->footer()->addButton(), &QToolButton::clicked, this, &ConversionEditorPanel::addTier);
+    connect(tiersTable_->footer()->removeButton(), &QToolButton::clicked, this, &ConversionEditorPanel::removeTier);
+    connect(tiers_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        const int index = tiers_->indexOfTopLevelItem(tiers_->currentItem());
+        tiersTable_->footer()->removeButton()->setEnabled(displayed_ && index >= 0
+            && static_cast<size_t>(index) < displayed_->tiers.size() && displayed_->tiers[index].maxBytes.has_value());
+    });
     auto* navigation = new ObjectRefNavigation(this);
     const auto navigate = [this](RefDomain domain, uint32_t id) {
         if (domain != RefDomain::ProjectObject) return;
@@ -210,7 +220,7 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     connect(&projects, &ProjectManager::targetPlatformsChanged, this, &ConversionEditorPanel::refreshPreset);
     connect(&projects, &ProjectManager::projectLanguagesChanged, this, [this] { resultsRefresh_.start(); });
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-        this, &ConversionEditorPanel::refreshPreset);
+        this, [this] { resultsRefresh_.start(); });
     connect(&PreviewMediaModeService::instance(), &PreviewMediaModeService::modeChanged,
         this, [this] { resultsRefresh_.start(); });
     auto& assets = AssetRegistry::instance();
@@ -243,11 +253,7 @@ ProjectItem* ConversionEditorPanel::boundItem() const
 void ConversionEditorPanel::bindItem(ProjectItem* item)
 {
     const auto guid = acceptsItem(item) ? item->guid : QUuid{};
-    if (guid != itemGuid_) {
-        cancelConversion();
-        selectedPlatform_ = QUuid{};
-        selectedTier_ = -1;
-    }
+    if (guid != itemGuid_) cancelConversion();
     itemGuid_ = guid;
     refreshPreset();
 }
@@ -256,9 +262,7 @@ void ConversionEditorPanel::clearEditor()
 {
     cancelConversion();
     itemGuid_ = QUuid{};
-    displayed_.clear();
-    selectedPlatform_ = QUuid{};
-    selectedTier_ = -1;
+    displayed_.reset();
     refreshPreset();
 }
 
@@ -279,212 +283,130 @@ void ConversionEditorPanel::restoreState(const QVariantMap& state)
     bindItem(ProjectManager::instance().findItemByGuid(QUuid(state.value(QStringLiteral("itemGuid")).toString())));
 }
 
-const ConversionPlatformConfig* ConversionEditorPanel::displayedConfig(const ProjectPlatformId& platform) const
-{
-    const auto found = std::find_if(displayed_.begin(), displayed_.end(),
-        [&](const auto& config) { return config.platformId == platform; });
-    return found == displayed_.end() ? nullptr : &*found;
-}
-
 void ConversionEditorPanel::refreshPreset()
 {
+    const QScopedValueRollback refreshing(refreshing_, true);
     const auto* item = boundItem();
+    const auto* project = ProjectManager::instance().currentProject();
     setWindowTitle(item ? tr("Conversion Editor - %1").arg(item->name) : tr("Conversion Editor"));
-    displayed_ = item ? item->comp<VConversion>()->platforms : std::vector<ConversionPlatformConfig>{};
-    rebuildPlatforms();
+    fields_->setVisible(item && project);
+    displayed_ = item && project ? std::optional{item->comp<VConversion>()->config} : std::nullopt;
+    refreshConfig();
     resultsRefresh_.start();
 }
 
-void ConversionEditorPanel::rebuildPlatforms()
+void ConversionEditorPanel::refreshConfig()
 {
     const QScopedValueRollback refreshing(refreshing_, true);
-    auto* rows = platforms_->rowsLayout();
-    while (QLayoutItem* entry = rows->takeAt(0)) {
-        if (QWidget* widget = entry->widget()) {
-            widget->hide();
-            widget->deleteLater();
-        }
-        delete entry;
+    const QSignalBlocker formatBlocker(format_);
+    const QSignalBlocker qualityBlocker(quality_);
+    format_->setEnabled(displayed_.has_value());
+    quality_->setEnabled(displayed_ && displayed_->format == ConversionFormat::Vorbis);
+    if (displayed_) {
+        format_->setCurrentIndex(format_->findData(static_cast<int>(displayed_->format)));
+        quality_->setValue(static_cast<int>(std::lround(displayed_->vorbisQuality * 100.0f)));
     }
-    tierRows_.clear();
-    groupFooters_.clear();
-    const auto* project = ProjectManager::instance().currentProject();
-    if (project && boundItem()) {
-        QVector<const ProjectPlatform*> ordered;
-        const auto primary = PlatformContextService::instance().context().primary;
-        if (const auto* platform = ProjectPlatformSemantics::find(project->platforms, primary))
-            ordered.push_back(platform);
-        for (const auto& platform : project->platforms)
-            if (platform.id != primary) ordered.push_back(&platform);
-        for (const auto* platform : ordered) {
-            const auto* config = displayedConfig(platform->id);
-            if (!config) continue;
-            auto* header = platforms_->createGroupHeader(platform->name);
-            header->setObjectName(QStringLiteral("conversionPlatformGroup"));
-            for (size_t index = 0; index < config->tiers.size(); ++index)
-                rows->addWidget(buildTierRow(*config, index));
-            auto* footer = platforms_->createGroupFooter();
-            const auto id = platform->id;
-            connect(footer->addButton(), &QToolButton::clicked, this, [this, id] { addTier(id); });
-            connect(footer->removeButton(), &QToolButton::clicked, this, [this, id] { removeTier(id); });
-            groupFooters_.insert(id, footer);
-        }
-    }
-    const auto* selected = displayedConfig(selectedPlatform_);
-    if (!selected || selectedTier_ < 0 || static_cast<size_t>(selectedTier_) >= selected->tiers.size()) {
-        selectedPlatform_ = QUuid{};
-        selectedTier_ = -1;
-    }
-    refreshSelection();
-    platforms_->refreshLayout();
+    refreshTiers();
 }
 
-QWidget* ConversionEditorPanel::buildTierRow(const ConversionPlatformConfig& config, size_t index)
+void ConversionEditorPanel::commitConfig(const ConversionConfig& config)
 {
-    const auto tier = config.tiers[index];
-    const auto platform = config.platformId;
-    const auto rendered = config;
-    auto* row = new QWidget(platforms_->rowsWidget());
-    row->setObjectName(QStringLiteral("listRow"));
-    row->setProperty("platformId", platform);
-    row->setProperty("tierIndex", static_cast<int>(index));
-    row->setProperty("selected", false);
-    row->setProperty("lastRow", index + 1 == config.tiers.size());
-    auto* layout = new QHBoxLayout(row);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
-    const auto current = [this, platform, rendered]() -> const ConversionPlatformConfig* {
-        const auto* value = displayedConfig(platform);
-        return refreshing_ || !value || *value != rendered ? nullptr : value;
-    };
-
-    auto* formatCell = platforms_->createCell(row);
-    formatCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto* qualityCell = platforms_->createCell(row);
-    qualityCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    if (index == 0) {
-        auto* format = new QComboBox(formatCell);
-        format->setObjectName(QStringLiteral("conversionFormat"));
-        format->addItem(QStringLiteral("PCM"), static_cast<int>(ConversionFormat::PCM));
-        format->addItem(QStringLiteral("Vorbis"), static_cast<int>(ConversionFormat::Vorbis));
-        format->setCurrentIndex(format->findData(static_cast<int>(config.format)));
-        formatCell->addWidget(format);
-        connect(format, &QComboBox::currentIndexChanged, this, [this, format, current] {
-            const auto* value = current();
-            if (!value) return;
-            auto next = *value;
-            next.format = static_cast<ConversionFormat>(format->currentData().toInt());
-            commitConfig(next);
-        });
-        auto* quality = new QSpinBox(qualityCell);
-        quality->setObjectName(QStringLiteral("conversionQuality"));
-        quality->setRange(0, 100);
-        quality->setSuffix(QStringLiteral("%"));
-        quality->setKeyboardTracking(false);
-        quality->setValue(static_cast<int>(std::lround(config.vorbisQuality * 100.0f)));
-        quality->setEnabled(config.format == ConversionFormat::Vorbis);
-        qualityCell->addWidget(quality);
-        connect(quality, &QSpinBox::valueChanged, this, [this, quality, current] {
-            const auto* value = current();
-            if (!value) return;
-            auto next = *value;
-            next.vorbisQuality = static_cast<float>(quality->value()) / 100.0f;
-            commitConfig(next);
-        });
-    }
-    layout->addWidget(formatCell);
-    layout->addWidget(qualityCell);
-
-    auto* limitCell = platforms_->createCell(row);
-    limitCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    if (tier.maxBytes) {
-        QLineEdit* value = nullptr;
-        QComboBox* unit = nullptr;
-        limitCell->addWidget(sizeInput(limitCell, value, unit, tier.maxBytes));
-        connect(value, &QLineEdit::editingFinished, this, [this, index, value, unit, current] {
-            const auto* config = current();
-            if (!config) return;
-            const auto bytes = sizeBytes(value->text(), unit->currentIndex());
-            auto next = *config;
-            if (bytes) next.tiers[index].maxBytes = *bytes;
-            sortTiers(next.tiers);
-            QString error;
-            const bool valid = bytes && validateSampleRateTiers(next.tiers, &error);
-            QtControlSkin::setSemanticProperty(value, "inputInvalid", !valid);
-            value->setToolTip(valid ? QString() : error.isEmpty() ? tr("Enter a whole-byte size within range.") : error);
-            if (valid) commitConfig(next);
-        });
-    } else {
-        limitCell->addWidget(new QLabel(tr("Infinite"), limitCell));
-    }
-    layout->addWidget(limitCell);
-
-    auto* rateCell = platforms_->createCell(row);
-    rateCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto* rate = sampleRates(rateCell, tier.sampleRate);
-    rateCell->addWidget(rate);
-    connect(rate, &QComboBox::currentIndexChanged, this, [this, index, rate, current] {
-        const auto* config = current();
-        if (!config) return;
-        auto next = *config;
-        next.tiers[index].sampleRate = rate->currentData().toUInt();
-        commitConfig(next);
-    });
-    layout->addWidget(rateCell);
-
-    platforms_->registerRow(row, {formatCell, qualityCell, limitCell, rateCell}, nullptr,
-                            platform.toString(QUuid::WithoutBraces));
-    tierRows_.append(row);
-    return row;
-}
-
-void ConversionEditorPanel::refreshSelection()
-{
-    for (auto* row : tierRows_) {
-        const bool selected = row->property("platformId").toUuid() == selectedPlatform_
-            && row->property("tierIndex").toInt() == selectedTier_;
-        QtControlSkin::setSemanticProperty(row, "selected", selected);
-    }
-    const auto* selected = displayedConfig(selectedPlatform_);
-    const bool removable = selected && selectedTier_ >= 0
-        && static_cast<size_t>(selectedTier_) < selected->tiers.size()
-        && selected->tiers[selectedTier_].maxBytes.has_value();
-    for (auto it = groupFooters_.cbegin(); it != groupFooters_.cend(); ++it)
-        it.value()->removeButton()->setEnabled(removable && it.key() == selectedPlatform_);
-}
-
-void ConversionEditorPanel::commitConfig(const ConversionPlatformConfig& config)
-{
-    if (refreshing_) return;
-    auto replacement = displayed_;
-    const auto row = std::find_if(replacement.begin(), replacement.end(),
-        [&](const auto& value) { return value.platformId == config.platformId; });
-    if (row == replacement.end() || *row == config) return;
-    *row = config;
+    if (refreshing_ || !displayed_ || *displayed_ == config) return;
     QString error;
-    if (!ConversionEditing::setPlatforms(ProjectManager::instance(), itemGuid_, replacement, displayed_, this, &error)) {
+    if (!ConversionEditing::setConfig(ProjectManager::instance(), itemGuid_, config, displayed_, this, &error)) {
         if (!error.isEmpty()) qWarning().noquote() << error;
         QMetaObject::invokeMethod(this, &ConversionEditorPanel::refreshPreset, Qt::QueuedConnection);
         return;
     }
-    displayed_ = std::move(replacement);
+    displayed_ = config;
 }
 
-void ConversionEditorPanel::addTier(const ProjectPlatformId& platform)
+void ConversionEditorPanel::refreshTiers()
 {
-    const auto* config = displayedConfig(platform);
-    if (!config) return;
+    const QSignalBlocker blocker(tiers_);
+    tiers_->clear();
+    tiersTable_->footer()->removeButton()->setEnabled(false);
+    tiersTable_->footer()->addButton()->setEnabled(displayed_.has_value());
+    if (!displayed_) return;
+    const auto rendered = *displayed_;
+    for (size_t index = 0; index < rendered.tiers.size(); ++index) {
+        const auto tier = rendered.tiers[index];
+        auto* row = new QTreeWidgetItem(tiers_);
+        if (tier.maxBytes) {
+            auto* limit = new QWidget(tiers_);
+            auto* layout = new QHBoxLayout(limit);
+            layout->setContentsMargins(0, 0, 0, 0);
+            ThemeLayout::spacing(layout, ThemeLayout::Space::Tight);
+            const int unitIndex = *tier.maxBytes >= unitScale(1) && *tier.maxBytes % unitScale(1) == 0 ? 1 : 0;
+            auto* value = new QLineEdit(sizeValue(*tier.maxBytes, unitIndex), limit);
+            value->setMaxLength(64);
+            value->setValidator(new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9]+(?:\\.[0-9]+)?")), value));
+            auto* unit = new QComboBox(limit);
+            unit->addItems({QStringLiteral("KB"), QStringLiteral("MB")});
+            unit->setCurrentIndex(unitIndex);
+            unit->setProperty("previousUnit", unitIndex);
+            layout->addWidget(value, 1);
+            layout->addWidget(unit);
+            tiers_->setItemWidget(row, 0, limit);
+            connect(unit, &QComboBox::currentIndexChanged, this, [value, unit](int next) {
+                const auto bytes = sizeBytes(value->text(), unit->property("previousUnit").toInt());
+                unit->setProperty("previousUnit", next);
+                if (bytes) value->setText(sizeValue(*bytes, next));
+            });
+            connect(value, &QLineEdit::editingFinished, this, [this, index, value, unit, rendered] {
+                if (refreshing_ || displayed_ != rendered) return;
+                const auto bytes = sizeBytes(value->text(), unit->currentIndex());
+                auto next = rendered;
+                if (bytes) next.tiers[index].maxBytes = *bytes;
+                sortTiers(next.tiers);
+                QString error;
+                const bool valid = bytes && validateSampleRateTiers(next.tiers, &error);
+                QtControlSkin::setSemanticProperty(value, "inputInvalid", !valid);
+                value->setToolTip(valid ? QString() : error.isEmpty() ? tr("Enter a whole-byte size within range.") : error);
+                if (valid) commitConfig(next);
+            });
+        } else {
+            row->setText(0, tr("Infinite"));
+        }
+        auto* rate = sampleRates(tiers_, tier.sampleRate);
+        tiers_->setItemWidget(row, 1, rate);
+        connect(rate, &QComboBox::currentIndexChanged, this, [this, index, rate, rendered] {
+            if (refreshing_ || displayed_ != rendered) return;
+            auto next = rendered;
+            next.tiers[index].sampleRate = rate->currentData().toUInt();
+            commitConfig(next);
+        });
+    }
+}
+
+void ConversionEditorPanel::addTier()
+{
+    if (!displayed_) return;
     const auto before = displayed_;
     const auto preset = itemGuid_;
     const auto project = ProjectManager::instance().currentProjectLease();
-    auto next = *config;
+    auto next = *displayed_;
     BaseDialog dialog(this);
     dialog.setWindowTitle(tr("Add Range"));
     auto* layout = new QVBoxLayout(&dialog);
     auto* form = new DialogFormLayout;
-    QLineEdit* value = nullptr;
-    QComboBox* unit = nullptr;
-    form->addRow(tr("Upper limit:"), sizeInput(&dialog, value, unit, std::nullopt));
+    auto* limit = new QWidget(&dialog);
+    auto* line = new QHBoxLayout(limit);
+    line->setContentsMargins(0, 0, 0, 0);
+    auto* value = new QLineEdit(limit);
+    value->setMaxLength(64);
+    value->setValidator(new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9]+(?:\\.[0-9]+)?")), value));
+    auto* unit = new QComboBox(limit);
+    unit->addItems({QStringLiteral("KB"), QStringLiteral("MB")});
+    unit->setProperty("previousUnit", 0);
+    connect(unit, &QComboBox::currentIndexChanged, &dialog, [value, unit](int next) {
+        const auto bytes = sizeBytes(value->text(), unit->property("previousUnit").toInt());
+        unit->setProperty("previousUnit", next);
+        if (bytes) value->setText(sizeValue(*bytes, next));
+    });
+    line->addWidget(value, 1);
+    line->addWidget(unit);
+    form->addRow(tr("Upper limit:"), limit);
     auto* rate = sampleRates(&dialog, 0);
     form->addRow(tr("Sample rate:"), rate);
     layout->addLayout(form);
@@ -511,16 +433,13 @@ void ConversionEditorPanel::addTier(const ProjectPlatformId& platform)
         commitConfig(next);
 }
 
-void ConversionEditorPanel::removeTier(const ProjectPlatformId& platform)
+void ConversionEditorPanel::removeTier()
 {
-    const auto* config = displayedConfig(platform);
-    if (!config || platform != selectedPlatform_ || selectedTier_ < 0
-        || static_cast<size_t>(selectedTier_) >= config->tiers.size()
-        || !config->tiers[selectedTier_].maxBytes) return;
-    auto next = *config;
-    next.tiers.erase(next.tiers.begin() + selectedTier_);
-    selectedPlatform_ = QUuid{};
-    selectedTier_ = -1;
+    const int index = tiers_->indexOfTopLevelItem(tiers_->currentItem());
+    if (!displayed_ || index < 0 || static_cast<size_t>(index) >= displayed_->tiers.size()
+        || !displayed_->tiers[index].maxBytes) return;
+    auto next = *displayed_;
+    next.tiers.erase(next.tiers.begin() + index);
     commitConfig(next);
 }
 

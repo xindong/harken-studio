@@ -785,19 +785,16 @@ TEST(SoundSourceSemanticsTest, CacheIdentityTracksEffectiveMediaParameters)
     asset.metadata.fileSize = 100;
     ConversionPresetSnapshot preset;
     preset.presetGuid = QUuid::createUuid();
-    ConversionPlatformConfig row;
-    row.platformId = QUuid::createUuid();
-    row.tiers = {{100, 24000}, {std::nullopt, 16000}};
-    preset.platforms.push_back(row);
+    preset.config.tiers = {{100, 24000}, {std::nullopt, 16000}};
     QString resolutionError;
-    const auto selected = resolveConversion(preset, row.platformId, asset, &resolutionError);
+    const auto selected = resolveConversion(preset, asset, &resolutionError);
     ASSERT_TRUE(selected) << resolutionError.toStdString();
     EXPECT_EQ(key(selected), resampled);
     preset.presetGuid = QUuid::createUuid();
-    preset.platforms.front().tiers = {{std::nullopt, 24000}};
-    EXPECT_EQ(key(resolveConversion(preset, row.platformId, asset)), resampled);
+    preset.config.tiers = {{std::nullopt, 24000}};
+    EXPECT_EQ(key(resolveConversion(preset, asset)), resampled);
     asset.metadata.sampleRate = 16000;
-    const auto originalRate = resolveConversion(preset, row.platformId, asset, &resolutionError);
+    const auto originalRate = resolveConversion(preset, asset, &resolutionError);
     ASSERT_TRUE(originalRate) << resolutionError.toStdString();
     EXPECT_EQ(originalRate->sampleRate, 0u);
 

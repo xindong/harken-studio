@@ -3783,19 +3783,14 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     addChild(context.project.actions.front().rootItem, secondAction);
     const auto addPreset = [&](const QString& name, uint32_t id, uint32_t rate) {
         auto item = makeItem(name, ProjectItem::Type::Conversion, id);
-        auto* conversion = item->comp<VConversion>();
-        for (const auto& platform : context.project.platforms) {
-            ConversionPlatformConfig config;
-            config.platformId = platform.id;
-            config.tiers = {{std::nullopt, platform.id == QUuid(context.platform) ? rate : 0u}};
-            conversion->platforms.push_back(config);
-        }
+        item->comp<VConversion>()->config.tiers = {{std::nullopt, rate}};
         context.project.conversionItems.push_back({item});
         return item;
     };
     const auto firstPreset = addPreset(QStringLiteral("First"), 601, 24000);
     const auto secondPreset = addPreset(QStringLiteral("Second"), 602, 16000);
     const auto unusedPreset = addPreset(QStringLiteral("Unused"), 603, 0);
+    const auto androidPreset = addPreset(QStringLiteral("Android"), 604, 0);
     const auto bind = [](ProjectItem& item, const ProjectItem& preset) {
         auto& group = item.fieldGroups.conversion.shared;
         group.mode = FieldGroupMode::Local;
@@ -3803,6 +3798,8 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     };
     bind(*layer, *firstPreset);
     bind(*secondSound, *secondPreset);
+    layer->fieldGroups.conversion.platforms[toFieldGroupGuid(HarkenTest::platformId("Android"))] =
+        {FieldGroupMode::Local, ConversionFieldGroup{toFieldGroupGuid(androidPreset->guid)}};
     bool compiled = false;
     const auto build = [&](bool force = false) {
         QString error;
@@ -3868,12 +3865,9 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     const auto initialReport = mediaReport(initial);
     ASSERT_NO_FATAL_FAILURE(expectPcmReport(initialReport));
     const auto secondBytes = readFileBytes(context.live.filePath(QStringLiteral("Two.bytes")));
-    auto* firstConfig = firstPreset->comp<VConversion>()->platformConfig(QUuid(context.platform));
-    ASSERT_NE(firstConfig, nullptr);
-    firstPreset->comp<VConversion>()->platformConfig(HarkenTest::platformId("Android"))
-        ->format = ConversionFormat::Vorbis;
-    unusedPreset->comp<VConversion>()->platformConfig(QUuid(context.platform))
-        ->format = ConversionFormat::Vorbis;
+    auto* firstConfig = &firstPreset->comp<VConversion>()->config;
+    androidPreset->comp<VConversion>()->config.format = ConversionFormat::Vorbis;
+    unusedPreset->comp<VConversion>()->config.format = ConversionFormat::Vorbis;
     const auto unrelated = build();
     ASSERT_TRUE(unrelated.allPlatformsSucceeded) << unrelated.preflightError.toStdString();
     ASSERT_TRUE(unrelated.finalizationResult.success) << unrelated.finalizationResult.error.toStdString();

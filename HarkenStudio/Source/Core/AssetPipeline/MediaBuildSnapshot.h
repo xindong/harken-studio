@@ -34,7 +34,7 @@ private:
     std::optional<MediaConversionRequest> buildRequest(
         const QUuid& soundGuid, uint32_t sourceID, ProjectPlatformId platformId,
         bool capture, QString* error) const;
-    std::shared_ptr<const QHash<QUuid, ConversionPresetSnapshot>> conversions_;
+    std::shared_ptr<const QHash<ProjectPlatformId, QHash<QUuid, ConversionPresetSnapshot>>> conversions_;
 };
 
 }

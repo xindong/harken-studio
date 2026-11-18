@@ -7,6 +7,7 @@
 #include "AuthoringPolicy.h"
 #include "AttenuationStore.h"
 #include "BusPlacementRules.h"
+#include "ConversionDefaults.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectSerializer.h"
 #include "SoundSourceSemantics.h"
@@ -584,8 +585,7 @@ bool TemplateApplyService::seedTemplateInto(
         remapTree(value.item.get(), identities);
         remintSubentityStableIds(project, value.item.get());
         if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(value.item->type))
-            value.item->fieldGroups.conversion.shared = {
-                FieldGroupMode::Local, ConversionFieldGroup{toFieldGroupGuid(project.defaultConversionRef)}};
+            ConversionDefaults::applyRootDefaults(project, value.item->fieldGroups.conversion);
         ProjectFileBinding binding;
         binding.parentFolder = value.folder;
         binding.rootItem = std::move(value.item);

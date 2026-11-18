@@ -153,33 +153,33 @@ Studio 的对象试听、Action 播放与容器重置统一使用 AudioEngine �
 
 ## Conversion 创作与转换
 
-Conversion 是 Conversions 桶内的独立预设，保存每个平台的格式、质量和采样率分档。对象的 Shared Conversion 字段组引用预设或继承父级，工程默认值由 `set_default_conversion` 设置。共享命令同时供独立 CLI、Studio shell、IPC 与 AI 使用。
+Conversion 是 Conversions 桶内的独立预设，只保存一份格式、质量和采样率分档。对象的 Conversion 字段组在 Shared 或平台覆写中引用预设或继承父级，各平台默认值由 `set_default_conversion` 设置。共享命令同时供独立 CLI、Studio shell、IPC 与 AI 使用。
 
 | 命令 | 参数 |
 |---|---|
 | `create_conversion` | `name`；可选 `folder`，为桶内已有相对目录或 `Conversions/` 开头的路径 |
-| `set_conversion_fields` | `conversion`，非空且不重复的 `platform_ids` 或 `all_platforms:true`，以及 `format/quality/sample_rate_tiers` 中至少一项 |
-| `set_object_conversion` | `object`、`inherit`；可选 `settings` 为预设选择器或 `null` |
-| `set_default_conversion` | `conversion` 为预设选择器或 `null` |
+| `set_conversion_fields` | `conversion`，以及 `format/quality/sample_rate_tiers` 中至少一项 |
+| `set_object_conversion` | `object`、`inherit`；可选 `settings` 为预设选择器或 `null`；可选 `platform_id` 改写该平台覆写，缺省为 Shared（写入 Shared 引用同时清除各平台覆写） |
+| `set_default_conversion` | `platform_id`；`conversion` 为预设选择器或 `null` |
 | `get_effective_conversion` | `object`；可选 `platform_id` |
 | `get_conversion_results` / `convert` | `conversion`；可选 `platform_id` |
 
-对象与预设选择器接受 GUID、无歧义路径或名称。省略 `platform_id` 使用当前主平台。`set_conversion_fields` 的两个平台选择参数严格互斥，未提供的配置字段保留；`format` 为 `PCM/Vorbis`，`quality` 为 0–100。`sample_rate_tiers` 完整替换分档，每项必须提供 `max_bytes` 和 `sample_rate`：有限字节上限严格递增，末档且仅末档的上限为 `null`（Infinite）。按原始文件大小匹配首个上限；采样率为 `0/8000/11025/16000/22050/24000/32000/44100/48000`，`0` 或不低于原始采样率的目标保留原始采样率。
+对象与预设选择器接受 GUID、无歧义路径或名称。查询与转换命令省略 `platform_id` 时使用当前主平台。`set_conversion_fields` 未提供的配置字段保留；`format` 为 `PCM/Vorbis`，`quality` 为 0–100。`sample_rate_tiers` 完整替换分档，每项必须提供 `max_bytes` 和 `sample_rate`：有限字节上限严格递增，末档且仅末档的上限为 `null`（Infinite）。按原始文件大小匹配首个上限；采样率为 `0/8000/11025/16000/22050/24000/32000/44100/48000`，`0` 或不低于原始采样率的目标保留原始采样率。
 
 `set_object_conversion` 的 `inherit:true` 不接受 `settings`；`inherit:false,settings:null` 明确选择不转换，省略 `settings` 沿用字段组本地历史。四个创作命令接入同一撤销栈；`convert` 只产生缓存，不进入撤销历史。以下流程在已导入 Sound 的工程会话执行，将 `<Sound selector>` 替换为目标对象身份：
 
 ```text
 harken> create_conversion {"name":"PreviewPCM"}
-harken> set_conversion_fields {"conversion":"PreviewPCM","all_platforms":true,"format":"PCM","sample_rate_tiers":[{"max_bytes":null,"sample_rate":24000}]}
+harken> set_conversion_fields {"conversion":"PreviewPCM","format":"PCM","sample_rate_tiers":[{"max_bytes":null,"sample_rate":24000}]}
 harken> set_object_conversion {"object":"<Sound selector>","inherit":false,"settings":"PreviewPCM"}
-harken> set_default_conversion {"conversion":"PreviewPCM"}
+harken> set_default_conversion {"platform_id":"<Platform ID>","conversion":"PreviewPCM"}
 harken> get_effective_conversion {"object":"<Sound selector>"}
 harken> get_conversion_results {"conversion":"PreviewPCM"}
 harken> convert {"conversion":"PreviewPCM"}
 harken> save_project
 ```
 
-`get_effective_conversion` 返回预设、来源对象与平台；Sound 另返回当前语言有效 Source 的身份和最终采样率。`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`，预设在 `components.conversion` 读回原生配置；`get_project_info.default_conversion` 为默认预设 GUID 或 `null`。
+`get_effective_conversion` 返回预设、来源对象与平台；Sound 另返回当前语言有效 Source 的身份和最终采样率。`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`，预设在 `components.conversion` 读回原生配置；`get_project_info.default_conversions` 以平台 ID 为键列出各平台默认预设 GUID，无默认值的平台不出现。
 
 `get_conversion_results` 仅检查现有缓存，不触发编码。返回 `sources`，每行包含 Sound、Source、语言、`original` 和 `converted`；未转换时 `converted:null`，已有结果带格式、采样率、声道、帧数、字节数、时长和路径。`convert` 使用相同范围，覆盖该平台各工程语言下实际引用预设的有效 Source，同步等待完成后返回 `conversion_result`（`converted/cached/canceled/errors`）与 `sources`。失败返回 `CONVERSION_FAILED`，成功生成的缓存保留。该同步命令不使用旧作业协议：独立 CLI 进程内执行不受异步作业等待期限约束；`--instance` 附加模式仍受 `--timeout` 的传输等待期限约束，等待超时不会取消 Studio 侧正在执行的同步转换。旧 `set_conversion_settings/transcode_asset/batch_convert_media/get_transcode_status/cancel_transcode` 已移除。
 

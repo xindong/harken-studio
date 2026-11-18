@@ -97,12 +97,10 @@ public:
                     keys.insert(key);
                 }
             } else if (it.key() == QStringLiteral("conversion") && childPath.endsWith(QStringLiteral("/components/conversion"))) {
-                VConversion conversion;
                 QString error;
-                if (!it.value().isObject() || !conversion.fromJson(it.value().toObject())
-                    || !validateConversionPlatforms(conversion.platforms, platforms_, &error))
+                if (!it.value().isObject() || !ConversionConfig::fromJson(it.value().toObject(), &error))
                     errors.append(QStringLiteral("Invalid Conversion at %1: %2").arg(childPath,
-                        error.isEmpty() ? QStringLiteral("Invalid platform configuration") : error));
+                        error.isEmpty() ? QStringLiteral("Invalid configuration") : error));
             } else if (it.key() == QStringLiteral("sources")) {
                 QString error;
                 const auto sources = it->isObject()
@@ -329,12 +327,12 @@ QVector<ProjectItem*> referenceOwners(const ProjectData& project)
 bool validateProject(const ProjectData& project, QString* error)
 {
     if (!validatePlatforms(project.platforms, error)) return false;
+    for (auto it = project.defaultConversionRefs.cbegin(); it != project.defaultConversionRefs.cend(); ++it)
+        if (!find(project.platforms, it.key()))
+            return fail(error, QStringLiteral("Default Conversion references an unknown platform"));
     QJsonObject root{{QStringLiteral("deployPlatforms"), platformsToJson(project.platforms)}};
     QMap<QString, QJsonObject> documents;
     for (const auto* item : referenceOwners(project)) {
-        if (const auto* conversion = item->comp<VConversion>();
-            conversion && !validateConversionPlatforms(conversion->platforms, project.platforms, error))
-            return false;
         QJsonObject json{{QStringLiteral("platformOverrides"), PlayablePropertyAuthoringV1::platformOverridesToJson(item->platformOverrides)}};
         QJsonObject fieldGroupPlatforms;
         const auto addGroups = [&](const auto& group) {
@@ -345,6 +343,7 @@ bool validateProject(const ProjectData& project, QString* error)
         addGroups(item->fieldGroups.send);
         addGroups(item->fieldGroups.spatialRating);
         addGroups(item->fieldGroups.effects);
+        addGroups(item->fieldGroups.conversion);
         json.insert(QStringLiteral("fieldGroups"), QJsonObject{{QStringLiteral("platforms"), fieldGroupPlatforms}});
         if (const auto* mix = item->comp<VMixNode>()) {
             QJsonObject platforms;

@@ -19,15 +19,15 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     QtControlSkin::setSemanticProperty(this, "surfaceRole", QStringLiteral("panel"));
     auto* layout = new QVBoxLayout(this);
     ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
-    auto* form = new DialogFormLayout();
+    form_ = new DialogFormLayout();
     name_ = new QLineEdit(this);
     name_->setObjectName("projectPlatformName");
-    form->addRow(tr("Platform:"), name_);
+    form_->addRow(tr("Platform:"), name_);
     base_ = new QComboBox(this);
     base_->setObjectName("projectPlatformBase");
     base_->addItems({"Windows", "Android", "Linux", "macOS", "iOS"});
-    form->addRow(tr("Base platform:"), base_);
-    layout->addLayout(form);
+    form_->addRow(tr("Base platform:"), base_);
+    layout->addLayout(form_);
     connect(name_, &QLineEdit::editingFinished, this, &ProjectPlatformEditor::finishNameEditing);
     connect(name_, &QLineEdit::textChanged, this, [this] {
         const auto error = nameError();
@@ -43,6 +43,12 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     });
     layout->addStretch();
     setPlatform(platform_);
+}
+
+void ProjectPlatformEditor::addField(const QString& label, QWidget* field)
+{
+    field->setParent(this);
+    form_->addRow(label, field);
 }
 
 void ProjectPlatformEditor::setPlatform(const ProjectPlatform& platform, const QStringList& otherNames)

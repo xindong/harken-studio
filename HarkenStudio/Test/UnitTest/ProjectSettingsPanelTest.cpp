@@ -75,10 +75,13 @@ TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChang
     ASSERT_NE(output, nullptr);
     ASSERT_NE(exported, nullptr);
     ASSERT_NE(conversion, nullptr);
-    const auto originalConversion = ProjectManager::instance().currentProject()->defaultConversionRef;
-    const auto* preset = ProjectManager::instance().findItemByGuid(originalConversion);
+    auto* project = ProjectManager::instance().currentProject();
+    const auto platform = project->platforms.first().id;
+    EXPECT_TRUE(project->defaultConversionFor(platform).isNull());
+    EXPECT_EQ(conversion->currentObjectID(), 0u);
+    ASSERT_FALSE(project->conversionItems.empty());
+    const auto* preset = project->conversionItems.front().rootItem.get();
     ASSERT_NE(preset, nullptr);
-    EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
     const QString originalName = ProjectManager::instance().currentProject()->platforms.first().name;
 
     editText(name, QStringLiteral("Desktop"));
@@ -100,17 +103,17 @@ TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChang
     UndoRedoManager::instance().undo();
     EXPECT_FALSE(exported->isChecked());
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 3);
-    emit conversion->objectChanged(0);
-    EXPECT_TRUE(ProjectManager::instance().currentProject()->defaultConversionRef.isNull());
-    EXPECT_EQ(conversion->currentObjectID(), 0u);
-    UndoRedoManager::instance().undo();
+    emit conversion->objectChanged(preset->objectID);
+    EXPECT_EQ(project->defaultConversionFor(platform), preset->guid);
     EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
+    UndoRedoManager::instance().undo();
+    EXPECT_EQ(conversion->currentObjectID(), 0u);
     UndoRedoManager::instance().redo();
-    EXPECT_EQ(conversion->currentObjectID(), 0u);
-    ASSERT_TRUE(ProjectManager::instance().setDefaultConversion(originalConversion));
     EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
-    UndoRedoManager::instance().undo();
+    ASSERT_TRUE(ProjectManager::instance().setDefaultConversion(platform, QUuid{}));
     EXPECT_EQ(conversion->currentObjectID(), 0u);
+    UndoRedoManager::instance().undo();
+    EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 4);
 }
 

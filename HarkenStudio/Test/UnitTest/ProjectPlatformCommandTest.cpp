@@ -64,8 +64,11 @@ protected:
             items.insert(item->guid.toString(), serializer.projectItemToJson(*item));
         QJsonArray targeting;
         for (const auto& row : manager().getActionPackTargeting()) targeting.append(row.toJson());
+        QJsonObject defaults;
+        for (auto it = project().defaultConversionRefs.cbegin(); it != project().defaultConversionRefs.cend(); ++it)
+            defaults.insert(Platforms::idString(it.key()), it.value().toString(QUuid::WithoutBraces));
         return {{"platforms", Platforms::platformsToJson(project().platforms)}, {"items", items},
-            {"defaultConversion", project().defaultConversionRef.toString(QUuid::WithoutBraces)},
+            {"defaultConversions", defaults},
             {"targeting", targeting},
             {"current", manager().getPackExportCurrentPlatform()},
             {"selected", QJsonArray::fromStringList(manager().getPackExportSelectedPlatforms())}};
@@ -109,41 +112,41 @@ TEST_F(ProjectPlatformCommand, ConversionCommandsValidateAtomicallyAndReplayWith
     const auto guid = QUuid(created.data.value("guid").toString());
     auto* preset = manager().findItemByGuid(guid);
     ASSERT_NE(preset, nullptr);
-    const auto initial = preset->comp<VConversion>()->platforms;
+    const auto initial = preset->comp<VConversion>()->config;
     const auto platform = Platforms::idString(project().platforms.front().id);
     const QJsonObject edit{{"conversion", guid.toString(QUuid::WithoutBraces)},
-        {"platform_ids", QJsonArray{platform}}, {"format", "Vorbis"}, {"quality", 57},
+        {"format", "Vorbis"}, {"quality", 57},
         {"sample_rate_tiers", QJsonArray{QJsonObject{{"max_bytes", QJsonValue(QJsonValue::Null)}, {"sample_rate", 24000}}}}};
     undo().clear();
     const auto changed = actions.execute("set_conversion_fields", edit, ActionSource::IPC);
     ASSERT_TRUE(changed.success) << changed.errorMessage.toStdString();
-    const auto updated = preset->comp<VConversion>()->platforms;
+    const auto updated = preset->comp<VConversion>()->config;
     EXPECT_NE(updated, initial);
     EXPECT_EQ(undo().undoStack()->count(), 1);
     auto invalid = edit;
-    invalid.insert("all_platforms", true);
+    invalid.insert("platform_ids", QJsonArray{platform});
     EXPECT_FALSE(actions.execute("set_conversion_fields", invalid, ActionSource::IPC).success);
     invalid = edit;
     invalid.insert("sample_rate_tiers", QJsonArray{QJsonObject{{"max_bytes", 1024}, {"sample_rate", 24000}}});
     EXPECT_FALSE(actions.execute("set_conversion_fields", invalid, ActionSource::IPC).success);
-    EXPECT_EQ(preset->comp<VConversion>()->platforms, updated);
+    EXPECT_EQ(preset->comp<VConversion>()->config, updated);
     EXPECT_EQ(undo().undoStack()->count(), 1);
     ASSERT_TRUE(undo().undo());
-    EXPECT_EQ(preset->comp<VConversion>()->platforms, initial);
+    EXPECT_EQ(preset->comp<VConversion>()->config, initial);
     ASSERT_TRUE(undo().redo());
-    EXPECT_EQ(preset->comp<VConversion>()->platforms, updated);
-    preset->comp<VConversion>()->platforms.front().vorbisQuality = 0.9f;
-    const auto externallyChanged = preset->comp<VConversion>()->platforms;
+    EXPECT_EQ(preset->comp<VConversion>()->config, updated);
+    preset->comp<VConversion>()->config.vorbisQuality = 0.9f;
+    const auto externallyChanged = preset->comp<VConversion>()->config;
     EXPECT_FALSE(undo().undo());
-    EXPECT_EQ(preset->comp<VConversion>()->platforms, externallyChanged);
-    preset->comp<VConversion>()->platforms = updated;
+    EXPECT_EQ(preset->comp<VConversion>()->config, externallyChanged);
+    preset->comp<VConversion>()->config = updated;
     ASSERT_TRUE(undo().undo());
-    EXPECT_EQ(preset->comp<VConversion>()->platforms, initial);
+    EXPECT_EQ(preset->comp<VConversion>()->config, initial);
     ASSERT_TRUE(undo().redo());
     ASSERT_TRUE(manager().saveProject());
     reopen();
     ASSERT_NE(manager().findItemByGuid(guid), nullptr);
-    EXPECT_EQ(manager().findItemByGuid(guid)->comp<VConversion>()->platforms, updated);
+    EXPECT_EQ(manager().findItemByGuid(guid)->comp<VConversion>()->config, updated);
 }
 
 TEST_F(ProjectPlatformCommand, ConversionBatchEditsRejectStaleMembersWithoutPartialWrites)
@@ -160,11 +163,11 @@ TEST_F(ProjectPlatformCommand, ConversionBatchEditsRejectStaleMembersWithoutPart
     const QVector<FieldGroupDefinitionSnapshot> before{{first->guid, first->fieldGroups}, {second->guid, second->fieldGroups}};
     undo().clear();
     QString error;
-    ASSERT_TRUE(ConversionEditing::setObjects(manager(), definitions, false, preset->guid, before, nullptr, &error))
+    ASSERT_TRUE(ConversionEditing::setObjects(manager(), definitions, false, preset->guid, {}, before, nullptr, &error))
         << error.toStdString();
     const auto changed = authoredState();
     EXPECT_EQ(undo().undoStack()->count(), 1);
-    EXPECT_FALSE(ConversionEditing::setObjects(manager(), definitions, true, {}, before, nullptr, &error));
+    EXPECT_FALSE(ConversionEditing::setObjects(manager(), definitions, true, {}, {}, before, nullptr, &error));
     EXPECT_EQ(authoredState(), changed);
     ASSERT_TRUE(undo().undo());
     EXPECT_EQ(first->fieldGroups, before.front().groups);
@@ -172,18 +175,20 @@ TEST_F(ProjectPlatformCommand, ConversionBatchEditsRejectStaleMembersWithoutPart
     ASSERT_TRUE(undo().redo());
     EXPECT_EQ(authoredState(), changed);
     EXPECT_FALSE(ConversionEditing::setObjects(manager(), {first->guid, preset->guid}, false,
-        QUuid{}, {}, nullptr, &error));
+        QUuid{}, {}, {}, nullptr, &error));
     EXPECT_EQ(authoredState(), changed);
     auto& actions = ActionManager::instance();
     const auto effective = actions.execute("get_effective_conversion", {{"object", first->guid.toString(QUuid::WithoutBraces)}});
     ASSERT_TRUE(effective.success) << effective.errorMessage.toStdString();
     EXPECT_EQ(effective.data.value("conversion").toString(), preset->guid.toString(QUuid::WithoutBraces));
-    const auto previousDefault = project().defaultConversionRef;
-    ASSERT_TRUE(actions.execute("set_default_conversion", {{"conversion", preset->guid.toString(QUuid::WithoutBraces)}}).success);
+    const auto platform = project().platforms.front().id;
+    const auto previousDefault = project().defaultConversionFor(platform);
+    ASSERT_TRUE(actions.execute("set_default_conversion", {{"platform_id", Platforms::idString(platform)},
+        {"conversion", preset->guid.toString(QUuid::WithoutBraces)}}).success);
     ASSERT_TRUE(undo().undo());
-    EXPECT_EQ(project().defaultConversionRef, previousDefault);
+    EXPECT_EQ(project().defaultConversionFor(platform), previousDefault);
     ASSERT_TRUE(undo().redo());
-    EXPECT_EQ(project().defaultConversionRef, preset->guid);
+    EXPECT_EQ(project().defaultConversionFor(platform), preset->guid);
 }
 
 TEST_F(ProjectPlatformCommand, LocalPreviewModeFollowsProjectIdentityBeforeOpenedNotification)
@@ -254,8 +259,7 @@ TEST_F(ProjectPlatformCommand, PlatformMembershipEditsRoundTripAllAuthoredOwners
     ASSERT_NE(layer, nullptr);
     auto* conversion = preset->comp<VConversion>();
     ASSERT_NE(conversion, nullptr);
-    ASSERT_FALSE(conversion->platforms.empty());
-    conversion->platforms.front().tiers = {{1024, 32000}, {std::nullopt, 22050}};
+    conversion->config.tiers = {{1024, 32000}, {std::nullopt, 22050}};
     layer->fieldGroups.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(preset->guid)};
     layer->fieldGroups.output.platforms[toFieldGroupGuid(project().platforms.front().id)] = {
         FieldGroupMode::Local, OutputFieldGroup{toFieldGroupGuid(manager().getMasterBusItem()->guid), -6.0f}};
@@ -302,15 +306,18 @@ TEST_F(ProjectPlatformCommand, PlatformMembershipEditsRoundTripAllAuthoredOwners
 
 TEST_F(ProjectPlatformCommand, DeletingReferencedAssetsRestoresDefaultsAndInheritedHistory)
 {
+    auto* preset = manager().createItem(nullptr, "Doomed", ProjectItem::Type::Conversion);
+    ASSERT_NE(preset, nullptr);
+    const auto presetGuid = preset->guid;
+    const auto platform = project().platforms.front().id;
+    ASSERT_TRUE(manager().setDefaultConversion(platform, presetGuid));
     auto* layer = manager().createItem(nullptr, "Layer", ProjectItem::Type::Layer);
     ASSERT_NE(layer, nullptr);
+    ASSERT_TRUE(layer->fieldGroups.conversion.platforms.contains(toFieldGroupGuid(platform)));
     auto* inherited = manager().createItem(layer, "Inherited", ProjectItem::Type::Sound);
     auto* local = manager().createItem(layer, "Local", ProjectItem::Type::Sound);
     ASSERT_NE(inherited, nullptr);
     ASSERT_NE(local, nullptr);
-    const auto presetGuid = project().defaultConversionRef;
-    auto* preset = manager().findItemByGuid(presetGuid);
-    ASSERT_NE(preset, nullptr);
     const ConversionFieldGroup reference{toFieldGroupGuid(presetGuid)};
     inherited->fieldGroups.conversion.shared.localHistory = reference;
     local->fieldGroups.conversion.shared = {FieldGroupMode::Local, reference};
@@ -318,8 +325,8 @@ TEST_F(ProjectPlatformCommand, DeletingReferencedAssetsRestoresDefaultsAndInheri
     const auto before = authoredState();
     ASSERT_TRUE(manager().deleteItem(preset));
     EXPECT_EQ(manager().findItemByGuid(presetGuid), nullptr);
-    EXPECT_TRUE(project().defaultConversionRef.isNull());
-    const auto effective = buildFieldGroupEffectiveSnapshot(project(), {});
+    EXPECT_TRUE(project().defaultConversionFor(platform).isNull());
+    const auto effective = buildFieldGroupEffectiveSnapshot(project(), toFieldGroupGuid(platform));
     ASSERT_TRUE(effective.ok());
     for (const auto* item : {layer, inherited, local})
         EXPECT_TRUE(harkenprojectschema::IsNull(

@@ -92,11 +92,6 @@ void ValidateAuthoredGroup(const AuthoredGroup<Payload>& authored,
                           Diagnostics& diagnostics)
 {
     ValidateState(authored.shared, group, {}, definition, diagnostics);
-    if (group == FieldGroupId::Conversion && !authored.platforms.empty()) {
-        diagnostics.push_back({DiagnosticCode::InvalidPlatform, definition,
-                               group, {}, "platforms", {}, {}});
-        return;
-    }
     for (const auto& [platform, state] : authored.platforms) {
         if (harkenstudio::IsNull(platform)) {
             diagnostics.push_back({DiagnosticCode::InvalidPlatform, definition,
@@ -542,7 +537,7 @@ FieldGroupResolutionResult FieldGroupResolver::Resolve(
         return ResolveGroup(definitions_, found->second, scope, group,
                             &DefinitionFieldGroups::effects);
     case FieldGroupId::Conversion:
-        return ResolveGroup(definitions_, found->second, {}, group,
+        return ResolveGroup(definitions_, found->second, scope, group,
                             &DefinitionFieldGroups::conversion);
     }
     return result;
