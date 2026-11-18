@@ -2201,6 +2201,50 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
 }
 
 
+TEST(PackLogicLoad, ThousandDefinitionsAndTwoThousandAttachmentsPlayAndUnload) {
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harkentest::ObjectId(7100);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
+    V2Builder builder(harken::kPackKindContent);
+    const std::array sounds{harkentest::ObjectId(7101), harkentest::ObjectId(7102)};
+    for (auto sound : sounds) builder.AddMedia(sound, harkentest::MakeDC(kBlock * 4, 0.25f));
+    VnBindingDesc binding{};
+    binding.structSize = sizeof(binding);
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    binding.targetId = harken::kTargetVoiceVolume;
+    binding.variableId = variable;
+    binding.curve.structSize = sizeof(binding.curve);
+    binding.curve.pointCount = 1;
+    for (unsigned i = 0; i < 1000; ++i) {
+        const auto id = harkentest::ObjectId(10000 + i);
+        builder.AddBindingDefinition(id, binding);
+        for (unsigned j = 0; j < sounds.size(); ++j)
+            builder.AddBindingAttachment(2 * i + j, id, VN_TARGET_SCOPE_VOICE, sounds[j]);
+    }
+    const auto path = TempPath("thousand_bindings.pack");
+    WriteFileBytes(path, builder.Build());
+    VnPackHandle pack{};
+    ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+    EXPECT_EQ(1000u, engine.bindings.DefinitionCount());
+    EXPECT_EQ(2000u, engine.bindings.AttachmentCount());
+    for (const auto sound : sounds) {
+        auto play = harkentest::MakePlayDesc(sound);
+        VnVoiceHandle handle{};
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        EXPECT_EQ(1000u, engine.params.VoiceBindingCount(harkentest::RenderHandle(&engine, handle)));
+        harkentest::Capture capture;
+        harkentest::PumpAndCapture(&engine, 1, capture);
+        EXPECT_GT(harkentest::Peak(capture.left), 0.01f);
+        engine.nullBackend.Pump(5);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+    EXPECT_EQ(0u, engine.bindings.AttachmentCount());
+    EXPECT_EQ(0u, engine.bindings.DefinitionCount());
+}
+
 TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -6310,8 +6354,8 @@ TEST(PackLogicReplace,
     EXPECT_EQ(harkentest::ObjectId(7983u), engine->bindings.Find(harkentest::ObjectId(7981))->variableId);
     const auto* recipe = engine->logicPacks.FindVoiceRecipe(harkentest::ObjectId(7980));
     ASSERT_NE(nullptr, recipe);
-    ASSERT_EQ(1u, recipe->bindings.size());
-    EXPECT_EQ(harkentest::ObjectId(7981u), recipe->bindings[0]);
+    ASSERT_EQ(1u, recipe->Bindings().size());
+    EXPECT_EQ(harkentest::ObjectId(7981u), recipe->Bindings()[0]);
     EXPECT_EQ(1u, engine->packs.LoadedCount());
     EXPECT_NE(harken::VoiceLedger::HandleKind::Stale,
               engine->ledger.Classify(voice).kind);

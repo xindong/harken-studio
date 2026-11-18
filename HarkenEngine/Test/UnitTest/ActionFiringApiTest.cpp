@@ -52616,7 +52616,15 @@ enum class OrderedQueueTransition { None, TargetFade, NaturalFade };
 enum class OrderedQueueTransitionExit { None, RefuseBoundPrivate, StopPublishedBeforeAudio,
     RefusePreludeBound, RefuseSourceControlBound };
 
-static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape, bool cancel = false,
+enum class BindingTiming { Initial, AfterAcceptance, RefusedAfterAcceptance };
+struct SubtreeBindingScenario {
+    SubtreeBindingScenario(OrderedVariableSubtreeCase subtree, BindingTiming when = BindingTiming::Initial)
+        : shape(subtree), timing(when) {}
+    OrderedVariableSubtreeCase shape;
+    BindingTiming timing;
+};
+
+static void CheckOrderedVariableSubtreeFirstPcm(SubtreeBindingScenario scenario, bool cancel = false,
     OrderedVariableSubtreePlacement placement = OrderedVariableSubtreePlacement::Initial,
     bool cancelPreparedNested = false,
     NestedReplacementPolicyShape nestedPolicyShape = NestedReplacementPolicyShape::Single,
@@ -52628,6 +52636,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     OrderedQueueTransitionExit transitionExit = OrderedQueueTransitionExit::None,
     bool targetFadeEnabled = true, bool retryPreludeDetach = false,
     bool precedingResetStep = false, bool trackQueueSource = false, bool precedingSilentVc = false) {
+    const auto shape = scenario.shape;
     constexpr std::uint32_t block = 64, rate = 48000;
     const bool nested = shape == OrderedVariableSubtreeCase::NestedVariableControl;
     const bool nativeFutureProbe = shape == OrderedVariableSubtreeCase::NativeQueueBacking;
@@ -52877,10 +52886,17 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     VnBindingAttachDesc attach{};
     attach.structSize = sizeof(attach);
     attach.scopeKind = VN_TARGET_SCOPE_VOICE;
-    for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
-        attach.objectId = sound;
-        ASSERT_EQ(VN_OK, Vn_AttachBinding(bindingId, &attach));
-    }
+    const auto attachBoth = [&](VnBindingId id, VnResult expected) {
+        for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
+            attach.objectId = sound;
+            if (expected == VN_OUT_OF_MEMORY) engine.nativeBackingAllocationFailureCountdownForTest = 0;
+            const auto result = Vn_AttachBinding(id, &attach);
+            engine.nativeBackingAllocationFailureCountdownForTest = -1;
+            ASSERT_EQ(expected, result);
+            ASSERT_EQ(expected == VN_OK, engine.bindings.HasAttachment(id, attach.scopeKind, sound));
+        }
+    };
+    if (scenario.timing != BindingTiming::AfterAcceptance) ASSERT_NO_FATAL_FAILURE(attachBoth(bindingId, VN_OK));
     const auto baseline = CaptureActionReclaimableOwners(engine);
     const auto sourceGenerations = CaptureSourceGenerations(engine);
     auto desc = ValidPostDesc();
@@ -52914,6 +52930,8 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     }
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    const auto secondBinding = harkentest::ObjectId(9711);
+    if (scenario.timing == BindingTiming::RefusedAfterAcceptance) ASSERT_EQ(VN_OK, Vn_RegisterBinding(secondBinding, &binding));
     VnActionStepResult accepted{};
     accepted.structSize = sizeof(accepted);
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, playOrdinal, &accepted));
@@ -53186,6 +53204,10 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         unsigned visits = 0;
         VnVariableId selector{};
         float expected = 3.0f;
+        const decltype(attachBoth)* attach = nullptr;
+        BindingTiming timing = BindingTiming::Initial;
+        VnBindingId binding{};
+        bool exercised = false;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         PendingQueueNativeBackingProbe* native = nullptr;
         bool checkWeights = false;
@@ -53201,6 +53223,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     if (nativeFutureProbe) placementProbe.native = &nativeProbe;
     placementProbe.checkWeights = nestedPolicyShape == NestedReplacementPolicyShape::BothSides && !cancelPreparedNested;
 #endif
+    placementProbe.timing = scenario.timing;
+    placementProbe.attach = &attachBoth;
+    placementProbe.binding = scenario.timing == BindingTiming::AfterAcceptance ? bindingId : secondBinding;
     if (nested || queue) {
         engine.pendingVariableGroupPlacementContextForTest = &placementProbe;
         engine.pendingVariableGroupPlacementHookForTest = [](harken::Engine& actual,
@@ -53215,6 +53240,13 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
                 EXPECT_TRUE(actual.variables.OriginalPendingVariableGroupUsesMatch(actual, producer, attempt, placement));
             else
                 EXPECT_TRUE(group->reselectionRequested);
+            if (!probe.exercised && probe.timing != BindingTiming::Initial) {
+                bool waiting = false;
+                ASSERT_TRUE(actual.EnsurePendingVariableNativeBacking(producer, attempt, &waiting));
+                ASSERT_FALSE(waiting);
+                probe.exercised = true;
+                (*probe.attach)(probe.binding, probe.timing == BindingTiming::AfterAcceptance ? VN_OK : VN_OUT_OF_MEMORY);
+            }
             float selector = 0;
             EXPECT_EQ(harken::VariableReadCutValueStatus::Value,
                 reader.Read(probe.selector, &selector));
@@ -54067,6 +54099,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         EXPECT_GT(nestedPolicyProbe.voiceVisits, 0u);
         EXPECT_EQ(0u, nestedPolicyProbe.refusalVisits);
     }
+    if (scenario.timing != BindingTiming::Initial) EXPECT_TRUE(placementProbe.exercised);
     if ((nested || queue) && !cancel && !precedingResetStep) EXPECT_GT(placementProbe.visits, 0u);
     engine.pendingVariableGroupPlacementHookForTest = nullptr;
     engine.pendingVariableGroupPlacementContextForTest = nullptr;
@@ -54276,6 +54309,17 @@ TEST(ActionFiringApi, OrderedVariableControlAndDirectSoundSiblingShareFirstInput
 }
 TEST(ActionFiringApi, OrderedVariableControlAndDirectSoundSiblingCancelReclaimsBeforeFirstPcm) {
     CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase::SoundSibling, true);
+}
+
+TEST(ActionFiringApi, PendingSubtreeBindingGrowthPreservesFirstPcm) {
+    for (const auto shape : {OrderedVariableSubtreeCase::NestedVariableControl, OrderedVariableSubtreeCase::NestedQueue}) {
+        for (const auto timing : {BindingTiming::AfterAcceptance, BindingTiming::RefusedAfterAcceptance}) {
+            SCOPED_TRACE(static_cast<int>(shape));
+            SCOPED_TRACE(static_cast<int>(timing));
+            ASSERT_NO_FATAL_FAILURE(CheckOrderedVariableSubtreeFirstPcm({shape, timing}, false,
+                OrderedVariableSubtreePlacement::SoundToSubtree));
+        }
+    }
 }
 
 TEST(ActionFiringApi, PendingVariableControlActualPlacementRebuildsSoundToNestedWithInitialBinding) {
@@ -55649,7 +55693,7 @@ TEST(ActionFiringApi, PendingVariableControlNewSequencePrivateCancelProtectsSour
 }
 
 enum class PendingOrdinarySuccessorCase {
-    Normal, CancelSuccessor, Binding, EffectCapacityRetry, EffectCapacityStop, BindingCapacityGrowth, SourceLoan,
+    Normal, CancelSuccessor, Binding, EffectCapacityRetry, EffectCapacityStop, BindingCapacityGrowth, BindingGrowthRefusal, SourceLoan,
     NestedRandom, NestedUnchanged, NestedCancelSuccessor, NestedToSound, NestedToNested, NestedToNestedEffectStop,
     NestedBinding
 };
@@ -55662,10 +55706,12 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         scenario == PendingOrdinarySuccessorCase::NestedToNestedEffectStop;
     const bool binding = scenario == PendingOrdinarySuccessorCase::Binding ||
         scenario == PendingOrdinarySuccessorCase::BindingCapacityGrowth ||
+        scenario == PendingOrdinarySuccessorCase::BindingGrowthRefusal ||
         scenario == PendingOrdinarySuccessorCase::NestedBinding;
     const bool cancelSuccessor = scenario == PendingOrdinarySuccessorCase::CancelSuccessor ||
         scenario == PendingOrdinarySuccessorCase::NestedCancelSuccessor;
-    const bool growBinding = scenario == PendingOrdinarySuccessorCase::BindingCapacityGrowth;
+    const bool rejectGrowth = scenario == PendingOrdinarySuccessorCase::BindingGrowthRefusal;
+    const bool growBinding = rejectGrowth || scenario == PendingOrdinarySuccessorCase::BindingCapacityGrowth;
     const bool stopAfterRetired = scenario == PendingOrdinarySuccessorCase::EffectCapacityStop ||
         scenario == PendingOrdinarySuccessorCase::NestedToNestedEffectStop;
     const bool nested = scenario >= PendingOrdinarySuccessorCase::NestedRandom;
@@ -55867,9 +55913,23 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
         }
+        auto* pending = std::find_if(engine.immediateEntryAttempts.data(),
+            engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+            [&](const auto& attempt) { return attempt.active && attempt.root == firings[1]; });
+        ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), pending);
+        ASSERT_EQ(1u, pending->selectionProducerCount);
+        const auto& selection = pending->selectionProducers[0];
+        auto* holder = engine.PendingOrdinarySelectionFor(engine.actionPlayStorage[selection.token.slot]);
+        ASSERT_NE(nullptr, holder);
+        (void)engine.ServicePendingOrdinarySelections(*pending, engine.timelinePool.WindowStartFrame() + 4u * block);
+        ASSERT_TRUE(holder->replacementVoice.HasStorage());
         ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(9072), &gainBinding));
         attach.objectId = CanonicalActionWorld::kFirstSound;
-        ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9072), &attach));
+        if (rejectGrowth) engine.nativeBackingAllocationFailureCountdownForTest = 0;
+        const auto result = Vn_AttachBinding(harkentest::ObjectId(9072), &attach);
+        engine.nativeBackingAllocationFailureCountdownForTest = -1;
+        ASSERT_EQ(rejectGrowth ? VN_OUT_OF_MEMORY : VN_OK, result);
+        EXPECT_EQ(!rejectGrowth, engine.bindings.HasAttachment(harkentest::ObjectId(9072), attach.scopeKind, attach.objectId));
         engine.deferPendingImmediateEntriesForTest = false;
     }
     std::vector<harken::EffectInstanceRef> effects;
@@ -56042,7 +56102,7 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
             EXPECT_EQ(ordinaryNativeAllocationCount, engine.nativeBackingAllocationCountForTest);
         }
     };
-    const auto gain = binding ? std::pow(10.0f, (growBinding ? -24.0f : -12.0f) / 20.0f) : effectPressure ? 0.5f : 1.0f;
+    const auto gain = binding ? std::pow(10.0f, (growBinding && !rejectGrowth ? -24.0f : -12.0f) / 20.0f) : effectPressure ? 0.5f : 1.0f;
     if (preservePredecessor) {
         std::array<VnActionFiringInfo, 2> infos{};
         std::array<std::uint32_t, 2> frames{};
@@ -56113,7 +56173,7 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         (warmup ? 1u : 0u) + (variableControl ? stopAfterRetired ? 0u : 1u : 2u);
     EXPECT_EQ(firstHistory, engine.selectionMemory.Snapshot(key).selectionOrdinal);
     if (nested) EXPECT_EQ(stopAfterRetired ? 0u : 1u, engine.selectionMemory.Snapshot(innerKey).selectionOrdinal);
-    if (growBinding) {
+    if (growBinding && !rejectGrowth) {
         attach.objectId = CanonicalActionWorld::kFirstSound;
         ASSERT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(9072), &attach));
     }
@@ -56169,6 +56229,10 @@ TEST(ActionFiringApi, PendingVariableControlSequenceRebuiltOrdinarySuccessorRetr
 
 TEST(ActionFiringApi, PendingVariableControlSequenceOrdinaryStopAfterOldSourceRetiredReclaimsPcm) {
     CheckPendingSequenceCancelledPredecessorPcm(true, true, PendingOrdinarySuccessorCase::EffectCapacityStop);
+}
+
+TEST(ActionFiringApi, PendingOrdinaryBindingGrowthRefusalKeepsAcceptedPlayback) {
+    CheckPendingSequenceCancelledPredecessorPcm(true, true, PendingOrdinarySuccessorCase::BindingGrowthRefusal);
 }
 
 TEST(ActionFiringApi, PendingVariableControlSequenceOrdinaryBindingGrowthKeepsPcmAndReclaims) {

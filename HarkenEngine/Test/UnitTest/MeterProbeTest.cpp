@@ -865,6 +865,43 @@ TEST(MeterProbe, ProbeIsNeverAVariableOrDecisionInput) {
     EXPECT_FALSE(engine->variables.CurrentValue(kProbe, &unused));
 }
 
+TEST(MeterProbe, PublicDetachPreservesPrivateBindingWithTheSameId) {
+    EngineSession session(ProbeConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harkentest::ObjectId(9111);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    std::uint32_t generation = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
+    ASSERT_NO_FATAL_FAILURE(DefineSidechain(&engine, kSidechain, kProbe, generation));
+    const auto target = engine.buses.FindRef(kTargetBus);
+    ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0, target.generation));
+    VnBindingDesc def{};
+    def.structSize = sizeof(def);
+    def.targetScopeKind = VN_TARGET_SCOPE_BUS;
+    def.variableId = variable;
+    def.curve.structSize = sizeof(def.curve);
+    def.curve.pointCount = 1;
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(kSidechain, &def));
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_BUS;
+    attach.objectId = VN_BUS_MASTER;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(kSidechain, &attach));
+    const auto before = engine.propertyPublisher.WorstCaseCommits();
+    attach.objectId = kTargetBus;
+    EXPECT_EQ(VN_UNKNOWN_ID, Vn_DetachBinding(kSidechain, &attach));
+    EXPECT_EQ(before, engine.propertyPublisher.WorstCaseCommits());
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(kSidechain, &attach));
+    EXPECT_EQ(before + 1, engine.propertyPublisher.WorstCaseCommits());
+    ASSERT_EQ(VN_OK, Vn_DetachBinding(kSidechain, &attach));
+    EXPECT_EQ(before, engine.propertyPublisher.WorstCaseCommits());
+    EXPECT_NE(nullptr, engine.bindings.FindProbeAttachment(kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0, target.generation));
+}
+
 TEST(MeterProbe, SidechainWaveformReachesBoundBusAndReleases) {
     EngineSession session(ProbeConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

@@ -490,6 +490,88 @@ TEST(PackReplaceStaging, SharedBusTargetBudgetSurvivesPendingDiscardAndCallerDet
     }
 }
 
+TEST(PackReplaceStaging, CallerAndPendingRevisionReserveTheirBusGenerations) {
+    const auto bus = harkentest::ObjectId(1530);
+    const auto variable = harkentest::ObjectId(7);
+    const auto packBinding = harkentest::ObjectId(9400);
+    const auto callerBinding = harkentest::ObjectId(9401);
+    const auto definitions = std::string(R"("bindings":[{"id":)") + harkentest::JsonObjectId(packBinding) +
+        R"(,"variable":)" + harkentest::JsonObjectId(variable) +
+        R"(,"scope":"bus","target":0,"curve":{"points":[[0,0],[1,-6]],"handles":[[0,0,1,-6]]}}])";
+    const auto attachment = std::string(R"(,"attachments":[{"binding":)") + harkentest::JsonObjectId(packBinding) +
+        R"(,"scope":"bus","object":)" + harkentest::JsonObjectId(bus) + "}]";
+    const auto original = TempPath("generation_old.pack"), updated = TempPath("generation_new.pack");
+    ASSERT_TRUE(BuildPackFile("generation_old", V2LogicManifest(original, "content", definitions)));
+    ASSERT_TRUE(BuildPackFile("generation_new", V2LogicManifest(updated, "content", definitions + attachment)));
+    for (const bool discard : {true, false}) {
+        SCOPED_TRACE(discard);
+        auto config = MakeNullConfig(4, kBlock, kRate);
+        config.maxBuses = 2;
+        config.topologyPlanPoolCapacity = 8;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
+        const auto topology = [&](unsigned revision, VnBusId id) {
+            VnBusTopologyBus row{};
+            row.structSize = sizeof(row);
+            row.busId = id;
+            row.parentId = VN_BUS_MASTER;
+            VnBusTopologyDesc desc{};
+            desc.structSize = sizeof(desc);
+            desc.ownerId = 180;
+            desc.baseRevision = revision - 1;
+            desc.revision = revision;
+            desc.buses = &row;
+            desc.busCount = 1;
+            desc.busStructSize = sizeof(row);
+            desc.sendStructSize = sizeof(VnBusTopologySend);
+            return Vn_ApplyBusTopology(&desc);
+        };
+        ASSERT_EQ(VN_OK, topology(1, bus));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto old = engine.buses.FindRef(bus);
+        VnPackHandle pack{};
+        ASSERT_EQ(VN_OK, LoadPack(original, &pack));
+        const auto baseline = engine.propertyPublisher.WorstCaseCommits();
+        ASSERT_EQ(VN_OK, ReplacePack(pack, updated));
+        ASSERT_EQ(1u, engine.logicPacks.pending.size());
+        EXPECT_EQ(baseline + 1, engine.propertyPublisher.WorstCaseCommits());
+        ASSERT_EQ(VN_OK, topology(2, harkentest::ObjectId(1531)));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, topology(3, bus));
+        ASSERT_GT(engine.buses.FindRef(bus).generation, old.generation);
+        EXPECT_EQ(baseline + 1, engine.propertyPublisher.WorstCaseCommits());
+        VnBindingDesc def{};
+        def.structSize = sizeof(def);
+        def.variableId = variable;
+        def.targetScopeKind = VN_TARGET_SCOPE_BUS;
+        def.curve.structSize = sizeof(def.curve);
+        def.curve.pointCount = 1;
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(callerBinding, &def));
+        VnBindingAttachDesc attach{};
+        attach.structSize = sizeof(attach);
+        attach.scopeKind = VN_TARGET_SCOPE_BUS;
+        attach.objectId = bus;
+        ASSERT_EQ(VN_OK, Vn_AttachBinding(callerBinding, &attach));
+        EXPECT_EQ(baseline + 2, engine.propertyPublisher.WorstCaseCommits());
+        if (discard) {
+            StagingFaultGuard fault(harken::PackStagingFault::BeforeApply);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        } else {
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_TRUE(engine.logicPacks.pending.empty());
+        ASSERT_EQ(!discard, engine.bindings.HasAttachment(packBinding, attach.scopeKind, bus));
+        EXPECT_EQ(baseline + 1, engine.propertyPublisher.WorstCaseCommits());
+        ASSERT_EQ(VN_OK, Vn_DetachBinding(callerBinding, &attach));
+        EXPECT_EQ(baseline + (discard ? 0 : 1), engine.propertyPublisher.WorstCaseCommits());
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+        EXPECT_EQ(baseline, engine.propertyPublisher.WorstCaseCommits());
+    }
+}
+
 TEST(PackReplaceStaging, FaultedBusDiffReplaceReleasesReservations) {
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     // One live plan slot plus one free: a leaked plan reservation would

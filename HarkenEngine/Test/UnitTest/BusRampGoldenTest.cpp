@@ -62,6 +62,59 @@ protected:
     VnPCMDesc desc{};
 };
 
+TEST_F(BusRampGolden, SecondCommandBeforeFirstMix) {
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.f, 500));
+    PlayThroughBus();
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(BusRampGolden, FirstCommandAfterMixUsesFloor) {
+    PlayThroughBus();
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 0));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 1, out);
+    constexpr float length = 240.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(BusRampGolden, FirstCommandAfterMixUsesRequestedTime) {
+    PlayThroughBus();
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(BusRampGolden, LaterCommandUsesRequestedTime) {
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.f, 500));
+    PlayThroughBus();
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
 TEST_F(BusRampGolden, RampFollowsClosedFormAndStaysStepBounded) {
     // Establish a snapped starting gain of 1.0 (first set always snaps).
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.0f, 0));

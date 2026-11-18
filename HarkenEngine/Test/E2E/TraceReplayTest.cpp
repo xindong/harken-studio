@@ -4622,6 +4622,74 @@ TEST(TraceReplayE2E, AuthoredProximityAndToneRecipeReplayByteIdentically) {
            "recorded render";
 }
 
+TEST(TraceReplayE2E, UnchangedVoiceAndBusTransitionsReplayTheirRecordedSamples) {
+    constexpr auto sound = harkentest::ObjectId(101);
+    constexpr auto action = harkentest::ObjectId(102);
+    constexpr auto variable = harkentest::ObjectId(103);
+    constexpr auto bus = harkentest::ObjectId(104);
+    for (const auto scenario : {4, 5, 9, 10}) {
+        SCOPED_TRACE(scenario);
+        const std::string name = "gain_transition_" + std::to_string(scenario);
+        const auto trace = TempPath(name + ".vtrc"), output = TempPath(name + ".f32");
+        std::vector<std::uint8_t> samples;
+        {
+            auto config = MakeNullConfig(4, kBlockFrames, 48000);
+            config.randomSeed = 345;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            auto dc = harkentest::MakeDC(48000, .5f);
+            const float* channels[]{dc.data()};
+            std::uint64_t revision{};
+            ASSERT_TRUE(harken::ComputeMediaPcmContentRevisionV1(48000, 1, dc.size(), channels, 1, &revision));
+            const CanonicalSoundActionSpec spec{sound, action, revision, scenario == 4 ? VN_BUS_MASTER : bus};
+            const auto def = harkentest::MakeVariableDefinition(variable, harken::VariableKindV1::Step, 0, 1, 0);
+            ASSERT_TRUE(InstallCanonicalSoundActions(engine, &spec, 1, &def, 1));
+            ASSERT_EQ(VN_OK, Vn_TraceStart(trace.c_str()));
+            const auto pcm = MonoDesc(dc, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+            const auto pump = [&](unsigned blocks) {
+                for (unsigned i = 0; i < blocks; ++i) {
+                    engine->nullBackend.Pump(1);
+                    CaptureLastBlock(engine, &samples);
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                }
+            };
+            if (scenario == 4) {
+                const auto binding = BindingDesc(variable, VN_TARGET_SCOPE_VOICE, 0, 0.f, -12.f,
+                    200);
+                ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(105), &binding));
+                const auto attach = AttachDesc(VN_TARGET_SCOPE_VOICE, sound);
+                ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(105), &attach));
+                ASSERT_NE(0u, PostCanonicalAction(action));
+                ASSERT_NO_FATAL_FAILURE(pump(8));
+                ASSERT_EQ(VN_OK, Vn_SetValue(variable, 1.f));
+            } else {
+                ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+                if (scenario == 10) {
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -3.f, 0));
+                    ASSERT_NO_FATAL_FAILURE(pump(220));
+                    ASSERT_EQ(nullptr, engine->buses.BusState(engine->buses.FindIndex(bus)));
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -12.f, 0));
+                    ASSERT_NE(0u, PostCanonicalAction(action));
+                } else {
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -3.f, 500));
+                    ASSERT_NE(0u, PostCanonicalAction(action));
+                    if (scenario == 9) ASSERT_NO_FATAL_FAILURE(pump(8));
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -12.f, 200));
+                }
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_NO_FATAL_FAILURE(pump(110));
+            ASSERT_EQ(VN_OK, Vn_TraceStop());
+        }
+        ASSERT_GT(PeakOfRawF32(samples), .05f);
+        const auto replay = RunHost("trace-replay " + trace + " --capture " + output);
+        ASSERT_EQ(0, replay.exitCode) << replay.output;
+        EXPECT_TRUE(samples == ReadFileBytes(output));
+    }
+}
+
 TEST(TraceReplayE2E, BindingVerbsReplayByteIdenticalOnDoubleRun) {
     constexpr VnSoundId kSound = harkentest::ObjectId(1);
     constexpr VnActionId kAction = harkentest::ObjectId(2);

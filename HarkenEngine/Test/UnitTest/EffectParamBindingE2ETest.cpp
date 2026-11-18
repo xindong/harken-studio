@@ -199,7 +199,7 @@ void InstallGainRecipe(harken::Engine* engine, VnSoundId playable,
     install.params[0] = gainDb;
     recipe.installs.push_back(install);
     if (binding != harkentest::ObjectId(0)) {
-        recipe.bindings.push_back(binding);
+        recipe.bindingStorage = std::make_shared<const std::vector<VnBindingId>>(std::initializer_list<VnBindingId>{binding});
     }
     record->voiceRecipes.push_back(std::move(recipe));
 }
@@ -323,14 +323,16 @@ static void CheckOrderedRecipeFirstPcm(std::uint32_t type, bool refuseArena) {
                   {harken::kCompressorParamMakeupDb, 0, -6}};
     }
     recipe.installs.push_back(install);
+    std::vector<VnBindingId> bindings;
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
         const auto id = harkentest::ObjectId(172 + i);
         const auto binding = EffectParamBinding(VN_TARGET_SCOPE_VOICE_EFFECT_PARAM,
             type, inputs[i].param, inputs[i].a, inputs[i].b);
         ASSERT_EQ(VN_OK, Vn_RegisterBinding(id, &binding));
-        recipe.bindings.push_back(id);
+        bindings.push_back(id);
     }
-    recipe.header.bindingCount = static_cast<std::uint32_t>(recipe.bindings.size());
+    recipe.header.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    recipe.bindingStorage = std::make_shared<const std::vector<VnBindingId>>(std::move(bindings));
     auto* record = ClaimTestLogicRecord(&engine);
     ASSERT_NE(nullptr, record);
     record->voiceRecipes.push_back(std::move(recipe));
@@ -686,12 +688,44 @@ TEST(EffectParamBindingE2E, VoiceGainBindingComposesBasePlusContribution) {
     // base -6 dB + contribution +6 dB = 0 dB -> output == input amplitude.
     EXPECT_NEAR(kDc, SteadyLevel(out), 2e-3f);
 
+    const auto render = harkentest::RenderHandle(session.Engine(), handle);
+    ASSERT_NE(0u, render);
+    const auto capacity = session.Engine()->bindings.AttachmentCapacity();
+    const auto other = harkentest::ObjectId(9200);
+    const auto pcm = harkentest::MakeDC(kRate, .125f);
+    const auto desc = MonoDesc(pcm, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(other, &desc));
+    const auto otherPlay = harkentest::MakePlayDesc(other);
+    VnVoiceHandle otherVoice{};
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&otherPlay, &otherVoice));
+    const auto sentinel = GainDesc(-12.f);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(otherVoice, kSlot, VN_EFFECT_GAIN, AsBase(&sentinel)));
+    const float sentinelLevel = .125f * std::pow(10.f, -12.f / 20.f);
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    attach.objectId = other;
+    auto property = bind;
+    property.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    property.targetId = harken::kTargetVoiceVolume;
+    for (unsigned i = 0; i <= capacity; ++i) {
+        const auto id = harkentest::ObjectId(10000 + i);
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(id, &property));
+        ASSERT_EQ(VN_OK, Vn_AttachBinding(id, &attach));
+    }
+    ASSERT_GT(session.Engine()->bindings.AttachmentCapacity(), capacity);
+    ASSERT_EQ(render, harkentest::RenderHandle(session.Engine(), handle));
+
     // Drive the variable to 0 -> contribution 0 dB -> resolved back to base -6.
     ASSERT_EQ(VN_OK, Vn_SetValue(kVar, 0.0f));
     harkentest::AdvanceVariableWrite(session.Engine());
     Capture out2;
     harkentest::PumpAndCapture(session.Engine(), 4, out2);
-    EXPECT_NEAR(kDc * std::pow(10.0f, -6.0f / 20.0f), SteadyLevel(out2), 2e-3f);
+    EXPECT_NEAR(sentinelLevel + kDc * std::pow(10.0f, -6.0f / 20.0f), SteadyLevel(out2), 2e-3f);
+    ASSERT_EQ(VN_OK, Vn_Stop(handle, 0));
+    Capture isolated;
+    harkentest::PumpAndCapture(session.Engine(), 4, isolated);
+    EXPECT_NEAR(sentinelLevel, SteadyLevel(isolated), 2e-3f);
 }
 
 // --- detach returns to base (explicit clear) ---

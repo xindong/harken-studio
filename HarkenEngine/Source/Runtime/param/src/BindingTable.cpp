@@ -1244,28 +1244,10 @@ VnResult BindingTable::Attach(BindingId id, std::uint32_t scopeKind,
 
 VnResult BindingTable::Detach(BindingId id, std::uint32_t scopeKind,
                               VnObjectId objectId, BusTargetStore* store) {
-    for (Attachment& a : m_attachments) {
-        if (a.used && a.bindingId == id && a.scopeKind == scopeKind &&
-            a.objectId == objectId) {
-            // A departing BUS contribution ramps back to neutral over the
-            // definition's transitionMs (section 5.3): mark the target
-            // dirty with that ramp folded, so the next publication carries
-            // the exit. An attachment that contributed nothing (unset
-            // Variable, frozen) departs silently — nothing to ramp.
-            if (store != nullptr && a.scopeKind == kTargetScopeBus &&
-                a.lastHadValue && (a.targetGeneration == 0 ||
-                    store->ActiveGeneration(a.busIndex) == a.targetGeneration)) {
-                const Definition& def = m_definitions[a.definitionIndex];
-                store->MarkVariableChanged(a.busIndex, def.targetId,
-                                           def.transitionMs);
-            }
-            ReleaseAttachmentDependency(a);
-            a = Attachment{};
-            --m_attachmentCount;
-            return VN_OK;
-        }
-    }
-    return VN_UNKNOWN_ID;
+    PreparedAttachmentToken token;
+    const auto result = PrepareDetach(id, scopeKind, objectId, &token);
+    if (result == VN_OK) CommitPreparedAttachment(&token, store);
+    return result;
 }
 
 VnResult BindingTable::PrepareAttach(
@@ -1320,18 +1302,12 @@ VnResult BindingTable::PrepareDetach(
         return VN_INVALID_ARG;
     }
     *out = PreparedAttachmentToken{};
-    for (std::uint32_t i = 0; i < m_attachments.size(); ++i) {
-        const Attachment& attachment = m_attachments[i];
-        if (attachment.used && attachment.bindingId == id &&
-            attachment.scopeKind == scopeKind &&
-            attachment.objectId == objectId) {
-            out->m_operation = PreparedAttachmentToken::Operation::Remove;
-            out->m_slotIndex = i;
-            out->m_value = attachment;
-            return VN_OK;
-        }
-    }
-    return VN_UNKNOWN_ID;
+    const auto* attachment = FindAttachment(id, scopeKind, objectId);
+    if (attachment == nullptr) return VN_UNKNOWN_ID;
+    out->m_operation = PreparedAttachmentToken::Operation::Remove;
+    out->m_slotIndex = m_attachments.IndexOf(attachment);
+    out->m_value = *attachment;
+    return VN_OK;
 }
 
 bool BindingTable::CanCommitPreparedAttachment(
@@ -1589,8 +1565,8 @@ const BindingTable::Attachment*
 BindingTable::FindAttachment(BindingId id, std::uint32_t scopeKind,
                              VnObjectId objectId) const {
     for (const Attachment& a : m_attachments) {
-        if (a.used && a.bindingId == id && a.scopeKind == scopeKind &&
-            a.objectId == objectId) {
+        if (a.used && a.bindingId == id && a.scopeKind == scopeKind && a.objectId == objectId &&
+            m_definitions[a.definitionIndex].sourceKind == BindingSourceKind::Variable) {
             return &a;
         }
     }

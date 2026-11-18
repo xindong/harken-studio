@@ -56,6 +56,36 @@ protected:
     VnVoiceHandle handle = 0;
 };
 
+TEST_F(VoiceRampGolden, ZeroBeforeFirstBlock) {
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, kHalfDb, 0));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 1, out);
+    for (const auto sample : out.left) ASSERT_FLOAT_EQ(.5f, sample);
+}
+
+TEST_F(VoiceRampGolden, HalfSecondBeforeFirstBlock) {
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, kHalfDb, 500));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 94, out);
+    constexpr float length = 24000.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(VoiceRampGolden, RenderedVoiceHonorsTwoHundredMilliseconds) {
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
 TEST_F(VoiceRampGolden, RampFollowsClosedFormAndStaysStepBounded) {
     Capture out;
     harkentest::PumpAndCapture(session->Engine(), 1, out);

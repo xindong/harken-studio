@@ -1530,7 +1530,9 @@ void SleepSettingsBus(harken::Engine& engine, harken::BusSlotRef bus) {
     ASSERT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
 }
 
-TEST(BusSettings, SilentWorkingBusRampsAndWokenBusProtectsItsNextChange) {
+enum class BusGainActivity { Silent, ColdSetting, ChangeAfterWake };
+
+void CheckBusGainActivity(BusGainActivity scenario) {
     EngineSession session(MakeNullConfig(2, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -1554,6 +1556,8 @@ TEST(BusSettings, SilentWorkingBusRampsAndWokenBusProtectsItsNextChange) {
         engine.buses.BusState(bus.index)->gain.current, 1e-6f);
     EXPECT_EQ(0u, engine.voices.ActiveCount());
 
+    if (scenario == BusGainActivity::Silent) return;
+
     // Allow the recovery probe and the subsequent half-second quiet hold.
     engine.nullBackend.Pump(800);
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -1573,6 +1577,7 @@ TEST(BusSettings, SilentWorkingBusRampsAndWokenBusProtectsItsNextChange) {
     for (auto sample : initial.left) EXPECT_NEAR(.25f * quiet, sample, 1e-6f);
     ASSERT_TRUE(engine.buses.BusState(bus.index)->hasMixed);
 
+    if (scenario == BusGainActivity::ColdSetting) return;
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -6, 0));
     Capture changed;
     harkentest::PumpAndCapture(&engine, 4, changed);
@@ -1581,6 +1586,18 @@ TEST(BusSettings, SilentWorkingBusRampsAndWokenBusProtectsItsNextChange) {
         EXPECT_NEAR(.25f * (quiet + (half - quiet) * ratio), changed.left[i], 1e-6f);
     }
     EXPECT_EQ(0u, harken::memguard::HitCount());
+}
+
+TEST(BusSettings, SilentWorkingBusRamps) {
+    CheckBusGainActivity(BusGainActivity::Silent);
+}
+
+TEST(BusSettings, ColdSettingAppliesOnFirstBlockAfterWake) {
+    CheckBusGainActivity(BusGainActivity::ColdSetting);
+}
+
+TEST(BusSettings, WokenBusRampsAfterFirstMix) {
+    CheckBusGainActivity(BusGainActivity::ChangeAfterWake);
 }
 
 TEST(BusSettings, DirectCommandsWakeColdBusWithoutChangingTheirRamps) {
