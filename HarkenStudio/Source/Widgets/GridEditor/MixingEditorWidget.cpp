@@ -385,8 +385,8 @@ void MixingEditorWidget::buildRow(int index)
         auto* waveformCell = view.children->createCell(childRow);
         waveformCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         auto* waveform = new SelectionWaveform(target, waveformCell);
-        connect(waveform, &SelectionWaveform::sourceEditorRequested,
-                this, &MixingEditorWidget::sourceEditorRequested);
+        connect(waveform, &SelectionWaveform::fileViewerRequested,
+                this, &MixingEditorWidget::fileViewerRequested);
         waveformCell->addWidget(waveform);
         rowLayout->addWidget(waveformCell);
         view.children->registerRow(childRow, {cell, waveformCell});

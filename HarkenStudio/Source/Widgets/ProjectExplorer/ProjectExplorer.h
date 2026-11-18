@@ -30,7 +30,7 @@ public:
     PaneSection* sourcesSection() const { return sourcesSection_; }
 
 signals:
-    void sourceEditorRequested(uint32_t sourceId);
+    void fileViewerRequested(uint32_t sourceId);
 
 protected:
     void setupPanelChrome() override;

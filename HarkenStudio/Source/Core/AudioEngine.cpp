@@ -710,22 +710,6 @@ Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
                                         sampleRate, startFrame, frameCount, loops);
 }
 
-Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerPreviewMediaSlice(
-    harkenstudio::ObjectId soundId, const SoundSourceDerivative::MaterializedArtifact& artifact,
-    uint64_t startFrame, uint64_t frameCount, bool loops)
-{
-    if (!session_) {
-        Bridge::EngineSession::RawPcmSliceRegistration registration;
-        registration.soundId = soundId;
-        registration.startFrame = startFrame;
-        registration.frameCount = frameCount;
-        registration.loops = loops;
-        registration.result = Bridge::kEngineNotInit;
-        return registration;
-    }
-    return session_->registerPreviewMediaSlice(soundId, artifact, startFrame, frameCount, loops);
-}
-
 Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::relocateRawPcmSlice(
     harkenstudio::ObjectId soundId, uint64_t startFrame)
 {

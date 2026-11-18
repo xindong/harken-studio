@@ -138,7 +138,7 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 |---|---|
 | 默认状态 | Fade In、Fade Out 时长均为 0；初始曲线为普通上凸二次曲线，归一化淡入为 `y = 2t − t²`，淡出与淡入沿时间方向镜像；已有保存的曲线保留原形状，不迁移 |
 | 编辑入口 | Sound → Sources 引用行的 External Editor，直接在波形上编辑 |
-| 波形预览 | Source Editor、Sources 引用缩略图、Grid 选择预览、Blueprint 和 Timeline 共用 Source 波形视图，由公共渲染器统一处理 Trim 与 Fade；按包络缩放振幅，素材库显示原始波形 |
+| 波形预览 | File Viewer、Sources 引用缩略图、Grid 选择预览、Blueprint 和 Timeline 共用 Source 波形视图，由公共渲染器统一处理 Trim 与 Fade；按包络缩放振幅，素材库显示原始波形 |
 | 预览更新 | 编辑器拖动时本地实时预览；提交、撤销和重做复用 Trim 的 `sources` 变更通知，所有引用预览自动更新；原始波形缓存共享，同文件的不同 Source 引用各自应用设置 |
 | Trim 交互 | 仅顶部抓手可拖动、双击或右键编辑裁剪；主体竖线只作位置指示，不拦截 Fade 点 |
 | 拖动顶部锚点 | 水平调整该侧时长；淡入、淡出不可重叠 |
@@ -152,8 +152,8 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | 拖动与取消 | 松手提交一次修改；Esc 取消当前拖动 |
 | 数据归属 | 保存于每条 Sound Source 引用，时长以采样帧记录；不改写共享音频文件 |
 | 保存／撤销／重做 | 时长、曲线随 Source 一起保存和恢复；旧项目默认没有淡入淡出 |
-| Source Editor 试听 | 绑定 Sound Source 时按源文件坐标应用淡入淡出；从中间定位或循环区间试听不重新锚定包络；素材库文件试听仍使用原音频 |
-| Source Editor 试听失效 | 提交编辑、撤销／重做或源文件内容变化时停止旧试听，下次播放重建；运行时清空或重启后可直接重新播放 |
+| File Viewer 试听 | 只播放源文件本身，不应用任何 Sound Source 的裁剪、淡入淡出或转换，也不受 Toolbar 的 Original／Converted 开关影响；播放控件独立于 Toolbar |
+| File Viewer 试听失效 | 源文件内容变化时停止旧试听，下次播放重建；运行时清空或重启后可直接重新播放 |
 | 对象试听与打包 | 共用媒体处理，在裁剪后、重采样与调度前置静音之前将包络写入 PCM；引擎直接播放处理后的媒体，不再重复计算 Source fade |
 | 转换缓存 | 有效淡入淡出时长与曲线参与派生媒体身份；修改、撤销与重做后使用对应媒体，未启用的曲线形状不生成不同派生媒体 |
 
@@ -163,11 +163,11 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 |---|---|
 | Conversion 归属 | Sound、Container、Layer、Track、Segment 在 Limitation > Conversion 设置 Inherit／Settings；引用为 Shared，预设内配置各平台；同一 Sound 全部 Source 共用有效预设 |
 | 默认引用 | 项目设置 Default Conversion 只赋给新根对象；空值表示新根对象不转换；不改已有对象 |
-| Original／Converted | Toolbar 与语言、平台同区切换，本机按工程记忆；绑定 Sound Source 的试听跟随模式与当前主平台，素材库始终 Original |
+| Original／Converted | Toolbar 与语言、平台同区切换，本机按工程记忆；只作用于进入混音管线的内容：Toolbar 播放 Sound 时按模式与当前主平台选择处理后的原件或转换产物，External Editor 的 Sources 行文件属性随模式切换；File Viewer 不受影响，始终显示和播放源文件 |
 | Converted 首次播放 | 没有产物时按需转换后播放，不做后台预转换；PCM 注册处理后的样本，Vorbis 经独立过渡模块解为 PCM 后注册 |
 | 转换入口 | 预设双击或 Settings 双击打开下方独立 Conversion Editor；Convert 处理当前主平台、有效引用该预设的各语言 Active Source，按文件并行、共享缓存且可取消 |
 | 显示边界 | 转换过程不显示进度、状态或失败文字，错误只进日志；结果表只读，未转换的产物字段留空 |
 | External Editor File Properties | Sound → Sources 引用行打开的 External Editor 中，波形下方以可拖动分隔条隔开，显示路径、声道、采样率、时长、大小、格式；Original 显示原文件，Converted 显示已有产物；有预设但未转换时留空，无有效预设则仍显示原文件 |
-| 刷新与失效 | 转换完成、预设／引用修改、平台或模式变化刷新结果及文件属性；相关试听停止，下次播放按新输入重建；编辑器显示仍使用源文件坐标 |
+| 刷新与失效 | 转换完成、预设／引用修改、平台或模式变化刷新结果及文件属性；相关试听停止，下次播放按新输入重建 |
 | 层级树状态 | Missing／Orphaned／Error 保持原语义；可用 Sound 按当前平台的有效预设和缓存 key 显示 Converted／Not Converted；无预设显示 Available，不再有 Outdated 警告色 |
 | Pack 边界 | PCM 可导出；Vorbis Pack 写入尚未接入并明确失败。Engine 解码试听、Vorbis Pack 和 Integration 接入留在 Part B |

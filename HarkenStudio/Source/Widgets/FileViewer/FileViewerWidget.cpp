@@ -1,24 +1,17 @@
-#include "SourceEditorWidget.h"
+#include "FileViewerWidget.h"
 #include "Core/ThemeLayout.h"
 
-#include "SourceEditorWaveformView.h"
+#include "Widgets/SourceEditor/SourceEditorWaveformView.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
-#include "Core/AssetPipeline/PathUtils.h"
 #include "Core/AudioEngine.h"
-#include "Core/Components/VSound.h"
 #include "Core/ProjectManager.h"
-#include "Core/PlatformContextService.h"
-#include "Core/PreviewMediaModeService.h"
 #include "Core/SoundSourceSemantics.h"
 #include "Core/AuditionManager.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeAssetResolver.h"
 #include "Core/ThemeManager.h"
-#include "Core/Build/PackagingBridge.h"
 
 #include <QFileInfo>
-#include <QDir>
-#include <QDebug>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -132,27 +125,27 @@ QLabel* addRangeValue(QGridLayout* layout, QWidget* parent, int column,
 
 }
 
-SourceEditorWidget::SourceEditorWidget(QWidget* parent)
+FileViewerWidget::FileViewerWidget(QWidget* parent)
     : QWidget(parent)
 {
-    setObjectName(QStringLiteral("SourceEditorWidget"));
+    setObjectName(QStringLiteral("FileViewerWidget"));
 
     auto* layout = new QVBoxLayout(this);
     ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
     ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
     sourceIdentityStrip_ = new QWidget(this);
-    sourceIdentityStrip_->setObjectName(QStringLiteral("sourceEditorSourceIdentity"));
+    sourceIdentityStrip_->setObjectName(QStringLiteral("fileViewerSourceIdentity"));
     auto* identityLayout = new QVBoxLayout(sourceIdentityStrip_);
     ThemeLayout::margins(identityLayout, ThemeLayout::Space::Tight, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None);
     ThemeLayout::spacing(identityLayout, ThemeLayout::Space::Tight);
     sourceTitle_ = new QLabel(sourceIdentityStrip_);
-    sourceTitle_->setObjectName(QStringLiteral("sourceEditorSourceTitle"));
+    sourceTitle_->setObjectName(QStringLiteral("fileViewerSourceTitle"));
     sourceTitle_->setProperty("textRole", QStringLiteral("primary"));
     sourceTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     sourceTitle_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     sourceContext_ = new QLabel(sourceIdentityStrip_);
-    sourceContext_->setObjectName(QStringLiteral("sourceEditorSourceContext"));
+    sourceContext_->setObjectName(QStringLiteral("fileViewerSourceContext"));
     sourceContext_->setProperty("textRole", QStringLiteral("muted"));
     sourceContext_->setProperty("textScale", QStringLiteral("caption"));
     sourceContext_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -162,7 +155,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     layout->addWidget(sourceIdentityStrip_);
 
     metadataStrip_ = new QWidget(this);
-    metadataStrip_->setObjectName(QStringLiteral("sourceEditorMetadataStrip"));
+    metadataStrip_->setObjectName(QStringLiteral("fileViewerMetadataStrip"));
     metadataStrip_->setProperty("surfaceRole", QStringLiteral("secondary"));
     metadataLayout_ = new QGridLayout(metadataStrip_);
     ThemeLayout::margins(metadataLayout_, ThemeLayout::Space::Panel);
@@ -186,14 +179,14 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     layout->addWidget(metadataStrip_);
 
     rangePanel_ = new QWidget(this);
-    rangePanel_->setObjectName(QStringLiteral("sourceEditorRangePanel"));
+    rangePanel_->setObjectName(QStringLiteral("fileViewerRangePanel"));
     rangePanel_->setProperty("surfaceRole", QStringLiteral("secondary"));
     auto* rangeLayout = new QVBoxLayout(rangePanel_);
     ThemeLayout::margins(rangeLayout, ThemeLayout::Space::Panel);
     ThemeLayout::spacing(rangeLayout, ThemeLayout::Space::Control);
     auto* rangeHeader = new QHBoxLayout();
     rangeSourceValue_ = new QLabel(rangePanel_);
-    rangeSourceValue_->setObjectName(QStringLiteral("sourceEditorRangeSource"));
+    rangeSourceValue_->setObjectName(QStringLiteral("fileViewerRangeSource"));
     rangeSourceValue_->setProperty("textRole", QStringLiteral("muted"));
     rangeSourceValue_->setProperty("textScale", QStringLiteral("caption"));
     rangeSourceValue_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -206,30 +199,24 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     ThemeLayout::horizontalSpacing(rangeValuesLayout_, ThemeLayout::Space::Section);
     ThemeLayout::verticalSpacing(rangeValuesLayout_, ThemeLayout::Space::Tight);
     trimStartValue_ = addRangeValue(rangeValuesLayout_, rangeValues_, 0, tr("Trim In"),
-                                    QStringLiteral("sourceEditorTrimStart"), &rangeTitleLabels_);
+                                    QStringLiteral("fileViewerTrimStart"), &rangeTitleLabels_);
     loopStartValue_ = addRangeValue(rangeValuesLayout_, rangeValues_, 1, tr("Loop In"),
-                                    QStringLiteral("sourceEditorLoopStart"), &rangeTitleLabels_);
+                                    QStringLiteral("fileViewerLoopStart"), &rangeTitleLabels_);
     loopEndValue_ = addRangeValue(rangeValuesLayout_, rangeValues_, 2, tr("Loop Out"),
-                                  QStringLiteral("sourceEditorLoopEnd"), &rangeTitleLabels_);
+                                  QStringLiteral("fileViewerLoopEnd"), &rangeTitleLabels_);
     trimEndValue_ = addRangeValue(rangeValuesLayout_, rangeValues_, 3, tr("Trim Out"),
-                                  QStringLiteral("sourceEditorTrimEnd"), &rangeTitleLabels_);
+                                  QStringLiteral("fileViewerTrimEnd"), &rangeTitleLabels_);
     rangeValueLabels_ = {trimStartValue_, loopStartValue_, loopEndValue_, trimEndValue_};
     rangeLayout->addWidget(rangeValues_);
-
-    integrityWarning_ = new QLabel(rangePanel_);
-    integrityWarning_->setObjectName(QStringLiteral("sourceEditorIntegrityWarning"));
-    integrityWarning_->setProperty("textRole", QStringLiteral("warning"));
-    integrityWarning_->setWordWrap(true);
-    rangeLayout->addWidget(integrityWarning_);
     layout->addWidget(rangePanel_);
 
     auditionStrip_ = new QWidget(this);
-    auditionStrip_->setObjectName(QStringLiteral("sourceEditorAudition"));
+    auditionStrip_->setObjectName(QStringLiteral("fileViewerAudition"));
     auto* auditionLayout = new QHBoxLayout(auditionStrip_);
     auditionLayout->setContentsMargins(0, 0, 0, 0);
     ThemeLayout::spacing(auditionLayout, ThemeLayout::Space::Section);
     playButton_ = new QToolButton(auditionStrip_);
-    playButton_->setObjectName(QStringLiteral("sourceEditorPlay"));
+    playButton_->setObjectName(QStringLiteral("fileViewerPlay"));
     playButton_->setAutoRaise(true);
     playButton_->setCursor(Qt::PointingHandCursor);
     playButton_->setProperty("flatIconButton", true);
@@ -241,7 +228,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     });
     playButton_->setToolTip(tr("Play"));
     stopButton_ = new QToolButton(auditionStrip_);
-    stopButton_->setObjectName(QStringLiteral("sourceEditorStop"));
+    stopButton_->setObjectName(QStringLiteral("fileViewerStop"));
     stopButton_->setAutoRaise(true);
     stopButton_->setCursor(Qt::PointingHandCursor);
     stopButton_->setProperty("flatIconButton", true);
@@ -264,13 +251,12 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
             return;
         const AssetInfo* asset = sourceId_ == 0
             ? nullptr : AssetRegistry::instance().getAsset(sourceId_);
-        refreshRangePresentation(waveformView_->previewSource(), asset,
-                                 !soundGuid_.isNull() && !entryId_.isNull());
+        refreshRangePresentation(waveformView_->previewSource(), asset);
     });
     layout->addWidget(waveformView_, 1);
 
     emptyStateLabel_ = new QLabel(this);
-    emptyStateLabel_->setObjectName(QStringLiteral("sourceEditorEmptyState"));
+    emptyStateLabel_->setObjectName(QStringLiteral("fileViewerEmptyState"));
     emptyStateLabel_->setProperty("textRole", QStringLiteral("muted"));
     emptyStateLabel_->setAlignment(Qt::AlignCenter);
     emptyStateLabel_->setWordWrap(true);
@@ -280,7 +266,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
         startPreviewPlayhead();
     });
     connect(stopButton_, &QToolButton::clicked,
-            this, &SourceEditorWidget::stopPreviewPlayhead);
+            this, &FileViewerWidget::stopPreviewPlayhead);
     connect(waveformView_, &SourceEditorWaveformView::locateRequested,
             this, [this](uint64_t frame) {
         const auto slice = previewPcmSlice();
@@ -301,7 +287,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
             refreshAuditionControls();
     });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
-            this, &SourceEditorWidget::applyAuditionTheme);
+            this, &FileViewerWidget::applyAuditionTheme);
 
     auto& assets = AssetRegistry::instance();
     connect(&assets, &AssetRegistry::assetRegistered, this, [this](uint32_t sourceId) {
@@ -318,70 +304,31 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     });
     connect(&ProjectManager::instance(), &ProjectManager::projectOpened,
             this, [this](ProjectData*) { refreshMetadata(); }, Qt::QueuedConnection);
-    connect(&ProjectManager::instance(), &ProjectManager::previewMediaInvalidated,
-            this, [this](const QUuid& soundGuid) {
-        if (!soundGuid_.isNull() && soundGuid == soundGuid_) refreshMetadata();
-    }, Qt::QueuedConnection);
-    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
-            this, [this](ProjectItem* item, const QString& property, const QObject*) {
-        if ((property == QStringLiteral("sources") || property == QStringLiteral("distinguishLanguage"))
-            && !soundGuid_.isNull()
-            && item && item->guid == soundGuid_) {
-            refreshMetadata();
-        }
-    }, Qt::QueuedConnection);
-    connect(&ProjectManager::instance(), &ProjectManager::itemDeleted,
-            this, [this](ProjectItem*) {
-        if (!soundGuid_.isNull())
-            refreshMetadata();
-    }, Qt::QueuedConnection);
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
-            this, &SourceEditorWidget::clearSource);
-    previewPlatform_ = PlatformContextService::instance().context().primary;
-    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, [this](const PlatformContext& context) {
-        if (previewPlatform_ == context.primary)
-            return;
-        previewPlatform_ = context.primary;
-        if (!soundGuid_.isNull())
-            stopPreviewPlayhead();
-    });
-    connect(&PreviewMediaModeService::instance(), &PreviewMediaModeService::modeChanged,
-            this, [this](PreviewMediaMode) {
-        if (!soundGuid_.isNull())
-            stopPreviewPlayhead();
-    });
+            this, &FileViewerWidget::clearSource);
 
     applyAuditionTheme();
     refreshMetadata();
 }
 
-SourceEditorWidget::~SourceEditorWidget()
+FileViewerWidget::~FileViewerWidget()
 {
     stopPreviewPlayhead();
 }
 
-void SourceEditorWidget::bindSource(uint32_t sourceId, const QUuid& soundGuid,
-                                   const QUuid& entryId)
+void FileViewerWidget::bindSource(uint32_t sourceId)
 {
     sourceId_ = sourceId;
-    if (sourceId_ != 0 && !soundGuid.isNull() && !entryId.isNull()) {
-        soundGuid_ = soundGuid;
-        entryId_ = entryId;
-    } else {
-        soundGuid_ = QUuid();
-        entryId_ = QUuid();
-    }
     stopPreviewPlayhead();
     refreshMetadata();
 }
 
-void SourceEditorWidget::clearSource()
+void FileViewerWidget::clearSource()
 {
     bindSource(0);
 }
 
-void SourceEditorWidget::setAuditionManager(HarkenEditor::AuditionManager* audition)
+void FileViewerWidget::setAuditionManager(HarkenEditor::AuditionManager* audition)
 {
     if (audition_ == audition)
         return;
@@ -402,14 +349,12 @@ void SourceEditorWidget::setAuditionManager(HarkenEditor::AuditionManager* audit
             AudioEngine::instance().unregisterRawPcm(previewSoundId_);
             previewSoundId_ = {};
         }
-        preparedSource_.reset();
-        preparedMedia_.reset();
         waveformView_->stopPlayhead();
         refreshAuditionControls();
     });
 }
 
-QString SourceEditorWidget::auditionObjectName(const AssetInfo* asset) const
+QString FileViewerWidget::auditionObjectName(const AssetInfo* asset) const
 {
     if (asset && !asset->relativePath.isEmpty())
         return asset->relativePath;
@@ -418,7 +363,7 @@ QString SourceEditorWidget::auditionObjectName(const AssetInfo* asset) const
     return tr("Audio source %1").arg(sourceId_);
 }
 
-void SourceEditorWidget::retireRawFileAudition()
+void FileViewerWidget::retireRawFileAudition()
 {
     if (auditionPlayingId_ == 0)
         return;
@@ -433,7 +378,7 @@ void SourceEditorWidget::retireRawFileAudition()
     auditionPlayingId_ = 0;
 }
 
-bool SourceEditorWidget::registerRawFileAudition(const AssetInfo* asset)
+bool FileViewerWidget::registerRawFileAudition(const AssetInfo* asset)
 {
     if (!audition_)
         return true;
@@ -446,17 +391,13 @@ bool SourceEditorWidget::registerRawFileAudition(const AssetInfo* asset)
     return auditionPlayingId_ != 0;
 }
 
-std::optional<SoundSourceSemantics::PcmSlice> SourceEditorWidget::previewPcmSlice(
+std::optional<SoundSourceSemantics::PcmSlice> FileViewerWidget::previewPcmSlice(
     uint64_t startFrame) const
 {
     if (sourceId_ == 0)
         return std::nullopt;
     const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId_);
     if (!asset)
-        return std::nullopt;
-    if (const SoundSourceDef* source = boundSource())
-        return SoundSourceSemantics::pcmSlice(*source, asset, startFrame);
-    if (referenceIsDangling())
         return std::nullopt;
 
     SoundSourceDef fileSource;
@@ -468,7 +409,7 @@ std::optional<SoundSourceSemantics::PcmSlice> SourceEditorWidget::previewPcmSlic
     return SoundSourceSemantics::pcmSlice(fileSource, asset, startFrame);
 }
 
-std::optional<SoundSourceSemantics::PcmSlice> SourceEditorWidget::previewLoopPcmSlice(
+std::optional<SoundSourceSemantics::PcmSlice> FileViewerWidget::previewLoopPcmSlice(
     uint64_t startFrame) const
 {
     const auto slice = previewPcmSlice(startFrame);
@@ -477,32 +418,7 @@ std::optional<SoundSourceSemantics::PcmSlice> SourceEditorWidget::previewLoopPcm
     return slice;
 }
 
-std::optional<ResolvedConversion> SourceEditorWidget::previewConversion(
-    const AssetInfo& asset, QString* error) const
-{
-    if (PreviewMediaModeService::instance().mode() != PreviewMediaMode::Converted
-        || !boundSource())
-        return std::nullopt;
-    auto& projects = ProjectManager::instance();
-    const auto* project = projects.currentProject();
-    const auto* sound = projects.findItemByGuid(soundGuid_);
-    if (!project || !sound)
-        return std::nullopt;
-    return resolveConversion(*project, *sound,
-        PlatformContextService::instance().context().primary, asset, error);
-}
-
-QString SourceEditorWidget::previewConversionKey(const AssetInfo& asset,
-    const std::optional<ResolvedConversion>& conversion) const
-{
-    const auto* source = boundSource();
-    return conversion && source
-        ? SoundSourceDerivative::cacheKey(asset.contentHash,
-            SoundSourceSemantics::authoredView(*source, &asset), 0.0, conversion, asset.metadata)
-        : QString{};
-}
-
-bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
+bool FileViewerWidget::startPreviewPlayhead(uint64_t startFrame)
 {
     const auto slice = previewPcmSlice(startFrame);
     const AssetInfo* asset = sourceId_ == 0
@@ -511,36 +427,6 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         stopPreviewPlayhead();
         return false;
     }
-    QString conversionError;
-    const auto conversion = previewConversion(*asset, &conversionError);
-    if (!conversionError.isEmpty()) {
-        qWarning().noquote() << QStringLiteral("Source preview conversion failed: %1").arg(conversionError);
-        stopPreviewPlayhead();
-        return false;
-    }
-    const auto conversionKey = previewConversionKey(*asset, conversion);
-    auto playbackSlice = *slice;
-    const auto range = boundSource()
-        ? SoundSourceSemantics::effectiveRange(*boundSource(), asset) : std::nullopt;
-    const auto mapConvertedSlice = [&]() {
-        const auto& media = *preparedMedia_;
-        const uint64_t frames = media.encodedMedia ? media.encodedMedia->frameCount
-            : media.samples->size() / media.channels;
-        playbackSlice.channels = media.channels;
-        playbackSlice.sampleRate = media.sampleRate;
-        playbackSlice.loops = media.loopable;
-        playbackSlice.windowStartFrame = media.loopable ? media.loopStartFrame : 0;
-        playbackSlice.windowFrameCount = media.loopable
-            ? media.loopEndFrame - media.loopStartFrame : frames;
-        const uint64_t mapped = static_cast<uint64_t>(std::llround(
-            static_cast<long double>(slice->startFrame - range->trimStartFrame)
-                * media.sampleRate / slice->sampleRate));
-        playbackSlice.startFrame = startFrame == 0 ? playbackSlice.windowStartFrame
-            : std::clamp(mapped, playbackSlice.windowStartFrame,
-                playbackSlice.windowStartFrame + playbackSlice.windowFrameCount - 1);
-        playbackSlice.frameCount = playbackSlice.loops ? playbackSlice.windowFrameCount
-            : playbackSlice.windowStartFrame + playbackSlice.windowFrameCount - playbackSlice.startFrame;
-    };
 
     auto& engine = AudioEngine::instance();
     if (!engine.startOutput()) {
@@ -560,88 +446,33 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         previewPlaybackHandle_ = 0;
     }
 
-    auto registrationResult = HarkenEditor::Bridge::kEngineOk;
-    if (const SoundSourceDef* source = boundSource()) {
-        bool prepareSource = !preparedSource_ || *preparedSource_ != *source
-            || preparedSourcePath_ != asset->absolutePath
-            || preparedSourceContentHash_ != asset->contentHash
-            || preparedConversionKey_ != conversionKey;
-        if (!prepareSource) {
-            if (preparedMedia_)
-                mapConvertedSlice();
-            registrationResult = engine.relocateRawPcmSlice(
-                previewSoundId_, playbackSlice.startFrame).result;
-            prepareSource = registrationResult == HarkenEditor::Bridge::kEngineUnknownId
-                || registrationResult == HarkenEditor::Bridge::kEngineNotInit;
-            if (prepareSource) {
-                previewSoundId_ = engine.mintRawPcmSoundId();
-                if (previewSoundId_ == harkenstudio::ObjectId{}) {
-                    stopPreviewPlayhead();
-                    return false;
-                }
-            }
+    const auto registerFile = [&] {
+        return engine.registerRawPcmSlice(previewSoundId_, asset->absolutePath,
+            slice->windowStartFrame, slice->windowFrameCount, slice->loops).result;
+    };
+    auto registrationResult = registerFile();
+    if (registrationResult == HarkenEditor::Bridge::kEngineUnknownId
+        || registrationResult == HarkenEditor::Bridge::kEngineInUse
+        || registrationResult == HarkenEditor::Bridge::kEngineNotInit) {
+        previewSoundId_ = engine.mintRawPcmSoundId();
+        if (previewSoundId_ == harkenstudio::ObjectId{}) {
+            stopPreviewPlayhead();
+            return false;
         }
-        if (prepareSource) {
-            preparedMedia_.reset();
-            if (conversion) {
-                const auto* project = ProjectManager::instance().currentProject();
-                const auto cacheDir = QDir(PathUtils::getDotCacheDir(
-                    QFileInfo(project->projectPath).absolutePath())).filePath(QStringLiteral("pack/media"));
-                preparedMedia_ = SoundSourceDerivative::materialize(asset->absolutePath,
-                    SoundSourceSemantics::authoredView(*source, asset), 0.0,
-                    PlatformContextService::instance().context().primary, cacheDir,
-                    conversion, &conversionError);
-                if (!preparedMedia_) {
-                    qWarning().noquote() << QStringLiteral("Source preview conversion failed: %1").arg(conversionError);
-                    stopPreviewPlayhead();
-                    return false;
-                }
-                mapConvertedSlice();
-                registrationResult = engine.registerPreviewMediaSlice(
-                    previewSoundId_, *preparedMedia_, playbackSlice.windowStartFrame,
-                    playbackSlice.windowFrameCount, playbackSlice.loops).result;
-            } else {
-                std::vector<float> samples;
-                int channels = 0;
-                int sampleRate = 0;
-                if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(
-                        asset->absolutePath, samples, channels, sampleRate)
-                    || channels <= 0 || sampleRate <= 0
-                    || samples.size() % static_cast<size_t>(channels) != 0) {
-                    stopPreviewPlayhead();
-                    return false;
-                }
-                SoundSourceSemantics::applyFadeEnvelope(
-                    samples, static_cast<uint32_t>(channels), *source,
-                    samples.size() / static_cast<size_t>(channels));
-                registrationResult = engine.registerRawPcmSlice(
-                    previewSoundId_, std::move(samples), channels, sampleRate,
-                    slice->windowStartFrame, slice->windowFrameCount, slice->loops).result;
-            }
-            if (registrationResult == HarkenEditor::Bridge::kEngineOk) {
-                preparedSource_ = *source;
-                preparedSourcePath_ = asset->absolutePath;
-                preparedSourceContentHash_ = asset->contentHash;
-                preparedConversionKey_ = conversionKey;
-            }
-        }
-    } else {
-        registrationResult = engine.registerRawPcmSlice(
-            previewSoundId_, asset->absolutePath, slice->windowStartFrame,
-            slice->windowFrameCount, slice->loops).result;
+        registrationResult = registerFile();
     }
     if (registrationResult != HarkenEditor::Bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
 
-    const auto relocated = engine.relocateRawPcmSlice(previewSoundId_, playbackSlice.startFrame);
+    const auto relocated = engine.relocateRawPcmSlice(previewSoundId_, slice->startFrame);
     if (relocated.result != HarkenEditor::Bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
 
-    previewPlaybackHandle_ = engine.playRawPcm(previewSoundId_, playbackSlice.loops);
+    previewPlaybackHandle_ = engine.playRawPcm(previewSoundId_, slice->loops);
     if (previewPlaybackHandle_ == 0) {
         stopPreviewPlayhead();
         return false;
@@ -651,16 +482,13 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         return false;
     }
 
-    waveformView_->startPlayhead(playbackSlice.startFrame, playbackSlice.windowStartFrame,
-        playbackSlice.windowFrameCount, playbackSlice.sampleRate, playbackSlice.loops,
-        preparedMedia_ ? range->trimStartFrame : 0,
-        preparedMedia_ ? range->trimEndFrame : 0,
-        preparedMedia_ ? slice->sampleRate : 0);
+    waveformView_->startPlayhead(slice->startFrame, slice->windowStartFrame,
+                                 slice->windowFrameCount, slice->sampleRate, slice->loops);
     refreshAuditionControls();
     return waveformView_->isPlayheadActive();
 }
 
-void SourceEditorWidget::stopPreviewPlayhead()
+void FileViewerWidget::stopPreviewPlayhead()
 {
     auto& engine = AudioEngine::instance();
     retireRawFileAudition();
@@ -672,13 +500,11 @@ void SourceEditorWidget::stopPreviewPlayhead()
         engine.unregisterRawPcm(previewSoundId_);
         previewSoundId_ = {};
     }
-    preparedSource_.reset();
-    preparedMedia_.reset();
     waveformView_->stopPlayhead();
     refreshAuditionControls();
 }
 
-bool SourceEditorWidget::handlePlayStopShortcut()
+bool FileViewerWidget::handlePlayStopShortcut()
 {
     if (isPreviewPlayheadActive()) {
         stopPreviewPlayhead();
@@ -687,71 +513,41 @@ bool SourceEditorWidget::handlePlayStopShortcut()
     return startPreviewPlayhead();
 }
 
-QString SourceEditorWidget::previewObjectName() const
+QString FileViewerWidget::previewObjectName() const
 {
     const AssetInfo* asset = sourceId_ == 0
         ? nullptr : AssetRegistry::instance().getAsset(sourceId_);
     return auditionObjectName(asset);
 }
 
-std::optional<uint64_t> SourceEditorWidget::previewPlayheadFrame() const
+std::optional<uint64_t> FileViewerWidget::previewPlayheadFrame() const
 {
     return waveformView_->playheadFrame();
 }
 
-bool SourceEditorWidget::isPreviewPlayheadActive() const
+bool FileViewerWidget::isPreviewPlayheadActive() const
 {
     return waveformView_->isPlayheadActive();
 }
 
-void SourceEditorWidget::resizeEvent(QResizeEvent* event)
+void FileViewerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     updateResponsiveLayouts(event->size().width() - 16);
 }
 
-const SoundSourceDef* SourceEditorWidget::boundSource() const
-{
-    if (sourceId_ == 0 || soundGuid_.isNull() || entryId_.isNull())
-        return nullptr;
-    const ProjectItem* item = ProjectManager::instance().findItemByGuid(soundGuid_);
-    const auto* sound = item && item->type == ProjectItem::Type::Sound
-        ? item->comp<VSound>() : nullptr;
-    if (!sound)
-        return nullptr;
-    const auto* source = SoundSourceSemantics::findEntry(*sound, entryId_);
-    return source && source->sourceId == sourceId_ ? source : nullptr;
-}
-
-bool SourceEditorWidget::referenceIsDangling() const
-{
-    return !soundGuid_.isNull() && !entryId_.isNull() && boundSource() == nullptr;
-}
-
-void SourceEditorWidget::setDisplayedSource(const SoundSourceDef& source)
+void FileViewerWidget::setDisplayedSource(const SoundSourceDef& source)
 {
     refreshingDisplayedSource_ = true;
     waveformView_->setSource(source);
     refreshingDisplayedSource_ = false;
 }
 
-void SourceEditorWidget::refreshMetadata()
+void FileViewerWidget::refreshMetadata()
 {
     const bool hasSource = sourceId_ != 0;
     const AssetInfo* asset = hasSource ? AssetRegistry::instance().getAsset(sourceId_) : nullptr;
-    const bool hasReferenceContext = !soundGuid_.isNull() && !entryId_.isNull();
-    const SoundSourceDef* source = boundSource();
-    const bool dangling = hasReferenceContext && !source;
-    const bool hasAsset = asset != nullptr && !dangling;
-    QString conversionError;
-    const bool conversionChanged = preparedSource_ && source && asset
-        && (previewConversionKey(*asset, previewConversion(*asset, &conversionError))
-                != preparedConversionKey_ || !conversionError.isEmpty());
-    if (dangling || (preparedSource_
-        && (!source || !asset || *preparedSource_ != *source
-            || preparedSourcePath_ != asset->absolutePath
-            || preparedSourceContentHash_ != asset->contentHash || conversionChanged)))
-        stopPreviewPlayhead();
+    const bool hasAsset = asset != nullptr;
 
     refreshSourceIdentity(asset);
     sourceIdentityStrip_->setVisible(hasSource);
@@ -761,9 +557,7 @@ void SourceEditorWidget::refreshMetadata()
     waveformView_->setVisible(hasAsset);
 
     SoundSourceDef displaySource;
-    if (source) {
-        displaySource = *source;
-    } else if (hasAsset) {
+    if (hasAsset) {
         displaySource.sourceId = asset->sourceID;
         displaySource.rangeContentHash = asset->contentHash;
         displaySource.loopRegion = SoundSourceSemantics::fileLoopRegion(asset);
@@ -773,12 +567,10 @@ void SourceEditorWidget::refreshMetadata()
     waveformView_->setEditable(false);
     setDisplayedSource(displaySource);
     waveformView_->setAsset(asset);
-    refreshRangePresentation(displaySource, asset, hasReferenceContext);
+    refreshRangePresentation(displaySource, asset);
 
     emptyStateLabel_->setVisible(hasSource && !hasAsset);
-    emptyStateLabel_->setText(!hasSource ? QString()
-                              : !asset   ? tr("Audio source is unavailable")
-                                         : tr("This audio reference no longer exists"));
+    emptyStateLabel_->setText(hasSource && !hasAsset ? tr("Audio source is unavailable") : QString());
     refreshAuditionControls();
     if (!hasAsset)
         return;
@@ -802,7 +594,7 @@ void SourceEditorWidget::refreshMetadata()
     updateResponsiveLayouts(width() - 16);
 }
 
-void SourceEditorWidget::refreshSourceIdentity(const AssetInfo* asset)
+void FileViewerWidget::refreshSourceIdentity(const AssetInfo* asset)
 {
     if (sourceId_ == 0) {
         sourceTitle_->clear();
@@ -816,8 +608,6 @@ void SourceEditorWidget::refreshSourceIdentity(const AssetInfo* asset)
                               ? tr("Audio Source %1").arg(sourceId_)
                               : QFileInfo(path).fileName());
     QStringList context;
-    if (const ProjectItem* item = ProjectManager::instance().findItemByGuid(soundGuid_))
-        context.push_back(item->name);
     if (!path.isEmpty() && QFileInfo(path).fileName() != path)
         context.push_back(path);
     context.push_back(tr("Source %1").arg(sourceId_));
@@ -826,14 +616,11 @@ void SourceEditorWidget::refreshSourceIdentity(const AssetInfo* asset)
     sourceContext_->setToolTip(asset ? asset->absolutePath : QString{});
 }
 
-void SourceEditorWidget::refreshRangePresentation(const SoundSourceDef& source,
-                                                 const AssetInfo* asset,
-                                                 bool hasReferenceContext)
+void FileViewerWidget::refreshRangePresentation(const SoundSourceDef& source,
+                                                 const AssetInfo* asset)
 {
     if (!asset) {
         rangeSourceValue_->clear();
-        integrityWarning_->clear();
-        integrityWarning_->hide();
         return;
     }
     const uint64_t totalFrames = asset->metadata.totalSamples;
@@ -849,13 +636,9 @@ void SourceEditorWidget::refreshRangePresentation(const SoundSourceDef& source,
     loopEndValue_->setText(source.loopRegion
         ? formatRangeValue(source.loopRegion->endFrame, asset->metadata.sampleRate)
         : tr("Off"));
-    const QString warning = hasReferenceContext
-        ? SoundSourceSemantics::integrityText(source, asset) : QString{};
-    integrityWarning_->setText(warning);
-    integrityWarning_->setVisible(!warning.isEmpty());
 }
 
-void SourceEditorWidget::applyAuditionTheme()
+void FileViewerWidget::applyAuditionTheme()
 {
     auto& manager = ThemeManager::instance();
     const auto theme = manager.snapshot();
@@ -870,7 +653,7 @@ void SourceEditorWidget::applyAuditionTheme()
         QString::fromLatin1(ThemeAssetIds::AuditionStop), stopVariant).icon);
 }
 
-void SourceEditorWidget::refreshAuditionControls()
+void FileViewerWidget::refreshAuditionControls()
 {
     const bool hasSlice = previewPcmSlice().has_value();
     const bool playing = isPreviewPlayheadActive();
@@ -881,7 +664,7 @@ void SourceEditorWidget::refreshAuditionControls()
     playButton_->style()->polish(playButton_);
 }
 
-void SourceEditorWidget::updateResponsiveLayouts(int availableWidth)
+void FileViewerWidget::updateResponsiveLayouts(int availableWidth)
 {
     int metadataColumns = 1;
     if (availableWidth >= 920)

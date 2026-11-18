@@ -306,9 +306,6 @@ public:
                                                 int channels, int sampleRate,
                                                 uint64_t startFrame, uint64_t frameCount,
                                                 bool loops = false);
-    RawPcmSliceRegistration registerPreviewMediaSlice(harkenstudio::ObjectId soundId,
-        const VNX::SoundSourceDerivative::MaterializedArtifact& artifact,
-        uint64_t startFrame, uint64_t frameCount, bool loops = false);
     RawPcmSliceRegistration relocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                                 uint64_t startFrame);
     EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);

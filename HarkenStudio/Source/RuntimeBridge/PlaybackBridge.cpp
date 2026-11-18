@@ -526,23 +526,6 @@ EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
     return registration;
 }
 
-EngineSession::RawPcmSliceRegistration EngineSession::registerPreviewMediaSlice(
-    harkenstudio::ObjectId soundId, const VNX::SoundSourceDerivative::MaterializedArtifact& artifact,
-    uint64_t startFrame, uint64_t frameCount, bool loops)
-{
-    QString error;
-    const auto prepared = preparePreviewMedia(artifact, &error);
-    if (!prepared) {
-        qWarning().noquote() << "[PlaybackRoute] Preview media preparation failed:" << error;
-        RawPcmSliceRegistration result;
-        result.soundId = soundId;
-        result.result = kEngineInvalidArg;
-        return result;
-    }
-    return registerRawPcmSlice(soundId, *prepared->samples, artifact.channels,
-        static_cast<int>(artifact.sampleRate), startFrame, frameCount, loops);
-}
-
 EngineSession::RawPcmSliceRegistration EngineSession::relocateRawPcmSlice(
     harkenstudio::ObjectId soundId, uint64_t startFrame)
 {

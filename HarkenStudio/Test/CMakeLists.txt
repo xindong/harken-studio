@@ -99,7 +99,7 @@ add_executable(harken_studio_tests
     UnitTest/BindingSemanticsTest.cpp
     UnitTest/ContainerGridCopyTest.cpp
     UnitTest/SourceEditorPanelTest.cpp
-    UnitTest/SourceEditorPcmSliceTest.cpp
+    UnitTest/FileViewerPcmSliceTest.cpp
     UnitTest/StandaloneEditorDispatchTest.cpp
     UnitTest/TimelineEditorPanelTest.cpp
     UnitTest/ItemTypeIconAssetTest.cpp
