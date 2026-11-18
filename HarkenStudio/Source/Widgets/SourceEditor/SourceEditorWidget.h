@@ -54,9 +54,6 @@ public:
     harkenstudio::ObjectId previewSoundId() const { return previewSoundId_; }
     uint64_t previewPlaybackHandle() const { return previewPlaybackHandle_; }
 
-signals:
-    void sourceContextChanged();
-
 protected:
     void resizeEvent(QResizeEvent* event) override;
 

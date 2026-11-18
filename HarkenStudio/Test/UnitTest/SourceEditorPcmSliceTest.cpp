@@ -10,6 +10,7 @@
 #include "RuntimeBridge/PlaybackBridge.h"
 #include "Widgets/SourceEditor/SourceEditorWidget.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
+#include "Widgets/SourceEditor/SourceFilePropertiesView.h"
 #include "harken/Harken.h"
 #include "harken/HarkenDevelopment.h"
 
@@ -251,9 +252,13 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
     auto& library = *libraryPanel.editorWidget();
     panel.bindSource(asset.sourceID, item->guid, source.entryId);
     libraryPanel.bindSource(asset.sourceID);
-    auto* filePath = panel.findChild<QLabel*>(QStringLiteral("sourceFilePath"));
-    auto* fileRate = panel.findChild<QLabel*>(QStringLiteral("sourceFileSampleRate"));
-    auto* libraryPath = libraryPanel.findChild<QLabel*>(QStringLiteral("sourceFilePath"));
+    VNX::SourceFilePropertiesView properties;
+    VNX::SourceFilePropertiesView libraryProperties;
+    properties.setSource(item->guid, source.entryId, asset.sourceID);
+    libraryProperties.setSource({}, {}, asset.sourceID);
+    auto* filePath = properties.findChild<QLabel*>(QStringLiteral("sourceFilePath"));
+    auto* fileRate = properties.findChild<QLabel*>(QStringLiteral("sourceFileSampleRate"));
+    auto* libraryPath = libraryProperties.findChild<QLabel*>(QStringLiteral("sourceFilePath"));
     ASSERT_NE(filePath, nullptr);
     ASSERT_NE(fileRate, nullptr);
     ASSERT_NE(libraryPath, nullptr);
@@ -332,6 +337,7 @@ TEST_F(SourceEditorPcmSliceTest, ConvertedSourceUsesMediaCoordinatesAndKeepsLibr
         EXPECT_EQ(library.previewPlaybackHandle(), libraryHandle);
     }
     panel.clearEditor();
+    properties.setSource({}, {}, 0);
     EXPECT_TRUE(filePath->text().isEmpty());
     EXPECT_TRUE(fileRate->text().isEmpty());
     EXPECT_EQ(libraryPath->text(), path);
