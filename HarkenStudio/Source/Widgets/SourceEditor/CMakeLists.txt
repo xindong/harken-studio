@@ -1,6 +1,8 @@
 add_library(harken_editor_source_editor STATIC
     SourceEditorPanel.cpp
     SourceEditorPanel.h
+    SourceFilePropertiesView.cpp
+    SourceFilePropertiesView.h
     SourceEditorWaveformView.cpp
     SourceEditorWaveformView_Fades.cpp
     SourceEditorWaveformView_Timeline.cpp
