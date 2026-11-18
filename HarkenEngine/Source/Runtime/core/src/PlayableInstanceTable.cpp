@@ -367,7 +367,7 @@ bool PlayableInstanceTable::PreparedCommitHeld(const PreparedPlayableInstance& o
 PlayableInstanceTable::PreparedParentLinksProof::PreparedParentLinksProof(std::size_t capacity) {
     if (capacity > UINT32_MAX || capacity > (std::numeric_limits<std::size_t>::max() - 1u) / 3u)
         throw std::length_error("parent link proof capacity overflow");
-    if (!PrepareStorage(capacity)) throw std::bad_alloc{};
+    if (!PrepareStorage(capacity)) throw harken::detail::LogicPreparationFailure{};
 }
 
 bool PlayableInstanceTable::PreparedParentLinksProof::PrepareStorage(std::size_t capacity) noexcept {
@@ -391,7 +391,7 @@ bool PlayableInstanceTable::PreparedParentLinksProof::PrepareStorage(std::size_t
         grow(groups_, capacity);
         anchorCapacity_ = capacity + 1u;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PlayableTreeStorage); return false; }
 }
 
 PlayableInstanceTable::PreparedParentLinksProof::PreparedParentLinksProof(
@@ -784,7 +784,7 @@ PlayableInstanceTable::PlayableInstanceTable(std::uint32_t capacity, std::uint32
     if (generationFloor >= kMaximumTaggedGeneration)
         throw std::invalid_argument("playable handle generation exhausted");
     m_initialGeneration = generationFloor + 1;
-    if (!m_entries.Reserve(capacity)) throw std::bad_alloc{};
+    if (!m_entries.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
 }
 
 std::uint32_t PlayableInstanceTable::GenerationHighWater() const noexcept {

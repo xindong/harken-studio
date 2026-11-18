@@ -21,7 +21,7 @@ through `Actions` or its owning `HarkenAction`.
 
 | `Voice` signature | Value and effect |
 | --- | --- |
-| `VnResult SetVolume(float volumeDb, uint rampMs)` | API contribution to authored voice volume, in dB; composes with Variable contributions. A positive ramp interpolates linear amplitude; zero snaps at the next block. |
+| `VnResult SetVolume(float volumeDb, uint rampMs)` | API contribution to authored voice volume, in dB; composes with Variable contributions. Linear-amplitude transitions use the requested sample count, with a 5 ms minimum after rendering. Before rendering, zero snaps and positive durations are honored. |
 | `VnResult SetOutputVolume(float volumeDb, uint rampMs)` | Independent output gain in dB. Voice sends bypass it. Pending/parked voices stage a value without ramping. |
 | `VnResult SetFilter(uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs)` | Tone-stage lowpass (`0`) or highpass (`1`). `enable01` is `0`/`1`; enabled Q must be positive, cutoff and Q finite. It composes with Variable contributions. |
 | `VnResult SetPitch(float ratio)` | Positive, finite playback-rate ratio at most `64`; preserves playback position. |
@@ -60,6 +60,10 @@ starts and park returns install the current image immediately. Retargeting
 begins at the last rendered image; a source that produces no frames does not
 advance that matrix transition.
 
+For continuously changing pitch, bind the pitch target to a Variable and update
+that Variable through the Variable API. `Voice.SetPitch` is a direct rate change;
+repeated calls do not provide a pitch transition or replace a Variable curve.
+
 `Playback.StopAll(uint fadeMs)` requests an atomic stop for all voices and
 Action firings. Authored state and registered content stay loaded. The call
 preflights capacity and can return `VN_BACKPRESSURE`; it does not release a
@@ -79,15 +83,23 @@ topology and filters are not public Unity game-code mutation APIs.
 
 | Signature | Contract |
 | --- | --- |
-| `VnResult SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs)` | Mix-wide gain in dB; affects direct output and post-fader sends. The first volume assignment snaps regardless of `rampMs`. |
+| `VnResult SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs)` | Mix-wide gain in dB; affects direct output and post-fader sends. Before the Bus work row first mixes, its first volume assignment snaps; after mixing, transitions last at least 5 ms. |
 | `VnResult SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs)` | Independent gain on the output toward the parent/final mix; sourced sends are unchanged. |
-| `VnResult SetBusMute(VnObjectId busId, uint mute01, uint fadeMs)` | Mute/unmute without replacing the bus's authored or API volume. Uses the ordinary Bus Volume ramp rules, including the first-assignment snap. |
+| `VnResult SetBusMute(VnObjectId busId, uint mute01, uint fadeMs)` | Mute/unmute without replacing the bus's authored or API volume. Uses the ordinary Bus Volume ramp rules, including the 5 ms minimum after mixing. |
 
 Volumes must be finite; `mute01` is `0` or `1`. Invalid values return
 `VN_INVALID_ARG`, and an unknown Bus ID returns `VN_UNKNOWN_ID`. Gain changes
-begin at a block boundary. Ordinary
-Bus Volume's first assignment snaps even for a positive ramp; later positive
-ramps interpolate in linear amplitude. Bus Output Volume is independent and
-honors a positive ramp on its first assignment too. Internal Bus creation,
-topology, filter, solo, and raw-handle filter helpers are not consumer entry
-points. See the Integration [public API policy](../../../API_SURFACE.md).
+begin at a block boundary and advance by samples. Volume, Output Volume,
+mute/unmute and Send level transitions last at least 5 ms after a voice has
+rendered or a Bus work row has mixed. Longer requests keep their duration.
+Send ramps finish at the requested sample without rounding up to a block end.
+
+Before its first rendered block, voice Volume and Output Volume honor the
+requested duration, including an instantaneous zero. Before a Bus work row's
+first mixed block, its first Volume assignment snaps; subsequent Volume and
+all Output Volume assignments honor the requested duration. Initial Send
+connections and values restored while a Bus sleeps remain instantaneous.
+
+Internal Bus creation, topology, filter, solo, and raw-handle filter helpers
+are not consumer entry points. See the Integration
+[public API policy](../../../API_SURFACE.md).

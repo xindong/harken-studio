@@ -67,12 +67,12 @@ public:
     // Capacity, byte accounting, growth and Swap remain control-side only.
     T* TryAt(std::uint32_t slot) noexcept {
         if (slot >= ConstructedCount()) return nullptr;
-        const auto segment = SegmentFor(slot);
+        const auto segment = slot < baseRows_ ? 0u : SegmentFor(slot);
         return &(*segments_[segment])[slot - SegmentBegin(segment)];
     }
     const T* TryAt(std::uint32_t slot) const noexcept {
         if (slot >= ConstructedCount()) return nullptr;
-        const auto segment = SegmentFor(slot);
+        const auto segment = slot < baseRows_ ? 0u : SegmentFor(slot);
         return &(*segments_[segment])[slot - SegmentBegin(segment)];
     }
 
@@ -85,6 +85,21 @@ public:
         const auto* row = TryAt(slot);
         assert(row != nullptr);
         return *row;
+    }
+
+    // Resolve a row held by a control-side owner without assuming contiguity.
+    std::uint32_t IndexOf(const T* row) const noexcept {
+        const auto address = reinterpret_cast<std::uintptr_t>(row);
+        for (std::uint32_t i = 0; i < segments_.size(); ++i) {
+            if (!segments_[i]) continue;
+            const auto begin = reinterpret_cast<std::uintptr_t>(segments_[i]->data());
+            const auto bytes = std::uint64_t{segments_[i]->ConstructedCount()} * sizeof(T);
+            if (address >= begin && address - begin < bytes && (address - begin) % sizeof(T) == 0) {
+                const auto index = SegmentBegin(i) + static_cast<std::uint32_t>((address - begin) / sizeof(T));
+                if (index < ConstructedCount()) return index;
+            }
+        }
+        return UINT32_MAX;
     }
 
     template<bool Const>
@@ -180,7 +195,7 @@ private:
                     auto candidate = std::make_unique<StableRowStorage<T>>();
                     if (!candidate->Reserve(segmentCapacity)) return false;
                     segments_[index] = std::move(candidate);
-                } catch (...) { return false; }
+                } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage); return false; }
                 capacity_ = first + segmentCapacity;
             }
             auto& segment = *segments_[index];

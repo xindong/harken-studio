@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/param/MeterProbe.h"
 
 #include "Engine.h"
@@ -864,6 +865,16 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
         engine.meterDetectors.NoteRefusal();
         return VN_BACKPRESSURE;
     }
+    const auto required = std::uint64_t{engine.bindings.AttachmentCount()} + 1u;
+    if (required > UINT32_MAX ||
+        !engine.params.PrepareMeterProbeContributionStorage(static_cast<std::uint32_t>(required)))
+        return VN_OUT_OF_MEMORY;
+    try {
+        if (withdrawalScratch_.size() < required) withdrawalScratch_.resize(static_cast<std::size_t>(required));
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+        return VN_OUT_OF_MEMORY;
+    }
     const VnResult result = engine.bindings.AttachProbe(
         bindingId, targetScope, targetStableId, targetInstanceHandle, busIndex, targetGeneration);
     if (result != VN_OK) {
@@ -941,7 +952,7 @@ VnResult MeterProbeSystem::Uninstall(Engine& engine,
     std::uint64_t logicSequence = 0;
     if (engine.logicCommits.TryIssue(&logicSequence) !=
         LogicCommitCoordinator::IssueStatus::Issued) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(engine.logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_BACKPRESSURE;
     }
     RetireProbe(engine, *probe, logicSequence);
@@ -1235,7 +1246,7 @@ VnResult MeterProbeSystem::PrepareBusRemovalV1(Engine& engine,
         for (auto& row : out.probes) {
             if (row.state != MeterSystem::State::Installed) continue;
             if (engine.logicCommits.TryIssue(&row.issuedSequence) != LogicCommitCoordinator::IssueStatus::Issued) {
-                if (engine.logicCommits.Exhausted()) engine.runtimeRecreateRequired = true;
+                if (engine.logicCommits.Exhausted()) engine.RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
                 return VN_BACKPRESSURE;
             }
         }
@@ -1243,7 +1254,7 @@ VnResult MeterProbeSystem::PrepareBusRemovalV1(Engine& engine,
         out.domainEpoch = domain->epoch;
         out.owner = &engine;
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage);
         return VN_BACKPRESSURE;
     }
 }
@@ -1332,7 +1343,7 @@ void MeterProbeSystem::NoteBusDestroyed(Engine& engine,
             std::uint64_t logicSequence = 0;
             if (engine.logicCommits.TryIssue(&logicSequence) !=
                 LogicCommitCoordinator::IssueStatus::Issued) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(engine.logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             RetireProbe(engine, *probe, logicSequence);
         }

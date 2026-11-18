@@ -14,6 +14,7 @@
 #ifndef HARKEN_CORE_COMMAND_QUEUE_H
 #define HARKEN_CORE_COMMAND_QUEUE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/Harken.h>
 
 #include "harken/dsp/Biquad.h"
@@ -796,7 +797,7 @@ public:
         m_originalRanges.resize(cap, nullptr);
         m_busActivities.resize(cap, nullptr);
         m_preparedOriginalRanges.resize(cap, nullptr);
-        if (!m_initialSources.Reserve(cap)) throw std::bad_alloc();
+        if (!m_initialSources.Reserve(cap)) throw harken::detail::LogicPreparationFailure{};
         m_mask = cap - 1;
     }
 

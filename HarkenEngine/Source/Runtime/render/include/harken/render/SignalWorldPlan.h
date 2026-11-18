@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_SIGNAL_WORLD_PLAN_H
 #define HARKEN_RENDER_SIGNAL_WORLD_PLAN_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/SignalRenderPlan.h"
 #include <tuple>
 
@@ -156,7 +157,7 @@ inline std::unique_ptr<SignalRenderPlan> PrepareSignalWorldPlan(
         auto result = SignalRenderPlan::Prepare(format, nodes, connections, paths, proofs);
         if (result) result->EnableActualRouting();
         return result;
-    } catch (...) { return {}; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return {}; }
 }
 
 } // namespace harken

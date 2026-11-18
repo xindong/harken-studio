@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/QueueContinuationLane.h"
 #include "harken/core/OriginalImmediateLaneConditionalProjection.h"
@@ -1101,7 +1102,7 @@ bool ImmediateActionLane::PrepareAttemptIdentityStorage() noexcept {
             eventPlacementOrder_ = std::make_unique<std::uint32_t[]>(config_.eventsPerAttempt);
         if (groupPlacementOrder_ == nullptr)
             groupPlacementOrder_ = std::make_unique<std::uint32_t[]>(config_.eventsPerAttempt);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ImmediateEntryStorage);
         return false;
     }
     return attempts_.ConstructThrough(attempts_.Capacity()) &&

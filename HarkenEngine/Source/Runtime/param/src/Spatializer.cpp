@@ -362,7 +362,7 @@ Spatializer::Spatializer(const EngineConfig& config, std::uint32_t initialVoiceR
     if (!m_mirrors.Reserve(config.voiceCapacity.Render()) ||
         !m_profiles.Reserve(kInitialAttenuationProfileSlots) ||
         !m_retainRing.Reserve(RetainCapacity(config)) ||
-        !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
+        !PrepareVoiceStorage(initialVoiceRows)) throw harken::detail::LogicPreparationFailure{};
 }
 
 VnResult Spatializer::SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up) {
@@ -512,7 +512,7 @@ VnResult Spatializer::PrepareProfileSlots(std::uint32_t additional) noexcept {
         m_profileGenerations.swap(generations);
         m_profileOccupied.swap(occupied);
         return VN_OK;
-    } catch (...) { return VN_BACKPRESSURE; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return VN_BACKPRESSURE; }
 }
 
 bool Spatializer::PrepareRetainSlots(std::size_t additional) noexcept {
@@ -1287,7 +1287,7 @@ VnResult Spatializer::PreparePackProfiles(const PackProfileInput* profiles,
         }
         *out = std::move(prepared);
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return VN_BACKPRESSURE;
     } catch (const std::length_error&) {
         return VN_PACK_RESIDENT_CAPACITY;

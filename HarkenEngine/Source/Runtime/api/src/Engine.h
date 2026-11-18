@@ -5,6 +5,8 @@
 #ifndef HARKEN_API_ENGINE_H
 #define HARKEN_API_ENGINE_H
 
+#include <source_location>
+
 #include "BusEffectSettings.h"
 #include "BusFilterSettings.h"
 #include <harken/ObjectId.h>
@@ -464,11 +466,11 @@ struct PendingStartRecord {
         VnObjectId bindingId{};
         VnObjectId attachmentObjectId{};
     };
-    std::array<PinnedBinding, kMaxVoiceBindingInstanceSlots> pinnedBindings{};
+    std::vector<PinnedBinding> pinnedBindings;
     std::uint32_t pinnedBindingCount = 0;
     std::vector<ParamSystem::PreparedBindingToken> preparedBindings;
-    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
-        recipeBindingIds{};
+    std::shared_ptr<const std::vector<VnBindingId>> recipeBindingStorage;
+    std::span<const VnBindingId> recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // Worst-case publication demand reserved at acceptance for the pinned
     // set's unique targets (section 10.4 moved to the earliest failure
@@ -510,8 +512,8 @@ struct VoicePlayFacts {
     std::uint32_t priority = 128;       // steal priority, for return-time steal
     bool hasTonePreset = false;
     VoiceTonePreset tonePreset{};
-    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
-        recipeBindingIds{};
+    std::shared_ptr<const std::vector<VnBindingId>> recipeBindingStorage;
+    std::span<const VnBindingId> recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
 };
 
@@ -533,7 +535,7 @@ struct EnginePlaybackPathStorage {
             if (count <= 1 || additionalPathRows != nullptr) return true;
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlaybackPathStorage);
             additionalPathRows = std::make_unique<PlaybackPathRow[]>(kPlaybackPathRowCapacity - 1u);
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         }
         return true;
@@ -649,8 +651,8 @@ struct ParkRecord {
     std::uint32_t returnEffectCount = 0;
     VnVoiceHandle returnPreparedRenderHandle = 0;
     bool returnEffectsPrepared = false;
-    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
-        recipeBindingIds{};
+    std::shared_ptr<const std::vector<VnBindingId>> recipeBindingStorage;
+    std::span<const VnBindingId> recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // The render handle the voice held at park. Effect-parameter binding apply-
     // instances (VN_TARGET_SCOPE_VOICE_EFFECT_PARAM) keep their pool slots across
@@ -2904,7 +2906,7 @@ public:
         try {
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlayableServiceFeatures);
             featureArrays_ = std::make_unique<EngineServiceFeatureArrays>();
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         BindFeatureArrays();
         return true;
     }
@@ -3610,7 +3612,7 @@ private:
             static_cast<std::uint64_t>(firstScale) * first +
             static_cast<std::uint64_t>(secondScale) * second;
         if (value > std::numeric_limits<std::uint32_t>::max()) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         return static_cast<std::uint32_t>(value);
     }
@@ -3619,7 +3621,7 @@ private:
                                     std::uint32_t stride) {
         if (stride != 0 &&
             rows > std::numeric_limits<std::size_t>::max() / stride) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         return static_cast<std::size_t>(rows) * stride;
     }
@@ -3921,7 +3923,7 @@ struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
         3u + 2u * kTimelineMaxVoiceEffects + 2u +
-        kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
+        kBuiltinTargetCount + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
     VnVoiceHandle renderHandle = 0;
@@ -4229,11 +4231,12 @@ public:
             if (!allowAllocation()) return nullptr;
             std::unique_ptr<EngineFrontierQueueOwnerContext> record(
                 new (std::nothrow) EngineFrontierQueueOwnerContext{});
+            if (!record) detail::RecordLogicAllocFailure(detail::LogicAllocSite::FrontierOwnerLedgerStorage);
             if (record == nullptr) return nullptr;
             auto* result = record.get();
             records_.push_back(std::move(record));
             return result;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return nullptr;
         } catch (const std::length_error&) {
             return nullptr;
@@ -4250,7 +4253,7 @@ public:
             for (std::uint32_t i = 0; i < count; ++i)
                 if (Acquire(i, count, true, allowAllocation) == nullptr) return false;
             return true;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         } catch (const std::length_error&) {
             return false;
@@ -4710,7 +4713,7 @@ struct EngineActionPlayStorage {
                 ordinals.resize(size);
                 detail::CheckedGrow(frames, size, detail::LogicAllocSite::ActionPlayContainerStorage);
                 frames.resize(size);
-            } catch (...) { return false; }
+            } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
             return !prepared[count].Valid();
         }
         bool PrepareMembers() noexcept {
@@ -4719,7 +4722,7 @@ struct EngineActionPlayStorage {
             try {
                 detail::CheckedGrow(members, count, detail::LogicAllocSite::ActionPlayContainerStorage);
                 members.resize(count);
-            } catch (...) { return false; }
+            } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
             for (std::uint32_t index = 0; index < count; ++index) {
                 if (!prepared[index].Valid()) return false;
                 members[index] = &prepared[index];
@@ -4790,7 +4793,7 @@ struct EngineActionPlayStorage {
             queueRoleCapacity(nodeCapacity),
             playableTreeExecutor(std::in_place, nodeCapacity, false) {
         if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits, 2u);
-        if (needsContainerState && !PrepareContainerStorage()) throw std::bad_alloc();
+        if (needsContainerState && !PrepareContainerStorage()) throw harken::detail::LogicPreparationFailure{};
     }
     bool PrepareContainerStorage() noexcept {
         if (containerStoragePrepared) return true;
@@ -4848,7 +4851,7 @@ struct EngineActionPlayStorage {
             // Retain completed columns across refusal; ready backing never moves.
             containerStoragePrepared = true;
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     enum class VariableControlRollbackStage : std::uint8_t {
         None,
@@ -6147,6 +6150,7 @@ struct Engine {
         OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt retirement;
         EngineActionPlayScratch::NativeVoiceSide nativeReplacement;
         CapturedTimelineVoiceInstall replacementVoice;
+        ParamSystem::BackingPreparation nativeBindingBacking;
         StableStoragePreparation nativeVoiceBacking;
         VoiceLedger::BackingPreparation nativeLedgerBacking;
         VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
@@ -6168,7 +6172,7 @@ struct Engine {
                 !producer.Valid() && !service.Valid() && !resource.Valid() && !resourceReference.Valid() &&
                 !root.Valid() && !source.Valid() &&
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
-                nativeReplacement.Empty() && !replacementVoice.HasStorage() &&
+                nativeReplacement.Empty() && !replacementVoice.HasStorage() && !nativeBindingBacking.Valid() &&
                 !nativeVoiceBacking.Valid() && nativeLedgerBacking.Empty() && !nativeMonitorBacking.Valid() &&
                 !nativePlayBacking.Valid() &&
                 !nativeMemberBacking.Valid() && !nativeRelationBacking.Valid() &&
@@ -6219,6 +6223,7 @@ struct Engine {
         bool discreteMatched = false;
     };
     struct PendingVariableGroupChild {
+        CapturedTimelineVoiceInstall capture;
         TimelineVoiceInstallDesc voice{};
         PlayableRefV1 leaf{};
         std::uint32_t frontierPolicyIndex = UINT32_MAX;
@@ -6701,8 +6706,11 @@ struct Engine {
     };
     bool AllowNativeBackingAllocation() noexcept {
         ++nativeBackingAllocationCountForTest;
-        if (forcePreparedScheduleAllocationFailureForTest || nativeBackingAllocationFailureCountdownForTest == 0)
+        if (forcePreparedScheduleAllocationFailureForTest) return false;
+        if (nativeBackingAllocationFailureCountdownForTest == 0) {
+            detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
             return false;
+        }
         if (nativeBackingAllocationFailureCountdownForTest > 0) --nativeBackingAllocationFailureCountdownForTest;
         return true;
     }
@@ -6744,7 +6752,7 @@ struct Engine {
                 storage->resize(count);
             }
         }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     bool PrepareVariableControlOwners(EnginePlayableServiceRow& row,
@@ -6762,7 +6770,7 @@ struct Engine {
                 return true;
             };
             return grow(row.variableControlControllers, controllers) && grow(row.variableControlContainers, containers);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool PrepareVariableControlMemberWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
         return count <= config.maxVariableControlLiveRows &&
@@ -6807,7 +6815,7 @@ struct Engine {
                 arms.storage->resize(count);
             }
         }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     EngineFrontierAttemptToken NativeBackingTokenFor(const EngineActionPlayScratch& scratch) const noexcept;
@@ -7169,7 +7177,7 @@ public:
           queuePermutationScratch(resolved.maxQueueChildren),
           queueProjectionScratch(static_cast<std::size_t>(resolved.maxQueueChildren) + 1u),
           bindings(resolved.maxBindings, resolved.maxBindingAttachments,
-                   resolved.maxBuses, params.PreparationCapacity()),
+                   resolved.maxBuses, params.BindingCapacity()),
           busTargets(resolved.maxBuses,
                      resolved.maxVariableSliceTargetsTotal),
           effectParamTargets(
@@ -7292,7 +7300,7 @@ public:
             !timelineStartScratch.transactions.Reserve(2u * kMaxKnownScheduleLeaves + 2u) ||
             !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
             !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity) ||
-            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
+            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw harken::detail::LogicPreparationFailure{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
         const auto playableMemberCapacity = static_cast<std::uint64_t>(playableStorage.memberCount) +
@@ -7305,7 +7313,7 @@ public:
             !actionPlayStorage.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
-            !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw std::bad_alloc{};
+            !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw harken::detail::LogicPreparationFailure{};
         if (playableMemberCapacity > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
             playableStorage.continuousCount > UINT32_MAX ||
             !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
@@ -7317,11 +7325,11 @@ public:
             !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!timelineArms.AttachRowStoragePreparation(this,
             [](void* context, std::uint32_t count, bool fullSourceCommandBacking) noexcept {
                 return static_cast<Engine*>(context)->PrepareOriginalSourceRowBacking(count, fullSourceCommandBacking);
-            })) throw std::bad_alloc{};
+            })) throw harken::detail::LogicPreparationFailure{};
         const bool originalPlayableResolver = playableInstances.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalPlayableBaseline, &DisposeOriginalPlayableAssociation);
         assert(originalPlayableResolver);
@@ -7380,7 +7388,7 @@ public:
             (laneHorizonQuanta > laneGroupLimit / groupsPerBucket ||
              resolved.maxDeferredIntents >
                  laneGroupLimit / groupsPerBucket - laneHorizonQuanta))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         timelinePoolConfig.maxImmediateLaneGroupRows =
             static_cast<std::uint32_t>(
                 (laneHorizonQuanta + resolved.maxDeferredIntents) *
@@ -7388,7 +7396,7 @@ public:
         timelinePoolConfig.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
         timelinePoolConfig.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
-        if (laneAttempts > UINT32_MAX) throw std::bad_alloc{};
+        if (laneAttempts > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
         if (!decisions.Valid() || !transitionInstances.Valid() ||
             !armGroups.Valid() ||
             !timelinePool.Reset(timelinePoolConfig, 0,
@@ -7413,9 +7421,9 @@ public:
                                   resolved.maxPropertiesPerCurrentSlice,
                                   resolved.maxVariableSliceTargetsTotal,
                                   variables.ApplyPayloadCapacity())) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
-        if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
+        if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw harken::detail::LogicPreparationFailure{};
         effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
         buses.AttachEffectRevisionReader(this, ReadBusEffectRevision);
         buses.AttachDormantEffects({this,
@@ -7447,15 +7455,15 @@ public:
             !initialQueueCurrentCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
             !initialQueueSuccessorCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
             !actionQueueReplacementScratch.Reserve(resolved.maxPlayableInstances))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
             !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
             !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (queueInstances.originalConditionalCapacity_ != 0) {
             if (!originalQueueConditionalHolders.Reserve(queueInstances.Capacity()) ||
                 !originalQueueReplacementHolders.Reserve(queueInstances.Capacity()))
-                throw std::bad_alloc{};
+                throw harken::detail::LogicPreparationFailure{};
             originalQueueReplacementSpans =
                 std::make_unique<PrivateSelectedQueueFutureSpanPool>(queueInstances.Capacity());
             originalQueueReplacementBatch =
@@ -7468,37 +7476,37 @@ public:
         if (!queueInstances.AttachRowStoragePreparation(this,
                 [](void* context, std::uint32_t count) noexcept {
                     return static_cast<Engine*>(context)->PrepareQueueInstanceHolders(count);
-                })) throw std::bad_alloc{};
+                })) throw harken::detail::LogicPreparationFailure{};
         originalQueueGroupCapacity = timelinePoolConfig.maxImmediateLaneGroupRows;
         if (!originalQueueGroupHolders.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (timelinePool.MaxArmsPerGroup() == 0)
-            throw std::bad_alloc{};
-        if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw std::bad_alloc{};
-        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
+        if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw harken::detail::LogicPreparationFailure{};
+        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw harken::detail::LogicPreparationFailure{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
         const auto plainCapacity = immediateActionLane.EventsPerAttempt();
         const auto plainRows = static_cast<std::uint64_t>(resolved.maxActionFirings) * plainCapacity;
         if (plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateSource) ||
             plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateStopRef))
-            throw std::bad_alloc{};
-        if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
+        if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw harken::detail::LogicPreparationFailure{};
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxPlan03GroupHeadersPerPage;
         if (pageGroupRows >
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03GroupSliceInput))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         const auto groupScratchCount = pageGroupRows +
             timelinePoolConfig.maxImmediateLaneGroupRows;
         if (groupScratchCount > UINT32_MAX ||
             groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(Plan03PageGroupView))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!timelineGroupCaptureScratch.Reserve(static_cast<std::uint32_t>(groupScratchCount)))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!PrepareTimelineGroupCaptureStorage(
                 timelinePool.CapturePendingEventStorageDemand().nativeGroups, 0))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         timelinePool.AttachPendingEventStorage(timelineGroupCapturePreparation, this,
             [](void* context, ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
                 return static_cast<Engine*>(context)->PrepareTimelineGroupCaptureStorage(demand.nativeGroups, 0);
@@ -7511,11 +7519,11 @@ public:
         if (queueEventCapacity > UINT32_MAX || queueEventCapacity >
             std::numeric_limits<std::size_t>::max() /
                 sizeof(EngineInitialQueueTimingEvent))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!initialQueueTimingProgramsScratch.Reserve(resolved.maxScheduledTransactions) ||
             !initialQueueTimingEventsScratch.Reserve(static_cast<std::uint32_t>(queueEventCapacity)) ||
             !initialQueueTimingGroupsScratch.Reserve(static_cast<std::uint32_t>(pageGroupRows)))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(ImmediateLaneEvent));
@@ -7523,16 +7531,16 @@ public:
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03ImmediateLaneGroupDescriptor));
         if (!initialQueueLaneGroupsScratch.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         if (!timelinePool.AttachImmediateLaneRowStoragePreparation(this,
                 [](void* context, std::uint32_t required) noexcept {
                     auto& engine = *static_cast<Engine*>(context);
                     return engine.PrepareTimelineGroupCaptureStorage(0, required) &&
                         engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
                         engine.originalQueueGroupHolders.ConstructThrough(required);
-                })) throw std::bad_alloc{};
+                })) throw harken::detail::LogicPreparationFailure{};
         if (!initialFrontierEvents.Reserve(4ull * resolved.maxPlayableInstances + 1u) ||
-            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw std::bad_alloc{};
+            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw harken::detail::LogicPreparationFailure{};
         const std::uint64_t frontierNodes = resolved.maxPlayableInstances;
         const auto boundedFrontierCount = [](std::uint64_t proposed, std::uint32_t limit) {
             return static_cast<std::uint32_t>(std::min<std::uint64_t>(proposed, limit));
@@ -7595,7 +7603,7 @@ public:
             !selectionMemory.Reset(selectionConfig) ||
             !variables.NoteEmitterCreated(emitters.DefaultState()) ||
             !playablePropertyCutScratch.Reset(cutConfig)) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         voices.AttachStreamSeekHandoffs(&streamSeekHandoffs);
         streamResyncs.assign(voices.Capacity(), StreamResyncRow{});
@@ -7615,7 +7623,7 @@ public:
                                     resolved.maxEventsPerQuantum,
                                     &timelinePool, &timelineArms,
                                     &timelineSink, &decisions)) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         timelineService = std::make_unique<TimelineServiceCoordinator>(*this);
         // Section-10.4 capacity contract: binding-instance growth consults
@@ -7641,13 +7649,13 @@ public:
         }
         // One staging record per Logical Voice entry, indexed by ledger slot;
         // only deferred starts are active.
-        if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
+        if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw harken::detail::LogicPreparationFailure{};
         bindings.AttachVoiceCatalogStorage(this, [](void* context) noexcept {
             return static_cast<Engine*>(context)->PrepareVoiceBindingCatalogStorage();
         });
         const auto renderCapacity = resolved.voiceCapacity.Render();
         if (resolved.audibilityParkEnabled != 0 &&
-            !audibilityCursorRows.Reserve(renderCapacity)) throw std::bad_alloc();
+            !audibilityCursorRows.Reserve(renderCapacity)) throw harken::detail::LogicPreparationFailure{};
         if (!voiceOriginPlayable.Reserve(renderCapacity) ||
             !voicePlayFacts.Reserve(renderCapacity) || !playbackPaths.Reserve(renderCapacity) ||
             !timelineVoiceInstallIdentities.Reserve(renderCapacity) ||
@@ -7656,10 +7664,10 @@ public:
             !voices.AttachSlotStoragePreparation(logicVoiceStorageRegistration, this,
                 [](void* context, std::uint32_t count) noexcept {
                     return static_cast<Engine*>(context)->PrepareLogicVoiceStorage(count);
-                })) throw std::bad_alloc();
+                })) throw harken::detail::LogicPreparationFailure{};
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
-        if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
+        if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw harken::detail::LogicPreparationFailure{};
         if (resolved.audibilityParkEnabled != 0) {
             detail::CheckedGrow(audibilityParkedSlots, resolved.voiceCapacity.Virtual(),
                                 detail::LogicAllocSite::AudibilityParked);
@@ -7750,7 +7758,7 @@ private:
         }
         if (!record.definitionEnded) (void)packComposition.EndOriginalDefinition(original.index_);
         if (record.phase == PackComposition::OriginalLeasePhase::Faulted) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         return packComposition.DischargeOriginalLease(original);
@@ -7766,7 +7774,7 @@ private:
         if (result != VN_OK) { *out = prepared; return result; }
         const auto abortBeforeResource = [&](VnResult failure) noexcept {
             const auto returned = packComposition.AbortOriginalPreparedLease(native);
-            if (returned != VN_OK) runtimeRecreateRequired = true;
+            if (returned != VN_OK) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             prepared.result = returned == VN_OK ? failure : VN_RUNTIME_RECREATE_REQUIRED;
             prepared.lease = {}; prepared.action = nullptr; prepared.playableRow = nullptr;
             *out = prepared;
@@ -8034,15 +8042,15 @@ public:
                 !actionFirings.Capture(holder.firing_, &actual) || actual.owner != holder.owner_ ||
                 actual.state != ActionFiringState::TerminalRetained ||
                 actual.ownedDeferredCount != 0 || actual.livePlayableCount != 0) {
-                runtimeRecreateRequired = true; return VN_RUNTIME_RECREATE_REQUIRED;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return VN_RUNTIME_RECREATE_REQUIRED;
             }
             if (holder.returned_) continue;
             if (!OriginalPackIdentityLeaseMatches(holder.original_, holder.owner_.pack)) {
-                runtimeRecreateRequired = true; return VN_RUNTIME_RECREATE_REQUIRED;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return VN_RUNTIME_RECREATE_REQUIRED;
             }
             const auto result = ReleaseOriginalPackIdentityLease(holder.original_);
             if (result != VN_OK) {
-                if (result != VN_IN_USE) runtimeRecreateRequired = true;
+                if (result != VN_IN_USE) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return result;
             }
             holder.returned_ = true;
@@ -8054,7 +8062,7 @@ public:
         for (auto& holder : originalActionFiringPackHolders) {
             if (holder.firing_ == 0 || holder.root_ != root) continue;
             if (!holder.returned_ || holder.original_.Valid()) {
-                runtimeRecreateRequired = true; continue;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); continue;
             }
             holder.firing_ = 0; holder.root_ = 0; holder.owner_ = {}; holder.returned_ = false;
         }
@@ -8081,7 +8089,7 @@ public:
     void ForgetFinalizedOriginalDeferredPack(ActionDeferredRecordToken token) noexcept {
         if (!MatchesOriginalDeferredPackRecord(token)) return;
         assert(OriginalDeferredPackFinalizationReady(token));
-        if (!OriginalDeferredPackFinalizationReady(token)) { runtimeRecreateRequired = true; return; }
+        if (!OriginalDeferredPackFinalizationReady(token)) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
         auto& original = originalDeferredPackHolders[token.slot];
         original.record_ = {}; original.pool_ = {}; original.lease_ = {};
         original.transferred_ = false; original.transferredActionFiring_ = 0; original.returned_ = false;
@@ -8094,20 +8102,20 @@ public:
         if (!MatchesOriginalDeferredPackRecord(token)) return ReleasePackIdentityLease(lease);
         auto& original = originalDeferredPackHolders[token.slot];
         if (!packComposition.SameFullOriginalLease(original.lease_, lease)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         if (original.returned_) return VN_OK;
         if (original.transferred_ || !original.original_.Valid() ||
             !packComposition.SameFullOriginalLease(original.original_.OriginalLease(), lease))
-            { runtimeRecreateRequired = true; return VN_RUNTIME_RECREATE_REQUIRED; }
+            { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return VN_RUNTIME_RECREATE_REQUIRED; }
         const auto result = ReleaseOriginalPackIdentityLease(original.original_);
         if (result == VN_OK) original.returned_ = true;
         else if (result == VN_IN_USE) {
             const auto state = actionDeferredRecords.State(token);
             if (state == ActionDeferredRecordState::Claimed || state == ActionDeferredRecordState::CancelRequested)
                 original.claimFinalizationPending_ = true;
-        } else runtimeRecreateRequired = true;
+        } else RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return result;
     }
 
@@ -8118,7 +8126,7 @@ public:
         auto& original = originalDeferredPackHolders[token.slot];
         if (!original.original_.Valid() || original.transferred_ || original.returned_ ||
             !packComposition.SameFullOriginalLease(original.original_.OriginalLease(), lease)) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
         return RetagOriginalPackIdentityLease(original.original_, PackLeaseSlice::Playable);
@@ -8170,7 +8178,7 @@ public:
     void ConsumeOriginalDeferredPackPreparation(EngineActionDeferredScratch& scratch) noexcept {
         const bool ready = PrepareOriginalDeferredPackCommit(scratch);
         assert(ready);
-        if (!ready) { runtimeRecreateRequired = true; return; }
+        if (!ready) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
         const auto token = scratch.recordToken;
         const auto pool = scratch.poolToken;
         actionDeferredRecords.ConsumePreparedPair(std::move(scratch.pairCommitProof));
@@ -8250,7 +8258,7 @@ public:
             grow(actionPlayAttemptTokens, std::min<std::size_t>(steps, actionPlayScratch.size()));
             grow(initialPendingVariableOwnerScratch, std::min<std::size_t>(steps, actionPlayScratch.size()));
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool PrepareImmediateEntryStorage(EngineImmediateEntryAttempt& attempt,
                                      EngineImmediateEntryStorageDemand demand) noexcept {
@@ -8276,7 +8284,7 @@ public:
             if (attempt.selectionCommitInputs.size() < count) attempt.selectionCommitInputs.resize(count);
             if (attempt.selectionPublicationCells.size() < count) attempt.selectionPublicationCells.resize(count);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     bool EnsureImmediateEntryAttempt(std::uint32_t slot) noexcept {
         if (slot < immediateEntryAttempts.size()) return true;
@@ -8337,7 +8345,7 @@ public:
             // their full backing once prepared, including across failed retries.
             held.laneMemberManifests = storage.privateInitialVcLaneMembers;
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     static bool ActionPlaySlotReusable(const EngineActionPlayScratch& scratch) noexcept {
         return scratch.storage.phase == EngineFrontierAttemptPhase::Free && scratch.storage.generation != UINT64_MAX;
@@ -8451,12 +8459,12 @@ public:
             if (association.engine_ != nullptr) return false;
             if (!preparingStorage->originalPendingVariableProducer.Empty()) return false;
             if (nextOriginalPendingVariableProducerMarker == UINT64_MAX) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
                 return false;
             }
             if (preparingStorage->originalDeferredPackRecord.Valid() &&
                 OriginalPreparingPackOwner(*preparingStorage) == nullptr) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (auto* issuedPack = OriginalPreparingPackOwner(*preparingStorage)) {
@@ -8481,7 +8489,7 @@ public:
             ? playablePartitions.Reserve(row.identity, nullptr, &original.baseline_)
             : context->ReserveOriginalService(playablePartitions, this, row, &original.baseline_);
         if (!partition.Valid()) {
-            if (playablePartitions.OriginalStorageIssuerExhausted()) runtimeRecreateRequired = true;
+            if (playablePartitions.OriginalStorageIssuerExhausted()) RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
             return false;
         }
         row.invocation = &invocation;
@@ -8929,7 +8937,8 @@ public:
     }
     enum class PendingOrdinarySelectionResult : std::uint8_t { Ready, Waiting, Refused, Rejected };
     PendingOrdinarySelectionResult ServicePendingOrdinarySelections(
-        EngineImmediateEntryAttempt& attempt, std::uint64_t anchor) noexcept;
+        EngineImmediateEntryAttempt& attempt, std::uint64_t anchor,
+        VnRuntimeFaultCategory* failureCategory = nullptr) noexcept;
 
     bool ClosePendingOrdinarySelection(OriginalPendingOrdinarySelectionHolder& holder) noexcept {
         if (holder.Empty()) return true;
@@ -8969,6 +8978,7 @@ public:
         holder.retiredChildEpoch = 0;
         holder.nativeReplacement = {};
         holder.replacementVoice = {};
+        holder.nativeBindingBacking.Release();
         holder.nativeVoiceBacking.Release();
         holder.nativeLedgerBacking.Release();
         holder.nativeMonitorBacking.Release();
@@ -9618,7 +9628,7 @@ public:
                 !allocateColumn(prepared->reprepare_.children, row.variableControlChildCount) ||
                 !allocateColumn(prepared->reprepare_.childEpochs, row.variableControlChildCount) ||
                 !allocateColumn(prepared->reprepare_.childrenReturned, row.variableControlChildCount)) return false;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         } catch (const std::length_error&) {
             return false;
@@ -10436,7 +10446,7 @@ public:
             group->retiredDecisions[slot] = {old[slot], group->initialDecisionInputs[slot], tickets[slot]};
             const bool finished = variableControlInstances.FinishInitialSideReplacement(held[slot], true);
             assert(finished);
-            if (!finished) { runtimeRecreateRequired = true; return false; }
+            if (!finished) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return false; }
             if (slot == 0) { row.variableControlDiscreteDecision = next[slot]; row.variableControlDiscreteTicket = next[slot].Valid() ? row.ticket : 0; }
             else { row.variableControlContinuousDecision = next[slot]; row.variableControlContinuousTicket = next[slot].Valid() ? row.ticket : 0; }
             group->initialDecisionInputs[slot] = nextInputs[slot];
@@ -10529,7 +10539,7 @@ public:
                 packComposition.SameFullOriginalLease(pack.lease, invocation.packLease) &&
                 !invocation.originalPackLease.Valid();
             assert(exact);
-            if (!exact) { runtimeRecreateRequired = true; return; }
+            if (!exact) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
             // All staged duties refer to this one genuine owner before moving it.
             for (const auto& service : originalPlayableServiceLifetimeHolders) {
                 if (service.engine_ != this || service.invocation_ != &invocation ||
@@ -10537,7 +10547,7 @@ public:
                     service.packDutyOwner_ != &owner) continue;
                 const bool dutyReady = MatchesOriginalPlayableServicePackDuty(service);
                 assert(dutyReady);
-                if (!dutyReady) { runtimeRecreateRequired = true; return; }
+                if (!dutyReady) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
             }
             invocation.originalPackLease = std::move(owner);
             // The native move is the only ownership transfer; no lease is acquired.
@@ -10577,7 +10587,7 @@ public:
                 pack.originalInvocationSlot == invocation.slot && !pack.originalInvocationEnded;
             assert(exact);
             if (exact) pack.originalInvocationEnded = true;
-            else runtimeRecreateRequired = true;
+            else RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         // End only already-issued associations at this actual final native exit.
         for (auto& storage : actionPlayStorage) {
@@ -10638,7 +10648,7 @@ public:
             if (queuePermutationScratch.size() < required) queuePermutationScratch.resize(required);
             if (queueProjectionScratch.size() <= required) queueProjectionScratch.resize(required + 1u);
             return true;
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return false;
         }
     }
@@ -11178,7 +11188,7 @@ public:
             commit.Release();
             const bool cleared = ledger.ClearCompletionMutationExact(voice.ledgerSlot, mutation);
             assert(cleared);
-            if (!cleared) runtimeRecreateRequired = true;
+            if (!cleared) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             else voice.ledgerPreparation.completionMutation = {};
             return false;
         }
@@ -11629,7 +11639,7 @@ public:
         // Native storage is unavailable while any original loan remains.
         if (holder.original_.Valid()) {
             (void)timelineOccurrences.CancelPreparedAcquire(token, nullptr, &actual);
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         holder.receiver_ = this;
@@ -11665,7 +11675,7 @@ public:
         if (holder.original_.Valid()) {
             // A Free native row cannot have an outstanding same-slot loan.
             (void)compositeCompletionOwners.CancelPrepared(*out);
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return CompositeCompletionAcquireStatus::Invalid;
         }
         holder.receiver_ = this;
@@ -12080,7 +12090,7 @@ public:
             try {
                 detail::LogicAllocCheckpoint(detail::LogicAllocSite::ImmediateEntryStorage);
                 attempt.originalC0Factory = std::make_unique<OriginalInitialC0FactoryRecord>();
-            } catch (...) { return false; }
+            } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         }
         auto& record = *attempt.originalC0Factory;
         record.receiver_ = this; record.root_ = attempt.root; record.attemptGeneration_ = attempt.generation;
@@ -12689,7 +12699,7 @@ public:
                 ConsumeOriginalQueueLaneGroup(std::move(transfer)) == holder.groups[i]) continue;
             transfer.Release();
             if (!timelinePool.CancelPrivateImmediateLaneGroup(&issued, &holder.groups[i]))
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         const auto& parent = originalQueueLifetimeHolders[holder.queue.slot];
@@ -13470,7 +13480,7 @@ public:
             const bool cancelled = queueInstances.CancelPreparedAcquire(prepared, &original);
             assert(cancelled);
             returnCheckpoint();
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         originalQueueLifetimeHolders[token.slot] = std::move(original);
@@ -13701,7 +13711,7 @@ public:
         proof.Release();
         const bool cancelled = timelinePool.CancelPrivateImmediateLaneGroup(&original, &identity);
         assert(cancelled);
-        if (!cancelled) runtimeRecreateRequired = true;
+        if (!cancelled) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
     }
 
@@ -13760,7 +13770,7 @@ public:
                 !buses.PrepareDefinitionCapacity(count)) return false;
             busDefinitionCapacity = count;
             return true;
-        } catch (...) { return false; }
+        } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BusDefinitionStorage); return false; }
     }
     bool PrepareBusOwnerCapacity(std::uint64_t required) noexcept {
         if (required >= UINT32_MAX) return false;
@@ -13781,7 +13791,7 @@ public:
             grow(preparedOwnerClaims);
             if (preparedPreviewOwnerSlots.size() < count) preparedPreviewOwnerSlots.resize(count, UINT32_MAX);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BusOwnerStorage); return false; }
     }
     // Prepared and retiring slots retain their old identities while backing grows.
     bool PrepareAdditionalBusDefinitions(std::uint64_t additions) noexcept {
@@ -14137,7 +14147,7 @@ public:
         auto* source = MemberRelationOwner(from);
         auto* target = MemberRelationOwner(to);
         assert(source != nullptr && target != nullptr);
-        if (source == nullptr || target == nullptr) { runtimeRecreateRequired = true; return; }
+        if (source == nullptr || target == nullptr) { RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE); return; }
         ClearPlayableMemberReferences(to, 1);
         const auto sourceOffset = static_cast<std::uint32_t>(from % playableStorage.memberStride);
         auto* sourceLink = MemberRelationLink(*source, sourceOffset);
@@ -14168,7 +14178,7 @@ public:
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
         try { row.members.resize(playableStorage.memberStride); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
@@ -14203,7 +14213,7 @@ public:
         const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(record), record.generation};
         if (FindPlayableMember(token) != &record ||
             (source.Valid() && source.slot >= sourcePlayableMembers.size())) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return false;
         }
         if (source.Valid()) {
@@ -14211,7 +14221,7 @@ public:
             if (existing != nullptr && existing != &record &&
                 existing->completion.source.slot == source.slot &&
                 existing->completion.source.generation == source.generation) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
         }
@@ -14402,7 +14412,7 @@ public:
         if (row.memberPrograms.size() == playableStorage.initialProgramStride) return true;
         if (memguard::IsAudioTagged() || memberProgramRecords.PreparedUseActive()) return false;
         try { row.memberPrograms.resize(playableStorage.initialProgramStride); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     static bool MemberProgramReusable(const EngineMemberProgramRecord& record) noexcept {
@@ -14506,11 +14516,11 @@ public:
             if (!record.occupied || record.directoryOwned || MemberProgramHasReaders(record)) continue;
             const auto* member = FindPlayableMember(record.memberToken);
             if (member == nullptr) {
-                runtimeRecreateRequired = true;
+                RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 continue;
             }
             if (member->release.Valid() && !voices.ReleaseObserved(member->release)) continue;
-            if (!RecycleMemberProgram(record)) runtimeRecreateRequired = true;
+            if (!RecycleMemberProgram(record)) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     bool RetiredMemberProgramsHoldService(const EnginePlayableServiceRow& row) noexcept {
@@ -14520,7 +14530,7 @@ public:
             auto* owner = ResolvePlayableService(record.member.service);
             for (std::size_t depth = 0;; ++depth) {
                 if (owner == nullptr || depth == playableServices.size()) {
-                    runtimeRecreateRequired = true;
+                    RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     return true;
                 }
                 if (owner == &row) return true;
@@ -14558,7 +14568,7 @@ public:
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableControlRetargetStorage);
             variableControlRetargetScratch =
                 std::make_unique<VariableControlRetargetTreeScratch>(config.maxPlayableInstances);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     VariableControlRetargetTreeScratch& VariableControlRetargetScratch() noexcept {
@@ -14618,14 +14628,29 @@ public:
                 initialRootArmPublicationInputs.resize(arms);
             }
             if (pendingImmediateLaneEventsScratch.size() < events) pendingImmediateLaneEventsScratch.resize(events);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
+        return true;
+    }
+    VnResult PrepareNativeBindingGrowth(
+        std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings) noexcept;
+    bool PrepareVoiceBindingResolutionStorage(std::uint64_t count) noexcept {
+        if (count <= voiceBindingResolutionScratch.size()) return true;
+        if (count > UINT32_MAX || memguard::IsAudioTagged() || !AllowNativeBackingAllocation()) return false;
+        try {
+            if (count > voiceBindingResolutionScratch.size())
+                voiceBindingResolutionScratch.resize(static_cast<std::size_t>(count));
+            voiceBindingAdmissionScratch.reserve(static_cast<std::size_t>(count));
+            voiceBindingPreparationScratch.reserve(static_cast<std::size_t>(count));
+        }
+        catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage); return false; }
         return true;
     }
     bool PrepareVoiceBindingCatalogStorage() noexcept {
-        if (voiceBindingCatalogScratch.capacity() >= config.maxBindingAttachments) return true;
+        if (!PrepareVoiceBindingResolutionStorage(bindings.AttachmentCapacity())) return false;
+        if (voiceBindingCatalogScratch.capacity() >= bindings.AttachmentCapacity()) return true;
         if (memguard::IsAudioTagged()) return false;
-        try { voiceBindingCatalogScratch.reserve(config.maxBindingAttachments); }
-        catch (...) { return false; }
+        try { voiceBindingCatalogScratch.reserve(bindings.AttachmentCapacity()); }
+        catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage); return false; }
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
@@ -14723,7 +14748,7 @@ public:
             });
         assert(recorded);
         if (!recorded) {
-            runtimeRecreateRequired = true;
+            RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         if (occupied) LinkPlayableServiceCohort(row);
@@ -14741,7 +14766,7 @@ public:
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (pending) {
             // Source receipts wake the exact registered parent before the child
             // can retire. Keep its deadline until service actually handles it.
@@ -14752,7 +14777,7 @@ public:
                 if (!playableServiceWork.MarkDirty(parentIdentity,
                         [&](PlayableServiceWorkIdentity current) noexcept {
                             return current == CapturePlayableServiceWorkIdentity(current.slot);
-                        })) runtimeRecreateRequired = true;
+                        })) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             // Shared source groups can span several real parent services.
             // Their exact synchronization owner must observe the same wake.
@@ -14762,7 +14787,7 @@ public:
                 if (!playableServiceWork.MarkDirty(ownerIdentity,
                         [&](PlayableServiceWorkIdentity current) noexcept {
                             return current == CapturePlayableServiceWorkIdentity(current.slot);
-                        })) runtimeRecreateRequired = true;
+                        })) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
         }
     }
@@ -14779,7 +14804,7 @@ public:
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     EnginePlayableServiceRow* NextPlayableServiceSourceExit(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::NextBlock, cursor,
@@ -15141,7 +15166,7 @@ public:
                 return current == PlayableMemberOnsetIdentity(current.slot);
             });
         assert(recorded);
-        if (!recorded) runtimeRecreateRequired = true;
+        if (!recorded) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
         const auto* record = FindPlayableMember(slot);
@@ -15153,7 +15178,7 @@ public:
                     return current == PlayableMemberOnsetIdentity(current.slot);
                 });
             assert(removed);
-            if (!removed) runtimeRecreateRequired = true;
+            if (!removed) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     void SetPlayableMemberCompletion(std::size_t slot, VariableControlMemberCompletion value) noexcept {
@@ -15161,7 +15186,7 @@ public:
         auto* record = FindPlayableMember(slot);
         if (record == nullptr) {
             assert(value.leafInstance == 0);
-            if (value.leafInstance != 0) runtimeRecreateRequired = true;
+            if (value.leafInstance != 0) RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             return;
         }
         SetPlayableMemberCompletion(*record, value);
@@ -15208,6 +15233,9 @@ public:
     // learns bindings exist.
     BindingTable bindings;
     std::vector<PackVoiceBinding> voiceBindingCatalogScratch;
+    std::vector<const PackVoiceBinding*> voiceBindingResolutionScratch;
+    std::vector<PendingStartRecord::PinnedBinding> voiceBindingAdmissionScratch;
+    std::vector<ParamSystem::PreparedBindingToken> voiceBindingPreparationScratch;
     // Bus-scope combine storage (section 8), LIVE from M6 S5 on: pack
     // apply writes the authored slot, BUS attachments evaluate into the
     // Variable slot each update, the tick's bus flush publishes changed
@@ -15399,7 +15427,25 @@ public:
     bool currentWorldReplacementAdmissionClosed = false;
     bool runtimeTransportResetActive = false;
     std::uint64_t runtimeTransportResetFrame = 0;
+    // Logic-thread state, independent of the lossy advisory queues.
+    VnRuntimeFaultInfoV1 runtimeFault{};
+    bool runtimeFaultNotificationDelivered = false;
+    bool runtimeFaultLogDelivered = false;
     bool runtimeRecreateRequired = false;
+
+    void RequireRecreation(VnRuntimeFaultCategory category,
+        std::source_location location = std::source_location::current()) noexcept {
+        runtimeRecreateRequired = true;
+        if (runtimeFault.category == VN_RUNTIME_FAULT_NONE) {
+            runtimeFault.structSize = sizeof(runtimeFault);
+            runtimeFault.category = category;
+            runtimeFault.line = location.line();
+            runtimeFault.file = location.file_name();
+            runtimeFault.function = location.function_name();
+        } else if (runtimeFault.repeatCount != UINT64_MAX) {
+            ++runtimeFault.repeatCount;
+        }
+    }
     bool forceActionPlayCommitFailureForTest = false;
     bool forceImmediateLaneReservationFailureForTest = false;
     std::uint32_t forceImmediateLaneBindLeafFailureForTest = UINT32_MAX;
@@ -15654,7 +15700,7 @@ public:
         const std::uint64_t count = live + retained + 3ull * config.voiceCapacity.Logical();
         if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return false;
         try { retainedProfileKeyScratch.reserve(static_cast<std::size_t>(count)); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
@@ -15693,7 +15739,7 @@ public:
     bool PrepareBusRetirements(std::size_t additions) noexcept {
         if (additions > busRetirements.max_size() - busRetirements.size()) return false;
         try { busRetirements.reserve(busRetirements.size() + additions); return true; }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     const TopologyRetirementV1* BusRetirement(std::uint32_t bus) const noexcept {
         const auto it = std::find_if(busRetirements.begin(), busRetirements.end(),

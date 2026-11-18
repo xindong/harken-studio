@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VariableSliceTable.h"
 
 #include <algorithm>
@@ -42,7 +43,7 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
         std::vector<std::uint32_t>().swap(subscribedSources_);
         sourceWords_ = static_cast<std::uint32_t>(sourceWords);
         freeRanges_ = std::move(freeRanges);
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         return false;
     } catch (const std::length_error&) {
         return false;
@@ -80,7 +81,7 @@ bool VariableSliceTable::PrepareRow(std::uint32_t slot) noexcept {
     for (auto index = previous; index <= slot; ++index)
         rows_[index].identity.store((std::uint64_t{1} << 32) | index, std::memory_order_relaxed);
     try { subscribedSources_.reserve(rows_.ConstructedCount()); }
-    catch (...) { return false; }
+    catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage); return false; }
     return true;
 }
 
@@ -139,7 +140,7 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
         freeRanges_.reserve(payloadPeak + 1u);
         payload.targets.resize(exactTargetCount);
         payload.sourceBits.resize(sourceWords_);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         std::vector<VariableSliceTarget>().swap(payload.targets);
         std::vector<std::uint64_t>().swap(payload.sourceBits);
         return false;

@@ -132,7 +132,7 @@ public:
                                     const DeferredIntent& intent);
     bool Release(DeferredIntentToken token);
     bool Cancel(DeferredIntentToken token);
-    bool CanResetForTransport() const noexcept;
+    bool CanResetForTransport(bool* generationExhausted = nullptr) const noexcept;
     bool ResetForTransport() noexcept;
 
     // Intents held, and held for one owner.

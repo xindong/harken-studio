@@ -46,6 +46,11 @@ queries. `HarkenEngine.Update()` drains notifications, invokes callbacks, and
 flushes commits; custom hosts call the public wrapper so managed cleanup can
 observe the outermost Update return boundary.
 
+Allocation failures are isolated to the API call that failed, including calls made
+from callbacks. A successful call remains successful. If the failing operation also
+requires engine recreation, `VN_RUNTIME_RECREATE_REQUIRED` takes precedence over
+`VN_OUT_OF_MEMORY`; do not treat it as an ordinary retryable allocation failure.
+
 ## Remote communication
 
 ```csharp
@@ -95,6 +100,7 @@ The complete enum and numeric values are generated in
 | `VN_NOT_INITIALIZED` (`-303`) | No usable engine session; check owner state and lifecycle. |
 | `VN_ALREADY_INITIALIZED` (`-304`) | A second owner or init request; check singleton ownership. |
 | `VN_NO_VOICE` (`-300`) | Voice capacity exhausted. |
+| `VN_OUT_OF_MEMORY` (`-348`) | A physical allocation failed. The logic log names the affected storage. Preserve the current session and diagnose available memory before retrying. Pack budget refusals retain their dedicated result. |
 | `VN_BACKPRESSURE` (`-301`) | A command or plan could not be admitted now; the refused call did not change state. Diagnose admission and lifecycle before retry policy. |
 | `VN_IN_USE` (`-302`) | Conflicting ownership or concurrent mutation; inspect the resource scope. |
 | `VN_UNKNOWN_ID` (`-200`) / `VN_STALE_HANDLE` (`-201`) | Unknown authored identity versus an expired generational handle. |
@@ -107,3 +113,25 @@ The result of a Post or Set call is its immediate admission result. Firing
 state, notification delivery, audio-device output, and human listening are
 separate observations. Preserve failed release ownership until cleanup really
 succeeds; a logged error alone is not a reason to discard its handle.
+
+## Runtime recreation diagnostics
+
+`VN_OUT_OF_MEMORY` identifies a failed allocation in the current call; it does not
+mean the Runtime must be recreated. `VN_RUNTIME_RECREATE_REQUIRED` means the
+session encountered an unrecoverable fault. Stop issuing new work and explicitly
+shut down and initialize a new session when the game is ready to recover.
+
+`HarkenEngine.QueryRuntimeFault(out RuntimeFaultInfo info)` returns the first fault's
+category, source file, line, function, and the number of later fault reports.
+The managed record copies the native strings. A successful query with category
+`VN_RUNTIME_FAULT_NONE` means no fault has been recorded. The query remains
+available after a fatal callback error and works without registered callbacks.
+
+`HarkenAudioSystem.RuntimeRecreationRequired` fires once per session and the owner
+writes one diagnostic error. Native result codes, the recreation notification,
+and its diagnostic log share this reporting state. Notification/log queue overflow
+cannot erase the first fault: the native engine retains it and delivers it directly
+from `Update`. Further faults increment `RepeatCount` without replacing the first
+cause. A successful initialization clears the report state; a failed initialization
+does not. Recovery is never automatic. Diagnostic event handlers must follow the
+same host-thread and lifecycle rules as other callbacks.

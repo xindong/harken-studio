@@ -3217,7 +3217,7 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
         occurrence.voice.outputBusId = VN_BUS_MASTER;
         occurrence.voice.target = target;
         occurrence.voice.bindingCount = 1;
-        auto& binding = occurrence.voice.bindingStorage[0];
+        harken::TimelineVoiceBindingInstall binding{};
         binding.objectId = occurrence.voice.soundId;
         binding.bindingId = bindingId;
         binding.variableId = variable;
@@ -3225,6 +3225,7 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
         const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, -12.0f}};
         const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, -12.0f}};
         ASSERT_TRUE(binding.curve.SetPoints(points, handles, 2));
+        occurrence.voice.SetBindings({binding});
         occurrence.voice.playbackPath.rowCount = pathCount;
         for (std::uint32_t row = 0; row < pathCount; ++row)
             occurrence.voice.playbackPath.rows[row] = {harkentest::ObjectId(pathId.low + row), 7 + row};

@@ -24755,8 +24755,12 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
                 const float streamValue = cropInitial && at + frame >= anchor + futureOffset &&
                     at + frame < anchor + futureOffset + 12u ? 0.125f : 0.5f;
                 // Volume binding curves interpolate these negative-dB endpoints in amplitude.
-                const float streamGain = !boundInitial ? 1.0f : at + frame < anchor + config.blockFrames
-                    ? 0.5f : 0.75f;
+                const auto transitionStart = anchor + config.blockFrames;
+                const float progress = at + frame < transitionStart ? 0.f :
+                    std::min(1.f, float(at + frame - transitionStart + 1u) / 240.f);
+                // The later occurrence is a fresh voice and installs its current initial value.
+                const float streamGain = !boundInitial ? 1.0f :
+                    at + frame >= anchor + futureOffset ? 0.75f : 0.5f + 0.25f * progress;
                 const float expected = channel == 0 ? boundFuture ? 0.125f : 0.25f : streamValue * streamGain;
                 EXPECT_NEAR(expected, sample, 0.00001f);
             }
@@ -31143,6 +31147,13 @@ TEST(PlayableStart, TimelineInstallIdentityClearsPrivateVoiceOnCommitRollback) {
     EXPECT_EQ(0u, engine->timelineVoiceInstallIdentities[0].renderHandle);
     // The fault closes Runtime admission, but the released ledger slot is reusable.
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     VnVoiceHandle reused = 0;
     std::uint32_t reusedSlot = 0;
     ASSERT_TRUE(engine->ledger.Acquire(&reused, &reusedSlot));
@@ -38689,7 +38700,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
                 const bool captureRefused = harken::detail::g_logicAllocFault.remaining == 0;
                 harken::detail::DisarmLogicAllocFaultForTests();
                 ASSERT_TRUE(captureRefused);
-                ASSERT_EQ(VN_NO_VOICE, refused);
+                ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
                 ASSERT_EQ(0u, packFiring);
                 EXPECT_EQ(published, engine->commands.PublishedHead());
                 for (unsigned block = 0; block < 16; ++block) {

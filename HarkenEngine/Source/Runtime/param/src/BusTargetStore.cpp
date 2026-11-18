@@ -16,7 +16,7 @@ BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                                std::uint32_t retiringTargetCapacity)
     : m_maxBuses(maxBuses),
       m_activeGenerations(maxBuses, 0) {
-    if (!m_retiringTargets.Reserve(retiringTargetCapacity)) throw std::bad_alloc{};
+    if (!m_retiringTargets.Reserve(retiringTargetCapacity)) throw harken::detail::LogicPreparationFailure{};
 
 }
 
@@ -36,7 +36,7 @@ BusTargetStore::BusTargetStore(const BusTargetStore& other)
         m_activities.push_back(std::move(copy));
     }
     if (!m_retiringTargets.Reserve(other.m_retiringTargets.Capacity()) ||
-        !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount())) throw std::bad_alloc{};
+        !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount())) throw harken::detail::LogicPreparationFailure{};
     std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
 }
 
@@ -47,7 +47,7 @@ bool BusTargetStore::PrepareBusCapacity(std::uint32_t count) noexcept {
         m_activeGenerations.reserve(count); m_activeGenerations.resize(count);
         m_maxBuses = count;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusTargetSettings); return false; }
 }
 
 BusTargetStore::Settings* BusTargetStore::FindSettings(std::size_t flat) noexcept {
@@ -75,7 +75,7 @@ BusTargetStore::Settings& BusTargetStore::MutableSettings(std::size_t flat) {
     const auto it = std::lower_bound(m_settings.begin(), m_settings.end(), flat,
         [](const auto& row, auto key) { return row.flat < key; });
     if (it != m_settings.end() && it->flat == flat) return it->value;
-    if (m_projectionActive) throw std::bad_alloc{};
+    if (m_projectionActive) throw harken::detail::LogicPreparationFailure{};
     detail::CheckedGrow(m_settings, m_settings.size() + 1, detail::LogicAllocSite::BusTargetSettings);
     Settings value{};
     const auto* meta = FindTargetMeta(kTargetScopeBus, static_cast<std::uint32_t>(flat % kBusTargetCount));
@@ -86,7 +86,7 @@ BusTargetStore::Settings& BusTargetStore::MutableSettings(std::size_t flat) {
 bool BusTargetStore::PrepareSettings(std::uint32_t bus, std::uint32_t target) noexcept {
     if (!InRange(bus, target, 0)) return false;
     try { (void)MutableSettings(PubIndexOf(bus, target)); return true; }
-    catch (...) { return false; }
+    catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusTargetSettings); return false; }
 }
 
 bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) noexcept {
@@ -100,7 +100,7 @@ bool BusTargetStore::PrepareActivity(std::uint32_t bus, std::uint32_t target) no
         m_activities.push_back(std::move(activity));
         settings.activity = m_activities.back().get();
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusTargetSettings); return false; }
 }
 
 BusTargetStore::Activity* BusTargetStore::FindActivity(std::uint32_t bus, std::uint32_t target) noexcept {
@@ -245,7 +245,7 @@ void BusTargetStore::SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
         settings.activeMask |= 1u << slot;
         return;
     }
-    if (!PrepareActivity(busIndex, targetId)) throw std::bad_alloc{};
+    if (!PrepareActivity(busIndex, targetId)) throw harken::detail::LogicPreparationFailure{};
     auto& current = slot == kSlotVariableIndex ? settings.activity->variable : settings.activity->meter;
     if (!current.active && slot == kSlotVariableIndex) ++m_variableSlotCount;
     current = {domainValue, true};
@@ -504,7 +504,7 @@ void BusTargetStore::MarkVariableChanged(std::uint32_t busIndex,
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
-    if (!PrepareActivity(busIndex, targetId)) throw std::bad_alloc{};
+    if (!PrepareActivity(busIndex, targetId)) throw harken::detail::LogicPreparationFailure{};
     auto& state = FindActivity(busIndex, targetId)->publish;
     SetDirty(state);
     if (!state.suppressClaimRamp &&

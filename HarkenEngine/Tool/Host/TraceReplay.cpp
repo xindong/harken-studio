@@ -1287,7 +1287,7 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
             (report.status == VN_CURRENT_WORLD_LOAD_BACKPRESSURE &&
              expected == VN_BACKPRESSURE) ||
             (report.status == VN_CURRENT_WORLD_LOAD_CAPACITY &&
-             expected == VN_CURRENT_WORLD_CAPACITY);
+             (expected == VN_CURRENT_WORLD_CAPACITY || expected == VN_OUT_OF_MEMORY));
         if (schema != 1 || !pathValid || path.empty() ||
             report.structSize != sizeof(report) ||
             report.result != expected || report.reserved0 != 0 ||
@@ -1464,7 +1464,7 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
                 report.runtimeSemanticFingerprint != 0 ||
                 report.capabilityMask != 0 ||
                 report.status != VN_CURRENT_WORLD_LOAD_CAPACITY ||
-                expected != VN_CURRENT_WORLD_CAPACITY) {
+                (expected != VN_CURRENT_WORLD_CAPACITY && expected != VN_OUT_OF_MEMORY)) {
                 return 1;
             }
             harken::CurrentWorldArtifactHeaderV1 header{};

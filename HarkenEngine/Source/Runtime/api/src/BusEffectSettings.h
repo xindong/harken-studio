@@ -1,5 +1,6 @@
 #pragma once
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/EffectPool.h"
 #include "harken/render/BusActivityPlan.h"
 #include <cstring>
@@ -70,7 +71,7 @@ public:
             m_rows.reserve(groups);
             m_exceptions.reserve(exceptions);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     void Set(std::uint32_t bus, std::uint32_t slot, Setting value) noexcept {
         assert(slot < kMaxFxSlotsPerBus);

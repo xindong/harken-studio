@@ -6,6 +6,7 @@
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/param/ParamTargets.h"
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/QueueContinuationLane.h"
@@ -30,7 +31,7 @@ class OriginalSourceSubmissionRegistry {
     friend struct Engine;
 public:
     static constexpr std::uint32_t kMaxCommands = 3u +
-        kTimelineMaxVoiceEffects + 2u + kMaxVoiceBindingInstanceSlots;
+        kTimelineMaxVoiceEffects + 2u + kBuiltinTargetCount;
     enum class Phase : std::uint8_t {
         Free, Preparing, QueuePrepared, Published, ConsumerOwned, CleanupPending,
         Disposed, EngineDestroyed
@@ -104,7 +105,7 @@ public:
         CommandQueue& commands, EffectPoolBank& effects)
         : arms_(arms), voices_(voices), commands_(commands), effects_(effects),
           capacity_(arms.Capacity()), incarnation_(NextIncarnation()) {
-        if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
+        if (!rows_.Reserve(capacity_)) throw harken::detail::LogicPreparationFailure{};
     }
     ~OriginalSourceSubmissionRegistry() {
         for (auto& row : rows_) {
@@ -161,7 +162,7 @@ private:
         try {
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::SourceCommandBacking);
             row.bodyTail_ = std::make_unique<Record::CommandTail>();
-        } catch (const std::bad_alloc&) { return false; }
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::SourceCommandBacking); return false; }
         allocatedCommandTails_.fetch_add(1u, std::memory_order_relaxed);
         return true;
     }

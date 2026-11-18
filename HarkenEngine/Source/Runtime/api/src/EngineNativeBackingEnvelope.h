@@ -8,6 +8,7 @@
 #include <harken/core/CurrentSelection.h>
 #include <harken/core/EngineConfig.h>
 #include <harken/core/TimelineProgram.h>
+#include <harken/param/BindingTable.h>
 #include <harken/render/generated/harken_effect_registry.g.h>
 
 #include <algorithm>
@@ -130,8 +131,9 @@ inline bool SameRef(const PlayableRefV1& a, const PlayableRefV1& b) noexcept {
 class WorldContent {
 public:
     explicit WorldContent(const PlayableWorldViewV1& view,
-        std::uint32_t liveBindingCapacity = kMaxVoiceBindingInstanceSlots) noexcept
-        : view_(view), liveBindingCapacity_(liveBindingCapacity) {}
+        const BindingTable* bindings = nullptr,
+        std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings = {}) noexcept
+        : view_(view), bindings_(bindings), prospectiveBindings_(prospectiveBindings) {}
     AuthorityStamp Authority() const noexcept {
         return {view_.generation, view_.identity.runtimeSemanticFingerprint};
     }
@@ -144,7 +146,10 @@ public:
                 return &view_.properties[i];
         return nullptr;
     }
-    std::uint32_t BindingCount(VnObjectId) const noexcept { return liveBindingCapacity_; }
+    std::uint32_t BindingCount(VnObjectId object) const noexcept {
+        for (const auto& [id, count] : prospectiveBindings_) if (id == object) return count;
+        return bindings_ == nullptr ? 0u : bindings_->VoiceAttachmentCount(object);
+    }
     std::uint32_t EffectType(const EffectNodeV1& node) const noexcept { return node.effectType; }
     const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
         if (view_.containers == nullptr) return nullptr;
@@ -169,7 +174,8 @@ public:
     }
 private:
     const PlayableWorldViewV1& view_;
-    std::uint32_t liveBindingCapacity_ = 0;
+    const BindingTable* bindings_ = nullptr;
+    std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings_;
 };
 
 class PackContent {
@@ -427,7 +433,9 @@ class Counter {
 public:
     Counter(const Content& content, Limits limits, MemoWorkspace& memo) noexcept
         : content_(content), limits_(limits), memo_(memo) {}
-    Result Count(const PlayableRefV1& root, AuthorityStamp expected) noexcept {
+    Result Count(const PlayableRefV1& root, AuthorityStamp expected,
+        const PlayableRefV1* inheritedRoot = nullptr,
+        std::span<const SelectionPathNodeV1> inheritedPath = {}) noexcept {
         if (limits_.currentScheduleDepth == 0 || limits_.currentScheduleDepth > kPathCapacity ||
             limits_.directFutureScheduleDepth == 0 || limits_.directFutureScheduleDepth > kPathCapacity ||
             limits_.propertyPrefixCount > kPathCapacity || limits_.seedPrefixCount > kPathCapacity)
@@ -442,7 +450,15 @@ public:
         result = Visit(root, Mode::Frontier, {kPathCapacity, limits_.currentScheduleDepth,
             kPathCapacity - limits_.propertyPrefixCount, 0, Domain::Current});
         if (result && result.profile.voice.path != 0) {
-            const auto* property = content_.Property(root);
+            const auto& propertyRoot = inheritedRoot == nullptr ? root : *inheritedRoot;
+            result.profile.voice.bindings = std::max(result.profile.voice.bindings,
+                content_.BindingCount(propertyRoot.stableId));
+            for (const auto& node : inheritedPath) {
+                result.profile.voice.AddPathPrefix(node.kind == PlayableKindV1::Segment ? 1u : 2u);
+                result.profile.voice.bindings = std::max(result.profile.voice.bindings,
+                    content_.BindingCount(node.objectId));
+            }
+            const auto* property = content_.Property(propertyRoot);
             if (property != nullptr) {
                 const bool structural = property->structuralAncestorCount != 0;
                 const auto count = structural ? property->structuralAncestorCount : property->organizationLayerAncestorCount;
@@ -453,9 +469,8 @@ public:
                         return Failure(Status::InvalidInput);
                     const auto id = structural ? property->structuralAncestors[i].stableId
                         : property->organizationLayerAncestors[i].layerStableId;
-                    result.profile.voice.bindings = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                        kMaxVoiceBindingInstanceSlots,
-                        static_cast<std::uint64_t>(result.profile.voice.bindings) + content_.BindingCount(id)));
+                    const auto count = content_.BindingCount(id);
+                    result.profile.voice.bindings = std::max(result.profile.voice.bindings, count);
                 }
             }
         }
@@ -552,8 +567,8 @@ private:
             auto& voice = entry->result.profile.voice;
             if (ref.kind != PlayableKindV1::Sound)
                 voice.AddPathPrefix(ref.kind == PlayableKindV1::Segment ? 1u : 2u);
-            voice.bindings = static_cast<std::uint32_t>(std::min<std::uint64_t>(kMaxVoiceBindingInstanceSlots,
-                static_cast<std::uint64_t>(voice.bindings) + content_.BindingCount(ref.stableId)));
+            const auto count = content_.BindingCount(ref.stableId);
+            voice.bindings = std::max(voice.bindings, count);
         }
         entry->state = MemoState::Ready;
         return entry->result;

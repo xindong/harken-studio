@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/CheckedIssuer.h"
 
@@ -60,7 +61,7 @@ CompositeCompletionOwnerPool::CompositeCompletionOwnerPool(
     const auto leafCapacity = capacity * maxLeaves;
     if (!leaves_.Reserve(leafCapacity) || !leafOriginals_.Reserve(leafCapacity) ||
         !leafCommitProofs_.Reserve(leafCapacity) || !rows_.Reserve(capacity))
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 CompositeCompletionOwnerPool::~CompositeCompletionOwnerPool() {

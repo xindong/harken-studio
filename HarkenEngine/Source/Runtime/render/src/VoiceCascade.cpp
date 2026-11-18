@@ -191,9 +191,8 @@ void MixReceivedOutput(const float* source, std::span<float* const> destinations
 
 // Scatters a voice's post-pan/post-width tap into each active send target,
 // scaled by the send's ramped level and added to the target bus's input. The
-// level interpolates per sample exactly like a bus gain (block-boundary linear),
-// and its multi-block ramp plan advances one block here — once per rendered
-// block, since RenderVoiceBlock runs once per voice per block. tap holds the
+// level interpolates per sample exactly like a bus gain and advances by the
+// produced frame count once, after all channels have been mixed. tap holds the
 // stereo block for [offset, offset+produced); each target gets a scaled copy of
 // that same region so the spatial image travels with the send.
 void ScatterVoiceSends(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
@@ -204,18 +203,10 @@ void ScatterVoiceSends(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
         if (!send.active) {
             continue;
         }
-        if (send.ramping) {
-            send.gain.SetBlockTarget(send.rampStartGain, send.rampEndGain,
-                                     send.rampBlocksDone, send.rampBlocksTotal);
-        }
         float* const* dst = busPlanes.ForBus(send.targetBusIndex, mixChannels, send.targetBusGeneration);
-        send.gain.MixAddBlock(tap, dst, mixChannels, offset, produced);
-        if (send.ramping) {
-            ++send.rampBlocksDone;
-            if (send.rampBlocksDone >= send.rampBlocksTotal) {
-                send.ramping = false;
-            }
-        }
+        for (std::uint32_t ch = 0; ch < mixChannels; ++ch)
+            send.gain.MixAdd(tap[ch] + offset, dst[ch] + offset, produced, 0);
+        send.gain.Advance(produced);
     }
 }
 

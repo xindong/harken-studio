@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_VOICE_TIMELINE_SINK_H
 #define HARKEN_RENDER_VOICE_TIMELINE_SINK_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ArmGroupTable.h"
 #include "harken/core/TimelineExecutor.h"
 #include "harken/core/OccurrenceStatePool.h"
@@ -35,7 +36,7 @@ public:
             !voices.AttachSlotStoragePreparation(slotStorageRegistration_, this,
                 [](void* context, std::uint32_t count) noexcept {
                     return static_cast<VoiceTimelineSink*>(context)->pendingVariableStarts_.ConstructThrough(count);
-                })) throw std::bad_alloc{};
+                })) throw harken::detail::LogicPreparationFailure{};
     }
 
     ~VoiceTimelineSink() override { slotStorageRegistration_.Detach(); }

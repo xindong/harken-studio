@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_SIGNAL_RENDER_PLAN_H
 #define HARKEN_RENDER_SIGNAL_RENDER_PLAN_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/PlaybackPath.h"
 #include "harken/core/PinnedSnapshot3.h"
@@ -150,7 +151,7 @@ public:
             next->post_.resize(format.capacityFrames);
             next->PrepareActivityObservation();
             return next;
-        } catch (...) { return {}; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return {}; }
     }
 
     // Compare immutable prepared proofs, never query a world/lease on audio.
@@ -263,7 +264,7 @@ public:
             worldIdentity_ = continuity_[0].identity != 0 ? predecessor->worldIdentity_ : identity;
             contentIdentity_ = contentIdentity;
             updateRampFrames_ = rampFrames;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
     std::uint64_t PublicationIdentity() const noexcept { return publicationIdentity_; }

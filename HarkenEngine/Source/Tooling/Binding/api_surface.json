@@ -134,7 +134,6 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAction.cs/Harken.Unity.HarkenAction::public string ActionName",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAction.cs/Harken.Unity.HarkenAction::public string ProjectId",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAction.cs/Harken.Unity.HarkenAction::public void BeforeRuntimeShutdown ( )",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:13afb0a5d69e3b6ce4f2702aaf0df9554dafae3e3dfd9801088572f7291a8b56]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public HarkenRuntimeState State { get ; private set ; }",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public PackBootstrapSession Session",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult ConfigureBeforeStartup ( string relativePackRoot , string relativeInitPack , ulong [ ] startupPacks , bool useNullDevice , bool keepAcrossScenes )",
@@ -213,11 +212,10 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public bool SuppressUnityAudio",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const string ResourceName = \" HarkenProjectSettings \"",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxActions = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxPacks = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxVoices = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint UnlimitedActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:5ed3073f8569dcb864adf835ea1db5b826b295ab141a68cb1f586957d6ac4e79]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:bd1fb045452c4e463fc4405459e0809f711f966f75f886c3f809217799b1f1fd]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public static HarkenProjectSettings Load ( )",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string InitPack",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string Language",
@@ -225,9 +223,7 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string PlatformId",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string PlatformName",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string [ ] PlayerExports",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint EmitterVariableSlots",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxActionFirings",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxActions",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxEmitters",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxPacks",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxVoices",
@@ -294,7 +290,8 @@
         "native:Vn_Stop",
         "native:Vn_StopActionFiring",
         "native:Vn_StopAll",
-        "native:Vn_StopEmitter"
+        "native:Vn_StopEmitter",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:50489d8f10c066b2174f6eb3e1e1e555a4a443ff4d3d68ebfd9117431a909afa]"
       ]
     },
     "host": {
@@ -347,7 +344,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public VnResult StartupResult { get ; private set ; } = VnResult . VN_NOT_INITIALIZED",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public bool IsActive",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public bool IsStartupComplete { get }",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession : IDisposable [ordered-members:22c013200f41b1a10db8ef553bb65e70550dd0e7c01fa44220d38dbf014a7c36]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession : IDisposable [ordered-members:f3df29f546de87d9ecca111118ed24e31dd618ccf1bb4e3c61e88312ac29d430]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string ContainmentRoot { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string Language { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string ProjectId { get ; private set ; }",
@@ -460,7 +457,10 @@
         "native:Vn_UnloadPackEx",
         "native:Vn_UnregisterStreamFile",
         "native:Vn_Update",
-        "native:Vn_QueryActionPlaybackReadiness"
+        "native:Vn_QueryActionPlaybackReadiness",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult QueryRuntimeFault ( out RuntimeFaultInfo info )",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public event Action < HarkenAudioSystem , RuntimeFaultInfo > RuntimeRecreationRequired",
+        "native:Vn_GetRuntimeFaultInfo"
       ]
     },
     "runtime-mix": {
@@ -1174,7 +1174,10 @@
         "source:HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenVariable.cs",
         "source:HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenVariableReference.cs",
         "source:HarkenIntegration/Unity/Harken/Runtime/Unity/UnityCoordinates.cs",
-        "source:HarkenIntegration/Unity/Harken/Runtime/Unity/UnitySpatial.cs"
+        "source:HarkenIntegration/Unity/Harken/Runtime/Unity/UnitySpatial.cs",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/<global>::using System",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/<global>::using System . Runtime . InteropServices",
+        "source:HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs"
       ]
     },
     "required-types": {
@@ -1467,7 +1470,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_READY = 2u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REGISTER = 0u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REPLACE = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:acacaccc4625de4aab63a07eca058012b47e4d16a8de4ffe44572b14a08f7fbd]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId ( 0UL , 1UL )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnCurrentWorldLoadDesc [ordered-members:ed0a74203613697bf8f279e747fce6aeb5e5fc6764c5bdbacbbafa5dea64c5d7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::public IntPtr utf8Path",
@@ -1537,7 +1539,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNotificationType::VN_NOTIFY_VOICE_STARVED = 3",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNotificationType::VN_NOTIFY_VOICE_STOLEN = 4",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNotificationType::VN_NOTIFY_VOICE_STOPPED_BY_FADE = 1",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNotificationType::public enum VnNotificationType : uint [ordered-members:2410d5253212b87144c256b8f975ff8e9d65e91d7c0433aa21a7da2fa4f6ee8e]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnObjectId::[ Serializable ] [ StructLayout ( LayoutKind . Sequential ) ] public partial struct VnObjectId [ordered-members:e0db07f095fd1c17067fd2ed201773240a9ce9c65469b2602dce036297b71769]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnObjectId::public ulong high",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnObjectId::public ulong low",
@@ -1686,7 +1687,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_VARIABLE_SCOPE_MISMATCH = - 1200",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_VARIABLE_TRANSACTION_EXHAUSTED = - 1203",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_VARIABLE_WRITER_FORBIDDEN = - 1201",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::public enum VnResult : int [ordered-members:e183c3fe2a6f4fed029bbfc4799cf4c52a748cc79305fa8ed372ea310b3bff5b]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnStreamSourceInfoV1::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnStreamSourceInfoV1 [ordered-members:4c9a56bd2408ed007c6ceee55100cade44c5274add7caf4205e85ce29dcb09b7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnStreamSourceInfoV1::public int result",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnStreamSourceInfoV1::public uint reserved0",
@@ -1755,7 +1755,26 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnVoiceState::VN_VOICE_STATE_DRAINING = 2",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnVoiceState::VN_VOICE_STATE_INACTIVE = 0",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnVoiceState::VN_VOICE_STATE_PREPARING = 3",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnVoiceState::public enum VnVoiceState : uint [ordered-members:61d58795981d51707672da3c836c65bb54504c4f30abef512c07cb8350104646]"
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnVoiceState::public enum VnVoiceState : uint [ordered-members:61d58795981d51707672da3c836c65bb54504c4f30abef512c07cb8350104646]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public override string ToString ( )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public readonly VnRuntimeFaultCategory Category",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public readonly string File",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public readonly string Function",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public readonly struct RuntimeFaultInfo [ordered-members:9f2b822d51af09b4d9669a4bafdfd5450e9862159f0f486627c79ff7e0d2262e]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public readonly uint Line",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RuntimeFaultDiagnostics.cs/Harken.RuntimeFaultInfo::public readonly ulong RepeatCount",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_LOG_RUNTIME_RECREATE_REQUIRED = 34u",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:b31c629e53cb8c5f74b5235496dd918d6b5314232cf1f4f1126f98e58ad0f01e]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNotificationType::VN_NOTIFY_RUNTIME_RECREATE_REQUIRED = 7",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNotificationType::public enum VnNotificationType : uint [ordered-members:b5acf32166e8ca5c198257ec630bdf1b868912f4865aa4129f1c08161c1ab048]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_OUT_OF_MEMORY = - 348",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::public enum VnResult : int [ordered-members:53f36db9da35cf8db2dfe331aeb180d6ad5ae61036e5e067dcf04205e0a41181]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnRuntimeFaultCategory::VN_RUNTIME_FAULT_CAPACITY = 1",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnRuntimeFaultCategory::VN_RUNTIME_FAULT_GENERATION_EXHAUSTED = 4",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnRuntimeFaultCategory::VN_RUNTIME_FAULT_INTERNAL_STATE = 3",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnRuntimeFaultCategory::VN_RUNTIME_FAULT_INVALID_INPUT = 2",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnRuntimeFaultCategory::VN_RUNTIME_FAULT_NONE = 0",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnRuntimeFaultCategory::public enum VnRuntimeFaultCategory : uint [ordered-members:ec4647d6bd1f737babf7f6dcbd90d474ee11cf821b8c44d6762e00833b6bc215]"
       ]
     },
     "tool-types": {
@@ -1997,7 +2016,9 @@
       "VnByteSourceReadAtFn": "required-types",
       "VnByteSourceReleaseFn": "required-types",
       "VnBusState": "tool-types",
-      "VnBusStateFlags": "tool-types"
+      "VnBusStateFlags": "tool-types",
+      "VnRuntimeFaultInfoV1": "native-binding",
+      "VnRuntimeFaultCategory": "required-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",
@@ -2038,7 +2059,8 @@
       "VN_STREAM_SOURCE_FAILED": "required-types",
       "VN_BYTE_READ_OK": "required-types",
       "VN_BYTE_READ_CANCELLED": "required-types",
-      "VN_BYTE_READ_IO_ERROR": "required-types"
+      "VN_BYTE_READ_IO_ERROR": "required-types",
+      "VN_LOG_RUNTIME_RECREATE_REQUIRED": "required-types"
     }
   },
   "managed_projection": {

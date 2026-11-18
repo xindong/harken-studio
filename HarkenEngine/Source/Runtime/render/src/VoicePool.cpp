@@ -260,7 +260,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
         !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_timelineEnvelopeCurves.Reserve(config.voiceCapacity.Render()) ||
-        !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw std::bad_alloc{};
+        !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw harken::detail::LogicPreparationFailure{};
     m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount;
     const auto monitorCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_blockFrames;
     const auto endpointCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_firstOutputStride;
@@ -268,12 +268,12 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     if (monitorCapacity > UINT32_MAX || endpointCapacity > UINT32_MAX || weightCapacity > UINT32_MAX ||
         !m_firstOutputEndpoints.Reserve(static_cast<std::uint32_t>(endpointCapacity)) ||
         !m_firstOutputWeights.Reserve(static_cast<std::uint32_t>(weightCapacity)) ||
-        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw std::bad_alloc{};
+        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw harken::detail::LogicPreparationFailure{};
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
             !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()) ||
             !m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         m_highRatioColumns.channels[ch] = m_highRatioStorage[ch].data();
     }
     // Create the fixed worker set on the logic thread. Real-device workers stay
@@ -285,10 +285,10 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     // rendering voice, which is the same bound m_jobSlots is sized from.
     if (!m_workers.Start(config.renderWorkerCount,
                          config.voiceCapacity.Render())) {
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     }
     if (config.nullDevice && !m_workers.EnableOffline()) {
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     }
 }
 
@@ -2068,7 +2068,7 @@ bool VoicePool::BindPreparedSignalPath(VnVoiceHandle handle,
         for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
             if (!registration->prepare_(registration->context_, m_slots.ConstructedCount())) return false;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VoiceSendStorage); return false; }
 }
 
 bool VoicePool::BindPreparedNativeReadCut(VnVoiceHandle handle,
@@ -3963,13 +3963,12 @@ void VoicePool::ApplySetVolume(VnVoiceHandle handle, float volumeDb,
         ++m_invalidVolumeApplies;
         return;
     }
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
+    const auto rampFrames = GainTransitionFrames(rampMs, m_sampleRate, !render.firstBlock);
     if (outputOnly) {
         render.outputGain.Set(linear, rampFrames);
         return;
     }
-    // N = ceil(rampMs * rate / 1000) produced samples. rampMs 0 is a snap.
+    // Use actual produced samples, preserving pre-render initialization.
     // Do not round N up to a whole block. A re-set restarts from current.
     render.gain.Set(linear, rampFrames);
 }
@@ -4663,7 +4662,7 @@ VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
             state.active = true;
             state.targetBusIndex = definition.targetBusIndex;
             state.targetBusGeneration = definition.targetBusGeneration;
-            state.gain.SnapTo(gain);
+            state.gain.Set(gain);
             routes->push_back({true, definition.targetBusIndex, definition.targetBusGeneration,
                 definition.slot, definition.incarnation});
         }
@@ -4674,7 +4673,7 @@ VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
         m_retainedVoiceSends += definitions.size();
         *out = prepared;
         return VN_OK;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VoiceSendStorage);
         return VN_DEVICE_ERROR;
     }
 }
@@ -4778,7 +4777,7 @@ void VoicePool::ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
     send.targetBusGeneration = targetBusGeneration;
     // The initial level snaps (no fictitious prior value), exactly like a
     // voice's first gain at play.
-    send.gain.SnapTo(DbToLinear(levelDb));
+    send.gain.Set(DbToLinear(levelDb));
     if (!wasActive) {
         ++slot->render.voiceSendActiveCount;
     }
@@ -4816,24 +4815,8 @@ void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
         return; // no-op on an empty slot (the API refuses this logic-side)
     }
     const float linear = DbToLinear(levelDb);
-    if (rampMs == 0) {
-        send.gain.SnapTo(linear);
-        send.ramping = false;
-        return;
-    }
-    // Same multi-block ramp formulation as the voice/bus gain: whole-block
-    // linear, landing exactly on a block boundary.
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
-    std::uint64_t blocks = (rampFrames + m_blockFrames - 1) / m_blockFrames;
-    if (blocks == 0) {
-        blocks = 1;
-    }
-    send.ramping = true;
-    send.rampStartGain = send.gain.current;
-    send.rampEndGain = linear;
-    send.rampBlocksTotal = blocks;
-    send.rampBlocksDone = 0;
+    send.gain.Set(linear, GainTransitionFrames(rampMs, m_sampleRate,
+        !slot->render.firstBlock));
 }
 
 VoicePool::RenderAllResult VoicePool::RenderAll(

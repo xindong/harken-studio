@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/StreamManager.h"
 
 #include <algorithm>
@@ -74,7 +75,7 @@ VnResult StreamManager::BeginSourceImpl(VnSoundId id,
         m_serviceRequested = true;
         m_wake.notify_all();
         return VN_OK;
-    } catch (const std::bad_alloc&) { return VN_BACKPRESSURE; }
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage); return VN_BACKPRESSURE; }
 }
 
 StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, VnResult* error,

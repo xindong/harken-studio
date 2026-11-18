@@ -3174,9 +3174,12 @@ TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     engine->voices.SetStreamParkCommitPageLimitForTests(SIZE_MAX);
     harken::detail::ArmLogicAllocFaultForTests(
         1, harken::detail::LogicAllocSite::ParkCaptureStorage);
-    const VnResult refused = PlayDefault(harkentest::ObjectId(9784), &claimant);
+    // Raw playback has no public boundary; normalize this injected call explicitly.
+    const VnResult refused = harken::detail::InvokeApi([&] {
+        return PlayDefault(harkentest::ObjectId(9784), &claimant);
+    });
     harken::detail::DisarmLogicAllocFaultForTests();
-    EXPECT_EQ(VN_NO_VOICE, refused);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, refused);
     EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
               engine->ledger.Classify(stream).kind);
     EXPECT_EQ(renderBefore, engine->ledger.ToRender(stream));

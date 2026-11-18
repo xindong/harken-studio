@@ -6,6 +6,7 @@
 #ifndef HARKEN_RENDER_DYNAMIC_ROUTE_H
 #define HARKEN_RENDER_DYNAMIC_ROUTE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
 
@@ -137,7 +138,7 @@ public:
         if (!m_busTapSamples.Reserve(static_cast<std::size_t>(m_busTapCapacity) *
                 kMaxChannels * m_blockFrames) ||
             !m_voiceTapSamples.Reserve(static_cast<std::size_t>(m_voiceTapCapacity) * 2u *
-                kMaxChannels * m_blockFrames)) throw std::bad_alloc{};
+                kMaxChannels * m_blockFrames)) throw harken::detail::LogicPreparationFailure{};
         m_routeFree.reserve(m_routeCapacity);
         m_busTapFree.reserve(m_busTapCapacity);
         m_voiceTapFree.reserve(m_voiceTapCapacity);

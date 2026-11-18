@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_ENGINE_QUEUE_SCHEDULE_STORAGE_H
 #define HARKEN_API_ENGINE_QUEUE_SCHEDULE_STORAGE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/TimelinePlanner.h"
@@ -387,7 +388,7 @@ private:
             return resize(columns.payloads, shape.events) && resize(columns.events, shape.events) &&
                 resize(columns.runtimes, shape.programs) && resize(columns.schedules, shape.programs) &&
                 resize(columns.releaseObservers, shape.programs) && resize(columns.members, shape.programs);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     template<class AllowAllocation>
     static std::unique_ptr<Slot> AllocateSlot(QueueScheduleShape shape, AllowAllocation& allow) noexcept {
@@ -396,7 +397,7 @@ private:
             auto slot = std::make_unique<Slot>();
             if (!AllocateColumns(slot->columns, shape, allow)) return nullptr;
             return slot;
-        } catch (...) { return nullptr; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
     }
 
     std::unique_ptr<Slot> slots_;

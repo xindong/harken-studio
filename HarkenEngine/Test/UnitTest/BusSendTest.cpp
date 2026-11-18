@@ -291,7 +291,7 @@ TEST_F(BusSendSlotReconcile, SameSlotAndTargetPreserveActiveRamp) {
     const float halfDb = 20.0f * std::log10(0.5f);
     engine->buses.ApplySetBusSendLevel(1, 2, halfDb, 2);
     const std::vector<float> first = RenderSourceBlock();
-    ASSERT_NEAR(1.75f, first.back(), 1e-5f);
+    ASSERT_NEAR((1.0f + 2.0f / 3.0f), first.back(), 1e-5f);
 
     const std::uint32_t republish = BuildPlan(2, harken::kEmptySendTarget);
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, republish);
@@ -306,7 +306,7 @@ TEST_F(BusSendSlotReconcile, CompactRowsKeepRampAfterPredecessorStorageIsReused)
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, initial);
     engine->buses.ApplyTopologyPlan(initial, 1, 2, 0.0f);
     engine->buses.ApplySetBusSendLevel(1, 2, 20.0f * std::log10(0.25f), 3);
-    ASSERT_NEAR(1.75f, RenderSourceBlock().back(), 1e-5f);
+    ASSERT_NEAR((1.0f + 2.0f / 3.0f), RenderSourceBlock().back(), 1e-5f);
 
     const auto compact = BuildPlan(harken::kEmptySendTarget, 2);
     const std::uint32_t counts[] = {0, 1, 0, 0};
@@ -319,7 +319,7 @@ TEST_F(BusSendSlotReconcile, CompactRowsKeepRampAfterPredecessorStorageIsReused)
     const auto reused = engine->topologyPlans.Acquire();
     ASSERT_EQ(initial, reused);
     engine->topologyPlans.Recycle(reused);
-    EXPECT_NEAR(1.5f, RenderSourceBlock().back(), 1e-5f);
+    EXPECT_NEAR((1.0f + 1.0f / 3.0f), RenderSourceBlock().back(), 1e-5f);
     EXPECT_NEAR(1.25f, RenderSourceBlock().back(), 1e-5f);
 }
 
@@ -358,13 +358,13 @@ TEST_F(BusSendSlotReconcile, ChangedSlotTargetResetsInsteadOfFollowingTarget) {
     EXPECT_FLOAT_EQ(2.0f, RenderSourceBlock().back());
 }
 
-TEST_F(BusSendSlotReconcile, PreparedLevelSnapsAndClearsRampBookkeeping) {
+TEST_F(BusSendSlotReconcile, PreparedLevelRetargetsAndRepublishPreservesSampleRamp) {
     const std::uint32_t initial = BuildPlan(2, harken::kEmptySendTarget);
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, initial);
     engine->buses.ApplyTopologyPlan(initial, 1, 2, 0.0f);
     engine->buses.ApplySetBusSendLevel(
         1, 2, 20.0f * std::log10(0.25f), 3);
-    ASSERT_NEAR(1.75f, RenderSourceBlock().back(), 1e-5f);
+    ASSERT_NEAR((1.0f + 2.0f / 3.0f), RenderSourceBlock().back(), 1e-5f);
 
     const std::uint32_t prepared =
         BuildPlan(2, harken::kEmptySendTarget, true, 0.4f);
@@ -378,8 +378,10 @@ TEST_F(BusSendSlotReconcile, PreparedLevelSnapsAndClearsRampBookkeeping) {
 
     for (int block = 0; block < 4; ++block) {
         const std::vector<float> output = RenderSourceBlock();
-        for (float sample : output) {
-            ASSERT_NEAR(1.4f, sample, 1e-5f) << "block " << block;
+        for (unsigned n = 0; n < kBlockFrames; ++n) {
+            const float progress = std::min(1.f, float(block * kBlockFrames + n + 1) / 240.f);
+            const float expected = 1.f + (2.f / 3.f) + (0.4f - 2.f / 3.f) * progress;
+            ASSERT_NEAR(expected, output[n], 1e-5f) << "block " << block << " sample " << n;
         }
     }
 }
@@ -472,16 +474,16 @@ TEST(BusSend, VoiceOutputVolumeRampsOnlyTheOutput) {
     const float halfDb = 20.0f * std::log10(0.5f);
     ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, halfDb, 2));
     Capture ramp;
-    PumpAndCapture(session.Engine(), 2, ramp);
+    PumpAndCapture(session.Engine(), 4, ramp);
     for (std::size_t i = 0; i < ramp.left.size(); ++i) {
-        const float progress = std::min(1.0f, static_cast<float>(i + 1) / 96.0f);
+        const float progress = std::min(1.0f, static_cast<float>(i + 1) / 240.0f);
         const float expected = 0.5f + 0.5f * (1.0f - 0.5f * progress);
         ASSERT_NEAR(expected, ramp.left[i], 1e-5f);
         ASSERT_NEAR(expected, ramp.right[i], 1e-5f);
     }
     ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, -120.0f, 0));
     Capture muted;
-    PumpAndCapture(session.Engine(), 1, muted);
+    PumpAndCapture(session.Engine(), 4, muted);
     ASSERT_NEAR(0.5f, muted.left.back(), 1e-5f);
 }
 
@@ -506,15 +508,16 @@ TEST(BusSend, BusOutputVolumeRampsFromUnityAndMasterScalesTheFinalMix) {
     const float halfDb = 20.0f * std::log10(0.5f);
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, halfDb, 2));
     Capture ramp;
-    PumpAndCapture(session.Engine(), 2, ramp);
+    PumpAndCapture(session.Engine(), 4, ramp);
     for (std::size_t i = 0; i < ramp.left.size(); ++i) {
-        const float progress = std::min(1.0f, static_cast<float>(i + 1) / 96.0f);
+        const float progress = std::min(1.0f, static_cast<float>(i + 1) / 240.0f);
         const float expected = 0.5f + 0.5f * (1.0f - 0.5f * progress);
         ASSERT_NEAR(expected, ramp.left[i], 1e-5f);
         ASSERT_NEAR(expected, ramp.right[i], 1e-5f);
     }
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(VN_BUS_MASTER, halfDb, 0));
     Capture master;
+    session.Engine()->nullBackend.Pump(4);
     PumpAndCapture(session.Engine(), 1, master);
     ASSERT_NEAR(0.375f, master.left.front(), 1e-5f);
     ASSERT_NEAR(0.375f, master.right.back(), 1e-5f);
@@ -562,6 +565,7 @@ TEST(BusSend, OutputVolumeRefusalsPreserveAcceptedGains) {
     ASSERT_NEAR(0.125f, refused.left.back(), 1e-5f);
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(VN_BUS_MASTER, 0.0f, 0));
     ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, 0.0f, 0));
+    session.Engine()->nullBackend.Pump(4); // Let the accepted 5 ms transition finish.
     Capture retried;
     PumpAndCapture(session.Engine(), 1, retried);
     ASSERT_NEAR(0.5f, retried.left.front(), 1e-5f);
@@ -591,7 +595,7 @@ TEST(BusSend, OverflowRefusalsPreserveFilteredBusAndVoiceSends) {
     ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 0, kBusB, 0.0f));
     const auto expectSettled = [&](float expected) {
         Capture out;
-        PumpAndCapture(engine, 4, out);
+        PumpAndCapture(engine, 8, out); // Include the 5 ms ramp and filter settling.
         ASSERT_GE(out.left.size(), kBlockFrames);
         for (std::size_t i = out.left.size() - kBlockFrames;
              i < out.left.size(); ++i) {
@@ -701,17 +705,17 @@ TEST(BusSend, MultiBlockLevelRetargetStartsAtTheCurrentGain) {
         PumpAndCapture(session.Engine(), 1, first);
         for (std::size_t i = 0; i < first.left.size(); ++i) {
             const float expected = 0.5f * (start + (target - start) *
-                static_cast<float>(i + 1) / (3 * kBlockFrames));
+                static_cast<float>(i + 1) / 240.0f);
             EXPECT_NEAR(expected, first.left[i], 1.0e-6f);
             EXPECT_EQ(first.left[i], first.right[i]);
         }
         ASSERT_EQ(VN_OK, setLevel(0.0f));
         Capture restarted;
         PumpAndCapture(session.Engine(), 4, restarted);
-        const float restart = start + (target - start) / 3;
+        const float restart = start + (target - start) * kBlockFrames / 240.0f;
         for (std::size_t i = 0; i < restarted.left.size(); ++i) {
             const float progress = std::min(1.0f,
-                static_cast<float>(i + 1) / (3 * kBlockFrames));
+                static_cast<float>(i + 1) / 240.0f);
             const float expected = 0.5f * (restart + (1.0f - restart) * progress);
             EXPECT_NEAR(expected, restarted.left[i], 1.0e-6f);
             EXPECT_EQ(restarted.left[i], restarted.right[i]);
@@ -1109,7 +1113,7 @@ TEST(BusSend, StoragePreparationFailureKeepsPriorDefinitionAndAudio) {
             harken::detail::LogicAllocSite::BusSendStorage);
         const auto refused = Vn_ConnectBusSend(kBusA, kBusC, 0.0f);
         harken::detail::DisarmLogicAllocFaultForTests();
-        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
         EXPECT_EQ(before, engine->busSends);
         EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
         EXPECT_EQ(plans, engine->topologyPlans.InUse());
@@ -1234,7 +1238,7 @@ TEST(BusSend, SparseVoiceLabelsAndQueuedEditsPreserveOtherRamps) {
     ASSERT_NE(nullptr, render);
     ASSERT_EQ(2u, render->voiceSends.size());
     const auto rampBefore = render->voiceSends.back();
-    ASSERT_TRUE(rampBefore.ramping);
+    ASSERT_GT(rampBefore.gain.remainingFrames, 0u);
     ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 42, VN_BUS_MASTER, -6));
     ASSERT_EQ(VN_OK, Vn_SetVoiceSendLevel(handle, 42, -30, 200));
     ASSERT_EQ(VN_OK, Vn_ClearVoiceSend(handle, 42));
@@ -1242,11 +1246,11 @@ TEST(BusSend, SparseVoiceLabelsAndQueuedEditsPreserveOtherRamps) {
     PumpAndCapture(session.Engine(), 1, output);
     ASSERT_EQ(3u, render->voiceSends.size());
     const auto& continued = render->voiceSends.back();
-    EXPECT_TRUE(continued.ramping);
-    EXPECT_EQ(rampBefore.rampBlocksDone + 1, continued.rampBlocksDone);
-    EXPECT_EQ(rampBefore.rampBlocksTotal, continued.rampBlocksTotal);
-    EXPECT_FLOAT_EQ(rampBefore.rampStartGain, continued.rampStartGain);
-    EXPECT_FALSE(render->voiceSends.front().ramping);
+    EXPECT_GT(continued.gain.remainingFrames, 0u);
+    EXPECT_EQ(rampBefore.gain.remainingFrames - kBlockFrames, continued.gain.remainingFrames);
+    EXPECT_EQ(rampBefore.gain.totalFrames, continued.gain.totalFrames);
+    EXPECT_FLOAT_EQ(rampBefore.gain.start, continued.gain.start);
+    EXPECT_EQ(0u, render->voiceSends.front().gain.remainingFrames);
     EXPECT_NEAR(std::pow(10.0f, -9.0f / 20), render->voiceSends.front().gain.current, 1e-6f);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(3u, session.Engine()->voices.RetainedVoiceSendCount());
@@ -1279,7 +1283,7 @@ TEST(BusSend, PendingSendPreparationFailureNeverStopsVictimAndRetriesWithLatestC
         harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
         const auto result = Vn_CommitVoiceStart(pending);
         harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, result);
         EXPECT_EQ(head, engine.commands.PublishedHead());
         EXPECT_EQ(0u, engine.voiceStolenCount);
         EXPECT_NE(0u, engine.ledger.ToRender(victim));
@@ -1319,7 +1323,7 @@ TEST(BusSend, VoiceSendPreparationFailureKeepsAcceptedRouting) {
         harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
         const auto result = Vn_SetVoiceSend(handle, UINT32_MAX, VN_BUS_MASTER, -3);
         harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, result);
         EXPECT_EQ(head, engine.commands.PublishedHead());
         EXPECT_TRUE(before == engine.voiceSendConfig[static_cast<std::uint32_t>(render)]);
         PumpAndCapture(&engine, 1, output);
@@ -1932,6 +1936,7 @@ TEST(BusSend, SixteenDestinationsRenderThroughFormalSignalRouting) {
     for (const auto sample : out.left) EXPECT_NEAR(0.81f, sample, 3.0e-6f);
     ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(kBusA, harkentest::ObjectId(115), -1000, 0));
     ASSERT_EQ(VN_OK, Vn_DisconnectBusSend(kBusA, harkentest::ObjectId(100)));
+    engine->nullBackend.Pump(4); // Route assertion observes the settled send.
     out = {};
     PumpAndCapture(engine, 2, out);
     for (const auto sample : out.left) EXPECT_NEAR(0.71f, sample, 3.0e-6f);

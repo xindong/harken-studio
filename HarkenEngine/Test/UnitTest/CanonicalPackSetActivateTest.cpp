@@ -2787,15 +2787,16 @@ TEST(CanonicalPackSetActivate, AllocationAfterBindingPreparationRollsBackAndRetr
     const auto bytes = harkentest::BuildMasterInitWithBusBindingBytes(
         kBusBindingId, kBindingVariableId, VN_BUS_MASTER);
     const auto baselineWorstCase = engine->propertyPublisher.WorstCaseCommits();
-    const auto dependencySlot = engine->bindings.Dependencies().ParamBindingCapacity();
+    const auto hasPreparation = +[](void* context) noexcept {
+        const auto& index = static_cast<harken::Engine*>(context)->bindings.Dependencies();
+        for (std::uint32_t slot = 0; slot < index.BackedBindingCapacity(); ++slot)
+            if (index.HasBindingPreparation(slot)) return true;
+        return false;
+    };
     allocation_probe::count = 0;
     allocation_probe::failAt = 1;
     allocation_probe::countContext = engine;
-    allocation_probe::countIf = +[](void* context) noexcept {
-        const auto* current = static_cast<harken::Engine*>(context);
-        return current->bindings.Dependencies().HasBindingPreparation(
-            current->bindings.Dependencies().ParamBindingCapacity());
-    };
+    allocation_probe::countIf = hasPreparation;
     allocation_probe::enabled = true;
     const auto failed = harkentest::ActivateInitBytesV1(
         directory, bytes, harkentest::packfoundation::kInitPackStableId);
@@ -2808,7 +2809,7 @@ TEST(CanonicalPackSetActivate, AllocationAfterBindingPreparationRollsBackAndRetr
     EXPECT_NE(VN_OK, failed.result);
     EXPECT_EQ(0u, failed.initHandle);
     EXPECT_EQ(nullptr, engine->bindings.Find(kBusBindingId));
-    EXPECT_FALSE(engine->bindings.Dependencies().HasBindingPreparation(dependencySlot));
+    EXPECT_FALSE(hasPreparation(engine));
     EXPECT_EQ(baselineWorstCase, engine->propertyPublisher.WorstCaseCommits());
     const auto retry = harkentest::ActivateInitBytesV1(
         directory, bytes, harkentest::packfoundation::kInitPackStableId);
@@ -3258,7 +3259,7 @@ TEST(CanonicalPackSetActivate, VoiceEffectParamDoesNotEnterTable) {
     EXPECT_EQ(nullptr, session.Engine()->bindings.Find(kBusBindingId));
 }
 
-TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
+TEST(CanonicalPackSetActivate, BindingReservationsGrowWithoutBypassingPublicationCapacity) {
     {
         VnConfig config = CanonicalActivationConfig();
         config.maxBindings = 1;
@@ -3267,14 +3268,14 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
         VnBindingDesc extra =
             harkentest::MakeCanonicalBusVolumeBindingDesc(kBindingVariableId);
         ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(9001), &extra));
-        const auto failed = harkentest::ActivateInitBytesV1(
+        const auto grown = harkentest::ActivateInitBytesV1(
             std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-def-cap",
             harkentest::BuildMasterInitWithBusBindingBytes(kBusBindingId, kBindingVariableId,
                                                           VN_BUS_MASTER),
             harkentest::packfoundation::kInitPackStableId);
-        EXPECT_EQ(VN_NO_BINDING, failed.result);
-        EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
-        EXPECT_EQ(nullptr, session.Engine()->bindings.Find(kBusBindingId));
+        EXPECT_EQ(VN_OK, grown.result);
+        EXPECT_NE(nullptr, session.Engine()->packComposition.Published());
+        EXPECT_NE(nullptr, session.Engine()->bindings.Find(kBusBindingId));
     }
     {
         VnConfig config = CanonicalActivationConfig();
@@ -3289,13 +3290,13 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
         attach.scopeKind = VN_TARGET_SCOPE_BUS;
         attach.objectId = VN_BUS_MASTER;
         ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9001), &attach));
-        const auto failed = harkentest::ActivateInitBytesV1(
+        const auto grown = harkentest::ActivateInitBytesV1(
             std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-att-cap",
             harkentest::BuildMasterInitWithBusBindingBytes(kBusBindingId, kBindingVariableId,
                                                           VN_BUS_MASTER),
             harkentest::packfoundation::kInitPackStableId);
-        EXPECT_EQ(VN_NO_BINDING, failed.result);
-        EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+        EXPECT_EQ(VN_OK, grown.result);
+        EXPECT_NE(nullptr, session.Engine()->packComposition.Published());
     }
     {
         VnConfig config = CanonicalActivationConfig();
@@ -4166,7 +4167,7 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
             const auto result = harkentest::ActivateCanonicalMembersV1(members.data(), members.size(), rows, report);
             harken::detail::DisarmLogicAllocFaultForTests();
-            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_EQ(VN_OUT_OF_MEMORY, result);
             EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
             EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
         }

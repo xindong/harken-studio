@@ -653,6 +653,7 @@ TEST(CompletionMutationGuard,
     ASSERT_TRUE(engine->ledger.AcquirePending(&pending, &pendingSlot, 128));
     engine->pendingStarts[pendingSlot].active = true;
     engine->pendingStarts[pendingSlot].publicHandle = pending;
+    engine->pendingStarts[pendingSlot].pinnedBindings.resize(1);
     engine->pendingStarts[pendingSlot].pinnedBindings[0].bindingId = harkentest::ObjectId(95);
     engine->pendingStarts[pendingSlot].pinnedBindingCount = 1;
 
@@ -814,6 +815,7 @@ TEST(CompletionMutationGuard,
     ASSERT_TRUE(engine->ledger.AcquirePending(&pending, &pendingSlot, 128));
     engine->pendingStarts[pendingSlot].active = true;
     engine->pendingStarts[pendingSlot].publicHandle = pending;
+    engine->pendingStarts[pendingSlot].pinnedBindings.resize(1);
     engine->pendingStarts[pendingSlot].pinnedBindings[0].bindingId = harkentest::ObjectId(97);
     engine->pendingStarts[pendingSlot].pinnedBindings[0].attachmentObjectId = harkentest::ObjectId(1);
     engine->pendingStarts[pendingSlot].pinnedBindingCount = 1;

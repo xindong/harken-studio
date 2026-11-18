@@ -220,6 +220,10 @@
           "type": "u32",
           "value": 1
         },
+        "VN_LOG_RUNTIME_RECREATE_REQUIRED": {
+          "type": "u32",
+          "value": 34
+        },
         "VN_MAX_CHANNELS": {
           "type": "u32",
           "value": 8
@@ -1425,6 +1429,7 @@
           "backing": "u32",
           "values": {
             "VN_NOTIFY_DEGRADATION_OCCURRED": 2,
+            "VN_NOTIFY_RUNTIME_RECREATE_REQUIRED": 7,
             "VN_NOTIFY_VOICE_ENDED": 0,
             "VN_NOTIFY_VOICE_PARKED": 5,
             "VN_NOTIFY_VOICE_RETURNED": 6,
@@ -1488,6 +1493,16 @@
             "VN_ROLLOFF_INVERSE_SQUARE": 1,
             "VN_ROLLOFF_LINEAR": 0,
             "VN_ROLLOFF_LOGARITHMIC": 2
+          }
+        },
+        "VnRuntimeFaultCategory": {
+          "backing": "u32",
+          "values": {
+            "VN_RUNTIME_FAULT_CAPACITY": 1,
+            "VN_RUNTIME_FAULT_GENERATION_EXHAUSTED": 4,
+            "VN_RUNTIME_FAULT_INTERNAL_STATE": 3,
+            "VN_RUNTIME_FAULT_INVALID_INPUT": 2,
+            "VN_RUNTIME_FAULT_NONE": 0
           }
         },
         "VnTargetScope": {
@@ -4092,6 +4107,17 @@
             }
           ],
           "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_GetRuntimeFaultInfo",
+          "parameters": [
+            {
+              "ctype": "VnRuntimeFaultInfoV1*",
+              "name": "outInfo"
+            }
+          ],
+          "returnType": "VnResult"
         }
       ],
       "platform": {
@@ -4138,6 +4164,7 @@
         "Vn_DestroyEmitter",
         "Vn_DetachBinding",
         "Vn_DisconnectBusSend",
+        "Vn_GetRuntimeFaultInfo",
         "Vn_Init",
         "Vn_InspectCanonicalPackV1",
         "Vn_InspectInitPack",
@@ -4324,6 +4351,7 @@
           "VN_NO_VARIABLE_LABEL": -1206,
           "VN_NO_VOICE": -300,
           "VN_OK": 0,
+          "VN_OUT_OF_MEMORY": -348,
           "VN_PACK_CATALOG_CAPACITY": -414,
           "VN_PACK_CYCLE": -413,
           "VN_PACK_HASH_MISMATCH": -412,
@@ -4405,6 +4433,7 @@
         "VnPackHandle": "u64",
         "VnPlaybackReadinessState": "u32",
         "VnResult": "i32",
+        "VnRuntimeFaultCategory": "u32",
         "VnStreamSourceRequest": "u64",
         "VnVoiceHandle": "u64"
       },
@@ -19435,6 +19464,84 @@
           ],
           "size": 600
         },
+        "VnRuntimeFaultInfoV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "category",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "line",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "repeatCount",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "file",
+              "offset": 24,
+              "shape": {
+                "ctype": "const char*",
+                "kind": "pointer",
+                "storage": "string"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "function",
+              "offset": 32,
+              "shape": {
+                "ctype": "const char*",
+                "kind": "pointer",
+                "storage": "string"
+              },
+              "size": 8
+            }
+          ],
+          "size": 40
+        },
         "VnSnapshot": {
           "alignment": 8,
           "fields": [
@@ -22790,6 +22897,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnRuntimeFaultInfoV1": {
+            "acceptedSizes": [
+              40
+            ],
+            "currentSize": 40,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnSnapshot": {
             "acceptedSizes": [
               1832,
@@ -24994,15 +25110,15 @@
       "formatVersion": 8
     }
   },
-  "contractSha256": "c4efe13aca25d9d527ae88d4674bc229777b9497cb5d900463c99fb9d24bd396",
+  "contractSha256": "92f73cb5f904870a5436c4bda36457f7e62eff58fdb1dac69744c8d0bb899b20",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "db8774cecb961a86d051a4a40e3cba4f643284d80e1552afd11a0b80781ffa7b",
-      "size": 341384
+      "sha256": "7cf4851c2e7798418aefe62002cfca747dd63dad18337c313b7318d78262498c",
+      "size": 343410
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
-      "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
-      "size": 11037
+      "sha256": "bd3905418ecb1f28e015bf6599db4c5f32a5907ea622495fd684c5d57429f6f7",
+      "size": 11686
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_dispatch.inl": {
       "sha256": "91efb7d65858ad58aa79c2cbda0d211e71993d0e34d855dfc8cd48e02df947b2",
@@ -25013,37 +25129,37 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "224c79233511ba8cceeccd6042ed736654be2f7f582435f4542cf06acee6ad68",
-      "size": 253770
+      "sha256": "ff02a7a17f084313723d22343268e18168b610afd64504654ace8613c5bfa398",
+      "size": 254819
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "11c48354a9efd6adec2aa7ab54e547a627c3bb6efc2dfac4554d13bf132afd75",
-      "size": 265781
+      "sha256": "94ee889dbc7aee6b5852768691a955aced4925f16557d62076f50dd844ea3e20",
+      "size": 267292
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "a43043345e400e15814c8502e8146f9cfbe85434e936d8075e79538b0b9a1273",
-      "size": 133231
+      "sha256": "a7a7ac94ed22d00ca9654985e044ddbe5e010a1ea02085176abf182a76c8d5fb",
+      "size": 134095
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "ce099bb0fb04e2cac32d54011861e43518687427d6c290973a2c2cb4adf2c711",
-      "size": 31608
+      "sha256": "45ccb183e260a8834379814a03f6d427fd58914a360abd2ab8beb4237420a3f2",
+      "size": 72166
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "8ef948acd2ea3eaf32510ed9763a3ee4aa713c9d0e292d05adc5b9c131876aa4",
-      "size": 70971
+      "sha256": "0e4ed78642fa9b71c88a80cbfc743498528146c87926686ed181eb0968c335fb",
+      "size": 71672
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "354f47ed590492a14598897196568cdc38babf60eacd3ad2092dc462b2593eda",
+    "nativeAbiSha256": "7a09c42bee3f4f994c9ba3aefc029c95c2ea5ca99d3d1b87eb249ef246e64e7a",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "16ae39686dc9e0dc9497fdb29e2f488d49c1eecf05fd509b53a55af6c3c0949e"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "4b4130ac17699a33e2274ad95ff83bdf3a83685f7c645a8278436f8e01df0792",
-      "size": 247249
+      "sha256": "1a865f7e86e083755520f3518028d89ce34002bbb6f83b86c299624eb211905d",
+      "size": 249124
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -25058,16 +25174,16 @@
       "size": 56134
     },
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py": {
-      "sha256": "d2325c13504af6b467a8452abbfbbf0accfaa653505d171ca2d7085b5e2de486",
-      "size": 39115
+      "sha256": "ee3f9bdeac90a5dcc0979b6d04dcf6a80f4955a2f4442750e50c5b5607ac6db2",
+      "size": 40262
     },
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py": {
       "sha256": "a7e38eb5b46878d6f892ee547ee03492a8472475a6545439fac7e84b3265c213",
       "size": 30778
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "e9075f49bad089b544d6c61b40c3a113232bcc1666893a0d7faf914f3b35c2dd",
-      "size": 264536
+      "sha256": "56628831e575c4b4752035b2de7acb458a46cbe5bc7f641c827eb748fd22c9d1",
+      "size": 266047
     }
   }
 }

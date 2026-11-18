@@ -3,6 +3,7 @@
 // silence scan is supplementary and never the sole pass condition (spec
 // section 16 silence guard).
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/TestUtil.h"
 #include "UnitTest/AllocationProbe.h"
 #include <harken/Harken.h>
 
@@ -273,7 +274,7 @@ TEST(NullBackendLifecycle, ArgumentAndStateErrors) {
 
     const VnConfig good = MakeNullConfig();
     harken::detail::StablePageReservation::FailNextReservationForTests();
-    EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&good));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_Init(&good));
     EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Term());
     ASSERT_EQ(VN_OK, Vn_Init(&good));
@@ -332,7 +333,7 @@ TEST(RealBackendLifecycle, StartFailureRollsBackPublishedEngine) {
     {
         DeviceStartFaultGuard fault(
             harken::DeviceStartFault::BeforeBackend);
-        EXPECT_EQ(VN_DEVICE_ERROR, Vn_Init(&real));
+        EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_Init(&real));
     }
 
     EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
@@ -1110,3 +1111,120 @@ TEST(MiniaudioInitRollback, AllocationFailuresReleaseResourcesAndRemainRetryable
 }
 
 } // namespace
+
+
+TEST(Lifecycle, RuntimeFaultPersistsAcrossQueueOverflowAndIsDeliveredOnce) {
+    struct Sink {
+        unsigned notifications = 0;
+        unsigned logs = 0;
+        VnRuntimeFaultInfoV1 observed{};
+    } sink;
+    auto config = MakeNullConfig();
+    config.notificationUserData = &sink;
+    config.onNotification = [](const VnNotification* notification, void* opaque) {
+        if (notification->type != VN_NOTIFY_RUNTIME_RECREATE_REQUIRED) return;
+        auto& target = *static_cast<Sink*>(opaque);
+        ++target.notifications;
+        target.observed.structSize = sizeof(target.observed);
+        EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&target.observed));
+        EXPECT_EQ(VN_OK, Vn_Update());
+    };
+    config.logUserData = &sink;
+    config.logCallback = [](void* opaque, std::uint32_t, std::uint32_t code, const char* text) {
+        if (code != VN_LOG_RUNTIME_RECREATE_REQUIRED) return;
+        ++static_cast<Sink*>(opaque)->logs;
+        EXPECT_NE(nullptr, std::strstr(text, "LifecycleTest.cpp"));
+    };
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto firstLine = __LINE__ + 1;
+    engine->RequireRecreation(VN_RUNTIME_FAULT_CAPACITY);
+    engine->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
+    for (std::uint32_t i = 0; i < engine->notifications.Capacity() * 3; ++i) {
+        engine->notifications.BeginQuantum();
+        engine->notifications.Push({});
+    }
+    for (std::uint32_t i = 0; i < harken::LogRing::kCapacity * 3; ++i) {
+        engine->logRing.BeginQuantum();
+        engine->logRing.Push({});
+        engine->logicLogRing.Push({});
+    }
+    EXPECT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(1u, sink.notifications);
+    EXPECT_EQ(1u, sink.logs);
+    EXPECT_EQ(VN_RUNTIME_FAULT_CAPACITY, sink.observed.category);
+    EXPECT_EQ(firstLine, sink.observed.line);
+    EXPECT_EQ(1u, sink.observed.repeatCount);
+    EXPECT_NE(nullptr, std::strstr(sink.observed.function, "RuntimeFaultPersists"));
+    engine->RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
+    VnRuntimeFaultInfoV1 latest{};
+    latest.structSize = sizeof(latest);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&latest));
+    EXPECT_EQ(2u, latest.repeatCount);
+    EXPECT_EQ(sink.observed.file, latest.file);
+    EXPECT_EQ(sink.observed.line, latest.line);
+    EXPECT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(1u, sink.notifications);
+    EXPECT_EQ(1u, sink.logs);
+}
+
+TEST(Lifecycle, RuntimeFaultQueryWorksWithoutCallbacksAndResetsOnInit) {
+    VnRuntimeFaultInfoV1 info{};
+    EXPECT_EQ(VN_INVALID_ARG, Vn_GetRuntimeFaultInfo(nullptr));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_GetRuntimeFaultInfo(&info));
+    info.structSize = sizeof(info);
+    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_GetRuntimeFaultInfo(&info));
+    {
+        harkentest::EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&info));
+        EXPECT_EQ(VN_RUNTIME_FAULT_NONE, info.category);
+        session.Engine()->RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
+        EXPECT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&info));
+        EXPECT_EQ(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED, info.category);
+    }
+    harkentest::EngineSession fresh(MakeNullConfig());
+    ASSERT_EQ(VN_OK, fresh.InitResult());
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&info));
+    EXPECT_EQ(VN_RUNTIME_FAULT_NONE, info.category);
+    EXPECT_EQ(0u, info.repeatCount);
+    EXPECT_EQ(nullptr, info.file);
+}
+
+TEST(Lifecycle, RuntimeFaultCallbackCanTerminateTheEngine) {
+    auto config = MakeNullConfig();
+    config.onNotification = [](const VnNotification* notification, void*) {
+        if (notification->type == VN_NOTIFY_RUNTIME_RECREATE_REQUIRED)
+            EXPECT_EQ(VN_OK, Vn_Term());
+    };
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    session.Engine()->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
+    EXPECT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    session.Release();
+}
+
+TEST(Lifecycle, RuntimeFaultQuerySurvivesThrowingCallback) {
+    auto config = MakeNullConfig();
+    unsigned calls = 0;
+    config.notificationUserData = &calls;
+    config.onNotification = [](const VnNotification* notification, void* opaque) {
+        if (notification->type != VN_NOTIFY_RUNTIME_RECREATE_REQUIRED) return;
+        ++*static_cast<unsigned*>(opaque);
+        throw 1;
+    };
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    session.Engine()->RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
+    EXPECT_EQ(VN_DEVICE_ERROR, Vn_Update());
+    VnRuntimeFaultInfoV1 info{};
+    info.structSize = sizeof(info);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&info));
+    EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, info.category);
+    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Update());
+    EXPECT_EQ(1u, calls);
+}

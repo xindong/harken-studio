@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/core/BindingTransition.h>
 #include "harken/media/PackLogicImage.h"
 
@@ -489,7 +490,8 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         }
         case kPackEntryKindVoiceRecipe: {
             PackLogicImage::VoiceRecipe recipe;
-            if (!ReadPackVoiceRecipePayload(payload, entry.size, entry.id, recipe) ||
+            std::vector<VnBindingId> bindings;
+            if (!ReadPackVoiceRecipePayload(payload, entry.size, entry.id, recipe, bindings) ||
                 !VoiceToneWireValuesValid(recipe.tone)) {
                 return VN_BAD_PACK;
             }
@@ -517,12 +519,15 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
             }
             VnBindingId previousBinding{};
             for (std::uint32_t n = 0; n < recipe.header.bindingCount; ++n) {
-                const auto binding = recipe.bindings[n];
+                const auto binding = bindings[n];
                 if (binding == VnObjectId{} ||
                     (n > 0 && binding <= previousBinding)) {
                     return VN_BAD_PACK;
                 }
                 previousBinding = binding;
+            }
+            if (!bindings.empty()) {
+                recipe.bindingStorage = std::make_shared<const std::vector<VnBindingId>>(std::move(bindings));
             }
             image.voiceRecipes.push_back(std::move(recipe));
             break;
@@ -676,7 +681,7 @@ struct PackVariableReadState {
     bool Attempt(Callback&& callback) noexcept {
         try {
             return callback();
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
             exception = std::current_exception();
             return false;
         }
@@ -1964,7 +1969,7 @@ VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes, std::uint6
     try {
         SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}};
         return ParsePackCanonicalCore(source, out, budget);
-    } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage); return VN_PACK_RESIDENT_CAPACITY; }
 }
 
 VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
@@ -1997,7 +2002,7 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
         *artifactHash = source.hash;
     }
     return result;
-} catch (const std::bad_alloc&) {
+} catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
     return VN_PACK_RESIDENT_CAPACITY;
 }
 
@@ -2151,7 +2156,7 @@ VnResult CheckPackClosure(const PackLogicImage& image,
                         recipe.header.playableId,
                         recipe.header.playableId);
         }
-        for (VnBindingId bindingId : recipe.bindings) {
+        for (VnBindingId bindingId : recipe.Bindings()) {
             if (!bindingCloses(bindingId)) {
                 return fail(PackClosureRef::RecipeBinding,
                             recipe.header.playableId, bindingId);

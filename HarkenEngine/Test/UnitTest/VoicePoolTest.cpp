@@ -119,12 +119,10 @@ void ExpectVoiceSendSlotsEqual(const harken::VoiceRenderContext& expected,
         EXPECT_EQ(lhs.targetBusIndex, rhs.targetBusIndex) << "send " << i;
         EXPECT_EQ(lhs.gain.current, rhs.gain.current) << "send " << i;
         EXPECT_EQ(lhs.gain.target, rhs.gain.target) << "send " << i;
-        EXPECT_EQ(lhs.gain.started, rhs.gain.started) << "send " << i;
-        EXPECT_EQ(lhs.ramping, rhs.ramping) << "send " << i;
-        EXPECT_EQ(lhs.rampStartGain, rhs.rampStartGain) << "send " << i;
-        EXPECT_EQ(lhs.rampEndGain, rhs.rampEndGain) << "send " << i;
-        EXPECT_EQ(lhs.rampBlocksTotal, rhs.rampBlocksTotal) << "send " << i;
-        EXPECT_EQ(lhs.rampBlocksDone, rhs.rampBlocksDone) << "send " << i;
+        EXPECT_EQ(lhs.gain.start, rhs.gain.start) << "send " << i;
+        EXPECT_EQ(lhs.gain.step, rhs.gain.step) << "send " << i;
+        EXPECT_EQ(lhs.gain.totalFrames, rhs.gain.totalFrames) << "send " << i;
+        EXPECT_EQ(lhs.gain.remainingFrames, rhs.gain.remainingFrames) << "send " << i;
     }
 }
 

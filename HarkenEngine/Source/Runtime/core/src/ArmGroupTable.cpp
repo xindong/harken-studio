@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ArmGroupTable.h"
 
 #include <limits>
@@ -30,7 +31,7 @@ ArmGroupTable::ArmGroupTable(std::uint32_t capacity,
       maxMembersPerGroup_(ValidConfig(capacity, maxMembersPerGroup)
                               ? static_cast<std::uint16_t>(maxMembersPerGroup)
                               : 0) {
-    if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
+    if (!rows_.Reserve(capacity_)) throw harken::detail::LogicPreparationFailure{};
 }
 
 std::size_t ArmGroupTable::MemberStorageBytes() const noexcept {
@@ -100,7 +101,7 @@ bool ArmGroupTable::PrepareBacking(std::uint32_t groupCount, std::uint32_t total
                 static_cast<std::size_t>(count) * sizeof(MemberRow);
             candidate.members_.push_back(std::move(member));
         }
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     *out = std::move(candidate);
     return true;
 }
@@ -249,7 +250,7 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
                     auto candidate = std::make_unique<MemberRow[]>(memberCount);
                     row.members.swap(candidate);
                     row.memberCapacity = memberCount;
-                } catch (...) {
+                } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
                     row.reservation.clear(std::memory_order_release);
                     return false;
                 }

@@ -58,7 +58,7 @@ void TopologyPlanPool::GrowBusStorage(PlanStorage& row, std::uint32_t count) {
 }
 
 void TopologyPlanPool::PreparePlanBusCapacity(std::uint32_t index, std::uint32_t count) {
-    if (!IsAcquired(index) || !PrepareBusCapacity(count)) throw std::bad_alloc{};
+    if (!IsAcquired(index) || !PrepareBusCapacity(count)) throw harken::detail::LogicPreparationFailure{};
     GrowBusStorage(m_storage[index], count);
 }
 
@@ -94,7 +94,7 @@ std::uint32_t TopologyPlanPool::AcquireImpl(bool legacyRows, std::uint32_t sendA
             storage = {};
             return kInvalidTopologyPlanIndex;
         }
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusSendStorage);
         storage = {};
         return kInvalidTopologyPlanIndex;
     }
@@ -146,7 +146,7 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
         m_slotCount[destinationIndex] = source.m_slotCount[sourceIndex];
         m_signals[destinationIndex] = source.m_signals[sourceIndex];
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusSendStorage); return false; }
 }
 
 void TopologyPlanPool::Recycle(std::uint32_t planIndex) noexcept {
@@ -240,7 +240,7 @@ bool TopologyPlanPool::PrepareSendRows(std::uint32_t planIndex,
             for (std::uint32_t slot = 0; slot < range.count; ++slot)
                 next.slots[range.first + slot] = slot;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusSendStorage); return false; }
 }
 
 bool TopologyPlanPool::ReserveSendCapacity(std::uint32_t planIndex, std::uint32_t count) {
@@ -260,7 +260,7 @@ bool TopologyPlanPool::ReserveSendCapacity(std::uint32_t planIndex, std::uint32_
         reserve(next.ramps, count);
         reserve(next.states, count);
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusSendStorage); return false; }
 }
 
 std::uint32_t* TopologyPlanPool::SendSlotsRow(std::uint32_t planIndex,

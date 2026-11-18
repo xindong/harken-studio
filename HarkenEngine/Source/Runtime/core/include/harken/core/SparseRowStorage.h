@@ -1,6 +1,7 @@
 #ifndef HARKEN_CORE_SPARSE_ROW_STORAGE_H
 #define HARKEN_CORE_SPARSE_ROW_STORAGE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableRowStorage.h"
 
 #include <algorithm>
@@ -39,7 +40,7 @@ public:
         std::unique_ptr<std::atomic<std::uint64_t>[]> prepared;
         try {
             prepared = std::make_unique<std::atomic<std::uint64_t>[]>(words);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         for (std::size_t word = 0; word < words; ++word)
             prepared[word].store(0, std::memory_order_relaxed);
         if (!reservation_.Reserve(pages * pageBytes, alignof(T), true)) return false;

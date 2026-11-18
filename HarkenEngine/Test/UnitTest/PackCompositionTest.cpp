@@ -1586,7 +1586,7 @@ TEST(PackCompositionContract, InspectInitReturnsProviderBorrowOnEveryExit) {
             const bool faultConsumed = allocation_probe::failAt == 0;
             allocation_probe::failAt = 0;
             if (provider.failAllocation) EXPECT_TRUE(faultConsumed);
-            const VnResult expected = mode == 0 ? VN_DEVICE_ERROR
+            const VnResult expected = mode == 0 ? VN_OUT_OF_MEMORY
                 : mode == 1 ? VN_OK : VN_PACK_PROVIDER_FAILED;
             EXPECT_EQ(expected, result);
             EXPECT_EQ(result, report.result);
@@ -1944,7 +1944,7 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     detail::ArmLogicAllocFaultForTests(1, detail::LogicAllocSite::PackVariablePublication);
     const auto allocationFailed = activateInit(&init);
     detail::DisarmLogicAllocFaultForTests();
-    ASSERT_EQ(VN_BACKPRESSURE, allocationFailed);
+    ASSERT_EQ(VN_OUT_OF_MEMORY, allocationFailed);
     EXPECT_EQ(published.get(), e.packComposition.Published());
     EXPECT_EQ(world, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(1u, e.variables.PendingCount());
@@ -5301,7 +5301,7 @@ TEST(PackCompositionContract, ProviderSpanReleasedAfterAllocationException) {
     const bool faultConsumed = allocation_probe::failAt == 0;
     allocation_probe::failAt = 0;
     EXPECT_TRUE(faultConsumed);
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, failed);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, failed);
     EXPECT_EQ(1u, provider.released);
     EXPECT_EQ(0u, handle);
     EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
@@ -12087,6 +12087,13 @@ static void CheckOriginalPackStorageLeaseLifetime(bool refuseAfterSourceCapture,
     EXPECT_NE(VN_OK, engine.packs.ValidateResourceClosure(retention.lease.resourceClosureToken));
     if (failLastResourceReturn) {
         ASSERT_TRUE(engine.runtimeRecreateRequired);
+        VnRuntimeFaultInfoV1 faultInfo{};
+        faultInfo.structSize = sizeof(faultInfo);
+        EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+        EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+        EXPECT_NE(nullptr, faultInfo.file);
+        EXPECT_GT(faultInfo.line, 0u);
+        EXPECT_EQ(engine.runtimeFault.line, faultInfo.line);
         ASSERT_LT(retention.service.token.slot, engine.playableServices.size());
         auto& actualService = engine.playableServices[retention.service.token.slot];
         ASSERT_NE(nullptr, actualService.invocation);
@@ -20207,7 +20214,7 @@ static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, 
         if (state.fault) EXPECT_EQ(VN_OK, actual.packs.ReleaseResourceClosure(resource));
     };
     engine.originalPackResourceAcquiredContextForTest = &prefix;
-    EXPECT_EQ(VN_BACKPRESSURE, fixture.PostOperation());
+    EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     ASSERT_EQ(opcode == ActionOpcodeV1::Stop ? 0u : 1u, prefix.calls);
@@ -28301,7 +28308,8 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
                     ASSERT_LE(std::abs(left), std::abs(expected) + 1e-5f);
                     ASSERT_NEAR(left, right, 1e-5f);
                 } else if (before < sendSettleBlock) {
-                    const float priorSend = sample * gain(childDb - 3.0f) *
+                    const float priorChildDb = run == 0 && replaced ? -6.0f : childDb;
+                    const float priorSend = sample * gain(priorChildDb - 3.0f) *
                         (gain(-6.0f) + gain(-6.0f));
                     ASSERT_GE(left, std::min(expected, priorSend) - 1e-5f);
                     ASSERT_LE(left, std::max(expected, priorSend) + 1e-5f);

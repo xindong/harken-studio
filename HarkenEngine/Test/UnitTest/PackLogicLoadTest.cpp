@@ -54,6 +54,7 @@
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/BusTree.h"
 
+#include <array>
 #include <cstdint>
 #include <cmath>
 #include <cstdlib>
@@ -1332,6 +1333,8 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FLOAT_EQ(-12.0f, engine->busTargets.LastCommitted(
                                index, harken::kBusTargetBusVolume));
+    // Re-leveling a mixed Bus ramps; start this short probe after it settles.
+    engine->nullBackend.Pump((240u + kBlock - 1u) / kBlock);
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     harkentest::Capture revised;
     harkentest::PumpAndCapture(engine, 1, revised);
@@ -2199,6 +2202,115 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
 }
 
 
+TEST(PackLogicLoad, PlayingSoundRespondsToEachOfTwentyFourPackBindings) {
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto sound = harkentest::ObjectId(7100);
+    constexpr float sourceLevel = 0.25f;
+    V2Builder builder(harken::kPackKindContent);
+    builder.AddMedia(sound, harkentest::MakeDC(kBlock * 4, sourceLevel));
+
+    std::array<harken::VariableDefinitionV1, 24> variables{};
+    const auto gainDb = [](unsigned i) { return -0.5f * (i + 1); };
+    for (unsigned i = 0; i < variables.size(); ++i) {
+        const auto variable = harkentest::ObjectId(7200 + i);
+        variables[i] = harkentest::MakeVariableDefinition(
+            variable, harken::VariableKindV1::Smooth, 0, 1, 0);
+        VnBindingDesc binding{};
+        binding.structSize = sizeof(binding);
+        binding.variableId = variable;
+        binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+        binding.targetId = harken::kTargetVoiceVolume;
+        binding.curve.structSize = sizeof(binding.curve);
+        binding.curve.pointCount = 2;
+        binding.curve.points[0] = {0, 0};
+        binding.curve.points[1] = {1, gainDb(i)};
+        binding.curve.handles[0] = harkentest::EndpointHandles(
+            binding.curve.points[0], binding.curve.points[1]);
+        const auto id = harkentest::ObjectId(7300 + i);
+        builder.AddBindingDefinition(id, binding);
+        builder.AddBindingAttachment(i, id, VN_TARGET_SCOPE_VOICE, sound);
+    }
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallDefinitionsWorld(
+        engine, variables.data(), variables.size()).status);
+    const auto path = TempPath("twenty_four_independent_bindings.pack");
+    WriteFileBytes(path, builder.Build());
+    VnPackHandle pack{};
+    ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+    auto play = MakePlayDesc(sound);
+    play.loopCount = 0;
+    VnVoiceHandle voice{};
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+
+    const auto checkOutput = [&](float expected) {
+        harkentest::Capture capture;
+        harkentest::PumpAndCapture(engine, 1, capture);
+        ASSERT_EQ(kBlock, capture.left.size());
+        ASSERT_EQ(kBlock, capture.right.size());
+        EXPECT_NEAR(expected, capture.left.back(), 1e-5f);
+        EXPECT_NEAR(expected, capture.right.back(), 1e-5f);
+    };
+    checkOutput(sourceLevel);
+    for (unsigned i = 0; i < variables.size(); ++i) {
+        SCOPED_TRACE(i);
+        ASSERT_EQ(VN_OK, Vn_SetValue(variables[i].variableId, 1));
+        harkentest::AdvanceVariableWrite(engine);
+        checkOutput(sourceLevel * std::pow(10.0f, gainDb(i) / 20.0f));
+        ASSERT_EQ(VN_OK, Vn_SetValue(variables[i].variableId, 0));
+        harkentest::AdvanceVariableWrite(engine);
+        checkOutput(sourceLevel);
+    }
+    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+    engine->nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, Vn_UnloadPack(pack));
+}
+
+TEST(PackLogicLoad, ThousandDefinitionsAndTwoThousandAttachmentsPlayAndUnload) {
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harkentest::ObjectId(7100);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
+    V2Builder builder(harken::kPackKindContent);
+    const std::array sounds{harkentest::ObjectId(7101), harkentest::ObjectId(7102)};
+    for (auto sound : sounds) builder.AddMedia(sound, harkentest::MakeDC(kBlock * 4, 0.25f));
+    VnBindingDesc binding{};
+    binding.structSize = sizeof(binding);
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    binding.targetId = harken::kTargetVoiceVolume;
+    binding.variableId = variable;
+    binding.curve.structSize = sizeof(binding.curve);
+    binding.curve.pointCount = 1;
+    for (unsigned i = 0; i < 1000; ++i) {
+        const auto id = harkentest::ObjectId(10000 + i);
+        builder.AddBindingDefinition(id, binding);
+        for (unsigned j = 0; j < sounds.size(); ++j)
+            builder.AddBindingAttachment(2 * i + j, id, VN_TARGET_SCOPE_VOICE, sounds[j]);
+    }
+    const auto path = TempPath("thousand_bindings.pack");
+    WriteFileBytes(path, builder.Build());
+    VnPackHandle pack{};
+    ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+    EXPECT_EQ(1000u, engine.bindings.DefinitionCount());
+    EXPECT_EQ(2000u, engine.bindings.AttachmentCount());
+    for (const auto sound : sounds) {
+        auto play = harkentest::MakePlayDesc(sound);
+        VnVoiceHandle handle{};
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        EXPECT_EQ(1000u, engine.params.VoiceBindingCount(harkentest::RenderHandle(&engine, handle)));
+        harkentest::Capture capture;
+        harkentest::PumpAndCapture(&engine, 1, capture);
+        EXPECT_GT(harkentest::Peak(capture.left), 0.01f);
+        engine.nullBackend.Pump(5);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+    EXPECT_EQ(0u, engine.bindings.AttachmentCount());
+    EXPECT_EQ(0u, engine.bindings.DefinitionCount());
+}
+
 TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -3032,7 +3144,7 @@ TEST(PackLogicStaging, BusDefinitionAllocationFailureRefusesWholeLoad) {
     harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusDefinitionStorage);
     const auto result = LoadPack(packPath, &pack);
     harken::detail::DisarmLogicAllocFaultForTests();
-    EXPECT_EQ(VN_BACKPRESSURE, result);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, result);
 
     // Zero mutation: no bus landed.
     EXPECT_EQ(1u, engine->buses.BusCount()); // the master alone
@@ -3042,7 +3154,7 @@ TEST(PackLogicStaging, BusDefinitionAllocationFailureRefusesWholeLoad) {
     EXPECT_EQ(4u, engine->buses.BusCount());
 }
 
-TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
+TEST(PackLogicStaging, BindingStorageGrowsForWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindings = 1;
     EngineSession session(config);
@@ -3054,8 +3166,7 @@ TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
                                                     1.0f, -3.0f);
     ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(890), &live));
 
-    // The pack stages an attenuation before the binding pool refuses;
-    // order-independence demands that neither object lands.
+    // The pack stages an attenuation and a definition beyond the initial reservation.
     const std::string packPath = TempPath("pll_no_binding.pack");
     ASSERT_TRUE(BuildPackFile(
         "pll_no_binding",
@@ -3071,11 +3182,11 @@ TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
 
     const std::uint32_t profilesBefore = engine->spatial.ProfileCount();
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BINDING, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    EXPECT_EQ(profilesBefore, engine->spatial.ProfileCount());
-    EXPECT_EQ(nullptr, engine->bindings.Find(harkentest::ObjectId(892)));
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    EXPECT_EQ(profilesBefore + 1u, engine->spatial.ProfileCount());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(892)));
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
 
 TEST(PackLogicStaging, CommandQueuePressureRefusesThenAdmits) {
@@ -3622,7 +3733,7 @@ TEST(PackLogicInitialAtomicity,
         {
             StagingFaultGuard guard(
                 harken::PackStagingFault::InitialCommandScratchAllocation);
-            EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(packPath, &pack)) << attempt;
+            EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(packPath, &pack)) << attempt;
         }
         EXPECT_EQ(kSentinel, pack) << attempt;
         EXPECT_EQ(registryBefore, engine->registry.Count()) << attempt;
@@ -3853,7 +3964,7 @@ TEST(PackLogicInitialAtomicity,
         {
             StagingFaultGuard guard(
                 harken::PackStagingFault::InitialMediaPreparation);
-            EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(packPath, &pack)) << attempt;
+            EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(packPath, &pack)) << attempt;
         }
         expectUntouched();
     }
@@ -3986,7 +4097,7 @@ TEST(PackLogicInitialSuccess,
     EXPECT_EQ(0u, active.stateFlags & VN_DYNAMIC_ROUTE_PENDING);
 }
 
-TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
+TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsOutOfMemory) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3999,7 +4110,7 @@ TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
     VnPackHandle pack = 0;
     {
         PcmRegisterFaultGuard guard(harken::PcmRegisterFault::MapCommit);
-        EXPECT_EQ(VN_DEVICE_ERROR, LoadPack(packPath, &pack));
+        EXPECT_EQ(VN_OUT_OF_MEMORY, LoadPack(packPath, &pack));
     }
 
     EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(851)).Valid());
@@ -4018,7 +4129,7 @@ TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
 // code and proves zero mutation through another entry kind of the same
 // pack (non-mutating probes only).
 
-TEST(PackLogicAggregateCapacity, BindingDefinitionSumRefusesWholeLoad) {
+TEST(PackLogicAggregateCapacity, BindingDefinitionSumGrowsForWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindings = 2; // one taken below: one free slot, pack needs two
     EngineSession session(config);
@@ -4044,16 +4155,16 @@ TEST(PackLogicAggregateCapacity, BindingDefinitionSumRefusesWholeLoad) {
                            "handles": [[0.0, 0.0, 1.0, -9.0]] } } ])")));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BINDING, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    // Zero mutation: neither definition landed.
-    EXPECT_EQ(1u, engine->bindings.DefinitionCount());
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(1002)));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(1003)));
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    // Both incoming definitions coexist with the caller definition.
+    EXPECT_EQ(3u, engine->bindings.DefinitionCount());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1002)));
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1003)));
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
 
-TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
+TEST(PackLogicAggregateCapacity, BindingAttachmentSumGrowsForWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindingAttachments = 2; // one taken below; pack carries two
     EngineSession session(config);
@@ -4096,15 +4207,15 @@ TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
                  { "binding": "3da91a64-b947-4560-0000-0000000003f6", "scope": "voice", "object": "3da91a64-b947-4560-0000-0000000003f5" } ])"))));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BINDING, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    // Zero mutation: no media, no definition, no attachment landed.
-    EXPECT_EQ(1u, engine->bindings.AttachmentCount());
-    EXPECT_EQ(nullptr, engine->bindings.Find(harkentest::ObjectId(1014)));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(1014)));
-    EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(1012)).Valid());
-    EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(1013)).Valid());
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    // Media and both attachments publish together after backing grows.
+    EXPECT_EQ(3u, engine->bindings.AttachmentCount());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1014)));
+    EXPECT_EQ(VN_IN_USE, Vn_UnregisterBinding(harkentest::ObjectId(1014)));
+    EXPECT_TRUE(engine->registry.Lookup(harkentest::ObjectId(1012)).Valid());
+    EXPECT_TRUE(engine->registry.Lookup(harkentest::ObjectId(1013)).Valid());
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
 
 TEST(PackLogicAggregateCapacity, AttenuationSumPreparesWholeLoadBeyond64) {
@@ -6309,8 +6420,8 @@ TEST(PackLogicReplace,
     EXPECT_EQ(harkentest::ObjectId(7983u), engine->bindings.Find(harkentest::ObjectId(7981))->variableId);
     const auto* recipe = engine->logicPacks.FindVoiceRecipe(harkentest::ObjectId(7980));
     ASSERT_NE(nullptr, recipe);
-    ASSERT_EQ(1u, recipe->bindings.size());
-    EXPECT_EQ(harkentest::ObjectId(7981u), recipe->bindings[0]);
+    ASSERT_EQ(1u, recipe->Bindings().size());
+    EXPECT_EQ(harkentest::ObjectId(7981u), recipe->Bindings()[0]);
     EXPECT_EQ(1u, engine->packs.LoadedCount());
     EXPECT_NE(harken::VoiceLedger::HandleKind::Stale,
               engine->ledger.Classify(voice).kind);

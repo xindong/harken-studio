@@ -117,6 +117,13 @@ TEST(MeterProbe, PreparedBusRemovalSequenceExhaustionDoesNotPartiallyRetire) {
     EXPECT_EQ(VN_BACKPRESSURE, engine->meterProbes.PrepareBusRemovalV1(*engine, refs, prepared));
     EXPECT_FALSE(engine->meterProbes.CanCommitBusRemovalV1(*engine, prepared));
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     EXPECT_TRUE(engine->logicCommits.Exhausted());
     EXPECT_EQ(head, engine->commands.PublishedHead());
     EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
@@ -858,6 +865,43 @@ TEST(MeterProbe, ProbeIsNeverAVariableOrDecisionInput) {
     EXPECT_FALSE(engine->variables.CurrentValue(kProbe, &unused));
 }
 
+TEST(MeterProbe, PublicDetachPreservesPrivateBindingWithTheSameId) {
+    EngineSession session(ProbeConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harkentest::ObjectId(9111);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    std::uint32_t generation = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
+    ASSERT_NO_FATAL_FAILURE(DefineSidechain(&engine, kSidechain, kProbe, generation));
+    const auto target = engine.buses.FindRef(kTargetBus);
+    ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0, target.generation));
+    VnBindingDesc def{};
+    def.structSize = sizeof(def);
+    def.targetScopeKind = VN_TARGET_SCOPE_BUS;
+    def.variableId = variable;
+    def.curve.structSize = sizeof(def.curve);
+    def.curve.pointCount = 1;
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(kSidechain, &def));
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_BUS;
+    attach.objectId = VN_BUS_MASTER;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(kSidechain, &attach));
+    const auto before = engine.propertyPublisher.WorstCaseCommits();
+    attach.objectId = kTargetBus;
+    EXPECT_EQ(VN_UNKNOWN_ID, Vn_DetachBinding(kSidechain, &attach));
+    EXPECT_EQ(before, engine.propertyPublisher.WorstCaseCommits());
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(kSidechain, &attach));
+    EXPECT_EQ(before + 1, engine.propertyPublisher.WorstCaseCommits());
+    ASSERT_EQ(VN_OK, Vn_DetachBinding(kSidechain, &attach));
+    EXPECT_EQ(before, engine.propertyPublisher.WorstCaseCommits());
+    EXPECT_NE(nullptr, engine.bindings.FindProbeAttachment(kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0, target.generation));
+}
+
 TEST(MeterProbe, SidechainWaveformReachesBoundBusAndReleases) {
     EngineSession session(ProbeConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -969,6 +1013,7 @@ TEST(MeterProbe, UninstallWithdrawsContributionToNeutral) {
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_Update());
     engine->nullBackend.Pump(2);
+    engine->nullBackend.Pump(4); // Measure the settled attenuation.
     harkentest::Capture ducked;
     harkentest::PumpAndCapture(engine, 2, ducked);
     const float duckedPeak = harkentest::Peak(ducked.left);

@@ -143,6 +143,7 @@ enum {
     VN_MONITOR_SEQUENCE_EXHAUSTED = -345,
     VN_MONITOR_RECORDING_FAILED = -346,
     VN_MONITOR_RESYNC_REQUIRED = -347,
+    VN_OUT_OF_MEMORY = -348, /* Physical allocation failed; existing state is retained unless recreation is required. */
 
     VN_VARIABLE_SCOPE_MISMATCH = -1200, /* reserved legacy result code */
     VN_VARIABLE_WRITER_FORBIDDEN = -1201, /* Game vs Action-only, or Action vs Game-only */
@@ -241,8 +242,8 @@ typedef struct VnConfig {
      * config that leaves any of them zero behaves exactly as one built against
      * an older header vintage. */
     uint32_t maxActions;            /* Reserved legacy field; Action definition counts are not limited by config. */
-    uint32_t maxContainers;         /* container-asset registry capacity; 0 = 64 */
-    uint32_t maxContainerChildren;  /* global container-child pool; 0 = 1024 */
+    uint32_t maxContainers;         /* retained legacy value (0 = 64), not a container definition quota */
+    uint32_t maxContainerChildren;  /* retained legacy value (0 = 1024), not a child-count quota */
     uint32_t containerCursorCapacity; /* retained legacy value (0 = 256), validated
                                       * and traced; current selection histories
                                       * grow on demand, without this quota */
@@ -250,7 +251,7 @@ typedef struct VnConfig {
                                      * tombstone; legacy prefix vintages:
                                      * delayed-Step queue depth; 0 = 256 */
     uint32_t maxEmitters;           /* emitter handle capacity; 0 = 128 */
-    uint32_t emitterVariableSlots;  /* per-emitter local Variable slots; 0 = 8 */
+    uint32_t emitterVariableSlots;  /* initial per-emitter Variable reservation, grows on demand; 0 = 8 */
     uint32_t maxParkedVoices;       /* parked Virtual Voice capacity; 0 = 256.
                                      * Pending starts are Logical Voices but
                                      * are not Virtual Voices. */
@@ -330,17 +331,12 @@ typedef struct VnConfig {
                                      * VN_DEVICE_ERROR. Above 64 Vn_Init returns
                                      * VN_INVALID_CONFIG. */
     uint32_t reserved6;             /* keeps 8-byte alignment for future fields */
-    /* Public binding-system pool capacities (one struct-size vintage,
-     * zero-means-default). A shorter struct omitting these reads every field
-     * as its default, and a config that leaves them zero behaves exactly as
-     * one built against an older header vintage. */
-    uint32_t maxBindings;           /* binding definition pool; 0 = 128 */
-    uint32_t maxBindingAttachments; /* global binding attachment pool; 0 = 256 */
-    uint32_t voiceBindingInstanceSlots; /* per-voice binding instance slots (the
-                                     * instance pool is maxVoices times this);
-                                     * 0 = 8; above the per-voice slot-array
-                                     * capacity (8) Vn_Init refuses
-                                     * VN_INVALID_CONFIG */
+    /* Initial logic-side binding reservations. Storage grows on demand;
+     * these values do not limit content or per-voice binding counts.
+     * Zero and omitted fields retain the defaults. */
+    uint32_t maxBindings;           /* initial definition rows; 0 = 128 */
+    uint32_t maxBindingAttachments; /* initial attachment rows; 0 = 256 */
+    uint32_t voiceBindingInstanceSlots; /* initial rows per render voice; 0 = 8 */
     uint32_t meterRingBlocks;       /* meter transport ring depth in blocks
                                      * (the audio->logic peak record ring
                                      * behind bus meter Variables); 0 = 32;
@@ -708,9 +704,11 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId);
 /* Sets a bus's volume. volumeDb must be finite, and the reduced bus volume
  * after this API-direct contribution must convert to a finite non-negative
  * linear gain (VN_INVALID_ARG otherwise).
- * rampMs > 0 ramps linearly in the amplitude domain from the current value,
- * completing on a block boundary; rampMs == 0 snaps at the next block
- * boundary. The first volume ever set on a bus snaps regardless of rampMs.
+ * Changes start at the next block and interpolate linear amplitude over
+ * ceil(rampMs * sampleRate / 1000) frames. Once this work row has mixed,
+ * transitions last at least 5 ms, including requests for 0 ms. Before its
+ * first mixed block, the first volume assignment snaps regardless of rampMs;
+ * subsequent assignments honor rampMs, including an instantaneous 0 ms.
  * The master bus accepts volume changes like any other bus. A full command
  * queue returns VN_BACKPRESSURE with no state change. */
 VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs);
@@ -732,9 +730,10 @@ VnResult Vn_SetBusFilter(VnBusId busId, uint32_t filterKind, float cutoffHz,
  * are unaffected, and ordinary Volume and Variable contributions remain
  * unchanged. volumeDb must convert to a finite non-negative linear gain
  * (VN_INVALID_ARG otherwise). The change starts at the next audio block:
- * rampMs == 0 snaps, while a positive ramp interpolates linearly in
- * amplitude from the current gain over ceil(rampMs * sampleRate / 1000)
- * frames, including the first update.
+ * a linear-amplitude ramp uses ceil(rampMs * sampleRate / 1000) frames,
+ * including the first update. After this work row has mixed a block, the
+ * transition lasts at least 5 ms. Before that, 0 ms is instantaneous and
+ * a positive duration is honored.
  * Returns VN_OK when queued, VN_UNKNOWN_ID for an unknown bus, or
  * VN_BACKPRESSURE when the command queue cannot admit the change; refusals
  * leave the gain unchanged. An absent or failed engine returns
@@ -756,7 +755,8 @@ VnResult Vn_SetBusOutputFilter(VnBusId busId, uint32_t filterKind,
  * Variable-driven contributions, and unmuting restores the composed value
  * exactly. While muted the bus's published gain is a silence floor (linear
  * zero); fadeMs rides the bus-volume ramp discipline (rampMs semantics,
- * block-boundary completion — including the first-ever-value snap rule).
+ * sample-accurate completion and the 5 ms minimum after mixing; the initial
+ * value snaps only before the work row has mixed its first block).
  * Muting the master silences the mix like any other bus. Setting the state a
  * bus already holds is a benign no-op returning VN_OK that publishes
  * nothing. Refusals, all with zero side effects: mute01 above 1 is
@@ -842,8 +842,9 @@ enum {
                                          * a higher-priority play */
     VN_NOTIFY_VOICE_PARKED = 5,          /* voice went inaudible and released its
                                          * render slot while its timeline lives */
-    VN_NOTIFY_VOICE_RETURNED = 6         /* parked voice became audible again and
+    VN_NOTIFY_VOICE_RETURNED = 6,        /* parked voice became audible again and
                                          * reacquired a render slot */
+    VN_NOTIFY_RUNTIME_RECREATE_REQUIRED = 7 /* query Vn_GetRuntimeFaultInfo */
 };
 
 /* Notification, produced on the audio thread and delivered to the
@@ -855,6 +856,38 @@ struct VnNotification {
     uint64_t blockTimestamp;   /* monotonic render-block index since
                                 * Vn_Init; the block the notification fired in */
 };
+
+/* First fatal runtime fault; the record survives notification/log overflow.
+ * Repeat count excludes the first occurrence and saturates at UINT64_MAX.
+ * file/function are immutable engine-owned UTF-8 strings, valid until the
+ * native library is unloaded. Copy them before unloading the library. */
+typedef uint32_t VnRuntimeFaultCategory;
+enum {
+    VN_RUNTIME_FAULT_NONE = 0,
+    VN_RUNTIME_FAULT_CAPACITY = 1,
+    VN_RUNTIME_FAULT_INVALID_INPUT = 2,
+    VN_RUNTIME_FAULT_INTERNAL_STATE = 3,
+    VN_RUNTIME_FAULT_GENERATION_EXHAUSTED = 4
+};
+
+typedef struct VnRuntimeFaultInfoV1 {
+    uint32_t structSize;
+    uint32_t category;
+    uint32_t line;
+    uint32_t reserved;
+    uint64_t repeatCount;
+    const char* file;
+    const char* function;
+} VnRuntimeFaultInfoV1;
+
+#define VN_LOG_RUNTIME_RECREATE_REQUIRED 34
+
+/* Logic thread only. Set structSize before calling. Available even after a
+ * fatal runtime or callback fault. VN_OK with category NONE means no fault.
+ * Vn_Init starts a fresh record. Neither this query nor notification triggers
+ * automatic recreation. Vn_Update delivers the first fault directly once to
+ * each configured notification/log sink, bypassing the overwriting queues. */
+VnResult Vn_GetRuntimeFaultInfo(VnRuntimeFaultInfoV1* outInfo);
 
 /* Pumps the engine on the calling thread: drains the notification queue
  * and invokes the VnConfig callback once per notification, then flushes
@@ -877,9 +910,11 @@ typedef struct VnVec3 {
 
 /* Sets a voice's volume. volumeDb must be finite, and the reduced voice
  * volume after this API-direct contribution must convert to a finite
- * non-negative linear gain (VN_INVALID_ARG otherwise). rampMs > 0 ramps
- * linearly in the amplitude domain from the current value, completing on a
- * block boundary; rampMs == 0 snaps at the next block boundary. This writes
+ * non-negative linear gain (VN_INVALID_ARG otherwise). Changes start at the
+ * next block and ramp in linear amplitude over ceil(rampMs * sampleRate / 1000)
+ * rendered frames. After the voice has rendered, the duration is at least
+ * 5 ms. Before its first rendered block, 0 ms snaps and a positive duration
+ * is honored. This writes
  * the API-direct contribution layered on the voice's authored volume — it
  * composes with, and never overwrites,
  * Variable-driven contributions. A stale handle is a benign no-op
@@ -909,9 +944,10 @@ VnResult Vn_SetVoiceFilter(VnVoiceHandle handle, uint32_t filterKind,
  * this gain; ordinary Volume and Variable contributions remain unchanged.
  * volumeDb must convert to a finite non-negative linear gain
  * (VN_INVALID_ARG, checked before the handle).
- * A live voice applies the change at the next audio block: rampMs == 0
- * snaps, while a positive ramp interpolates linearly in amplitude from the
- * current gain over ceil(rampMs * sampleRate / 1000) rendered frames.
+ * A live voice applies the change at the next audio block, interpolating
+ * linear amplitude over ceil(rampMs * sampleRate / 1000) rendered frames.
+ * Once the voice has rendered, the duration is at least 5 ms. Before its
+ * first rendered block, 0 ms snaps and a positive duration is honored.
  * Pending and parked voices store the value without a command, ignore
  * rampMs, and install it without a ramp at onset or park return.
  * Returns VN_OK when accepted, VN_STALE_HANDLE for a stale handle, or
@@ -1227,9 +1263,9 @@ typedef struct VnSnapshot {
     uint64_t voiceHighWater;      /* most Render Voices ever live at once */
     uint64_t voiceCompletedCount; /* voices that finished or were stopped */
     uint64_t staleHandleCount;    /* operations refused on stale handles */
-    uint64_t noVoiceCount;        /* voice admissions refused with VN_NO_VOICE,
-                                   * including capacity, policy, or controlled
-                                   * logic-side allocation failures */
+    uint64_t noVoiceCount;        /* refused voice admissions, including capacity,
+                                   * policy, and logic-side allocation failures
+                                   * (the latter return VN_OUT_OF_MEMORY) */
     uint64_t backpressureCount;   /* commands refused by a full queue */
     uint64_t notificationDropCount;      /* notifications lost to drop-oldest */
     uint64_t logDropCount;        /* audio-side log records lost to drop-oldest
@@ -3039,9 +3075,11 @@ VnResult Vn_ConnectBusSend(VnBusId fromBus, VnBusId toBus, float levelDb);
  * only. */
 VnResult Vn_DisconnectBusSend(VnBusId fromBus, VnBusId toBus);
 
-/* Sets an existing bus->bus send edge's level. rampMs > 0 ramps linearly in the
- * amplitude domain from the current value, completing on a block boundary;
- * rampMs == 0 snaps at the next block boundary (the bus-volume convention). This
+/* Sets an existing bus->bus send edge's level. Changes start at the next block
+ * and ramp in linear amplitude over ceil(rampMs * sampleRate / 1000) frames,
+ * completing at that sample without rounding to a block boundary. Once the
+ * source bus work row has mixed, the duration is at least 5 ms; before then,
+ * 0 ms snaps and positive durations are honored. Initial connects snap. This
  * is not a structural change — it reorders nothing and publishes no topology
  * plan. Refusals: an unknown bus or an edge that is not connected is
  * VN_UNKNOWN_ID; a non-finite level is VN_INVALID_ARG; an edge owned by a
@@ -3069,7 +3107,9 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
  * state change. Logic thread only. */
 VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot);
 
-/* Sets a voice send slot's level. Same ramp discipline as Vn_SetBusSendLevel.
+/* Sets a voice send slot's level. Same sample-accurate ramp as Vn_SetBusSendLevel,
+ * with the 5 ms minimum applying after the voice has rendered its first block.
+ * Initial Vn_SetVoiceSend values snap.
  * Refusals: a non-finite or unrepresentable level, or a label
  * that holds no active send is VN_INVALID_ARG; a stale handle is a benign no-op
  * returning VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no
@@ -3518,11 +3558,10 @@ VnResult Vn_ReplaceBinding(VnBindingId bindingId, const VnBindingDesc* desc);
  * equal the definition's targetScopeKind, is VN_INVALID_ARG; an unknown
  * binding id, bus, or playable is VN_UNKNOWN_ID; a duplicate
  * (definition, object) attachment is VN_IN_USE; a full attachment pool is
- * VN_NO_BINDING with a log record naming the pool; an attachment whose
- * worst-case publication demand would exceed the command queue's capacity
- * is VN_INVALID_CONFIG (structural — clear by detaching or configuring a
- * larger queue; the log record carries both numbers). Logic thread
- * only. */
+ * VN_NO_BINDING with a log record naming the pool; only a new (Bus, target) publication consumes a
+ * command reservation. VN_INVALID_CONFIG means that reservation would exceed
+ * the command queue's capacity. Voice-scope publication demand is reserved
+ * when a play is accepted. Logic thread only. */
 VnResult Vn_AttachBinding(VnBindingId bindingId,
                           const VnBindingAttachDesc* desc);
 
@@ -3545,9 +3584,8 @@ VnResult Vn_DetachBinding(VnBindingId bindingId,
  * unknown binding id is VN_UNKNOWN_ID; a definition whose scope is not
  * VN_TARGET_SCOPE_VOICE is VN_INVALID_ARG; a stale or ended handle is a
  * benign no-op returning VN_STALE_HANDLE; an instance of this definition
- * already live on the voice is VN_IN_USE; a full per-voice instance table
- * (voiceBindingInstanceSlots) is VN_NO_BINDING with a log record naming
- * the pool; an instance whose worst-case publication demand would exceed
+ * already live on the voice is VN_IN_USE; failure to grow instance storage
+ * is VN_OUT_OF_MEMORY; an instance whose worst-case publication demand would exceed
  * the command queue's capacity is VN_INVALID_CONFIG (the attachment
  * contract's capacity rule). Logic thread only. */
 VnResult Vn_ApplyVoiceBinding(VnVoiceHandle handle, VnBindingId bindingId);

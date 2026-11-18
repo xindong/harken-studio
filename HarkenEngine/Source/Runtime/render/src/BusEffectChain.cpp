@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BusTree.h"
 #include "harken/render/BusActivityPlan.h"
 #include "harken/render/BuiltinEffects.h"
@@ -136,7 +137,7 @@ VnResult BusTree::PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner
             }
         }
         return VN_OK;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EffectExtraStorage);
         CancelPreviewEffectChain(out);
         return VN_DEVICE_ERROR;
     }
@@ -151,7 +152,7 @@ VnResult BusTree::PreparePreviewEffectOwnerRelease(BusSlotRef host, std::uint64_
     if (state->owner != owner) return VN_IN_USE;
     if (state->phase.load(std::memory_order_acquire) != Phase::Free) return VN_BACKPRESSURE;
     if (state->revision == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
-    try { state->update = std::make_unique<EffectChainUpdate>(); } catch (...) { return VN_DEVICE_ERROR; }
+    try { state->update = std::make_unique<EffectChainUpdate>(); } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EffectExtraStorage); return VN_DEVICE_ERROR; }
     auto& update = *state->update;
     out = {state, host, state->owner, state->revision, true, true};
     state->preparedOwner = owner;

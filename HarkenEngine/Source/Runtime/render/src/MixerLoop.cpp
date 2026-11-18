@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/SignalRoutingTypes.h"
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/BusActivityPlan.h"
@@ -137,13 +138,13 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_sampleRate(config.mixRate.SampleRate()),
       m_cpuTicksPerSecond(CpuClockTicksPerSecond()) {
     if (!m_currentSliceScratch.Reserve(timelinePool != nullptr ? CurrentSliceScratchCapacity(config) : 0))
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     m_buses.AttachActivitySnapshots(&m_snapshots);
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
             return static_cast<MixerLoop*>(context)->PreparePreparedChannelBacking(count);
-        })) throw std::bad_alloc{};
+        })) throw harken::detail::LogicPreparationFailure{};
     InitializeVariableSliceConsumptionStorage();
     m_voices.AttachFirstOutputCommandConsumer(this,
         [](void* context, const CommandRecord& command) noexcept {
@@ -599,13 +600,13 @@ void MixerLoop::InitializeVariableSliceConsumptionStorage() {
     if (capacity != m_pendingSliceConsumptions.Capacity()) {
         StableRowStorage<PendingSliceConsumption> consumptions;
         StableRowStorage<std::uint32_t> order;
-        if (!consumptions.Reserve(capacity) || !order.Reserve(capacity)) throw std::bad_alloc{};
+        if (!consumptions.Reserve(capacity) || !order.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
         m_pendingSliceConsumptions.Swap(consumptions);
         m_pendingSliceOrder.Swap(order);
     }
     if (m_timelinePool != nullptr && m_timelinePool->Valid()) {
         if (!PrepareCurrentSliceStorage(m_timelinePool->PreparedCurrentSliceRowCount()))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         m_timelinePool->AttachCurrentSliceStorage(m_currentSliceStorageRegistration, this,
             [](void* context, std::size_t required) noexcept {
                 return static_cast<MixerLoop*>(context)->PrepareCurrentSliceStorage(required);

@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BusActivityPlan.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/render/VoicePool.h"
@@ -188,7 +189,7 @@ bool PrepareBusActivitySelection(const TopologyPlanView& topology,
             if (selected[topology.slotCount + i]) next.signalNodes.push_back(i);
         out = std::move(next);
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return false; }
 }
 
 BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
@@ -319,7 +320,7 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
         auto* result = plan.get();
         m_activities.push_back(std::move(plan));
         return result;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return nullptr; }
 }
 
 CommandQueue::BusActivityAttachment* BusTree::ActivityAttachment(BusActivityPlan* plan) noexcept {
@@ -384,7 +385,7 @@ bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
                 if (!previous->signals->ContainsNodeDefinition(*plan.signals, i))
                     throw std::invalid_argument("sleep introduced a signal node");
             plan.dormantSignals = plan.signals->PrepareDormantState(*previous->signals);
-            if (!plan.dormantSignals) throw std::bad_alloc();
+            if (!plan.dormantSignals) throw harken::detail::LogicPreparationFailure{};
             if (!plan.signals->PrepareSleepObservation(*previous->signals, *plan.dormantSignals, block, removesSignals))
                 throw std::invalid_argument("invalid signal sleep observation");
             plan.sleepSignalScratch.resize(previous->signals->NodeCount());
@@ -393,7 +394,7 @@ bool BusTree::PrepareConditionalSleep(BusActivityPlan& plan,
             throw std::invalid_argument("sleep must remove work");
         plan.sleepDecision.store(BusActivityPlan::SleepDecision::Pending, std::memory_order_release);
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage);
         plan.ReleaseSleepHolds();
         plan.dormantSignals.reset();
         return false;
@@ -437,7 +438,7 @@ bool BusTree::AcknowledgeSleep() noexcept {
             if (m_dormantEffects.commit != nullptr &&
                 !m_dormantEffects.commit(m_dormantEffects.context, effects, plan.publication)) return false;
             m_dormant.swap(next);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BusOwnerStorage); return false; }
     }
     if (m_lastQueuedActivity == &plan && decision == BusActivityPlan::SleepDecision::Rejected)
         m_lastQueuedActivity = plan.sleepPrevious;

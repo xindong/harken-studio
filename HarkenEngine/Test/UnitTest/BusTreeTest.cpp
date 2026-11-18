@@ -1005,6 +1005,7 @@ TEST(BusActivity, ConditionalSleepRejectsStaleProofAndWakeOwnsRemovedRowPastAck)
         EXPECT_EQ(buses.AudioWorkRef(bus.index), work);
         EXPECT_EQ(engine.effectBank.InUseOf(VN_EFFECT_GAIN), 1u);
         EXPECT_EQ(buses.ActivityFallbackCount(), 0u);
+        if (reject) engine.nullBackend.Pump(2); // Finish the 5 ms gain transition.
         if (reject) EXPECT_NEAR(buses.BusState(bus.index)->gain.current, std::pow(10.f, -3.f / 20), 1e-6f);
     }
 }
@@ -1529,6 +1530,76 @@ void SleepSettingsBus(harken::Engine& engine, harken::BusSlotRef bus) {
     ASSERT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());
 }
 
+enum class BusGainActivity { Silent, ColdSetting, ChangeAfterWake };
+
+void CheckBusGainActivity(BusGainActivity scenario) {
+    EngineSession session(MakeNullConfig(2, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    engine.buses.SetAutomaticSleepEnabledForTest(false);
+    const auto id = harkentest::ObjectId(711);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(1);
+    const auto bus = engine.buses.FindRef(id);
+    ASSERT_NE(nullptr, engine.buses.BusState(bus.index));
+    ASSERT_TRUE(engine.buses.BusState(bus.index)->hasMixed);
+    ASSERT_FALSE(engine.buses.BusState(bus.index)->gainStarted);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -6, 0));
+    engine.nullBackend.Pump(1);
+    const auto half = std::pow(10.f, -6.f / 20.f);
+    EXPECT_EQ(176u, engine.buses.BusState(bus.index)->gain.remainingFrames);
+    EXPECT_NEAR(1.f + (half - 1.f) * 64.f / 240.f,
+        engine.buses.BusState(bus.index)->gain.current, 1e-6f);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+
+    if (scenario == BusGainActivity::Silent) return;
+
+    // Allow the recovery probe and the subsequent half-second quiet hold.
+    engine.nullBackend.Pump(800);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_NO_FATAL_FAILURE(SleepSettingsBus(engine, bus));
+    ASSERT_EQ(nullptr, engine.buses.BusState(bus.index));
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -12, 0));
+    const auto pcm = harkentest::MakeDC(8192, .25f);
+    const auto descriptor = MonoDesc(pcm, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(712), &descriptor));
+    auto play = MakePlayDesc(harkentest::ObjectId(712));
+    play.busId = id;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    Capture initial;
+    harkentest::PumpAndCapture(&engine, 1, initial);
+    const auto quiet = std::pow(10.f, -12.f / 20.f);
+    for (auto sample : initial.left) EXPECT_NEAR(.25f * quiet, sample, 1e-6f);
+    ASSERT_TRUE(engine.buses.BusState(bus.index)->hasMixed);
+
+    if (scenario == BusGainActivity::ColdSetting) return;
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -6, 0));
+    Capture changed;
+    harkentest::PumpAndCapture(&engine, 4, changed);
+    for (std::size_t i = 0; i < changed.left.size(); ++i) {
+        const float ratio = std::min(1.f, float(i + 1) / 240.f);
+        EXPECT_NEAR(.25f * (quiet + (half - quiet) * ratio), changed.left[i], 1e-6f);
+    }
+    EXPECT_EQ(0u, harken::memguard::HitCount());
+}
+
+TEST(BusSettings, SilentWorkingBusRamps) {
+    CheckBusGainActivity(BusGainActivity::Silent);
+}
+
+TEST(BusSettings, ColdSettingAppliesOnFirstBlockAfterWake) {
+    CheckBusGainActivity(BusGainActivity::ColdSetting);
+}
+
+TEST(BusSettings, WokenBusRampsAfterFirstMix) {
+    CheckBusGainActivity(BusGainActivity::ChangeAfterWake);
+}
+
 TEST(BusSettings, DirectCommandsWakeColdBusWithoutChangingTheirRamps) {
     using namespace harken;
     for (unsigned operation = 0; operation != 14; ++operation) {
@@ -1540,6 +1611,8 @@ TEST(BusSettings, DirectCommandsWakeColdBusWithoutChangingTheirRamps) {
             engine.buses.SetAutomaticSleepEnabledForTest(cold);
             const auto id = harkentest::ObjectId(711);
             ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+            // Establish the initial value so both cases test a subsequent assignment.
+            ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
             ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(713), VN_BUS_MASTER));
             ASSERT_EQ(VN_OK, Vn_ConnectBusSend(id, VN_BUS_MASTER, -12));
             VnGainDesc gain{};
@@ -1728,7 +1801,7 @@ TEST(BusSettings, SparseDirectSettingFailurePublishesNothingAndRetryKeepsRamp) {
         harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::BusTargetSettings);
         const auto refused = set();
         harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_BACKPRESSURE, refused);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, refused);
         EXPECT_EQ(head, engine.commands.PublishedHead());
         EXPECT_EQ(0, engine.busTargets.Reduce(bus.index, target));
         EXPECT_FALSE(engine.buses.AcceptedWorkRef(bus).Valid());

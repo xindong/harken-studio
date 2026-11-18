@@ -19,13 +19,6 @@ template<class T> std::span<T> Reserve(std::span<std::byte>& storage, std::size_
     storage = {static_cast<std::byte*>(raw) + bytes, size - bytes};
     return {pointer, count};
 }
-double SendBound(const VoiceSendSlot& send) noexcept {
-    auto gain = send.gain;
-    if (send.ramping) gain.SetBlockTarget(send.rampStartGain, send.rampEndGain,
-        send.rampBlocksDone, send.rampBlocksTotal);
-    // GainRamp is block-linear, with finite prepared endpoints.
-    return std::max(std::abs(static_cast<double>(gain.current)), std::abs(static_cast<double>(gain.target)));
-}
 }
 
 void SignalRenderPlan::PrepareFinalOutputs(std::span<const SignalMemberImage> members) noexcept {
@@ -126,7 +119,7 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
             const auto ordinal = mapping.Ordinal(send.targetBusIndex);
             if (!send.active || ordinal == UINT32_MAX ||
                 send.targetBusGeneration != info[ordinal].generation) continue;
-            if (!route(send.targetBusIndex, SendBound(send))) return false;
+            if (!route(send.targetBusIndex, send.gain.AbsoluteBound(current_.frames))) return false;
         }
         // Sum duplicate routes within this Voice before the existing maximum
         // across members sharing a sound node. No degree-squared rescans.

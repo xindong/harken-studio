@@ -716,7 +716,7 @@ TEST(BuiltinEffectPool, ExhaustionRefusesWithNoEffect) {
     const auto publishedBefore = session.Engine()->commands.PublishedHead();
     {
         EffectExtraAllocationFault fault;
-        EXPECT_EQ(VN_NO_EFFECT, Vn_SetVoiceEffect(a, 0, VN_EFFECT_FEEDBACK_DELAY, AsBase(&d)));
+        EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_SetVoiceEffect(a, 0, VN_EFFECT_FEEDBACK_DELAY, AsBase(&d)));
     }
     EXPECT_EQ(publishedBefore, session.Engine()->commands.PublishedHead());
     EXPECT_EQ(0u, session.Engine()->effectBank.InUseOf(VN_EFFECT_FEEDBACK_DELAY));

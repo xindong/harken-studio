@@ -4350,7 +4350,7 @@ void ExpectScheduleCapacityActionCompletes(
         const auto retargetRemaining = harken::detail::g_logicAllocFault.remaining;
         harken::detail::DisarmLogicAllocFaultForTests();
         EXPECT_EQ(0u, retargetRemaining);
-        EXPECT_EQ(VN_NO_VOICE, refusedRetarget);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, refusedRetarget);
         EXPECT_EQ(nullptr, engine->variableControlRetargetScratch);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(0u, engine->actionFirings.LiveCount());
@@ -4398,8 +4398,7 @@ void ExpectScheduleCapacityActionCompletes(
             const auto refused = Vn_PostAction(&desc, &firing);
             EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
             harken::detail::DisarmLogicAllocFaultForTests();
-            EXPECT_EQ(site == harken::detail::LogicAllocSite::CapturedScheduleVoices
-                          ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
+            EXPECT_EQ(VN_OUT_OF_MEMORY, refused);
             EXPECT_EQ(0u, firing);
             EXPECT_EQ(0u, engine->actionFirings.LiveCount());
             EXPECT_EQ(commandHead, engine->commands.PublishedHead());
@@ -4424,7 +4423,7 @@ void ExpectScheduleCapacityActionCompletes(
             const auto remaining = engine->nativeBackingAllocationFailureCountdownForTest;
             engine->nativeBackingAllocationFailureCountdownForTest = -1;
             if (result == VN_OK) break;
-            ASSERT_EQ(VN_BACKPRESSURE, result);
+            ASSERT_EQ(VN_OUT_OF_MEMORY, result);
             EXPECT_EQ(0, remaining);
             EXPECT_EQ(0u, firing);
             EXPECT_EQ(0u, engine->actionFirings.LiveCount());
@@ -4801,6 +4800,13 @@ void ExpectDirectScheduleRootPostFailureRollsBackSharedTransaction(
     EXPECT_EQ(commandFreeBefore, engine->commands.FreeSlots());
     EXPECT_EQ(startRowsBefore, activeStartRows());
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_INTERNAL_STATE, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     EXPECT_FALSE(engine->forceDirectPlayablePostFailureForTest);
 }
 
@@ -6530,7 +6536,10 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        ASSERT_EQ((refusedStorage <= 3u || (refusedStorage >= 14u && refusedStorage <= 21u))
+        const bool allocationRefused = refusedStorage == 14u ||
+            (refusedStorage >= 17u && refusedStorage <= 22u);
+        ASSERT_EQ(allocationRefused ? VN_OUT_OF_MEMORY :
+            (refusedStorage <= 3u || refusedStorage == 15u || refusedStorage == 16u)
                 ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
@@ -9512,7 +9521,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         const auto allocationsBefore = engine->nativeBackingAllocationCountForTest;
         const auto result = Vn_PostAction(&command, &firing);
         if (refuseVoiceCapture) harken::detail::DisarmLogicAllocFaultForTests();
-        EXPECT_EQ(VN_BACKPRESSURE, result);
+        EXPECT_EQ(refuseVoiceCapture ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, result);
         EXPECT_FALSE(engine->forceTimelineVoiceCommitRollbackForTest);
         ExpectActionPreparationOwnersUnchanged(*engine, before);
         EXPECT_EQ(beforeCaptureBytes, engine->CapturedVoiceStorageBytes());
@@ -9532,7 +9541,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
                 engine->nativeBackingAllocationFailureCountdownForTest = static_cast<std::int32_t>(ordinal);
                 const auto refused = Vn_PostAction(&command, &firing);
                 engine->nativeBackingAllocationFailureCountdownForTest = -1;
-                ASSERT_EQ(VN_BACKPRESSURE, refused);
+                ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
                 ASSERT_EQ(0u, firing);
                 ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
                 EXPECT_EQ(coldScheduleBytes, engine->queueScheduleStorage.StorageBytes());
@@ -10754,12 +10763,16 @@ static void CheckSameKeyResetWithExistingFutureStop(bool stopBeforeBoundary, boo
     const auto before = CaptureActionPreparationOwners(*engine);
     post.actionId = image.actions[10].actionStableId;
     VnActionFiringHandle resetFiring = 0;
+    if (rollback) harken::detail::ArmLogicAllocFaultForTests(
+        1, harken::detail::LogicAllocSite::VariableValueStorage);
     const auto resetResult = Vn_PostAction(&post, &resetFiring);
+    if (rollback) EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     testing::Test::RecordProperty("stop_frame", std::to_string(stopFrame));
     testing::Test::RecordProperty("boundary", std::to_string(boundary));
     testing::Test::RecordProperty("reset_result", std::to_string(resetResult));
     if (stopBeforeBoundary || rollback) {
-        EXPECT_EQ(rollback ? VN_VARIABLE_EMITTER_SLOT_EXHAUSTED : VN_BACKPRESSURE,
+        EXPECT_EQ(rollback ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE,
                   resetResult);
         if (resetResult != VN_OK) {
             ExpectActionPreparationOwnersUnchanged(*engine, before);
@@ -21835,7 +21848,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
                         harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::CapturedVoiceInstall);
                         const auto result = Vn_PostAction(&reset, &firing);
                         harken::detail::DisarmLogicAllocFaultForTests();
-                        ASSERT_EQ(VN_BACKPRESSURE, result);
+                        ASSERT_EQ(VN_OUT_OF_MEMORY, result);
                         EXPECT_EQ(0u, firing);
                         ExpectActionPreparationOwnersUnchanged(engine, before);
                         EXPECT_EQ(priorRoot, row.variableControlNestedQueueSuccessorInstance);
@@ -23463,7 +23476,7 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
         harken::detail::DisarmLogicAllocFaultForTests();
         // Restore even on an assertion failure; partial successful backing may remain cached.
         limitTimeline(SIZE_MAX);
-        ASSERT_EQ(VN_BACKPRESSURE, result);
+        ASSERT_EQ(warmFailure.allocation != 0 ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, result);
         EXPECT_EQ(beforeTimeline, timelineState(warmFailure.timelineColumn));
         for (unsigned column = 1; column < warmFailure.timelineColumn; ++column) {
             const auto prepared = timelineState(column);
@@ -33370,7 +33383,10 @@ TEST(ActionFiringApi,
         });
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -33463,7 +33479,10 @@ TEST(ActionFiringApi,
         engine->effectBank.ToneHighWater();
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -33559,7 +33578,10 @@ TEST(ActionFiringApi,
         });
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -33657,7 +33679,10 @@ TEST(ActionFiringApi,
         });
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -37894,7 +37919,7 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanDoesNotMaskNativeSour
     ASSERT_TRUE(probe.called);
     ASSERT_NE(nullptr, probe.attempt);
     ASSERT_TRUE(probe.foreign.Valid());
-    ASSERT_EQ(VN_BACKPRESSURE, result);
+    ASSERT_EQ(VN_RUNTIME_RECREATE_REQUIRED, result);
     EXPECT_EQ(0u, refused);
     EXPECT_FALSE(engine.forceImmediateLaneReservationFailureForTest);
     ASSERT_NE(nullptr, probe.ordinary);
@@ -40567,6 +40592,14 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
     EXPECT_LT(blockAverages[firstIndex + 2u], -0.1f);
 }
 
+// Initial read cuts hold the first rendered block; later live writes ramp.
+static float GainAfterInitialBlock(std::uint64_t frame, std::uint64_t onset,
+    std::uint32_t block, float target) {
+    const auto start = (onset / block + 1u) * block;
+    if (frame < start) return 1.f;
+    return 1.f + (target - 1.f) * std::min(1.f, float(frame - start + 1u) / 240.f);
+}
+
 static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned currentDelay = 0,
     bool shortCurrent = false, bool publishedWait = false, bool retainSuccessor = false, bool chain = false,
     bool sourceWait = true, bool refuseFollowing = false) {
@@ -40621,6 +40654,9 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
         attach.objectId = sound;
         ASSERT_EQ(VN_OK, Vn_AttachBinding(bindingId, &attach));
     }
+    // Initialize fixed output scaling before mixing. The same setter below
+    // remains queued as the source-frontier blocker under test.
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 1, 0));
     ASSERT_EQ(VN_OK, Vn_Update());
     engine.nullBackend.Pump(2);
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 1, 0));
@@ -40820,7 +40856,18 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
                 const auto absoluteFrame = recoveryStartFrame + frame;
                 const bool initialReadCut = offset < first.size() && absoluteFrame / block ==
                     (recoveryStartFrame + onset) / block;
-                if (!initialReadCut && absoluteFrame >= variableAppliedFrame) expected *= gainB;
+                if (!initialReadCut && absoluteFrame >= variableAppliedFrame) {
+                    const auto cycleOffset = offset % length;
+                    const auto voiceOnset = recoveryStartFrame + onset + (offset / length) * length +
+                        (cycleOffset < first.size() ? 0u : first.size());
+                    if (voiceOnset >= variableAppliedFrame) expected *= gainB;
+                    else {
+                        const auto changeStart = std::max(variableAppliedFrame, (voiceOnset / block + 1u) * block);
+                        const float progress = absoluteFrame < changeStart ? 0.f :
+                            std::min(1.f, float(absoluteFrame - changeStart + 1u) / 240.f);
+                        expected *= 1.f + (gainB - 1.f) * progress;
+                    }
+                }
             }
             EXPECT_NEAR(expected * masterGain, recoveredPcm[frame], 1e-6f)
                 << "chain frame " << frame << recoveryTrace.str();
@@ -40838,12 +40885,10 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
         for (std::size_t frame = 0; frame < recoveredPcm.size(); ++frame) {
             float expected = 0;
             if (frame >= onset && frame - onset < first.size())
-                expected += 0.25f * ((recoveryStartFrame + frame) / block ==
-                    (recoveryStartFrame + onset) / block ? 1.0f : gainB);
+                expected += 0.25f * GainAfterInitialBlock(recoveryStartFrame + frame, recoveryStartFrame + onset, block, gainB);
             if (compositeCurrent && frame >= onset + currentDelay &&
                 frame - onset - currentDelay < second.size())
-                expected -= 0.125f * ((recoveryStartFrame + frame) / block ==
-                    (recoveryStartFrame + onset + currentDelay) / block ? 1.0f : gainB);
+                expected -= 0.125f * GainAfterInitialBlock(recoveryStartFrame + frame, recoveryStartFrame + onset + currentDelay, block, gainB);
             if (frame >= successorOffset && frame - successorOffset < second.size())
                 expected -= 0.125f * gainB;
             EXPECT_NEAR(expected * masterGain, recoveredPcm[frame], 1e-6f)
@@ -40891,11 +40936,9 @@ static void CheckInitialQueueSourceWaitPcm(bool compositeCurrent, unsigned curre
             if (frame >= onset) {
                 const auto relative = frame - onset;
                 if (relative < first.size())
-                    expected += 0.25f * ((recoveryStartFrame + frame) / block ==
-                        (recoveryStartFrame + onset) / block ? 1.0f : gainB);
+                    expected += 0.25f * GainAfterInitialBlock(recoveryStartFrame + frame, recoveryStartFrame + onset, block, gainB);
                 if (compositeCurrent && relative >= currentDelay && relative - currentDelay < second.size())
-                    expected -= 0.125f * ((recoveryStartFrame + frame) / block ==
-                        (recoveryStartFrame + onset + currentDelay) / block ? 1.0f : gainB);
+                    expected -= 0.125f * GainAfterInitialBlock(recoveryStartFrame + frame, recoveryStartFrame + onset + currentDelay, block, gainB);
                 if (relative >= successorOffset && relative - successorOffset < second.size())
                     expected -= 0.125f * gainB;
             }
@@ -46635,7 +46678,10 @@ TEST(ActionFiringApi,
     const std::uint32_t armsBefore = engine->timelineArms.LiveCount();
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -46716,7 +46762,10 @@ TEST(ActionFiringApi,
         engine->compositeCompletionOwners.HighWater();
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -46844,7 +46893,10 @@ TEST(ActionFiringApi,
         engine->queueCheckpoints.LiveCount();
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());
@@ -47336,7 +47388,10 @@ TEST(ActionFiringApi, EmitterSetValueBundleRefusesAtomicallyAtSlotCapacity) {
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
     const std::uint64_t sequenceBefore = engine->logicCommits.IssuedCount();
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
     EXPECT_EQ(0u, engine->actionFirings.LiveCount());
@@ -47564,6 +47619,9 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
         attach.objectId = CanonicalActionWorld::kSecondSound;
         ASSERT_EQ(VN_OK, Vn_AttachBinding(bindingId, &attach));
     }
+    // Keep the later same-value command as a frontier blocker, while fixed
+    // master scaling is initialized before the first mixed block.
+    if (stallSource) ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 1, 0));
     ASSERT_EQ(VN_OK, Vn_Update());
     engine.nullBackend.Pump(2);
     auto desc = ValidPostDesc();
@@ -47649,7 +47707,7 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
         std::array<std::array<std::uint64_t, 4>, 2> originalOnsets{};
         std::array<std::array<std::uint64_t, 4>, 2> startedSequences{};
         std::array<std::array<bool, 4>, 2> firstPcmChecked{};
-        std::array<std::array<bool, 4>, 2> liveBChecked{};
+        std::array<std::array<bool, 4>, 2> liveTransitionChecked{};
         std::array<harken::EnginePlayableServiceRow*, 2> roots{};
         const std::uint32_t leafCount = allDelayed ? 4u : 3u;
         const auto gainB = std::pow(10.0f, -12.0f / 20.0f);
@@ -47819,8 +47877,8 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                             continue;
                         const auto onset = onsets[playIndex][leaf];
                         if (frameBase + frame < onset) continue;
-                        const bool initial = frameBase / block == onset / block;
-                        expected += sourceAmplitude * (playIndex == 0u && initial ? 1.0f : gainB);
+                        expected += sourceAmplitude * (playIndex == 0u ?
+                            GainAfterInitialBlock(frameBase + frame, onset, block, gainB) : gainB);
                     }
                 if (!stopWaiting || !stopped)
                     EXPECT_NEAR(expected * masterGain, engine.nullBackend.LastBlock()[2 * frame], 1e-6f)
@@ -47836,9 +47894,10 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                         const auto* voice = engine.voices.Resolve(handles[playIndex][leaf]);
                         ASSERT_NE(nullptr, voice);
                         const bool initial = frameBase / block == onsets[playIndex][leaf] / block;
-                        EXPECT_NEAR(playIndex == 0u && initial ? 1.0f : gainB, voice->gain.current, 1e-6f);
+                        EXPECT_NEAR(playIndex == 0u ? GainAfterInitialBlock(frameBase + block - 1u,
+                            onsets[playIndex][leaf], block, gainB) : gainB, voice->gain.current, 1e-6f);
                         if (initial) firstPcmChecked[playIndex][leaf] = true;
-                        else liveBChecked[playIndex][leaf] = true;
+                        else liveTransitionChecked[playIndex][leaf] = true;
                     }
             }
             if (allStarted && frameBase >= lastOnset + 3 * block) break;
@@ -47854,7 +47913,7 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                 const auto token = arms[playIndex][leaf];
                 if (!stopped) {
                     EXPECT_TRUE(firstPcmChecked[playIndex][leaf]);
-                    EXPECT_TRUE(liveBChecked[playIndex][leaf]);
+                    EXPECT_TRUE(liveTransitionChecked[playIndex][leaf]);
                 }
                 if (stallSource) {
                     EXPECT_NE(0u, startedSequences[playIndex][leaf]);
@@ -47941,7 +48000,7 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
     }
     engine.nullBackend.Pump(1);
     for (std::uint32_t frame = block / 2; frame < block; ++frame)
-        EXPECT_NEAR(masterGain * selectedCount * (2.0f * sourceAmplitude) * gainB, engine.nullBackend.LastBlock()[2 * frame], 1e-6f);
+        EXPECT_NEAR(masterGain * selectedCount * sourceAmplitude * (1.f + (gainB - 1.f) * float(frame + 1) / 240.f + gainB), engine.nullBackend.LastBlock()[2 * frame], 1e-6f);
     ASSERT_EQ(VN_OK, Vn_Update());
     for (const auto render : renders) {
         EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
@@ -52557,7 +52616,15 @@ enum class OrderedQueueTransition { None, TargetFade, NaturalFade };
 enum class OrderedQueueTransitionExit { None, RefuseBoundPrivate, StopPublishedBeforeAudio,
     RefusePreludeBound, RefuseSourceControlBound };
 
-static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape, bool cancel = false,
+enum class BindingTiming { Initial, AfterAcceptance, RefusedAfterAcceptance };
+struct SubtreeBindingScenario {
+    SubtreeBindingScenario(OrderedVariableSubtreeCase subtree, BindingTiming when = BindingTiming::Initial)
+        : shape(subtree), timing(when) {}
+    OrderedVariableSubtreeCase shape;
+    BindingTiming timing;
+};
+
+static void CheckOrderedVariableSubtreeFirstPcm(SubtreeBindingScenario scenario, bool cancel = false,
     OrderedVariableSubtreePlacement placement = OrderedVariableSubtreePlacement::Initial,
     bool cancelPreparedNested = false,
     NestedReplacementPolicyShape nestedPolicyShape = NestedReplacementPolicyShape::Single,
@@ -52569,6 +52636,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     OrderedQueueTransitionExit transitionExit = OrderedQueueTransitionExit::None,
     bool targetFadeEnabled = true, bool retryPreludeDetach = false,
     bool precedingResetStep = false, bool trackQueueSource = false, bool precedingSilentVc = false) {
+    const auto shape = scenario.shape;
     constexpr std::uint32_t block = 64, rate = 48000;
     const bool nested = shape == OrderedVariableSubtreeCase::NestedVariableControl;
     const bool nativeFutureProbe = shape == OrderedVariableSubtreeCase::NativeQueueBacking;
@@ -52818,10 +52886,17 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     VnBindingAttachDesc attach{};
     attach.structSize = sizeof(attach);
     attach.scopeKind = VN_TARGET_SCOPE_VOICE;
-    for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
-        attach.objectId = sound;
-        ASSERT_EQ(VN_OK, Vn_AttachBinding(bindingId, &attach));
-    }
+    const auto attachBoth = [&](VnBindingId id, VnResult expected) {
+        for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
+            attach.objectId = sound;
+            if (expected == VN_OUT_OF_MEMORY) engine.nativeBackingAllocationFailureCountdownForTest = 0;
+            const auto result = Vn_AttachBinding(id, &attach);
+            engine.nativeBackingAllocationFailureCountdownForTest = -1;
+            ASSERT_EQ(expected, result);
+            ASSERT_EQ(expected == VN_OK, engine.bindings.HasAttachment(id, attach.scopeKind, sound));
+        }
+    };
+    if (scenario.timing != BindingTiming::AfterAcceptance) ASSERT_NO_FATAL_FAILURE(attachBoth(bindingId, VN_OK));
     const auto baseline = CaptureActionReclaimableOwners(engine);
     const auto sourceGenerations = CaptureSourceGenerations(engine);
     auto desc = ValidPostDesc();
@@ -52855,6 +52930,8 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     }
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    const auto secondBinding = harkentest::ObjectId(9711);
+    if (scenario.timing == BindingTiming::RefusedAfterAcceptance) ASSERT_EQ(VN_OK, Vn_RegisterBinding(secondBinding, &binding));
     VnActionStepResult accepted{};
     accepted.structSize = sizeof(accepted);
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, playOrdinal, &accepted));
@@ -53127,6 +53204,10 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         unsigned visits = 0;
         VnVariableId selector{};
         float expected = 3.0f;
+        const decltype(attachBoth)* attach = nullptr;
+        BindingTiming timing = BindingTiming::Initial;
+        VnBindingId binding{};
+        bool exercised = false;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         PendingQueueNativeBackingProbe* native = nullptr;
         bool checkWeights = false;
@@ -53142,6 +53223,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     if (nativeFutureProbe) placementProbe.native = &nativeProbe;
     placementProbe.checkWeights = nestedPolicyShape == NestedReplacementPolicyShape::BothSides && !cancelPreparedNested;
 #endif
+    placementProbe.timing = scenario.timing;
+    placementProbe.attach = &attachBoth;
+    placementProbe.binding = scenario.timing == BindingTiming::AfterAcceptance ? bindingId : secondBinding;
     if (nested || queue) {
         engine.pendingVariableGroupPlacementContextForTest = &placementProbe;
         engine.pendingVariableGroupPlacementHookForTest = [](harken::Engine& actual,
@@ -53156,6 +53240,13 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
                 EXPECT_TRUE(actual.variables.OriginalPendingVariableGroupUsesMatch(actual, producer, attempt, placement));
             else
                 EXPECT_TRUE(group->reselectionRequested);
+            if (!probe.exercised && probe.timing != BindingTiming::Initial) {
+                bool waiting = false;
+                ASSERT_TRUE(actual.EnsurePendingVariableNativeBacking(producer, attempt, &waiting));
+                ASSERT_FALSE(waiting);
+                probe.exercised = true;
+                (*probe.attach)(probe.binding, probe.timing == BindingTiming::AfterAcceptance ? VN_OK : VN_OUT_OF_MEMORY);
+            }
             float selector = 0;
             EXPECT_EQ(harken::VariableReadCutValueStatus::Value,
                 reader.Read(probe.selector, &selector));
@@ -54008,6 +54099,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         EXPECT_GT(nestedPolicyProbe.voiceVisits, 0u);
         EXPECT_EQ(0u, nestedPolicyProbe.refusalVisits);
     }
+    if (scenario.timing != BindingTiming::Initial) EXPECT_TRUE(placementProbe.exercised);
     if ((nested || queue) && !cancel && !precedingResetStep) EXPECT_GT(placementProbe.visits, 0u);
     engine.pendingVariableGroupPlacementHookForTest = nullptr;
     engine.pendingVariableGroupPlacementContextForTest = nullptr;
@@ -54219,6 +54311,17 @@ TEST(ActionFiringApi, OrderedVariableControlAndDirectSoundSiblingCancelReclaimsB
     CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase::SoundSibling, true);
 }
 
+TEST(ActionFiringApi, PendingSubtreeBindingGrowthPreservesFirstPcm) {
+    for (const auto shape : {OrderedVariableSubtreeCase::NestedVariableControl, OrderedVariableSubtreeCase::NestedQueue}) {
+        for (const auto timing : {BindingTiming::AfterAcceptance, BindingTiming::RefusedAfterAcceptance}) {
+            SCOPED_TRACE(static_cast<int>(shape));
+            SCOPED_TRACE(static_cast<int>(timing));
+            ASSERT_NO_FATAL_FAILURE(CheckOrderedVariableSubtreeFirstPcm({shape, timing}, false,
+                OrderedVariableSubtreePlacement::SoundToSubtree));
+        }
+    }
+}
+
 TEST(ActionFiringApi, PendingVariableControlActualPlacementRebuildsSoundToNestedWithInitialBinding) {
     CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase::NestedVariableControl, false,
         OrderedVariableSubtreePlacement::SoundToSubtree);
@@ -54374,7 +54477,7 @@ TEST(ActionFiringApi, OrderedVariableDoubleNestedPlayPreservesInitialPcmAndRetir
             EXPECT_GT(countdown, 0);
             break;
         }
-        ASSERT_EQ(VN_BACKPRESSURE, result) << "allocation countdown " << countdown;
+        ASSERT_EQ(VN_OUT_OF_MEMORY, result) << "allocation countdown " << countdown;
         EXPECT_EQ(0, remaining);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(commandHead, engine.commands.PublishedHead());
@@ -55590,7 +55693,7 @@ TEST(ActionFiringApi, PendingVariableControlNewSequencePrivateCancelProtectsSour
 }
 
 enum class PendingOrdinarySuccessorCase {
-    Normal, CancelSuccessor, Binding, EffectCapacityRetry, EffectCapacityStop, BindingCapacityReject, SourceLoan,
+    Normal, CancelSuccessor, Binding, EffectCapacityRetry, EffectCapacityStop, BindingCapacityGrowth, BindingGrowthRefusal, SourceLoan,
     NestedRandom, NestedUnchanged, NestedCancelSuccessor, NestedToSound, NestedToNested, NestedToNestedEffectStop,
     NestedBinding
 };
@@ -55602,11 +55705,13 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         scenario == PendingOrdinarySuccessorCase::EffectCapacityStop ||
         scenario == PendingOrdinarySuccessorCase::NestedToNestedEffectStop;
     const bool binding = scenario == PendingOrdinarySuccessorCase::Binding ||
-        scenario == PendingOrdinarySuccessorCase::BindingCapacityReject ||
+        scenario == PendingOrdinarySuccessorCase::BindingCapacityGrowth ||
+        scenario == PendingOrdinarySuccessorCase::BindingGrowthRefusal ||
         scenario == PendingOrdinarySuccessorCase::NestedBinding;
     const bool cancelSuccessor = scenario == PendingOrdinarySuccessorCase::CancelSuccessor ||
         scenario == PendingOrdinarySuccessorCase::NestedCancelSuccessor;
-    const bool reject = scenario == PendingOrdinarySuccessorCase::BindingCapacityReject;
+    const bool rejectGrowth = scenario == PendingOrdinarySuccessorCase::BindingGrowthRefusal;
+    const bool growBinding = rejectGrowth || scenario == PendingOrdinarySuccessorCase::BindingCapacityGrowth;
     const bool stopAfterRetired = scenario == PendingOrdinarySuccessorCase::EffectCapacityStop ||
         scenario == PendingOrdinarySuccessorCase::NestedToNestedEffectStop;
     const bool nested = scenario >= PendingOrdinarySuccessorCase::NestedRandom;
@@ -55618,7 +55723,7 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
     if (scenario != PendingOrdinarySuccessorCase::Normal) ASSERT_TRUE(variableControl && ordinarySuccessor);
     auto config = harkentest::MakeNullConfig(8, block, 48000);
     if (effectPressure) config.gainEffectPoolCapacity = 4;
-    if (reject) config.voiceBindingInstanceSlots = 1;
+    if (growBinding) config.voiceBindingInstanceSlots = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -55796,21 +55901,35 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         }
     }
     EXPECT_EQ(variableControl ? warmup ? 1u : 0u : 2u, engine.selectionMemory.Snapshot(key).selectionOrdinal);
-    if (reject) engine.deferPendingImmediateEntriesForTest = true;
+    if (growBinding) engine.deferPendingImmediateEntriesForTest = true;
     if (nested) {
         EXPECT_EQ(warmup ? 1u : 0u, engine.selectionMemory.Snapshot(key).selectionOrdinal);
         EXPECT_EQ(warmup ? 1u : 0u, engine.selectionMemory.Snapshot(innerKey).selectionOrdinal);
     }
     if (!preservePredecessor) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[cancelSuccessor ? 1 : 0], 0));
     EXPECT_FALSE(engine.runtimeRecreateRequired) << "stop predecessor";
-    if (reject) {
+    if (growBinding) {
         for (unsigned quantum = 0; quantum < 16; ++quantum) {
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
         }
+        auto* pending = std::find_if(engine.immediateEntryAttempts.data(),
+            engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+            [&](const auto& attempt) { return attempt.active && attempt.root == firings[1]; });
+        ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), pending);
+        ASSERT_EQ(1u, pending->selectionProducerCount);
+        const auto& selection = pending->selectionProducers[0];
+        auto* holder = engine.PendingOrdinarySelectionFor(engine.actionPlayStorage[selection.token.slot]);
+        ASSERT_NE(nullptr, holder);
+        (void)engine.ServicePendingOrdinarySelections(*pending, engine.timelinePool.WindowStartFrame() + 4u * block);
+        ASSERT_TRUE(holder->replacementVoice.HasStorage());
         ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(9072), &gainBinding));
         attach.objectId = CanonicalActionWorld::kFirstSound;
-        ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9072), &attach));
+        if (rejectGrowth) engine.nativeBackingAllocationFailureCountdownForTest = 0;
+        const auto result = Vn_AttachBinding(harkentest::ObjectId(9072), &attach);
+        engine.nativeBackingAllocationFailureCountdownForTest = -1;
+        ASSERT_EQ(rejectGrowth ? VN_OUT_OF_MEMORY : VN_OK, result);
+        EXPECT_EQ(!rejectGrowth, engine.bindings.HasAttachment(harkentest::ObjectId(9072), attach.scopeKind, attach.objectId));
         engine.deferPendingImmediateEntriesForTest = false;
     }
     std::vector<harken::EffectInstanceRef> effects;
@@ -55977,14 +56096,13 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &finished));
         EXPECT_EQ(accepted.producedPlayableInstance, finished.producedPlayableInstance);
         EXPECT_EQ(expectedState, finished.state);
-        if (reject && firing == firings[1]) EXPECT_EQ(VN_INVALID_CONFIG, finished.result);
         if (probeOrdinaryNative && firing == firings[1]) {
             EXPECT_TRUE(probedOrdinaryNative);
             EXPECT_TRUE(frozeOrdinaryNative);
             EXPECT_EQ(ordinaryNativeAllocationCount, engine.nativeBackingAllocationCountForTest);
         }
     };
-    const auto gain = binding ? std::pow(10.0f, -12.0f / 20.0f) : effectPressure ? 0.5f : 1.0f;
+    const auto gain = binding ? std::pow(10.0f, (growBinding && !rejectGrowth ? -24.0f : -12.0f) / 20.0f) : effectPressure ? 0.5f : 1.0f;
     if (preservePredecessor) {
         std::array<VnActionFiringInfo, 2> infos{};
         std::array<std::uint32_t, 2> frames{};
@@ -56032,8 +56150,8 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         EXPECT_EQ(2u, engine.selectionMemory.Snapshot(key).selectionOrdinal);
         EXPECT_EQ(1u, engine.selectionMemory.Snapshot(innerKey).selectionOrdinal);
     } else if (cancelSuccessor) ASSERT_NO_FATAL_FAILURE(render(firings[0], first[0]));
-    else if (stopAfterRetired || reject)
-        ASSERT_NO_FATAL_FAILURE(render(firings[1], 0, 0, reject ? VN_ACTION_STEP_FAILED : VN_ACTION_STEP_CANCELLED));
+    else if (stopAfterRetired)
+        ASSERT_NO_FATAL_FAILURE(render(firings[1], 0, 0, VN_ACTION_STEP_CANCELLED));
     else ASSERT_NO_FATAL_FAILURE(render(firings[1], (warmup ? second[0] : variableControl ? first[0] : second[0]) * gain));
     for (const auto effect : effects) EXPECT_TRUE(engine.effectBank.CancelPrepared(effect));
     effects.clear();
@@ -56052,10 +56170,10 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         EXPECT_EQ(VN_ACTION_STEP_CANCELLED, cancelled.state);
     }
     const auto firstHistory = preservePredecessor ? 2u :
-        (warmup ? 1u : 0u) + (variableControl ? stopAfterRetired || reject ? 0u : 1u : 2u);
+        (warmup ? 1u : 0u) + (variableControl ? stopAfterRetired ? 0u : 1u : 2u);
     EXPECT_EQ(firstHistory, engine.selectionMemory.Snapshot(key).selectionOrdinal);
     if (nested) EXPECT_EQ(stopAfterRetired ? 0u : 1u, engine.selectionMemory.Snapshot(innerKey).selectionOrdinal);
-    if (reject) {
+    if (growBinding && !rejectGrowth) {
         attach.objectId = CanonicalActionWorld::kFirstSound;
         ASSERT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(9072), &attach));
     }
@@ -56113,8 +56231,12 @@ TEST(ActionFiringApi, PendingVariableControlSequenceOrdinaryStopAfterOldSourceRe
     CheckPendingSequenceCancelledPredecessorPcm(true, true, PendingOrdinarySuccessorCase::EffectCapacityStop);
 }
 
-TEST(ActionFiringApi, PendingVariableControlSequenceOrdinaryPermanentBindingRefusalReclaimsPcm) {
-    CheckPendingSequenceCancelledPredecessorPcm(true, true, PendingOrdinarySuccessorCase::BindingCapacityReject);
+TEST(ActionFiringApi, PendingOrdinaryBindingGrowthRefusalKeepsAcceptedPlayback) {
+    CheckPendingSequenceCancelledPredecessorPcm(true, true, PendingOrdinarySuccessorCase::BindingGrowthRefusal);
+}
+
+TEST(ActionFiringApi, PendingVariableControlSequenceOrdinaryBindingGrowthKeepsPcmAndReclaims) {
+    CheckPendingSequenceCancelledPredecessorPcm(true, true, PendingOrdinarySuccessorCase::BindingCapacityGrowth);
 }
 
 TEST(ActionFiringApi, PendingVariableControlSequenceRebuiltOrdinarySuccessorPreservesSourceLoanStoragePcm) {
@@ -62897,7 +63019,10 @@ TEST(ActionFiringApi,
     desc.actionId = harkentest::ObjectId(50);
     desc.emitter = emitter;
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
@@ -63051,7 +63176,10 @@ TEST(ActionFiringApi,
     desc.actionId = harkentest::ObjectId(50);
     desc.emitter = emitter;
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_EQ(successor, row->QueuePayload().queueSuccessorRenderHandle);
@@ -63693,7 +63821,10 @@ TEST(ActionFiringApi,
     desc.actionId = harkentest::ObjectId(50);
     desc.emitter = emitter;
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_EQ(decision.slot, row->QueueFiling().queueDecision.slot);
@@ -63857,7 +63988,10 @@ TEST(ActionFiringApi,
     desc.actionId = harkentest::ObjectId(50);
     desc.emitter = emitter;
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(current, row->renderHandle);
     EXPECT_EQ(successor, row->QueuePayload().queueSuccessorRenderHandle);
@@ -64048,7 +64182,10 @@ TEST(ActionFiringApi,
     const auto sequenceBefore = engine->logicCommits.IssuedCount();
 
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED, Vn_PostAction(&desc, &firing));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(0u, firing);
     const auto after = engine->selectionMemory.Snapshot(key);
     EXPECT_EQ(before.resetEpoch, after.resetEpoch);
@@ -70328,7 +70465,7 @@ static void CheckOriginalPlainTwoSoundsAndFixedStop(bool fade, bool repeated, bo
         const auto remaining = harken::detail::g_logicAllocFault.remaining;
         harken::detail::DisarmLogicAllocFaultForTests();
         EXPECT_EQ(0u, remaining);
-        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        ASSERT_EQ(VN_OUT_OF_MEMORY, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(commandHead, engine->commands.PublishedHead());
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(*engine));
@@ -72908,7 +73045,7 @@ static void CheckQueueSourceRetainedPreparationRefusal(bool composite) {
     desc.actionId = image.actions[9].actionStableId;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
     VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, Vn_PostAction(&desc, &firing));
     engine.originalQueueSourcePreparationHookForTest = nullptr;
     engine.originalQueueSourcePreparationContextForTest = nullptr;
     ASSERT_EQ(1u, loan.calls);

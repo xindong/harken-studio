@@ -87,6 +87,7 @@ static_assert(static_cast<int>(VN_MONITOR_INCOMPATIBLE) == -344, "binding result
 static_assert(static_cast<int>(VN_MONITOR_SEQUENCE_EXHAUSTED) == -345, "binding result drift: VN_MONITOR_SEQUENCE_EXHAUSTED");
 static_assert(static_cast<int>(VN_MONITOR_RECORDING_FAILED) == -346, "binding result drift: VN_MONITOR_RECORDING_FAILED");
 static_assert(static_cast<int>(VN_MONITOR_RESYNC_REQUIRED) == -347, "binding result drift: VN_MONITOR_RESYNC_REQUIRED");
+static_assert(static_cast<int>(VN_OUT_OF_MEMORY) == -348, "binding result drift: VN_OUT_OF_MEMORY");
 static_assert(static_cast<int>(VN_VARIABLE_SCOPE_MISMATCH) == -1200, "binding result drift: VN_VARIABLE_SCOPE_MISMATCH");
 static_assert(static_cast<int>(VN_VARIABLE_WRITER_FORBIDDEN) == -1201, "binding result drift: VN_VARIABLE_WRITER_FORBIDDEN");
 static_assert(static_cast<int>(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED) == -1202, "binding result drift: VN_VARIABLE_EMITTER_SLOT_EXHAUSTED");
@@ -315,6 +316,7 @@ static_assert(static_cast<int>(VN_NOTIFY_VOICE_STARVED) == 3, "binding enum drif
 static_assert(static_cast<int>(VN_NOTIFY_VOICE_STOLEN) == 4, "binding enum drift: VN_NOTIFY_VOICE_STOLEN");
 static_assert(static_cast<int>(VN_NOTIFY_VOICE_PARKED) == 5, "binding enum drift: VN_NOTIFY_VOICE_PARKED");
 static_assert(static_cast<int>(VN_NOTIFY_VOICE_RETURNED) == 6, "binding enum drift: VN_NOTIFY_VOICE_RETURNED");
+static_assert(static_cast<int>(VN_NOTIFY_RUNTIME_RECREATE_REQUIRED) == 7, "binding enum drift: VN_NOTIFY_RUNTIME_RECREATE_REQUIRED");
 static_assert(static_cast<int>(VN_LOG_INFO) == 0, "binding enum drift: VN_LOG_INFO");
 static_assert(static_cast<int>(VN_LOG_WARN) == 1, "binding enum drift: VN_LOG_WARN");
 static_assert(static_cast<int>(VN_LOG_ERROR) == 2, "binding enum drift: VN_LOG_ERROR");
@@ -681,6 +683,11 @@ static_assert(static_cast<int>(VN_PLAYBACK_READINESS_TERMINAL) == 6, "binding en
 static_assert(static_cast<int>(VN_BUS_STATE_VALID) == 1, "binding enum drift: VN_BUS_STATE_VALID");
 static_assert(static_cast<int>(VN_BUS_STATE_WORKING) == 2, "binding enum drift: VN_BUS_STATE_WORKING");
 static_assert(static_cast<int>(VN_BUS_STATE_RENDERED) == 4, "binding enum drift: VN_BUS_STATE_RENDERED");
+static_assert(static_cast<int>(VN_RUNTIME_FAULT_NONE) == 0, "binding enum drift: VN_RUNTIME_FAULT_NONE");
+static_assert(static_cast<int>(VN_RUNTIME_FAULT_CAPACITY) == 1, "binding enum drift: VN_RUNTIME_FAULT_CAPACITY");
+static_assert(static_cast<int>(VN_RUNTIME_FAULT_INVALID_INPUT) == 2, "binding enum drift: VN_RUNTIME_FAULT_INVALID_INPUT");
+static_assert(static_cast<int>(VN_RUNTIME_FAULT_INTERNAL_STATE) == 3, "binding enum drift: VN_RUNTIME_FAULT_INTERNAL_STATE");
+static_assert(static_cast<int>(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED) == 4, "binding enum drift: VN_RUNTIME_FAULT_GENERATION_EXHAUSTED");
 
 // #define constants.
 static_assert(static_cast<std::uint64_t>(VN_EMITTER_CREATE_STATE_ONLY) == 1ull, "binding define drift: VN_EMITTER_CREATE_STATE_ONLY");
@@ -778,6 +785,7 @@ static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_CANCELLED) == 1ull, "bindi
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_IO_ERROR) == 2ull, "binding define drift: VN_BYTE_READ_IO_ERROR");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STREAM_FACT_SUPPLY) == 1ull, "binding define drift: VN_MONITOR_STREAM_FACT_SUPPLY");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STREAM_FACT_AUDIO) == 2ull, "binding define drift: VN_MONITOR_STREAM_FACT_AUDIO");
+static_assert(static_cast<std::uint64_t>(VN_LOG_RUNTIME_RECREATE_REQUIRED) == 34ull, "binding define drift: VN_LOG_RUNTIME_RECREATE_REQUIRED");
 
 // Mirrored struct sizes and field offsets (the values the C# ABI test
 // asserts its managed layout against).
@@ -2548,6 +2556,14 @@ static_assert(offsetof(VnBusState, flags) == 32, "binding offset drift: VnBusSta
 static_assert(offsetof(VnBusState, peakPreFader) == 36, "binding offset drift: VnBusState.peakPreFader");
 static_assert(offsetof(VnBusState, peakPostFader) == 40, "binding offset drift: VnBusState.peakPostFader");
 static_assert(offsetof(VnBusState, peakPostEffects) == 44, "binding offset drift: VnBusState.peakPostEffects");
+static_assert(sizeof(VnRuntimeFaultInfoV1) == 40, "binding size drift: VnRuntimeFaultInfoV1");
+static_assert(offsetof(VnRuntimeFaultInfoV1, structSize) == 0, "binding offset drift: VnRuntimeFaultInfoV1.structSize");
+static_assert(offsetof(VnRuntimeFaultInfoV1, category) == 4, "binding offset drift: VnRuntimeFaultInfoV1.category");
+static_assert(offsetof(VnRuntimeFaultInfoV1, line) == 8, "binding offset drift: VnRuntimeFaultInfoV1.line");
+static_assert(offsetof(VnRuntimeFaultInfoV1, reserved) == 12, "binding offset drift: VnRuntimeFaultInfoV1.reserved");
+static_assert(offsetof(VnRuntimeFaultInfoV1, repeatCount) == 16, "binding offset drift: VnRuntimeFaultInfoV1.repeatCount");
+static_assert(offsetof(VnRuntimeFaultInfoV1, file) == 24, "binding offset drift: VnRuntimeFaultInfoV1.file");
+static_assert(offsetof(VnRuntimeFaultInfoV1, function) == 32, "binding offset drift: VnRuntimeFaultInfoV1.function");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY
@@ -2719,6 +2735,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CommitStreamSource)(VnStreamSourceRequest) = &Vn_CommitStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryActionPlaybackReadiness)(VnActionFiringHandle, VnActionPlaybackReadinessV1*, VnPlaybackReadinessMemberV1*, uint32_t) = &Vn_QueryActionPlaybackReadiness;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CaptureBusStates)(uint32_t, VnBusState*, uint32_t, uint32_t*, uint32_t*) = &Vn_CaptureBusStates;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_GetRuntimeFaultInfo)(VnRuntimeFaultInfoV1*) = &Vn_GetRuntimeFaultInfo;
 }
 
 #endif // HARKEN_BINDING_ABI_PIN_H

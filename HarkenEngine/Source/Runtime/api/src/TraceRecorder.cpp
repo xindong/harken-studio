@@ -432,6 +432,7 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
         out->prepared_ = true;
         return true;
     } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ProjectAdmissionSnapshot);
         out->Reset();
         return false;
     }
@@ -474,6 +475,7 @@ void TraceRecorder::RecordCurrentWorldInstall(
     std::uint64_t publishedBusFingerprint,
     std::uint64_t compileTargetProfileFingerprint,
     std::uint32_t publicationVintage) noexcept {
+    detail::LogicAllocCallScope recordingAllocation;
     if (!m_active) {
         return;
     }
@@ -681,6 +683,7 @@ void TraceRecorder::RecordMeterProbeBindingAttachment(
 }
 
 void TraceRecorder::RememberEmitterHandle(VnEmitterHandle handle) noexcept {
+    detail::LogicAllocCallScope recordingAllocation;
     if (!m_active || handle == 0) return;
     try {
         if (TraceRecorderFaultForTests() == TraceRecorderFault::HandleStorage) {
@@ -707,6 +710,7 @@ void TraceRecorder::RecordPreviewPlayPlayable(
     VnObjectId stableId, std::uint64_t emitter, std::uint32_t flags,
     std::uint32_t reserved, std::int32_t result,
     std::uint32_t returnedKind, std::uint64_t handle) noexcept {
+    detail::LogicAllocCallScope recordingAllocation;
     if (!m_active) return;
     const std::size_t start = BeginRecord(kTraceRecordApiCall);
     AppendU16(kTraceCallPreviewPlayPlayable);
@@ -897,6 +901,7 @@ void TraceRecorder::EmitBarrier(std::uint16_t type,
 }
 
 std::uint64_t TraceRecorder::RecordPackBytes(const void* bytes, std::uint64_t count) noexcept {
+    detail::LogicAllocCallScope recordingAllocation;
     if (!m_active) return 0;
     if (bytes == nullptr || count == 0 || count > UINT32_MAX - 24u || count > SIZE_MAX) {
         FailTrace();
@@ -963,6 +968,7 @@ void TraceRecorder::SetFlag(std::size_t recordStart,
 }
 
 void TraceRecorder::Append(const void* bytes, std::size_t count) noexcept {
+    detail::LogicAllocCallScope recordingAllocation;
     if (count == 0 || m_appendFailed ||
         (!m_active && !m_file.is_open())) {
         return;
@@ -1523,6 +1529,7 @@ TraceCallScribe& TraceCallScribe::PackDesc(const VnPackDesc* d) noexcept {
 }
 
 TraceCallScribe& TraceCallScribe::FileRef(const char* utf8Path) noexcept {
+    detail::LogicAllocCallScope recordingAllocation;
     if (m_recorder == nullptr) {
         return *this;
     }

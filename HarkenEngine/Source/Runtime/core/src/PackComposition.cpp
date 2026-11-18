@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/core/BindingTransition.h>
 #include "harken/core/PackComposition.h"
 
@@ -2753,7 +2754,7 @@ PackComposition::PackComposition(std::size_t sharedActionDeferredCapacity,
     }
     const std::size_t leaseCount = static_cast<std::size_t>(leaseTotal);
     if (!leases_.Reserve(leaseCount) || !originalLeaseRecords_.Reserve(leaseCount) ||
-        !frozenClosures_.Reserve(leaseCount)) throw std::bad_alloc{};
+        !frozenClosures_.Reserve(leaseCount)) throw harken::detail::LogicPreparationFailure{};
     originalLeaseIncarnation_ = IssueOriginalPackIncarnation();
 }
 
@@ -3595,7 +3596,7 @@ VnResult PackComposition::PrepareCommit(
     return VN_OK;
 } catch (const detail::PackDecodeCapacity&) {
     return VN_PACK_RESIDENT_CAPACITY;
-} catch (const std::bad_alloc&) {
+} catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage);
     if (budget) return VN_PACK_RESIDENT_CAPACITY;
     throw;
 }
@@ -4631,13 +4632,14 @@ std::uint32_t PackPlaybackView::ResolveVoiceBindings(
         if (owner == nullptr || owner->snapshot.voiceBindings == nullptr) {
             continue;
         }
-        std::uint32_t count = 0;
-        for (const PackVoiceBinding& binding : *owner->snapshot.voiceBindings) {
-            if (binding.objectId == objectId) {
-                if (count < capacity) out[count] = &binding;
-                ++count;
-            }
-        }
+        const auto& rows = *owner->snapshot.voiceBindings;
+        const auto first = std::lower_bound(rows.begin(), rows.end(), objectId,
+            [](const PackVoiceBinding& row, VnObjectId object) { return row.objectId < object; });
+        const auto last = std::upper_bound(first, rows.end(), objectId,
+            [](VnObjectId object, const PackVoiceBinding& row) { return object < row.objectId; });
+        const auto count = static_cast<std::uint32_t>(last - first);
+        for (std::uint32_t j = 0; out != nullptr && j < std::min(count, capacity); ++j)
+            out[j] = &first[j];
         if (count != 0) {
             return count;
         }
@@ -4660,7 +4662,7 @@ std::uint32_t LookupCatalogVoiceBindings(
         if (catalog->first[i].objectId != objectId) {
             continue;
         }
-        if (count < capacity) {
+        if (out != nullptr && count < capacity) {
             out[count] = &catalog->first[i];
         }
         ++count;
@@ -4682,63 +4684,19 @@ std::uint32_t CollectCutVoiceBindingsWithLookup(
     if (lookup == nullptr || (pathCount != 0 && path == nullptr)) {
         return 0;
     }
-    const PackVoiceBinding* chosen[kMaxVoiceBindingInstanceSlots]{};
-    std::uint32_t chosenCount = 0;
-    bool overflow = false;
-    const PackVoiceBinding* found[kMaxVoiceBindingInstanceSlots]{};
-    for (std::uint32_t i = 0; i < pathCount; ++i) {
-        const std::uint32_t n =
-            lookup(ctx, path[i].stableId, found, kMaxVoiceBindingInstanceSlots);
-        if (n > kMaxVoiceBindingInstanceSlots) {
-            overflow = true;
+    for (std::uint32_t i = pathCount; i != 0; --i) {
+        const PackVoiceBinding* first = nullptr;
+        const auto object = path[i - 1].stableId;
+        const auto count = lookup(ctx, object, &first, 1);
+        if (count == 0) continue;
+        if (count == 1 && first->bindingId == VnObjectId{}) return 0;
+        if (out != nullptr && capacity != 0) {
+            if (count == 1 || capacity == 1) out[0] = first;
+            else lookup(ctx, object, out, capacity);
         }
-        if (n == 0) {
-            continue;
-        }
-        const std::uint32_t visible =
-            n < kMaxVoiceBindingInstanceSlots ? n : kMaxVoiceBindingInstanceSlots;
-        bool hasReal = false;
-        for (std::uint32_t j = 0; j < visible; ++j) {
-            if (found[j] != nullptr && found[j]->bindingId != VnObjectId{}) {
-                hasReal = true;
-                break;
-            }
-        }
-        if (!hasReal) {
-            chosenCount = 0;
-            continue;
-        }
-        chosenCount = 0;
-        for (std::uint32_t j = 0; j < visible; ++j) {
-            if (found[j] == nullptr || found[j]->bindingId == VnObjectId{}) {
-                continue;
-            }
-            bool duplicate = false;
-            for (std::uint32_t k = 0; k < chosenCount; ++k) {
-                duplicate = duplicate || chosen[k]->bindingId == found[j]->bindingId;
-            }
-            if (duplicate) {
-                continue;
-            }
-            if (chosenCount < kMaxVoiceBindingInstanceSlots) {
-                chosen[chosenCount] = found[j];
-            }
-            ++chosenCount;
-        }
-        if (chosenCount > kMaxVoiceBindingInstanceSlots) {
-            overflow = true;
-        }
+        return count;
     }
-    const std::uint32_t written =
-        out == nullptr ? 0
-                       : (chosenCount < capacity ? chosenCount : capacity);
-    for (std::uint32_t i = 0; i < written; ++i) {
-        out[i] = chosen[i];
-    }
-    if (overflow && chosenCount <= kMaxVoiceBindingInstanceSlots) {
-        return kMaxVoiceBindingInstanceSlots + 1;
-    }
-    return chosenCount;
+    return 0;
 }
 
 } // namespace

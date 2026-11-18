@@ -1,4 +1,5 @@
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <exception>
 
@@ -71,16 +72,28 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment, bo
             const auto count = reservedBytes / pageBytes;
             committedPageWords = count / 64u + (count % 64u != 0);
             committedPages = std::make_unique<std::uint64_t[]>(committedPageWords);
-        } catch (...) { return false; }
+        } catch (...) {
+            RecordCurrentLogicAllocFailure(LogicAllocSite::EngineStorage);
+            return false;
+        }
     }
-    if (std::exchange(failNextReservationForTests, false)) return false;
+    if (std::exchange(failNextReservationForTests, false)) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #if defined(_WIN32)
     void* address = VirtualAlloc(nullptr, reservedBytes, MEM_RESERVE, PAGE_NOACCESS);
-    if (address == nullptr) return false;
+    if (address == nullptr) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #else
     void* address = mmap(nullptr, reservedBytes, PROT_NONE,
                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (address == MAP_FAILED) return false;
+    if (address == MAP_FAILED) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #endif
     address_ = address;
     pageBytes_ = pageBytes;
@@ -158,9 +171,15 @@ bool StablePageReservation::CommitPage(std::size_t offset) noexcept {
     if (remainingPagesForTests_ == 0) return false;
     auto* page = static_cast<std::byte*>(address_) + offset;
 #if defined(_WIN32)
-    if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr) return false;
+    if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #else
-    if (mprotect(page, pageBytes_, PROT_READ | PROT_WRITE) != 0) return false;
+    if (mprotect(page, pageBytes_, PROT_READ | PROT_WRITE) != 0) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #endif
     *reinterpret_cast<volatile unsigned char*>(page) = 0;
     if (remainingPagesForTests_ != SIZE_MAX) --remainingPagesForTests_;

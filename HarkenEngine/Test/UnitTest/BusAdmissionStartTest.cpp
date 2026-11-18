@@ -1776,6 +1776,7 @@ TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejec
         EXPECT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
         EXPECT_EQ(before + 1, engine->mixer.BlocksRendered());
+        engine->nullBackend.Pump((240u + engine->config.blockFrames - 1u) / engine->config.blockFrames + 1u);
         const float expected = 0.25f * std::pow(10.0f, expectedDb / 20.0f);
         EXPECT_NEAR(expected, engine->nullBackend.LastBlock()[0], 1e-5f);
         EXPECT_NEAR(expected, engine->nullBackend.LastBlock()[1], 1e-5f);
@@ -1821,6 +1822,7 @@ TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejec
     const auto beforeRejectedBlock = engine->mixer.BlocksRendered();
     engine->nullBackend.Pump(1);
     ASSERT_EQ(beforeRejectedBlock + 1, engine->mixer.BlocksRendered());
+    engine->nullBackend.Pump((240u + engine->config.blockFrames - 1u) / engine->config.blockFrames + 1u);
     EXPECT_NEAR(0.25f * std::pow(10.0f, oldDb / 20.0f),
         engine->nullBackend.LastBlock()[0], 1e-5f);
     harken::CancelPreparedProjectGenerationV1(*engine, std::move(staleInput));
@@ -1863,6 +1865,7 @@ TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejec
     const auto beforeDefaultBlock = engine->mixer.BlocksRendered();
     engine->nullBackend.Pump(1);
     ASSERT_EQ(beforeDefaultBlock + 1, engine->mixer.BlocksRendered());
+    engine->nullBackend.Pump((240u + engine->config.blockFrames - 1u) / engine->config.blockFrames + 1u);
     EXPECT_NEAR(0.25f * std::pow(10.0f, defaultDb / 20.0f),
         engine->nullBackend.LastBlock()[0], 1e-5f);
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -1888,6 +1891,7 @@ TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejec
     const auto beforeRemovedBlock = engine->mixer.BlocksRendered();
     engine->nullBackend.Pump(1);
     ASSERT_EQ(beforeRemovedBlock + 1, engine->mixer.BlocksRendered());
+    engine->nullBackend.Pump((240u + engine->config.blockFrames - 1u) / engine->config.blockFrames + 1u);
     EXPECT_NEAR(0.25f * std::pow(10.0f, -16.0f / 20.0f),
         engine->nullBackend.LastBlock()[0], 1e-5f);
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -3466,6 +3470,7 @@ TEST(BusAdmissionStart, LiveBusV3AndV4RetainActualConsumerAndValidatedWorld) {
         EXPECT_EQ(worldFingerprint, engine.variables.CurrentWorldInstallView()
             .identity.runtimeSemanticFingerprint);
         EXPECT_TRUE(harken::HasCurrentWorldPublicationConsumers(engine));
+        engine.nullBackend.Pump((240u + engine.config.blockFrames - 1u) / engine.config.blockFrames + 1u);
         const float expected = 0.25f * std::pow(10.0f, -6.0f / 20.0f);
         for (std::uint32_t i = 0; i < engine.config.blockFrames * 2; ++i)
             EXPECT_NEAR(expected, engine.nullBackend.LastBlock()[i], 1e-5f) << i;

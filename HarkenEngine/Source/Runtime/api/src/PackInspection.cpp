@@ -1,3 +1,5 @@
+#include "HarkenApiInternal.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/Harken.h>
 
 #include "harken/core/CurrentWorldCodec.h"
@@ -109,7 +111,7 @@ void PreviewFacts(const ContainerWorldInstallViewV1& view, const PackCanonicalIm
         if (params > UINT32_MAX) return;
         capacity.maxEffectParams = std::max(capacity.maxEffectParams, static_cast<std::uint32_t>(params));
     }
-    if (!storage.Reset(capacity)) throw std::bad_alloc();
+    if (!storage.Reset(capacity)) throw harken::detail::LogicPreparationFailure{};
     const auto count = container == nullptr ? 1u : container->childCount;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto ordinal = container == nullptr ? UINT32_MAX : container->children[i].stableChildOrdinal;
@@ -170,6 +172,7 @@ void PreviewFacts(const ContainerWorldInstallViewV1& view, const PackCanonicalIm
 
 VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
                                   VnPackInspectReportV1* report) {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     if (desc == nullptr || report == nullptr || desc->structSize != sizeof(*desc) ||
         report->structSize != sizeof(*report) || desc->flags != 0 ||
         desc->names == nullptr || desc->maxInputBytes == 0 ||
@@ -285,6 +288,8 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
         if (!occurrences.empty()) std::copy(occurrences.begin(), occurrences.end(), desc->occurrences);
         if (!media.empty()) std::copy(media.begin(), media.end(), desc->media);
         return VN_OK;
-    } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
-    catch (...) { return VN_BAD_PACK; }
+    } catch (const std::bad_alloc& failure) {
+        harken::detail::RecordLogicAllocFailure(failure, harken::detail::LogicAllocSite::ApiEntry); return VN_PACK_RESIDENT_CAPACITY; }
+    catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PackStorage); return VN_BAD_PACK; }
+    });
 }

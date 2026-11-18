@@ -540,7 +540,7 @@ TEST(PanLawGolden, SimultaneousPanWidthAndMixRetargetsStayContinuous) {
     EXPECT_NEAR(kPannedAmp / std::sqrt(2.0f), transition.right.back(), kTol);
 }
 
-TEST(PanLawGolden, AuthoredZeroRampVolumeStillSnapsAtNextBlock) {
+TEST(PanLawGolden, AuthoredZeroRampVolumePreservesSpatialImageDuringDeclick) {
     EngineSession session(MakeNullConfig(2, kBlockFrames, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -563,8 +563,11 @@ TEST(PanLawGolden, AuthoredZeroRampVolumeStillSnapsAtNextBlock) {
     const float expected =
         kPannedAmp * static_cast<float>(std::pow(10.0, -12.0 / 20.0)) *
         0.70710678f;
-    EXPECT_NEAR(expected, after.left.front(), kTol);
-    EXPECT_NEAR(expected, after.right.front(), kTol);
+    for (std::size_t n = 0; n < after.left.size(); ++n) {
+        const float progress = std::min(1.f, float(n + 1) / 240.f);
+        EXPECT_NEAR(before.left.back() + (expected - before.left.back()) * progress, after.left[n], kTol);
+        EXPECT_NEAR(before.right.back() + (expected - before.right.back()) * progress, after.right[n], kTol);
+    }
 }
 
 TEST(PanLawGolden, SpatialMotionAtControlCadenceHasNoBroadbandTransient) {

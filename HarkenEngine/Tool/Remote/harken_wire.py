@@ -7845,6 +7845,44 @@ TABLE_JSON = r'''
           "f32"
         ]
       ]
+    },
+    "VnRuntimeFaultInfoV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "category",
+          "u32"
+        ],
+        [
+          "line",
+          "u32"
+        ],
+        [
+          "reserved",
+          "u32"
+        ],
+        [
+          "repeatCount",
+          "u64"
+        ],
+        [
+          "file",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "function",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -10931,6 +10969,18 @@ TABLE_JSON = r'''
         }
       ],
       "note": "Passive logic-thread native Bus observation with caller storage and pagination; no remote opcode."
+    },
+    {
+      "name": "Vn_GetRuntimeFaultInfo",
+      "note": "Local diagnostic query; returned string pointers are process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "outInfo",
+          "ctype": "VnRuntimeFaultInfoV1*",
+          "wire": "structref",
+          "type": "VnRuntimeFaultInfoV1"
+        }
+      ]
     }
   ],
   "binding_overloads": [
@@ -11104,7 +11154,8 @@ TABLE_JSON = r'''
       "VnMonitorChunkFlags": "u32",
       "VnStreamSourceRequest": "u64",
       "VnPlaybackReadinessState": "u32",
-      "VnBusStateFlags": "u32"
+      "VnBusStateFlags": "u32",
+      "VnRuntimeFaultCategory": "u32"
     },
     "results": {
       "backing": "i32",
@@ -11179,6 +11230,7 @@ TABLE_JSON = r'''
         "VN_MONITOR_SEQUENCE_EXHAUSTED": -345,
         "VN_MONITOR_RECORDING_FAILED": -346,
         "VN_MONITOR_RESYNC_REQUIRED": -347,
+        "VN_OUT_OF_MEMORY": -348,
         "VN_VARIABLE_SCOPE_MISMATCH": -1200,
         "VN_VARIABLE_WRITER_FORBIDDEN": -1201,
         "VN_VARIABLE_EMITTER_SLOT_EXHAUSTED": -1202,
@@ -11485,7 +11537,8 @@ TABLE_JSON = r'''
           "VN_NOTIFY_VOICE_STARVED": 3,
           "VN_NOTIFY_VOICE_STOLEN": 4,
           "VN_NOTIFY_VOICE_PARKED": 5,
-          "VN_NOTIFY_VOICE_RETURNED": 6
+          "VN_NOTIFY_VOICE_RETURNED": 6,
+          "VN_NOTIFY_RUNTIME_RECREATE_REQUIRED": 7
         }
       },
       "VnLogLevel": {
@@ -12193,6 +12246,16 @@ TABLE_JSON = r'''
           "VN_BUS_STATE_WORKING": 2,
           "VN_BUS_STATE_RENDERED": 4
         }
+      },
+      "VnRuntimeFaultCategory": {
+        "backing": "u32",
+        "values": {
+          "VN_RUNTIME_FAULT_NONE": 0,
+          "VN_RUNTIME_FAULT_CAPACITY": 1,
+          "VN_RUNTIME_FAULT_INVALID_INPUT": 2,
+          "VN_RUNTIME_FAULT_INTERNAL_STATE": 3,
+          "VN_RUNTIME_FAULT_GENERATION_EXHAUSTED": 4
+        }
       }
     },
     "defines": {
@@ -12578,6 +12641,10 @@ TABLE_JSON = r'''
       "VN_MONITOR_STREAM_FACT_AUDIO": {
         "type": "u32",
         "value": 2
+      },
+      "VN_LOG_RUNTIME_RECREATE_REQUIRED": {
+        "type": "u32",
+        "value": 34
       }
     },
     "callbacks": {
