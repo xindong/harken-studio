@@ -109,7 +109,7 @@
 | 引用结果 | 下半区按 Toolbar 当前平台展示有效引用此预设的 Sound Source，包含各语言；没有有效缓存时 Converted 各列和 Ratio 留空 |
 | Convert | 表尾仅一个 Convert 按钮，为当前平台的引用源生成产物，已有缓存直接跳过；转换不显示进度或状态，Esc 可取消未完成工作 |
 | 文件属性 | Sound → Sources 引用行打开的 External Editor（波形编辑）下半区显示 File Properties，可拖动分隔条调整高度；Original／Converted 共用路径、声道、采样率、时长、大小和格式字段 |
-| 属性切换 | 绑定 Sound Source 时跟随试听模式及当前平台；Converted 无缓存时留空，有效 Conversion 为空时显示原件；素材库试听始终显示并播放 Original |
+| 属性切换 | 跟随 Toolbar 的 Original／Converted 与当前平台；Converted 无缓存时留空，有效 Conversion 为空时显示原件；File Viewer 不显示 Studio 处理后的信息，始终显示并播放源文件 |
 | Part A 播放边界 | Studio 的 Vorbis 试听使用过渡解码路径；Pack 编译仍拒绝 Vorbis，Engine 原生解码与 Pack 放开留待 Part B |
 
 ## Selection Editor

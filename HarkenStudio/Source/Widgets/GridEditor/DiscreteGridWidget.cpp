@@ -845,8 +845,8 @@ void DiscreteGridWidget::rebuildReferenceWidgets()
         targetRefs_.push_back(ref);
         if (!item || item->type != ProjectItem::Type::Sound) continue;
         auto* waveform = new SelectionWaveform(target, table_);
-        connect(waveform, &SelectionWaveform::sourceEditorRequested,
-                this, &DiscreteGridWidget::sourceEditorRequested);
+        connect(waveform, &SelectionWaveform::fileViewerRequested,
+                this, &DiscreteGridWidget::fileViewerRequested);
         table_->setCellWidget(row, 2, waveform);
     }
 }

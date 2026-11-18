@@ -12,7 +12,7 @@ public:
     explicit SelectionWaveform(const QUuid& targetGuid, QWidget* parent = nullptr);
 
 signals:
-    void sourceEditorRequested(const QUuid& soundGuid, const QUuid& entryId);
+    void fileViewerRequested(const QUuid& soundGuid, const QUuid& entryId);
 
 private:
     void refresh();

@@ -14,7 +14,7 @@ SelectionWaveform::SelectionWaveform(const QUuid& targetGuid, QWidget* parent)
     connect(this, &SourceRangeThumb::clicked, this, [this] {
         if (isEnabled() && !entryId_.isNull()
             && AssetRegistry::instance().sourceFileExists(sourceId_))
-            emit sourceEditorRequested(targetGuid_, entryId_);
+            emit fileViewerRequested(targetGuid_, entryId_);
     });
     auto& manager = ProjectManager::instance();
     connect(&manager, &ProjectManager::itemPropertyChanged, this,
@@ -93,7 +93,7 @@ void SelectionWaveform::refresh()
     sourceId_ = source->sourceId;
     const auto* asset = AssetRegistry::instance().getAsset(sourceId_);
     setSource(*source, asset);
-    if (isEnabled()) setToolTip(tr("Open Source Editor"));
+    if (isEnabled()) setToolTip(tr("Open File Viewer"));
 }
 
 }

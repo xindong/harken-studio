@@ -90,9 +90,6 @@ public:
         harkenstudio::ObjectId soundId, std::vector<float> interleaved,
         int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount,
         bool loops = false);
-    HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration registerPreviewMediaSlice(
-        harkenstudio::ObjectId soundId, const SoundSourceDerivative::MaterializedArtifact& artifact,
-        uint64_t startFrame, uint64_t frameCount, bool loops = false);
     HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration relocateRawPcmSlice(
         harkenstudio::ObjectId soundId, uint64_t startFrame);
     HarkenEditor::Bridge::EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);

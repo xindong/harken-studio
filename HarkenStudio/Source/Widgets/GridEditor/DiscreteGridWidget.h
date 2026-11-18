@@ -51,7 +51,7 @@ signals:
     void navigateToItem(uint32_t objectID);
     void locateItem(uint32_t objectID);
     void drillRequested(const QUuid& target);
-    void sourceEditorRequested(const QUuid& soundGuid, const QUuid& entryId);
+    void fileViewerRequested(const QUuid& soundGuid, const QUuid& entryId);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

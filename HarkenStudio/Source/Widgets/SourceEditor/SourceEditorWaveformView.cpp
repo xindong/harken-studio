@@ -171,8 +171,7 @@ void SourceEditorWaveformView::setCommitHandler(
 
 void SourceEditorWaveformView::startPlayhead(uint64_t startFrame, uint64_t windowStartFrame,
                                             uint64_t windowFrameCount, uint32_t sampleRate,
-                                            bool loops, uint64_t sourceStartFrame,
-                                            uint64_t sourceEndFrame, uint32_t sourceSampleRate)
+                                            bool loops)
 {
     playhead_.startFrame = startFrame;
     playhead_.windowStartFrame = windowStartFrame;
@@ -180,12 +179,8 @@ void SourceEditorWaveformView::startPlayhead(uint64_t startFrame, uint64_t windo
     playhead_.sampleRate = sampleRate;
     playhead_.loops = loops;
     playhead_.playing = true;
-    playheadSourceStartFrame_ = sourceStartFrame;
-    playheadSourceEndFrame_ = sourceEndFrame;
-    playheadSourceSampleRate_ = sourceSampleRate;
     playheadClock_.restart();
-    if ((sourceSampleRate != 0 && sourceEndFrame <= sourceStartFrame)
-        || !SoundSourceSemantics::extrapolatedPlayheadFrame(playhead_, 0)) {
+    if (!SoundSourceSemantics::extrapolatedPlayheadFrame(playhead_, 0)) {
         stopPlayhead();
         return;
     }
@@ -208,13 +203,8 @@ std::optional<uint64_t> SourceEditorWaveformView::playheadFrame() const
 {
     if (!playhead_.playing)
         return std::nullopt;
-    const auto frame = SoundSourceSemantics::extrapolatedPlayheadFrame(
+    return SoundSourceSemantics::extrapolatedPlayheadFrame(
         playhead_, playheadClock_.isValid() ? playheadClock_.nsecsElapsed() : 0);
-    if (!frame || playheadSourceSampleRate_ == 0)
-        return frame;
-    const auto mapped = playheadSourceStartFrame_ + static_cast<uint64_t>(std::llround(
-        static_cast<long double>(*frame) * playheadSourceSampleRate_ / playhead_.sampleRate));
-    return std::clamp(mapped, playheadSourceStartFrame_, playheadSourceEndFrame_ - 1);
 }
 
 int SourceEditorWaveformView::playheadPosition() const

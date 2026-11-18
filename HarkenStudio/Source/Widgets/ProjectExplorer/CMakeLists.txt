@@ -8,11 +8,11 @@
 #                                   for the Sources tab filter)
 #             harken_editor_shared   (ProjectItemMenuController via ProjectTreePanel)
 #             harken_editor_projecttree (ProjectExplorer subclasses ProjectTreePanel)
-# Sources tab lists AssetRegistry and emits sourceEditorRequested(sourceId);
-# it does not link harken_editor_source_editor. MainWindow opens the standalone panel.
+# Sources tab lists AssetRegistry and emits fileViewerRequested(sourceId);
+# it does not link harken_editor_file_viewer. MainWindow opens the standalone panel.
 # Note: requires add_subdirectory(Source/Widgets/Common), Shared, and ProjectTree
 #       BEFORE add_subdirectory(Source/Widgets/ProjectExplorer) in the parent
-#       CMakeLists.txt. SourceEditor may follow or precede this directory.
+#       CMakeLists.txt. FileViewer may follow or precede this directory.
 
 add_library(harken_editor_explorer STATIC
     ProjectExplorer.cpp

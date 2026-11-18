@@ -2,7 +2,6 @@
 
 #include "Core/ProjectTypes.h"
 
-#include <QUuid>
 #include <QVariantMap>
 #include <QWidget>
 
@@ -16,9 +15,9 @@ class AuditionManager;
 
 namespace VNX {
 
-class SourceEditorWidget;
+class FileViewerWidget;
 
-class SourceEditorPanel final : public QWidget
+class FileViewerPanel final : public QWidget
 {
     Q_OBJECT
 
@@ -26,21 +25,19 @@ public:
     static QString typeId();
     static QString dockObjectPrefix();
 
-    explicit SourceEditorPanel(QWidget* parent = nullptr);
+    explicit FileViewerPanel(QWidget* parent = nullptr);
 
-    static SourceEditorPanel* panelContaining(QWidget* widget);
+    static FileViewerPanel* panelContaining(QWidget* widget);
 
     int panelId() const { return panelId_; }
     void setPanelId(int id) { panelId_ = id; }
     bool isPinned() const { return pinned_; }
     void setPinned(bool pinned);
-    SourceEditorWidget* editorWidget() const { return editor_; }
+    FileViewerWidget* viewerWidget() const { return viewer_; }
     bool isPreviewPlayheadActive() const;
     QString previewObjectName() const;
     uint32_t sourceId() const;
-    QUuid soundGuid() const;
-    QUuid entryId() const;
-    void bindSource(uint32_t sourceId, const QUuid& soundGuid = {}, const QUuid& entryId = {});
+    void bindSource(uint32_t sourceId);
     void setAuditionManager(HarkenEditor::AuditionManager* audition);
     bool handlePlayStopShortcut();
     void clearEditor();
@@ -60,7 +57,7 @@ private:
 
     int panelId_ = 0;
     bool pinned_ = false;
-    SourceEditorWidget* editor_ = nullptr;
+    FileViewerWidget* viewer_ = nullptr;
 };
 
 }

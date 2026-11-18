@@ -3,10 +3,8 @@
 #include "Utils/ObjectId.h"
 
 #include "Core/SoundSourceSemantics.h"
-#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 
 #include <QPointer>
-#include <QUuid>
 #include <QWidget>
 
 #include <cstdint>
@@ -28,18 +26,16 @@ namespace VNX {
 struct AssetInfo;
 class SourceEditorWaveformView;
 
-class SourceEditorWidget final : public QWidget
+class FileViewerWidget final : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit SourceEditorWidget(QWidget* parent = nullptr);
-    ~SourceEditorWidget() override;
+    explicit FileViewerWidget(QWidget* parent = nullptr);
+    ~FileViewerWidget() override;
 
     uint32_t sourceId() const { return sourceId_; }
-    QUuid soundGuid() const { return soundGuid_; }
-    QUuid entryId() const { return entryId_; }
-    void bindSource(uint32_t sourceId, const QUuid& soundGuid = {}, const QUuid& entryId = {});
+    void bindSource(uint32_t sourceId);
     void clearSource();
     void setAuditionManager(HarkenEditor::AuditionManager* audition);
     uint32_t auditionPlayingId() const { return auditionPlayingId_; }
@@ -58,35 +54,20 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    const SoundSourceDef* boundSource() const;
-    bool referenceIsDangling() const;
     void setDisplayedSource(const SoundSourceDef& source);
     void refreshMetadata();
     void refreshSourceIdentity(const AssetInfo* asset);
-    void refreshRangePresentation(const SoundSourceDef& source, const AssetInfo* asset,
-                                  bool hasReferenceContext);
+    void refreshRangePresentation(const SoundSourceDef& source, const AssetInfo* asset);
     void applyAuditionTheme();
     void refreshAuditionControls();
     void updateResponsiveLayouts(int availableWidth);
     QString auditionObjectName(const AssetInfo* asset) const;
     void retireRawFileAudition();
     bool registerRawFileAudition(const AssetInfo* asset);
-    std::optional<ResolvedConversion> previewConversion(const AssetInfo& asset,
-                                                       QString* error = nullptr) const;
-    QString previewConversionKey(const AssetInfo& asset,
-                                  const std::optional<ResolvedConversion>& conversion) const;
 
     uint32_t sourceId_ = 0;
-    QUuid soundGuid_;
-    QUuid entryId_;
     harkenstudio::ObjectId previewSoundId_{};
     uint64_t previewPlaybackHandle_ = 0;
-    std::optional<SoundSourceDef> preparedSource_;
-    QString preparedSourcePath_;
-    QString preparedSourceContentHash_;
-    QString preparedConversionKey_;
-    std::optional<SoundSourceDerivative::MaterializedArtifact> preparedMedia_;
-    ProjectPlatformId previewPlatform_;
     uint32_t auditionPlayingId_ = 0;
     QPointer<HarkenEditor::AuditionManager> audition_;
     bool refreshingDisplayedSource_ = false;
@@ -115,7 +96,6 @@ private:
     QLabel* loopStartValue_ = nullptr;
     QLabel* loopEndValue_ = nullptr;
     QLabel* trimEndValue_ = nullptr;
-    QLabel* integrityWarning_ = nullptr;
     QWidget* auditionStrip_ = nullptr;
     QToolButton* playButton_ = nullptr;
     QToolButton* stopButton_ = nullptr;

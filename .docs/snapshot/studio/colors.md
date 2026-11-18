@@ -71,7 +71,7 @@ Explorer 的 Assets / Sources 与 Selection Editor 的 Content / Transition 共�
 
 长度使用 Qt 逻辑像素，字体仍使用字体职责中的 pt。窗口首选大小用于首次布局，用户拖动后的窗口大小不在每次主题切换时强制恢复。
 
-检查器表单、列比例、装饰槽、分节、设置、参数控件和窗口壳层在现有控件上更新几何。蓝图节点和连线先通知 Graphics Scene 几何变化，再更新测量与绘图缓存；端口绘制与命中区域共享尺寸。时间轴与 Source Editor 的手柄矩形共用计算入口，波形绘制与幅度刻度共用带显式留白的范围计算。Assistant 的换行宽度、高度测量和实际布局使用相同边距。菜单尺寸由字体、图标和 padding 共同决定。
+检查器表单、列比例、装饰槽、分节、设置、参数控件和窗口壳层在现有控件上更新几何。蓝图节点和连线先通知 Graphics Scene 几何变化，再更新测量与绘图缓存；端口绘制与命中区域共享尺寸。时间轴与 Source 波形视图的手柄矩形共用计算入口，波形绘制与幅度刻度共用带显式留白的范围计算。Assistant 的换行宽度、高度测量和实际布局使用相同边距。菜单尺寸由字体、图标和 padding 共同决定。
 
 以下为档位收束前的历史验收：2026-11-06 在 Windows、Qt 6.11.1、RelWithDebInfo 下，编辑器和测试目标构建通过，142 项相关合同测试通过，覆盖主题候选校验、输入与手势保留、布局与 spacer 生命周期、时间轴绘制和命中几何。QSS 归属检查通过，样式表的 113 个令牌均有解析入口。隔离工程分别在 offscreen 和原生 Windows 平台生成 42 张真实窗口截图，检查 Dark / Light、170 个基础尺寸增至约 1.5 倍，以及恢复默认值后的界面；覆盖主窗口、检查器、蓝图、时间轴、设置、选色器、About、Assistant、Meter、曲线、日志和菜单。动态切换保留输入选择与检查器控件，About 的标题栏与 Logo 均计入布局范围。证据位于 `.temp/metrics-review/`，测试结果位于 `.temp/metrics-tests.xml`。这是主题尺寸与生命周期验证，字体未随该探针放大，不等同于完整 UI 缩放验收；已有蓝图位置保持原坐标，较大的节点主题可能需要用户重新排列，自动布局的尺寸来源已经统一。
 
@@ -176,7 +176,7 @@ Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时
 
 Timeline clip 当前无描边，与轨道上下边缘各留 1px；标题使用独立背景的 title tab。主体和普通标题优先使用对象颜色，否则使用 `timeline.clip`；选中或拖动标题无对象颜色时使用 `timeline.clipSelected`，该职责同时保留名义范围背景的用途。标题先填充画布基础表面，再按状态叠加颜色，保留源 RGBA 的 Alpha；波形位于标题下方。普通 clip 按开始时间由早到晚绘制，同起点保留存储顺序；鼠标按相反顺序命中，拖动预览保持置顶。重叠标题仅在左端连续可见区域内对名称做右侧省略，左端被遮挡时不绘制名称，不向右侧空白段避让；Blend 保留原有名称避让。画布轨道分界与左侧标题区对齐，使用 `border.primary`，不借用时间刻度的 `border.tick`。
 
-Timeline 的 Entry 使用 `timeline.entry` 黄色、Exit 使用 `timeline.exit` 红色，播放与编辑 Cursor 使用 `music.cursor` 绿色；三者均由主题职责控制，画布不再局部覆盖 Cursor 颜色。Marker 位于刻度轴底部的 12px 区域，复用 Source Editor trim 的双握槽手柄，Entry 向右、Exit 向左；悬停与选中按同一职责色加亮。
+Timeline 的 Entry 使用 `timeline.entry` 黄色、Exit 使用 `timeline.exit` 红色，播放与编辑 Cursor 使用 `music.cursor` 绿色；三者均由主题职责控制，画布不再局部覆盖 Cursor 颜色。Marker 位于刻度轴底部的 12px 区域，复用 Source 波形视图 trim 的双握槽手柄，Entry 向右、Exit 向左；悬停与选中按同一职责色加亮。
 
 Timeline 不再显示遗留的 `EXT` 引用标记。clip 跨轨移动同步更新目标对象的树归属，多选保持相对轨道偏移；部分共用对象的 clip 换轨时，为迁移部分建立独立对象并共享原音频资源，其余 clip 留在原轨，整组换轨则迁移原对象。树归属、clip 数据和物理文件夹位置作为同一次撤销事务处理。
 
@@ -332,13 +332,13 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
 
-**状态层。** 业务侧不再用 `lighter()` / `darker()` 生成悬停、按下和高亮色，统一调用 `ThemeColors::stateColor`：职责色向首要文字色分别混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source Editor 手柄）的悬停与选中使用 `Highlight`：保持色相，按首要文字相对底色的明暗方向调亮或调暗 35%，Dark 下与原 `lighter(130)` 观感一致，Light 下变深而不是变浅。比例属于交互规范，作为代码常量集中在 `ThemeSnapshot.h`。Dark 下状态变亮，Light 下变暗，两张色卡都可辨认。未选中的 Mixing 曲线改为源 Alpha 乘 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255），悬停叠加使用首要文字 8%。业务侧按比例乘透明度的做法保持不变。
+**状态层。** 业务侧不再用 `lighter()` / `darker()` 生成悬停、按下和高亮色，统一调用 `ThemeColors::stateColor`：职责色向首要文字色分别混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source 波形视图手柄）的悬停与选中使用 `Highlight`：保持色相，按首要文字相对底色的明暗方向调亮或调暗 35%，Dark 下与原 `lighter(130)` 观感一致，Light 下变深而不是变浅。比例属于交互规范，作为代码常量集中在 `ThemeSnapshot.h`。Dark 下状态变亮，Light 下变暗，两张色卡都可辨认。未选中的 Mixing 曲线改为源 Alpha 乘 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255），悬停叠加使用首要文字 8%。业务侧按比例乘透明度的做法保持不变。
 
 **QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮改用 `@success@ / @warning@ / @error@` 及其 `Hover` 状态层令牌；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
 
 2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_studio` 与 `harken_studio_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
 
-Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，两侧各一条首要边界线，与面板之间的缝隙观感一致；整条缝隙都可拖动调节：轨道区由调节条绘制并接收鼠标；标尺段由标尺在 cursor 手柄之前绘制缝隙，上方覆盖透明命中层，落在 cursor 手柄上的按下与拖动原样交给标尺，其余位置进入宽度调节；悬停与拖动时整条缝隙显示强调色。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
+Timeline 与 Source 波形视图的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，两侧各一条首要边界线，与面板之间的缝隙观感一致；整条缝隙都可拖动调节：轨道区由调节条绘制并接收鼠标；标尺段由标尺在 cursor 手柄之前绘制缝隙，上方覆盖透明命中层，落在 cursor 手柄上的按下与拖动原样交给标尺，其余位置进入宽度调节；悬停与拖动时整条缝隙显示强调色。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
 
 ## Studio Default 的领域绑定
 
@@ -362,7 +362,7 @@ Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻
 | `curve.readoutBackground` | `background.secondary` |
 | `waveform.previewPlayhead` | `status.success`，与 Timeline 的播放头沿用同一来源；字段与独立配置键均删除 |
 
-`waveform.previewGradientTop`、`waveform.previewGradientMid`、`waveform.previewLoopFill`、`waveform.previewLoopBorder`、`waveform.previewPeakClip`、`waveform.previewPeakSafe` 没有实际绘制消费者，成员、默认值和独立配置键一并删除，不再保留无效色板项。Source Editor 的字段名、值、空状态、警告、表面、边界和坐标均遵循共享职责；裁剪与循环标记继续使用缩略图和 External Editor 共用的波形样式。
+`waveform.previewGradientTop`、`waveform.previewGradientMid`、`waveform.previewLoopFill`、`waveform.previewLoopBorder`、`waveform.previewPeakClip`、`waveform.previewPeakSafe` 没有实际绘制消费者，成员、默认值和独立配置键一并删除，不再保留无效色板项。File Viewer 的字段名、值、空状态、警告、表面、边界和坐标均遵循共享职责；裁剪与循环标记继续使用缩略图和 External Editor 共用的波形样式。
 
 | 仪表绘制位置 | Studio Default 来源 |
 |---|---|
@@ -430,9 +430,9 @@ Alpha 验证使用隔离设置加载实际启动 Renderer，读回默认四色�
 
 以下记录颜色收束阶段的历史变化。2026-10-31 的文字职责调整以本文前述 Studio Default 职责与领域绑定表为准。
 
-共同来源保持现有四级文字、青色强调和深色工作区的值。Settings、Source Editor、Publisher 等字段名统一至次要文字；多行输入与只读有效值统一至主要文字。普通滑条、旋钮及被收束的曲线、仪表背景和边框保持原默认色。
+共同来源保持现有四级文字、青色强调和深色工作区的值。Settings、File Viewer、Publisher 等字段名统一至次要文字；多行输入与只读有效值统一至主要文字。普通滑条、旋钮及被收束的曲线、仪表背景和边框保持原默认色。
 
-节点字段名和连线标签由 `#AEB3BD` 改为 `#AAAAAA`，节点字段值由 `#E8E9EC` 改为 `#E0E0E0`。节点标题底取消类型色，统一为共享标题背景 `#1B2130`，默认标题文字由白色归入 `#E0E0E0`；普通节点波形取消角色色，统一使用现有 Blueprint 波形色 `#0FB5A8`，保留选中与未选中的透明度差异。未开放的独立 Source Editor 预览播放头由私有红色 `#FF6464` 改为与 Timeline 一致的 `#4CAF50`。其余被收束领域槽位保持原默认 RGBA，包括原有透明度。
+节点字段名和连线标签由 `#AEB3BD` 改为 `#AAAAAA`，节点字段值由 `#E8E9EC` 改为 `#E0E0E0`。节点标题底取消类型色，统一为共享标题背景 `#1B2130`，默认标题文字由白色归入 `#E0E0E0`；普通节点波形取消角色色，统一使用现有 Blueprint 波形色 `#0FB5A8`，保留选中与未选中的透明度差异。未开放的独立 File Viewer 预览播放头由私有红色 `#FF6464` 改为与 Timeline 一致的 `#4CAF50`。其余被收束领域槽位保持原默认 RGBA，包括原有透明度。
 
 实现入口：`HarkenStudio/Source/Core/ThemeSnapshot.h`、`ThemeColorResolver.*`、`BuiltinTheme.cpp`、`ThemePackageLoader.cpp`、`QtControlSkin.cpp`、`HarkenStudio/Resources/styles/dark_theme.qss`。公共表格和 Inspector 的其他外观边界见 [tables.md](tables.md) 与 [inspector-tables.md](inspector-tables.md)。
 

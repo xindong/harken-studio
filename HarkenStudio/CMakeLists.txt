@@ -389,6 +389,7 @@ add_subdirectory(Source/Widgets/Meter)
 add_subdirectory(Source/Widgets/TimeSeries)
 add_subdirectory(Source/Widgets/Monitor)
 add_subdirectory(Source/Widgets/SourceEditor)
+add_subdirectory(Source/Widgets/FileViewer)
 add_subdirectory(Source/Widgets/CurveEditor)
 add_subdirectory(Source/Widgets/ExternalEditor)
 add_subdirectory(Source/Widgets/EffectEditor)
@@ -400,8 +401,8 @@ add_subdirectory(Source/Widgets/Timeline)
 # ProjectTreeWidget); must come AFTER Common + Shared, BEFORE ProjectExplorer /
 # Hierarchy since both link it.
 add_subdirectory(Source/Widgets/ProjectTree)
-# Sources tab lists AssetRegistry and emits sourceEditorRequested(sourceId);
-# it does not link SourceEditor. MainWindow opens the standalone panel.
+# Sources tab lists AssetRegistry and emits fileViewerRequested(sourceId);
+# it does not link FileViewer. MainWindow opens the standalone panel.
 add_subdirectory(Source/Widgets/ProjectExplorer)
 # Hierarchy: independent clone of ProjectExplorer (initial mirror, may diverge).
 add_subdirectory(Source/Widgets/Hierarchy)
@@ -431,6 +432,7 @@ target_link_libraries(harken_editor_lib PUBLIC harken_editor_meter)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_time_series)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_monitor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_source_editor)
+target_link_libraries(harken_editor_lib PUBLIC harken_editor_file_viewer)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_curve_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_external_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_effect_editor)
