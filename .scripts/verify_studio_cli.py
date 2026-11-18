@@ -386,11 +386,12 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         conversion = preset["guid"]
         execute("set_conversion_fields", {"conversion": conversion,
             "format": "PCM", "sample_rate_tiers": [{"max_bytes": None, "sample_rate": 24000}]}, save=True)
-        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": conversion}, save=True)
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": conversion,
+                                          "platform_id": platform}, save=True)
         effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
         assert effective["conversion"] == conversion and effective["sample_rate"] == 24000, effective
         readback = execute("get_item_info", {"path": "tone"})["result"]
-        assert readback["conversion"] == readback["fieldGroups"]["shared"]["conversion"], readback
+        assert readback["fieldGroups"]["platforms"][platform]["conversion"]["values"]["settingsRef"] == conversion, readback
         conversion_args = {"conversion": conversion, "platform_id": platform}
         before_convert = authored_contents()
         queried = execute("get_conversion_results", conversion_args)["result"]["sources"]
