@@ -4,6 +4,7 @@
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/MediaBuildSnapshot.h"
 #include "AssetPipeline/PathUtils.h"
+#include "FieldGroupProjectAdapter.h"
 #include "ReferenceSlotResolution.h"
 #include "SoundSourceSemantics.h"
 #include "Tooling/Harkenizer/Core/PackMediaPreparation.h"
@@ -65,11 +66,13 @@ QVector<SelectedSource> selectedSources(const ProjectData& project, const QUuid&
         return {};
     }
     QVector<SelectedSource> selected;
+    const auto effective = std::make_shared<const FieldGroupEffectiveSnapshot>(
+        buildFieldGroupEffectiveSnapshot(project, toFieldGroupGuid(platform)));
     for (const auto* item : items) {
         const auto* sound = item->comp<VSound>();
         if (!sound) continue;
         const auto resolved = ReferenceSlotResolution::resolveEffectiveConversion(
-            ReferenceSlotResolution::buildResolutionScope(project, item));
+            ReferenceSlotResolution::buildResolutionScope(item, effective));
         if (!resolved.valid) {
             if (error) *error = resolved.error;
             return {};
