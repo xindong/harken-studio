@@ -1119,15 +1119,11 @@
         "renderSampleRate": {
           "type": "integer"
         },
-        "defaultConversion": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/objectReference"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "defaultConversions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/objectReference"
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -1270,6 +1266,9 @@
         },
         "effect": {
           "$ref": "#/$defs/fieldGroupPlatformEffect"
+        },
+        "conversion": {
+          "$ref": "#/$defs/fieldGroupPlatformConversion"
         }
       },
       "required": [],
@@ -2681,6 +2680,18 @@
       "type": "object",
       "minProperties": 1
     },
+    "fieldGroupPlatformConversion": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupConversionPayload"
+        }
+      },
+      "type": "object"
+    },
     "fieldGroupSharedConversion": {
       "additionalProperties": false,
       "properties": {
@@ -2759,12 +2770,9 @@
       ],
       "type": "object"
     },
-    "conversionPlatformConfig": {
+    "conversionComponent": {
       "additionalProperties": false,
       "properties": {
-        "platformId": {
-          "$ref": "#/$defs/projectPlatformId"
-        },
         "format": {
           "enum": [
             "PCM",
@@ -2785,26 +2793,9 @@
         }
       },
       "required": [
-        "platformId",
         "format",
         "vorbisQuality",
         "sampleRateTiers"
-      ],
-      "type": "object"
-    },
-    "conversionComponent": {
-      "additionalProperties": false,
-      "properties": {
-        "platforms": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/conversionPlatformConfig"
-          }
-        }
-      },
-      "required": [
-        "platforms"
       ],
       "type": "object"
     }
@@ -3671,10 +3662,25 @@
         },
         {
           "allowNull": true,
+          "kind": "guid",
+          "path": [
+            "fieldGroups",
+            "platforms",
+            "*",
+            "conversion",
+            "values",
+            "settingsRef"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        },
+        {
           "kind": "object",
           "path": [
             "audio",
-            "defaultConversion"
+            "defaultConversions",
+            "*"
           ],
           "targetTypes": [
             "Conversion"

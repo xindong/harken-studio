@@ -44,20 +44,17 @@ ActionResult invalid(const QString& message)
 
 QJsonObject describePreset(const ProjectData& project, const ProjectItem& item)
 {
-    QJsonArray platforms;
-    for (const auto& config : item.comp<VConversion>()->platforms) {
-        QJsonArray tiers;
-        for (const auto& tier : config.tiers)
-            tiers.append(QJsonObject{{"max_bytes", tier.maxBytes
-                ? QJsonValue(static_cast<qint64>(*tier.maxBytes)) : QJsonValue(QJsonValue::Null)},
-                {"sample_rate", static_cast<qint64>(tier.sampleRate)}});
-        platforms.append(QJsonObject{{"platform_id", ProjectPlatformSemantics::idString(config.platformId)},
-            {"format", config.format == ConversionFormat::Vorbis ? "Vorbis" : "PCM"},
-            {"quality", std::round(static_cast<double>(config.vorbisQuality) * 1000000.0) / 10000.0},
-            {"sample_rate_tiers", tiers}});
-    }
+    const auto& config = item.comp<VConversion>()->config;
+    QJsonArray tiers;
+    for (const auto& tier : config.tiers)
+        tiers.append(QJsonObject{{"max_bytes", tier.maxBytes
+            ? QJsonValue(static_cast<qint64>(*tier.maxBytes)) : QJsonValue(QJsonValue::Null)},
+            {"sample_rate", static_cast<qint64>(tier.sampleRate)}});
     return {{"guid", item.guid.toString(QUuid::WithoutBraces)}, {"name", item.name},
-        {"path", project.itemPath(&item)}, {"platforms", platforms}};
+        {"path", project.itemPath(&item)},
+        {"format", config.format == ConversionFormat::Vorbis ? "Vorbis" : "PCM"},
+        {"quality", std::round(static_cast<double>(config.vorbisQuality) * 1000000.0) / 10000.0},
+        {"sample_rate_tiers", tiers}};
 }
 
 std::optional<ProjectPlatformId> platformFor(const ProjectData& project, const QJsonObject& args)
@@ -90,8 +87,11 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         return success(describePreset(*project, *item));
     }
     if (name == QStringLiteral("set_default_conversion") && args.value(QStringLiteral("conversion")).isNull()) {
-        if (!manager.setDefaultConversion({})) return invalid(QStringLiteral("Cannot set default Conversion"));
-        return success({{"conversion", QJsonValue(QJsonValue::Null)}});
+        const auto platform = platformFor(*project, args);
+        if (!platform) return invalid(QStringLiteral("Unknown project platform ID"));
+        if (!manager.setDefaultConversion(*platform, {})) return invalid(QStringLiteral("Cannot set default Conversion"));
+        return success({{"platform_id", ProjectPlatformSemantics::idString(*platform)},
+            {"conversion", QJsonValue(QJsonValue::Null)}});
     }
     const bool objectCommand = name == QStringLiteral("set_object_conversion")
         || name == QStringLiteral("get_effective_conversion");
@@ -104,8 +104,11 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
     if (objectCommand && !PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
         return invalid(QStringLiteral("Object does not support Conversion settings"));
     if (name == QStringLiteral("set_default_conversion")) {
-        if (!manager.setDefaultConversion(item->guid)) return invalid(QStringLiteral("Cannot set default Conversion"));
-        return success({{"conversion", item->guid.toString(QUuid::WithoutBraces)}});
+        const auto platform = platformFor(*project, args);
+        if (!platform) return invalid(QStringLiteral("Unknown project platform ID"));
+        if (!manager.setDefaultConversion(*platform, item->guid)) return invalid(QStringLiteral("Cannot set default Conversion"));
+        return success({{"platform_id", ProjectPlatformSemantics::idString(*platform)},
+            {"conversion", item->guid.toString(QUuid::WithoutBraces)}});
     }
     if (name == QStringLiteral("set_object_conversion")) {
         std::optional<QUuid> settings;
@@ -119,50 +122,43 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
                 settings = preset.item->guid;
             }
         }
+        PlatformScope platform;
+        if (args.contains(QStringLiteral("platform_id"))) {
+            platform = platformFor(*project, args);
+            if (!platform) return invalid(QStringLiteral("Unknown project platform ID"));
+        }
         if (!ConversionEditing::setObject(manager, item->guid, args.value(QStringLiteral("inherit")).toBool(),
-            settings, originator, &error)) return invalid(error);
-        const auto& group = item->fieldGroups.conversion.shared;
-        const auto local = group.localHistory
-            ? group.localHistory->settingsRef : harkenprojectschema::AuthoringGuid{};
-        return success({{"object", item->guid.toString(QUuid::WithoutBraces)},
-            {"inherit", group.mode == FieldGroupMode::Inherit},
+            settings, platform, originator, &error)) return invalid(error);
+        const auto& groups = item->fieldGroups.conversion;
+        const auto found = platform ? groups.platforms.find(toFieldGroupGuid(*platform)) : groups.platforms.end();
+        const auto* group = platform ? (found == groups.platforms.end() ? nullptr : &found->second) : &groups.shared;
+        const auto local = group && group->localHistory
+            ? group->localHistory->settingsRef : harkenprojectschema::AuthoringGuid{};
+        QJsonObject result{{"object", item->guid.toString(QUuid::WithoutBraces)},
+            {"inherit", group && group->mode == FieldGroupMode::Inherit},
             {"settings", harkenprojectschema::IsNull(local) ? QJsonValue(QJsonValue::Null)
-                : QJsonValue(fromFieldGroupGuid(local).toString(QUuid::WithoutBraces))}});
+                : QJsonValue(fromFieldGroupGuid(local).toString(QUuid::WithoutBraces))}};
+        if (platform) result.insert(QStringLiteral("platform_id"), ProjectPlatformSemantics::idString(*platform));
+        return success(result);
     }
     if (name == QStringLiteral("set_conversion_fields")) {
-        QSet<ProjectPlatformId> platforms;
-        if (args.value(QStringLiteral("all_platforms")).toBool()) {
-            for (const auto& platform : project->platforms) platforms.insert(platform.id);
-        } else {
-            for (const auto& value : args.value(QStringLiteral("platform_ids")).toArray()) {
-                const auto platform = ProjectPlatformSemantics::parseId(value.toString());
-                if (!platform || !ProjectPlatformSemantics::find(project->platforms, *platform))
-                    return invalid(QStringLiteral("Unknown project platform ID"));
-                platforms.insert(*platform);
+        const auto before = item->comp<VConversion>()->config;
+        auto json = before.toJson();
+        if (args.contains(QStringLiteral("format"))) json.insert(QStringLiteral("format"), args.value(QStringLiteral("format")));
+        if (args.contains(QStringLiteral("quality")))
+            json.insert(QStringLiteral("vorbisQuality"), args.value(QStringLiteral("quality")).toDouble() / 100.0);
+        if (args.contains(QStringLiteral("sample_rate_tiers"))) {
+            QJsonArray tiers;
+            for (const auto& value : args.value(QStringLiteral("sample_rate_tiers")).toArray()) {
+                const auto tier = value.toObject();
+                tiers.append(QJsonObject{{"maxBytes", tier.value(QStringLiteral("max_bytes"))},
+                    {"sampleRate", tier.value(QStringLiteral("sample_rate"))}});
             }
+            json.insert(QStringLiteral("sampleRateTiers"), tiers);
         }
-        const auto before = item->comp<VConversion>()->platforms;
-        auto replacement = before;
-        for (auto& config : replacement) {
-            if (!platforms.contains(config.platformId)) continue;
-            auto json = config.toJson();
-            if (args.contains(QStringLiteral("format"))) json.insert(QStringLiteral("format"), args.value(QStringLiteral("format")));
-            if (args.contains(QStringLiteral("quality")))
-                json.insert(QStringLiteral("vorbisQuality"), args.value(QStringLiteral("quality")).toDouble() / 100.0);
-            if (args.contains(QStringLiteral("sample_rate_tiers"))) {
-                QJsonArray tiers;
-                for (const auto& value : args.value(QStringLiteral("sample_rate_tiers")).toArray()) {
-                    const auto tier = value.toObject();
-                    tiers.append(QJsonObject{{"maxBytes", tier.value(QStringLiteral("max_bytes"))},
-                        {"sampleRate", tier.value(QStringLiteral("sample_rate"))}});
-                }
-                json.insert(QStringLiteral("sampleRateTiers"), tiers);
-            }
-            const auto parsed = ConversionPlatformConfig::fromJson(json, &error);
-            if (!parsed) return invalid(error);
-            config = *parsed;
-        }
-        if (!ConversionEditing::setPlatforms(manager, item->guid, replacement, before, originator, &error))
+        const auto parsed = ConversionConfig::fromJson(json, &error);
+        if (!parsed) return invalid(error);
+        if (!ConversionEditing::setConfig(manager, item->guid, *parsed, before, originator, &error))
             return invalid(error);
         return success(describePreset(*project, *item));
     }

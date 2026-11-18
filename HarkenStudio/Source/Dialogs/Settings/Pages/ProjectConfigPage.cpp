@@ -70,21 +70,21 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     platformBusyLabel_->setWordWrap(true);
     QtControlSkin::setSemanticProperty(platformBusyLabel_, "textRole", QStringLiteral("secondary"));
     static_cast<QVBoxLayout*>(platformsGroup->layout())->addWidget(platformBusyLabel_);
-    auto* conversionForm = new DialogFormLayout();
-    defaultConversion_ = new ObjectRefWidget(platformsGroup);
+    defaultConversion_ = new ObjectRefWidget(platformEditor_);
     defaultConversion_->setObjectName(QStringLiteral("projectDefaultConversion"));
     defaultConversion_->setFilterType(ProjectItem::Type::Conversion);
     defaultConversion_->setSelectorTitle(tr("Select Default Conversion"));
     defaultConversion_->setRequired(false);
     defaultConversion_->setClearSupport(true);
     defaultConversion_->setEditGuard([this] { return hasCurrentProject(); });
-    conversionForm->addRow(tr("Default Conversion"), defaultConversion_);
-    static_cast<QVBoxLayout*>(platformsGroup->layout())->addLayout(conversionForm);
+    platformEditor_->addField(tr("Default conversion:"), defaultConversion_);
     connect(defaultConversion_, &ObjectRefWidget::objectChanged, this, [this](uint32_t id) {
         auto& manager = ProjectManager::instance();
         const auto* item = manager.findItemByObjectID(id);
-        if (hasCurrentProject() && (id == 0 || (item && item->type == ProjectItem::Type::Conversion)))
-            manager.setDefaultConversion(item ? item->guid : QUuid{});
+        const auto platform = platformEditor_->platform().id;
+        if (hasCurrentProject() && ProjectPlatformSemantics::find(platforms_, platform)
+            && (id == 0 || (item && item->type == ProjectItem::Type::Conversion)))
+            manager.setDefaultConversion(platform, item ? item->guid : QUuid{});
         syncDefaultConversion();
     });
     body->addWidget(platformsGroup);
@@ -212,7 +212,8 @@ void ProjectConfigPage::syncDefaultConversion()
 {
     defaultConversion_->cancelPendingSelection();
     const auto project = projectLease_.lock();
-    const auto guid = hasCurrentProject() ? project->defaultConversionRef : QUuid{};
+    const auto guid = hasCurrentProject()
+        ? project->defaultConversionFor(platformEditor_->platform().id) : QUuid{};
     const auto* item = ProjectManager::instance().findItemByGuid(guid);
     const QSignalBlocker blocker(defaultConversion_);
     if (!guid.isNull() && !item)
@@ -267,6 +268,7 @@ void ProjectConfigPage::selectPlatform(int index)
             if (platform.id != id) otherNames.append(platform.name);
         platformEditor_->setPlatform(*selected, otherNames);
     }
+    syncDefaultConversion();
     updatePlatformAvailability();
 }
 

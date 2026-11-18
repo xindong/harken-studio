@@ -64,8 +64,6 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             request.scopes.platforms.push_back(toFieldGroupGuid(*platform));
         }
     }
-    if (request.group == FieldGroupId::Conversion && !request.scopes.shared)
-        return invalid(QStringLiteral("Conversion only supports Shared scope"));
     if (args.contains(QStringLiteral("occurrence_target"))
         || args.contains(QStringLiteral("clip_guid")))
         return invalid(QStringLiteral("Field groups only edit definitions"));
@@ -123,7 +121,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     } else if (request.group == FieldGroupId::Conversion) {
         if (action != QStringLiteral("set_field_group_field")
             || args.value(QStringLiteral("field")) != QJsonValue(QStringLiteral("settingsRef")))
-            return invalid(QStringLiteral("Conversion only supports Shared settingsRef edits"));
+            return invalid(QStringLiteral("Conversion only supports settingsRef edits"));
         Guid ref{};
         const auto value = args.value(QStringLiteral("value"));
         if (!value.isNull() && !parseGuid(value, ref))

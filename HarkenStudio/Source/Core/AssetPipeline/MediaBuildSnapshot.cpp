@@ -14,22 +14,26 @@ QString MediaConversionRequest::inputPath() const
 bool MediaBuildSnapshot::captureConversions(const ProjectData& project, QString* error)
 {
     if (error) error->clear();
-    auto effective = std::make_shared<const FieldGroupEffectiveSnapshot>(
-        buildFieldGroupEffectiveSnapshot(project, {}));
-    if (!effective->ok()) {
-        if (error) *error = effective->diagnostics.front().message;
-        return false;
-    }
-    QHash<QUuid, ConversionPresetSnapshot> captured;
-    for (const auto& [guid, item] : effective->objects) {
-        if (item->type != ProjectItem::Type::Sound) continue;
-        const auto preset = captureConversionPreset(
-            ReferenceSlotResolution::buildResolutionScope(item, effective), project.platforms, error);
-        if (!preset) return false;
-        captured.insert(fromFieldGroupGuid(guid), *preset);
+    QHash<ProjectPlatformId, QHash<QUuid, ConversionPresetSnapshot>> captured;
+    for (const auto& platform : project.platforms) {
+        auto effective = std::make_shared<const FieldGroupEffectiveSnapshot>(
+            buildFieldGroupEffectiveSnapshot(project, toFieldGroupGuid(platform.id)));
+        if (!effective->ok()) {
+            if (error) *error = effective->diagnostics.front().message;
+            return false;
+        }
+        auto& sounds = captured[platform.id];
+        for (const auto& [guid, item] : effective->objects) {
+            if (item->type != ProjectItem::Type::Sound) continue;
+            const auto preset = captureConversionPreset(
+                ReferenceSlotResolution::buildResolutionScope(item, effective), error);
+            if (!preset) return false;
+            sounds.insert(fromFieldGroupGuid(guid), *preset);
+        }
     }
     platforms = project.platforms;
-    conversions_ = std::make_shared<const QHash<QUuid, ConversionPresetSnapshot>>(std::move(captured));
+    conversions_ = std::make_shared<const QHash<ProjectPlatformId, QHash<QUuid, ConversionPresetSnapshot>>>(
+        std::move(captured));
     return true;
 }
 
@@ -43,10 +47,14 @@ std::optional<MediaConversionRequest> MediaBuildSnapshot::buildRequest(
         if (error) *error = QStringLiteral("Platform ID does not belong to this media snapshot");
         return std::nullopt;
     }
-    if (!conversions_ || !conversions_->contains(soundGuid)) {
+    const auto missing = [&] {
         if (error) *error = QStringLiteral("Sound has no captured Conversion settings in this media snapshot");
         return std::nullopt;
-    }
+    };
+    if (!conversions_) return missing();
+    const auto platformConversions = conversions_->constFind(platformId);
+    if (platformConversions == conversions_->cend() || !platformConversions->contains(soundGuid))
+        return missing();
     const auto asset = assets.constFind(sourceID);
     if (asset == assets.cend()) {
         if (error) *error = QStringLiteral("Asset not found in media snapshot");
@@ -62,7 +70,7 @@ std::optional<MediaConversionRequest> MediaBuildSnapshot::buildRequest(
         current.metadata = input->metadata;
     }
     QString conversionError;
-    const auto conversion = resolveConversion(*conversions_->constFind(soundGuid), platformId, current, &conversionError);
+    const auto conversion = resolveConversion(*platformConversions->constFind(soundGuid), current, &conversionError);
     if (!conversionError.isEmpty()) {
         if (error) *error = conversionError;
         return std::nullopt;

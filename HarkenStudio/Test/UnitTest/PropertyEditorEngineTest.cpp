@@ -248,7 +248,8 @@ TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomi
     const auto firstBefore = first->fieldGroups;
     const auto secondBefore = second->fieldGroups;
     const auto parentBefore = parent->fieldGroups;
-    auto* preset = manager.findItemByGuid(manager.currentProject()->defaultConversionRef);
+    ASSERT_FALSE(manager.currentProject()->conversionItems.empty());
+    auto* preset = manager.currentProject()->conversionItems.front().rootItem.get();
     ASSERT_NE(preset, nullptr);
     history.clear();
     InspectorPanel panel;
@@ -284,6 +285,7 @@ TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomi
         EXPECT_EQ(settings->currentObjectID(), preset->objectID);
         EXPECT_FALSE(settings->isReadOnly());
     }
+    PlatformContextService::instance().setAll(true);
     emit settings->objectChanged(0);
     EXPECT_EQ(history.undoStack()->count(), 4);
     EXPECT_TRUE(harkenprojectschema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
@@ -303,7 +305,7 @@ TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomi
     EXPECT_EQ(second->fieldGroups, secondChanged);
     QString error;
     EXPECT_FALSE(ConversionEditing::setObjects(manager, {first->guid, second->guid},
-        std::nullopt, QUuid{}, expected, nullptr, &error));
+        std::nullopt, QUuid{}, {}, expected, nullptr, &error));
     EXPECT_FALSE(error.isEmpty());
     EXPECT_EQ(first->fieldGroups, firstStable);
     EXPECT_EQ(second->fieldGroups, secondChanged);

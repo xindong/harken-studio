@@ -204,13 +204,13 @@ def worker(work: Path, host: str, cli: Path, studio: Path):
 
         send('create_conversion {"name":"ConsoleConversion"}')
         conversion = await_action(instance, "ConsoleConversion")["result"]["runtime_stable_id"]
-        send('set_conversion_fields ' + json.dumps({"conversion": conversion, "all_platforms": True,
+        send('set_conversion_fields ' + json.dumps({"conversion": conversion,
             "format": "PCM", "quality": 61, "sample_rate_tiers": [{"max_bytes": None, "sample_rate": 24000}]}))
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             code, converted = execute(instance, "get_item_info", {"path": "ConsoleConversion"})
-            rows = converted.get("result", {}).get("components", {}).get("conversion", {}).get("platforms", [])
-            if code == 0 and rows and all(row["sampleRateTiers"] == [{"maxBytes": None, "sampleRate": 24000}] for row in rows):
+            row = converted.get("result", {}).get("components", {}).get("conversion", {})
+            if code == 0 and row.get("sampleRateTiers") == [{"maxBytes": None, "sampleRate": 24000}]:
                 break
             time.sleep(0.1)
         else:

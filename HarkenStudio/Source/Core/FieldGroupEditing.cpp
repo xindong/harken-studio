@@ -276,7 +276,7 @@ Diagnostics validateView(const EditingContext& context,
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
             const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
             const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
-            const auto conversion = resolver.Resolve(definition.guid, {}, FieldGroupId::Conversion);
+            const auto conversion = resolver.Resolve(definition.guid, scope, FieldGroupId::Conversion);
             for (const auto* result : {&output, &send, &spatial, &effects, &conversion}) {
                 appendGroupDiagnostics(diagnostics, context, result->diagnostics);
                 if (result->value)
@@ -306,12 +306,6 @@ std::vector<FieldGroupScope> targetScopes(const ProjectData& project,
                                           Diagnostics& diagnostics)
 {
     std::vector<FieldGroupScope> scopes;
-    if (request.group == FieldGroupId::Conversion && !request.scopes.shared) {
-        addDiagnostic(diagnostics, EditCode::InvalidScopes,
-                      QStringLiteral("Conversion only supports Shared scope"),
-                      request.definition, request.group, {}, QStringLiteral("scopes"));
-        return {};
-    }
     bool valid = request.scopes.shared ? request.scopes.platforms.empty()
                                        : !request.scopes.platforms.empty();
     std::set<Guid> seen;
@@ -461,7 +455,7 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
     const bool conversionEdit = std::holds_alternative<SetConversionFieldGroup>(request.operation);
     if (field || sendsEdit || effectsEdit || conversionEdit || clear) {
         auto inspected = scopes;
-        if (request.scopes.shared && request.group != FieldGroupId::Conversion) {
+        if (request.scopes.shared) {
             inspected.clear();
             for (const auto platform : context.platforms) inspected.push_back(platform);
         }

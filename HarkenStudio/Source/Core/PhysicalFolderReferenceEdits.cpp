@@ -256,18 +256,25 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
 {
     cleanActions(content, QStringLiteral("actions"), guids);
     editObject(content, QStringLiteral("audio"), [&](QJsonObject& audio) {
-        if (deleted(audio.value(QStringLiteral("defaultConversion")), guids))
-            audio.insert(QStringLiteral("defaultConversion"), QJsonValue::Null);
+        editObject(audio, QStringLiteral("defaultConversions"), [&](QJsonObject& defaults) {
+            for (const auto& key : defaults.keys())
+                if (deleted(defaults.value(key), guids)) defaults.remove(key);
+        });
     });
     editObject(content, QStringLiteral("playableProperties"), [&](auto& properties) { cleanPlayable(properties, guids); });
     editObject(content, QStringLiteral("fieldGroups"), [&](QJsonObject& groups) {
-        editObject(groups, QStringLiteral("shared"), [&](QJsonObject& shared) {
-            editObject(shared, QStringLiteral("conversion"), [&](QJsonObject& state) {
+        const auto cleanConversion = [&](QJsonObject& scoped) {
+            editObject(scoped, QStringLiteral("conversion"), [&](QJsonObject& state) {
                 editObject(state, QStringLiteral("values"), [&](QJsonObject& values) {
                     if (deleted(values.value(QStringLiteral("settingsRef")), guids))
                         values.insert(QStringLiteral("settingsRef"), QUuid{}.toString(QUuid::WithoutBraces));
                 });
             });
+        };
+        editObject(groups, QStringLiteral("shared"), cleanConversion);
+        editObject(groups, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
+            for (const auto& key : platforms.keys())
+                editObject(platforms, key, cleanConversion);
         });
         const auto cleanEffectGroup = [&](QJsonObject& scoped) {
             editObject(scoped, QStringLiteral("effect"), [&](QJsonObject& state) {

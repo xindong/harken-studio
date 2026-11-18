@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Components/VConversion.h"
+#include "ProjectPlatform.h"
 
 namespace VNX {
 
@@ -24,16 +25,14 @@ struct ResolvedConversion
 struct ConversionPresetSnapshot
 {
     QUuid presetGuid;
-    std::vector<ConversionPlatformConfig> platforms;
+    ConversionConfig config;
 };
 
 std::optional<ConversionPresetSnapshot> captureConversionPreset(
-    const ReferenceSlotResolution::ResolutionScope& scope,
-    const QVector<ProjectPlatform>& platforms, QString* error = nullptr);
+    const ReferenceSlotResolution::ResolutionScope& scope, QString* error = nullptr);
 
 std::optional<ResolvedConversion> resolveConversion(
-    const ConversionPresetSnapshot& preset, ProjectPlatformId platform,
-    const AssetInfo& source, QString* error = nullptr);
+    const ConversionPresetSnapshot& preset, const AssetInfo& source, QString* error = nullptr);
 
 std::optional<ResolvedConversion> resolveConversion(
     const ProjectData& project, const ProjectItem& sound,

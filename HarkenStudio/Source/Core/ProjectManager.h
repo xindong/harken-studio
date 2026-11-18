@@ -549,7 +549,7 @@ public:
     void setBuildProjectDataExportInternal(bool enabled);
     void setBuildPackMetadataExportInternal(bool enabled);
     void setBuildWaveformSettingsInternal(bool enabled, const QString& directory);
-    bool setDefaultConversion(const QUuid& guid);
+    bool setDefaultConversion(const ProjectPlatformId& platform, const QUuid& guid);
 
     PackExportSelection packExportSelection() const;
     void setPackExportSelectionInternal(PackExportSelection selection);
@@ -600,7 +600,7 @@ signals:
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
     void projectPublishSettingsChanged();
-    void defaultConversionChanged(const QUuid& guid);
+    void defaultConversionChanged(const QUuid& platform, const QUuid& guid);
     void previewMediaInvalidated(const QUuid& soundGuid);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
@@ -681,7 +681,7 @@ private:
         bool converted = false;
         ProjectPlatformId platform;
         QUuid presetGuid;
-        std::optional<ConversionPlatformConfig> config;
+        std::optional<ConversionConfig> config;
         QString error;
 
         bool operator==(const PreviewConversionState&) const = default;

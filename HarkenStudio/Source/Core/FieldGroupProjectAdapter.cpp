@@ -142,6 +142,7 @@ FieldGroupProjectView buildFieldGroupProjectView(
         validatePlatforms(groups->send);
         validatePlatforms(groups->spatialRating);
         validatePlatforms(groups->effects);
+        validatePlatforms(groups->conversion);
         auto definition = fieldGroupDefinitionView(*item);
         definition.guid = identity->second;
         definition.parentGuid = parentGuid;
@@ -245,7 +246,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
         const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
         const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
         const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
-        const auto conversion = resolver.Resolve(definition.guid, {}, FieldGroupId::Conversion);
+        const auto conversion = resolver.Resolve(definition.guid, scope, FieldGroupId::Conversion);
         for (const auto* resolved : {&output, &send, &spatial, &effects, &conversion}) {
             append(resolved->diagnostics, definition.guid);
             if (resolved->value)

@@ -1,5 +1,6 @@
 #include "ConversionResolution.h"
 
+#include "FieldGroupProjectAdapter.h"
 #include "ReferenceSlotResolution.h"
 
 #include <algorithm>
@@ -7,8 +8,7 @@
 namespace VNX {
 
 std::optional<ConversionPresetSnapshot> captureConversionPreset(
-    const ReferenceSlotResolution::ResolutionScope& scope,
-    const QVector<ProjectPlatform>& platforms, QString* error)
+    const ReferenceSlotResolution::ResolutionScope& scope, QString* error)
 {
     if (error) error->clear();
     if (!scope.subject || scope.subject->type != ProjectItem::Type::Sound) {
@@ -26,32 +26,25 @@ std::optional<ConversionPresetSnapshot> captureConversionPreset(
         if (error) *error = QStringLiteral("Conversion reference does not target a Conversion preset");
         return std::nullopt;
     }
-    if (!validateConversionPlatforms(conversion->platforms, platforms, error))
-        return std::nullopt;
-    return ConversionPresetSnapshot{resolved.target->guid, conversion->platforms};
+    if (!validateConversionConfig(conversion->config, error)) return std::nullopt;
+    return ConversionPresetSnapshot{resolved.target->guid, conversion->config};
 }
 
 std::optional<ResolvedConversion> resolveConversion(
-    const ConversionPresetSnapshot& preset, ProjectPlatformId platform,
-    const AssetInfo& source, QString* error)
+    const ConversionPresetSnapshot& preset, const AssetInfo& source, QString* error)
 {
     if (error) error->clear();
     if (preset.presetGuid.isNull()) return std::nullopt;
-    const auto config = std::find_if(preset.platforms.begin(), preset.platforms.end(),
-        [&](const auto& value) { return value.platformId == platform; });
-    if (config == preset.platforms.end()) {
-        if (error) *error = QStringLiteral("Conversion preset has no configuration for this platform");
-        return std::nullopt;
-    }
-    if (!validateConversionConfig(*config, error)) return std::nullopt;
+    if (!validateConversionConfig(preset.config, error)) return std::nullopt;
     if (source.metadata.sampleRate == 0 || source.metadata.fileSize == 0) {
         if (error) *error = QStringLiteral("Conversion resolution requires source sample rate and file size");
         return std::nullopt;
     }
-    const auto tier = std::find_if(config->tiers.begin(), config->tiers.end(),
+    const auto& tiers = preset.config.tiers;
+    const auto tier = std::find_if(tiers.begin(), tiers.end(),
         [&](const auto& value) { return !value.maxBytes || source.metadata.fileSize <= *value.maxBytes; });
     const auto sampleRate = tier->sampleRate < source.metadata.sampleRate ? tier->sampleRate : 0u;
-    return ResolvedConversion{config->format, config->vorbisQuality, sampleRate, preset.presetGuid};
+    return ResolvedConversion{preset.config.format, preset.config.vorbisQuality, sampleRate, preset.presetGuid};
 }
 
 std::optional<ResolvedConversion> resolveConversion(
@@ -63,10 +56,10 @@ std::optional<ResolvedConversion> resolveConversion(
         if (error) *error = QStringLiteral("Conversion platform does not belong to the project");
         return std::nullopt;
     }
-    const auto preset = captureConversionPreset(
-        ReferenceSlotResolution::buildResolutionScope(project, &sound), project.platforms, error);
+    const auto preset = captureConversionPreset(ReferenceSlotResolution::buildResolutionScope(
+        project, &sound, toFieldGroupGuid(platform)), error);
     if (!preset) return std::nullopt;
-    return resolveConversion(*preset, platform, source, error);
+    return resolveConversion(*preset, source, error);
 }
 
 }

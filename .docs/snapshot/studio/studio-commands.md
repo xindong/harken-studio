@@ -121,15 +121,15 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 
 | 命令 | 参数与结果 | 撤销 |
 |---|---|---|
-| `create_conversion` | 必填 `name`；可选 `folder` 指向 Conversions 桶中已有目录。返回预设 GUID、名称、路径及各平台配置 | 是 |
-| `set_conversion_fields` | `conversion` 加 `platform_ids` 或 `all_platforms:true`，修改 `format`、`quality`、`sample_rate_tiers` 中至少一项；未提供的字段保留 | 是 |
-| `set_object_conversion` | `object`、`inherit`，可选 `settings` 指定预设或 `null`；省略 `settings` 沿用字段组的本地历史，`inherit:true` 不接受 `settings` | 是 |
-| `set_default_conversion` | `conversion` 指定工程默认预设，`null` 清空 | 是 |
+| `create_conversion` | 必填 `name`；可选 `folder` 指向 Conversions 桶中已有目录。新预设为 Vorbis 40%、Original；返回预设 GUID、名称、路径与配置 | 是 |
+| `set_conversion_fields` | `conversion`，修改 `format`、`quality`、`sample_rate_tiers` 中至少一项；未提供的字段保留 | 是 |
+| `set_object_conversion` | `object`、`inherit`，可选 `settings` 指定预设或 `null`，可选 `platform_id` 改写该平台覆写（缺省为 Shared，写入 Shared 引用同时清除各平台覆写）；省略 `settings` 沿用字段组的本地历史，`inherit:true` 不接受 `settings` | 是 |
+| `set_default_conversion` | `platform_id` 与 `conversion`：指定该平台的默认预设，`null` 清空 | 是 |
 | `get_effective_conversion` | `object`，可选 `platform_id`；返回生效预设、来源对象、平台，以及 Sound 当前语言 Source 的最终采样率 | 只读 |
 | `get_conversion_results` | `conversion`，可选 `platform_id`；列出实际引用该预设的各语言有效 Source、原始属性及已有转换产物 | 只读 |
 | `convert` | `conversion`，可选 `platform_id`；转换相同范围的 Source，返回 `conversion_result` 计数、错误与 `sources` 结果 | 否 |
 
-对象和预设选择器接受 GUID、无歧义工程路径或名称。可选 `platform_id` 缺省为当前主平台；对象的 Conversion 引用属于 Shared 字段组，平台差异写在预设内部。`platform_ids` 必须非空且不重复，与 `all_platforms:true` 严格互斥。
+对象和预设选择器接受 GUID、无歧义工程路径或名称。查询与转换命令的可选 `platform_id` 缺省为当前主平台。预设只保存一份配置；平台差异由对象的 Conversion 字段组平台覆写承担，与其他字段组一致。
 
 `format` 仅接受 `PCM`、`Vorbis`，`quality` 为 0–100。`sample_rate_tiers` 是完整分档数组，元素形如 `{"max_bytes":null,"sample_rate":24000}`；按原始文件字节数匹配首个上限，有限上限严格递增且仅末档必须为 `null`（Infinite）。采样率可选 `0/8000/11025/16000/22050/24000/32000/44100/48000`；`0` 保留原始采样率，目标不低于原始采样率时也保持原样，不升采样。
 

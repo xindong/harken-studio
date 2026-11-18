@@ -508,11 +508,12 @@ bool ReadFieldGroupsJson(const std::string& text,
             if (!ReadGuid(identity, platform, path, error)) return false;
             if (harkenprojectschema::IsNull(platform) || WriteGuid(platform) != name)
                 return Fail(error, path, "expected a canonical non-null platform UUID");
-            if (!CheckMembers(value, path, {"output", "send", "spatialRating", "effect"}, {}, error)
+            if (!CheckMembers(value, path, {"output", "send", "spatialRating", "effect", "conversion"}, {}, error)
                 || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
                 || !ReadPlatformState(value, "send", platform, parsed.send, path, error)
                 || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error)
-                || !ReadPlatformState(value, "effect", platform, parsed.effects, path, error))
+                || !ReadPlatformState(value, "effect", platform, parsed.effects, path, error)
+                || !ReadPlatformState(value, "conversion", platform, parsed.conversion, path, error))
                 return false;
         }
     }
@@ -543,7 +544,8 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     WriteState(writer, groups.conversion.shared);
     writer.EndObject();
     if (!groups.output.platforms.empty() || !groups.send.platforms.empty()
-        || !groups.spatialRating.platforms.empty() || !groups.effects.platforms.empty()) {
+        || !groups.spatialRating.platforms.empty() || !groups.effects.platforms.empty()
+        || !groups.conversion.platforms.empty()) {
         writer.Key("platforms");
         writer.BeginObject();
         std::set<AuthoringGuid> platforms;
@@ -551,6 +553,7 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
         for (const auto& [platform, state] : groups.send.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.spatialRating.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.effects.platforms) platforms.insert(platform);
+        for (const auto& [platform, state] : groups.conversion.platforms) platforms.insert(platform);
         for (const auto platform : platforms) {
             writer.Key(WriteGuid(platform).c_str());
             writer.BeginObject();
@@ -558,6 +561,7 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
             WritePlatformState(writer, "send", platform, groups.send);
             WritePlatformState(writer, "spatialRating", platform, groups.spatialRating);
             WritePlatformState(writer, "effect", platform, groups.effects);
+            WritePlatformState(writer, "conversion", platform, groups.conversion);
             writer.EndObject();
         }
         writer.EndObject();

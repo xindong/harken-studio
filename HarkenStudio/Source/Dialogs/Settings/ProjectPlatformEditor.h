@@ -8,6 +8,8 @@
 class QComboBox;
 class QLineEdit;
 
+namespace VNX { class DialogFormLayout; }
+
 namespace VNX {
 
 class ProjectPlatformEditor : public QWidget
@@ -22,6 +24,7 @@ public:
     bool hasPendingName() const;
     void finishNameEditing();
     void discardNameEditing();
+    void addField(const QString& label, QWidget* field);
 
 signals:
     void platformChanged(const ProjectPlatform& before);
@@ -35,6 +38,7 @@ private:
     bool readOnly_ = false;
     QLineEdit* name_ = nullptr;
     QComboBox* base_ = nullptr;
+    DialogFormLayout* form_ = nullptr;
 };
 
 }

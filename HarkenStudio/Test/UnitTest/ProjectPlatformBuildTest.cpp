@@ -356,15 +356,11 @@ protected:
     }
     void setRate(ProjectPlatformId id, uint32_t rate)
     {
-        auto* item = manager().findItemByGuid(project().defaultConversionRef);
+        auto* item = manager().createItem(nullptr, QStringLiteral("Rate%1").arg(rate), ProjectItem::Type::Conversion);
         ASSERT_NE(item, nullptr);
-        auto* conversion = item->comp<VConversion>();
-        ASSERT_NE(conversion, nullptr);
-        auto* config = conversion->platformConfig(id);
-        ASSERT_NE(config, nullptr);
-        config->format = ConversionFormat::PCM;
-        config->tiers = {{std::nullopt, rate}};
+        item->comp<VConversion>()->config = {ConversionFormat::PCM, 0.4f, {{std::nullopt, rate}}};
         item->markDirty();
+        ASSERT_TRUE(manager().setDefaultConversion(id, item->guid));
     }
     ProjectPackExporter::ExportResult exportPlatform(ProjectPlatformId id, const QString& path,
         std::vector<ProjectPackExporter::PackBuildRecord>& records)

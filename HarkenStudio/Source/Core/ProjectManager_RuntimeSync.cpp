@@ -682,13 +682,10 @@ void ProjectManager::refreshPreviewConversions()
         next.platform = platform;
         if (converted) {
             const auto preset = captureConversionPreset(
-                ReferenceSlotResolution::buildResolutionScope(item, snapshot),
-                m_currentProject->platforms, &next.error);
+                ReferenceSlotResolution::buildResolutionScope(item, snapshot), &next.error);
             if (preset && !preset->presetGuid.isNull()) {
                 next.presetGuid = preset->presetGuid;
-                const auto config = std::find_if(preset->platforms.begin(), preset->platforms.end(),
-                    [platform](const auto& value) { return value.platformId == platform; });
-                if (config != preset->platforms.end()) next.config = *config;
+                next.config = preset->config;
             }
         }
         const auto previous = m_previewConversions.constFind(item->runtimeId());
@@ -777,9 +774,8 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
             std::optional<ResolvedConversion> conversion;
             if (converted && manager.m_currentProject) {
                 const auto preset = captureConversionPreset(
-                    ReferenceSlotResolution::buildResolutionScope(item, effectiveGroups),
-                    manager.m_currentProject->platforms, &mediaError);
-                if (preset) conversion = resolveConversion(*preset, platform, *asset, &mediaError);
+                    ReferenceSlotResolution::buildResolutionScope(item, effectiveGroups), &mediaError);
+                if (preset) conversion = resolveConversion(*preset, *asset, &mediaError);
                 if (!mediaError.isEmpty()) {
                     LogService::logWarning(LogCategory::RuntimeSync, mediaError);
                     continue;

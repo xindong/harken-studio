@@ -1227,20 +1227,25 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
     root["audio"] = QJsonObject{
         {"renderSampleRate", project.sampleRate},
         {"channelConfig", static_cast<int>(project.channelConfig)},
-        {"defaultConversion", QJsonValue(QJsonValue::Null)},
     };
-    if (!project.defaultConversionRef.isNull()) {
-        const auto target = referencesByGuid_.constFind(project.defaultConversionRef);
+    QJsonObject defaultConversions;
+    for (auto it = project.defaultConversionRefs.cbegin(); it != project.defaultConversionRefs.cend(); ++it) {
+        if (!ProjectPlatformSemantics::find(project.platforms, it.key())) {
+            lastError_ = QStringLiteral("Default Conversion references an unknown platform");
+            return {};
+        }
+        const auto target = referencesByGuid_.constFind(it.value());
         if (target == referencesByGuid_.cend()) {
             lastError_ = QStringLiteral("Default Conversion does not exist");
             return {};
         }
         const auto reference = persistentReference(target->objectId, ProjectItem::Type::Conversion);
         if (reference.isEmpty()) return {};
-        auto audio = root["audio"].toObject();
-        audio["defaultConversion"] = reference;
-        root["audio"] = audio;
+        defaultConversions[ProjectPlatformSemantics::idString(it.key())] = reference;
     }
+    auto audio = root["audio"].toObject();
+    audio["defaultConversions"] = defaultConversions;
+    root["audio"] = audio;
     root["deployPlatforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
 
     emit progressChanged(20, tr("Saving project structure..."));
@@ -1592,13 +1597,18 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (!ProjectPlatformSemantics::platformsFromJson(root["deployPlatforms"], &project.platforms, &lastError_))
         return false;
     const QJsonObject audio = root["audio"].toObject();
-    project.defaultConversionRef = QUuid{};
-    const auto defaultConversion = audio.value(QStringLiteral("defaultConversion"));
-    if (!defaultConversion.isNull() && !defaultConversion.isUndefined()) {
-        uint32_t objectId = 0;
-        if (!transientReference(defaultConversion, ProjectItem::Type::Conversion, &objectId))
+    project.defaultConversionRefs.clear();
+    const auto defaultConversions = audio.value(QStringLiteral("defaultConversions")).toObject();
+    for (auto it = defaultConversions.begin(); it != defaultConversions.end(); ++it) {
+        const auto platform = ProjectPlatformSemantics::parseId(it.key());
+        if (!platform || !ProjectPlatformSemantics::find(project.platforms, *platform)) {
+            lastError_ = QStringLiteral("Default Conversion references an unknown platform");
             return false;
-        project.defaultConversionRef = QUuid(defaultConversion.toObject().value(QStringLiteral("id")).toString());
+        }
+        uint32_t objectId = 0;
+        if (!transientReference(it.value(), ProjectItem::Type::Conversion, &objectId))
+            return false;
+        project.defaultConversionRefs.insert(*platform, QUuid(it.value().toObject().value(QStringLiteral("id")).toString()));
     }
     if (audio.contains("renderSampleRate")) {
         project.sampleRate = audio["renderSampleRate"].toInt(project.sampleRate);

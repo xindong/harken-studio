@@ -24,7 +24,7 @@
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sends | 六类对象的发送配置 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
-| C12 | 配置 | Conversion Editor / Platforms | Format / Quality / Upper limit / Sample rate；按平台分组，Format 与 Quality 位于组内首行；阈值使用 KB／MB，按阈值排序，末行固定 Infinite；组尾加减号增删有限阈值 |
+| C12 | 配置 | Conversion Editor / Sample Rate Tiers | Upper limit / Sample rate；阈值使用 KB／MB，按阈值排序，末行固定 Infinite；表尾加减号增删有限阈值；Format 与 Quality 在表上方表单 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
@@ -90,10 +90,10 @@
 
 | ID / 位置 | 内容与当前行为 |
 |---|---|
-| C10 / Platform Configuration | 左侧平台导航、右侧名称与基础平台类型；同一区域提供 Default Conversion ObjectRef，指定新建根对象的默认预设，可清空 |
+| C10 / Platform Configuration | 左侧平台导航；右侧为所选平台的名称、基础平台类型与 Default conversion ObjectRef，指定该平台新建根对象的默认预设，可清空 |
 | C11 / Language Configuration | 左侧语言导航与增删，右侧名称；无语言时右侧留空，加号通过弹窗新增 |
 | 平台与语言编辑 | 结束编辑即提交，无效输入恢复旧值；支持项目撤销并随项目保存 |
-| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；转换参数由 Conversion 预设保存，每个平台行按基础平台类型初始化 |
+| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；默认工程只有 Low Quality 一个 Conversion 预设，仅 Android／iOS 将其作为平台默认值 |
 | 导航布局 | 无表头，保留当前激活项；纵向槽常驻、无横向滚动，不适用普通表格的空白与 Esc 清选 |
 | 主 toolbar | 提供 Original / Converted 试听开关，与平台（含 ALL）、语言一起按本机工程记忆；播放控件居中，Layout 在最右侧 |
 | Layout 切换与保存 | 切换保留各布局在当前工程的工作状态；同名保存更新预设，另存后切换当前布局身份 |
@@ -104,7 +104,7 @@
 | 项目 | 当前表现 |
 |---|---|
 | 入口与布局 | 双击 Assets 中的 Conversion 预设或 Inspector 的 Settings 引用，在中央区域下方打开独立 Conversion Editor |
-| 平台分组 | 上半区为分组配置表，每个工程平台一组并全部平铺，Toolbar 当前平台置顶，其余按工程顺序；组内首行编辑 Format 与 Quality，各行编辑 Sample Rate 分档；不提供跨平台复制或差异标记 |
+| 配置表单 | 上半区为单一配置：Format、Quality 表单与 Sample Rate 分档表；预设不区分平台，平台差异由使用方的 Conversion 平台覆写承担 |
 | 格式与采样率 | Format 为 PCM／Vorbis；Quality 以 0–100% 显示，仅 Vorbis 可编辑；采样率可选 Original（不重采样）或受支持的离散值，有限阈值可增删，Infinite 末行不可删除 |
 | 引用结果 | 下半区按 Toolbar 当前平台展示有效引用此预设的 Sound Source，包含各语言；没有有效缓存时 Converted 各列和 Ratio 留空 |
 | Convert | 表尾仅一个 Convert 按钮，为当前平台的引用源生成产物，已有缓存直接跳过；转换不显示进度或状态，Esc 可取消未完成工作 |
