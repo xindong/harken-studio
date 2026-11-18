@@ -54,6 +54,7 @@
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/BusTree.h"
 
+#include <array>
 #include <cstdint>
 #include <cmath>
 #include <cstdlib>
@@ -2200,6 +2201,71 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
     }
 }
 
+
+TEST(PackLogicLoad, PlayingSoundRespondsToEachOfTwentyFourPackBindings) {
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto sound = harkentest::ObjectId(7100);
+    constexpr float sourceLevel = 0.25f;
+    V2Builder builder(harken::kPackKindContent);
+    builder.AddMedia(sound, harkentest::MakeDC(kBlock * 4, sourceLevel));
+
+    std::array<harken::VariableDefinitionV1, 24> variables{};
+    const auto gainDb = [](unsigned i) { return -0.5f * (i + 1); };
+    for (unsigned i = 0; i < variables.size(); ++i) {
+        const auto variable = harkentest::ObjectId(7200 + i);
+        variables[i] = harkentest::MakeVariableDefinition(
+            variable, harken::VariableKindV1::Smooth, 0, 1, 0);
+        VnBindingDesc binding{};
+        binding.structSize = sizeof(binding);
+        binding.variableId = variable;
+        binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+        binding.targetId = harken::kTargetVoiceVolume;
+        binding.curve.structSize = sizeof(binding.curve);
+        binding.curve.pointCount = 2;
+        binding.curve.points[0] = {0, 0};
+        binding.curve.points[1] = {1, gainDb(i)};
+        binding.curve.handles[0] = harkentest::EndpointHandles(
+            binding.curve.points[0], binding.curve.points[1]);
+        const auto id = harkentest::ObjectId(7300 + i);
+        builder.AddBindingDefinition(id, binding);
+        builder.AddBindingAttachment(i, id, VN_TARGET_SCOPE_VOICE, sound);
+    }
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallDefinitionsWorld(
+        engine, variables.data(), variables.size()).status);
+    const auto path = TempPath("twenty_four_independent_bindings.pack");
+    WriteFileBytes(path, builder.Build());
+    VnPackHandle pack{};
+    ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+    auto play = MakePlayDesc(sound);
+    play.loopCount = 0;
+    VnVoiceHandle voice{};
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+
+    const auto checkOutput = [&](float expected) {
+        harkentest::Capture capture;
+        harkentest::PumpAndCapture(engine, 1, capture);
+        ASSERT_EQ(kBlock, capture.left.size());
+        ASSERT_EQ(kBlock, capture.right.size());
+        EXPECT_NEAR(expected, capture.left.back(), 1e-5f);
+        EXPECT_NEAR(expected, capture.right.back(), 1e-5f);
+    };
+    checkOutput(sourceLevel);
+    for (unsigned i = 0; i < variables.size(); ++i) {
+        SCOPED_TRACE(i);
+        ASSERT_EQ(VN_OK, Vn_SetValue(variables[i].variableId, 1));
+        harkentest::AdvanceVariableWrite(engine);
+        checkOutput(sourceLevel * std::pow(10.0f, gainDb(i) / 20.0f));
+        ASSERT_EQ(VN_OK, Vn_SetValue(variables[i].variableId, 0));
+        harkentest::AdvanceVariableWrite(engine);
+        checkOutput(sourceLevel);
+    }
+    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+    engine->nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, Vn_UnloadPack(pack));
+}
 
 TEST(PackLogicLoad, ThousandDefinitionsAndTwoThousandAttachmentsPlayAndUnload) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
