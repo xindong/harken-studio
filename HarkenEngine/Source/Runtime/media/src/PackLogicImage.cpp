@@ -490,7 +490,8 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
         }
         case kPackEntryKindVoiceRecipe: {
             PackLogicImage::VoiceRecipe recipe;
-            if (!ReadPackVoiceRecipePayload(payload, entry.size, entry.id, recipe) ||
+            std::vector<VnBindingId> bindings;
+            if (!ReadPackVoiceRecipePayload(payload, entry.size, entry.id, recipe, bindings) ||
                 !VoiceToneWireValuesValid(recipe.tone)) {
                 return VN_BAD_PACK;
             }
@@ -518,12 +519,15 @@ VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
             }
             VnBindingId previousBinding{};
             for (std::uint32_t n = 0; n < recipe.header.bindingCount; ++n) {
-                const auto binding = recipe.bindings[n];
+                const auto binding = bindings[n];
                 if (binding == VnObjectId{} ||
                     (n > 0 && binding <= previousBinding)) {
                     return VN_BAD_PACK;
                 }
                 previousBinding = binding;
+            }
+            if (!bindings.empty()) {
+                recipe.bindingStorage = std::make_shared<const std::vector<VnBindingId>>(std::move(bindings));
             }
             image.voiceRecipes.push_back(std::move(recipe));
             break;
@@ -2152,7 +2156,7 @@ VnResult CheckPackClosure(const PackLogicImage& image,
                         recipe.header.playableId,
                         recipe.header.playableId);
         }
-        for (VnBindingId bindingId : recipe.bindings) {
+        for (VnBindingId bindingId : recipe.Bindings()) {
             if (!bindingCloses(bindingId)) {
                 return fail(PackClosureRef::RecipeBinding,
                             recipe.header.playableId, bindingId);

@@ -3558,11 +3558,10 @@ VnResult Vn_ReplaceBinding(VnBindingId bindingId, const VnBindingDesc* desc);
  * equal the definition's targetScopeKind, is VN_INVALID_ARG; an unknown
  * binding id, bus, or playable is VN_UNKNOWN_ID; a duplicate
  * (definition, object) attachment is VN_IN_USE; a full attachment pool is
- * VN_NO_BINDING with a log record naming the pool; an attachment whose
- * worst-case publication demand would exceed the command queue's capacity
- * is VN_INVALID_CONFIG (structural — clear by detaching or configuring a
- * larger queue; the log record carries both numbers). Logic thread
- * only. */
+ * VN_NO_BINDING with a log record naming the pool; only a new (Bus, target) publication consumes a
+ * command reservation. VN_INVALID_CONFIG means that reservation would exceed
+ * the command queue's capacity. Voice-scope publication demand is reserved
+ * when a play is accepted. Logic thread only. */
 VnResult Vn_AttachBinding(VnBindingId bindingId,
                           const VnBindingAttachDesc* desc);
 

@@ -37,6 +37,7 @@
 
 #include <cstdint>
 #include <array>
+#include <compare>
 #include <utility>
 #include <vector>
 
@@ -71,6 +72,19 @@ struct BindingDependencyIdentity {
     bool operator==(const BindingDependencyIdentity&) const = default;
 };
 static_assert(sizeof(BindingDependencyIdentity) == 40);
+
+struct BusPublicationTarget {
+    std::uint32_t busIndex;
+    std::uint32_t generation;
+    std::uint32_t target;
+
+    auto operator<=>(const BusPublicationTarget&) const = default;
+
+    constexpr BindingDependencyIdentity Identity() const noexcept {
+        return {.object = busIndex, .scope = kTargetScopeBus, .target = target,
+                .generation = generation, .detail = static_cast<std::uint32_t>(BindingSourceKind::Variable)};
+    }
+};
 
 struct BindingDependencyToken {
     std::uint32_t slot = UINT32_MAX;
@@ -120,6 +134,7 @@ public:
     const void* Fact(BindingDependencyToken token) const noexcept;
     bool CommitTarget(BindingDirtyTarget target, std::uint64_t version) noexcept;
     std::size_t StorageBytes() const noexcept;
+    bool HasBusPublicationTarget(BusPublicationTarget target) const noexcept;
     std::uint32_t BusPublicationTargetCount() const noexcept;
     std::uint32_t BackedBindingCapacity() const noexcept { return inputs_.ConstructedCount() / 3u; }
 
@@ -621,6 +636,9 @@ public:
         return count;
     }
 
+    const Attachment* FindAttachment(BindingId id, std::uint32_t scopeKind,
+                                     VnObjectId objectId) const;
+
     // Whether one exact (definition, scope, object) attachment is live.
     // The pack ledger verifies its recorded triples with this instead of
     // count arithmetic: a caller may detach a pack's attachment and
@@ -628,14 +646,9 @@ public:
     // existence tells the two apart.
     bool HasAttachment(BindingId id, std::uint32_t scopeKind,
                        VnObjectId objectId) const {
-        for (const Attachment& a : m_attachments) {
-            if (a.used && a.bindingId == id && a.scopeKind == scopeKind &&
-                a.objectId == objectId) {
-                return true;
-            }
-        }
-        return false;
+        return FindAttachment(id, scopeKind, objectId) != nullptr;
     }
+
 
     // Whether one exact triple is live AND still carries the given
     // provenance imprint. This is the generation-safe form of the probe
@@ -1038,8 +1051,6 @@ private:
         std::uint32_t slot = UINT32_MAX;
     };
     std::vector<DefinitionIndexEntry> m_definitionIndex;
-    const Attachment* FindAttachment(BindingId id, std::uint32_t scopeKind,
-                                     VnObjectId objectId) const;
     // Shared registration/replace validation: curve rules, known scoped
     // target, section-9.1 transition legality. Fills *outCurve on
     // success; refuses VN_INVALID_ARG with no state touched otherwise.

@@ -212,11 +212,10 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public bool SuppressUnityAudio",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const string ResourceName = \" HarkenProjectSettings \"",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxActions = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxPacks = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxVoices = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint UnlimitedActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:5ed3073f8569dcb864adf835ea1db5b826b295ab141a68cb1f586957d6ac4e79]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:bd1fb045452c4e463fc4405459e0809f711f966f75f886c3f809217799b1f1fd]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public static HarkenProjectSettings Load ( )",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string InitPack",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string Language",
@@ -224,9 +223,7 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string PlatformId",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string PlatformName",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string [ ] PlayerExports",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint EmitterVariableSlots",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxActionFirings",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxActions",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxEmitters",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxPacks",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxVoices",
@@ -294,7 +291,7 @@
         "native:Vn_StopActionFiring",
         "native:Vn_StopAll",
         "native:Vn_StopEmitter",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:c9b96c5d95f5b775a9d87da95f124b2025c9e8f33f3261118aaca2afb8c8e6fd]"
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:50489d8f10c066b2174f6eb3e1e1e555a4a443ff4d3d68ebfd9117431a909afa]"
       ]
     },
     "host": {
@@ -347,7 +344,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public VnResult StartupResult { get ; private set ; } = VnResult . VN_NOT_INITIALIZED",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public bool IsActive",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public bool IsStartupComplete { get }",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession : IDisposable [ordered-members:22c013200f41b1a10db8ef553bb65e70550dd0e7c01fa44220d38dbf014a7c36]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession : IDisposable [ordered-members:f3df29f546de87d9ecca111118ed24e31dd618ccf1bb4e3c61e88312ac29d430]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string ContainmentRoot { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string Language { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string ProjectId { get ; private set ; }",

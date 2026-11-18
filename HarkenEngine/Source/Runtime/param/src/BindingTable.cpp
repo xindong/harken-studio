@@ -593,6 +593,11 @@ bool BindingDependencyIndex::CommitTarget(BindingDirtyTarget target, std::uint64
     return true;
 }
 
+bool BindingDependencyIndex::HasBusPublicationTarget(BusPublicationTarget target) const noexcept {
+    const auto key = Find(BindingDependencyKind::Target, target.Identity());
+    return key != UINT32_MAX && keys_[key].count != 0;
+}
+
 std::uint32_t BindingDependencyIndex::BusPublicationTargetCount() const noexcept {
     std::uint32_t count = 0;
     for (const auto& key : keys_) {

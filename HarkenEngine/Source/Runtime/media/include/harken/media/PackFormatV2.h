@@ -630,11 +630,11 @@ inline bool ReadPackContainerPayload(const std::uint8_t* in, std::uint64_t size,
 
 template <class Recipe>
 inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t size,
-                                       VnBindingId expectedId, Recipe& recipe) {
+                                       VnBindingId expectedId, Recipe& recipe, std::vector<VnBindingId>& bindings) {
     if (!ReadPackVoiceRecipeHeader(in, size, &recipe.header) ||
         recipe.header.playableId == VnBindingId{} || recipe.header.playableId != expectedId) return false;
     recipe.installs.resize(recipe.header.installCount);
-    recipe.bindings.resize(recipe.header.bindingCount);
+    bindings.resize(recipe.header.bindingCount);
     struct InstallVisitor {
         PackVoiceRecipeInstall& target;
         PackVoiceRecipeInstallWire row{};
@@ -647,6 +647,7 @@ inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t siz
     };
     struct Visitor {
         Recipe& row;
+        std::vector<VnBindingId>& bindings;
         auto& Value() noexcept { return row.header; }
         auto& Header() noexcept { return row.header; }
         auto& Tone() noexcept { return row.tone; }
@@ -660,11 +661,11 @@ inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t siz
         }
         InstallVisitor Installs(std::uint64_t index) noexcept { return {row.installs[static_cast<std::size_t>(index)]}; }
         bool PrepareBindings(std::uint64_t count) noexcept {
-            return count == row.bindings.size();
+            return count == bindings.size();
         }
-        auto& Bindings(std::uint64_t index) noexcept { return row.bindings[static_cast<std::size_t>(index)]; }
+        auto& Bindings(std::uint64_t index) noexcept { return bindings[static_cast<std::size_t>(index)]; }
         bool Finish() noexcept { return true; }
-    } visitor{recipe};
+    } visitor{recipe, bindings};
     PackWireBuffer<const std::uint8_t> buffer{in, size};
     return ReadPackVoiceRecipePayload(buffer, visitor) && buffer.offset == size;
 }

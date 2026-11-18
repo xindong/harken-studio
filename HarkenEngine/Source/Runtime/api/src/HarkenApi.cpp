@@ -5506,7 +5506,7 @@ VnResult UnregisterBindingImpl(Engine& engine, BindingId id,
             }
             for (const PackLogicImage::VoiceRecipe& recipe :
                  record.voiceRecipes) {
-                for (VnBindingId recipeBinding : recipe.bindings) {
+                for (VnBindingId recipeBinding : recipe.Bindings()) {
                     if (recipeBinding == id) {
                         recipeReferenced = true;
                         return;
@@ -5612,17 +5612,6 @@ bool VariableConsumerBlocked(const Engine& engine,
     return engine.variables.BlocksVariableConsumer(variableId);
 }
 
-using BusPublicationTarget = std::pair<VnObjectId, std::uint32_t>;
-
-bool HasLiveBusPublicationTarget(const Engine& engine, const BusPublicationTarget& key) noexcept {
-    bool found = false;
-    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
-        found |= definition.sourceKind == BindingSourceKind::Variable &&
-            attachment.objectId == key.first && definition.targetId == key.second;
-    });
-    return found;
-}
-
 bool HasPendingBusPublicationTarget(const Engine& engine, const BusPublicationTarget& key,
     const PackPendingRevision* skip = nullptr) noexcept {
     for (const auto& pending : engine.logicPacks.pending) {
@@ -5633,7 +5622,7 @@ bool HasPendingBusPublicationTarget(const Engine& engine, const BusPublicationTa
 }
 
 // The pending directory owns future demand. Count its union with live targets,
-// without tying a reservation to transient topology slots or a particular payer.
+// including the generation that will receive each pending publication.
 std::uint64_t BusPublicationUnionCount(const Engine& engine,
     const PackPendingRevision* skip = nullptr,
     std::span<const BusPublicationTarget> extra = {}) noexcept {
@@ -5641,7 +5630,7 @@ std::uint64_t BusPublicationUnionCount(const Engine& engine,
     for (const auto& pending : engine.logicPacks.pending) {
         if (&pending == skip) continue;
         for (const auto& key : pending.publicationTargets) {
-            if (HasLiveBusPublicationTarget(engine, key)) continue;
+            if (engine.bindings.Dependencies().HasBusPublicationTarget(key)) continue;
             bool earlier = false;
             for (const auto& prior : engine.logicPacks.pending) {
                 if (&prior == &pending) break;
@@ -5652,7 +5641,7 @@ std::uint64_t BusPublicationUnionCount(const Engine& engine,
         }
     }
     for (const auto& key : extra)
-        if (!HasLiveBusPublicationTarget(engine, key) && !HasPendingBusPublicationTarget(engine, key, skip)) ++count;
+        if (!engine.bindings.Dependencies().HasBusPublicationTarget(key) && !HasPendingBusPublicationTarget(engine, key, skip)) ++count;
     return count;
 }
 
@@ -5731,9 +5720,10 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         const auto prepared = engine.PrepareNativeBindingGrowth({&demand, 1});
         if (prepared != VN_OK) return prepared;
     }
-    const bool usesPublisher = scopeKind == kTargetScopeBus && definition != nullptr &&
-        !HasLiveBusPublicationTarget(engine, {objectId, definition->targetId}) &&
-        !HasPendingBusPublicationTarget(engine, {objectId, definition->targetId});
+    const BusPublicationTarget publication{busIndex, targetGeneration, definition->targetId};
+    const bool usesPublisher = scopeKind == kTargetScopeBus && definition->sourceKind == BindingSourceKind::Variable &&
+        !engine.bindings.Dependencies().HasBusPublicationTarget(publication) &&
+        !HasPendingBusPublicationTarget(engine, publication);
     if (scopeKind == kTargetScopeBus && definition != nullptr &&
         !engine.busTargets.PrepareActivity(busIndex, definition->targetId)) {
         return VN_BACKPRESSURE;
@@ -5761,7 +5751,8 @@ VnResult DetachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     // back to neutral over the definition's transitionMs at the next
     // publication); detaching also shrinks the control graph, so the next
     // update rescans the section-11.5 freeze marks.
-    if (!engine.bindings.HasAttachment(id, scopeKind, objectId)) {
+    const auto* attachment = engine.bindings.FindAttachment(id, scopeKind, objectId);
+    if (attachment == nullptr) {
         return VN_UNKNOWN_ID;
     }
     const BindingTable::Definition* definition = engine.bindings.Find(id);
@@ -5771,19 +5762,19 @@ VnResult DetachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         engine.commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    const auto targetId = definition == nullptr ? UINT32_MAX : definition->targetId;
+    const bool usesPublisher = scopeKind == kTargetScopeBus && definition != nullptr &&
+        definition->sourceKind == BindingSourceKind::Variable;
+    const BusPublicationTarget publication{attachment->busIndex, attachment->targetGeneration,
+                                           definition == nullptr ? UINT32_MAX : definition->targetId};
     const VnResult result =
         engine.bindings.Detach(id, scopeKind, objectId, &engine.busTargets);
     if (result != VN_OK) {
         return result;
     }
-    if (scopeKind == kTargetScopeBus) {
-    }
     // Symmetric with AttachBinding: effect-parameter attachments never grew the
     // publisher's worst-case budget, so their detach must not shrink it.
-    if (scopeKind == kTargetScopeBus &&
-        !HasLiveBusPublicationTarget(engine, {objectId, targetId}) &&
-        !HasPendingBusPublicationTarget(engine, {objectId, targetId})) {
+    if (usesPublisher && !engine.bindings.Dependencies().HasBusPublicationTarget(publication) &&
+        !HasPendingBusPublicationTarget(engine, publication)) {
         engine.propertyPublisher.ShrinkWorstCase(1);
     }
     if (scopeKind == kTargetScopeVoice) {
@@ -75591,8 +75582,8 @@ std::uint32_t UniqueRecipeTargetCount(const harken::Engine& engine,
 
 std::uint32_t UniqueRecipeTargetCount(const harken::Engine& engine,
     const harken::PackLogicImage::VoiceRecipe* recipe) {
-    return recipe == nullptr ? 0u : UniqueRecipeTargetCount(engine, recipe->bindings.data(),
-        static_cast<std::uint32_t>(recipe->bindings.size()));
+    return recipe == nullptr ? 0u : UniqueRecipeTargetCount(engine, recipe->Bindings().data(),
+        static_cast<std::uint32_t>(recipe->Bindings().size()));
 }
 
 void RecycleRecipeEffects(
@@ -75803,7 +75794,7 @@ void AdoptVoiceRecipe(
         }
     }
     rec.recipeBindingCount =
-        static_cast<std::uint32_t>(recipe->bindings.size());
+        static_cast<std::uint32_t>(recipe->Bindings().size());
     rec.recipeBindingStorage = bindingStorage;
     rec.recipeBindingIds = bindingStorage ? std::span<const VnBindingId>(*bindingStorage) : std::span<const VnBindingId>{};
 }
@@ -114312,9 +114303,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     const std::uint32_t recipeBindingCount =
         voiceRecipe == nullptr
             ? 0u
-            : static_cast<std::uint32_t>(voiceRecipe->bindings.size());
-    const auto recipeBindingStorage = recipeBindingCount == 0 ? nullptr :
-        std::make_shared<const std::vector<VnBindingId>>(voiceRecipe->bindings);
+            : static_cast<std::uint32_t>(voiceRecipe->Bindings().size());
+    const auto recipeBindingStorage = voiceRecipe ? voiceRecipe->bindingStorage : nullptr;
     const std::uint32_t recipeTargets =
         UniqueRecipeTargetCount(*engine, voiceRecipe);
 
@@ -114417,7 +114407,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         for (std::uint32_t i = 0; i < recipeBindingCount; ++i) {
             float contribution = 0;
             if (!TryVoiceVolumeBindingContribution(
-                    *engine, emitterHandle, voiceRecipe->bindings[i], &contribution, reader)) return VN_BACKPRESSURE;
+                    *engine, emitterHandle, voiceRecipe->Bindings()[i], &contribution, reader)) return VN_BACKPRESSURE;
             bindingsDb = harken::AddFiniteContributions(bindingsDb, contribution);
         }
         // Match the authoritative Variable slot, then compose with the base.
@@ -114427,7 +114417,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     for (std::uint32_t i = 0;
          i < recipeBindingCount; ++i) {
         const harken::BindingTable::Definition* definition =
-            engine->bindings.Find(voiceRecipe->bindings[i]);
+            engine->bindings.Find(voiceRecipe->Bindings()[i]);
         const bool variable = definition != nullptr &&
             definition->sourceKind == harken::BindingSourceKind::Variable;
         hasVariableBindings = hasVariableBindings || variable;
@@ -114442,7 +114432,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         for (std::uint32_t i = 0; i < matchedBindingCount; ++i)
             if (!variableCut.ReadBinding(pinnedBindings[i].bindingId)) return VN_BACKPRESSURE;
         for (std::uint32_t i = 0; i < recipeBindingCount; ++i)
-            if (!variableCut.ReadBinding(voiceRecipe->bindings[i])) return VN_BACKPRESSURE;
+            if (!variableCut.ReadBinding(voiceRecipe->Bindings()[i])) return VN_BACKPRESSURE;
     }
     const auto* initialReader = variableCut.Reader();
     double initialVoiceDb = 0.0;
@@ -114471,7 +114461,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (recipeBindingCount > 0) {
         const VnResult bindingRoom =
             engine->bindings.CanReserveVoiceEffectInstances(
-                voiceRecipe->bindings.data(), recipeBindingCount,
+                voiceRecipe->Bindings().data(), recipeBindingCount,
                 &engine->logicLogRing);
         if (bindingRoom != VN_OK) {
             return bindingRoom;
@@ -114557,7 +114547,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         if (recipeBindingCount > 0) {
             const VnResult reserved =
                 engine->bindings.ReserveVoiceEffectInstances(
-                    pendingPublic, voiceRecipe->bindings.data(),
+                    pendingPublic, voiceRecipe->Bindings().data(),
                     recipeBindingCount, &engine->logicLogRing);
             if (reserved != VN_OK) {
                 engine->ledger.CancelPending(pendingSlot);
@@ -114631,7 +114621,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         if (recipeBindingCount > 0) {
             const VnResult reserved =
                 engine->bindings.ReserveVoiceEffectInstances(
-                    pendingPublic, voiceRecipe->bindings.data(),
+                    pendingPublic, voiceRecipe->Bindings().data(),
                     recipeBindingCount, &engine->logicLogRing);
             if (reserved != VN_OK) {
                 engine->ledger.CancelPending(pendingSlot);
@@ -114775,7 +114765,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         if (recipeBindingCount > 0) {
             const VnResult reserved =
                 engine->bindings.ReserveVoiceEffectInstances(
-                    pendingPublic, voiceRecipe->bindings.data(),
+                    pendingPublic, voiceRecipe->Bindings().data(),
                     recipeBindingCount, &engine->logicLogRing);
             if (reserved != VN_OK) {
                 engine->ledger.CancelPending(pendingSlot);
@@ -114972,7 +114962,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (recipeBindingCount > 0) {
         const VnResult reserved =
             engine->bindings.ReserveVoiceEffectInstances(
-                publicHandle, voiceRecipe->bindings.data(),
+                publicHandle, voiceRecipe->Bindings().data(),
                 recipeBindingCount, &engine->logicLogRing);
         if (reserved != VN_OK) {
             return reserved;
@@ -115190,7 +115180,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (recipeBindingCount > 0) {
         const bool recipePrimed = PrimeRecipeBindings(
             *engine, publicHandle, renderHandle,
-            voiceRecipe->bindings.data(), recipeBindingCount, writer, initialReader);
+            voiceRecipe->Bindings().data(), recipeBindingCount, writer, initialReader);
         if (!recipePrimed) return writer.Overflowed() ? VN_INVALID_CONFIG : VN_INVALID_ARG;
         recipeBindingGuard.armed = false;
     }
@@ -124269,7 +124259,7 @@ VnResult ValidatePackVoiceRecipes(const harken::Engine& engine,
                 }
             }
         }
-        for (VnBindingId bindingId : recipe.bindings) {
+        for (VnBindingId bindingId : recipe.Bindings()) {
             const harken::PackLogicImage::BindingDefinition* packedDef =
                 nullptr;
             for (const harken::PackLogicImage::BindingDefinition& packed :
@@ -125535,7 +125525,7 @@ VnResult ScreenPackBindingRemoval(Engine& engine,
             }
             for (const PackLogicImage::VoiceRecipe& recipe :
                  candidate.voiceRecipes) {
-                for (VnBindingId recipeBinding : recipe.bindings) {
+                for (VnBindingId recipeBinding : recipe.Bindings()) {
                     if (recipeBinding == id) {
                         foreignRecipeReferenced = true;
                         return;
@@ -127952,14 +127942,15 @@ VnResult ApplyPackRevision(
 } // namespace
 
 VnResult PreparePackBusPublicationTargets(Engine& engine, PackPendingRevision& revision) {
-    std::vector<std::pair<VnObjectId, std::uint32_t>> targets;
+    std::vector<BusPublicationTarget> targets;
     for (const auto& attachment : revision.addAttachments) {
         if (attachment.scopeKind != kTargetScopeBus) continue;
         const auto* definition = engine.bindings.Find(attachment.bindingId);
         auto target = definition == nullptr ? UINT32_MAX : definition->targetId;
         for (const auto& incoming : revision.image.bindingDefinitions)
             if (incoming.id == attachment.bindingId) { target = incoming.desc.targetId; break; }
-        targets.emplace_back(attachment.objectId, target);
+        targets.push_back({ProspectiveRevisionBusIndex(engine, revision, attachment.objectId),
+                           ProspectiveRevisionBusGeneration(engine, revision, attachment.objectId), target});
     }
     std::sort(targets.begin(), targets.end());
     targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
@@ -128673,7 +128664,6 @@ void ActivatePendingPackRevisions(Engine& engine) {
                     throw std::bad_alloc();
                 }
                 r = ScreenPackRevision(engine, *record, revision);
-                if (r == VN_OK) r = PreparePackBusPublicationTargets(engine, revision);
                 if (r == VN_OK) {
                     // Caller mutations since staging can grow every binding store.
                     revision.preparedBindingPurgeExits.resize(engine.params.BindingCapacity());
@@ -128758,6 +128748,14 @@ void ActivatePendingPackRevisions(Engine& engine) {
         if (r == VN_OK &&
             !PrepareRevisionProspectiveTopology(engine, revision)) {
             r = VN_BAD_PACK;
+        }
+        if (r == VN_OK) {
+            try {
+                r = PreparePackBusPublicationTargets(engine, revision);
+            } catch (const std::bad_alloc&) {
+                harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
+                r = VN_OUT_OF_MEMORY;
+            }
         }
         if (r == VN_OK && PackRevisionEffectClaimsBlocked(engine, revision)) {
             engine.commands.NoteBackpressure();
@@ -129839,7 +129837,7 @@ struct CanonicalBindingPlanV1 {
     std::vector<BindingTable::PreparedDefinitionToken> definitionAdds;
     std::vector<BindingTable::PreparedDefinitionToken> definitionRevisions;
     std::vector<BindingTable::PreparedAttachmentToken> attachmentAdds;
-    std::vector<std::pair<VnObjectId, std::uint32_t>> publicationTargets;
+    std::vector<BusPublicationTarget> publicationTargets;
     std::uint64_t busTargetsBefore = 0;
     std::vector<VnBindingId> purgeDefinitionIds;
     std::vector<ParamSystem::PreparedPurgeExit> purgeExits;
@@ -129899,7 +129897,7 @@ VnResult ScreenCanonicalBindingRemoval(
                 return;
             }
             for (const PackLogicImage::VoiceRecipe& recipe : candidate.voiceRecipes) {
-                for (VnBindingId recipeBinding : recipe.bindings) {
+                for (VnBindingId recipeBinding : recipe.Bindings()) {
                     if (recipeBinding == id) {
                         foreignRecipeReferenced = true;
                         return;
@@ -130459,7 +130457,8 @@ VnResult PrepareCanonicalBindingDiff(
         plan.attachmentOccupancy[slot] = 1;
         plan.attachmentAdds.push_back(std::move(token));
         if (attachment.scopeKind == kTargetScopeBus) {
-            const auto key = std::pair(attachment.objectId, activityTarget);
+            const BusPublicationTarget key{busIndex, slotPlan == nullptr ? engine.buses.GenerationAt(busIndex)
+                                                                         : slotPlan->generations[busIndex], activityTarget};
             const auto at = std::lower_bound(plan.publicationTargets.begin(), plan.publicationTargets.end(), key);
             if (at == plan.publicationTargets.end() || *at != key) {
                 plan.publicationTargets.insert(at, key);
