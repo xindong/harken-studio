@@ -144,7 +144,7 @@ TEST_F(BusRampGolden, TwentyMsAt48kLandsOnFrame960Not1024) {
     }
 }
 
-TEST_F(BusRampGolden, ZeroRampSnapsAtNextBlockBoundary) {
+TEST_F(BusRampGolden, ZeroRampUsesFiveMillisecondTransitionAfterRendering) {
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.0f, 0));
     PlayThroughBus();
 
@@ -152,17 +152,15 @@ TEST_F(BusRampGolden, ZeroRampSnapsAtNextBlockBoundary) {
     harkentest::PumpAndCapture(session->Engine(), 1, out);
     HARKENTEST_ASSERT_NON_SILENT(out.left);
 
-    // rampMs 0: the whole next block renders at the new value — the first
-    // sample already carries it, with no intra-block ramp.
+    // A zero request on a rendered object completes at sample 240.
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 0));
     harkentest::PumpAndCapture(session->Engine(), 1, out);
 
     for (std::size_t n = 0; n < kBlockFrames; ++n) {
-        ASSERT_NEAR(0.5f, out.left[kBlockFrames + n], 1e-5f)
-            << "snapped sample " << n;
+        const float expected = 1.f - .5f * std::min(1.f, float(n + 1) / 240.f);
+        ASSERT_NEAR(expected, out.left[kBlockFrames + n], 1e-5f) << n;
     }
-    // Constant gain over DC: the block is exactly flat.
-    ASSERT_EQ(out.left[kBlockFrames], out.left[2 * kBlockFrames - 1]);
+    ASSERT_NEAR(.5f, out.left[kBlockFrames + 239], 1e-5f);
 }
 
 TEST_F(BusRampGolden, FirstVolumeSetSnapsEvenWithNonzeroRamp) {

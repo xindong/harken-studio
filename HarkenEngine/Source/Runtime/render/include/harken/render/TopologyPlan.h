@@ -73,12 +73,7 @@ struct TopologyBuildScratch {
 struct BusSendState {
     std::uint32_t toIndex = kEmptySendTarget;
     std::uint32_t toGeneration = 0;
-    GainRamp gain;
-    bool ramping = false;
-    float rampStartGain = 1.0f;
-    float rampEndGain = 1.0f;
-    std::uint64_t rampBlocksTotal = 0;
-    std::uint64_t rampBlocksDone = 0;
+    OutputGain gain;
 };
 
 struct TopologyPlanView {

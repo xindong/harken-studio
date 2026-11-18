@@ -865,6 +865,16 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
         engine.meterDetectors.NoteRefusal();
         return VN_BACKPRESSURE;
     }
+    const auto required = std::uint64_t{engine.bindings.AttachmentCount()} + 1u;
+    if (required > UINT32_MAX ||
+        !engine.params.PrepareMeterProbeContributionStorage(static_cast<std::uint32_t>(required)))
+        return VN_OUT_OF_MEMORY;
+    try {
+        if (withdrawalScratch_.size() < required) withdrawalScratch_.resize(static_cast<std::size_t>(required));
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+        return VN_OUT_OF_MEMORY;
+    }
     const VnResult result = engine.bindings.AttachProbe(
         bindingId, targetScope, targetStableId, targetInstanceHandle, busIndex, targetGeneration);
     if (result != VN_OK) {

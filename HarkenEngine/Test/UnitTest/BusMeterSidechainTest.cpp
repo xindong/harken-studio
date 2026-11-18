@@ -174,6 +174,7 @@ TEST(BusMeterSidechain, DialogueAttenuatesMusicAndReleases) {
     EXPECT_GT(engine->meterDetectors.ValueDb(kSidechainProbe),
               harken::kMeterFloorDb);
 
+    engine->nullBackend.Pump(1); // The preceding block contained the gain ramp.
     // The attenuation: music drops by the curve's -12 dB (a pure gain scale on
     // the same signal, so the peak ratio is the linear gain).
     const float attenuated = BusPeak(engine, kMusicBus);
@@ -183,7 +184,7 @@ TEST(BusMeterSidechain, DialogueAttenuatesMusicAndReleases) {
     // Two-slot combine: an API-direct -6 dB sums in dB with the -12 dB
     // binding contribution (order-free, one reduced command).
     ASSERT_EQ(Vn_SetBusVolume(kMusicBus, -6.0f, 0), VN_OK);
-    engine->nullBackend.Pump(1);
+    engine->nullBackend.Pump(2);
     const float combined = BusPeak(engine, kMusicBus);
     const float expectedCombined = std::pow(10.0f, -18.0f / 20.0f);
     EXPECT_NEAR(combined / scene.musicBaseline, expectedCombined, 2e-3f);
@@ -245,12 +246,12 @@ TEST(BusMeterSidechain, DetachRampsContributionBackToNeutral) {
     scene.StartDialogue();
     engine->nullBackend.Pump(1);
     ASSERT_EQ(Vn_Update(), VN_OK);
-    engine->nullBackend.Pump(1);
+    engine->nullBackend.Pump(2);
     const float attenuated = BusPeak(engine, kMusicBus);
     ASSERT_LT(attenuated, scene.musicBaseline * 0.5f);
 
     // Detach while attenuated: the contribution leaves at the next update
-    // (transitionMs 0 snaps) and music returns to baseline even though
+    // (transitionMs 0 uses the 5 ms minimum) and music returns to baseline even though
     // the detector stays hot.
     const std::uint32_t musicIndex = engine->buses.FindIndex(kMusicBus);
     ASSERT_EQ(harken::DetachMeterProbeBinding(

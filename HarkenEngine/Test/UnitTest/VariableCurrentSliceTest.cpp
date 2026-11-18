@@ -936,8 +936,10 @@ TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAnd
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f * DbToLinear(-12),
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
-        e.streams.SyncServe();
-        e.nullBackend.Pump(1);
+        for (unsigned step = 0; step < (240u + kBlockFrames - 1u) / kBlockFrames + 1u; ++step) {
+            e.streams.SyncServe();
+            e.nullBackend.Pump(1);
+        }
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
@@ -1058,7 +1060,7 @@ TEST(VariableCurrentSlice, StagedStartsCaptureApplicableWritesAtCommitAndKeepOwn
             }
         }
         ASSERT_TRUE(heard);
-        e.nullBackend.Pump(1);
+        e.nullBackend.Pump((240u + kBlockFrames - 1u) / kBlockFrames + 1u);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
@@ -1372,7 +1374,7 @@ TEST(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
             ASSERT_EQ(VN_OK, Vn_Update());
     }
     ASSERT_EQ(harken::VariableSliceState::SliceApplied, e.variableSlices.State(laterSource));
-    e.nullBackend.Pump(1);
+    e.nullBackend.Pump((240u + kBlockFrames - 1u) / kBlockFrames + 1u);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
         EXPECT_NEAR(0.05f * (1 + DbToLinear(-12)) * 0.5f,
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
@@ -9065,6 +9067,7 @@ TEST(VariableCurrentSlice, ConsumedSlicesWaitForFifoWithoutLosingDependencyOrder
         EXPECT_EQ(state, e.variableSlices.State(dependent));
         EXPECT_EQ(10u, e.variableSlices.AppliedBlockSequence(source));
         EXPECT_EQ(10u, e.variableSlices.AppliedBlockSequence(dependent));
+        e.nullBackend.Pump((240u + kBlockFrames - 1u) / kBlockFrames + 1u);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f * (cancelSource ? 1 : DbToLinear(-6)),
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
@@ -9200,7 +9203,7 @@ TEST(VariableCurrentSlice, NativeVoicesPreserveOwnFirstOutputThenUseLatestVariab
         };
         checkOutput(-12, -6);
         for (const auto& identity : identities) ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
-        e.nullBackend.Pump(1);
+        e.nullBackend.Pump((240u + kBlockFrames - 1u) / kBlockFrames + 1u);
         checkOutput(-3, -3);
     }
 }
@@ -9359,7 +9362,7 @@ TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
-        e.nullBackend.Pump(1);
+        e.nullBackend.Pump((240u + kBlockFrames - 1u) / kBlockFrames + 1u);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f * DbToLinear(-6) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }

@@ -28308,7 +28308,8 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
                     ASSERT_LE(std::abs(left), std::abs(expected) + 1e-5f);
                     ASSERT_NEAR(left, right, 1e-5f);
                 } else if (before < sendSettleBlock) {
-                    const float priorSend = sample * gain(childDb - 3.0f) *
+                    const float priorChildDb = run == 0 && replaced ? -6.0f : childDb;
+                    const float priorSend = sample * gain(priorChildDb - 3.0f) *
                         (gain(-6.0f) + gain(-6.0f));
                     ASSERT_GE(left, std::min(expected, priorSend) - 1e-5f);
                     ASSERT_LE(left, std::max(expected, priorSend) + 1e-5f);

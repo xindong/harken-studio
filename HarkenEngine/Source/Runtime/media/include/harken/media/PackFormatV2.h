@@ -30,7 +30,6 @@ inline constexpr std::uint32_t kPackKindInit = 2;
 inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
 
 inline constexpr std::uint32_t kPackVoiceRecipeMaxInstalls = 8;
-inline constexpr std::uint32_t kPackVoiceRecipeMaxBindings = 8;
 inline constexpr std::uint32_t kPackEffectDescriptorVintage = 2;
 inline constexpr std::uint32_t kPackVoiceToneLowpassEnabled = 1u << 0;
 inline constexpr std::uint32_t kPackVoiceToneHighpassEnabled = 1u << 1;
@@ -548,7 +547,6 @@ inline bool ReadPackVoiceRecipeHeader(const std::uint8_t* in, std::uint64_t size
     return size >= kPackVoiceRecipeHeaderBytes &&
            ParsePackVoiceRecipeHeader(in, kPackVoiceRecipeHeaderBytes, out) &&
            out->installCount <= kPackVoiceRecipeMaxInstalls &&
-           out->bindingCount <= kPackVoiceRecipeMaxBindings &&
            size == PackVoiceRecipePayloadBytes(out->installCount, out->bindingCount);
 }
 

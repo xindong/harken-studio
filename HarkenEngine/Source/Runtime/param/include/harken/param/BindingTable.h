@@ -28,7 +28,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/LogRing.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/param/BusTargetStore.h"
 #include "harken/param/Curve.h"
 #include "harken/param/EffectParamTargetStore.h"
@@ -93,6 +93,8 @@ public:
     bool Reset(std::uint32_t bindingCapacity, std::uint32_t targetCapacity,
                std::uint32_t keyCapacity = 0) noexcept;
     bool PrepareBinding(std::uint32_t slot) noexcept;
+    bool AllocateBindingSlot(std::uint32_t* out) noexcept;
+    void ReleaseBindingSlot(std::uint32_t slot) noexcept;
     using BackingPreparation = std::array<StableStoragePreparation, 3>;
     using BackingUse = std::array<StableStoragePreparedUse, 3>;
     bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
@@ -118,8 +120,7 @@ public:
     const void* Fact(BindingDependencyToken token) const noexcept;
     bool CommitTarget(BindingDirtyTarget target, std::uint64_t version) noexcept;
     std::size_t StorageBytes() const noexcept;
-    std::uint32_t BindingCapacity() const noexcept { return bindingCapacity_; }
-    std::uint32_t ParamBindingCapacity() const noexcept { return paramBindingCapacity_; }
+    std::uint32_t BusPublicationTargetCount() const noexcept;
     std::uint32_t BackedBindingCapacity() const noexcept { return inputs_.ConstructedCount() / 3u; }
 
 private:
@@ -182,15 +183,13 @@ private:
     std::uint32_t Rotate(std::uint32_t key, bool left) noexcept;
     std::uint32_t Height(std::uint32_t key) const noexcept;
     void UpdateHeight(std::uint32_t key) noexcept;
-    std::uint32_t bindingCapacity_ = 0;
-    std::uint32_t paramBindingCapacity_ = 0;
-    std::uint32_t targetCapacity_ = 0;
-    std::uint32_t keyCapacity_ = 0;
+    std::uint32_t slotCount_ = 0;
+    std::vector<std::uint32_t> freeSlots_;
     std::uint32_t root_ = UINT32_MAX;
     std::uint64_t version_ = 0;
-    StableRowStorage<InputNode> inputs_;
-    StableRowStorage<Key> keys_;
-    StableRowStorage<DirtyRow> targets_;
+    GrowingRowStorage<InputNode> inputs_;
+    GrowingRowStorage<Key> keys_;
+    GrowingRowStorage<DirtyRow> targets_;
     std::vector<std::uint32_t> freeKeys_, freeTargets_, dirtyTargets_;
     std::vector<std::uint64_t> preparedBindings_;
     std::uint32_t preparedBindingCount_ = 0;
@@ -273,6 +272,7 @@ public:
         std::uint64_t ownerCookie = 0;
         const Definition* dependencyDefinition = nullptr;
         BindingDependencyToken dependency{};
+        std::uint32_t dependencySlot = UINT32_MAX;
     };
 
     struct PreparedDefinitionToken {
@@ -332,6 +332,7 @@ public:
         const Definition* dependencyDefinition = nullptr;
         VnEmitterHandle dependencyEmitter = 0;
         BindingDependencyToken dependency{};
+        std::uint32_t dependencySlot = UINT32_MAX;
     };
 
     BindingTable(std::uint32_t maxDefinitions, std::uint32_t maxAttachments,
@@ -428,11 +429,11 @@ public:
     template <typename CanInstall, typename OnInstalled>
     void InstallPendingRevisions(CanInstall&& canInstall,
                                  OnInstalled&& onInstalled) {
-        if (m_definitionCount == 0) return;
+        if (!m_hasPendingDefinitions) return;
+        m_hasPendingDefinitions = false;
         for (Definition& def : m_definitions) {
-            if (!def.used || !def.pendingInstall || !canInstall(def)) {
-                continue;
-            }
+            if (!def.used || !def.pendingInstall) continue;
+            if (!canInstall(def)) { m_hasPendingDefinitions = true; continue; }
             def.curve = def.pendingCurve;
             def.transitionMs = def.pendingTransitionMs;
             def.pendingInstall = false;
@@ -591,15 +592,14 @@ public:
     template <typename Fn>
     void ForEachVoiceAttachment(VnObjectId playedId, VnObjectId leafId,
                                 Fn&& fn) const {
-        for (const Attachment& a : m_attachments) {
-            if (!a.used || a.scopeKind != kTargetScopeVoice ||
-                m_definitions[a.definitionIndex].sourceKind !=
-                    BindingSourceKind::Variable) {
-                continue;
-            }
-            if (a.objectId != playedId && a.objectId != leafId) {
-                continue;
-            }
+        auto first = VoiceAttachmentRange(playedId);
+        auto second = playedId == leafId ? std::span<const std::uint32_t>{} : VoiceAttachmentRange(leafId);
+        while (!first.empty() || !second.empty()) {
+            const bool takeFirst = second.empty() || (!first.empty() && first.front() < second.front());
+            const auto slot = takeFirst ? first.front() : second.front();
+            if (takeFirst) first = first.subspan(1);
+            else second = second.subspan(1);
+            const auto& a = m_attachments[slot];
             fn(m_definitions[a.definitionIndex], a.objectId);
         }
     }
@@ -953,6 +953,16 @@ public:
 
     std::uint32_t DefinitionCount() const { return m_definitionCount; }
     std::uint32_t AttachmentCount() const { return m_attachmentCount; }
+    bool PrepareCapacity(std::uint64_t definitions, std::uint64_t attachments) noexcept;
+    bool PrepareEffectInstanceCapacity(std::uint64_t count) noexcept;
+    std::uint32_t VoiceAttachmentCount(VnObjectId object) const noexcept {
+        return static_cast<std::uint32_t>(VoiceAttachmentRange(object).size());
+    }
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_definitions.SetCommitPageLimitForTests(pages);
+        m_attachments.SetCommitPageLimitForTests(pages);
+        m_voiceEffectInstances.SetCommitPageLimitForTests(pages);
+    }
     std::uint32_t DefinitionCapacity() const {
         return static_cast<std::uint32_t>(m_definitions.size());
     }
@@ -970,8 +980,7 @@ public:
     std::uint32_t DefinitionSlotOf(BindingId id) const {
         const Definition* def = Find(id);
         return def != nullptr
-                   ? static_cast<std::uint32_t>(
-                         def - m_definitions.data())
+                   ? m_definitions.IndexOf(def)
                    : 0xFFFFFFFFu;
     }
 
@@ -1004,7 +1013,8 @@ public:
 private:
     static BindingDependencyIdentity ReadAttachmentDependency(const void* fact, BindingDependencyKind kind) noexcept;
     static BindingDependencyIdentity ReadEffectDependency(const void* fact, BindingDependencyKind kind) noexcept;
-    bool PrepareAttachmentDependency(std::uint32_t slot, std::uint32_t scope) noexcept;
+    bool PrepareAttachmentDependency(Attachment& row, std::uint32_t scope) noexcept;
+    void ReleaseAttachmentDependency(Attachment& row) noexcept;
     void RegisterAttachmentDependency(Attachment& attachment) noexcept;
     bool PrepareEffectDependency(std::uint32_t slot) noexcept;
     std::uint32_t EffectDependencySlot(const VoiceEffectInstance& instance) const noexcept;
@@ -1014,8 +1024,20 @@ private:
     void* m_voiceCatalogContext = nullptr;
     bool (*m_prepareVoiceCatalog)(void*) noexcept = nullptr;
     BindingDependencyIndex m_dependencies;
-    std::uint32_t m_renderBindingCapacity = 0;
+    std::span<const std::uint32_t> VoiceAttachmentRange(VnObjectId object) const noexcept;
+    void IndexVoiceAttachment(const Attachment& row) noexcept;
+    void UnindexVoiceAttachment(const Attachment& row) noexcept;
+    std::vector<std::uint32_t> m_voiceAttachmentIndex;
     Definition* FindMutable(BindingId id);
+    std::uint32_t IndexedDefinition(BindingSourceKind kind, BindingId id) const noexcept;
+    void IndexDefinition(const Definition& row) noexcept;
+    void UnindexDefinition(const Definition& row) noexcept;
+    struct DefinitionIndexEntry {
+        BindingSourceKind kind{};
+        BindingId id{};
+        std::uint32_t slot = UINT32_MAX;
+    };
+    std::vector<DefinitionIndexEntry> m_definitionIndex;
     const Attachment* FindAttachment(BindingId id, std::uint32_t scopeKind,
                                      VnObjectId objectId) const;
     // Shared registration/replace validation: curve rules, known scoped
@@ -1029,8 +1051,8 @@ private:
                                        std::uint32_t transitionMs,
                                        Curve* outCurve);
 
-    std::vector<Definition> m_definitions; // fixed capacity (maxBindings)
-    std::vector<Attachment> m_attachments; // fixed (maxBindingAttachments)
+    GrowingRowStorage<Definition> m_definitions;
+    GrowingRowStorage<Attachment> m_attachments;
     struct AttachmentEvaluation {
         float lastContribution = 0.0f;
         bool lastHadValue = false;
@@ -1038,8 +1060,9 @@ private:
     std::vector<AttachmentEvaluation> m_projectionAttachments;
     bool m_projectionActive = false;
     // Voice-effect apply instances, fixed capacity (sized to maxAttachments).
-    std::vector<VoiceEffectInstance> m_voiceEffectInstances;
+    GrowingRowStorage<VoiceEffectInstance> m_voiceEffectInstances;
     std::uint32_t m_definitionCount = 0;
+    bool m_hasPendingDefinitions = false;
     std::uint32_t m_attachmentCount = 0;
     std::uint32_t m_voiceEffectInstanceCount = 0;
     std::uint64_t m_definitionHighWater = 0;

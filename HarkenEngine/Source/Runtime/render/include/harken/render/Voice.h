@@ -155,19 +155,14 @@ private:
 // voice's post-pan/post-width stereo block (the identical block that feeds its
 // dry bus) scaled by this level, added to the target bus's input — so the
 // spatial image travels with the send. Membership is per-voice (no cycles: a
-// voice receives nothing); the level ramps with the same block-boundary
-// discipline as a bus gain. An inactive slot (targetBusIndex == kInvalidBusIndex
+// voice receives nothing); the level ramps over the requested sample count
+// with the same minimum transition as voice gain after rendering begins. An inactive slot (targetBusIndex == kInvalidBusIndex
 // sentinel, mirrored by active) contributes nothing.
 struct VoiceSendSlot {
     bool active = false;
     std::uint32_t targetBusIndex = 0; // dense bus index of the send target
     std::uint32_t targetBusGeneration = 0;
-    GainRamp gain;
-    bool ramping = false;
-    float rampStartGain = 1.0f;
-    float rampEndGain = 1.0f;
-    std::uint64_t rampBlocksTotal = 0;
-    std::uint64_t rampBlocksDone = 0;
+    OutputGain gain;
 };
 
 struct VoiceTimelineEvent {

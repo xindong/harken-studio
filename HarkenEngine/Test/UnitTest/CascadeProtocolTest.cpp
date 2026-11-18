@@ -116,7 +116,7 @@ TEST(CascadeProtocol, CompactBusPlanesPreserveDirectSendAndFormalImageRouting) {
         send.active = true;
         send.targetBusIndex = 2;
         send.targetBusGeneration = 8;
-        send.gain.SnapTo(.5f);
+        send.gain.Set(.5f);
         if (mode != 0) {
             harness.ctx.voiceSends = {&send, 1};
             harness.ctx.voiceSendActiveCount = 1;

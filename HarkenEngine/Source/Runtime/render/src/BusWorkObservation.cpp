@@ -42,7 +42,7 @@ bool BusTree::LocalRecoveryReady(const Bus& bus) const noexcept {
     const auto plan = m_plans.View(m_currentPlanIndex);
     const auto sends = plan.valid ? plan.Sends(bus.busIndex) : TopologySendRange{};
     for (std::uint32_t s = 0; s < sends.count; ++s)
-        if (plan.sendStates[sends.first + s].ramping) return false;
+        if (plan.sendStates[sends.first + s].gain.remainingFrames != 0) return false;
     for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
         if (bus.fxBypassRamping[slot]) return false;
         if (bus.fxSlots[slot].process == nullptr) continue;

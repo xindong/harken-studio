@@ -24755,8 +24755,12 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
                 const float streamValue = cropInitial && at + frame >= anchor + futureOffset &&
                     at + frame < anchor + futureOffset + 12u ? 0.125f : 0.5f;
                 // Volume binding curves interpolate these negative-dB endpoints in amplitude.
-                const float streamGain = !boundInitial ? 1.0f : at + frame < anchor + config.blockFrames
-                    ? 0.5f : 0.75f;
+                const auto transitionStart = anchor + config.blockFrames;
+                const float progress = at + frame < transitionStart ? 0.f :
+                    std::min(1.f, float(at + frame - transitionStart + 1u) / 240.f);
+                // The later occurrence is a fresh voice and installs its current initial value.
+                const float streamGain = !boundInitial ? 1.0f :
+                    at + frame >= anchor + futureOffset ? 0.75f : 0.5f + 0.25f * progress;
                 const float expected = channel == 0 ? boundFuture ? 0.125f : 0.25f : streamValue * streamGain;
                 EXPECT_NEAR(expected, sample, 0.00001f);
             }

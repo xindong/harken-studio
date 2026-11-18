@@ -538,12 +538,12 @@ TEST(PropertyPressureGolden,
                 renderedBlock, 0, oldAmplitude, renderTolerance);
             const bool atNewAmplitude = BlockIsFlatAt(
                 renderedBlock, 0, newAmplitude, renderTolerance);
-            const bool atPartialAmplitude = BlockIsFlatAt(
-                renderedBlock, 0, partialAmplitude, renderTolerance);
-            EXPECT_TRUE(atOldAmplitude || atPartialAmplitude ||
-                        atNewAmplitude)
-                << "tick " << tick
-                << " rendered tail=" << BlockTail(renderedBlock, 0);
+            // Accepted target changes may be inside their 5 ms ramps. Keep
+            // the publication deadline and final exact plateau checks below.
+            for (const float sample : renderedBlock.left) {
+                EXPECT_GE(sample, std::min({oldAmplitude, partialAmplitude, newAmplitude}) - renderTolerance);
+                EXPECT_LE(sample, std::max({oldAmplitude, partialAmplitude, newAmplitude}) + renderTolerance);
+            }
             if (deferringTick && tick == 0) {
                 EXPECT_TRUE(atOldAmplitude)
                     << "deferred tick " << tick

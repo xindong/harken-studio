@@ -976,6 +976,7 @@ TEST(MeterProbe, UninstallWithdrawsContributionToNeutral) {
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_Update());
     engine->nullBackend.Pump(2);
+    engine->nullBackend.Pump(4); // Measure the settled attenuation.
     harkentest::Capture ducked;
     harkentest::PumpAndCapture(engine, 2, ducked);
     const float duckedPeak = harkentest::Peak(ducked.left);

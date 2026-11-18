@@ -20,11 +20,9 @@ template<class T> std::span<T> Reserve(std::span<std::byte>& storage, std::size_
     return {pointer, count};
 }
 double SendBound(const VoiceSendSlot& send) noexcept {
-    auto gain = send.gain;
-    if (send.ramping) gain.SetBlockTarget(send.rampStartGain, send.rampEndGain,
-        send.rampBlocksDone, send.rampBlocksTotal);
-    // GainRamp is block-linear, with finite prepared endpoints.
-    return std::max(std::abs(static_cast<double>(gain.current)), std::abs(static_cast<double>(gain.target)));
+    // A monotone sample ramp stays within these finite prepared endpoints.
+    return std::max(std::abs(static_cast<double>(send.gain.current)),
+                    std::abs(static_cast<double>(send.gain.target)));
 }
 }
 

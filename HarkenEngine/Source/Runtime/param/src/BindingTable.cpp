@@ -46,7 +46,7 @@ auto DependencyOrder(BindingDependencyKind kind, const BindingDependencyIdentity
 }
 
 BindingDependencyIndex::BindingDependencyIndex(const BindingDependencyIndex& other) {
-    if (!Reset(other.bindingCapacity_, other.targetCapacity_, other.keyCapacity_) ||
+    if (!Reset(0, 0) ||
         !inputs_.ConstructThrough(other.inputs_.ConstructedCount()) ||
         !keys_.ConstructThrough(other.keys_.ConstructedCount()) ||
         !targets_.ConstructThrough(other.targets_.ConstructedCount())) throw harken::detail::LogicPreparationFailure{};
@@ -61,7 +61,9 @@ BindingDependencyIndex::BindingDependencyIndex(const BindingDependencyIndex& oth
     dirtyTargets_.reserve(targets_.ConstructedCount());
     preparedBindings_ = other.preparedBindings_;
     preparedBindingCount_ = other.preparedBindingCount_;
-    paramBindingCapacity_ = other.paramBindingCapacity_;
+    slotCount_ = other.slotCount_;
+    freeSlots_ = other.freeSlots_;
+    freeSlots_.reserve(other.inputs_.ConstructedCount() / 3u);
     root_ = other.root_;
     version_ = other.version_;
 }
@@ -74,23 +76,19 @@ bool BindingDependencyIndex::Reset(std::uint32_t bindingCapacity, std::uint32_t 
     const auto needed = std::uint64_t{bindingCapacity} * 3u + targetCapacity;
     if (keyCapacity == 0 && needed > UINT32_MAX) return false;
     if (keyCapacity == 0) keyCapacity = static_cast<std::uint32_t>(needed);
-    StableRowStorage<InputNode> inputs;
-    StableRowStorage<Key> keys;
-    StableRowStorage<DirtyRow> targets;
-    if (!inputs.Reserve(bindingCapacity * 3u) || !keys.Reserve(keyCapacity) ||
-        !targets.Reserve(targetCapacity)) return false;
+    GrowingRowStorage<InputNode> inputs;
+    GrowingRowStorage<Key> keys;
+    GrowingRowStorage<DirtyRow> targets;
     inputs_.Swap(inputs);
     keys_.Swap(keys);
     targets_.Swap(targets);
     std::vector<std::uint32_t>().swap(freeKeys_);
     std::vector<std::uint32_t>().swap(freeTargets_);
     std::vector<std::uint32_t>().swap(dirtyTargets_);
+    std::vector<std::uint32_t>().swap(freeSlots_);
     std::vector<std::uint64_t>().swap(preparedBindings_);
     preparedBindingCount_ = 0;
-    bindingCapacity_ = bindingCapacity;
-    paramBindingCapacity_ = bindingCapacity;
-    targetCapacity_ = targetCapacity;
-    keyCapacity_ = keyCapacity;
+    slotCount_ = 0;
     version_ = 0;
     return true;
 }
@@ -99,6 +97,7 @@ bool BindingDependencyIndex::PrepareInputs(std::uint32_t count, std::uint32_t oc
                                           StableStoragePreparation* backing) noexcept {
     const auto metadata = [this](std::uint32_t required) noexcept {
         try {
+            freeSlots_.reserve(required / 3u);
             const auto words = (std::uint64_t{required / 3u} + 63u) / 64u;
             if (preparedBindings_.size() < words) preparedBindings_.resize(static_cast<std::size_t>(words), 0);
             return true;
@@ -139,19 +138,19 @@ bool BindingDependencyIndex::PrepareTargets(std::uint32_t count, std::uint32_t o
 bool BindingDependencyIndex::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
     if (out == nullptr || memguard::IsAudioTagged() ||
         std::any_of(out->begin(), out->end(), [](const auto& hold) { return hold.Valid(); })) return false;
-    count = std::min(count, bindingCapacity_);
+    if (count > UINT32_MAX / 4u) return false;
     auto occupiedInputs = inputs_.ConstructedCount() / 3u;
     while (occupiedInputs != 0 && inputs_[(occupiedInputs - 1u) * 3u].fact == nullptr &&
            !HasBindingPreparation(occupiedInputs - 1u)) --occupiedInputs;
+    occupiedInputs = std::max(occupiedInputs, slotCount_);
     const auto occupiedKeys = static_cast<std::uint32_t>(keys_.ConstructedCount() - freeKeys_.size()) +
         preparedBindingCount_ * 4u;
     const auto occupiedTargets = static_cast<std::uint32_t>(targets_.ConstructedCount() - freeTargets_.size()) +
         preparedBindingCount_;
     BackingPreparation candidate;
     if (!PrepareInputs(count * 3u, occupiedInputs * 3u, &candidate[0]) ||
-        !PrepareKeys(static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t{count} * 4u,
-                                                                    keyCapacity_)), occupiedKeys, &candidate[1]) ||
-        !PrepareTargets(std::min(count, targetCapacity_), occupiedTargets, &candidate[2])) return false;
+        !PrepareKeys(count * 4u, occupiedKeys, &candidate[1]) ||
+        !PrepareTargets(count, occupiedTargets, &candidate[2])) return false;
     *out = std::move(candidate);
     return true;
 }
@@ -163,7 +162,7 @@ BindingDependencyIndex::BackingUse BindingDependencyIndex::UseBacking(const Back
 }
 
 bool BindingDependencyIndex::PrepareBinding(std::uint32_t slot) noexcept {
-    if (memguard::IsAudioTagged() || slot >= bindingCapacity_ ||
+    if (memguard::IsAudioTagged() || slot >= UINT32_MAX / 3u ||
         !PrepareInputs((slot + 1u) * 3u, 0)) return false;
     if (HasBindingPreparation(slot)) return true;
     if (inputs_[slot * 3u].generation == UINT32_MAX) return false;
@@ -171,12 +170,31 @@ bool BindingDependencyIndex::PrepareBinding(std::uint32_t slot) noexcept {
         std::uint64_t{preparedBindingCount_ + 1u} * 4u;
     const auto targetNeed = std::uint64_t{targets_.ConstructedCount() - freeTargets_.size()} +
         preparedBindingCount_ + 1u;
-    if (keyNeed > keyCapacity_ || targetNeed > targetCapacity_ ||
+    if (keyNeed > UINT32_MAX || targetNeed > UINT32_MAX ||
         !PrepareKeys(static_cast<std::uint32_t>(keyNeed), 0) ||
         !PrepareTargets(static_cast<std::uint32_t>(targetNeed), 0)) return false;
     preparedBindings_[slot / 64u] |= std::uint64_t{1} << (slot % 64u);
     ++preparedBindingCount_;
     return true;
+}
+
+bool BindingDependencyIndex::AllocateBindingSlot(std::uint32_t* out) noexcept {
+    if (out == nullptr || memguard::IsAudioTagged()) return false;
+    const bool append = freeSlots_.empty();
+    const auto slot = append ? slotCount_ : freeSlots_.back();
+    if (!PrepareBinding(slot)) return false;
+    if (append) ++slotCount_;
+    else freeSlots_.pop_back();
+    *out = slot;
+    return true;
+}
+
+void BindingDependencyIndex::ReleaseBindingSlot(std::uint32_t slot) noexcept {
+    if (slot == UINT32_MAX) return;
+    assert(slot < slotCount_ && inputs_[slot * 3u].fact == nullptr);
+    CancelBindingPreparation(slot);
+    // Exhausted generations are retired permanently, never recycled.
+    if (inputs_[slot * 3u].generation != UINT32_MAX) freeSlots_.push_back(slot);
 }
 
 bool BindingDependencyIndex::HasBindingPreparation(std::uint32_t slot) const noexcept {
@@ -216,9 +234,10 @@ std::uint32_t BindingDependencyIndex::Find(BindingDependencyKind kind,
     auto key = root_;
     const auto wanted = DependencyOrder(kind, identity);
     while (key != UINT32_MAX) {
-        const auto current = DependencyOrder(Kind(keys_[key]), Identity(keys_[key]));
+        const auto& row = keys_[key];
+        const auto current = DependencyOrder(Kind(row), Identity(row));
         if (wanted == current) return key;
-        key = wanted < current ? keys_[key].left : keys_[key].right;
+        key = wanted < current ? row.left : row.right;
     }
     return UINT32_MAX;
 }
@@ -273,11 +292,12 @@ std::uint32_t BindingDependencyIndex::EnsureKey(BindingDependencyKind kind, std:
     const auto wanted = DependencyOrder(kind, identity);
     bool left = false;
     while (current != UINT32_MAX) {
-        const auto candidate = DependencyOrder(Kind(keys_[current]), Identity(keys_[current]));
+        const auto& row = keys_[current];
+        const auto candidate = DependencyOrder(Kind(row), Identity(row));
         if (wanted == candidate) return current;
         parent = current;
         left = wanted < candidate;
-        current = left ? keys_[current].left : keys_[current].right;
+        current = left ? row.left : row.right;
     }
     assert(!freeKeys_.empty());
     const auto slot = freeKeys_.back();
@@ -349,9 +369,14 @@ bool BindingDependencyIndex::Register(std::uint32_t slot, const void* fact, Read
     const auto targetFound = Find(BindingDependencyKind::Target, read(fact, BindingDependencyKind::Target));
     needed += targetFound == UINT32_MAX;
     const auto inputKind = probe ? BindingDependencyKind::Probe : BindingDependencyKind::Global;
-    needed += Find(inputKind, read(fact, inputKind)) == UINT32_MAX;
-    if (local && !probe) needed += Find(BindingDependencyKind::Local, read(fact, BindingDependencyKind::Local)) == UINT32_MAX;
-    if (liveDefinition) needed += Find(BindingDependencyKind::Definition, read(fact, BindingDependencyKind::Definition)) == UINT32_MAX;
+    const auto inputFound = Find(inputKind, read(fact, inputKind));
+    const auto localFound = local && !probe
+        ? Find(BindingDependencyKind::Local, read(fact, BindingDependencyKind::Local)) : UINT32_MAX;
+    const auto definitionFound = liveDefinition
+        ? Find(BindingDependencyKind::Definition, read(fact, BindingDependencyKind::Definition)) : UINT32_MAX;
+    needed += inputFound == UINT32_MAX;
+    if (local && !probe) needed += localFound == UINT32_MAX;
+    if (liveDefinition) needed += definitionFound == UINT32_MAX;
     if (freeKeys_.size() < needed || (targetFound == UINT32_MAX && freeTargets_.empty())) return false;
     const auto generation = primary.generation;
     for (std::uint32_t i = 0; i < 3; ++i) {
@@ -362,7 +387,9 @@ bool BindingDependencyIndex::Register(std::uint32_t slot, const void* fact, Read
         node.generation = generation;
         node.order = order;
     }
-    const auto target = EnsureKey(BindingDependencyKind::Target, slot * 3u);
+    // Key slots remain stable across insertions and tree rotations.
+    const auto target = targetFound != UINT32_MAX ? targetFound
+        : EnsureKey(BindingDependencyKind::Target, slot * 3u);
     auto& key = keys_[target];
     auto targetRow = UINT32_MAX;
     if (key.count != 0) targetRow = key.locator.targetRow;
@@ -383,9 +410,11 @@ bool BindingDependencyIndex::Register(std::uint32_t slot, const void* fact, Read
     if (key.count++ == 0) { key.locator = Locator{}; Reanchor(key, slot * 3u); }
     key.locator.targetRow = targetRow;
     for (std::uint32_t i = 0; i < 3; ++i) inputs_[slot * 3u + i].target = target;
-    LinkSource(slot * 3u, EnsureKey(probe ? BindingDependencyKind::Probe : BindingDependencyKind::Global, slot * 3u));
-    if (local && !probe) LinkSource(slot * 3u + 1u, EnsureKey(BindingDependencyKind::Local, slot * 3u + 1u));
-    if (liveDefinition) LinkSource(slot * 3u + 2u, EnsureKey(BindingDependencyKind::Definition, slot * 3u + 2u));
+    LinkSource(slot * 3u, inputFound != UINT32_MAX ? inputFound : EnsureKey(inputKind, slot * 3u));
+    if (local && !probe) LinkSource(slot * 3u + 1u, localFound != UINT32_MAX ? localFound
+        : EnsureKey(BindingDependencyKind::Local, slot * 3u + 1u));
+    if (liveDefinition) LinkSource(slot * 3u + 2u, definitionFound != UINT32_MAX ? definitionFound
+        : EnsureKey(BindingDependencyKind::Definition, slot * 3u + 2u));
     *out = {slot, generation};
     CancelBindingPreparation(slot);
     MarkTarget(target);
@@ -564,9 +593,20 @@ bool BindingDependencyIndex::CommitTarget(BindingDirtyTarget target, std::uint64
     return true;
 }
 
+std::uint32_t BindingDependencyIndex::BusPublicationTargetCount() const noexcept {
+    std::uint32_t count = 0;
+    for (const auto& key : keys_) {
+        if (key.count == 0 || Kind(key) != BindingDependencyKind::Target) continue;
+        const auto identity = Identity(key);
+        if (identity.scope == kTargetScopeBus &&
+            identity.detail == static_cast<std::uint32_t>(BindingSourceKind::Variable)) ++count;
+    }
+    return count;
+}
+
 std::size_t BindingDependencyIndex::StorageBytes() const noexcept {
     return inputs_.RequestedBytes() + keys_.RequestedBytes() + targets_.RequestedBytes() +
-        (freeKeys_.capacity() + freeTargets_.capacity() + dirtyTargets_.capacity()) * sizeof(std::uint32_t) +
+        (freeKeys_.capacity() + freeTargets_.capacity() + dirtyTargets_.capacity() + freeSlots_.capacity()) * sizeof(std::uint32_t) +
         preparedBindings_.capacity() * sizeof(std::uint64_t);
 }
 
@@ -574,30 +614,41 @@ BindingTable::BindingTable(std::uint32_t maxDefinitions,
                            std::uint32_t maxAttachments,
                            std::uint32_t maxBuses, std::uint32_t renderBindingCapacity,
                            std::uint32_t targetCapacity)
-    : m_renderBindingCapacity(renderBindingCapacity),
-      m_definitions(maxDefinitions),
-      m_attachments(maxAttachments),
-      m_projectionAttachments(maxAttachments),
-      m_voiceEffectInstances(maxAttachments) {
+    : m_projectionAttachments(maxAttachments) {
+    if (!m_definitions.ConstructThrough(maxDefinitions) ||
+        !m_attachments.ConstructThrough(maxAttachments) ||
+        !m_voiceEffectInstances.ConstructThrough(maxAttachments))
+        throw harken::detail::LogicPreparationFailure{};
+    m_voiceAttachmentIndex.reserve(maxAttachments);
+    m_definitionIndex.reserve(maxDefinitions);
     (void)maxBuses;
     const auto bindings = std::uint64_t{renderBindingCapacity} + 2ull * maxAttachments;
     const auto targets = targetCapacity == 0 ? bindings + 3ull * kVariableSliceTargetHardLimit : targetCapacity;
     if (bindings > UINT32_MAX || targets > UINT32_MAX ||
         !m_dependencies.Reset(static_cast<std::uint32_t>(bindings), static_cast<std::uint32_t>(targets)))
         throw harken::detail::LogicPreparationFailure{};
-    m_dependencies.paramBindingCapacity_ = renderBindingCapacity;
 }
 
 BindingTable::BindingTable(const BindingTable& other)
     : m_voiceCatalogContext(nullptr), m_prepareVoiceCatalog(nullptr),
-      m_dependencies(other.m_dependencies), m_renderBindingCapacity(other.m_renderBindingCapacity),
-      m_definitions(other.m_definitions), m_attachments(other.m_attachments),
+      m_dependencies(other.m_dependencies),
       m_projectionAttachments(other.m_projectionAttachments), m_projectionActive(other.m_projectionActive),
-      m_voiceEffectInstances(other.m_voiceEffectInstances),
-      m_definitionCount(other.m_definitionCount), m_attachmentCount(other.m_attachmentCount),
+      m_definitionCount(other.m_definitionCount), m_hasPendingDefinitions(other.m_hasPendingDefinitions),
+      m_attachmentCount(other.m_attachmentCount),
       m_voiceEffectInstanceCount(other.m_voiceEffectInstanceCount),
       m_definitionHighWater(other.m_definitionHighWater), m_definitionRefusedCount(other.m_definitionRefusedCount),
       m_attachmentHighWater(other.m_attachmentHighWater), m_attachmentRefusedCount(other.m_attachmentRefusedCount) {
+    if (!m_definitions.ConstructThrough(other.m_definitions.size()) ||
+        !m_attachments.ConstructThrough(other.m_attachments.size()) ||
+        !m_voiceEffectInstances.ConstructThrough(other.m_voiceEffectInstances.size()))
+        throw harken::detail::LogicPreparationFailure{};
+    m_definitionIndex = other.m_definitionIndex;
+    m_definitionIndex.reserve(other.m_definitions.size());
+    m_voiceAttachmentIndex = other.m_voiceAttachmentIndex;
+    m_voiceAttachmentIndex.reserve(other.m_attachments.size());
+    std::copy(other.m_definitions.begin(), other.m_definitions.end(), m_definitions.begin());
+    std::copy(other.m_attachments.begin(), other.m_attachments.end(), m_attachments.begin());
+    std::copy(other.m_voiceEffectInstances.begin(), other.m_voiceEffectInstances.end(), m_voiceEffectInstances.begin());
     for (auto& row : m_attachments) {
         if (!row.used) continue;
         row.dependencyDefinition = &m_definitions[row.definitionIndex];
@@ -609,6 +660,75 @@ BindingTable::BindingTable(const BindingTable& other)
         row.dependencyDefinition = &m_definitions[row.definitionIndex];
         if (row.dependency.Valid()) (void)m_dependencies.Relocate(row.dependency, &row, &ReadEffectDependency);
     }
+}
+
+bool BindingTable::PrepareCapacity(std::uint64_t definitions, std::uint64_t attachments) noexcept {
+    if (definitions > UINT32_MAX || attachments > UINT32_MAX || m_projectionActive) return false;
+    const auto grow = [](std::uint32_t current, std::uint64_t required) {
+        return static_cast<std::uint32_t>(std::min<std::uint64_t>(UINT32_MAX,
+            std::max(required, std::uint64_t{current} * 2u)));
+    };
+    if (definitions > m_definitions.size() &&
+        !m_definitions.ConstructThrough(grow(m_definitions.size(), definitions),
+            [this](std::uint32_t count) noexcept {
+                try { m_definitionIndex.reserve(count); return true; }
+                catch (...) {
+                    detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+                    return false;
+                }
+            })) return false;
+    if (attachments > m_attachments.size() &&
+        !m_attachments.ConstructThrough(grow(m_attachments.size(), attachments),
+            [this](std::uint32_t count) noexcept {
+                try {
+                    m_projectionAttachments.resize(count);
+                    m_voiceAttachmentIndex.reserve(count);
+                    return true;
+                } catch (...) {
+                    detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+                    return false;
+                }
+            })) return false;
+    return true;
+}
+
+bool BindingTable::PrepareEffectInstanceCapacity(std::uint64_t count) noexcept {
+    if (count > UINT32_MAX) return false;
+    if (count <= m_voiceEffectInstances.size()) return true;
+    const auto capacity = static_cast<std::uint32_t>(std::min<std::uint64_t>(UINT32_MAX,
+        std::max(count, std::uint64_t{m_voiceEffectInstances.size()} * 2u)));
+    return m_voiceEffectInstances.ConstructThrough(capacity);
+}
+
+std::span<const std::uint32_t> BindingTable::VoiceAttachmentRange(VnObjectId object) const noexcept {
+    const auto begin = std::lower_bound(m_voiceAttachmentIndex.begin(), m_voiceAttachmentIndex.end(), object,
+        [this](std::uint32_t slot, VnObjectId id) { return m_attachments[slot].objectId < id; });
+    const auto end = std::upper_bound(begin, m_voiceAttachmentIndex.end(), object,
+        [this](VnObjectId id, std::uint32_t slot) { return id < m_attachments[slot].objectId; });
+    return {begin, end};
+}
+
+void BindingTable::IndexVoiceAttachment(const Attachment& row) noexcept {
+    if (row.scopeKind != kTargetScopeVoice ||
+        m_definitions[row.definitionIndex].sourceKind != BindingSourceKind::Variable) return;
+    const auto slot = m_attachments.IndexOf(&row);
+    const auto at = std::lower_bound(m_voiceAttachmentIndex.begin(), m_voiceAttachmentIndex.end(), slot,
+        [this](std::uint32_t a, std::uint32_t b) {
+            return std::pair(m_attachments[a].objectId, a) < std::pair(m_attachments[b].objectId, b);
+        });
+    assert(m_voiceAttachmentIndex.size() < m_voiceAttachmentIndex.capacity());
+    m_voiceAttachmentIndex.insert(at, slot);
+}
+
+void BindingTable::UnindexVoiceAttachment(const Attachment& row) noexcept {
+    if (row.scopeKind != kTargetScopeVoice ||
+        m_definitions[row.definitionIndex].sourceKind != BindingSourceKind::Variable) return;
+    const auto slot = m_attachments.IndexOf(&row);
+    const auto at = std::lower_bound(m_voiceAttachmentIndex.begin(), m_voiceAttachmentIndex.end(), slot,
+        [this](std::uint32_t a, std::uint32_t b) {
+            return std::pair(m_attachments[a].objectId, a) < std::pair(m_attachments[b].objectId, b);
+        });
+    if (at != m_voiceAttachmentIndex.end() && *at == slot) m_voiceAttachmentIndex.erase(at);
 }
 
 BindingDependencyIdentity BindingTable::ReadAttachmentDependency(const void* fact, BindingDependencyKind kind) noexcept {
@@ -646,35 +766,46 @@ BindingDependencyIdentity BindingTable::ReadEffectDependency(const void* fact, B
     return identity;
 }
 
-bool BindingTable::PrepareAttachmentDependency(std::uint32_t slot, std::uint32_t scope) noexcept {
+bool BindingTable::PrepareAttachmentDependency(Attachment& row, std::uint32_t scope) noexcept {
     if (scope == kTargetScopeVoice)
         return m_prepareVoiceCatalog == nullptr || m_prepareVoiceCatalog(m_voiceCatalogContext);
-    return m_dependencies.PrepareBinding(m_renderBindingCapacity + slot);
+    return m_dependencies.AllocateBindingSlot(&row.dependencySlot);
+}
+
+void BindingTable::ReleaseAttachmentDependency(Attachment& row) noexcept {
+    UnindexVoiceAttachment(row);
+    if (row.dependency.Valid()) (void)m_dependencies.Remove(row.dependency);
+    m_dependencies.ReleaseBindingSlot(row.dependencySlot);
+    row.dependency = {};
+    row.dependencySlot = UINT32_MAX;
 }
 
 void BindingTable::RegisterAttachmentDependency(Attachment& row) noexcept {
+    IndexVoiceAttachment(row);
     row.dependencyDefinition = &m_definitions[row.definitionIndex];
     if (row.scopeKind == kTargetScopeVoice && row.dependencyDefinition->sourceKind == BindingSourceKind::Variable) return;
-    const auto slot = m_renderBindingCapacity + static_cast<std::uint32_t>(&row - m_attachments.data());
-    const bool registered = m_dependencies.Register(slot, &row, &ReadAttachmentDependency, slot, false, true,
+    const auto slot = row.dependencySlot;
+    const bool registered = m_dependencies.Register(slot, &row, &ReadAttachmentDependency, m_attachments.IndexOf(&row), false, true,
         row.dependencyDefinition->sourceKind == BindingSourceKind::MeterProbe, &row.dependency);
     assert(registered);
     (void)registered;
 }
 
 bool BindingTable::PrepareEffectDependency(std::uint32_t slot) noexcept {
-    return m_dependencies.PrepareBinding(m_renderBindingCapacity + static_cast<std::uint32_t>(m_attachments.size()) + slot);
+    auto& row = m_voiceEffectInstances[slot];
+    return row.dependencySlot == UINT32_MAX
+        ? m_dependencies.AllocateBindingSlot(&row.dependencySlot)
+        : m_dependencies.PrepareBinding(row.dependencySlot);
 }
 
 std::uint32_t BindingTable::EffectDependencySlot(const VoiceEffectInstance& row) const noexcept {
-    return m_renderBindingCapacity + static_cast<std::uint32_t>(m_attachments.size()) +
-        static_cast<std::uint32_t>(&row - m_voiceEffectInstances.data());
+    return row.dependencySlot;
 }
 
 void BindingTable::RegisterEffectDependency(VoiceEffectInstance& row) noexcept {
     row.dependencyDefinition = &m_definitions[row.definitionIndex];
     const auto slot = EffectDependencySlot(row);
-    const bool registered = m_dependencies.Register(slot, &row, &ReadEffectDependency, slot, true, true, false, &row.dependency);
+    const bool registered = m_dependencies.Register(slot, &row, &ReadEffectDependency, m_voiceEffectInstances.IndexOf(&row), true, true, false, &row.dependency);
     assert(registered);
     (void)registered;
 }
@@ -690,7 +821,7 @@ bool BindingTable::RefreshEffectDependencyEmitter(VoiceEffectInstance& row, VnEm
         row.dependencyEmitter = 0;
         return true;
     }
-    if (!PrepareEffectDependency(static_cast<std::uint32_t>(&row - m_voiceEffectInstances.data()))) return false;
+    if (!PrepareEffectDependency(m_voiceEffectInstances.IndexOf(&row))) return false;
     RemoveEffectDependency(row);
     row.dependencyEmitter = emitter;
     RegisterEffectDependency(row);
@@ -792,11 +923,6 @@ VnResult BindingTable::CanRegister(BindingId id, VnVariableId variableId,
     if (Find(id) != nullptr) {
         return VN_IN_USE;
     }
-    // The definition count tracks used slots exactly, so a full count is
-    // exactly "no free slot" — the same refusal the slot scan produces.
-    if (m_definitionCount >= m_definitions.size()) {
-        return kResultNoBinding;
-    }
     return VN_OK;
 }
 
@@ -820,6 +946,8 @@ VnResult BindingTable::RegisterBinding(BindingId id, VnVariableId variableId,
         }
         return admitted;
     }
+    if (!PrepareCapacity(std::uint64_t{m_definitionCount} + 1u, m_attachmentCount))
+        return VN_OUT_OF_MEMORY;
     // Rebuild the validated curve: the admission proved this set succeeds,
     // and SetPoints is pure, so the admission/commit split shares no
     // scratch state.
@@ -852,6 +980,7 @@ VnResult BindingTable::RegisterBinding(BindingId id, VnVariableId variableId,
     slot->curve = curve;
     slot->transitionMs = transitionMs;
     slot->ownerCookie = ownerCookie;
+    IndexDefinition(*slot);
     ++m_definitionCount;
     if (m_definitionCount > m_definitionHighWater) {
         m_definitionHighWater = m_definitionCount;
@@ -867,6 +996,7 @@ VnResult BindingTable::UnregisterBinding(BindingId id) {
     if (AnyAttachmentOf(id)) {
         return VN_IN_USE;
     }
+    UnindexDefinition(*def);
     *def = Definition{};
     --m_definitionCount;
     return VN_OK;
@@ -903,6 +1033,7 @@ VnResult BindingTable::ReplaceBinding(BindingId id, VnVariableId variableId,
     def->pendingCurve = curve;
     def->pendingTransitionMs = transitionMs;
     def->pendingInstall = true;
+    m_hasPendingDefinitions = true;
     return VN_OK;
 }
 
@@ -975,7 +1106,7 @@ VnResult BindingTable::PrepareReplaceDefinition(
     value.pendingInstall = true;
     out->m_operation = PreparedDefinitionToken::Operation::Replace;
     out->m_slotIndex =
-        static_cast<std::uint32_t>(def - m_definitions.data());
+        m_definitions.IndexOf(def);
     out->m_value = value;
     return VN_OK;
 }
@@ -996,7 +1127,7 @@ VnResult BindingTable::PrepareRemoveDefinition(
     }
     out->m_operation = PreparedDefinitionToken::Operation::Remove;
     out->m_slotIndex =
-        static_cast<std::uint32_t>(def - m_definitions.data());
+        m_definitions.IndexOf(def);
     out->m_value = *def;
     return VN_OK;
 }
@@ -1017,6 +1148,7 @@ void BindingTable::CommitPreparedDefinition(
     switch (token->m_operation) {
     case PreparedDefinitionToken::Operation::Add:
         slot = token->m_value;
+        IndexDefinition(slot);
         ++m_definitionCount;
         if (m_definitionCount > m_definitionHighWater) {
             m_definitionHighWater = m_definitionCount;
@@ -1032,8 +1164,10 @@ void BindingTable::CommitPreparedDefinition(
             ++slot.revision;
             m_dependencies.NotifyDefinition(slot.id);
         }
+        m_hasPendingDefinitions |= slot.pendingInstall;
         break;
     case PreparedDefinitionToken::Operation::Remove:
+        UnindexDefinition(slot);
         slot = Definition{};
         --m_definitionCount;
         break;
@@ -1055,9 +1189,6 @@ VnResult BindingTable::CanAttach(BindingId id, std::uint32_t scopeKind,
     if (FindAttachment(id, scopeKind, objectId) != nullptr) {
         return VN_IN_USE;
     }
-    if (m_attachmentCount >= m_attachments.size()) {
-        return kResultNoBinding;
-    }
     return VN_OK;
 }
 
@@ -1074,17 +1205,19 @@ VnResult BindingTable::Attach(BindingId id, std::uint32_t scopeKind,
         }
         return admitted;
     }
+    if (!PrepareCapacity(m_definitionCount, std::uint64_t{m_attachmentCount} + 1u))
+        return VN_OUT_OF_MEMORY;
     const Definition* def = Find(id);
     for (std::uint32_t i = 0; i < m_attachments.size(); ++i) {
         Attachment& a = m_attachments[i];
         if (a.used) {
             continue;
         }
-        if (!PrepareAttachmentDependency(i, scopeKind)) return kResultNoBinding;
+        if (!PrepareAttachmentDependency(a, scopeKind)) return kResultNoBinding;
         a.used = true;
         a.bindingId = id;
         a.definitionIndex =
-            static_cast<std::uint32_t>(def - m_definitions.data());
+            m_definitions.IndexOf(def);
         a.scopeKind = scopeKind;
         a.objectId = objectId;
         a.busIndex = busIndex;
@@ -1121,7 +1254,7 @@ VnResult BindingTable::Detach(BindingId id, std::uint32_t scopeKind,
                 store->MarkVariableChanged(a.busIndex, def.targetId,
                                            def.transitionMs);
             }
-            if (a.dependency.Valid()) (void)m_dependencies.Remove(a.dependency);
+            ReleaseAttachmentDependency(a);
             a = Attachment{};
             --m_attachmentCount;
             return VN_OK;
@@ -1156,13 +1289,13 @@ VnResult BindingTable::PrepareAttach(
     if (m_attachments[slotIndex].used && !slotWillBeVacant) {
         return kResultNoBinding;
     }
-    if (!PrepareAttachmentDependency(slotIndex, scopeKind)) return kResultNoBinding;
     Attachment value;
+    if (!PrepareAttachmentDependency(value, scopeKind)) return kResultNoBinding;
     value.used = true;
     value.bindingId = id;
     value.definitionIndex =
         !definitionWillBeAdded && def != nullptr
-            ? static_cast<std::uint32_t>(def - m_definitions.data())
+            ? m_definitions.IndexOf(def)
             : preparedDefinitionIndex;
     value.scopeKind = scopeKind;
     value.objectId = objectId;
@@ -1224,7 +1357,7 @@ void BindingTable::CancelPreparedAttachment(
     if (token != nullptr) {
         if (token->m_operation == PreparedAttachmentToken::Operation::Add &&
             token->m_value.scopeKind != kTargetScopeVoice)
-            m_dependencies.CancelBindingPreparation(m_renderBindingCapacity + token->m_slotIndex);
+            m_dependencies.ReleaseBindingSlot(token->m_value.dependencySlot);
         *token = PreparedAttachmentToken{};
     }
 }
@@ -1253,31 +1386,50 @@ void BindingTable::CommitPreparedAttachment(
             store->MarkVariableChanged(removed.busIndex, def.targetId,
                                        def.transitionMs);
         }
-        if (slot.dependency.Valid()) (void)m_dependencies.Remove(slot.dependency);
+        ReleaseAttachmentDependency(slot);
         slot = Attachment{};
         --m_attachmentCount;
     }
     *token = PreparedAttachmentToken{};
 }
 
+std::uint32_t BindingTable::IndexedDefinition(BindingSourceKind kind, BindingId id) const noexcept {
+    const auto key = std::pair(kind, id);
+    const auto at = std::lower_bound(m_definitionIndex.begin(), m_definitionIndex.end(), key,
+        [](const DefinitionIndexEntry& row, const auto& sought) {
+            return std::pair(row.kind, row.id) < sought;
+        });
+    return at != m_definitionIndex.end() && at->kind == kind && at->id == id ? at->slot : UINT32_MAX;
+}
+
+void BindingTable::IndexDefinition(const Definition& row) noexcept {
+    const auto key = std::pair(row.sourceKind, row.id);
+    const auto at = std::lower_bound(m_definitionIndex.begin(), m_definitionIndex.end(), key,
+        [](const DefinitionIndexEntry& value, const auto& sought) {
+            return std::pair(value.kind, value.id) < sought;
+        });
+    assert(m_definitionIndex.size() < m_definitionIndex.capacity());
+    m_definitionIndex.insert(at, {row.sourceKind, row.id, m_definitions.IndexOf(&row)});
+}
+
+void BindingTable::UnindexDefinition(const Definition& row) noexcept {
+    const auto key = std::pair(row.sourceKind, row.id);
+    const auto at = std::lower_bound(m_definitionIndex.begin(), m_definitionIndex.end(), key,
+        [](const DefinitionIndexEntry& value, const auto& sought) {
+            return std::pair(value.kind, value.id) < sought;
+        });
+    assert(at != m_definitionIndex.end() && at->slot == m_definitions.IndexOf(&row));
+    m_definitionIndex.erase(at);
+}
+
 const BindingTable::Definition* BindingTable::Find(BindingId id) const {
-    for (const Definition& def : m_definitions) {
-        if (def.used && def.sourceKind == BindingSourceKind::Variable &&
-            def.id == id) {
-            return &def;
-        }
-    }
-    return nullptr;
+    const auto slot = IndexedDefinition(BindingSourceKind::Variable, id);
+    return slot == UINT32_MAX ? nullptr : &m_definitions[slot];
 }
 
 BindingTable::Definition* BindingTable::FindMutable(BindingId id) {
-    for (Definition& def : m_definitions) {
-        if (def.used && def.sourceKind == BindingSourceKind::Variable &&
-            def.id == id) {
-            return &def;
-        }
-    }
-    return nullptr;
+    const auto slot = IndexedDefinition(BindingSourceKind::Variable, id);
+    return slot == UINT32_MAX ? nullptr : &m_definitions[slot];
 }
 
 VnResult BindingTable::RegisterProbeBinding(
@@ -1293,9 +1445,8 @@ VnResult BindingTable::RegisterProbeBinding(
     if (!curve.SetPoints(points, handles, pointCount)) {
         return VN_INVALID_ARG;
     }
-    if (m_definitionCount >= m_definitions.size()) {
-        return kResultNoBinding;
-    }
+    if (!PrepareCapacity(std::uint64_t{m_definitionCount} + 1u, m_attachmentCount))
+        return VN_OUT_OF_MEMORY;
     for (Definition& def : m_definitions) {
         if (def.used) {
             continue;
@@ -1310,6 +1461,7 @@ VnResult BindingTable::RegisterProbeBinding(
         def.targetId = targetId;
         def.curve = curve;
         def.transitionMs = transitionMs;
+        IndexDefinition(def);
         ++m_definitionCount;
         if (m_definitionCount > m_definitionHighWater) {
             m_definitionHighWater = m_definitionCount;
@@ -1327,20 +1479,19 @@ VnResult BindingTable::AttachProbe(BindingId id, std::uint32_t scopeKind,
     if (def == nullptr) {
         return VN_UNKNOWN_ID;
     }
-    if (m_attachmentCount >= m_attachments.size()) {
-        return kResultNoBinding;
-    }
+    if (!PrepareCapacity(m_definitionCount, std::uint64_t{m_attachmentCount} + 1u))
+        return VN_OUT_OF_MEMORY;
     for (Attachment& a : m_attachments) {
         if (a.used) {
             continue;
         }
-        const auto slot = static_cast<std::uint32_t>(&a - m_attachments.data());
-        if (!m_dependencies.PrepareBinding(m_renderBindingCapacity + slot)) return kResultNoBinding;
+        const auto slot = m_attachments.IndexOf(&a);
         a = Attachment{};
+        if (!m_dependencies.AllocateBindingSlot(&a.dependencySlot)) return kResultNoBinding;
         a.used = true;
         a.bindingId = id;
         a.definitionIndex =
-            static_cast<std::uint32_t>(def - m_definitions.data());
+            m_definitions.IndexOf(def);
         a.scopeKind = scopeKind;
         a.objectId = objectId;
         a.instanceHandle = instanceHandle;
@@ -1356,26 +1507,14 @@ VnResult BindingTable::AttachProbe(BindingId id, std::uint32_t scopeKind,
     return kResultNoBinding;
 }
 
-BindingTable::Definition* BindingTable::FindProbeDefinition(
-    BindingId id) noexcept {
-    for (Definition& def : m_definitions) {
-        if (def.used && def.sourceKind == BindingSourceKind::MeterProbe &&
-            def.id == id) {
-            return &def;
-        }
-    }
-    return nullptr;
+BindingTable::Definition* BindingTable::FindProbeDefinition(BindingId id) noexcept {
+    const auto slot = IndexedDefinition(BindingSourceKind::MeterProbe, id);
+    return slot == UINT32_MAX ? nullptr : &m_definitions[slot];
 }
 
-const BindingTable::Definition* BindingTable::FindProbeDefinition(
-    BindingId id) const noexcept {
-    for (const Definition& def : m_definitions) {
-        if (def.used && def.sourceKind == BindingSourceKind::MeterProbe &&
-            def.id == id) {
-            return &def;
-        }
-    }
-    return nullptr;
+const BindingTable::Definition* BindingTable::FindProbeDefinition(BindingId id) const noexcept {
+    const auto slot = IndexedDefinition(BindingSourceKind::MeterProbe, id);
+    return slot == UINT32_MAX ? nullptr : &m_definitions[slot];
 }
 
 BindingTable::Attachment* BindingTable::FindProbeAttachment(
@@ -1395,7 +1534,7 @@ BindingTable::Attachment* BindingTable::FindProbeAttachment(
 
 void BindingTable::ReleaseProbeAttachment(Attachment& row) noexcept {
     if (row.used) {
-        if (row.dependency.Valid()) (void)m_dependencies.Remove(row.dependency);
+        ReleaseAttachmentDependency(row);
         row = Attachment{};
         --m_attachmentCount;
     }
@@ -1403,6 +1542,7 @@ void BindingTable::ReleaseProbeAttachment(Attachment& row) noexcept {
 
 void BindingTable::ReleaseProbeDefinition(Definition& row) noexcept {
     if (row.used && row.sourceKind == BindingSourceKind::MeterProbe) {
+        UnindexDefinition(row);
         row = Definition{};
         --m_definitionCount;
     }
@@ -1572,12 +1712,7 @@ VnResult BindingTable::CanApplyVoiceEffectInstance(
             return VN_IN_USE;
         }
     }
-    for (const VoiceEffectInstance& inst : m_voiceEffectInstances) {
-        if (!inst.used) {
-            return VN_OK;
-        }
-    }
-    return kResultNoBinding;
+    return VN_OK;
 }
 
 VnResult BindingTable::ApplyVoiceEffectInstance(BindingId id,
@@ -1594,12 +1729,14 @@ VnResult BindingTable::ApplyVoiceEffectInstance(BindingId id,
         }
         return admitted;
     }
+    if (!PrepareEffectInstanceCapacity(std::uint64_t{m_voiceEffectInstanceCount} + 1u))
+        return VN_OUT_OF_MEMORY;
     const Definition* def = Find(id);
     const std::uint32_t defIndex =
-        static_cast<std::uint32_t>(def - m_definitions.data());
+        m_definitions.IndexOf(def);
     for (VoiceEffectInstance& inst : m_voiceEffectInstances) {
         if (!inst.used) {
-            if (!PrepareEffectDependency(static_cast<std::uint32_t>(&inst - m_voiceEffectInstances.data())))
+            if (!PrepareEffectDependency(m_voiceEffectInstances.IndexOf(&inst)))
                 return kResultNoBinding;
             inst.used = true;
             inst.parked = false;
@@ -1633,14 +1770,19 @@ VnResult BindingTable::ReserveVoiceEffectInstances(
     if (preflight != VN_OK) {
         return preflight;
     }
+    if (!PrepareEffectInstanceCapacity(std::uint64_t{m_voiceEffectInstanceCount} + count))
+        return VN_OUT_OF_MEMORY;
     std::uint32_t preparedCount = 0;
     for (std::uint32_t slot = 0; slot < m_voiceEffectInstances.size() && preparedCount < count; ++slot) {
         if (m_voiceEffectInstances[slot].used) continue;
         if (!PrepareEffectDependency(slot)) {
             for (std::uint32_t rollback = 0; rollback < slot; ++rollback)
                 if (!m_voiceEffectInstances[rollback].used)
-                    m_dependencies.CancelBindingPreparation(m_renderBindingCapacity +
-                        static_cast<std::uint32_t>(m_attachments.size()) + rollback);
+                {
+                    auto& row = m_voiceEffectInstances[rollback];
+                    m_dependencies.ReleaseBindingSlot(row.dependencySlot);
+                    row.dependencySlot = UINT32_MAX;
+                }
             return kResultNoBinding;
         }
         ++preparedCount;
@@ -1656,7 +1798,7 @@ VnResult BindingTable::ReserveVoiceEffectInstances(
         inst.pending = true;
         inst.bindingId = ids[committed];
         inst.definitionIndex =
-            static_cast<std::uint32_t>(def - m_definitions.data());
+            m_definitions.IndexOf(def);
         inst.publicHandle = publicHandle;
         inst.renderHandle = 0;
         ++committed;
@@ -1683,14 +1825,6 @@ VnResult BindingTable::CanReserveVoiceEffectInstances(
                 return VN_IN_USE;
             }
         }
-    }
-    const std::uint32_t freeCount =
-        static_cast<std::uint32_t>(m_voiceEffectInstances.size()) -
-        m_voiceEffectInstanceCount;
-    if (count > freeCount) {
-        LogPoolExhausted(log, kBindingPoolVoiceInstances,
-                         m_voiceEffectInstances.size());
-        return kResultNoBinding;
     }
     return VN_OK;
 }
@@ -1722,6 +1856,7 @@ void BindingTable::CancelReservedVoiceEffectInstances(
             inst.publicHandle == publicHandle) {
             m_dependencies.CancelBindingPreparation(EffectDependencySlot(inst));
             RemoveEffectDependency(inst);
+            m_dependencies.ReleaseBindingSlot(inst.dependencySlot);
             inst = VoiceEffectInstance{};
             --m_voiceEffectInstanceCount;
         }
@@ -1735,6 +1870,7 @@ bool BindingTable::ClearVoiceEffectInstance(VnVoiceHandle renderHandle,
             inst.renderHandle == renderHandle) {
             m_dependencies.CancelBindingPreparation(EffectDependencySlot(inst));
             RemoveEffectDependency(inst);
+            m_dependencies.ReleaseBindingSlot(inst.dependencySlot);
             inst = VoiceEffectInstance{};
             --m_voiceEffectInstanceCount;
             return true;
@@ -1749,6 +1885,7 @@ void BindingTable::RemoveVoiceEffectInstances(VnVoiceHandle renderHandle) {
             inst.renderHandle == renderHandle) {
             m_dependencies.CancelBindingPreparation(EffectDependencySlot(inst));
             RemoveEffectDependency(inst);
+            m_dependencies.ReleaseBindingSlot(inst.dependencySlot);
             inst = VoiceEffectInstance{};
             --m_voiceEffectInstanceCount;
         }
@@ -1805,6 +1942,7 @@ void BindingTable::PurgeVoiceEffectInstancesOf(
         if (inst.used && inst.bindingId == id) {
             m_dependencies.CancelBindingPreparation(EffectDependencySlot(inst));
             RemoveEffectDependency(inst);
+            m_dependencies.ReleaseBindingSlot(inst.dependencySlot);
             inst = VoiceEffectInstance{};
             --m_voiceEffectInstanceCount;
         }

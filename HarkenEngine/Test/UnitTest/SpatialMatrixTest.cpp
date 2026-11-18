@@ -857,7 +857,7 @@ TEST(SpatialMatrix, CollectiveImageSharesMappingAndAdvancesOutputAndSendsOnlyOnF
                 original.voiceSends = sendStates;
                 original.voiceSends[0].active = true;
                 original.voiceSends[0].targetBusIndex = 1;
-                original.voiceSends[0].gain.SnapTo(.75f);
+                original.voiceSends[0].gain.Set(.75f);
                 for (std::uint32_t ch = 0; ch < sources; ++ch) {
                     for (std::uint32_t n = offset; n < offset + produced; ++n)
                         source[ch][n] = (static_cast<int>((n + ch) % 13) - 6) * .03f;

@@ -416,6 +416,80 @@ TEST(PackReplaceStaging, VoiceRecipeSwapsOnlyAtActivationTick) {
 // --- staging: the fault-injection golden ---
 
 
+TEST(PackReplaceStaging, SharedBusTargetBudgetSurvivesPendingDiscardAndCallerDetach) {
+    std::array<std::string, 2> oldPaths, newPaths;
+    for (unsigned i = 0; i < 2; ++i) {
+        const auto binding = harkentest::JsonObjectId(harkentest::ObjectId(9400 + i));
+        const auto variable = harkentest::JsonObjectId(harkentest::ObjectId(7));
+        const auto master = harkentest::JsonObjectId(VN_BUS_MASTER);
+        const std::string definitions = "\"bindings\":[{\"id\":" + binding +
+            ",\"variable\":" + variable + ",\"scope\":\"bus\",\"target\":0,"
+            "\"curve\":{\"points\":[[0,0],[1,-6]],\"handles\":[[0,0,1,-6]]}}]";
+        const auto name = "pr_shared_target_" + std::to_string(i);
+        oldPaths[i] = TempPath(name + "_old.pack");
+        newPaths[i] = TempPath(name + "_new.pack");
+        ASSERT_TRUE(BuildPackFile(name + "_old", V2LogicManifest(oldPaths[i], "content", definitions)));
+        ASSERT_TRUE(BuildPackFile(name + "_new", V2LogicManifest(newPaths[i], "content", definitions +
+            ",\"attachments\":[{\"binding\":" + binding + ",\"scope\":\"bus\",\"object\":" + master + "}]")));
+    }
+    for (const bool discardBoth : {false, true}) {
+        SCOPED_TRACE(discardBoth);
+        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harkentest::InstallSmoothDefinitions(engine, {harkentest::ObjectId(7)}, 0.0f, 1.0f).status);
+        VnPackHandle packs[2]{};
+        ASSERT_EQ(VN_OK, LoadPack(oldPaths[0], &packs[0]));
+        ASSERT_EQ(VN_OK, LoadPack(oldPaths[1], &packs[1]));
+        VnBindingDesc caller{};
+        caller.structSize = sizeof(caller);
+        caller.variableId = harkentest::ObjectId(7);
+        caller.targetScopeKind = VN_TARGET_SCOPE_BUS;
+        caller.targetId = 0;
+        caller.curve.structSize = sizeof(caller.curve);
+        caller.curve.pointCount = 2;
+        caller.curve.points[0] = {0, 0};
+        caller.curve.points[1] = {1, -6};
+        caller.curve.handles[0] = harkentest::EndpointHandles(caller.curve.points[0], caller.curve.points[1]);
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(9402), &caller));
+        VnBindingAttachDesc attach{};
+        attach.structSize = sizeof(attach);
+        attach.scopeKind = VN_TARGET_SCOPE_BUS;
+        attach.objectId = VN_BUS_MASTER;
+        const auto baseline = engine->propertyPublisher.WorstCaseCommits();
+        const auto capacity = engine->propertyPublisher.BatchCapacity();
+        ASSERT_GT(capacity, baseline);
+        const auto filler = capacity - baseline - 1u;
+        ASSERT_TRUE(engine->propertyPublisher.TryGrowWorstCase(filler, nullptr));
+        ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9402), &attach));
+        ASSERT_EQ(VN_OK, ReplacePack(packs[0], newPaths[0]));
+        ASSERT_EQ(VN_OK, ReplacePack(packs[1], newPaths[1]));
+        ASSERT_EQ(2u, engine->logicPacks.pending.size());
+        EXPECT_EQ(capacity, engine->propertyPublisher.WorstCaseCommits());
+        ASSERT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(9402), &attach));
+        EXPECT_EQ(capacity, engine->propertyPublisher.WorstCaseCommits());
+        if (discardBoth) {
+            StagingFaultGuard fault(harken::PackStagingFault::BeforeApply);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            EXPECT_TRUE(engine->logicPacks.pending.empty());
+            EXPECT_EQ(capacity - 1u, engine->propertyPublisher.WorstCaseCommits());
+        } else {
+            ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9400), &attach));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            EXPECT_TRUE(engine->logicPacks.pending.empty());
+            EXPECT_EQ(capacity, engine->propertyPublisher.WorstCaseCommits());
+            ASSERT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(9400), &attach));
+            EXPECT_EQ(capacity, engine->propertyPublisher.WorstCaseCommits());
+        }
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(packs[0]));
+        ASSERT_EQ(VN_OK, Vn_UnloadPack(packs[1]));
+        EXPECT_EQ(capacity - 1u, engine->propertyPublisher.WorstCaseCommits());
+        engine->propertyPublisher.ShrinkWorstCase(filler);
+        EXPECT_EQ(baseline, engine->propertyPublisher.WorstCaseCommits());
+    }
+}
+
 TEST(PackReplaceStaging, FaultedBusDiffReplaceReleasesReservations) {
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     // One live plan slot plus one free: a leaked plan reservation would
@@ -1124,16 +1198,14 @@ TEST(PackReplaceSemantics, BindingIdentityChangeRefusedWhileReferenced) {
     EXPECT_EQ(harkentest::ObjectId(7761u), def->variableId); // the old revision untouched
 
     const VnVoiceHandle stoppedRender = harkentest::RenderHandle(engine, voice);
-    // Drain the live reference; the dead render entry deliberately remains
-    // in ParamSystem until slot reuse or definition purge.
+    // Drain the live reference and return its binding storage before reuse.
     ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     std::vector<harken::ParamSystem::InstanceState> inertInstances;
     engine->params.CaptureVoiceInstances(stoppedRender, &inertInstances);
-    ASSERT_EQ(1u, inertInstances.size());
-    EXPECT_EQ(harkentest::ObjectId(4631u), inertInstances[0].definitionId);
-    EXPECT_EQ(1u, engine->params.VoiceBindingCount(stoppedRender));
+    EXPECT_TRUE(inertInstances.empty());
+    EXPECT_EQ(0u, engine->params.VoiceBindingCount(stoppedRender));
     ASSERT_EQ(VN_OK, ReplacePack(content, conV2));
     ASSERT_EQ(VN_OK, Vn_Update());
     def = engine->bindings.Find(harkentest::ObjectId(4631));
@@ -1379,6 +1451,59 @@ TEST(PackReplaceSemantics,
 
 // --- semantics: net capacity arithmetic over the diff ---
 
+TEST(PackReplaceSemantics, BindingOccupancyGrowsAfterStaging) {
+    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    config.maxBindings = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto variable = harkentest::ObjectId(7785);
+    const harken::VariableDefinitionV1 definitions[] = {
+        harkentest::MakeVariableDefinition(variable, harken::VariableKindV1::Smooth,
+                                          0.0f, 1.0f, 0.0f)};
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harkentest::InstallDefinitionsWorld(engine, definitions, 1).status);
+    const auto definition = [&](std::uint64_t id) {
+        return "{\"id\":" + harkentest::JsonObjectId(harkentest::ObjectId(id)) +
+            ",\"variable\":" + harkentest::JsonObjectId(variable) +
+            R"(,"scope":"bus","target":0,"curve":{"points":[[0,0],[1,-6]],"handles":[[0,0,1,-6]]}})";
+    };
+    const auto beforePath = TempPath("pr_binding_gap_capacity_before.pack");
+    const auto afterPath = TempPath("pr_binding_gap_capacity_after.pack");
+    ASSERT_TRUE(BuildPackFile("pr_binding_gap_capacity_before",
+        V2LogicManifest(beforePath, "resident", "\"bindings\":[" + definition(4951) + "]")));
+    ASSERT_TRUE(BuildPackFile("pr_binding_gap_capacity_after",
+        V2LogicManifest(afterPath, "resident",
+            "\"bindings\":[" + definition(4951) + "," + definition(4952) + "]")));
+    VnPackHandle pack = 0;
+    ASSERT_EQ(VN_OK, LoadPack(beforePath, &pack));
+    ASSERT_EQ(VN_OK, ReplacePack(pack, afterPath));
+    ASSERT_EQ(1u, engine->logicPacks.pending.size());
+    const auto stagedCapacity = engine->bindings.DefinitionCapacity();
+    ASSERT_LT(engine->bindings.DefinitionCount(), stagedCapacity);
+    VnBindingDesc caller{};
+    caller.structSize = sizeof(caller);
+    caller.variableId = variable;
+    caller.targetScopeKind = VN_TARGET_SCOPE_BUS;
+    caller.targetId = 0;
+    caller.curve.structSize = sizeof(caller.curve);
+    caller.curve.pointCount = 2;
+    caller.curve.points[0] = {0.0f, 0.0f};
+    caller.curve.points[1] = {1.0f, -6.0f};
+    caller.curve.handles[0] = {0.0f, 0.0f, 1.0f, -6.0f};
+    std::vector<VnBindingId> callerIds;
+    while (engine->bindings.DefinitionCount() < stagedCapacity) {
+        const auto id = harkentest::ObjectId(5000u + callerIds.size());
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(id, &caller));
+        callerIds.push_back(id);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_TRUE(engine->logicPacks.pending.empty());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(4951)));
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(4952)));
+    for (const auto id : callerIds) EXPECT_NE(nullptr, engine->bindings.Find(id));
+}
+
 TEST(PackReplaceSemantics, ReplaceNetCapacityFreesBeforeAdds) {
     LogSink sink;
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
@@ -1434,17 +1559,15 @@ TEST(PackReplaceSemantics, ReplaceNetCapacityFreesBeforeAdds) {
     ASSERT_EQ(VN_OK, LoadPack(v1Path, &pack));
     ASSERT_EQ(2u, engine->bindings.DefinitionCount()); // pool full
 
-    // Net 3 over capacity 2: refused at the CALL with the pool code,
-    // nothing staged, nothing landed.
-    EXPECT_EQ(VN_NO_BINDING, ReplacePack(pack, growthPath));
-    EXPECT_TRUE(engine->logicPacks.pending.empty());
+    // Growth is staged atomically, then the next revision removes one definition.
+    ASSERT_EQ(VN_OK, ReplacePack(pack, growthPath));
+    EXPECT_FALSE(engine->logicPacks.pending.empty());
     EXPECT_EQ(nullptr, engine->bindings.Find(harkentest::ObjectId(4953)));
     EXPECT_EQ(2u, engine->bindings.DefinitionCount());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_TRUE(engine->logicPacks.pending.empty());
+    EXPECT_EQ(3u, engine->bindings.DefinitionCount());
 
-    // Net 2 within capacity 2: the removal of 4952 frees the slot 4953
-    // consumes. The replace stages, and the activation re-screen
-    // recomputes the same net arithmetic — the revision applies whole
-    // instead of discarding.
     ASSERT_EQ(VN_OK, ReplacePack(pack, swapPath));
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_TRUE(engine->logicPacks.pending.empty());
@@ -2090,7 +2213,7 @@ TEST(PackReplaceSemantics, LiveOwnedAttachmentRemovalFundsAdditionOnFullPool) {
     EXPECT_EQ(2u, engine->bindings.AttachmentCountOf(harkentest::ObjectId(5621)));
 }
 
-TEST(PackReplaceSemantics, AbsentAttachmentRemovalFundsNothing) {
+TEST(PackReplaceSemantics, AbsentAttachmentRemovalPreservesCallerAndGrows) {
     LogSink sink;
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     config.maxBindingAttachments = 2;
@@ -2156,29 +2279,25 @@ TEST(PackReplaceSemantics, AbsentAttachmentRemovalFundsNothing) {
     ASSERT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(5721), &packTriple));
     ASSERT_EQ(1u, engine->bindings.AttachmentCount());
 
-    // Two adds need two slots and only one is free: refused at the call
-    // with the pool code, nothing staged.
+    // Both additions grow backing; the absent old relation cannot remove the caller's relation.
     const std::uint64_t refusedBefore = Snap().hotReloadRefusedCount;
-    EXPECT_EQ(VN_NO_BINDING, ReplacePack(pack, v2Path));
-    EXPECT_EQ(refusedBefore + 1, Snap().hotReloadRefusedCount);
-    EXPECT_TRUE(engine->logicPacks.pending.empty());
+    ASSERT_EQ(VN_OK, ReplacePack(pack, v2Path));
+    EXPECT_EQ(refusedBefore, Snap().hotReloadRefusedCount);
+    EXPECT_FALSE(engine->logicPacks.pending.empty());
 
-    // Zero staging footprint: the next update discards nothing and the
-    // old state is unchanged — the caller's triple alone, the pack's
-    // triple still detached, no added triple anywhere.
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, sink.Count(harken::kLogCodePackRevisionDiscarded));
     const harken::BindingTable::Definition* def = engine->bindings.Find(harkentest::ObjectId(5721));
     ASSERT_NE(nullptr, def);
     EXPECT_EQ(harkentest::ObjectId(7804u), def->variableId);
-    EXPECT_EQ(1u, engine->bindings.AttachmentCountOf(harkentest::ObjectId(5721)));
+    EXPECT_EQ(3u, engine->bindings.AttachmentCountOf(harkentest::ObjectId(5721)));
     EXPECT_TRUE(
         engine->bindings.HasAttachment(harkentest::ObjectId(5721), VN_TARGET_SCOPE_VOICE, harkentest::ObjectId(5712)));
     EXPECT_FALSE(
         engine->bindings.HasAttachment(harkentest::ObjectId(5721), VN_TARGET_SCOPE_VOICE, harkentest::ObjectId(5711)));
-    EXPECT_FALSE(
+    EXPECT_TRUE(
         engine->bindings.HasAttachment(harkentest::ObjectId(5721), VN_TARGET_SCOPE_VOICE, harkentest::ObjectId(5713)));
-    EXPECT_FALSE(
+    EXPECT_TRUE(
         engine->bindings.HasAttachment(harkentest::ObjectId(5721), VN_TARGET_SCOPE_VOICE, harkentest::ObjectId(5714)));
 }
 

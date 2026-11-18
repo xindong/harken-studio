@@ -198,6 +198,12 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     ASSERT_EQ(Registry::Phase::Published, engine.originalSourceSubmissions.Find(body.arm)->State());
 }
 
+// The independent voice was already audible; its metadata setter now ramps.
+float FirstLiveBlockPeak(float baseline, float factor, unsigned elapsed = 0,
+    float initialFactor = 1.f) {
+    return baseline * (initialFactor + (factor - initialFactor) * float(elapsed + 1u) / 240.f);
+}
+
 void CheckCompletedDisposition(harken::Engine& engine, const SourceBody& body,
     bool cancelled, float factor) {
     const auto before = engine.mixer.BlocksRendered();
@@ -213,7 +219,7 @@ void CheckCompletedDisposition(harken::Engine& engine, const SourceBody& body,
     EXPECT_EQ(cancelled ? 0u : before + 1u, row->armedCompletionSequence.load());
     EXPECT_EQ(cancelled ? before + 1u : 0u, row->tombstoneAudioSequence.load());
     EXPECT_EQ(cancelled, engine.voices.ReleaseObserved(body.release));
-    EXPECT_NEAR(body.baseline * factor, CurrentPeak(engine), 0.00001f);
+    EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, factor), CurrentPeak(engine), 0.00001f);
 }
 
 void RecycleExactRetirement(harken::Engine& engine, const SourceBody& body) {
@@ -617,7 +623,7 @@ TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetiremen
     EXPECT_FALSE(row->finalSourcePublicationConsumed);
     EXPECT_EQ(Registry::Phase::CleanupPending, engine.originalSourceSubmissions.Find(body.arm)->State());
     EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(original, body.source));
-    EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
+    EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, .5f), CurrentPeak(engine), 0.00001f);
     harken::EffectInstanceRef returned{};
     ASSERT_TRUE(harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, oldEffect).TryPop(returned));
     ASSERT_TRUE(Registry::SameEffect(placeholder, returned));
@@ -730,7 +736,7 @@ TEST(OriginalSourceSubmission, NativeOriginalLoanRetainsInstalledBodyWhilePhysic
     EXPECT_FALSE(engine.voices.ReleaseObserved(body.release));
     EXPECT_TRUE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(loan, body.source));
     EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(loan, body.independent));
-    EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
+    EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, .5f), CurrentPeak(engine), 0.00001f);
     Registry::OriginalSourceLifetimePin descendant;
     ASSERT_TRUE(loan.Borrow(&descendant));
     Registry::OriginalSourceLifetimePin moved(std::move(loan));
@@ -861,7 +867,7 @@ TEST(OriginalSourceSubmission, NativeOriginalCancellationAndInvalidBodyRetainOri
         EXPECT_TRUE(engine.originalSourceSubmissions.IsOriginalSourceLifetimePinFor(original, body.arm));
         EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(original, body.source));
         EXPECT_TRUE(engine.timelineArms.RowAt(body.arm.slot)->originalLifetimePinned.load());
-        EXPECT_NEAR(body.baseline * (invalid ? 1.0f : 0.5f), CurrentPeak(engine), 0.00001f);
+        EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, invalid ? 1.0f : 0.5f), CurrentPeak(engine), 0.00001f);
         EXPECT_FALSE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
         original.Release();
         EXPECT_TRUE(engine.timelineArms.RowAt(body.arm.slot)->originalLifetimePinned.load());
@@ -1094,7 +1100,7 @@ VnResult PrepareAtOriginalBodySlot(harken::Engine& engine, const SourceBody& bod
         0, pcm.frames, 1, harken::ResampleProfile::Professional44148,
         out, 1, static_cast<std::uint32_t>(body.source), 0, true);
 }
-void PumpOriginalBodyInstall(harken::Engine& engine, const SourceBody& body) {
+void PumpOriginalBodyInstall(harken::Engine& engine, const SourceBody& body, float expectedPeak = -1.f) {
     const auto before = engine.mixer.BlocksRendered();
     engine.nullBackend.Pump(1);
     ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
@@ -1104,7 +1110,8 @@ void PumpOriginalBodyInstall(harken::Engine& engine, const SourceBody& body) {
     EXPECT_EQ(before + 1u, engine.timelineArms.RowAt(body.arm.slot)->armedCompletionSequence.load());
     EXPECT_EQ(0u, engine.timelineArms.RowAt(body.arm.slot)->startedBlockSequence.load());
     EXPECT_FALSE(engine.voices.ReleaseObserved(body.release));
-    EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
+    EXPECT_NEAR(expectedPeak < 0.f ? FirstLiveBlockPeak(body.baseline, .5f) : expectedPeak,
+        CurrentPeak(engine), 0.00001f);
 }
 } // namespace
 
@@ -1222,7 +1229,7 @@ TEST(OriginalSourceSubmission, GenuineBodyEarlySourceAThenFrozenSourceBRefusesBe
     EXPECT_EQ(0u, engine.timelineArms.RowAt(body.arm.slot)->startedBlockSequence.load());
     EXPECT_EQ(before + 1u, engine.timelineArms.RowAt(body.arm.slot)->tombstoneAudioSequence.load());
     // The original independent-target setter is still a valid cancellation metadata tail.
-    EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
+    EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, .5f), CurrentPeak(engine), 0.00001f);
     source.Release();
     original.Release();
     EXPECT_TRUE(engine.timelineArms.RowAt(body.arm.slot)->originalLifetimePinned.load());
@@ -1316,7 +1323,7 @@ TEST(OriginalSourceSubmission, GenuineBodyNativeCancellationAndInvalidWireHaveNo
         EXPECT_FALSE(engine.voices.IsOriginalSourceBodyCurrent(original));
         EXPECT_EQ(0u, engine.timelineArms.RowAt(body.arm.slot)->armedCompletionSequence.load());
         EXPECT_EQ(before + 1u, engine.timelineArms.RowAt(body.arm.slot)->tombstoneAudioSequence.load());
-        EXPECT_NEAR(body.baseline * (cancel ? 0.5f : 1.0f), CurrentPeak(engine), 0.00001f);
+        EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, cancel ? 0.5f : 1.0f), CurrentPeak(engine), 0.00001f);
         source.Release();
         original.Release();
         EXPECT_TRUE(engine.timelineArms.RowAt(body.arm.slot)->originalLifetimePinned.load());
@@ -3301,7 +3308,7 @@ void HoldActualPendingSource(harken::Engine& engine, const SourceBody& body,
         engine.timelineArms.ProvePendingSourceCommand(body.arm, &held, original));
     ASSERT_TRUE(held.Valid());
 }
-void PumpActualSourceDeferred(harken::Engine& engine, const SourceBody& body) {
+void PumpActualSourceDeferred(harken::Engine& engine, const SourceBody& body, float expectedPeak = -1) {
     const auto before = engine.mixer.BlocksRendered();
     const auto consumed = engine.commands.ConsumedCount();
     engine.nullBackend.Pump(1);
@@ -3315,7 +3322,7 @@ void PumpActualSourceDeferred(harken::Engine& engine, const SourceBody& body) {
     EXPECT_GE(state.count, 1u);
     EXPECT_FALSE(engine.voices.ReleaseObserved(body.release));
     // The metadata prefix has not escaped the real row proof reservation.
-    EXPECT_NEAR(body.baseline, CurrentPeak(engine), 0.00001f);
+    EXPECT_NEAR(expectedPeak < 0 ? body.baseline : expectedPeak, CurrentPeak(engine), 0.00001f);
 }
 void ReturnActualOriginTail(harken::Engine& engine, const SourceBody& body,
     Registry::OriginalSourceLifetimePin& source, BodyPin& original) {
@@ -3452,7 +3459,7 @@ TEST(OriginalSourceSubmission, NormalOriginGenuineCancelAndInvalidWireHaveNoInst
         EXPECT_FALSE(engine.voices.IsOriginalSourceBodyCurrent(original));
         EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(source, body.source));
         EXPECT_EQ(violations + (cancel ? 0u : 1u), engine.mixer.CommandProtocolViolationCount());
-        EXPECT_NEAR(body.baseline * (cancel ? 0.5f : 1.0f), CurrentPeak(engine), 0.00001f);
+        EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, cancel ? 0.5f : 1.0f), CurrentPeak(engine), 0.00001f);
         EXPECT_TRUE(SourceOriginAccess::Matches(engine.originalSourceSubmissions, retained));
         source.Release(); original.Release();
         EXPECT_FALSE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
@@ -3515,7 +3522,8 @@ TEST(OriginalSourceSubmission, NormalOriginRealActorMoveOverwriteForeignReceiver
     ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, second, false, false, &secondSource, &secondBody));
     harken::TimelineArmTable::SourceCommandRowProof secondHeld;
     ASSERT_NO_FATAL_FAILURE(HoldActualPendingSource(engine, second, secondHeld));
-    ASSERT_NO_FATAL_FAILURE(PumpActualSourceDeferred(engine, second));
+    ASSERT_NO_FATAL_FAILURE(PumpActualSourceDeferred(engine, second,
+        FirstLiveBlockPeak(first.baseline, .5f, 64)));
     SourceActor secondActor;
     ASSERT_TRUE(SourceOriginAccess::BorrowExistingNativeFrontActor(engine.originalSourceSubmissions, &secondActor));
     SourceActor moved(std::move(firstActor));
@@ -3889,7 +3897,7 @@ TEST(OriginalSourceSubmission, NativeTimelineCancelUsesActualCallbackHoldAndRetu
         EXPECT_TRUE(probe.before);
         EXPECT_TRUE(probe.after);
         ASSERT_TRUE(engine.voices.ReleaseObserved(body.release));
-        EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
+        EXPECT_NEAR(FirstLiveBlockPeak(body.baseline, .5f, kFrames), CurrentPeak(engine), 0.00001f);
         ASSERT_NO_FATAL_FAILURE(CheckActualNativeCallbackReturned(engine, body));
         if (!returnForeignInCallback) {
             VnVoiceHandle refused = 0;
@@ -8914,7 +8922,9 @@ TEST(OriginalSourceSubmission, PendingInstalledRetirementSealsFreshTerminalBefor
     EXPECT_EQ(nullptr, engine.originalSourceSubmissions.Find(body.arm));
     EXPECT_TRUE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
     EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, next.arm));
-    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, next));
+    // The reused independent voice has already rendered two fading blocks.
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, next,
+        FirstLiveBlockPeak(body.baseline, .5f, 0, 1.f - .5f * (2u * kFrames) / 240.f)));
     EXPECT_EQ(Result::Refused,
         SourceOriginAccess::RequestRetirementReceipt(engine.originalSourceSubmissions, nextSource, nextBody, &moved));
     EXPECT_TRUE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
@@ -8943,7 +8953,9 @@ TEST(OriginalSourceSubmission, PendingInstalledRetirementRejectsForeignPairAndBo
     ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, first));
     ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, second, false, false,
         &secondSource, &secondBody, false, nullptr, true));
-    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, second));
+    // The second setter retargets the same voice after one fading block.
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, second,
+        FirstLiveBlockPeak(first.baseline, .5f, 0, 1.f - .5f * kFrames / 240.f)));
     EXPECT_EQ(Result::Refused,
         SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, firstSource, secondBody));
     EXPECT_EQ(Result::Refused,

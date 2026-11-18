@@ -1332,6 +1332,8 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FLOAT_EQ(-12.0f, engine->busTargets.LastCommitted(
                                index, harken::kBusTargetBusVolume));
+    // Re-leveling a mixed Bus ramps; start this short probe after it settles.
+    engine->nullBackend.Pump((240u + kBlock - 1u) / kBlock);
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     harkentest::Capture revised;
     harkentest::PumpAndCapture(engine, 1, revised);
@@ -3042,7 +3044,7 @@ TEST(PackLogicStaging, BusDefinitionAllocationFailureRefusesWholeLoad) {
     EXPECT_EQ(4u, engine->buses.BusCount());
 }
 
-TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
+TEST(PackLogicStaging, BindingStorageGrowsForWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindings = 1;
     EngineSession session(config);
@@ -3054,8 +3056,7 @@ TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
                                                     1.0f, -3.0f);
     ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(890), &live));
 
-    // The pack stages an attenuation before the binding pool refuses;
-    // order-independence demands that neither object lands.
+    // The pack stages an attenuation and a definition beyond the initial reservation.
     const std::string packPath = TempPath("pll_no_binding.pack");
     ASSERT_TRUE(BuildPackFile(
         "pll_no_binding",
@@ -3071,11 +3072,11 @@ TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
 
     const std::uint32_t profilesBefore = engine->spatial.ProfileCount();
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BINDING, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    EXPECT_EQ(profilesBefore, engine->spatial.ProfileCount());
-    EXPECT_EQ(nullptr, engine->bindings.Find(harkentest::ObjectId(892)));
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    EXPECT_EQ(profilesBefore + 1u, engine->spatial.ProfileCount());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(892)));
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
 
 TEST(PackLogicStaging, CommandQueuePressureRefusesThenAdmits) {
@@ -4018,7 +4019,7 @@ TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsOutOfMemory) {
 // code and proves zero mutation through another entry kind of the same
 // pack (non-mutating probes only).
 
-TEST(PackLogicAggregateCapacity, BindingDefinitionSumRefusesWholeLoad) {
+TEST(PackLogicAggregateCapacity, BindingDefinitionSumGrowsForWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindings = 2; // one taken below: one free slot, pack needs two
     EngineSession session(config);
@@ -4044,16 +4045,16 @@ TEST(PackLogicAggregateCapacity, BindingDefinitionSumRefusesWholeLoad) {
                            "handles": [[0.0, 0.0, 1.0, -9.0]] } } ])")));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BINDING, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    // Zero mutation: neither definition landed.
-    EXPECT_EQ(1u, engine->bindings.DefinitionCount());
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(1002)));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(1003)));
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    // Both incoming definitions coexist with the caller definition.
+    EXPECT_EQ(3u, engine->bindings.DefinitionCount());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1002)));
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1003)));
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
 
-TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
+TEST(PackLogicAggregateCapacity, BindingAttachmentSumGrowsForWholeLoad) {
     VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindingAttachments = 2; // one taken below; pack carries two
     EngineSession session(config);
@@ -4096,15 +4097,15 @@ TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
                  { "binding": "3da91a64-b947-4560-0000-0000000003f6", "scope": "voice", "object": "3da91a64-b947-4560-0000-0000000003f5" } ])"))));
 
     VnPackHandle pack = 0;
-    EXPECT_EQ(VN_NO_BINDING, LoadPack(packPath, &pack));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &pack));
 
-    // Zero mutation: no media, no definition, no attachment landed.
-    EXPECT_EQ(1u, engine->bindings.AttachmentCount());
-    EXPECT_EQ(nullptr, engine->bindings.Find(harkentest::ObjectId(1014)));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(1014)));
-    EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(1012)).Valid());
-    EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(1013)).Valid());
-    EXPECT_EQ(0u, engine->packs.LoadedCount());
+    // Media and both attachments publish together after backing grows.
+    EXPECT_EQ(3u, engine->bindings.AttachmentCount());
+    EXPECT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1014)));
+    EXPECT_EQ(VN_IN_USE, Vn_UnregisterBinding(harkentest::ObjectId(1014)));
+    EXPECT_TRUE(engine->registry.Lookup(harkentest::ObjectId(1012)).Valid());
+    EXPECT_TRUE(engine->registry.Lookup(harkentest::ObjectId(1013)).Valid());
+    EXPECT_EQ(1u, engine->packs.LoadedCount());
 }
 
 TEST(PackLogicAggregateCapacity, AttenuationSumPreparesWholeLoadBeyond64) {

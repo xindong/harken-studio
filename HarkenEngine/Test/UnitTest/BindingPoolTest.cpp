@@ -343,7 +343,7 @@ TEST(BindingPool, RegisterValidatesExhaustivelyBeforeMutating) {
     EXPECT_EQ(harken::kTargetVoiceVolume, def->targetId);
 }
 
-TEST(BindingPool, DefinitionPoolFullRefusesNoBindingAndNamesThePool) {
+TEST(BindingPool, DefinitionPoolGrowsBeyondInitialReservation) {
     EngineSession session(MakeNullConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -356,23 +356,55 @@ TEST(BindingPool, DefinitionPoolFullRefusesNoBindingAndNamesThePool) {
                                         harken::kTargetVoiceVolume, 0.0f,
                                         -6.0f));
     }
-    EXPECT_EQ(harken::kResultNoBinding,
+    EXPECT_EQ(VN_OK,
               RegisterLinear(engine, harkentest::ObjectId(5000), harkentest::ObjectId(7), harken::kTargetScopeVoice,
                              harken::kTargetVoiceVolume, 0.0f, -6.0f));
-    harken::LogRecord record{};
-    ASSERT_TRUE(FindLogicLog(engine, harken::kLogCodeBindingPoolExhausted,
-                             &record));
-    EXPECT_EQ(harken::kBindingPoolDefinitions, record.arg0);
-    EXPECT_EQ(128u, record.arg1);
-    // Section 12: the definition pool's high water and refusal counter
-    // surface in the snapshot tail, 1:1 with the log record.
     VnSnapshot snapshot{};
     snapshot.structSize = sizeof(VnSnapshot);
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
-    EXPECT_EQ(128u, snapshot.bindingDefinitionHighWater);
-    EXPECT_EQ(1u, snapshot.bindingDefinitionRefusedCount);
+    EXPECT_EQ(129u, snapshot.bindingDefinitionHighWater);
+    EXPECT_EQ(0u, snapshot.bindingDefinitionRefusedCount);
     EXPECT_EQ(0u, snapshot.bindingAttachmentRefusedCount);
     EXPECT_EQ(0u, snapshot.bindingInstanceRefusedCount);
+    for (std::uint32_t i = 0; i < 128; i += 2)
+        ASSERT_EQ(VN_OK, engine->bindings.UnregisterBinding(harkentest::ObjectId(1000 + i)));
+    for (std::uint32_t i = 0; i < 128; ++i)
+        EXPECT_EQ((i % 2) != 0, engine->bindings.Find(harkentest::ObjectId(1000 + i)) != nullptr);
+    for (std::uint32_t i = 0; i < 128; i += 2)
+        ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(1000 + i), harkentest::ObjectId(7),
+            harken::kTargetScopeVoice, harken::kTargetVoiceVolume, 0.0f, -6.0f));
+    for (std::uint32_t i = 0; i < 128; ++i)
+        ASSERT_NE(nullptr, engine->bindings.Find(harkentest::ObjectId(1000 + i)));
+}
+
+TEST(BindingPool, FailedGrowthPreservesRowsAndIndexedAttachmentOrder) {
+    harken::BindingTable table(1, 1, 1);
+    const auto binding = harkentest::ObjectId(41);
+    const auto first = harkentest::ObjectId(81);
+    const auto second = harkentest::ObjectId(82);
+    const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, -6.0f}};
+    const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, -6.0f}};
+    ASSERT_EQ(VN_OK, table.RegisterBinding(binding, harkentest::ObjectId(71), harken::kTargetScopeVoice,
+        harken::kTargetVoiceVolume, points, handles, 2, 0, nullptr));
+    ASSERT_EQ(VN_OK, table.Attach(binding, harken::kTargetScopeVoice, second, 0, nullptr));
+    const auto* definition = table.Find(binding);
+    table.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.PrepareCapacity(4096, 4096));
+    EXPECT_EQ(definition, table.Find(binding));
+    EXPECT_EQ(1u, table.DefinitionCount());
+    EXPECT_EQ(1u, table.AttachmentCount());
+    EXPECT_EQ(1u, table.VoiceAttachmentCount(second));
+    table.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(table.PrepareCapacity(4096, 4096));
+    ASSERT_EQ(VN_OK, table.Attach(binding, harken::kTargetScopeVoice, first, 0, nullptr));
+    std::vector<VnObjectId> visited;
+    table.ForEachVoiceAttachment(first, second, [&](const auto&, VnObjectId object) { visited.push_back(object); });
+    EXPECT_EQ((std::vector<VnObjectId>{second, first}), visited);
+    harken::BindingTable copy(table);
+    ASSERT_EQ(VN_OK, table.Detach(binding, harken::kTargetScopeVoice, second, nullptr));
+    EXPECT_EQ(0u, table.VoiceAttachmentCount(second));
+    EXPECT_EQ(1u, copy.VoiceAttachmentCount(second));
+    EXPECT_EQ(definition, table.Find(binding));
 }
 
 // --- section 5.3: attachment validation ---
@@ -414,7 +446,7 @@ TEST(BindingPool, AttachValidationMatrix) {
                                           harken::kTargetScopeVoice, harkentest::ObjectId(1)));
 }
 
-TEST(BindingPool, AttachmentPoolFullRefusesNoBindingAndNamesThePool) {
+TEST(BindingPool, AttachmentPoolGrowsBeyondInitialReservation) {
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     // Headroom for 256 attachment worst-case commits (section 10.4): the
     // capacity contract must not fire before the pool bound under test.
@@ -438,21 +470,16 @@ TEST(BindingPool, AttachmentPoolFullRefusesNoBindingAndNamesThePool) {
         ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(1000 + i),
                                               harken::kTargetScopeVoice, harkentest::ObjectId(2)));
     }
-    EXPECT_EQ(harken::kResultNoBinding,
+    EXPECT_EQ(VN_OK,
               harken::AttachBinding(*engine, harkentest::ObjectId(1000), harken::kTargetScopeVoice,
                                    harkentest::ObjectId(3)));
-    harken::LogRecord record{};
-    ASSERT_TRUE(FindLogicLog(engine, harken::kLogCodeBindingPoolExhausted,
-                             &record));
-    EXPECT_EQ(harken::kBindingPoolAttachments, record.arg0);
-    EXPECT_EQ(256u, record.arg1);
-    // Section 12: attachment pool high water and refusal counter in the
-    // snapshot tail, 1:1 with the log record.
     VnSnapshot snapshot{};
     snapshot.structSize = sizeof(VnSnapshot);
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
-    EXPECT_EQ(256u, snapshot.bindingAttachmentHighWater);
-    EXPECT_EQ(1u, snapshot.bindingAttachmentRefusedCount);
+    EXPECT_EQ(257u, snapshot.bindingAttachmentHighWater);
+    EXPECT_EQ(0u, snapshot.bindingAttachmentRefusedCount);
+    EXPECT_EQ(128u, engine->bindings.VoiceAttachmentCount(harkentest::ObjectId(1)));
+    EXPECT_EQ(1u, engine->bindings.VoiceAttachmentCount(harkentest::ObjectId(3)));
 }
 
 TEST(BindingPool, AttachCapacityContractRefusesInvalidConfig) {
@@ -460,9 +487,8 @@ TEST(BindingPool, AttachCapacityContractRefusesInvalidConfig) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     InstallBindingVariables(engine);
-    RegisterLeaf(harkentest::ObjectId(1));
-    ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(10), harkentest::ObjectId(7), harken::kTargetScopeVoice,
-                                    harken::kTargetVoiceVolume, 0.0f, -6.0f));
+    ASSERT_EQ(VN_OK, RegisterLinear(engine, harkentest::ObjectId(10), harkentest::ObjectId(7), harken::kTargetScopeBus,
+                                    harken::kBusTargetBusVolume, 0.0f, -6.0f));
     // Squeeze the section-10.4 worst-case bound to its ceiling: the next
     // attach's +1 cannot fit and refuses structurally, with zero pool
     // state change.
@@ -470,12 +496,12 @@ TEST(BindingPool, AttachCapacityContractRefusesInvalidConfig) {
     ASSERT_TRUE(engine->propertyPublisher.TryGrowWorstCase(capacity,
                                                            nullptr));
     EXPECT_EQ(VN_INVALID_CONFIG,
-              harken::AttachBinding(*engine, harkentest::ObjectId(10), harken::kTargetScopeVoice, harkentest::ObjectId(1)));
+              harken::AttachBinding(*engine, harkentest::ObjectId(10), harken::kTargetScopeBus, VN_BUS_MASTER));
     EXPECT_EQ(0u, engine->bindings.AttachmentCount());
     // Releasing the pressure re-opens admission.
     engine->propertyPublisher.ShrinkWorstCase(capacity);
     EXPECT_EQ(VN_OK, harken::AttachBinding(*engine, harkentest::ObjectId(10),
-                                          harken::kTargetScopeVoice, harkentest::ObjectId(1)));
+                                          harken::kTargetScopeBus, VN_BUS_MASTER));
 }
 
 // --- section 5.4: unregister refuses while referenced ---
@@ -516,7 +542,7 @@ TEST(BindingPool, UnregisterRefusesWhileAttachedOrInstanced) {
 
 // --- section 16: the per-voice instance slot ceiling ---
 
-TEST(BindingPool, InstanceSlotCeilingRefusesNoBinding) {
+TEST(BindingPool, InstanceStorageGrowsBeyondEight) {
     EngineSession session(MakeNullConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -531,18 +557,9 @@ TEST(BindingPool, InstanceSlotCeilingRefusesNoBinding) {
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(1));
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    // Eight instances fill the voice's slots (voiceBindingInstanceSlots
-    // default, section 16); the ninth refuses the no-binding code and
-    // the log record names the instance pool.
-    for (std::uint32_t i = 0; i < 8; ++i) {
+    for (std::uint32_t i = 0; i < 9; ++i) {
         ASSERT_EQ(VN_OK, harken::ApplyVoiceBinding(*engine, handle, harkentest::ObjectId(100 + i)));
     }
-    EXPECT_EQ(harken::kResultNoBinding,
-              harken::ApplyVoiceBinding(*engine, handle, harkentest::ObjectId(108)));
-    harken::LogRecord record{};
-    ASSERT_TRUE(FindLogicLog(engine, harken::kLogCodeBindingPoolExhausted,
-                             &record));
-    EXPECT_EQ(harken::kBindingPoolVoiceInstances, record.arg0);
     // A second instance of an already-applied definition is a duplicate,
     // not a fresh slot.
     EXPECT_EQ(VN_IN_USE, harken::ApplyVoiceBinding(*engine, handle, harkentest::ObjectId(100)));
@@ -552,8 +569,8 @@ TEST(BindingPool, InstanceSlotCeilingRefusesNoBinding) {
     VnSnapshot snapshot{};
     snapshot.structSize = sizeof(VnSnapshot);
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
-    EXPECT_EQ(8u, snapshot.bindingInstanceHighWater);
-    EXPECT_EQ(1u, snapshot.bindingInstanceRefusedCount);
+    EXPECT_EQ(9u, snapshot.bindingInstanceHighWater);
+    EXPECT_EQ(0u, snapshot.bindingInstanceRefusedCount);
 }
 
 // --- section 5.5: frozen structural identity ---

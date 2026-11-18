@@ -92,6 +92,7 @@ public:
         return *this;
     }
     bool Valid() const noexcept { return state_ != nullptr; }
+    std::uint32_t ReservedRows() const noexcept { return count_; }
     StableStoragePreparedUse Use() const noexcept { return StableStoragePreparedUse(state_); }
     void Release() noexcept {
         if (state_ != nullptr) {

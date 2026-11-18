@@ -453,7 +453,7 @@ public:
     VariableAcceptResult AcceptEmitter(VnEmitterHandle emitter, VnVariableId id,
                                        float value,
                                        const VariableCallObservation& observed,
-                                       const EmitterTable& emitters,
+                                       EmitterTable& emitters,
                                        ParamSystem& params);
     VariableAcceptResult AcceptGlobalBatch(
         const VnVariableWriteV1* writes, std::uint32_t writeCount,
@@ -462,7 +462,7 @@ public:
     VariableAcceptResult AcceptEmitterBatch(
         VnEmitterHandle emitter, const VnVariableWriteV1* writes,
         std::uint32_t writeCount, const VariableCallObservation& observed,
-        const EmitterTable& emitters, ParamSystem& params);
+        EmitterTable& emitters, ParamSystem& params);
     VariableAcceptResult AcceptGlobalResetBatch(
         const VnVariableWriteV1* writes, std::uint32_t writeCount,
         const VariableCallObservation& observed, ParamSystem& params,
@@ -477,7 +477,7 @@ public:
         VnEmitterHandle emitter, VnVariableId id, float value,
         const VariableCallObservation& observed,
         std::uint32_t executionOrdinal,
-        const EmitterTable& emitters,
+        EmitterTable& emitters,
         PreparedVariableWriteToken* out,
         VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game) noexcept;
     void CommitPreparedWrite(PreparedVariableWriteToken* prepared,
@@ -1409,7 +1409,7 @@ private:
         const VnVariableWriteV1* writes, std::uint32_t writeCount,
         const VariableCallObservation& observed,
         VariableWriterIdentityV1 writer,
-        const EmitterTable* emitters,
+        EmitterTable* emitters,
         bool wholeBatchSupersede = true);
     static std::uint32_t MapPublicOutcome(VariableOutcomeKind outcome) noexcept;
     void RememberAcceptedTicket(LogicCommitSequence sequence,
@@ -1435,7 +1435,7 @@ private:
         std::uint32_t executionOrdinal,
         PreparedVariableWriteToken* out,
         VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game,
-        bool staging = false) noexcept;
+        bool staging = false, EmitterTable* emitters = nullptr) noexcept;
     void CommitPreparedWriteImpl(PreparedVariableWriteToken* prepared, LogicCommitSequence sequence,
         const LogicCommitCoordinator::ConsumedIssue* consumed,
         const ActionFiringTable::ChildActivationReceipt* activated = nullptr,

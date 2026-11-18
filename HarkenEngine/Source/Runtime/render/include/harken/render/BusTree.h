@@ -508,9 +508,10 @@ public:
         bool activityInput = false, activityDetector = false;
         OutputGain gain;
         OutputGain outputGain;
-        // First ApplyVolume snaps even if rampMs != 0 (no fictitious prior
-        // value). Kept on Bus so OutputGain does not grow a started field.
+        // Before mixing, the first ApplyVolume installs an initial value.
+        // Kept on Bus so OutputGain does not grow a started field.
         bool gainStarted = false;
+        bool hasMixed = false; // Audio-owned after the work row is published.
         float preFaderPeak = 0.0f;
         float postFaderPeak = 0.0f;
         // Post-effects output tap for the last mixed block (see OutputPeak).
@@ -698,13 +699,7 @@ private:
     // row only if out of range (never in practice).
     // Finds the level slot addressing `toBus` in a from-bus's row, or nullptr.
     SendEdge* FindEdge(std::uint32_t fromBus, std::uint32_t toBus);
-    // Applies a send ramp request to a GainRamp + its multi-block plan
-    // fields (first-set/zero snaps, else a whole-block linear ramp).
-    // Bus Volume no longer uses this; SendEdge still does.
-    void ArmRamp(GainRamp& gain, bool& ramping, float& rampStartGain,
-                 float& rampEndGain, std::uint64_t& rampBlocksTotal,
-                 std::uint64_t& rampBlocksDone, float targetLinear,
-                 std::uint32_t rampMs);
+
 
     TopologyPlanPool& m_plans;
     // Shared effect instance pools (same bank voices use). Bus chains acquire

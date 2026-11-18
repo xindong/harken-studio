@@ -1,6 +1,7 @@
 #include <harken/Harken.h>
 
 #include "MonitorCaptureHubTestHooks.h"
+#include "MonitorCaptureHub.h"
 #include "Common/TestUtil.h"
 
 #include <gtest/gtest.h>
@@ -716,4 +717,59 @@ TEST(MonitorHubPlan, WrongThreadIsFirstFailure) {
     worker.join();
     EXPECT_EQ(VN_MONITOR_WRONG_THREAD, result.load());
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+}
+
+TEST(MonitorHubPlan, DrainExceptionsStopCaptureReportOnceAndAllowEngineTeardown) {
+    for (unsigned failure : {1u, 2u}) {
+        unsigned reports = 0;
+        auto config = harkentest::MakeNullConfig();
+        config.logUserData = &reports;
+        config.logCallback = [](void* context, std::uint32_t level, std::uint32_t code, const char* text) {
+            if (code != harken::kLogCodeMonitorDrainFailed) return;
+            EXPECT_EQ(VN_LOG_ERROR, level);
+            EXPECT_NE(nullptr, std::strstr(text, "monitor capture stopped"));
+            ++*static_cast<unsigned*>(context);
+        };
+        harkentest::EngineSession engine(config);
+        ASSERT_EQ(VN_OK, engine.InitResult());
+        VnMonitorSessionHandle handle = 0;
+        ASSERT_EQ(VN_OK, OpenControl(&handle));
+        VnMonitorCaptureControlStatus lease{};
+        ASSERT_EQ(VN_OK, Acquire(handle, &lease));
+        auto plan = MakeArmedPlan();
+        VnMonitorEffectiveCapturePlan accepted{};
+        accepted.structSize = sizeof(accepted);
+        ASSERT_EQ(VN_OK, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan, &accepted));
+        engine.Engine()->nullBackend.Pump(1);
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!harken::monitor::TimeSeriesLiveArmed() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        ASSERT_TRUE(harken::monitor::TimeSeriesLiveArmed());
+        harken::monitor::FailDrainForTests(failure);
+        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (harken::monitor::DrainRunningForTests() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        ASSERT_FALSE(harken::monitor::DrainRunningForTests());
+        EXPECT_FALSE(harken::monitor::TimeSeriesLiveArmed());
+        EXPECT_FALSE(harken::monitor::AudioLiveArmed());
+        VnResult wrongThread = VN_OK;
+        std::thread wrongCaller([&] {
+            wrongThread = Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan, &accepted);
+        });
+        wrongCaller.join();
+        EXPECT_EQ(VN_MONITOR_WRONG_THREAD, wrongThread);
+        EXPECT_EQ(VN_OK, Vn_MonitorStopCapture(handle, lease.leaseGeneration, &accepted));
+        PollArgs poll;
+        EXPECT_EQ(VN_DEVICE_ERROR, Vn_MonitorPoll(handle, &poll.desc, &poll.result));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(1u, reports);
+        EXPECT_EQ(VN_DEVICE_ERROR, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan, &accepted));
+        harken::monitor::StartDrainForTests();
+        EXPECT_FALSE(harken::monitor::DrainRunningForTests());
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+        EXPECT_EQ(VN_OK, Vn_Term());
+        EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan, &accepted));
+    }
 }

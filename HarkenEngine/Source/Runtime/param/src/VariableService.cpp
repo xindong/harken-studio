@@ -1213,7 +1213,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
     WriteOperation operation, const VariableScopeKey& scope, VnVariableId id,
     float value, const VariableCallObservation& observed,
     std::uint32_t executionOrdinal, PreparedVariableWriteToken* out,
-    VariableWriterIdentityV1 writer, bool staging) noexcept {
+    VariableWriterIdentityV1 writer, bool staging, EmitterTable* emitters) noexcept {
     VariableAcceptResult result{};
     result.observation = observed;
     result.observation.world = worldGeneration_;
@@ -1304,9 +1304,15 @@ VariableAcceptResult VariableServiceV1::Prepare(
         ++refusalCount_;
         return result;
     }
-    std::size_t emitterOverrideSlot = overridesPerEmitter_;
+    std::size_t emitterOverrideSlot = UINT32_MAX;
     if (operation == WriteOperation::Set &&
         scope.scope == VariableScopeV1::Emitter) {
+        if (emitters == nullptr || scope.emitterSlot >= emitterBanks_.size()) {
+            result.result = VN_STALE_HANDLE;
+            ++refusalCount_;
+            return result;
+        }
+        auto& backing = emitterBanks_[scope.emitterSlot].overrides;
         const EmitterBank* bank = FindEmitterBank(scope);
         if (bank != nullptr) {
             for (std::size_t i = 0; i < bank->overrides.size(); ++i) {
@@ -1317,7 +1323,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
             }
         }
-        if (emitterOverrideSlot == overridesPerEmitter_) {
+        if (emitterOverrideSlot == UINT32_MAX) {
             for (const WriteRow& prepared : history_) {
                 if (prepared.reserved &&
                     prepared.emitterOverrideSlot != UINT32_MAX &&
@@ -1328,8 +1334,8 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
             }
         }
-        if (emitterOverrideSlot == overridesPerEmitter_) {
-            for (std::size_t i = 0; i < overridesPerEmitter_; ++i) {
+        if (emitterOverrideSlot == UINT32_MAX) {
+            for (std::size_t i = 0; i < backing.size(); ++i) {
                 if (bank != nullptr && bank->overrides[i].used) {
                     continue;
                 }
@@ -1348,11 +1354,36 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
             }
         }
-        if (emitterOverrideSlot == overridesPerEmitter_) {
-            result.result = VN_VARIABLE_EMITTER_SLOT_EXHAUSTED;
+        if (emitterOverrideSlot == UINT32_MAX) emitterOverrideSlot = backing.size();
+        const auto count = std::max(emitterOverrideSlot + 1u, backing.size());
+        const auto size = count > backing.size()
+            ? std::max(count, std::min<std::size_t>(UINT32_MAX, backing.size() * 2u)) : count;
+        if (count > UINT32_MAX) {
+            result.result = VN_BACKPRESSURE;
             ++refusalCount_;
             return result;
         }
+        try {
+            detail::CheckedGrow(backing, size, detail::LogicAllocSite::VariableValueStorage);
+            backing.reserve(size);
+        } catch (const std::bad_alloc&) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableValueStorage);
+            result.result = VN_OUT_OF_MEMORY;
+            ++refusalCount_;
+            return result;
+        } catch (const std::length_error&) {
+            result.result = VN_BACKPRESSURE;
+            ++refusalCount_;
+            return result;
+        }
+        const auto handle = (static_cast<std::uint64_t>(scope.emitterGeneration) << 32) |
+            scope.emitterSlot;
+        result.result = emitters->PrepareLocalValueStorage(handle, size);
+        if (result.result != VN_OK) {
+            ++refusalCount_;
+            return result;
+        }
+        if (size > backing.size()) backing.resize(size);
     }
     if (publicationWorld_ != worldGeneration_ || publicationTransport_ != transport_.Current()) {
         if (publicationOwner_.generation == UINT32_MAX) {
@@ -1376,7 +1407,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
     row.value = storedValue;
     row.requestedFrame = observed.requestedEffectiveFrame;
     row.executionOrdinal = executionOrdinal;
-    if (emitterOverrideSlot != overridesPerEmitter_) {
+    if (emitterOverrideSlot != UINT32_MAX) {
         row.emitterOverrideSlot =
             static_cast<std::uint32_t>(emitterOverrideSlot);
     }
@@ -1776,7 +1807,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     WriteOperation operation, const VariableScopeKey& scope,
     const VnVariableWriteV1* writes, std::uint32_t writeCount,
     const VariableCallObservation& observed,
-    VariableWriterIdentityV1 writer, const EmitterTable* emitters,
+    VariableWriterIdentityV1 writer, EmitterTable* emitters,
     bool wholeBatchSupersede) {
     VariableAcceptResult result{};
     result.observation = observed;
@@ -1828,7 +1859,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     for (std::uint32_t i = 0; i < writeCount; ++i) {
         VariableAcceptResult row = Prepare(
             operation, scope, writes[i].variableId, writes[i].value, observed,
-            0, &batch.rows_[i], writer, true);
+            0, &batch.rows_[i], writer, true, emitters);
         if (row.result != VN_OK) {
             batch.count_ = i;
             result.result = row.result;
@@ -1952,7 +1983,7 @@ VariableAcceptResult VariableServiceV1::PrepareGlobalWrite(
 VariableAcceptResult VariableServiceV1::PrepareEmitterWrite(
     VnEmitterHandle emitter, VnVariableId id, float value,
     const VariableCallObservation& observed,
-    std::uint32_t executionOrdinal, const EmitterTable& emitters,
+    std::uint32_t executionOrdinal, EmitterTable& emitters,
     PreparedVariableWriteToken* out, VariableWriterIdentityV1 writer) noexcept {
     if (emitter == 0 || !emitters.IsLive(emitter)) {
         VariableAcceptResult result{};
@@ -1966,7 +1997,7 @@ VariableAcceptResult VariableServiceV1::PrepareEmitterWrite(
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
     scope.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
     return Prepare(WriteOperation::Set, scope, id, value, observed,
-                   executionOrdinal, out, writer);
+                   executionOrdinal, out, writer, false, &emitters);
 }
 
 VariableAcceptResult VariableServiceV1::AcceptGlobal(
@@ -1983,7 +2014,7 @@ VariableAcceptResult VariableServiceV1::AcceptGlobal(
 
 VariableAcceptResult VariableServiceV1::AcceptEmitter(
     VnEmitterHandle emitter, VnVariableId id, float value,
-    const VariableCallObservation& observed, const EmitterTable& emitters,
+    const VariableCallObservation& observed, EmitterTable& emitters,
     ParamSystem& /*params*/) {
     VnVariableWriteV1 write{};
     write.variableId = id;
@@ -2017,7 +2048,7 @@ VariableAcceptResult VariableServiceV1::AcceptGlobalResetBatch(
 VariableAcceptResult VariableServiceV1::AcceptEmitterBatch(
     VnEmitterHandle emitter, const VnVariableWriteV1* writes,
     std::uint32_t writeCount, const VariableCallObservation& observed,
-    const EmitterTable& emitters, ParamSystem& /*params*/) {
+    EmitterTable& emitters, ParamSystem& /*params*/) {
     VariableScopeKey scope{};
     scope.scope = VariableScopeV1::Emitter;
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
@@ -4153,9 +4184,7 @@ void VariableServiceV1::NoteEmitterDestroyed(Engine& engine,
             bank.live = false;
             bank.generation = 0;
         }
-        for (OverrideRow& override : bank.overrides) {
-            override = OverrideRow{};
-        }
+        std::vector<OverrideRow>().swap(bank.overrides);
     }
     for (WriteRow& row : history_) {
         if (!row.used || !row.batchLeader || row.state == RowState::Terminal ||
@@ -4516,7 +4545,9 @@ std::size_t VariableServiceV1::ReadCutStorageBytes() const noexcept {
 }
 
 std::size_t VariableServiceV1::StorageBytes() const noexcept {
-    return ReadCutStorageBytes() + slices_.StorageBytes() +
+    auto emitterBytes = emitterBanks_.capacity() * sizeof(EmitterBank);
+    for (const auto& bank : emitterBanks_) emitterBytes += bank.overrides.capacity() * sizeof(OverrideRow);
+    return emitterBytes + ReadCutStorageBytes() + slices_.StorageBytes() +
         censusScratch_.capacity() * sizeof(GatheredTarget) +
         history_.RequestedBytes() + freeSlots_.capacity() * sizeof(std::uint32_t) +
         outcomes_.RequestedBytes() +

@@ -5,7 +5,7 @@
 //
 // OutputGain is the frame-accurate path: N = ceil(ms * rate / 1000) actual
 // samples, evaluated from a fixed start/target/total with the §3 low+step
-// *distance formula. GainRamp keeps its one-block / Send duration.
+// *distance formula. GainRamp retains its one-block interpolation.
 //
 // Pure math: no allocation, audio-thread safe.
 #ifndef HARKEN_DSP_GAIN_RAMP_H
@@ -22,6 +22,14 @@
 #endif
 
 namespace harken {
+
+// Changes to an already rendered voice or mixed bus must not hard-step.
+inline constexpr std::uint32_t kGainDeclickMs = 5;
+inline std::uint64_t GainTransitionFrames(std::uint32_t rampMs,
+    std::uint32_t sampleRate, bool hasRendered) noexcept {
+    const auto ms = hasRendered && rampMs < kGainDeclickMs ? kGainDeclickMs : rampMs;
+    return (static_cast<std::uint64_t>(ms) * sampleRate + 999) / 1000;
+}
 
 // Converts a volume in dB with the same float pow the audio-thread gain
 // apply path uses. Succeeds only when both the dB value and the converted

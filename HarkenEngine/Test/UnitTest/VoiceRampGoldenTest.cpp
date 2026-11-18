@@ -131,22 +131,20 @@ TEST_F(VoiceRampGolden, TwentyMsAt48kLandsOnFrame960Not1024) {
     }
 }
 
-TEST_F(VoiceRampGolden, ZeroRampSnapsAtNextBlockBoundary) {
+TEST_F(VoiceRampGolden, ZeroRampUsesFiveMillisecondTransitionAfterRendering) {
     Capture out;
     harkentest::PumpAndCapture(session->Engine(), 1, out);
     HARKENTEST_ASSERT_NON_SILENT(out.left);
 
-    // rampMs 0: the whole next block renders at the new value — the
-    // first sample already carries it, with no intra-block ramp.
+    // A zero request on a rendered object completes at sample 240.
     ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, kHalfDb, 0));
     harkentest::PumpAndCapture(session->Engine(), 1, out);
 
     for (std::size_t n = 0; n < kBlockFrames; ++n) {
-        ASSERT_NEAR(0.5f, out.left[kBlockFrames + n], 1e-5f)
-            << "snapped sample " << n;
+        const float expected = 1.f - .5f * std::min(1.f, float(n + 1) / 240.f);
+        ASSERT_NEAR(expected, out.left[kBlockFrames + n], 1e-5f) << n;
     }
-    // Constant gain over DC: the block is exactly flat.
-    ASSERT_EQ(out.left[kBlockFrames], out.left[2 * kBlockFrames - 1]);
+    ASSERT_NEAR(.5f, out.left[kBlockFrames + 239], 1e-5f);
 }
 
 TEST_F(VoiceRampGolden, RampComposesOnTheAuthoredBaseNotOverwritesIt) {
@@ -171,7 +169,7 @@ TEST_F(VoiceRampGolden, RampComposesOnTheAuthoredBaseNotOverwritesIt) {
 
     ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 6.0206f, 0));
     harkentest::PumpAndCapture(session->Engine(), 1, out);
-    ASSERT_NEAR(1.0f, out.left[2 * kBlockFrames], 1e-4f)
+    ASSERT_NEAR(1.0f, out.left[2 * kBlockFrames + 239], 1e-4f)
         << "+6 dB API-direct on a -6 dB base must land on unity";
 }
 

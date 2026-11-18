@@ -373,33 +373,7 @@ const std::uint32_t* BusTree::InstalledMigrationTargets() const {
                                              : nullptr;
 }
 
-void BusTree::ArmRamp(GainRamp& gain, bool& ramping, float& rampStartGain,
-                      float& rampEndGain, std::uint64_t& rampBlocksTotal,
-                      std::uint64_t& rampBlocksDone, float targetLinear,
-                      std::uint32_t rampMs) {
-    if (!gain.started || rampMs == 0) {
-        // First-ever value snaps (no fictitious prior value to ramp from);
-        // rampMs == 0 snaps at this block boundary by request.
-        gain.SnapTo(targetLinear);
-        ramping = false;
-        return;
-    }
-    // Frames round up so a short positive ramp is never zero-length, then
-    // blocks round up so the ramp completes exactly on a block boundary.
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
-    std::uint64_t blocks = (rampFrames + m_blockFrames - 1) / m_blockFrames;
-    if (blocks == 0) {
-        blocks = 1;
-    }
-    // A re-set during an active ramp restarts from the value in effect at
-    // this block boundary: deterministic, no queued targets.
-    ramping = true;
-    rampStartGain = gain.current;
-    rampEndGain = targetLinear;
-    rampBlocksTotal = blocks;
-    rampBlocksDone = 0;
-}
+
 
 namespace {
 
@@ -603,20 +577,19 @@ void BusTree::ApplyVolume(std::uint32_t busIndex, float volumeDb,
         ++m_invalidVolumeApplies;
         return;
     }
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
+    const auto rampFrames = GainTransitionFrames(rampMs, m_sampleRate, bus.hasMixed);
     NoteWorkMutation(bus);
     if (outputOnly) {
         bus.outputGain.Set(linear, rampFrames);
         return;
     }
-    // First volume on a bus snaps even if rampMs != 0. Later sets use
-    // N = ceil(rampMs * rate / 1000) mix frames; rampMs 0 is N = 0.
-    if (!bus.gainStarted) {
+    // Preserve the initial-value contract only before this work row mixes.
+    if (!bus.hasMixed && !bus.gainStarted) {
         bus.gain.Set(linear, 0);
         bus.gainStarted = true;
         return;
     }
+    bus.gainStarted = true;
     bus.gain.Set(linear, rampFrames);
 }
 
@@ -811,19 +784,9 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                     plan.sendLevelRampMs != nullptr
                         ? plan.sendLevelRampMs[planSlot]
                         : 0;
-                if (retained && rampMs != 0) {
-                    ArmRamp(edge.gain, edge.ramping,
-                            edge.rampStartGain, edge.rampEndGain,
-                            edge.rampBlocksTotal, edge.rampBlocksDone,
-                            linear, rampMs);
-                } else {
-                    edge.gain.SnapTo(linear);
-                    edge.ramping = false;
-                    edge.rampStartGain = linear;
-                    edge.rampEndGain = linear;
-                    edge.rampBlocksTotal = 0;
-                    edge.rampBlocksDone = 0;
-                }
+                const auto frames = retained ? GainTransitionFrames(rampMs, m_sampleRate,
+                    HasWorkRow(from) && WorkState(from).hasMixed) : 0;
+                edge.gain.Set(linear, frames);
             }
         }
     }
@@ -839,7 +802,7 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                 plan.generations != nullptr && connectTo < m_audioCount
                     ? plan.generations[connectTo]
                     : 0;
-            edge->gain.SnapTo(std::pow(10.0f, connectLevelDb / 20.0f));
+            edge->gain.Set(std::pow(10.0f, connectLevelDb / 20.0f));
         }
     }
     if (previousIndex != kInvalidTopologyPlanIndex && previousIndex != planIndex)
@@ -874,8 +837,8 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
     if (edge == nullptr) return;
     if (HasWorkRow(fromBus)) NoteWorkMutation(WorkState(fromBus));
     const float linear = std::pow(10.0f, levelDb / 20.0f);
-    ArmRamp(edge->gain, edge->ramping, edge->rampStartGain, edge->rampEndGain,
-            edge->rampBlocksTotal, edge->rampBlocksDone, linear, rampMs);
+    edge->gain.Set(linear, GainTransitionFrames(rampMs, m_sampleRate,
+        HasWorkRow(fromBus) && WorkState(fromBus).hasMixed));
 }
 
 void BusTree::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
@@ -1210,17 +1173,9 @@ void BusTree::FoldBusOutput(Bus& bus, float* const* planes,
 
 void BusTree::ScatterSend(const float* const* src, float* const* dst,
                           std::uint32_t blockFrames, SendEdge& edge) {
-    if (edge.ramping) {
-        edge.gain.SetBlockTarget(edge.rampStartGain, edge.rampEndGain,
-                                 edge.rampBlocksDone, edge.rampBlocksTotal);
-    }
-    edge.gain.MixAddBlock(src, dst, m_mixChannels, 0, blockFrames);
-    if (edge.ramping) {
-        ++edge.rampBlocksDone;
-        if (edge.rampBlocksDone >= edge.rampBlocksTotal) {
-            edge.ramping = false;
-        }
-    }
+    for (std::uint32_t ch = 0; ch < m_mixChannels; ++ch)
+        edge.gain.MixAdd(src[ch], dst[ch], blockFrames, 0);
+    edge.gain.Advance(blockFrames);
 }
 
 SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t frames,
@@ -1427,11 +1382,7 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
             const auto to = mapping.Ordinal(plan.sendTargets[range.first + slot]);
             if (to == UINT32_MAX || info[to].id == VnBusId{}) continue;
             const auto* edge = &plan.sendStates[range.first + slot];
-            auto gain = edge->gain;
-            if (edge->ramping) gain.SetBlockTarget(edge->rampStartGain, edge->rampEndGain,
-                edge->rampBlocksDone, edge->rampBlocksTotal);
-            const double level = std::max(std::abs(static_cast<double>(gain.current)),
-                std::abs(static_cast<double>(gain.target)));
+            const double level = edge->gain.AbsoluteBound(frames);
             edges[used++] = {mapping.Node(i), inputNode(to),
                 SignalBoundProduct(level, segmented ? 1 : info[to].inputBound), false};
         }
@@ -1597,6 +1548,7 @@ bool BusTree::MixDown(const BusRenderView& busPlanes, std::uint32_t blockFrames,
         } else {
             bus.outputGain.Advance(blockFrames);
         }
+        if (blockFrames != 0) bus.hasMixed = true;
     }
     return true;
 }

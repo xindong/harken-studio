@@ -399,8 +399,11 @@ std::size_t Engine::CapturedVoiceStorageBytes() const noexcept {
         bytes += charge(ordinary.replacementVoice) + sideBytes(ordinary.nativeReplacement);
     const auto groupBytes = [&](const auto& groups) noexcept {
         std::size_t result = 0;
-        for (const auto& group : groups)
+        for (const auto& group : groups) {
             for (const auto& slot : group.nativeReplacementSlots) result += sideBytes(slot.side);
+            if (group.nativeRuntimeBacking)
+                for (const auto& leaf : group.nativeRuntimeBacking->reprepareLeaves) result += charge(leaf.capture);
+        }
         return result;
     };
     bytes += groupBytes(preparedPendingVariableGroups) + groupBytes(acceptedPendingVariableGroups);
@@ -509,11 +512,43 @@ public:
         return status;
     }
 
+    template<class Allow>
+    static PlayableStartStatus GrowPreservingInput(std::uint32_t bindings, std::uint32_t path,
+        std::uint32_t sends, std::uint32_t effects, Allow&& allow,
+        CapturedTimelineVoiceInstall* out) noexcept {
+        if (out == nullptr) return PlayableStartStatus::InvalidInput;
+        CapturedTimelineVoiceInstall::ColumnRange ranges[4]{};
+        std::size_t bytes = 0;
+        if (!Layout(bindings, path, sends, effects, ranges, bytes)) return PlayableStartStatus::Capacity;
+        if (out->AllocationBytes() >= bytes) return PlayableStartStatus::Accepted;
+        if (!allow()) return PlayableStartStatus::Capacity;
+        CapturedTimelineVoiceInstall candidate;
+        const auto reserved = Reserve(bindings, path, sends, effects, &candidate);
+        if (reserved != PlayableStartStatus::Accepted) return reserved;
+        if (out->Valid()) {
+            const auto old = out->Input();
+            const auto filled = Fill(static_cast<std::uint32_t>(old.bindings.size()),
+                static_cast<std::uint32_t>(old.pathRows.size()), static_cast<std::uint32_t>(old.sends.size()),
+                static_cast<std::uint32_t>(old.effects.size()),
+                [&](auto& facts, auto bindingRows, auto pathRows, auto sendRows, auto effectRows) noexcept {
+                    facts = *old.facts;
+                    std::copy(old.bindings.begin(), old.bindings.end(), bindingRows.begin());
+                    std::copy(old.pathRows.begin(), old.pathRows.end(), pathRows.begin());
+                    std::copy(old.sends.begin(), old.sends.end(), sendRows.begin());
+                    std::copy(old.effects.begin(), old.effects.end(), effectRows.begin());
+                    return PlayableStartStatus::Accepted;
+                }, &candidate);
+            if (filled != PlayableStartStatus::Accepted) return filled;
+        }
+        *out = std::move(candidate);
+        return PlayableStartStatus::Accepted;
+    }
+
 private:
     static bool Layout(std::uint32_t bindings, std::uint32_t path,
         std::uint32_t sends, std::uint32_t effects,
         CapturedTimelineVoiceInstall::ColumnRange (&ranges)[4], std::size_t& bytes) noexcept {
-        if (bindings > kMaxVoiceBindingInstanceSlots || path > kPlaybackPathRowCapacity ||
+        if (path > kPlaybackPathRowCapacity ||
             effects > kTimelineMaxVoiceEffects) return false;
         bytes = sizeof(CapturedTimelineVoiceInstall::Header);
         return Append<TimelineVoiceBindingInstall>(bytes, bindings, ranges[0]) &&
@@ -5577,6 +5612,50 @@ bool VariableConsumerBlocked(const Engine& engine,
     return engine.variables.BlocksVariableConsumer(variableId);
 }
 
+using BusPublicationTarget = std::pair<VnObjectId, std::uint32_t>;
+
+bool HasLiveBusPublicationTarget(const Engine& engine, const BusPublicationTarget& key) noexcept {
+    bool found = false;
+    engine.bindings.ForEachBusAttachment([&](const auto& attachment, const auto& definition) {
+        found |= definition.sourceKind == BindingSourceKind::Variable &&
+            attachment.objectId == key.first && definition.targetId == key.second;
+    });
+    return found;
+}
+
+bool HasPendingBusPublicationTarget(const Engine& engine, const BusPublicationTarget& key,
+    const PackPendingRevision* skip = nullptr) noexcept {
+    for (const auto& pending : engine.logicPacks.pending) {
+        if (&pending != skip && std::binary_search(pending.publicationTargets.begin(),
+                pending.publicationTargets.end(), key)) return true;
+    }
+    return false;
+}
+
+// The pending directory owns future demand. Count its union with live targets,
+// without tying a reservation to transient topology slots or a particular payer.
+std::uint64_t BusPublicationUnionCount(const Engine& engine,
+    const PackPendingRevision* skip = nullptr,
+    std::span<const BusPublicationTarget> extra = {}) noexcept {
+    std::uint64_t count = engine.bindings.Dependencies().BusPublicationTargetCount();
+    for (const auto& pending : engine.logicPacks.pending) {
+        if (&pending == skip) continue;
+        for (const auto& key : pending.publicationTargets) {
+            if (HasLiveBusPublicationTarget(engine, key)) continue;
+            bool earlier = false;
+            for (const auto& prior : engine.logicPacks.pending) {
+                if (&prior == &pending) break;
+                if (&prior != skip && std::binary_search(prior.publicationTargets.begin(),
+                        prior.publicationTargets.end(), key)) { earlier = true; break; }
+            }
+            if (!earlier) ++count;
+        }
+    }
+    for (const auto& key : extra)
+        if (!HasLiveBusPublicationTarget(engine, key) && !HasPendingBusPublicationTarget(engine, key, skip)) ++count;
+    return count;
+}
+
 VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
                        VnObjectId objectId) {
     std::uint32_t busIndex = 0;
@@ -5645,7 +5724,16 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     // Effect-parameter bindings emit on their own command path (opcodes 14/22
     // via the update's fold+flush), not through the property publisher's
     // transaction, so they do not consume its section-10.4 worst-case budget.
-    const bool usesPublisher = scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    if (scopeKind == kTargetScopeVoice) {
+        const auto count = engine.bindings.VoiceAttachmentCount(objectId);
+        if (count == UINT32_MAX) return VN_OUT_OF_MEMORY;
+        const std::pair<VnObjectId, std::uint32_t> demand{objectId, count + 1u};
+        const auto prepared = engine.PrepareNativeBindingGrowth({&demand, 1});
+        if (prepared != VN_OK) return prepared;
+    }
+    const bool usesPublisher = scopeKind == kTargetScopeBus && definition != nullptr &&
+        !HasLiveBusPublicationTarget(engine, {objectId, definition->targetId}) &&
+        !HasPendingBusPublicationTarget(engine, {objectId, definition->targetId});
     if (scopeKind == kTargetScopeBus && definition != nullptr &&
         !engine.busTargets.PrepareActivity(busIndex, definition->targetId)) {
         return VN_BACKPRESSURE;
@@ -5683,6 +5771,7 @@ VnResult DetachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         engine.commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
+    const auto targetId = definition == nullptr ? UINT32_MAX : definition->targetId;
     const VnResult result =
         engine.bindings.Detach(id, scopeKind, objectId, &engine.busTargets);
     if (result != VN_OK) {
@@ -5692,7 +5781,9 @@ VnResult DetachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     }
     // Symmetric with AttachBinding: effect-parameter attachments never grew the
     // publisher's worst-case budget, so their detach must not shrink it.
-    if (scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
+    if (scopeKind == kTargetScopeBus &&
+        !HasLiveBusPublicationTarget(engine, {objectId, targetId}) &&
+        !HasPendingBusPublicationTarget(engine, {objectId, targetId})) {
         engine.propertyPublisher.ShrinkWorstCase(1);
     }
     if (scopeKind == kTargetScopeVoice) {
@@ -5833,18 +5924,10 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
                 return VN_IN_USE;
             }
         }
-        if (rec.bindingInstances.size() >=
-                engine.config.voiceBindingInstanceSlots ||
-            rec.bindingInstances.size() ==
-                rec.bindingInstances.capacity()) {
-            ++engine.bindingInstanceRefusedCount;
-            LogRecord record{};
-            record.level = VN_LOG_WARN;
-            record.code = kLogCodeBindingPoolExhausted;
-            record.arg0 = kBindingPoolVoiceInstances;
-            record.arg1 = engine.config.voiceBindingInstanceSlots;
-            engine.logicLogRing.Push(record);
-            return kResultNoBinding;
+        try { rec.bindingInstances.reserve(rec.bindingInstances.size() + 1u); }
+        catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+            return VN_OUT_OF_MEMORY;
         }
         bool targetAlreadyOwned = false;
         for (const ParamSystem::BindingState& binding : rec.bindings) {
@@ -5918,7 +6001,7 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
             record.level = VN_LOG_WARN;
             record.code = kLogCodeBindingPoolExhausted;
             record.arg0 = kBindingPoolVoiceInstances;
-            record.arg1 = engine.config.voiceBindingInstanceSlots;
+            record.arg1 = engine.params.BindingCapacity();
             engine.logicLogRing.Push(record);
             return kResultNoBinding;
         }
@@ -5955,7 +6038,7 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
         record.level = VN_LOG_WARN;
         record.code = kLogCodeBindingPoolExhausted;
         record.arg0 = kBindingPoolVoiceInstances;
-        record.arg1 = engine.config.voiceBindingInstanceSlots;
+        record.arg1 = engine.params.BindingCapacity();
         engine.logicLogRing.Push(record);
         return kResultNoBinding;
     }
@@ -8349,15 +8432,19 @@ VnResult ValidateTimelineVoiceInstallInputShape(
     const harken::TimelineVoiceInstallInput& input) noexcept {
     if (input.facts == nullptr) return VN_INVALID_ARG;
     if (input.sends.size() > UINT32_MAX ||
-        input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
+        input.bindings.size() > UINT32_MAX ||
         input.pathRows.size() > harken::kPlaybackPathRowCapacity ||
         input.effects.size() > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
+    for (const auto& binding : input.bindings) {
+        if (binding.targetId >= harken::kBuiltinTargetCount || binding.curve.pointCount == 0)
+            return VN_INVALID_ARG;
+    }
     return VN_OK;
 }
 
 VnResult ValidateLegacyTimelineVoiceInstallCounts(
     const harken::TimelineVoiceInstallDesc& source) noexcept {
-    if (source.bindingCount > harken::kMaxVoiceBindingInstanceSlots ||
+    if (source.bindingCount > source.bindings.size() ||
         source.playbackPath.rowCount > harken::kPlaybackPathRowCapacity ||
         source.sendCount > source.sends.size() ||
         source.effectCount > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
@@ -8409,7 +8496,7 @@ public:
         status_ = ValidateLegacyTimelineVoiceInstallCounts(source);
         if (status_ != VN_OK) return;
         facts_ = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallFacts>(source);
-        input_ = {&facts_, {source.bindingStorage, source.bindingCount},
+        input_ = {&facts_, source.bindings.first(source.bindingCount),
             {source.playbackPath.rows, source.playbackPath.rowCount},
             source.sends.first(source.sendCount), {source.effects, source.effectCount}};
     }
@@ -8507,7 +8594,7 @@ harken::TimelineVoiceInstallDesc ProjectLegacyTimelineVoiceInstall(
     result.playbackPath.rowCount = static_cast<std::uint32_t>(input.pathRows.size());
     result.sendCount = static_cast<std::uint32_t>(input.sends.size());
     result.effectCount = static_cast<std::uint32_t>(input.effects.size());
-    std::copy(input.bindings.begin(), input.bindings.end(), result.bindingStorage);
+    result.SetBindings({input.bindings.begin(), input.bindings.end()});
     std::copy(input.pathRows.begin(), input.pathRows.end(), result.playbackPath.rows);
     result.SetSends({input.sends.begin(), input.sends.end()});
     std::copy(input.effects.begin(), input.effects.end(), result.effects);
@@ -8570,7 +8657,7 @@ VnResult TimelineVoiceStartCommandBudget(
     if (out == nullptr) return VN_INVALID_ARG;
     const auto status = ValidateTimelineVoiceInstallInputShape(input);
     if (status != VN_OK) return status;
-    *out = 3u + static_cast<std::uint32_t>(input.bindings.size()) +
+    *out = 3u + static_cast<std::uint32_t>(std::min<std::size_t>(input.bindings.size(), harken::kBuiltinTargetCount)) +
         static_cast<std::uint32_t>(input.effects.size()) +
         SpatialStartCommandDemand(input.facts->spatialized, input.facts->attenuationResolved);
     for (const auto& effect : input.effects) *out += (effect.flags & 1u) != 0;
@@ -8582,7 +8669,7 @@ VnResult TimelineVoiceStartCommandBudget(
     if (out == nullptr) return VN_INVALID_ARG;
     const auto status = ValidateLegacyTimelineVoiceInstallCounts(install);
     if (status != VN_OK) return status;
-    *out = 3u + install.effectCount + install.bindingCount +
+    *out = 3u + install.effectCount + std::min(install.bindingCount, harken::kBuiltinTargetCount) +
         SpatialStartCommandDemand(install.spatialized, install.attenuationResolved);
     for (std::uint32_t index = 0; index < install.effectCount; ++index)
         *out += (install.effects[index].flags & 1u) != 0;
@@ -8686,8 +8773,7 @@ VnResult PreflightTimelineVoiceStart(
         install.spatializationMix < 0.0f || install.spatializationMix > 1.0f) {
         return VN_INVALID_ARG;
     }
-    if (input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
-        commandCount > engine.playLedBatchScratch.size() ||
+    if (commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         return VN_INVALID_CONFIG;
     }
@@ -9083,8 +9169,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         return result;
     }
     commandCount += static_cast<std::uint32_t>(variableWeight != nullptr);
-    if (input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
-        commandCount > engine.playLedBatchScratch.size() ||
+    if (commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         result.status = VN_INVALID_CONFIG;
         return result;
@@ -21728,20 +21813,23 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
     const harken::PlayableRefV1& root,
     const MaterializedScheduleLeaf& materialized,
-    PreparedScheduleLeafStart* out, bool allowRegisteredStream = false) noexcept;
+    PreparedScheduleLeafStart* out, bool allowRegisteredStream = false,
+    harken::CapturedTimelineVoiceInstall* preparedCapture = nullptr) noexcept;
 
 harken::PlayableStartStatus BuildScheduleLeafStart(
     harken::Engine& engine, const harken::PackPlaybackView& world,
     const harken::PlayableRefV1& root,
     const MaterializedScheduleLeaf& materialized,
     const harken::PackPartitionLease& packLease,
-    PreparedScheduleLeafStart* out, bool allowRegisteredStream = false) noexcept;
+    PreparedScheduleLeafStart* out, bool allowRegisteredStream = false,
+    harken::CapturedTimelineVoiceInstall* preparedCapture = nullptr) noexcept;
 
 template <typename WorldView>
 harken::PlayableStartStatus BuildVariableControlScheduleLeafStart(
     harken::Engine& engine, const WorldView& world,
     const harken::EnginePlayableServiceRow& row,
-    MaterializedScheduleLeaf materialized, PreparedScheduleLeafStart* out) noexcept {
+    MaterializedScheduleLeaf materialized, PreparedScheduleLeafStart* out,
+    harken::CapturedTimelineVoiceInstall* preparedCapture = nullptr) noexcept {
     const bool inherited = row.VariableControlPropertyRoot().stableId != VnObjectId{};
     if (inherited) {
         if (row.selectionCount > materialized.selectedOrdinals.size() - materialized.selectionCount)
@@ -21758,8 +21846,8 @@ harken::PlayableStartStatus BuildVariableControlScheduleLeafStart(
     }
     const auto& root = inherited ? row.VariableControlPropertyRoot() : row.root;
     if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>)
-        return BuildScheduleLeafStart(engine, world, root, materialized, row.Invocation().packLease, out, true);
-    else return BuildScheduleLeafStart(engine, world, root, materialized, out, true);
+        return BuildScheduleLeafStart(engine, world, root, materialized, row.Invocation().packLease, out, true, preparedCapture);
+    else return BuildScheduleLeafStart(engine, world, root, materialized, out, true, preparedCapture);
 }
 
 // Streaming is a property of the Sound definition itself, so it can be read
@@ -22984,21 +23072,20 @@ bool ObserveRetargetNestedControllerEntry(harken::Engine& engine,
     return true;
 }
 
-void SnapshotVoiceBindingCatalog(harken::Engine& engine) noexcept {
+void SnapshotVoiceBindingCatalog(harken::Engine& engine,
+    const harken::ResolvedPlayablePropertyCutViewV1& cut) noexcept {
     auto& scratch = engine.voiceBindingCatalogScratch;
     scratch.clear();
-    engine.bindings.ForEachAttachment(
-        [&](const harken::BindingTable::Attachment& attachment,
-            const harken::BindingTable::Definition& definition) {
-            if (attachment.scopeKind != VN_TARGET_SCOPE_VOICE ||
-                !definition.used || definition.id == VnObjectId{}) {
-                return;
-            }
-            if (scratch.size() >= scratch.capacity()) {
-                return;
-            }
+    for (std::uint32_t i = 0; i < cut.pathCount; ++i) {
+        const auto object = cut.path[i].stableId;
+        bool seen = false;
+        for (std::uint32_t j = 0; j < i; ++j) seen = seen || cut.path[j].stableId == object;
+        if (seen) continue;
+        engine.bindings.ForEachVoiceAttachment(object, object,
+        [&](const harken::BindingTable::Definition& definition, VnObjectId objectId) {
+            assert(scratch.size() < scratch.capacity());
             harken::PackVoiceBinding row{};
-            row.objectId = attachment.objectId;
+            row.objectId = objectId;
             row.bindingId = definition.id;
             row.descriptor.structSize = sizeof(VnBindingDesc);
             row.descriptor.variableId = definition.variableId;
@@ -23023,11 +23110,12 @@ void SnapshotVoiceBindingCatalog(harken::Engine& engine) noexcept {
             }
             scratch.push_back(row);
         });
+    }
 }
 
 struct ResolvedTimelineVoiceInstallSource {
     harken::TimelineVoiceInstallFacts facts{};
-    const harken::PackVoiceBinding* bindings[harken::kMaxVoiceBindingInstanceSlots]{};
+    std::span<const harken::PackVoiceBinding*> bindings{};
     std::uint32_t bindingCount = 0;
     const harken::PackEffectPresetSnapshot* effectPresets[harken::kTimelineMaxVoiceEffects]{};
 };
@@ -23110,9 +23198,11 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
         if (!engine.packComposition.PlaybackViewAtLease(*leaseOrNull, &playback)) {
             return harken::PlayableStartStatus::MediaMismatch;
         }
-        bindingCount = playback.CollectCutVoiceBindings(
-            cut.path, cut.pathCount, resolved,
-            harken::kMaxVoiceBindingInstanceSlots);
+        bindingCount = playback.CollectCutVoiceBindings(cut.path, cut.pathCount, nullptr, 0);
+        if (!engine.PrepareVoiceBindingResolutionStorage(bindingCount)) return harken::PlayableStartStatus::Capacity;
+        resolved = {engine.voiceBindingResolutionScratch.data(), bindingCount};
+        if (playback.CollectCutVoiceBindings(cut.path, cut.pathCount, resolved.data(), bindingCount) != bindingCount)
+            return harken::PlayableStartStatus::InvalidInput;
         for (std::uint32_t index = 0; index < cut.effectNodeCount; ++index) {
             const auto& node = cut.effectNodes[index];
             if (node.presetId == VnObjectId{}) continue;
@@ -23121,15 +23211,13 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
                 return harken::PlayableStartStatus::InvalidInput;
         }
     } else {
-        SnapshotVoiceBindingCatalog(engine);
-        bindingCount = harken::CollectCutVoiceBindings(
-            cut.path, cut.pathCount, engine.voiceBindingCatalogScratch.data(),
-            static_cast<std::uint32_t>(engine.voiceBindingCatalogScratch.size()),
-            resolved, harken::kMaxVoiceBindingInstanceSlots);
-    }
-    if (bindingCount > engine.config.voiceBindingInstanceSlots ||
-        bindingCount > harken::kMaxVoiceBindingInstanceSlots) {
-        return harken::PlayableStartStatus::Capacity;
+        SnapshotVoiceBindingCatalog(engine, cut);
+        const auto catalogCount = static_cast<std::uint32_t>(engine.voiceBindingCatalogScratch.size());
+        resolved = engine.voiceBindingResolutionScratch;
+        bindingCount = harken::CollectCutVoiceBindings(cut.path, cut.pathCount,
+            engine.voiceBindingCatalogScratch.data(), catalogCount, resolved.data(), static_cast<std::uint32_t>(resolved.size()));
+        if (bindingCount > resolved.size()) return harken::PlayableStartStatus::Capacity;
+        resolved = resolved.first(bindingCount);
     }
     for (std::uint32_t index = 0; index < bindingCount; ++index)
         if (resolved[index] == nullptr) return harken::PlayableStartStatus::InvalidInput;
@@ -23254,22 +23342,46 @@ harken::PlayableStartStatus BuildTimelineVoiceInstallFromCut(
     harken::Engine& engine, const harken::ResolvedPlayablePropertyCutViewV1& cut,
     harken::TimelineVoiceInstallDesc* out,
     const harken::PackPartitionLease* leaseOrNull = nullptr,
-    bool allowDirectActionStream = false) noexcept {
+    bool allowDirectActionStream = false,
+    harken::CapturedTimelineVoiceInstall* preparedCapture = nullptr) noexcept {
     if (out == nullptr) return harken::PlayableStartStatus::InvalidInput;
     ResolvedTimelineVoiceInstallSource source;
     const auto resolved = ResolveTimelineVoiceInstallSource(
         engine, cut, leaseOrNull, allowDirectActionStream, source);
     if (resolved != harken::PlayableStartStatus::Accepted) return resolved;
+    if (preparedCapture != nullptr) {
+        const auto filled = harken::CapturedTimelineVoiceInstallBuilder::Fill(source.bindingCount,
+            cut.pathCount, cut.sendCount, cut.effectNodeCount,
+            [&](auto& facts, auto bindings, auto path, auto sends, auto effects) noexcept {
+                facts = source.facts;
+                return PopulateTimelineVoiceInstallColumns(engine, cut, source, bindings, path, sends, effects);
+            }, preparedCapture);
+        if (filled != harken::PlayableStartStatus::Accepted) return filled;
+        const auto input = preparedCapture->Input();
+        auto voice = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallDesc>(*input.facts);
+        voice.bindings = input.bindings;
+        voice.bindingCount = static_cast<std::uint32_t>(input.bindings.size());
+        voice.sends = input.sends;
+        voice.sendCount = static_cast<std::uint32_t>(input.sends.size());
+        voice.playbackPath.rowCount = static_cast<std::uint32_t>(input.pathRows.size());
+        std::copy(input.pathRows.begin(), input.pathRows.end(), voice.playbackPath.rows);
+        voice.effectCount = static_cast<std::uint32_t>(input.effects.size());
+        std::copy(input.effects.begin(), input.effects.end(), voice.effects);
+        *out = std::move(voice);
+        return harken::PlayableStartStatus::Accepted;
+    }
     try {
         auto voice = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallDesc>(source.facts);
         voice.bindingCount = source.bindingCount;
         voice.playbackPath.rowCount = cut.pathCount;
         voice.effectCount = cut.effectNodeCount;
+        std::vector<harken::TimelineVoiceBindingInstall> bindings(source.bindingCount);
         std::vector<harken::TimelineVoiceSendInstall> sends(cut.sendCount);
         const auto populated = PopulateTimelineVoiceInstallColumns(engine, cut, source,
-            {voice.bindingStorage, voice.bindingCount}, {voice.playbackPath.rows, cut.pathCount},
+            bindings, {voice.playbackPath.rows, cut.pathCount},
             sends, {voice.effects, voice.effectCount});
         if (populated != harken::PlayableStartStatus::Accepted) return populated;
+        voice.SetBindings(std::move(bindings));
         voice.SetSends(std::move(sends));
         *out = std::move(voice);
         return harken::PlayableStartStatus::Accepted;
@@ -23338,7 +23450,8 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
     const harken::PlayableWorldViewV1& world,
     const harken::PlayableRefV1& root,
     const MaterializedScheduleLeaf& materialized,
-    PreparedScheduleLeafStart* out, bool allowRegisteredStream) noexcept {
+    PreparedScheduleLeafStart* out, bool allowRegisteredStream,
+    harken::CapturedTimelineVoiceInstall* preparedCapture) noexcept {
     if (out == nullptr || materialized.selectionCount == 0 ||
         engine.playablePropertyCutScratch.Resolve(
             world, root, materialized.selectedOrdinals.data(),
@@ -23359,7 +23472,7 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
         materialized.selectedOrdinals[materialized.selectionCount - 1u];
     const harken::PlayableStartStatus voiceStatus =
         BuildTimelineVoiceInstallFromCut(engine, cut, &candidate.voice,
-                                         nullptr, allowRegisteredStream);
+                                         nullptr, allowRegisteredStream, preparedCapture);
     if (voiceStatus != harken::PlayableStartStatus::Accepted) {
         return voiceStatus;
     }
@@ -23379,7 +23492,8 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
     const harken::PlayableRefV1& root,
     const MaterializedScheduleLeaf& materialized,
     const harken::PackPartitionLease& packLease,
-    PreparedScheduleLeafStart* out, bool allowRegisteredStream) noexcept {
+    PreparedScheduleLeafStart* out, bool allowRegisteredStream,
+    harken::CapturedTimelineVoiceInstall* preparedCapture) noexcept {
     if (out == nullptr || materialized.selectionCount == 0 ||
         engine.playablePropertyCutScratch.Resolve(
             world, root, materialized.selectedOrdinals.data(),
@@ -23400,7 +23514,7 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
         materialized.selectedOrdinals[materialized.selectionCount - 1u];
     const harken::PlayableStartStatus voiceStatus =
         BuildTimelineVoiceInstallFromCut(engine, cut, &candidate.voice,
-                                         &packLease, allowRegisteredStream);
+                                         &packLease, allowRegisteredStream, preparedCapture);
     if (voiceStatus != harken::PlayableStartStatus::Accepted) {
         return voiceStatus;
     }
@@ -49011,15 +49125,14 @@ bool PreparePendingVariableGroupSelection(harken::Engine& engine,
             PreparedScheduleLeafStart prepared{};
             const auto status = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
                 ? BuildVariableControlScheduleLeafStart(engine, row.Invocation().packPlaybackView,
-                    row, materialized.leaves[index], &prepared)
+                    row, materialized.leaves[index], &prepared, &leaves[leafCount].capture)
                 : BuildVariableControlScheduleLeafStart(engine, row.variableControlWorldUsesCurrentAuthority
                     ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(),
-                    row, materialized.leaves[index], &prepared);
+                    row, materialized.leaves[index], &prepared, &leaves[leafCount].capture);
             if (status != harken::PlayableStartStatus::Accepted) return false;
             if (prepared.startOffsetFrames > UINT64_MAX - anchor ||
                 (prepared.endOffsetFrames != UINT64_MAX && prepared.endOffsetFrames > UINT64_MAX - anchor)) return false;
             auto& leaf = leaves[leafCount++];
-            leaf = {};
             leaf.voice = prepared.voice;
             leaf.voice.target.programSemanticFingerprint = program.programSemanticFingerprint;
             leaf.voice.target.subjectId = prepared.leaf.stableId;
@@ -63989,10 +64102,14 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 backing::MemoWorkspace workspace(memo.data(), memo.size());
                 if (pack) {
                     backing::PackContent content(row.Invocation().packPlaybackView);
-                    result = backing::Counter(content, limits, workspace).Count(row.root, stamp);
+                    result = backing::Counter(content, limits, workspace).Count(row.root, stamp,
+                        limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot(),
+                        {row.selectionPath.data(), limits.propertyPrefixCount});
                 } else {
-                    backing::WorldContent content(world, config.voiceBindingInstanceSlots);
-                    result = backing::Counter(content, limits, workspace).Count(row.root, stamp);
+                    backing::WorldContent content(world, &bindings);
+                    result = backing::Counter(content, limits, workspace).Count(row.root, stamp,
+                        limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot(),
+                        {row.selectionPath.data(), limits.propertyPrefixCount});
                 }
                 if (result.status != backing::Status::WorkspaceExhausted) break;
                 if (memo.size() > memo.max_size() / 2u) return false;
@@ -64008,6 +64125,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             } else if (packComposition.ValidateLease(row.Invocation().packLease) != VN_OK ||
                 row.Invocation().packPlaybackView.CompositeGeneration() != stamp.generation ||
                 row.Invocation().packPlaybackView.WorldSemanticFingerprint() != stamp.semanticFingerprint) return false;
+            if (!PrepareVoiceBindingResolutionStorage(result.profile.voice.bindings)) return shortage();
             profiles[ordinal] = result.profile;
             if (result.profile.controlSides < 2u || result.profile.containerRows == 0) return false;
             if (!PrepareVariableControlOwners(row,
@@ -64016,8 +64134,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             futures.voice.Include(result.profile.voice);
             futures.queue.Include(result.profile.queue);
             const auto voiceRows = backing::ReservedRows(result.profile);
-            const auto bindingsPerVoice = std::min({result.profile.voice.bindings,
-                config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots});
+            const auto bindingsPerVoice = result.profile.voice.bindings;
             const auto bindingRows = voiceRows * bindingsPerVoice;
             if (nativeBindingRows > UINT64_MAX - bindingRows) return false;
             nativeBindingRows += bindingRows;
@@ -64081,7 +64198,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             const auto& columns = ordinal == UINT32_MAX ? futures.voice : profiles[ordinal].voice;
             for (auto& captured : slot.side.Captures()) {
                 if (!allow() || CapturedTimelineVoiceInstallBuilder::Reserve(
-                        std::min({columns.bindings, config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots}),
+                        columns.bindings,
                         columns.path, columns.sends,
                         std::min({columns.effects, config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), &captured.voice) !=
                             PlayableStartStatus::Accepted) return false;
@@ -64192,6 +64309,12 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         // Preserve the selection workspace bound independently of the final
         // PCM leaf limit: selected children may complete without a PCM leaf.
         nativeCandidate->reprepareLeaves.resize(kMaxKnownScheduleLeaves);
+        for (auto& leaf : nativeCandidate->reprepareLeaves) {
+            if (!AllowNativeBackingAllocation() ||
+                CapturedTimelineVoiceInstallBuilder::Reserve(futures.voice.bindings, futures.voice.path,
+                    futures.voice.sends, futures.voice.effects, &leaf.capture) != PlayableStartStatus::Accepted)
+                return shortage();
+        }
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->selections.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
@@ -64246,8 +64369,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !PreparePendingVariableQueueOriginBacking(static_cast<std::uint32_t>(nativeGroups),
                 &nativeCandidate->queueOrigins) ||
             !effectBank.PrepareBacking(effectInstances, &nativeCandidate->effects) ||
-            !params.PrepareBindingBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                nativeBindingRows, params.PreparationCapacity())), &nativeCandidate->bindings)) return shortage();
+            nativeBindingRows > UINT32_MAX ||
+            !params.PrepareBindingBacking(static_cast<std::uint32_t>(nativeBindingRows), &nativeCandidate->bindings)) return shortage();
         for (std::uint32_t ordinal = 0; ordinal < producerCount; ++ordinal)
             if (!nativeCandidate->checkpoints.Split(profiles[ordinal].Q, 0, &queueCandidate[ordinal].checkpoints))
                 return false;
@@ -64407,9 +64530,165 @@ bool Engine::CancelPendingOrdinarySelectionCandidate(OriginalPendingOrdinarySele
     return true;
 }
 
+VnResult Engine::PrepareNativeBindingGrowth(
+    std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings) noexcept {
+    namespace backing = native_backing;
+    if (prospectiveBindings.empty()) return VN_OK;
+    if (nativeRuntimeBackingInUse != nullptr || actionPlayScratch.PreparedUseActive()) return VN_BACKPRESSURE;
+    try {
+        std::vector<backing::MemoEntry> memo;
+        const auto count = [&](EnginePlayableServiceRow& row, bool variableControl,
+                               backing::Profile& profile, const EngineActionPlayStorage* storage = nullptr) {
+            const bool pack = variableControl
+                ? !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
+                : row.containerLoopAuthorityKind == PlayableExecutionAuthorityKind::Pack;
+            PlayableWorldViewV1 world{};
+            if (!pack) {
+                if (variableControl) world = row.variableControlWorldUsesCurrentAuthority
+                    ? variables.CurrentPlayableWorld() : row.VariableControlWorld();
+                else {
+                    const auto* current = ContainerLoopWorld(*this, row);
+                    if (current == nullptr) return false;
+                    world = *current;
+                }
+            }
+            backing::Limits limits{};
+            limits.currentScheduleDepth = limits.directFutureScheduleDepth = pack
+                ? kSelectionPathNodeCapacity : world.maxTrackSegmentScheduleDepth;
+            limits.immediateFutureSides = config.maxPlayableInstances;
+            limits.queueRoleCapacity = config.maxPlayableInstances;
+            if (variableControl) {
+                if (storage == nullptr) return false;
+                limits.immediateFutureSides = static_cast<std::uint32_t>(std::min({
+                    static_cast<std::size_t>(storage->queueRoleCapacity), storage->queueFutureAttempts.size(),
+                    storage->queueFutureOwners.size(), static_cast<std::size_t>(config.maxPlayableInstances)}));
+                limits.queueRoleCapacity = storage->queueRoleCapacity;
+                const auto& initial = storage->initialSelection;
+                if (initial.BoundFor(storage->generation)) {
+                    if (!initial.prefixSealed || initial.prefixCount > initial.prefix.size()) return false;
+                    limits.seedPrefixCount = initial.prefixCount;
+                }
+                if (pack) limits.directFutureScheduleDepth = WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth;
+            }
+            limits.propertyPrefixCount = variableControl && row.VariableControlPropertyRoot().stableId != VnObjectId{}
+                ? row.selectionCount : 0;
+            const backing::AuthorityStamp stamp{pack ? row.Invocation().worldGeneration : world.generation,
+                pack ? row.Invocation().packPlaybackView.WorldSemanticFingerprint() : world.identity.runtimeSemanticFingerprint};
+            for (;;) {
+                backing::MemoWorkspace workspace(memo.data(), memo.size());
+                const auto* inheritedRoot = limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot();
+                const std::span<const SelectionPathNodeV1> inheritedPath{row.selectionPath.data(), limits.propertyPrefixCount};
+                const auto result = pack
+                    ? backing::Counter(backing::PackContent(row.Invocation().packPlaybackView), limits, workspace)
+                        .Count(row.root, stamp, inheritedRoot, inheritedPath)
+                    : backing::Counter(backing::WorldContent(world, &bindings, prospectiveBindings), limits, workspace)
+                        .Count(row.root, stamp, inheritedRoot, inheritedPath);
+                if (result.status != backing::Status::WorkspaceExhausted) {
+                    if (!result) return false;
+                    profile = result.profile;
+                    return true;
+                }
+                if (!AllowNativeBackingAllocation() || memo.size() > memo.max_size() / 2u) return false;
+                memo.resize(memo.empty() ? 64u : memo.size() * 2u);
+            }
+        };
+        const auto grow = [&](CapturedTimelineVoiceInstall& capture, const backing::VoiceColumns& columns) {
+            return CapturedTimelineVoiceInstallBuilder::GrowPreservingInput(columns.bindings, columns.path,
+                columns.sends, columns.effects, [&] { return AllowNativeBackingAllocation(); }, &capture)
+                == PlayableStartStatus::Accepted;
+        };
+        const auto growSide = [&](auto& side, const backing::VoiceColumns& columns) {
+            for (auto& capture : side.Captures()) {
+                auto old = capture.voice.Share();
+                if (!grow(capture.voice, columns)) return false;
+                for (auto* reader : capture.stagedReaders)
+                    if (reader != nullptr && reader->SharesStorage(old)) *reader = capture.voice.Share();
+            }
+            return true;
+        };
+        const auto refreshGroups = [&](auto& groups) {
+            for (auto& group : groups) {
+                if (!group.nativeRuntimeBacking) continue;
+                auto& runtime = *group.nativeRuntimeBacking;
+                std::vector<backing::Profile> profiles(runtime.rootMemberWeights.size());
+                backing::VoiceColumns future;
+                std::uint64_t bindingRows = 0;
+                bool currentAuthority = false;
+                for (std::size_t i = 0; i < profiles.size(); ++i) {
+                    const auto found = std::find_if(groups.begin(), groups.end(), [&](const auto& candidate) {
+                        return candidate.producer.Valid() && candidate.producer.original_->service_ != nullptr &&
+                            candidate.producer.original_->service_->identity == runtime.rootMemberWeights[i].service;
+                    });
+                    if (found == groups.end()) return false;
+                    auto* row = found->producer.original_->service_;
+                    currentAuthority |= row->variableControlWorldUsesCurrentAuthority || row->Invocation().packLease.leaseToken == 0;
+                    if (!count(*row, true, profiles[i], found->producer.original_->storage_)) return false;
+                    future.Include(profiles[i].voice);
+                }
+                if (!currentAuthority) continue;
+                for (const auto& slot : group.nativeReplacementSlots) {
+                    if (slot.producerOrdinal != UINT32_MAX && slot.producerOrdinal >= profiles.size()) return false;
+                    const auto& columns = slot.producerOrdinal == UINT32_MAX ? future : profiles[slot.producerOrdinal].voice;
+                    bindingRows += std::uint64_t{slot.capacity} * columns.bindings;
+                }
+                if (bindingRows > UINT32_MAX) return false;
+                if (bindingRows > runtime.bindings.ReservedRows()) {
+                    ParamSystem::BackingPreparation candidate;
+                    if (!params.PrepareBindingBacking(static_cast<std::uint32_t>(bindingRows), &candidate)) return false;
+                    runtime.bindings = std::move(candidate);
+                }
+                if (!PrepareVoiceBindingResolutionStorage(future.bindings)) return false;
+                for (auto& slot : group.nativeReplacementSlots) {
+                    auto* side = &slot.side;
+                    if (slot.borrower.Valid()) {
+                        auto* child = FindFrontierAttempt(*this, slot.borrower);
+                        if (child == nullptr) return false;
+                        side = slot.producerOrdinal == UINT32_MAX ? &child->queueSuccessorVoiceStarts : &child->voiceStarts;
+                    }
+                    const auto& columns = slot.producerOrdinal == UINT32_MAX ? future : profiles[slot.producerOrdinal].voice;
+                    if (!growSide(*side, columns)) return false;
+                }
+                for (auto& leaf : runtime.reprepareLeaves) {
+                    if (!grow(leaf.capture, future)) return false;
+                    if (leaf.capture.Valid()) {
+                        leaf.voice.bindings = leaf.capture.Input().bindings;
+                        leaf.voice.sends = leaf.capture.Input().sends;
+                    }
+                }
+            }
+            return true;
+        };
+        if (!refreshGroups(preparedPendingVariableGroups) || !refreshGroups(acceptedPendingVariableGroups))
+            return VN_OUT_OF_MEMORY;
+        for (auto& holder : pendingOrdinarySelections) {
+            if (!holder.replacementVoice.HasStorage()) continue;
+            auto* row = ResolvePlayableService(holder.reference);
+            if (row == nullptr || row->containerLoopAuthorityKind == PlayableExecutionAuthorityKind::Pack) continue;
+            backing::Profile profile;
+            if (!count(*row, false, profile)) return VN_OUT_OF_MEMORY;
+            if (profile.voice.bindings > holder.nativeBindingBacking.ReservedRows()) {
+                ParamSystem::BackingPreparation candidate;
+                if (!params.PrepareBindingBacking(profile.voice.bindings, &candidate)) return VN_OUT_OF_MEMORY;
+                holder.nativeBindingBacking = std::move(candidate);
+            }
+            if (!PrepareVoiceBindingResolutionStorage(profile.voice.bindings) ||
+                !grow(holder.replacementVoice, profile.voice) || !growSide(holder.nativeReplacement, profile.voice))
+                return VN_OUT_OF_MEMORY;
+            if (holder.replacement.Valid()) {
+                auto* child = FindFrontierAttempt(*this, holder.replacement);
+                if (child == nullptr || !growSide(child->voiceStarts, profile.voice)) return VN_OUT_OF_MEMORY;
+            }
+        }
+        return VN_OK;
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+        return VN_OUT_OF_MEMORY;
+    }
+}
+
 static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
     const EnginePlayableServiceRow& row, const PlayableWorldViewV1* world,
-    CapturedTimelineVoiceInstall* out) noexcept {
+    CapturedTimelineVoiceInstall* out, ParamSystem::BackingPreparation* bindingBacking) noexcept {
     namespace backing = native_backing;
     if (out == nullptr) return false;
     if (out->HasStorage()) return true;
@@ -64427,7 +64706,7 @@ static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
             backing::MemoWorkspace workspace(memo.data(), memo.size());
             const auto result = pack
                 ? backing::Counter(backing::PackContent(row.Invocation().packPlaybackView), limits, workspace).Count(row.root, stamp)
-                : backing::Counter(backing::WorldContent(*world, engine.config.voiceBindingInstanceSlots), limits, workspace)
+                : backing::Counter(backing::WorldContent(*world, &engine.bindings), limits, workspace)
                     .Count(row.root, stamp);
             if (result.status == backing::Status::WorkspaceExhausted) {
                 if (memo.size() > memo.max_size() / 2u || !engine.AllowNativeBackingAllocation()) return false;
@@ -64436,11 +64715,15 @@ static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
             }
             if (!result || !engine.AllowNativeBackingAllocation()) return false;
             const auto& columns = result.profile.voice;
-            return CapturedTimelineVoiceInstallBuilder::Reserve(
-                std::min({columns.bindings, engine.config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots}),
+            if (!engine.PrepareVoiceBindingResolutionStorage(columns.bindings)) return false;
+            ParamSystem::BackingPreparation candidate;
+            if (!engine.params.PrepareBindingBacking(columns.bindings, &candidate)) return false;
+            if (CapturedTimelineVoiceInstallBuilder::Reserve(
+                columns.bindings,
                 columns.path, columns.sends,
-                std::min({columns.effects, engine.config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), out) ==
-                    PlayableStartStatus::Accepted;
+                std::min({columns.effects, engine.config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), out) != PlayableStartStatus::Accepted) return false;
+            *bindingBacking = std::move(candidate);
+            return true;
         }
     } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return false;
@@ -64621,9 +64904,14 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             : playablePropertyCutScratch.Resolve(*world, row.root, ordinals.data(), selectionCount);
         if (cut != ResolvedPlayablePropertyCutStatusV1::Ok) return Result::Refused;
         const auto actualLeaf = playablePropertyCutScratch.View().leaf;
+        if (!holder->replacementVoice.HasStorage()) {
+            if (holder->sourceRetired || holder->retirement.Valid()) return Result::Refused;
+            if (!PreparePendingOrdinaryVoiceBacking(*this, row, world, &holder->replacementVoice, &holder->nativeBindingBacking))
+                return Result::Waiting;
+        }
         TimelineVoiceInstallDesc voice{};
-        const auto built = BuildTimelineVoiceInstallFromCut(*this, playablePropertyCutScratch.View(), &voice,
-            pack ? &row.Invocation().packLease : nullptr);
+        const auto built = ::BuildTimelineVoiceInstallFromCut(*this, playablePropertyCutScratch.View(), &voice,
+            pack ? &row.Invocation().packLease : nullptr, false, &holder->replacementVoice);
         if (built != PlayableStartStatus::Accepted) {
             switch (built) {
             case PlayableStartStatus::Capacity: return reject(VN_INVALID_CONFIG);
@@ -64668,13 +64956,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
                     &holder->nativeScheduleBacking, [&]() noexcept { return AllowNativeBackingAllocation(); })))
                 return Result::Waiting;
         }
-        if (!holder->replacementVoice.HasStorage()) {
-            if (holder->sourceRetired || holder->retirement.Valid()) return Result::Refused;
-            if (!PreparePendingOrdinaryVoiceBacking(*this, row, world, &holder->replacementVoice))
-                return Result::Waiting;
-        }
-        if (CaptureTimelineVoiceInstall(voice, &holder->replacementVoice, true) != PlayableStartStatus::Accepted)
-            return Result::Refused;
+        const ParamSystem::PreparedUse preparedBindingBacking(params, &holder->nativeBindingBacking);
         const auto preparedVoiceBacking = holder->nativeVoiceBacking.Use();
         const auto preparedLedgerBacking = holder->nativeLedgerBacking.Use();
         const auto preparedMonitorBacking = holder->nativeMonitorBacking.Use();
@@ -74679,6 +74961,7 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
                 busTargets.LastCommitted(busIndex, kBusTargetBusVolume)), &gain)) return fail(VN_INVALID_ARG);
         row.gain.Set(gain);
         row.gainStarted = busVolumePublished[busIndex] != 0;
+        row.hasMixed = false;
         if (!TryVolumeGainFromDb(busTargets.LastCommitted(busIndex, kBusTargetBusOutputVolume), &gain))
             return fail(VN_INVALID_ARG);
         row.outputGain.Set(gain);
@@ -74851,24 +75134,13 @@ VnResult SetGlobalVariableValue(harken::Engine& engine, VnVariableId id,
 
 // --- binding attachment resolution at play ---
 
-// The per-voice pin capacity: the configured instance ceiling, bounded by
-// the compile-time POD-layout constant sizing the pinned arrays.
-std::uint32_t PinCapacity(const harken::Engine& engine) {
-    const std::uint32_t slots = engine.config.voiceBindingInstanceSlots;
-    if (slots == 0 || slots > harken::kMaxVoiceBindingInstanceSlots) {
-        return harken::kMaxVoiceBindingInstanceSlots;
-    }
-    return slots;
-}
-
-// Collects the VOICE-scope attachments activated by one Sound play. Writes up to
-// `capacity` identities and returns the TOTAL matched count: a total
-// beyond the per-voice instance ceiling makes the caller refuse the whole
-// play at acceptance (section 5.7 pins the resolved set — the whole set,
-// never a truncation; over-ceiling refuses loudly, never silently drops).
+// Resolve accepted identities and admission facts in one indexed traversal.
 std::uint32_t MatchVoiceAttachments(
     harken::Engine& engine, VnSoundId playedId, VnSoundId leafId,
-    harken::PendingStartRecord::PinnedBinding* out, std::uint32_t capacity) {
+    harken::PendingStartRecord::PinnedBinding* out, std::uint32_t capacity,
+    std::uint32_t& targetMask, bool& hasVariables) {
+    targetMask = 0;
+    hasVariables = false;
     std::uint32_t written = 0;
     std::uint32_t matched = 0;
     engine.bindings.ForEachVoiceAttachment(
@@ -74876,6 +75148,8 @@ std::uint32_t MatchVoiceAttachments(
         [&](const harken::BindingTable::Definition& def,
             VnObjectId objectId) {
             ++matched;
+            if (def.targetId < harken::kBuiltinTargetCount) targetMask |= 1u << def.targetId;
+            hasVariables |= def.sourceKind == harken::BindingSourceKind::Variable;
             if (written >= capacity) {
                 return;
             }
@@ -75224,7 +75498,7 @@ void NoteOnsetBindFailure(harken::Engine& engine) {
     record.level = VN_LOG_ERROR;
     record.code = harken::kLogCodeBindingPoolExhausted;
     record.arg0 = harken::kBindingPoolVoiceInstances;
-    record.arg1 = engine.config.voiceBindingInstanceSlots;
+    record.arg1 = engine.params.BindingCapacity();
     engine.logicLogRing.Push(record);
 }
 
@@ -75299,50 +75573,26 @@ const harken::PackLogicImage::VoiceRecipe* FindPlayVoiceRecipe(
     return recipe;
 }
 
-std::uint32_t UniqueRecipeTargetCount(
-    const harken::Engine& engine,
-    const harken::PackLogicImage::VoiceRecipe* recipe) {
-    if (recipe == nullptr) {
-        return 0;
-    }
-    std::uint32_t targets[harken::kPackVoiceRecipeMaxBindings] = {};
+std::uint32_t UniqueRecipeTargetCount(const harken::Engine& engine,
+                                      const VnBindingId* ids, std::uint32_t idCount) {
     std::uint32_t count = 0;
-    for (VnBindingId id : recipe->bindings) {
-        const harken::BindingTable::Definition* def = engine.bindings.Find(id);
-        if (def == nullptr) {
-            continue;
-        }
+    for (std::uint32_t i = 0; i < idCount; ++i) {
+        const auto* definition = engine.bindings.Find(ids[i]);
+        if (definition == nullptr) continue;
         bool seen = false;
-        for (std::uint32_t i = 0; i < count; ++i) {
-            seen = seen || targets[i] == def->targetId;
+        for (std::uint32_t j = 0; j < i; ++j) {
+            const auto* prior = engine.bindings.Find(ids[j]);
+            seen = seen || (prior != nullptr && prior->targetId == definition->targetId);
         }
-        if (!seen) {
-            targets[count++] = def->targetId;
-        }
+        count += !seen;
     }
     return count;
 }
 
 std::uint32_t UniqueRecipeTargetCount(const harken::Engine& engine,
-                                      const VnBindingId* ids,
-                                      std::uint32_t idCount) {
-    std::uint32_t targets[harken::kPackVoiceRecipeMaxBindings] = {};
-    std::uint32_t count = 0;
-    for (std::uint32_t i = 0; i < idCount; ++i) {
-        const harken::BindingTable::Definition* def =
-            engine.bindings.Find(ids[i]);
-        if (def == nullptr) {
-            continue;
-        }
-        bool seen = false;
-        for (std::uint32_t j = 0; j < count; ++j) {
-            seen = seen || targets[j] == def->targetId;
-        }
-        if (!seen) {
-            targets[count++] = def->targetId;
-        }
-    }
-    return count;
+    const harken::PackLogicImage::VoiceRecipe* recipe) {
+    return recipe == nullptr ? 0u : UniqueRecipeTargetCount(engine, recipe->bindings.data(),
+        static_cast<std::uint32_t>(recipe->bindings.size()));
 }
 
 void RecycleRecipeEffects(
@@ -75527,6 +75777,7 @@ bool RecipeTonePreset(
 void AdoptVoiceRecipe(
     harken::Engine& engine, harken::PendingStartRecord& rec,
     const harken::PackLogicImage::VoiceRecipe* recipe,
+    const std::shared_ptr<const std::vector<VnBindingId>>& bindingStorage,
     const std::array<harken::PendingStartRecord::StagedEffect,
                      harken::kMaxFxSlotsPerVoice>& effects,
     const std::array<bool, harken::kMaxFxSlotsPerVoice>& bypass) {
@@ -75553,9 +75804,8 @@ void AdoptVoiceRecipe(
     }
     rec.recipeBindingCount =
         static_cast<std::uint32_t>(recipe->bindings.size());
-    for (std::uint32_t i = 0; i < rec.recipeBindingCount; ++i) {
-        rec.recipeBindingIds[i] = recipe->bindings[i];
-    }
+    rec.recipeBindingStorage = bindingStorage;
+    rec.recipeBindingIds = bindingStorage ? std::span<const VnBindingId>(*bindingStorage) : std::span<const VnBindingId>{};
 }
 
 template <typename Writer>
@@ -75564,81 +75814,52 @@ bool PrimeRecipeBindingsWith(
     VnVoiceHandle renderHandle, const VnBindingId* ids,
     std::uint32_t count, Writer& writer,
     const harken::VariableReadCutReader* reader = nullptr) {
-    if (count == 0) {
-        return true;
-    }
-    if (count > harken::kPackVoiceRecipeMaxBindings) return false;
-    const VnEmitterHandle emitter = engine.params.EmitterHandleOf(renderHandle);
-    std::array<float, harken::kPackVoiceRecipeMaxBindings> inputs{};
-    std::array<bool, harken::kPackVoiceRecipeMaxBindings> hasInput{};
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const auto* def = engine.bindings.Find(ids[i]);
-        if (def == nullptr) continue;
-        if (reader != nullptr) {
-            const auto status = reader->Read(def->variableId, &inputs[i]);
-            if (status == harken::VariableReadCutValueStatus::Failed) return false;
-            hasInput[i] = status == harken::VariableReadCutValueStatus::Value;
-        } else {
-            hasInput[i] = engine.params.ScopedVariableValue(
-                &engine.emitters, emitter, def->variableId, &inputs[i]);
-        }
-    }
-    const bool activated =
-        engine.bindings.ActivateReservedVoiceEffectInstances(
-            publicHandle, renderHandle, emitter);
-    if (!activated) {
-        return false;
-    }
-    std::uint32_t handled[harken::kPackVoiceRecipeMaxBindings] = {};
-    std::array<float, harken::kPackVoiceRecipeMaxBindings> resolvedValues{};
+    if (count == 0) return true;
+    // Storage follows the finite DSP target domain, independent of the number of contributors.
+    constexpr auto targetCount = harken::kMaxFxSlotsPerVoice * harken::kMaxEffectParamCount;
+    std::array<std::uint32_t, targetCount> handled{};
+    std::array<double, targetCount> contributions{};
+    std::array<float, targetCount> resolvedValues{};
     std::uint32_t handledCount = 0;
+    const VnEmitterHandle emitter = engine.params.EmitterHandleOf(renderHandle);
     for (std::uint32_t i = 0; i < count; ++i) {
-        const harken::BindingTable::Definition* first =
-            engine.bindings.Find(ids[i]);
-        if (first == nullptr) {
-            continue;
-        }
-        bool seen = false;
-        for (std::uint32_t h = 0; h < handledCount; ++h) {
-            seen = seen || handled[h] == first->targetId;
-        }
-        if (seen) {
-            continue;
-        }
-        const harken::EffectParamLocator locator =
-            harken::UnpackEffectParamLocator(first->targetId);
-        const harken::EffectParamMeta* meta =
-            harken::FindEffectParamMeta(locator.effectType,
-                                       locator.paramIndex);
-        if (meta == nullptr) {
-            continue;
-        }
-        handled[handledCount++] = first->targetId;
-        double contribution = meta->neutral;
-        for (std::uint32_t j = i; j < count; ++j) {
-            const harken::BindingTable::Definition* def =
-                engine.bindings.Find(ids[j]);
-            if (def == nullptr || def->targetId != first->targetId) {
-                continue;
-            }
-            if (!hasInput[j]) continue;
-            const float value = def->Evaluate(inputs[j]);
-            if (meta->combine == harken::EffectParamCombine::Multiply) {
-                contribution = static_cast<float>(contribution) * value;
-            } else {
-                contribution = harken::AddFiniteContributions(contribution, value);
-            }
-        }
-        float resolved = 0.0f;
-        const bool primed = engine.effectParamTargets.PrimeContribution(
-            harken::EffectParamTargetStore::Scope::Voice,
-            static_cast<std::uint64_t>(renderHandle), locator.slot,
-            locator.paramIndex, locator.effectType, contribution, &resolved);
-        if (!primed) {
+        const auto* definition = engine.bindings.Find(ids[i]);
+        if (definition == nullptr) continue;
+        const auto locator = harken::UnpackEffectParamLocator(definition->targetId);
+        const auto* meta = harken::FindEffectParamMeta(locator.effectType, locator.paramIndex);
+        if (meta == nullptr) continue;
+        if (locator.slot >= harken::kMaxFxSlotsPerVoice || locator.paramIndex >= harken::kMaxEffectParamCount)
             return false;
+        std::uint32_t target = 0;
+        while (target < handledCount && handled[target] != definition->targetId) ++target;
+        if (target == handledCount) {
+            if (handledCount == targetCount) return false;
+            handled[handledCount] = definition->targetId;
+            contributions[handledCount++] = meta->neutral;
         }
-        resolvedValues[handledCount - 1u] = resolved;
+        float input = 0.0f;
+        bool hasInput = false;
+        if (reader != nullptr) {
+            const auto status = reader->Read(definition->variableId, &input);
+            if (status == harken::VariableReadCutValueStatus::Failed) return false;
+            hasInput = status == harken::VariableReadCutValueStatus::Value;
+        } else {
+            hasInput = engine.params.ScopedVariableValue(&engine.emitters, emitter, definition->variableId, &input);
+        }
+        if (!hasInput) continue;
+        const auto value = definition->Evaluate(input);
+        contributions[target] = meta->combine == harken::EffectParamCombine::Multiply
+            ? static_cast<float>(contributions[target]) * value
+            : harken::AddFiniteContributions(contributions[target], value);
     }
+    if (!engine.bindings.ActivateReservedVoiceEffectInstances(publicHandle, renderHandle, emitter)) return false;
+    for (std::uint32_t i = 0; i < handledCount; ++i) {
+        const auto locator = harken::UnpackEffectParamLocator(handled[i]);
+        if (!engine.effectParamTargets.PrimeContribution(harken::EffectParamTargetStore::Scope::Voice,
+                renderHandle, locator.slot, locator.paramIndex, locator.effectType, contributions[i], &resolvedValues[i]))
+            return false;
+    }
+
     // All members are reduced before preparing a physical DSP tuple.
     for (std::uint32_t i = 0; i < handledCount; ++i) {
         const auto locator = harken::UnpackEffectParamLocator(handled[i]);
@@ -75788,6 +76009,9 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
                       "hot reload refused: asset class %llu id %s",
                       static_cast<unsigned long long>(record.arg0),
                       reloadText);
+        break;
+    case harken::kLogCodeMonitorDrainFailed:
+        std::snprintf(out, capacity, "monitor capture stopped: drain worker exception");
         break;
     case harken::kLogCodeTraceWriteFailed:
         std::snprintf(out, capacity,
@@ -76194,7 +76418,7 @@ void RecordPlayFacts(harken::Engine& engine, VnVoiceHandle renderHandle,
                      float baseVolumeDb, double basePitchRatio,
                      harken::ResampleProfile resampleProfile,
                      std::uint32_t priority,
-                      const VnBindingId* recipeBindingIds,
+                      const std::shared_ptr<const std::vector<VnBindingId>>& recipeBindingStorage,
                       std::uint32_t recipeBindingCount,
                       const harken::VoiceTonePreset* tonePreset,
                       float outputBusVolumeDb = 0.0f) {
@@ -76225,9 +76449,8 @@ void RecordPlayFacts(harken::Engine& engine, VnVoiceHandle renderHandle,
         facts.tonePreset = *tonePreset;
     }
     facts.recipeBindingCount = recipeBindingCount;
-    for (std::uint32_t i = 0; i < recipeBindingCount; ++i) {
-        facts.recipeBindingIds[i] = recipeBindingIds[i];
-    }
+    facts.recipeBindingStorage = recipeBindingStorage;
+    facts.recipeBindingIds = recipeBindingStorage ? std::span<const VnBindingId>(*recipeBindingStorage) : std::span<const VnBindingId>{};
     if (isStream) {
         facts.streamFileIndex = streamFacts.fileIndex;
         facts.sourceSampleRate = streamFacts.sampleRate;
@@ -76334,6 +76557,7 @@ DirectParkPendingResult CommitDirectParkPending(
     facts.priority = rec.priority;
     facts.hasTonePreset = rec.hasTonePreset;
     facts.tonePreset = rec.tonePreset;
+    facts.recipeBindingStorage = rec.recipeBindingStorage;
     facts.recipeBindingIds = rec.recipeBindingIds;
     facts.recipeBindingCount = rec.recipeBindingCount;
 
@@ -76374,6 +76598,7 @@ DirectParkPendingResult CommitDirectParkPending(
     engine.ledger.ParkPending(ledgerSlot);
     prec.active = true;
     prec.facts = facts;
+    prec.recipeBindingStorage = facts.recipeBindingStorage;
     prec.recipeBindingIds = facts.recipeBindingIds;
     prec.recipeBindingCount = facts.recipeBindingCount;
     prec.streamResumeFrame = 0;
@@ -77115,7 +77340,7 @@ PendingStartOutcome StartDeferredVoice(
     RecordPlayFacts(engine, render, rec.originPlayable, rec.soundId,
                     rec.isStream, rec.view, rec.streamFacts, rec.busIndex, rec.loopStartFrame,
                     rec.loopEndFrame, rec.loopCount, rec.baseVolumeDb, rec.ratio,
-                    rec.resampleProfile, rec.priority, rec.recipeBindingIds.data(),
+                    rec.resampleProfile, rec.priority, rec.recipeBindingStorage,
                     rec.recipeBindingCount, rec.hasTonePreset ? &rec.tonePreset : nullptr,
                     rec.outputBusVolumeDb);
     for (std::uint32_t slot = 0; slot < rec.effects.size(); ++slot)
@@ -77452,13 +77677,13 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
             harken::detail::LogicAllocSite::ParkCaptureStorage);
         rec.apiDirect.reserve(harken::kBuiltinTargetCount);
         harken::detail::CheckedGrow(
-            rec.bindings, engine.config.voiceBindingInstanceSlots,
+            rec.bindings, engine.params.VoiceBindingCount(render),
             harken::detail::LogicAllocSite::ParkCaptureStorage);
-        rec.bindings.reserve(engine.config.voiceBindingInstanceSlots);
+        rec.bindings.reserve(engine.params.VoiceBindingCount(render));
         harken::detail::CheckedGrow(
-            rec.bindingInstances, engine.config.voiceBindingInstanceSlots,
+            rec.bindingInstances, engine.params.VoiceBindingCount(render),
             harken::detail::LogicAllocSite::ParkCaptureStorage);
-        rec.bindingInstances.reserve(engine.config.voiceBindingInstanceSlots);
+        rec.bindingInstances.reserve(engine.params.VoiceBindingCount(render));
         harken::detail::CheckedGrow(
             rec.effects, engine.config.fxSlotsPerVoice,
             harken::detail::LogicAllocSite::ParkCaptureStorage);
@@ -77497,6 +77722,7 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     }
     rec.active = true;
     rec.facts = facts;
+    rec.recipeBindingStorage = facts.recipeBindingStorage;
     rec.recipeBindingIds = facts.recipeBindingIds;
     rec.recipeBindingCount = facts.recipeBindingCount;
     rec.streamResumeFrame = 0;
@@ -77684,14 +77910,14 @@ StreamVictimWaitResult TryWaitStreamVictim(
             harken::detail::LogicAllocSite::ParkCaptureStorage);
         rec.apiDirect.reserve(harken::kBuiltinTargetCount);
         harken::detail::CheckedGrow(
-            rec.bindings, engine.config.voiceBindingInstanceSlots,
+            rec.bindings, engine.params.VoiceBindingCount(victim),
             harken::detail::LogicAllocSite::ParkCaptureStorage);
-        rec.bindings.reserve(engine.config.voiceBindingInstanceSlots);
+        rec.bindings.reserve(engine.params.VoiceBindingCount(victim));
         harken::detail::CheckedGrow(
-            rec.bindingInstances, engine.config.voiceBindingInstanceSlots,
+            rec.bindingInstances, engine.params.VoiceBindingCount(victim),
             harken::detail::LogicAllocSite::ParkCaptureStorage);
         rec.bindingInstances.reserve(
-            engine.config.voiceBindingInstanceSlots);
+            engine.params.VoiceBindingCount(victim));
         harken::detail::CheckedGrow(
             rec.effects, engine.config.fxSlotsPerVoice,
             harken::detail::LogicAllocSite::ParkCaptureStorage);
@@ -77718,6 +77944,7 @@ StreamVictimWaitResult TryWaitStreamVictim(
             victim, harken::kTargetVoicePitch, &engine.emitters));
 
     rec.facts = facts;
+    rec.recipeBindingStorage = facts.recipeBindingStorage;
     rec.recipeBindingIds = facts.recipeBindingIds;
     rec.recipeBindingCount = facts.recipeBindingCount;
     rec.lastAdvanceFrame = engine.serviceFrameClock;
@@ -78542,7 +78769,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         bool armed = true;
         ~ParkReturnPreparationGuard() {
             if (!armed || render == 0) return;
-            engine.params.DiscardPreparedVoice(render);
+            engine.params.ReleaseVoice(render);
             if (transferredTargets && reservedTargets != 0) {
                 const bool restored = engine.propertyPublisher.TryGrowWorstCase(reservedTargets, &engine.logicLogRing);
                 assert(restored);
@@ -78872,7 +79099,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
                     static_cast<float>(rec.facts.baseVolumeDb),
                     rec.facts.basePitchRatio, rec.facts.resampleProfile,
                     rec.facts.priority,
-                    rec.recipeBindingIds.data(), rec.recipeBindingCount,
+                    rec.recipeBindingStorage, rec.recipeBindingCount,
                     rec.facts.hasTonePreset ? &rec.facts.tonePreset
                                             : nullptr,
                     rec.facts.outputBusVolumeDb);
@@ -90520,8 +90747,7 @@ bool ObserveDirectDelayedCurrentBeforeSource(
         const auto& leaf = leaves[index];
         const auto& install = leaf.voice;
         // Other original supported profiles retain their existing factory route.
-        if (leaf.startOffsetFrames > UINT64_MAX - base || install.streamed ||
-            install.bindingCount > harken::kMaxVoiceBindingInstanceSlots)
+        if (leaf.startOffsetFrames > UINT64_MAX - base || install.streamed)
             return false;
         const auto media = install.capturedMedia.Valid()
             ? install.capturedMedia : engine.registry.Lookup(install.soundId);
@@ -96224,7 +96450,7 @@ bool PrepareContainerCompositeQueueChild(
             const auto reader = engine.variables.ReadCutReader(initialVariables.ref);
             for (std::uint32_t binding = 0; inputsReady && binding < source.voice.bindingCount; ++binding) {
                 float value = 0.0f;
-                inputsReady = reader.Read(source.voice.bindingStorage[binding].variableId, &value) !=
+                inputsReady = reader.Read(source.voice.bindings[binding].variableId, &value) !=
                     harken::VariableReadCutValueStatus::Failed;
             }
             const bool sourcesReady = inputsReady && (context.initialForestReadCutOwner != nullptr ||
@@ -112490,7 +112716,7 @@ VnResult Vn_Update(void) {
                     *engine, engine->ledger.ToPublic(renderHandle),
                     renderHandle);
                 engine->bindings.RemoveVoiceEffectInstances(renderHandle);
-                ReleaseTimelineVoiceBindings(*engine, renderHandle, true);
+                engine->params.ReleaseVoice(renderHandle);
                 engine->effectParamTargets.ClearObject(
                     harken::EffectParamTargetStore::Scope::Voice,
                     static_cast<std::uint64_t>(renderHandle),
@@ -112574,7 +112800,7 @@ VnResult Vn_Update(void) {
                 *engine, engine->ledger.ToPublic(renderHandle),
                 renderHandle);
             engine->bindings.RemoveVoiceEffectInstances(renderHandle);
-            ReleaseTimelineVoiceBindings(*engine, renderHandle, true);
+            engine->params.ReleaseVoice(renderHandle);
             engine->effectParamTargets.ClearObject(
                 harken::EffectParamTargetStore::Scope::Voice,
                 static_cast<std::uint64_t>(renderHandle),
@@ -114087,6 +114313,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         voiceRecipe == nullptr
             ? 0u
             : static_cast<std::uint32_t>(voiceRecipe->bindings.size());
+    const auto recipeBindingStorage = recipeBindingCount == 0 ? nullptr :
+        std::make_shared<const std::vector<VnBindingId>>(voiceRecipe->bindings);
     const std::uint32_t recipeTargets =
         UniqueRecipeTargetCount(*engine, voiceRecipe);
 
@@ -114142,24 +114370,39 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     // capacity gate; the guard releases the reservation on every later
     // refusal path, and success hands it to the pending record, the
     // park hold, or the immediate instantiation.
-    harken::PendingStartRecord::PinnedBinding
-        pinnedBindings[harken::kMaxVoiceBindingInstanceSlots];
-    const std::uint32_t pinCapacity = PinCapacity(*engine);
+    const auto pinCount = std::uint64_t{engine->bindings.VoiceAttachmentCount(originPlayable)} +
+        (originPlayable == playableId ? 0u : engine->bindings.VoiceAttachmentCount(playableId));
+    if (pinCount > UINT32_MAX) return VN_OUT_OF_MEMORY;
+    // Borrow reusable control-side storage. Nested calls get independent vectors;
+    // pending or parked starts move their accepted storage into their own records.
+    struct BindingAdmissionStorage {
+        harken::Engine& engine;
+        std::vector<harken::PendingStartRecord::PinnedBinding> pins;
+        std::vector<harken::ParamSystem::PreparedBindingToken> preparations;
+        explicit BindingAdmissionStorage(harken::Engine& owner) : engine(owner) {
+            pins.swap(engine.voiceBindingAdmissionScratch);
+            preparations.swap(engine.voiceBindingPreparationScratch);
+        }
+        ~BindingAdmissionStorage() {
+            preparations.clear();
+            pins.clear();
+            if (pins.capacity() > engine.voiceBindingAdmissionScratch.capacity())
+                pins.swap(engine.voiceBindingAdmissionScratch);
+            if (preparations.capacity() > engine.voiceBindingPreparationScratch.capacity())
+                preparations.swap(engine.voiceBindingPreparationScratch);
+        }
+    } admissionStorage(*engine);
+    auto& pinnedBindingStorage = admissionStorage.pins;
+    pinnedBindingStorage.resize(static_cast<std::size_t>(pinCount));
+    auto* pinnedBindings = pinnedBindingStorage.data();
+    std::uint32_t pinnedTargetMask = 0;
+    bool hasVariableBindings = false;
     const std::uint32_t matchedBindingCount = MatchVoiceAttachments(
-        *engine, originPlayable, playableId, pinnedBindings, pinCapacity);
-    if (matchedBindingCount > pinCapacity) {
-        ++engine->bindingInstanceRefusedCount;
-        harken::LogRecord record{};
-        record.level = VN_LOG_WARN;
-        record.code = harken::kLogCodeBindingPoolExhausted;
-        record.arg0 = harken::kBindingPoolVoiceInstances;
-        record.arg1 = pinCapacity;
-        engine->logicLogRing.Push(record);
-        return harken::kResultNoBinding;
-    }
-    const std::uint32_t pinnedTargets = UniquePinnedTargetCount(
-        *engine, pinnedBindings, matchedBindingCount);
-    std::vector<harken::ParamSystem::PreparedBindingToken> preparedBindings;
+        *engine, originPlayable, playableId, pinnedBindings, static_cast<std::uint32_t>(pinCount),
+        pinnedTargetMask, hasVariableBindings);
+    assert(matchedBindingCount == pinCount);
+    const auto pinnedTargets = static_cast<std::uint32_t>(std::popcount(pinnedTargetMask));
+    auto& preparedBindings = admissionStorage.preparations;
     if (!harken::PrepareVoiceBindings(*engine, preparedBindings, matchedBindingCount))
         return VN_BACKPRESSURE;
     const auto resolveInitialVoiceDb = [&](const harken::VariableReadCutReader* reader,
@@ -114181,15 +114424,6 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         *result = harken::AddFiniteContributions(desc->volumeDb, bindingsDb);
         return VN_OK;
     };
-    bool hasVariableBindings = false;
-    for (std::uint32_t i = 0;
-         i < matchedBindingCount; ++i) {
-        const harken::BindingTable::Definition* definition =
-            engine->bindings.Find(pinnedBindings[i].bindingId);
-        const bool variable = definition != nullptr &&
-            definition->sourceKind == harken::BindingSourceKind::Variable;
-        hasVariableBindings = hasVariableBindings || variable;
-    }
     for (std::uint32_t i = 0;
          i < recipeBindingCount; ++i) {
         const harken::BindingTable::Definition* definition =
@@ -114350,13 +114584,11 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.source = acceptedSource;
         rec.priority = priority;
         rec.emitterHandle = emitterHandle;
-        for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
-            rec.pinnedBindings[i] = pinnedBindings[i];
-        }
+        rec.pinnedBindings = std::move(pinnedBindingStorage);
         rec.pinnedBindingCount = matchedBindingCount;
         rec.pinnedReservedTargets = pinnedTargets;
         rec.preparedBindings = std::move(preparedBindings);
-        AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
+        AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeBindingStorage, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
         if (view.useCount != nullptr) {
@@ -114436,13 +114668,11 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         // Identities only: the curves are read at onset, so a Replace in
         // the gap is live on the first audible block. The acceptance-
         // reserved worst-case demand rides the record from here on.
-        for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
-            rec.pinnedBindings[i] = pinnedBindings[i];
-        }
+        rec.pinnedBindings = std::move(pinnedBindingStorage);
         rec.pinnedBindingCount = matchedBindingCount;
         rec.pinnedReservedTargets = pinnedTargets;
         rec.preparedBindings = std::move(preparedBindings);
-        AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
+        AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeBindingStorage, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
         if (isStream) {
@@ -114580,13 +114810,11 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         // exactly as the onset-deferred path does: identities, read
         // against current revisions when the steal-deferred start lands,
         // with the acceptance reservation riding the record.
-        for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
-            rec.pinnedBindings[i] = pinnedBindings[i];
-        }
+        rec.pinnedBindings = std::move(pinnedBindingStorage);
         rec.pinnedBindingCount = matchedBindingCount;
         rec.pinnedReservedTargets = pinnedTargets;
         rec.preparedBindings = std::move(preparedBindings);
-        AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
+        AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeBindingStorage, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
         if (isStream) {
@@ -115013,7 +115241,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     RecordPlayFacts(*engine, renderHandle, originPlayable, playableId,
                     isStream, view, streamFacts, busIndex, loopStart, loopEnd, loopCount,
                     desc->volumeDb, ratio, resampleProfile, priority,
-                    voiceRecipe == nullptr ? nullptr : voiceRecipe->bindings.data(),
+                    recipeBindingStorage,
                     recipeBindingCount, hasRecipeTonePreset ? &recipeTonePreset : nullptr);
     for (std::uint32_t slot = 0; slot < recipeEffects.size(); ++slot)
         if (recipeEffects[slot].set)
@@ -116369,7 +116597,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         VnObjectId objectId{};
     };
     std::vector<BindingDetach> detaches;
-    detaches.reserve(engine->config.maxBindingAttachments);
+    detaches.reserve(engine->bindings.AttachmentCapacity());
     bool foreignDependency = false;
     engine->bindings.ForEachAttachment(
         [&](const harken::BindingTable::Attachment& attachment,
@@ -116705,8 +116933,10 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     }
     harken::CommitUnpublishedTimelineRoutingV1(*engine, unpublishedRouting);
     if (neutralMaster) harken::ResetNeutralBusPropertiesV1(*engine, 0);
+    const auto bindingTargetsBefore = harken::BusPublicationUnionCount(*engine);
     for (auto& detach : preparedDetaches)
         engine->bindings.CommitPreparedAttachment(&detach, nullptr);
+    engine->propertyPublisher.ShrinkWorstCase(bindingTargetsBefore - harken::BusPublicationUnionCount(*engine));
     engine->meterProbes.CommitBusRemovalV1(*engine, preparedMeterRemoval);
     for (std::uint32_t i = 1; i < oldCount; ++i) {
         if (removedOld[i] == 0) {
@@ -117097,9 +117327,9 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     std::vector<BindingDetach> detaches;
     try {
         harken::detail::CheckedGrow(
-            detaches, engine->config.maxBindingAttachments,
+            detaches, engine->bindings.AttachmentCapacity(),
             harken::detail::LogicAllocSite::DestroyBusDetaches);
-        detaches.reserve(engine->config.maxBindingAttachments);
+        detaches.reserve(engine->bindings.AttachmentCapacity());
         engine->bindings.ForEachBusAttachment(
             [&](const harken::BindingTable::Attachment& a,
                 const harken::BindingTable::Definition&) {
@@ -117301,7 +117531,9 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     }
     for (const auto ref : removedRefs) harken::CommitRetireTopologyBusV1(*engine, ref, acceptedRevision);
     harken::CommitUnpublishedTimelineRoutingV1(*engine, unpublishedRouting);
+    const auto bindingTargetsBefore = harken::BusPublicationUnionCount(*engine);
     for (auto& detach : preparedDetaches) engine->bindings.CommitPreparedAttachment(&detach, nullptr);
+    engine->propertyPublisher.ShrinkWorstCase(bindingTargetsBefore - harken::BusPublicationUnionCount(*engine));
     engine->busSends.Swap(candidateSends);
     engine->busSendActive = engine->busSends.Count();
     // Voice-send mirrors (live staging, pending starts, parked replay state,
@@ -124014,10 +124246,6 @@ VnResult ValidatePackVoiceRecipes(const harken::Engine& engine,
                 return VN_INVALID_ARG;
             }
         }
-        if (recipe.bindings.size() >
-            engine.config.voiceBindingInstanceSlots) {
-            return harken::kResultNoBinding;
-        }
         VnPackHandle existingOwner = 0;
         if (engine.logicPacks.FindVoiceRecipe(recipe.header.playableId,
                                               &existingOwner) != nullptr &&
@@ -124383,13 +124611,10 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
             return r;
         }
     }
-    if (engine.bindings.DefinitionCount() + image.bindingDefinitions.size() >
-        engine.bindings.DefinitionCapacity()) {
-        return harken::kResultNoBinding;
-    }
-    if (engine.bindings.AttachmentCount() + image.bindingAttachments.size() >
-        engine.bindings.AttachmentCapacity()) {
-        return harken::kResultNoBinding;
+    if (!engine.bindings.PrepareCapacity(
+            engine.bindings.DefinitionCount() + image.bindingDefinitions.size(),
+            engine.bindings.AttachmentCount() + image.bindingAttachments.size())) {
+        return VN_OUT_OF_MEMORY;
     }
     for (const harken::PackBindingAttachmentEntry& attachment :
          image.bindingAttachments) {
@@ -125722,11 +125947,6 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             ++fundedDefRemovals;
         }
     }
-    if (engine.bindings.DefinitionCount() - fundedDefRemovals +
-            revision.addBindingDefs.size() >
-        engine.bindings.DefinitionCapacity()) {
-        return kResultNoBinding;
-    }
     std::size_t fundedAttachmentRemovals = 0;
     for (const PackBindingAttachmentEntry& gone :
          revision.removeAttachments) {
@@ -125736,10 +125956,10 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             ++fundedAttachmentRemovals;
         }
     }
-    if (engine.bindings.AttachmentCount() - fundedAttachmentRemovals +
-            revision.addAttachments.size() >
-        engine.bindings.AttachmentCapacity()) {
-        return kResultNoBinding;
+    if (!engine.bindings.PrepareCapacity(
+            engine.bindings.DefinitionCount() - fundedDefRemovals + revision.addBindingDefs.size(),
+            engine.bindings.AttachmentCount() - fundedAttachmentRemovals + revision.addAttachments.size())) {
+        return VN_OUT_OF_MEMORY;
     }
     for (const PackBindingAttachmentEntry& attachment :
          revision.addAttachments) {
@@ -126728,6 +126948,28 @@ void CancelRevisionBindings(
 VnResult PrepareRevisionBindings(
     Engine& engine, PackPendingRevision& revision) noexcept {
     CancelRevisionBindings(engine, revision);
+    try {
+        std::vector<std::pair<VnObjectId, std::uint32_t>> demand;
+        for (const auto& attachment : revision.addAttachments) {
+            if (attachment.scopeKind != kTargetScopeVoice) continue;
+            const auto at = std::lower_bound(demand.begin(), demand.end(), attachment.objectId,
+                [](const auto& row, VnObjectId id) { return row.first < id; });
+            if (at != demand.end() && at->first == attachment.objectId) {
+                if (at->second == UINT32_MAX) return VN_OUT_OF_MEMORY;
+                ++at->second;
+            } else {
+                const auto count = engine.bindings.VoiceAttachmentCount(attachment.objectId);
+                if (count == UINT32_MAX) return VN_OUT_OF_MEMORY;
+                demand.insert(at, {attachment.objectId, count + 1u});
+            }
+        }
+        const auto prepared = engine.PrepareNativeBindingGrowth(demand);
+        if (prepared != VN_OK) return prepared;
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+        return VN_OUT_OF_MEMORY;
+    }
+
     for (std::uint32_t i = 0;
          i < revision.bindingDefinitionOccupancy.size(); ++i) {
         revision.bindingDefinitionOccupancy[i] =
@@ -127030,10 +127272,10 @@ void ReleaseRevisionReservations(Engine& engine,
         engine.effectBank.Recycle(reservation.ref);
     }
     revision.busEffectRefs.clear();
-    if (revision.grownAttachments > 0) {
-        engine.propertyPublisher.ShrinkWorstCase(revision.grownAttachments);
-        revision.grownAttachments = 0;
-    }
+    const auto before = BusPublicationUnionCount(engine, &revision, revision.publicationTargets);
+    const auto after = BusPublicationUnionCount(engine, &revision);
+    engine.propertyPublisher.ShrinkWorstCase(before - after);
+    revision.publicationTargets.clear();
 }
 
 // The activation apply publishes one already-prepared transaction. Every
@@ -127597,6 +127839,7 @@ VnResult ApplyPreparedPackTransaction(
     revision.dynamicRouteRemovals.clear();
     if (sendsChanged) {
     }
+    const auto busTargetsBefore = BusPublicationUnionCount(engine, &revision, revision.publicationTargets);
     for (std::size_t i = revision.removeAttachments.size(); i-- > 0;) {
         const PackBindingAttachmentEntry& attachment =
             revision.removeAttachments[i];
@@ -127613,9 +127856,6 @@ VnResult ApplyPreparedPackTransaction(
             &token, &engine.busTargets);
         if (attachment.scopeKind == kTargetScopeBus) {
             }
-        if (attachment.scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
-            engine.propertyPublisher.ShrinkWorstCase(1);
-        }
         if (attachment.scopeKind == kTargetScopeVoice) {
             engine.params.NeutralizeInstancesOf(
                 attachment.bindingId, attachment.objectId);
@@ -127686,7 +127926,10 @@ VnResult ApplyPreparedPackTransaction(
         record->used = true;
         record->handle = handle;
     }
-    revision.grownAttachments = 0;
+    const auto busTargetsAfter = BusPublicationUnionCount(engine, &revision);
+    assert(busTargetsBefore >= busTargetsAfter);
+    engine.propertyPublisher.ShrinkWorstCase(busTargetsBefore - busTargetsAfter);
+    revision.publicationTargets.clear();
     if (initialOutHandle != nullptr) {
         *initialOutHandle = revision.handle;
     }
@@ -127707,6 +127950,27 @@ VnResult ApplyPackRevision(
 }
 
 } // namespace
+
+VnResult PreparePackBusPublicationTargets(Engine& engine, PackPendingRevision& revision) {
+    std::vector<std::pair<VnObjectId, std::uint32_t>> targets;
+    for (const auto& attachment : revision.addAttachments) {
+        if (attachment.scopeKind != kTargetScopeBus) continue;
+        const auto* definition = engine.bindings.Find(attachment.bindingId);
+        auto target = definition == nullptr ? UINT32_MAX : definition->targetId;
+        for (const auto& incoming : revision.image.bindingDefinitions)
+            if (incoming.id == attachment.bindingId) { target = incoming.desc.targetId; break; }
+        targets.emplace_back(attachment.objectId, target);
+    }
+    std::sort(targets.begin(), targets.end());
+    targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+    const auto before = BusPublicationUnionCount(engine, &revision, revision.publicationTargets);
+    const auto after = BusPublicationUnionCount(engine, &revision, targets);
+    if (after > UINT32_MAX || (after > before && !engine.propertyPublisher.TryGrowWorstCase(static_cast<std::uint32_t>(after - before), &engine.logicLogRing)))
+        return VN_INVALID_CONFIG;
+    if (before > after) engine.propertyPublisher.ShrinkWorstCase(before - after);
+    revision.publicationTargets.swap(targets);
+    return VN_OK;
+}
 
 VnResult PrepareAndApplyInitialPackLogic(
     Engine& engine, ::PackStaging& staging,
@@ -127956,27 +128220,8 @@ VnResult PrepareAndApplyInitialPackLogic(
         revision.dynamicRouteCandidates.push_back(candidate);
     }
 
-    std::uint64_t growth = 0;
-    for (const PackBindingAttachmentEntry& attachment :
-         revision.addAttachments) {
-        if (attachment.scopeKind !=
-            VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
-            ++growth;
-        }
-    }
-    if (growth >
-        (std::numeric_limits<std::uint32_t>::max)()) {
-        return VN_INVALID_CONFIG;
-    }
-    if (growth != 0) {
-        if (!engine.propertyPublisher.TryGrowWorstCase(
-                static_cast<std::uint32_t>(growth),
-                &engine.logicLogRing)) {
-            return VN_INVALID_CONFIG;
-        }
-        revision.grownAttachments =
-            static_cast<std::uint32_t>(growth);
-    }
+    const auto publicationReady = PreparePackBusPublicationTargets(engine, revision);
+    if (publicationReady != VN_OK) return publicationReady;
 
     if (revision.needsPlan) {
         ProspectiveTopologyView prospective{};
@@ -128371,23 +128616,16 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
         }
         revision.dynamicRouteRemovals.push_back(live->tableIndex);
     }
-    {
-        std::uint32_t growth = 0;
-        for (const PackBindingAttachmentEntry& attachment :
-             revision.addAttachments) {
-            if (attachment.scopeKind !=
-                VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
-                ++growth;
-            }
-        }
-        if (growth > 0) {
-            if (!engine.propertyPublisher.TryGrowWorstCase(
-                    growth, &engine.logicLogRing)) {
-                ReleaseRevisionReservations(engine, revision);
-                return VN_INVALID_CONFIG;
-            }
-            revision.grownAttachments = growth;
-        }
+    VnResult publicationReady = VN_OK;
+    try {
+        publicationReady = PreparePackBusPublicationTargets(engine, revision);
+    } catch (...) {
+        ReleaseRevisionReservations(engine, revision);
+        throw;
+    }
+    if (publicationReady != VN_OK) {
+        ReleaseRevisionReservations(engine, revision);
+        return publicationReady;
     }
     if (PackFaultHit(PackStagingFault::BeforeApply)) {
         // The fault-injection golden's late staging failure: the staged
@@ -128395,7 +128633,12 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
         ReleaseRevisionReservations(engine, revision);
         return VN_BAD_PACK;
     }
-    engine.logicPacks.pending.push_back(std::move(revision));
+    try {
+        engine.logicPacks.pending.push_back(std::move(revision));
+    } catch (...) {
+        ReleaseRevisionReservations(engine, revision);
+        throw;
+    }
     return VN_OK;
 }
 
@@ -128430,6 +128673,13 @@ void ActivatePendingPackRevisions(Engine& engine) {
                     throw std::bad_alloc();
                 }
                 r = ScreenPackRevision(engine, *record, revision);
+                if (r == VN_OK) r = PreparePackBusPublicationTargets(engine, revision);
+                if (r == VN_OK) {
+                    // Caller mutations since staging can grow every binding store.
+                    revision.preparedBindingPurgeExits.resize(engine.params.BindingCapacity());
+                    revision.bindingDefinitionOccupancy.resize(engine.bindings.DefinitionCapacity());
+                    revision.bindingAttachmentOccupancy.resize(engine.bindings.AttachmentCapacity());
+                }
                 if ((r == VN_OK || r == VN_IN_USE) &&
                     PackRevisionTouchesGuardedCompletion(engine, revision)) {
                     r = VN_OK;
@@ -129589,7 +129839,8 @@ struct CanonicalBindingPlanV1 {
     std::vector<BindingTable::PreparedDefinitionToken> definitionAdds;
     std::vector<BindingTable::PreparedDefinitionToken> definitionRevisions;
     std::vector<BindingTable::PreparedAttachmentToken> attachmentAdds;
-    std::vector<std::uint32_t> attachmentRemovalScopeKinds;
+    std::vector<std::pair<VnObjectId, std::uint32_t>> publicationTargets;
+    std::uint64_t busTargetsBefore = 0;
     std::vector<VnBindingId> purgeDefinitionIds;
     std::vector<ParamSystem::PreparedPurgeExit> purgeExits;
     ParamSystem::PreparedPurgeToken purge;
@@ -129930,7 +130181,6 @@ VnResult PrepareCanonicalBindingDiff(
             return result;
         }
         plan.attachmentOccupancy[token.SlotIndex()] = 0;
-        plan.attachmentRemovalScopeKinds.push_back(attachment.scopeKind);
         plan.attachmentRemovalEntries.push_back(attachment);
         plan.attachmentRemovals.push_back(std::move(token));
     }
@@ -129977,7 +130227,6 @@ VnResult PrepareCanonicalBindingDiff(
                     return;
                 }
                 plan.attachmentOccupancy[token.SlotIndex()] = 0;
-                plan.attachmentRemovalScopeKinds.push_back(attachment.scopeKind);
                 PackBindingAttachmentEntry removed{};
                 removed.bindingId = attachment.bindingId;
                 removed.scopeKind = attachment.scopeKind;
@@ -130067,9 +130316,12 @@ VnResult PrepareCanonicalBindingDiff(
         if (live != nullptr && !removed) {
             return VN_IN_USE;
         }
-        const std::uint32_t slot = FirstVacantOccupancy(plan.definitionOccupancy);
-        if (slot == 0xFFFFFFFFu) {
-            return kResultNoBinding;
+        std::uint32_t slot = FirstVacantOccupancy(plan.definitionOccupancy);
+        if (slot == UINT32_MAX) {
+            if (plan.definitionOccupancy.size() >= UINT32_MAX) return VN_OUT_OF_MEMORY;
+            slot = static_cast<std::uint32_t>(plan.definitionOccupancy.size());
+            if (!engine.bindings.PrepareCapacity(std::uint64_t{slot} + 1u, engine.bindings.AttachmentCapacity())) return VN_OUT_OF_MEMORY;
+            plan.definitionOccupancy.resize(engine.bindings.DefinitionCapacity(), 0);
         }
         BindingTable::PreparedDefinitionToken token;
         const VnResult result = engine.bindings.PrepareRegisterDefinition(
@@ -130085,7 +130337,6 @@ VnResult PrepareCanonicalBindingDiff(
         addDefinitionIndices.push_back(i);
         plan.definitionAdds.push_back(std::move(token));
     }
-    std::uint64_t growth = 0;
     for (const auto& attachment : nextImage->bindingAttachments) {
         const VnResult scoped =
             ScreenCanonicalBindingScope(nextImage->packKind, attachment.scopeKind,
@@ -130166,9 +130417,12 @@ VnResult PrepareCanonicalBindingDiff(
         if (bus != VN_OK) {
             return bus;
         }
-        const std::uint32_t slot = FirstVacantOccupancy(plan.attachmentOccupancy);
-        if (slot == 0xFFFFFFFFu) {
-            return kResultNoBinding;
+        std::uint32_t slot = FirstVacantOccupancy(plan.attachmentOccupancy);
+        if (slot == UINT32_MAX) {
+            if (plan.attachmentOccupancy.size() >= UINT32_MAX) return VN_OUT_OF_MEMORY;
+            slot = static_cast<std::uint32_t>(plan.attachmentOccupancy.size());
+            if (!engine.bindings.PrepareCapacity(engine.bindings.DefinitionCapacity(), std::uint64_t{slot} + 1u)) return VN_OUT_OF_MEMORY;
+            plan.attachmentOccupancy.resize(engine.bindings.AttachmentCapacity(), 0);
         }
         std::uint32_t definitionSlot =
             engine.bindings.DefinitionSlotOf(attachment.bindingId);
@@ -130204,19 +130458,13 @@ VnResult PrepareCanonicalBindingDiff(
         }
         plan.attachmentOccupancy[slot] = 1;
         plan.attachmentAdds.push_back(std::move(token));
-        if (attachment.scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
-            ++growth;
+        if (attachment.scopeKind == kTargetScopeBus) {
+            const auto key = std::pair(attachment.objectId, activityTarget);
+            const auto at = std::lower_bound(plan.publicationTargets.begin(), plan.publicationTargets.end(), key);
+            if (at == plan.publicationTargets.end() || *at != key) {
+                plan.publicationTargets.insert(at, key);
+            }
         }
-    }
-    if (growth > (std::numeric_limits<std::uint32_t>::max)()) {
-        return VN_INVALID_CONFIG;
-    }
-    if (growth != 0) {
-        if (!engine.propertyPublisher.TryGrowWorstCase(
-                static_cast<std::uint32_t>(growth), &engine.logicLogRing)) {
-            return VN_INVALID_CONFIG;
-        }
-        plan.grownAttachments += static_cast<std::uint32_t>(growth);
     }
     return VN_OK;
 }
@@ -130225,11 +130473,18 @@ VnResult FinishCanonicalBindingPlan(Engine& engine, CanonicalBindingPlanV1& plan
     if (plan.purgeExits.size() < engine.params.BindingCapacity()) {
         plan.purgeExits.resize(engine.params.BindingCapacity());
     }
-    return engine.params.PreparePurgeInstancesOf(
+    const auto result = engine.params.PreparePurgeInstancesOf(
         plan.purgeDefinitionIds.data(),
         static_cast<std::uint32_t>(plan.purgeDefinitionIds.size()),
         plan.purgeExits.data(),
         static_cast<std::uint32_t>(plan.purgeExits.size()), &plan.purge);
+    if (result != VN_OK) return result;
+    const auto before = BusPublicationUnionCount(engine);
+    const auto after = BusPublicationUnionCount(engine, nullptr, plan.publicationTargets);
+    if (after > UINT32_MAX || (after > before && !engine.propertyPublisher.TryGrowWorstCase(static_cast<std::uint32_t>(after - before), &engine.logicLogRing)))
+        return VN_INVALID_CONFIG;
+    plan.grownAttachments = after - before;
+    return VN_OK;
 }
 
 VnResult PrepareCanonicalBindingPlan(
@@ -130239,6 +130494,15 @@ VnResult PrepareCanonicalBindingPlan(
     CanonicalBindingPlanV1& plan) {
     CancelCanonicalBindingPlan(engine, plan);
     plan = CanonicalBindingPlanV1{};
+    std::uint64_t incomingBindingRows = 0;
+    for (const auto& member : members) {
+        const auto rows = member.keptOwner != nullptr ?
+            (member.keptOwner->voiceBindings ? member.keptOwner->voiceBindings->size() : 0u) :
+            member.image.bindingAttachments.size();
+        if (rows > UINT32_MAX - incomingBindingRows) return VN_OUT_OF_MEMORY;
+        incomingBindingRows += rows;
+    }
+    if (!engine.PrepareVoiceBindingResolutionStorage(incomingBindingRows)) return VN_OUT_OF_MEMORY;
     plan.definitionOccupancy.assign(engine.bindings.DefinitionCapacity(), 0);
     plan.attachmentOccupancy.assign(engine.bindings.AttachmentCapacity(), 0);
     for (std::uint32_t i = 0; i < plan.definitionOccupancy.size(); ++i) {
@@ -130300,6 +130564,7 @@ VnResult PrepareCanonicalBindingPlan(
 
 void CommitCanonicalBindingPlanStageA(Engine& engine,
                                       CanonicalBindingPlanV1& plan) noexcept {
+    plan.busTargetsBefore = BusPublicationUnionCount(engine, nullptr, plan.publicationTargets);
     for (const auto& token : plan.attachmentRemovals) {
         if (token.IsPrepared()) {
             assert(engine.bindings.CanCommitPreparedAttachment(token));
@@ -130331,18 +130596,13 @@ void CommitCanonicalBindingPlanStageC(Engine& engine,
     for (auto& token : plan.attachmentAdds) {
         engine.bindings.CommitPreparedAttachment(&token, nullptr);
     }
-    std::uint32_t shrink = 0;
-    for (std::uint32_t scopeKind : plan.attachmentRemovalScopeKinds) {
-        if (scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
-            ++shrink;
-        }
-    }
-    if (shrink > 0) {
-        engine.propertyPublisher.ShrinkWorstCase(shrink);
-    }
+    const auto busTargetsAfter = BusPublicationUnionCount(engine);
+    assert(plan.busTargetsBefore >= busTargetsAfter);
+    const auto shrink = plan.busTargetsBefore - busTargetsAfter;
+    engine.propertyPublisher.ShrinkWorstCase(shrink);
     plan.shrinkAttachments = shrink;
     plan.grownAttachments = 0;
-    plan.attachmentRemovalScopeKinds.clear();
+    plan.publicationTargets.clear();
 }
 
 // Sound streaming choices of a candidate publication: incoming artifacts

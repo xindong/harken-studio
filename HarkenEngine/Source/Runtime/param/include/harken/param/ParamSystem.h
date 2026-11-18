@@ -31,6 +31,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/LogRing.h"
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/VariableReadCut.h"
 #include "harken/core/VariableSliceTable.h"
 #include "harken/param/Curve.h"
@@ -70,12 +71,7 @@ enum : std::uint32_t {
     kCombineSlotCount = 5
 };
 
-// Preallocated Variable table capacity. Variables are logic-side state,
-// but their storage is still fixed at init so a running game never grows
-// a container mid-session. The binding/instance table's capacity is
-// config-driven (maxVoices x voiceBindingInstanceSlots): the historical
-// fixed table is the instance layer's implementation detail, superseded
-// by the config-driven binding pools.
+// Variable definitions have a separate fixed table; binding rows grow on demand.
 inline constexpr std::uint32_t kMaxVariables = 256;
 
 // Pitch crosses the combine model in cents and returns to the audio thread
@@ -155,7 +151,7 @@ public:
     void OnVoiceStarted(VnVoiceHandle handle, float baseVolumeDb,
                         double basePitchRatio, VnEmitterHandle emitterHandle = 0);
     void RetireVoiceTargets(VnVoiceHandle handle) noexcept;
-    void DiscardPreparedVoice(VnVoiceHandle handle) noexcept;
+    void ReleaseVoice(VnVoiceHandle handle) noexcept;
 
     void ApplyTonePreset(VnVoiceHandle handle,
                          const VoiceTonePreset& preset);
@@ -183,6 +179,7 @@ public:
     void SetAttenuationSlot(VnVoiceHandle handle, std::uint32_t targetId,
                             float domainValue, std::uint32_t rampMs = 0);
     void ClearAttenuationSlot(VnVoiceHandle handle, std::uint32_t targetId);
+    bool PrepareMeterProbeContributionStorage(std::uint32_t count) noexcept;
     void SetMeterProbeContribution(VnVoiceHandle handle,
                                    VnObjectId bindingId,
                                    std::uint32_t targetId, float value,
@@ -316,6 +313,7 @@ public:
         BackingPreparation(BackingPreparation&& other) noexcept;
         BackingPreparation& operator=(BackingPreparation&& other) noexcept;
         bool Valid() const noexcept { return m_owner != nullptr; }
+        std::uint32_t ReservedRows() const noexcept { return m_bindingRows.ReservedRows(); }
         void Release() noexcept;
     private:
         friend class ParamSystem;
@@ -434,7 +432,7 @@ public:
     void CommitPreparedPurgeInstances(
         PreparedPurgeToken* token) noexcept;
     std::uint32_t BindingCapacity() const {
-        return m_bindings.Capacity();
+        return m_bindings.ConstructedCount();
     }
     std::size_t BindingStorageBytes() const noexcept {
         return m_bindings.RequestedBytes() + m_primingInputs.capacity() * sizeof(PrimingInput) +
@@ -443,7 +441,6 @@ public:
     void SetBindingCommitPageLimitForTests(std::size_t pages) noexcept {
         m_bindings.SetCommitPageLimitForTests(pages);
     }
-    std::uint32_t PreparationCapacity() const noexcept { return m_preparationCapacity; }
 
     // Removes ALL definition-backed instances of one voice WITHOUT
     // releasing their worst-case demand, returning the unique-target
@@ -1128,7 +1125,8 @@ private:
     void EvalIndexedBindings(const EmitterTable* emitters);
     static BindingDependencyIdentity ReadBindingDependency(
         const void* fact, BindingDependencyKind kind) noexcept;
-    void RegisterBindingDependency(Binding& binding, PreparedBindingToken* preparation) noexcept;
+    void RegisterBindingDependency(Binding& binding, std::uint32_t index,
+                                   PreparedBindingToken* preparation) noexcept;
     void RemoveBindingDependency(Binding& binding) noexcept;
     void RemovePendingNeutralization(Binding& binding) noexcept;
     void MoveBinding(std::uint32_t from, std::uint32_t to) noexcept;
@@ -1207,20 +1205,15 @@ private:
     StableRowStorage<RetiringTarget> m_retiringTargets;
     std::uint32_t m_sampleRate = 0;
     std::vector<Variable> m_variables;     // prepared capacity, m_variableCount live
-    // Fixed capacity (maxVoices x voiceBindingInstanceSlots — the
-    // section-16 instance pool), m_bindingCount live entries in stable
-    // order. Raw bindings and definition-backed instances share it; a
-    // slot-reuse purge reclaims the dead occupant's entries.
+    // Raw bindings and definition-backed instances share stable growing rows.
+    // A slot-reuse purge reclaims the dead occupant's entries.
     std::uint32_t BindingBackingOccupancy() const noexcept;
     bool PrepareBindingAuxiliaryStorage(std::uint32_t count) noexcept;
     bool PrepareBindingRows(std::uint32_t count) noexcept;
-    StableRowStorage<Binding> m_bindings;
+    GrowingRowStorage<Binding> m_bindings;
     BindingDependencyIndex* m_dependencies = nullptr;
     Binding* m_pendingNeutralizations = nullptr;
-    std::vector<std::uint32_t> m_freeDependencySlots;
-    std::uint32_t m_dependencySlotCount = 0;
     std::uint32_t m_preparedBindingCount = 0;
-    std::uint32_t m_preparationCapacity = 0;
     std::uint32_t m_backingPreparationCount = 0;
     std::uint32_t m_backingUsers = 0;
     std::vector<PrimingInput> m_primingInputs;
@@ -1235,7 +1228,6 @@ private:
     std::uint32_t m_projectionDirtyTargetCount = 0;
     std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<MeterProbeContribution> m_meterProbeContributions;
-    std::uint32_t m_instanceSlotsPerVoice = 0; // per-voice ceiling
     std::uint32_t m_variableCount = 0;
     std::uint32_t m_bindingCount = 0;
     std::uint64_t m_instanceHighWater = 0;

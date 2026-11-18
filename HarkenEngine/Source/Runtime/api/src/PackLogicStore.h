@@ -131,7 +131,7 @@ struct PackPendingRevision {
     std::uint32_t planIndex = 0xFFFFFFFFu;
     std::uint32_t dynamicPlanIndex = 0xFFFFFFFFu;
     std::uint32_t levelCommands = 0;
-    std::uint32_t grownAttachments = 0;
+    std::vector<std::pair<VnObjectId, std::uint32_t>> publicationTargets;
 
     // The post-activation ledger content, fully built (every vector
     // populated) during the call's staging so the activation only MOVES

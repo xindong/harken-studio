@@ -40,13 +40,6 @@ inline constexpr std::uint32_t kMaxFxSlotsPerVoice = kMaxVoiceFxSlots;
 // kMaxVoiceSendSlots in the ABI contract is a legacy observation width.
 // Runtime Voice Sends use actual-size storage, independent of the config hint.
 
-// Compile-time upper bound on a voice's binding instance slots (the
-// per-voice ceiling of the public binding system's instance layer). This is
-// the POD-layout constant sizing the pinned-attachment arrays in pending
-// records and the ceiling the resolved voiceBindingInstanceSlots config
-// value may not exceed. Single definition point, like kMaxVoiceSendSlots.
-inline constexpr std::uint32_t kMaxVoiceBindingInstanceSlots = 8;
-
 // Compile-time upper bound on a bus's insert-effect chain. Bus effect chains
 // are pure reuse of the voice chain mechanics and share its slot maximum, so
 // this equals kMaxFxSlotsPerVoice by design; it names the POD-layout constant
@@ -227,11 +220,7 @@ struct EngineConfig {
     // master->device downmix triggers on the true device width. A concrete
     // deviceChannelLayout leaves this false and is used verbatim.
     bool deviceLayoutFromDefault = true;
-    // Public binding-system pools, resolved from the VnConfig tail
-    // appends; zero fields keep the defaults below.
-    // voiceBindingInstanceSlots is the
-    // per-Render-Voice instance ceiling (the instance pool is Render capacity
-    // times this) and may not exceed kMaxVoiceBindingInstanceSlots.
+    // Initial logic-side binding reservations; all three grow on demand.
     std::uint32_t maxBindings = 128;
     std::uint32_t maxBindingAttachments = 256;
     std::uint32_t voiceBindingInstanceSlots = 8;

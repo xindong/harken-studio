@@ -6,6 +6,7 @@
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/param/ParamTargets.h"
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/QueueContinuationLane.h"
@@ -30,7 +31,7 @@ class OriginalSourceSubmissionRegistry {
     friend struct Engine;
 public:
     static constexpr std::uint32_t kMaxCommands = 3u +
-        kTimelineMaxVoiceEffects + 2u + kMaxVoiceBindingInstanceSlots;
+        kTimelineMaxVoiceEffects + 2u + kBuiltinTargetCount;
     enum class Phase : std::uint8_t {
         Free, Preparing, QueuePrepared, Published, ConsumerOwned, CleanupPending,
         Disposed, EngineDestroyed

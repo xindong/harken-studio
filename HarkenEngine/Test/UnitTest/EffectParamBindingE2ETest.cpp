@@ -1430,7 +1430,7 @@ TEST(EffectParamBindingE2E, ParkedBoundVoiceReturnsAndBindingStillDrives) {
 
 // --- park reservation: a parked voice's binding slot stays booked ---
 
-TEST(EffectParamBindingE2E, ParkedVoiceEffectBindingReservationRefusesNewApply) {
+TEST(EffectParamBindingE2E, ParkedVoiceEffectBindingSurvivesPoolGrowth) {
     // Instance pool of exactly one: voice A applies the only slot then parks, so
     // the slot must stay RESERVED while parked. A second live voice's apply must
     // then be refused for want of capacity, and A's binding must still drive
@@ -1485,8 +1485,8 @@ TEST(EffectParamBindingE2E, ParkedVoiceEffectBindingReservationRefusesNewApply) 
     ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
               engine->ledger.Classify(a).kind);
 
-    // The reservation holds: B's apply is refused for want of capacity.
-    EXPECT_EQ(VN_NO_BINDING, Vn_ApplyVoiceBinding(b, harkentest::ObjectId(1)));
+    // Grow for B without borrowing A's parked reservation.
+    EXPECT_EQ(VN_OK, Vn_ApplyVoiceBinding(b, harkentest::ObjectId(1)));
 
     // Stop B so only A renders for the drive check below.
     ASSERT_EQ(VN_OK, Vn_Stop(b, 0));

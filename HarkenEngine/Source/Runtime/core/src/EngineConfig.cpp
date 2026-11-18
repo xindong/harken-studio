@@ -91,7 +91,7 @@ constexpr std::uint32_t kMaxContainerChildrenCeiling = 1 << 20;
 constexpr std::uint32_t kMaxContainerCursorCeiling = 1 << 20;
 constexpr std::uint32_t kMaxPendingActionCeiling = 1 << 20;
 constexpr std::uint32_t kMaxEmittersCeiling = 1 << 16;
-constexpr std::uint32_t kMaxEmitterVariableSlotsCeiling = 1 << 12;
+constexpr std::uint32_t kMaxInitialEmitterVariableSlots = 1 << 12;
 constexpr std::uint32_t kMaxParkedVoicesCeiling = 1 << 14;
 constexpr std::uint32_t kMaxTopologyPlanPoolCeiling = 1 << 12;
 constexpr std::uint64_t kMaxTopologyPlanBytesCeiling =
@@ -100,10 +100,7 @@ constexpr std::uint64_t kMaxTopologyPlanBytesCeiling =
 // vintage this engine does not know.
 constexpr std::uint32_t kMaxStealPolicy = 2;
 
-// Binding-pool sanity ceilings, same discipline as the playback-management
-// ceilings: logic-side pools, preallocated at Init, refused when plainly
-// nonsensical. The per-voice instance-slot field is bounded by its
-// POD-layout constant (kMaxVoiceBindingInstanceSlots) instead, below.
+// Initial binding-reservation sanity ceilings; runtime storage grows on demand.
 constexpr std::uint32_t kMaxBindingsCeiling = 1 << 16;
 constexpr std::uint32_t kMaxBindingAttachmentsCeiling = 1 << 16;
 
@@ -594,7 +591,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.containerCursorCapacity > kMaxContainerCursorCeiling ||
         resolved.pendingActionCapacity > kMaxPendingActionCeiling ||
         resolved.maxEmitters > kMaxEmittersCeiling ||
-        resolved.emitterVariableSlots > kMaxEmitterVariableSlotsCeiling ||
+        resolved.emitterVariableSlots > kMaxInitialEmitterVariableSlots ||
         resolved.voiceCapacity.Virtual() > kMaxParkedVoicesCeiling ||
         resolved.voiceStealPolicy > kMaxStealPolicy ||
         resolved.audibilityParkEnabled > 1u ||
@@ -605,13 +602,11 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxTopologyPlanBytes > kMaxTopologyPlanBytesCeiling ||
         resolved.maxBindings > kMaxBindingsCeiling ||
         resolved.maxBindingAttachments > kMaxBindingAttachmentsCeiling ||
-        // voiceBindingInstanceSlots is bounded by the POD-layout constant
-        // that sizes the pinned-attachment arrays, like fxSlotsPerVoice.
-        resolved.voiceBindingInstanceSlots > kMaxVoiceBindingInstanceSlots ||
         resolved.meterRingBlocks > kMaxMeterRingBlocksCeiling) {
         return VN_INVALID_CONFIG;
     }
 
+    // These limits bound startup reservations, not live emitter Variable counts.
     std::uint64_t overrideBytesPerEmitter = 0;
     std::uint64_t bytesPerEmitter = 0;
     std::uint64_t emitterVariableBankBytes = 0;

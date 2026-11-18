@@ -466,11 +466,11 @@ struct PendingStartRecord {
         VnObjectId bindingId{};
         VnObjectId attachmentObjectId{};
     };
-    std::array<PinnedBinding, kMaxVoiceBindingInstanceSlots> pinnedBindings{};
+    std::vector<PinnedBinding> pinnedBindings;
     std::uint32_t pinnedBindingCount = 0;
     std::vector<ParamSystem::PreparedBindingToken> preparedBindings;
-    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
-        recipeBindingIds{};
+    std::shared_ptr<const std::vector<VnBindingId>> recipeBindingStorage;
+    std::span<const VnBindingId> recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // Worst-case publication demand reserved at acceptance for the pinned
     // set's unique targets (section 10.4 moved to the earliest failure
@@ -512,8 +512,8 @@ struct VoicePlayFacts {
     std::uint32_t priority = 128;       // steal priority, for return-time steal
     bool hasTonePreset = false;
     VoiceTonePreset tonePreset{};
-    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
-        recipeBindingIds{};
+    std::shared_ptr<const std::vector<VnBindingId>> recipeBindingStorage;
+    std::span<const VnBindingId> recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
 };
 
@@ -651,8 +651,8 @@ struct ParkRecord {
     std::uint32_t returnEffectCount = 0;
     VnVoiceHandle returnPreparedRenderHandle = 0;
     bool returnEffectsPrepared = false;
-    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
-        recipeBindingIds{};
+    std::shared_ptr<const std::vector<VnBindingId>> recipeBindingStorage;
+    std::span<const VnBindingId> recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // The render handle the voice held at park. Effect-parameter binding apply-
     // instances (VN_TARGET_SCOPE_VOICE_EFFECT_PARAM) keep their pool slots across
@@ -3923,7 +3923,7 @@ struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
         3u + 2u * kTimelineMaxVoiceEffects + 2u +
-        kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
+        kBuiltinTargetCount + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
     VnVoiceHandle renderHandle = 0;
@@ -6150,6 +6150,7 @@ struct Engine {
         OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt retirement;
         EngineActionPlayScratch::NativeVoiceSide nativeReplacement;
         CapturedTimelineVoiceInstall replacementVoice;
+        ParamSystem::BackingPreparation nativeBindingBacking;
         StableStoragePreparation nativeVoiceBacking;
         VoiceLedger::BackingPreparation nativeLedgerBacking;
         VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
@@ -6171,7 +6172,7 @@ struct Engine {
                 !producer.Valid() && !service.Valid() && !resource.Valid() && !resourceReference.Valid() &&
                 !root.Valid() && !source.Valid() &&
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
-                nativeReplacement.Empty() && !replacementVoice.HasStorage() &&
+                nativeReplacement.Empty() && !replacementVoice.HasStorage() && !nativeBindingBacking.Valid() &&
                 !nativeVoiceBacking.Valid() && nativeLedgerBacking.Empty() && !nativeMonitorBacking.Valid() &&
                 !nativePlayBacking.Valid() &&
                 !nativeMemberBacking.Valid() && !nativeRelationBacking.Valid() &&
@@ -6222,6 +6223,7 @@ struct Engine {
         bool discreteMatched = false;
     };
     struct PendingVariableGroupChild {
+        CapturedTimelineVoiceInstall capture;
         TimelineVoiceInstallDesc voice{};
         PlayableRefV1 leaf{};
         std::uint32_t frontierPolicyIndex = UINT32_MAX;
@@ -7175,7 +7177,7 @@ public:
           queuePermutationScratch(resolved.maxQueueChildren),
           queueProjectionScratch(static_cast<std::size_t>(resolved.maxQueueChildren) + 1u),
           bindings(resolved.maxBindings, resolved.maxBindingAttachments,
-                   resolved.maxBuses, params.PreparationCapacity()),
+                   resolved.maxBuses, params.BindingCapacity()),
           busTargets(resolved.maxBuses,
                      resolved.maxVariableSliceTargetsTotal),
           effectParamTargets(
@@ -8976,6 +8978,7 @@ public:
         holder.retiredChildEpoch = 0;
         holder.nativeReplacement = {};
         holder.replacementVoice = {};
+        holder.nativeBindingBacking.Release();
         holder.nativeVoiceBacking.Release();
         holder.nativeLedgerBacking.Release();
         holder.nativeMonitorBacking.Release();
@@ -14628,11 +14631,26 @@ public:
         } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         return true;
     }
+    VnResult PrepareNativeBindingGrowth(
+        std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings) noexcept;
+    bool PrepareVoiceBindingResolutionStorage(std::uint64_t count) noexcept {
+        if (count <= voiceBindingResolutionScratch.size()) return true;
+        if (count > UINT32_MAX || memguard::IsAudioTagged() || !AllowNativeBackingAllocation()) return false;
+        try {
+            if (count > voiceBindingResolutionScratch.size())
+                voiceBindingResolutionScratch.resize(static_cast<std::size_t>(count));
+            voiceBindingAdmissionScratch.reserve(static_cast<std::size_t>(count));
+            voiceBindingPreparationScratch.reserve(static_cast<std::size_t>(count));
+        }
+        catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage); return false; }
+        return true;
+    }
     bool PrepareVoiceBindingCatalogStorage() noexcept {
-        if (voiceBindingCatalogScratch.capacity() >= config.maxBindingAttachments) return true;
+        if (!PrepareVoiceBindingResolutionStorage(bindings.AttachmentCapacity())) return false;
+        if (voiceBindingCatalogScratch.capacity() >= bindings.AttachmentCapacity()) return true;
         if (memguard::IsAudioTagged()) return false;
-        try { voiceBindingCatalogScratch.reserve(config.maxBindingAttachments); }
-        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
+        try { voiceBindingCatalogScratch.reserve(bindings.AttachmentCapacity()); }
+        catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage); return false; }
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
@@ -15215,6 +15233,9 @@ public:
     // learns bindings exist.
     BindingTable bindings;
     std::vector<PackVoiceBinding> voiceBindingCatalogScratch;
+    std::vector<const PackVoiceBinding*> voiceBindingResolutionScratch;
+    std::vector<PendingStartRecord::PinnedBinding> voiceBindingAdmissionScratch;
+    std::vector<ParamSystem::PreparedBindingToken> voiceBindingPreparationScratch;
     // Bus-scope combine storage (section 8), LIVE from M6 S5 on: pack
     // apply writes the authored slot, BUS attachments evaluate into the
     // Variable slot each update, the tick's bus flush publishes changed

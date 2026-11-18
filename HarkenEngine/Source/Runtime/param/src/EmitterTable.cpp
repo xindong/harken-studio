@@ -1,4 +1,5 @@
 #include "harken/param/EmitterTable.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -12,12 +13,11 @@ EmitterTable::EmitterTable(const EngineConfig& config, std::uint32_t generationF
     for (Emitter& emitter : m_emitters) {
         emitter.generation = generationFloor + 1;
         emitter.locals.assign(config.emitterVariableSlots, LocalVar{});
+        emitter.projectionLocals.resize(config.emitterVariableSlots);
     }
     m_emitters.back().generation = 1;
     m_emitters.back().live = true;
     m_emitters.back().stateOnly = true;
-    m_projectionStride = config.emitterVariableSlots;
-    m_projectionLocals.resize(m_emitters.size() * m_projectionStride);
 }
 
 std::uint32_t EmitterTable::GenerationHighWater() const noexcept {
@@ -31,7 +31,7 @@ bool EmitterTable::BeginVariableProjection() noexcept {
     if (m_projectionActive) return false;
     for (std::size_t i = 0; i < m_emitters.size(); ++i) {
         const auto& locals = m_emitters[i].locals;
-        std::copy(locals.begin(), locals.end(), m_projectionLocals.begin() + i * m_projectionStride);
+        std::copy(locals.begin(), locals.end(), m_emitters[i].projectionLocals.begin());
     }
     m_projectionActive = true;
     return true;
@@ -41,7 +41,7 @@ void EmitterTable::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
     for (std::size_t i = 0; i < m_emitters.size(); ++i) {
         auto& locals = m_emitters[i].locals;
-        const auto begin = m_projectionLocals.begin() + i * m_projectionStride;
+        const auto begin = m_emitters[i].projectionLocals.begin();
         const auto handle = MakeHandle(static_cast<std::uint32_t>(i), m_emitters[i].generation);
         for (std::size_t slot = 0; slot < locals.size(); ++slot) {
             const auto previous = locals[slot];
@@ -59,7 +59,10 @@ void EmitterTable::RestoreVariableProjection() noexcept {
 }
 
 std::uint64_t EmitterTable::VariableProjectionStorageBytes() const noexcept {
-    return m_projectionLocals.size() * sizeof(LocalVar);
+    std::uint64_t bytes = 0;
+    for (const auto& emitter : m_emitters)
+        bytes += emitter.projectionLocals.capacity() * sizeof(LocalVar);
+    return bytes;
 }
 
 bool EmitterTable::Create(VnEmitterHandle* outHandle, bool stateOnly) {
@@ -101,6 +104,8 @@ bool EmitterTable::Destroy(VnEmitterHandle handle) {
         local = LocalVar{};
         if (previous.inUse) NotifyVariableChange(handle, previous.variableId);
     }
+    std::vector<LocalVar>().swap(emitter->locals);
+    std::vector<LocalVar>().swap(emitter->projectionLocals);
     --m_activeCount;
     return true;
 }
@@ -123,12 +128,35 @@ PlaybackExecutionContext EmitterTable::Context(VnEmitterHandle state) const noex
 }
 
 std::uint64_t EmitterTable::StorageBytesPerEmitter(std::uint32_t localSlots) noexcept {
-    return sizeof(Emitter) + static_cast<std::uint64_t>(localSlots) * sizeof(LocalVar);
+    return sizeof(Emitter) + static_cast<std::uint64_t>(localSlots) * sizeof(LocalVar) * 2u;
 }
 
 std::size_t EmitterTable::LocalValueCapacity(VnEmitterHandle handle) const noexcept {
     const auto* emitter = Live(handle);
     return emitter != nullptr ? emitter->locals.size() : 0;
+}
+
+VnResult EmitterTable::PrepareLocalValueStorage(VnEmitterHandle handle, std::size_t count) noexcept {
+    auto* emitter = Live(handle);
+    if (emitter == nullptr) return VN_STALE_HANDLE;
+    if (count <= emitter->locals.size()) return VN_OK;
+    if (m_projectionActive) return VN_BACKPRESSURE;
+    try {
+        const auto size = std::max(count, emitter->locals.size() * 2u);
+        // Reserve both copies before exposing slots; failure preserves all values.
+        detail::CheckedGrow(emitter->locals, size, detail::LogicAllocSite::VariableValueStorage);
+        emitter->locals.reserve(size);
+        detail::CheckedGrow(emitter->projectionLocals, size, detail::LogicAllocSite::VariableValueStorage);
+        emitter->projectionLocals.reserve(size);
+        emitter->locals.resize(size);
+        emitter->projectionLocals.resize(size);
+        return VN_OK;
+    } catch (const std::bad_alloc&) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableValueStorage);
+        return VN_OUT_OF_MEMORY;
+    } catch (const std::length_error&) {
+        return VN_BACKPRESSURE;
+    }
 }
 
 bool EmitterTable::SetPosition(VnEmitterHandle handle, float x, float y,
@@ -192,7 +220,10 @@ VnResult EmitterTable::SetLocalValue(VnEmitterHandle handle,
         }
     }
     if (free == nullptr) {
-        return VN_NO_VARIABLE; // this emitter's local table is full
+        const auto slot = emitter->locals.size();
+        const auto result = PrepareLocalValueStorage(handle, slot + 1u);
+        if (result != VN_OK) return result;
+        free = &emitter->locals[slot];
     }
     free->inUse = true;
     free->variableId = variableId;

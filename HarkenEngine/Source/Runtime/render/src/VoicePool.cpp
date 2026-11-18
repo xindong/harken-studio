@@ -3963,13 +3963,12 @@ void VoicePool::ApplySetVolume(VnVoiceHandle handle, float volumeDb,
         ++m_invalidVolumeApplies;
         return;
     }
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
+    const auto rampFrames = GainTransitionFrames(rampMs, m_sampleRate, !render.firstBlock);
     if (outputOnly) {
         render.outputGain.Set(linear, rampFrames);
         return;
     }
-    // N = ceil(rampMs * rate / 1000) produced samples. rampMs 0 is a snap.
+    // Use actual produced samples, preserving pre-render initialization.
     // Do not round N up to a whole block. A re-set restarts from current.
     render.gain.Set(linear, rampFrames);
 }
@@ -4663,7 +4662,7 @@ VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
             state.active = true;
             state.targetBusIndex = definition.targetBusIndex;
             state.targetBusGeneration = definition.targetBusGeneration;
-            state.gain.SnapTo(gain);
+            state.gain.Set(gain);
             routes->push_back({true, definition.targetBusIndex, definition.targetBusGeneration,
                 definition.slot, definition.incarnation});
         }
@@ -4778,7 +4777,7 @@ void VoicePool::ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
     send.targetBusGeneration = targetBusGeneration;
     // The initial level snaps (no fictitious prior value), exactly like a
     // voice's first gain at play.
-    send.gain.SnapTo(DbToLinear(levelDb));
+    send.gain.Set(DbToLinear(levelDb));
     if (!wasActive) {
         ++slot->render.voiceSendActiveCount;
     }
@@ -4816,24 +4815,8 @@ void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
         return; // no-op on an empty slot (the API refuses this logic-side)
     }
     const float linear = DbToLinear(levelDb);
-    if (rampMs == 0) {
-        send.gain.SnapTo(linear);
-        send.ramping = false;
-        return;
-    }
-    // Same multi-block ramp formulation as the voice/bus gain: whole-block
-    // linear, landing exactly on a block boundary.
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
-    std::uint64_t blocks = (rampFrames + m_blockFrames - 1) / m_blockFrames;
-    if (blocks == 0) {
-        blocks = 1;
-    }
-    send.ramping = true;
-    send.rampStartGain = send.gain.current;
-    send.rampEndGain = linear;
-    send.rampBlocksTotal = blocks;
-    send.rampBlocksDone = 0;
+    send.gain.Set(linear, GainTransitionFrames(rampMs, m_sampleRate,
+        !slot->render.firstBlock));
 }
 
 VoicePool::RenderAllResult VoicePool::RenderAll(

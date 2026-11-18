@@ -201,7 +201,15 @@ struct TimelineVoiceInstallDesc {
     std::uint64_t streamLoopEndFrame = 0;
     bool timelineResync = false;
     std::uint32_t bindingCount = 0;
-    TimelineVoiceBindingInstall bindingStorage[kMaxVoiceBindingInstanceSlots]{};
+    std::shared_ptr<const std::vector<TimelineVoiceBindingInstall>> bindingStorage;
+    std::span<const TimelineVoiceBindingInstall> bindings{};
+    void SetBindings(std::vector<TimelineVoiceBindingInstall> rows) {
+        bindingStorage = rows.empty() ? nullptr :
+            std::make_shared<const std::vector<TimelineVoiceBindingInstall>>(std::move(rows));
+        bindings = bindingStorage ? std::span<const TimelineVoiceBindingInstall>(*bindingStorage) :
+            std::span<const TimelineVoiceBindingInstall>{};
+        bindingCount = static_cast<std::uint32_t>(bindings.size());
+    }
     PlaybackPath playbackPath{};
     VnObjectId soundId{};
     VnObjectId outputBusId{};
