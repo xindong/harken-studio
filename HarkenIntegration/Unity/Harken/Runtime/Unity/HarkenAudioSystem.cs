@@ -57,7 +57,6 @@ namespace Harken.Unity
         [SerializeField, HideInInspector] private bool previousUnityAudioPause;
         [SerializeField, HideInInspector] private float previousUnityAudioVolume;
         [SerializeField, HideInInspector] private uint maxEmitters;
-        [SerializeField, HideInInspector] private uint emitterVariableSlots;
         [SerializeField] private UnityEvent ready = new UnityEvent();
         [SerializeField] private HarkenRuntimeResultEvent failed =
             new HarkenRuntimeResultEvent();
