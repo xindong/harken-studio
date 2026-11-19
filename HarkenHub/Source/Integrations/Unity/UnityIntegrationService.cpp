@@ -83,17 +83,6 @@ QStringList relativeFiles(const QString& root)
     return files;
 }
 
-QStringList settingsInside(const QString& root)
-{
-    QStringList settings;
-    for (const QString& relative : allFiles(root)) {
-        const QString name = relative.section(QLatin1Char('/'), -1);
-        if (name == QStringLiteral("HarkenProjectSettings.asset") || name == QStringLiteral("HarkenEditorProjectSettings.asset"))
-            settings << QDir(root).filePath(relative);
-    }
-    return settings;
-}
-
 QByteArray sha256File(const QString& path)
 {
     VNH::IntegrationProgress::inspectedEntry();
@@ -251,15 +240,6 @@ bool removeBackup(const QString& backupRoot, QString* error)
 bool discardIncompleteBackup(const QString& backupRoot, QString* error)
 {
     return backupReady(backupRoot) || removeBackup(backupRoot, error);
-}
-
-bool rejectSettingsInside(const QString& target, QString* error)
-{
-    const QStringList settings = settingsInside(target);
-    if (settings.isEmpty()) return true;
-    *error = QStringLiteral("Integration settings are stored inside the installation directory and would be replaced:\n%1\nMove them out of the installation directory in Unity (for example to Assets/Resources and Assets/Editor), then retry.")
-                 .arg(settings.join(QLatin1Char('\n')));
-    return false;
 }
 
 bool lockProject(const QString& project, std::unique_ptr<QLockFile>* lock, QString* error)
@@ -518,18 +498,8 @@ QString UnityIntegrationService::locateIntegrationSource(const QString& preferre
     if (!preferredPath.trimmed().isEmpty()) {
         candidates << preferredPath;
     } else {
-        QByteArray fromEnv = qgetenv("HARKEN_UNITY_INTEGRATION_PATH");
-        if (fromEnv.isEmpty()) fromEnv = qgetenv("HARKEN_UNITY_SDK_PATH");
+        const QByteArray fromEnv = qgetenv("HARKEN_UNITY_INTEGRATION_PATH");
         if (!fromEnv.isEmpty()) candidates << QString::fromLocal8Bit(fromEnv);
-
-        QDir cursor(QCoreApplication::applicationDirPath());
-        for (int i = 0; i < 6; ++i) {
-            candidates << cursor.filePath(QStringLiteral("HarkenIntegration/Unity/Harken"));
-            candidates << cursor.filePath(QStringLiteral("HarkenIntegration"));
-            candidates << cursor.filePath(QStringLiteral("HarkenSDK/Unity/Harken"));
-            candidates << cursor.filePath(QStringLiteral("HarkenSDK"));
-            if (!cursor.cdUp()) break;
-        }
     }
 
     for (const QString& candidate : candidates) {
@@ -596,7 +566,6 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
             || (backupRoot = backupDirectory(result.unityProjectPath, &error)).isEmpty()
             || !discardIncompleteBackup(backupRoot, &error)
             || !UnityInstallation::validateTarget(result.unityProjectPath, target, &error)
-            || !rejectSettingsInside(target, &error)
             || !checkUnityProjectClosed(result.unityProjectPath, &error)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The Integration Package installation location is not safe to use.");
@@ -621,7 +590,7 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
                                  .arg(cleanAbsolutePath(request.integrationSourcePath));
                 step.remediation = QStringLiteral("Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.");
             } else {
-                step.cause = QStringLiteral("No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_INTEGRATION_PATH (legacy: HARKEN_UNITY_SDK_PATH).");
+                step.cause = QStringLiteral("No Integration Package source was selected, and HARKEN_UNITY_INTEGRATION_PATH does not point to a valid com.harken.core package.");
                 step.remediation = QStringLiteral("Use the Integration Package source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.");
             }
             return;
@@ -793,8 +762,7 @@ UnityIntegrationService::Result UnityIntegrationService::remove(const Request& r
                 return;
             }
         }
-        if (!UnityInstallation::validateTarget(result.unityProjectPath, target, &error, true)
-            || !rejectSettingsInside(target, &error)) {
+        if (!UnityInstallation::validateTarget(result.unityProjectPath, target, &error, true)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The installed Integration Package cannot be removed safely.");
             step.cause = error;
