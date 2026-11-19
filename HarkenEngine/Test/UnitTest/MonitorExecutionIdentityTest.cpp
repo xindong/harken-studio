@@ -1781,6 +1781,7 @@ TEST(MonitorIdentityHub, OldWorldPlayableAndTerminalActionStayInBaselineUntilAct
     PreparedActionFiring firing{};
     auto& actions = engine.Engine()->actionFirings;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(8), 5, 0, &firing));
+    ASSERT_TRUE(engine.Engine()->PrepareActionFiringOwners(0));
     ASSERT_TRUE(actions.Commit(&firing, 19));
     ActionFiringSnapshot retained{};
     ASSERT_TRUE(actions.Capture(firing.Handle(), &retained));
