@@ -3,7 +3,8 @@
 
 #include "BusTopologySync.h"
 #include "DiagnosticsBridge.h"
-#include "PackagingBridge.h"
+#include "MediaRegistry.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "RuntimeLink.h"
 
 #include <harken/Harken.h>
@@ -438,6 +439,12 @@ bool EngineSession::setListenerTransform(float px, float py, float pz,
 }
 
 bool EngineSession::loadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeLoadPack(path, outResult); }
+bool EngineSession::loadCanonicalPack(const QString& path, const QByteArray& bytes,
+                                      uint64_t packStableId, uint32_t packKind,
+                                      EngineResult* outResult)
+{
+    return Detail::runtimeLoadCanonicalPack(path, bytes, packStableId, packKind, outResult);
+}
 bool EngineSession::unloadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeUnloadPack(path, outResult); }
 uint32_t EngineSession::loadedPackCount() const { return Detail::runtimeLoadedPackCount(); }
 QStringList EngineSession::loadedPackPaths() const { return Detail::runtimeLoadedPackPaths(); }
@@ -446,6 +453,17 @@ bool EngineSession::prepareMedia(uint32_t sourceId, const QString& absolutePath,
 {
     mediaRegistryRegister(sourceId, absolutePath, fileSize);
     return Detail::runtimePrepareMedia(sourceId);
+}
+
+std::optional<PreparedPreviewMedia> preparePreviewMedia(
+    const VNX::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error)
+{
+    return Detail::runtimePreparePreviewMedia(artifact, error);
+}
+
+EngineResult registerPreviewMedia(harkenstudio::ObjectId soundId, const PreparedPreviewMedia& media)
+{
+    return static_cast<EngineResult>(Detail::runtimeRegisterPreviewMedia(soundId, media));
 }
 
 bool EngineSession::swapMedia(uint32_t sourceId, const QString& newPath, uint64_t fileSize)

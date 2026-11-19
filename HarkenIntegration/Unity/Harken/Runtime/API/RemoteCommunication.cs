@@ -1,3 +1,7 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
+#if HARKEN_ENGINE_DEV
 using System;
 using System.Runtime.InteropServices;
 
@@ -50,3 +54,4 @@ namespace Harken
         }
     }
 }
+#endif

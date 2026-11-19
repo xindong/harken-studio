@@ -79,6 +79,20 @@ FieldGroupInspectorFieldView FieldGroupInspectorView::field(const QString& field
 {
     FieldGroupInspectorFieldView result;
     if (!valid || perScope.empty()) return result;
+    if (group == FieldGroupId::Conversion) {
+        if (fieldName != QLatin1String("settingsRef")) return result;
+        result.uniform = true;
+        for (const auto& target : perScope) {
+            const QVariant value = fromFieldGroupGuid(
+                std::get<ConversionFieldGroup>(target.resolved.payload).settingsRef);
+            if (result.perScope.isEmpty())
+                result.value = value;
+            else if (result.value != value)
+                result.uniform = false;
+            result.perScope.append({target.scope, value});
+        }
+        return result;
+    }
     const auto* descriptor = PlayablePropertyAuthoringV1::fieldByName(fieldName);
     if (!descriptor && fieldName != QLatin1String("effects")) return result;
     const auto property = fieldName == QLatin1String("effects")

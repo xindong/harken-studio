@@ -32,6 +32,7 @@ VNX--RangeField {
     background: transparent;
 }
 
+VNX--ConversionSizeSplits,
 VNX--TimelineCanvas,
 VNX--TimelineRuler,
 VNX--TimelineMarkerRuler,
@@ -2191,9 +2192,6 @@ QDialog QLabel {
     font-weight: @regularWeight@;
     margin: 0;
     padding: 0;
-    min-width: @windowButtonWidth@px;
-    max-width: @windowButtonWidth@px;
-    min-height: @titleBarHeight@px;
 }
 
 #titleBarMin:pressed,

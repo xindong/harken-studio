@@ -23,15 +23,19 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
+
+namespace VNX::SoundSourceDerivative { struct MaterializedArtifact; }
 
 namespace HarkenEditor {
 namespace Bridge {
 
 enum class EngineDeviceMode : uint8_t {
     Real,
-    Null
+    Null,
+    NullRealtime
 };
 
 //==============================================================================
@@ -63,6 +67,17 @@ inline constexpr EngineResult kEngineRuntimeRecreateRequired =
     static_cast<EngineResult>(-328);
 inline constexpr EngineResult kEngineDeviceError =
     static_cast<EngineResult>(-400);
+
+struct PreparedPreviewMedia
+{
+    std::shared_ptr<const VNX::SoundSourceDerivative::MaterializedArtifact> artifact;
+    std::shared_ptr<const std::vector<float>> samples;
+    uint64_t contentRevision = 0;
+};
+
+std::optional<PreparedPreviewMedia> preparePreviewMedia(
+    const VNX::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error = nullptr);
+EngineResult registerPreviewMedia(harkenstudio::ObjectId soundId, const PreparedPreviewMedia& media);
 
 //==============================================================================
 // Editor-owned mirror structs.
@@ -259,6 +274,9 @@ public:
 
     // -- packs / prepare --
     bool loadPack(const QString& path, EngineResult* outResult = nullptr);
+    bool loadCanonicalPack(const QString& path, const QByteArray& bytes,
+                           uint64_t packStableId, uint32_t packKind,
+                           EngineResult* outResult = nullptr);
     bool unloadPack(const QString& path, EngineResult* outResult = nullptr);
     uint32_t loadedPackCount() const;
     QStringList loadedPackPaths() const;

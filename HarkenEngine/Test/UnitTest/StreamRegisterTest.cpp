@@ -5,6 +5,7 @@
 #include "harken/media/VorbisDecoder.h"
 #include "Common/PcmStreamFixture.h"
 // External Pack source preparation, byte supply, and generation lifetime.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
@@ -831,6 +832,7 @@ TEST(StreamRegister, SourceFailureAndTermBalanceOwnership) {
 TEST(StreamRegister, FileSourceRetainsOpenedIdentityAndReadsSparse64BitRange) {
     const auto path = TempPath("stream_source_sparse.bin");
     const auto retained = TempPath("stream_source_sparse_retained.bin");
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     constexpr std::uint64_t offset = (1ull << 32) + 17;
     {
 #ifdef _WIN32

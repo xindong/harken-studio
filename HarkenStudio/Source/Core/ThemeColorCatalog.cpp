@@ -139,7 +139,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("background.hover"), QStringLiteral("Interaction"),
          QStringLiteral("Hover background"),
-         QStringLiteral("Hovered controls and selected node bodies."),
+         QStringLiteral("Background of hovered controls."),
          {
              {QStringLiteral("background.hover"), std::nullopt},
              {QStringLiteral("nodeGraph.node.bodySelected"), std::nullopt},

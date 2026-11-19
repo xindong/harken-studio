@@ -328,6 +328,17 @@ void registerAuditionActions(ActionManager& mgr,
                 return {false, {}, "INVALID_PARAM", "Container has no selection memory"};
             if (harkenstudio::IsNull(item->runtimeId()))
                 return {false, {}, "NOT_READY", "Container has no runtime identity"};
+            const auto barrier = engine->currentWorldPlaybackBarrier();
+            if (barrier.state != RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
+                QJsonObject data{
+                    {"runtime_sync_status", static_cast<int>(barrier.failure)},
+                    {"project_session_id", QString::number(barrier.projectSessionId)},
+                    {"authoring_revision", QString::number(barrier.requiredRevision)}};
+                if (barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending)
+                    return {false, data, "RUNTIME_SYNC_PENDING",
+                        "The current project is still being prepared for reset. The reset has not been applied."};
+                return {false, data, "RUNTIME_SYNC_FAILED", "The current project could not be prepared for reset."};
+            }
             const int32_t status = auditionManager->resetPreviewContainer(
                 item->runtimeId());
             if (HarkenEditor::AuditionManager::previewResetSucceeded(status))

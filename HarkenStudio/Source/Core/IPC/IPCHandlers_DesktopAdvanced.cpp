@@ -31,8 +31,6 @@ QJsonObject IPCServer::queueDesktopOperation(QWidget* widget,
             {"message", "The desktop command session ended before the operation ran."}};
         if (!server->mainWindow_ || server->appState_ != AppState::Ready)
             return server->errorResponse("INVALID_STATE", "The desktop is no longer ready for UI interaction.");
-        if (server->transcodeInProgress_)
-            return server->errorResponse("TRANSCODE_IN_PROGRESS", "Media conversion started before the queued UI operation ran.");
         if (PackGenerationRecordStore::instance().isExporting())
             return server->errorResponse("PACK_BUILD_IN_PROGRESS", "Pack export started before the queued UI operation ran.");
         if (server->projectManager_ && server->projectManager_->isClosing())

@@ -300,29 +300,29 @@ namespace Harken.Unity.Tests
                     byte[] bytes = Read(path);
                     if (path != invalid) return bytes;
                     string json = Encoding.UTF8.GetString(bytes);
-                    var parser = new JsonParser(json, "schemaVersion");
+                    var parser = new JsonParser(json, "packMetadataVersion");
                     var root = parser.Read(0) as Dictionary<string, object>;
-                    Assert.That(parser.End && root != null && root.TryGetValue("schemaVersion", out object version) &&
-                        version is JsonParser.NumberToken, Is.True, "version injection requires a top-level numeric schemaVersion");
-                    decimal current = decimal.Parse(((JsonParser.NumberToken)root["schemaVersion"]).Text,
+                    Assert.That(parser.End && root != null && root.TryGetValue("packMetadataVersion", out object version) &&
+                        version is JsonParser.NumberToken, Is.True, "version injection requires a top-level numeric packMetadataVersion");
+                    decimal current = decimal.Parse(((JsonParser.NumberToken)root["packMetadataVersion"]).Text,
                         NumberStyles.Float, CultureInfo.InvariantCulture);
                     string invalidVersion = current.ToString("0", CultureInfo.InvariantCulture) + ".0000000000000001";
-                    Assert.That(((JsonParser.NumberToken)root["schemaVersion"]).Text, Is.Not.EqualTo(invalidVersion),
+                    Assert.That(((JsonParser.NumberToken)root["packMetadataVersion"]).Text, Is.Not.EqualTo(invalidVersion),
                         "version injection requires a different source version");
                     foreach (Match match in Regex.Matches(json,
-                        "\"schemaVersion\"\\s*:\\s*(?<value>-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)"))
+                        "\"packMetadataVersion\"\\s*:\\s*(?<value>-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)"))
                     {
                         Group value = match.Groups["value"];
                         string changed = json.Remove(value.Index, value.Length).Insert(value.Index, invalidVersion);
-                        var changedParser = new JsonParser(changed, "schemaVersion");
+                        var changedParser = new JsonParser(changed, "packMetadataVersion");
                         var changedRoot = (Dictionary<string, object>)changedParser.Read(0);
-                        if (changedParser.End && changedRoot["schemaVersion"] is JsonParser.NumberToken changedVersion && changedVersion.Text == invalidVersion)
+                        if (changedParser.End && changedRoot["packMetadataVersion"] is JsonParser.NumberToken changedVersion && changedVersion.Text == invalidVersion)
                         {
                             Assert.That(changed, Is.Not.EqualTo(json), "version injection must change the companion");
                             return Encoding.UTF8.GetBytes(changed);
                         }
                     }
-                    throw new InvalidOperationException("version injection did not replace the top-level schemaVersion");
+                    throw new InvalidOperationException("version injection did not replace the top-level packMetadataVersion");
                 });
                 LogAssert.Expect(LogType.Error, "Harken operation failed: PackBootstrap.Start: VN_BAD_PACK");
                 var start = fixture.Runtime.StartRuntimeAsync(source);

@@ -7,7 +7,6 @@
 
 #include "harken_studio_build/WorldBodyVintage.h"
 #include "harken_studio_build/PackFormat.h"
-#include "harken_studio_build/generated/harken_pack_wire_constants.g.h"
 
 #include <harken_studio_build/World.h>
 
@@ -21,21 +20,6 @@
 #include <vector>
 
 namespace harkenstudiobuild {
-
-inline constexpr std::uint32_t kPackKindResident = 0;
-inline constexpr std::uint32_t kPackKindContent = 1;
-inline constexpr std::uint32_t kPackKindInit = 2;
-inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
-inline constexpr std::uint32_t kPackVoiceRecipeMaxInstalls = 8;
-inline constexpr std::uint32_t kPackVoiceRecipeMaxBindings = 8;
-inline constexpr std::uint32_t kPackEffectDescriptorVintage = 2;
-inline constexpr std::uint32_t kPackVoiceToneLowpassEnabled = 1u << 0;
-inline constexpr std::uint32_t kPackVoiceToneHighpassEnabled = 1u << 1;
-inline constexpr std::uint32_t kPackVoiceToneLowShelfEnabled = 1u << 2;
-inline constexpr std::uint32_t kPackVoiceToneHighShelfEnabled = 1u << 3;
-inline constexpr std::uint32_t kPackVoiceToneEnableMask =
-    kPackVoiceToneLowpassEnabled | kPackVoiceToneHighpassEnabled |
-    kPackVoiceToneLowShelfEnabled | kPackVoiceToneHighShelfEnabled;
 
 inline void StoreLEF32(std::uint8_t* out, float v) {
     std::uint32_t bits;
@@ -86,7 +70,7 @@ struct PackVoiceRecipeInstall {
     std::uint32_t descriptorVintage = 0;
     std::uint32_t bypass = 0;
     std::uint32_t paramCount = 0;
-    std::array<float, kPackVoiceRecipeMaxParams> params{};
+    std::array<float, HK_PACK_VOICE_RECIPE_MAX_PARAMS> params{};
     harkenstudio::ObjectId effectId{};
 };
 
@@ -103,7 +87,7 @@ struct PackBusEffectEntry {
     std::uint32_t faderPointGuard = 0;
     std::uint32_t paramCount = 0;
     std::uint32_t paramBytes = 0;
-    std::array<float, kPackVoiceRecipeMaxParams> params{};
+    std::array<float, HK_PACK_VOICE_RECIPE_MAX_PARAMS> params{};
     harkenstudio::ObjectId effectId{};
 };
 
@@ -167,12 +151,9 @@ inline constexpr std::uint32_t kInitCatalogIdentityClassAction = 1;
 inline constexpr std::uint32_t kInitCatalogIdentityClassPlayable = 2;
 inline constexpr std::uint32_t kInitCatalogIdentityClassVariable = 3;
 inline constexpr std::uint32_t kInitCatalogIdentityClassResource = 4;
-inline constexpr std::uint32_t kPackDependencyEdgeKindInit = 1;
-inline constexpr std::uint32_t kPackDependencyEdgeKindShared = 2;
-inline constexpr std::uint32_t kPackDependencyEdgeKindContent = 3;
 
 inline bool PackIsCanonicalKind(std::uint32_t packKind) {
-    return packKind == kPackKindInit || packKind == kPackKindCanonicalContent;
+    return packKind == HK_PACK_KIND_INIT || packKind == HK_PACK_KIND_CANONICAL_CONTENT;
 }
 
 inline bool CheckedMulU64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
@@ -443,45 +424,45 @@ struct PackSegmentEntryTimeline {
 
 }
 
-#include <harken_studio_build/generated/harken_pack_wire.g.h>
+#include <harken_studio_build/PackWire.h>
 
 namespace harkenstudiobuild {
 
 inline bool ReadPackCanonicalPartitionHeader(
     const std::uint8_t* in, std::uint64_t size,
     PackCanonicalPartitionHeader* out) noexcept {
-    if (size < kPackCanonicalPartitionHeaderBytes ||
-        !ParsePackCanonicalPartitionHeader(in, kPackCanonicalPartitionHeaderBytes, out)) {
+    if (size < kPackBytes<HkPackCanonicalPartitionHeader> ||
+        !ParsePackRow<HkPackCanonicalPartitionHeader>(in, kPackBytes<HkPackCanonicalPartitionHeader>, out)) {
         return false;
     }
     std::uint64_t expectedSize = 0;
-    return out->headerBytes == kPackCanonicalPartitionHeaderBytes &&
+    return out->headerBytes == kPackBytes<HkPackCanonicalPartitionHeader> &&
            out->packStableId != 0 &&
            CheckedAddU64(out->headerBytes, out->bodyBytes, &expectedSize) &&
            size == expectedSize &&
-           Fnv1a64(in, kPackCanonicalPartitionHeaderHeaderChecksumOffset) == out->headerChecksum &&
+           Fnv1a64(in, offsetof(HkPackCanonicalPartitionHeader, headerChecksum)) == out->headerChecksum &&
            Fnv1a64(in + out->headerBytes, static_cast<std::size_t>(out->bodyBytes)) == out->bodyChecksum;
 }
 
 inline bool PackRequirementBlockValid(const PackRequirementBlock& block) noexcept {
-    return block.schemaVersion == kPackPackRequirementBlockVintage &&
-           block.storageModelVersion == kPackPackRequirementBlockVintage &&
+    return block.schemaVersion == HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE &&
+           block.storageModelVersion == HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE &&
            block.packStableId != 0 && block.reserved0 == 0;
 }
 
 inline bool ReadPackRequirementBlock(const std::uint8_t* in, std::uint64_t size,
                                      PackRequirementBlock* out) noexcept {
-    return ParsePackRequirementBlock(in, size, out) && PackRequirementBlockValid(*out);
+    return ParsePackRow<HkPackRequirementBlock>(in, size, out) && PackRequirementBlockValid(*out);
 }
 
 inline bool ReadPackDependencyEdge(const std::uint8_t* in, std::uint64_t size,
                                    PackDependencyEdge* out) noexcept {
     out->reserved0 = 0;
-    return ParsePackDependencyEdge(in, size, out) &&
+    return ParsePackRow<HkPackDependencyEdge>(in, size, out) &&
            out->prerequisitePackStableId != 0 &&
-           (out->edgeKind == kPackDependencyEdgeKindInit ||
-            out->edgeKind == kPackDependencyEdgeKindShared ||
-            out->edgeKind == kPackDependencyEdgeKindContent) &&
+           (out->edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT ||
+            out->edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_SHARED ||
+            out->edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_CONTENT) &&
            out->required01 <= 1;
 }
 
@@ -523,24 +504,24 @@ inline std::uint64_t PackVoiceRecipePayloadBytes(std::uint32_t installCount,
 
 inline bool ReadPackContainerHeader(const std::uint8_t* in, std::uint64_t size,
                                     PackContainerEntryHeader* out) noexcept {
-    return size >= kPackContainerHeaderBytes &&
-           ParsePackContainerHeader(in, kPackContainerHeaderBytes, out) &&
+    return size >= kPackBytes<HkPackContainerHeader> &&
+           ParsePackRow<HkPackContainerHeader>(in, kPackBytes<HkPackContainerHeader>, out) &&
            size == PackContainerPayloadBytes(out->childCount);
 }
 
 inline bool ReadPackVoiceRecipeHeader(const std::uint8_t* in, std::uint64_t size,
                                       PackVoiceRecipeEntryHeader* out) noexcept {
-    return size >= kPackVoiceRecipeHeaderBytes &&
-           ParsePackVoiceRecipeHeader(in, kPackVoiceRecipeHeaderBytes, out) &&
-           out->installCount <= kPackVoiceRecipeMaxInstalls &&
-           out->bindingCount <= kPackVoiceRecipeMaxBindings &&
+    return size >= kPackBytes<HkPackVoiceRecipeHeader> &&
+           ParsePackRow<HkPackVoiceRecipeHeader>(in, kPackBytes<HkPackVoiceRecipeHeader>, out) &&
+           out->installCount <= HK_PACK_VOICE_RECIPE_MAX_INSTALLS &&
+           out->bindingCount <= HK_PACK_VOICE_RECIPE_MAX_BINDINGS &&
            size == PackVoiceRecipePayloadBytes(out->installCount, out->bindingCount);
 }
 
 inline bool PackVoiceRecipeToneValid(const PackVoiceRecipeTone& tone) noexcept {
     const auto* out = &tone;
     if (out->present > 1 ||
-        (out->sectionEnableMask & ~kPackVoiceToneEnableMask) != 0 ||
+        (out->sectionEnableMask & ~HK_PACK_VOICE_TONE_SECTIONS) != 0 ||
         (out->present == 0 && out->sectionEnableMask != 0)) return false;
     if (out->present != 0) return true;
     const float values[] = {out->lowpassFrequencyHz, out->lowpassQ, out->highpassFrequencyHz,
@@ -553,7 +534,7 @@ inline bool PackVoiceRecipeToneValid(const PackVoiceRecipeTone& tone) noexcept {
 }
 
 inline bool ReadPackVoiceRecipeTone(const std::uint8_t* in, PackVoiceRecipeTone* out) noexcept {
-    return ParsePackVoiceRecipeTone(in, kPackVoiceRecipeToneBytes, out) && PackVoiceRecipeToneValid(*out);
+    return ParsePackRow<HkPackVoiceRecipeTone>(in, kPackBytes<HkPackVoiceRecipeTone>, out) && PackVoiceRecipeToneValid(*out);
 }
 
 inline bool PackVoiceRecipeSpatialValid(const PackVoiceRecipeSpatial& spatial) noexcept {
@@ -564,7 +545,7 @@ inline bool PackVoiceRecipeSpatialValid(const PackVoiceRecipeSpatial& spatial) n
 
 inline bool ReadPackVoiceRecipeSpatial(const std::uint8_t* in, PackVoiceRecipeSpatial* out) noexcept {
     *out = {};
-    return ParsePackVoiceRecipeSpatial(in, kPackVoiceRecipeSpatialBytes, out) && PackVoiceRecipeSpatialValid(*out);
+    return ParsePackRow<HkPackVoiceRecipeSpatial>(in, kPackBytes<HkPackVoiceRecipeSpatial>, out) && PackVoiceRecipeSpatialValid(*out);
 }
 
 inline bool PackVoiceRecipePlaybackValid(const PackVoiceRecipePlayback& playback) noexcept {
@@ -572,24 +553,24 @@ inline bool PackVoiceRecipePlaybackValid(const PackVoiceRecipePlayback& playback
 }
 
 inline bool ReadPackVoiceRecipePlayback(const std::uint8_t* in, PackVoiceRecipePlayback* out) noexcept {
-    return ParsePackVoiceRecipePlayback(in, kPackVoiceRecipePlaybackBytes, out) && PackVoiceRecipePlaybackValid(*out);
+    return ParsePackRow<HkPackVoiceRecipePlayback>(in, kPackBytes<HkPackVoiceRecipePlayback>, out) && PackVoiceRecipePlaybackValid(*out);
 }
 
 inline void WritePackVoiceRecipeInstall(const PackVoiceRecipeInstall& install, std::uint8_t* out) noexcept {
     PackVoiceRecipeInstallWire row;
     static_cast<PackVoiceRecipeInstall&>(row) = install;
     row.paramBytes = install.paramCount * sizeof(float);
-    SerializePackVoiceRecipeInstall(row, out);
+    SerializePackRow<HkPackVoiceRecipeInstall>(row, out);
 }
 
 inline bool PackVoiceRecipeInstallWireValid(const PackVoiceRecipeInstallWire& row) noexcept {
-    return row.bypass <= 1 && row.paramCount <= kPackVoiceRecipeMaxParams &&
+    return row.bypass <= 1 && row.paramCount <= HK_PACK_VOICE_RECIPE_MAX_PARAMS &&
            row.paramBytes == row.paramCount * sizeof(float);
 }
 
 inline bool ReadPackVoiceRecipeInstall(const std::uint8_t* in, PackVoiceRecipeInstall* out) noexcept {
     PackVoiceRecipeInstallWire row{};
-    if (!ParsePackVoiceRecipeInstall(in, kPackVoiceRecipeInstallBytes, &row) ||
+    if (!ParsePackRow<HkPackVoiceRecipeInstall>(in, kPackBytes<HkPackVoiceRecipeInstall>, &row) ||
         !PackVoiceRecipeInstallWireValid(row)) return false;
     *out = row;
     return true;
@@ -658,74 +639,74 @@ inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t siz
 
 inline PackTocEntry ReadPackMedia(const std::uint8_t* in) noexcept {
     PackTocEntry row{};
-    (void)ParsePackMedia(in, kPackMediaBytes, &row);
+    (void)ParsePackRow<HkPackMedia>(in, kPackBytes<HkPackMedia>, &row);
     return row;
 }
 
 inline std::uint64_t PackTocByteOffset(std::uint32_t index) noexcept {
-    return static_cast<std::uint64_t>(index) * kPackMediaBytes;
+    return static_cast<std::uint64_t>(index) * kPackBytes<HkPackMedia>;
 }
 
 inline bool ReadPackBusEffect(const std::uint8_t* in, std::uint64_t size,
                               PackBusEffectEntry* out) noexcept {
-    return ParsePackBusEffect(in, size, out) &&
-           out->paramCount <= kPackVoiceRecipeMaxParams &&
+    return ParsePackRow<HkPackBusEffect>(in, size, out) &&
+           out->paramCount <= HK_PACK_VOICE_RECIPE_MAX_PARAMS &&
            out->paramBytes == out->paramCount * sizeof(float);
 }
 
 inline bool ReadPackAttenuation(const std::uint8_t* in, std::uint64_t size,
                                 AttenuationDefinition* out) noexcept {
     *out = {};
-    return ParsePackAttenuation(in, size, out);
+    return ParsePackRow<HkPackAttenuation>(in, size, out);
 }
 
 inline void WritePackBindingDefinition(harkenstudio::ObjectId bindingId, const BindingDefinition& definition,
                                        std::uint8_t* out) noexcept {
-    SerializePackBindingDefinition({bindingId, definition}, out);
+    SerializePackRow<HkPackBindingDefinition>(PackBindingDefinitionEntry{bindingId, definition}, out);
 }
 
 inline bool ReadPackBindingDefinition(const std::uint8_t* in, std::uint64_t size,
                                       harkenstudio::ObjectId* outId, BindingDefinition* out) noexcept {
     PackBindingDefinitionEntry row{};
-    if (!ParsePackBindingDefinition(in, size, &row)) return false;
+    if (!ParsePackRow<HkPackBindingDefinition>(in, size, &row)) return false;
     *outId = row.bindingId;
     *out = row.definition;
     return true;
 }
 
 inline bool PackIsCanonicalEntryKind(std::uint32_t entryKind) {
-    return entryKind == kPackEntryKindCanonicalDefinitionPartition ||
-           entryKind == kPackEntryKindPackRequirementBlock ||
-           entryKind == kPackEntryKindPackDependencyEdge ||
-           entryKind == kPackEntryKindBusDefinitionSnapshot ||
-           entryKind == kPackEntryKindVariablePolicyOverlay ||
-           entryKind == kPackEntryKindVariableRequirements ||
-           entryKind == kPackEntryKindEffectPreset;
+    return entryKind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION ||
+           entryKind == HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK ||
+           entryKind == HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE ||
+           entryKind == HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT ||
+           entryKind == HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY ||
+           entryKind == HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS ||
+           entryKind == HK_PACK_ENTRY_KIND_EFFECT_PRESET;
 }
 inline bool ReadPackBusDefinitionSnapshotHeader(
     const std::uint8_t* in, std::uint64_t size,
     PackBusDefinitionSnapshotHeader* out) noexcept {
-    if (size < kPackBusDefinitionSnapshotHeaderBytes ||
-        !ParsePackBusDefinitionSnapshotHeader(in, kPackBusDefinitionSnapshotHeaderBytes, out)) {
+    if (size < kPackBytes<HkPackBusDefinitionSnapshotHeader> ||
+        !ParsePackRow<HkPackBusDefinitionSnapshotHeader>(in, kPackBytes<HkPackBusDefinitionSnapshotHeader>, out)) {
         return false;
     }
     std::uint64_t expectedSize = 0;
-    if (out->schemaVersion != kPackBusDefinitionSnapshotVintage ||
-        out->storageModelVersion != kPackBusDefinitionSnapshotVintage ||
-        out->headerBytes != kPackBusDefinitionSnapshotHeaderBytes ||
+    if (out->schemaVersion != HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE ||
+        out->storageModelVersion != HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE ||
+        out->headerBytes != kPackBytes<HkPackBusDefinitionSnapshotHeader> ||
         (out->publicationCapabilityVintage != 3u && out->publicationCapabilityVintage != 4u &&
          out->publicationCapabilityVintage != 5u) ||
         out->profileVintage != 1 || out->reserved0 != 0 || out->reserved1 != 0 ||
-        out->busRowBytes != kPackBusDefinitionBusBytes ||
-        out->sendRowBytes != kPackBusDefinitionSendBytes ||
-        out->downmixRowBytes != kPackBusDefinitionDownmixBytes ||
-        out->coefficientRowBytes != kPackBusDefinitionCoefficientBytes ||
+        out->busRowBytes != kPackBytes<HkPackBusDefinitionBus> ||
+        out->sendRowBytes != kPackBytes<HkPackBusDefinitionSend> ||
+        out->downmixRowBytes != kPackBytes<HkPackBusDefinitionDownmix> ||
+        out->coefficientRowBytes != kPackBytes<HkPackBusDefinitionCoefficient> ||
         !CheckedAddU64(out->headerBytes, out->payloadBytes, &expectedSize) ||
         size != expectedSize) {
         return false;
     }
-    constexpr auto checksumOffset = kPackBusDefinitionSnapshotHeaderChecksumOffset;
-    constexpr auto checksumEnd = kPackBusDefinitionSnapshotHeaderCompileTargetProfileFingerprintOffset;
+    constexpr auto checksumOffset = offsetof(HkPackBusDefinitionSnapshotHeader, checksum);
+    constexpr auto checksumEnd = offsetof(HkPackBusDefinitionSnapshotHeader, compileTargetProfileFingerprint);
     const std::uint8_t checksumZero[checksumEnd - checksumOffset] = {};
     std::uint64_t hash = Fnv1a64(in, checksumOffset);
     hash = Fnv1a64(checksumZero, sizeof(checksumZero), hash);
@@ -734,16 +715,16 @@ inline bool ReadPackBusDefinitionSnapshotHeader(
 }
 
 inline bool ReadPackMediaFileHeader(const std::uint8_t* in, PackMediaFileHeader* out) noexcept {
-    return ParsePackMediaFileHeader(in, kPackMediaFileHeaderBytes, out);
+    return ParsePackRow<HkPackMediaFileHeader>(in, kPackBytes<HkPackMediaFileHeader>, out);
 }
 
 inline bool ReadPackFileHeader(const std::uint8_t* in, PackFileHeader* out) noexcept {
-    return ParsePackFileHeader(in, kPackFileHeaderBytes, out);
+    return ParsePackRow<HkPackFileHeader>(in, kPackBytes<HkPackFileHeader>, out);
 }
 
 inline PackDirectoryEntry ReadPackDirectoryEntry(const std::uint8_t* in) noexcept {
     PackDirectoryEntry row;
-    (void)ParsePackDirectoryEntry(in, kPackDirectoryEntryBytes, &row);
+    (void)ParsePackRow<HkPackDirectoryEntry>(in, kPackBytes<HkPackDirectoryEntry>, &row);
     return row;
 }
 

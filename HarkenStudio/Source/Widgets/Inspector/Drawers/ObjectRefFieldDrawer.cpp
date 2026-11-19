@@ -16,9 +16,11 @@ QWidget* ObjectRefFieldDrawer::build(const PropertyDescriptor& d, QWidget* paren
     w->setSelectorTitle(QObject::tr("Select %1").arg(d.label.isEmpty() ? d.field : d.label));
     w->setObjectName(QStringLiteral("prop_") + d.field);
     w->setRequired(d.refFilter != static_cast<int>(ProjectItem::Type::Attenuation)
+        && d.refFilter != static_cast<int>(ProjectItem::Type::Conversion)
         && d.field != QLatin1String("outputBusId")
         && d.field != QLatin1String("outputBusRef"));
     w->setClearSupport(d.refFilter == static_cast<int>(ProjectItem::Type::Attenuation)
+        || d.refFilter == static_cast<int>(ProjectItem::Type::Conversion)
         || d.field == QLatin1String("outputBusRef"));
     if (d.flags.readOnly)
         w->setReadOnly(true);

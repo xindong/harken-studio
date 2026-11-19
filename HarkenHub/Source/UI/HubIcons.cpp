@@ -1,7 +1,6 @@
 #include "UI/HubIcons.h"
 
 #include <QApplication>
-#include <QImageReader>
 #include <QPainter>
 #include <QPixmap>
 #include <QSvgRenderer>
@@ -63,21 +62,8 @@ QIcon iconWithAllStates(const QPixmap& pixmap)
 
 QIcon applicationIcon(const QColor& color)
 {
-    QImageReader reader(QStringLiteral(":/Resources/icons/HubIcon.ico"));
-    QIcon icon;
-    for (int frame = 0; frame < reader.imageCount(); ++frame) {
-        if (!reader.jumpToImage(frame))
-            continue;
-        QImage image = reader.read().convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        if (image.isNull())
-            continue;
-        QPainter painter(&image);
-        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        painter.fillRect(image.rect(), color);
-        painter.end();
-        icon.addPixmap(QPixmap::fromImage(image));
-    }
-    return icon;
+    Q_UNUSED(color);
+    return QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico"));
 }
 
 ApplicationIcon::ApplicationIcon(QObject* parent)

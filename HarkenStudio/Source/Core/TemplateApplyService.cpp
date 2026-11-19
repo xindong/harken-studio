@@ -7,6 +7,7 @@
 #include "AuthoringPolicy.h"
 #include "AttenuationStore.h"
 #include "BusPlacementRules.h"
+#include "ConversionDefaults.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectSerializer.h"
 #include "SoundSourceSemantics.h"
@@ -324,9 +325,31 @@ bool TemplateApplyService::seedTemplateInto(
 
 bool TemplateApplyService::seedTemplateInto(
     ProjectData& project,
-    const ProjectTemplateData& templateData,
+    const ProjectTemplateData& sourceTemplateData,
     QString* error)
 {
+    auto templateData = sourceTemplateData;
+    const auto initializeConversion = [](auto&& self, QJsonObject item) -> QJsonObject {
+        if (item.value(QStringLiteral("fieldGroups")).isObject()) {
+            auto groups = item.value(QStringLiteral("fieldGroups")).toObject();
+            auto shared = groups.value(QStringLiteral("shared")).toObject();
+            if (!shared.contains(QStringLiteral("conversion"))) {
+                shared.insert(QStringLiteral("conversion"), QJsonObject{{QStringLiteral("inherit"), true}});
+                groups.insert(QStringLiteral("shared"), shared);
+                item.insert(QStringLiteral("fieldGroups"), groups);
+            }
+        }
+        if (item.value(QStringLiteral("children")).isArray()) {
+            QJsonArray children;
+            for (const auto& child : item.value(QStringLiteral("children")).toArray())
+                children.append(child.isObject() ? QJsonValue(self(self, child.toObject())) : child);
+            item.insert(QStringLiteral("children"), children);
+        }
+        return item;
+    };
+    for (qsizetype index = 0; index < templateData.content.size(); ++index)
+        if (templateData.content[index].isObject())
+            templateData.content[index] = initializeConversion(initializeConversion, templateData.content[index].toObject());
     auto setErr = [error](const QString& msg) -> bool {
         if (error) *error = msg;
         return false;
@@ -561,6 +584,8 @@ bool TemplateApplyService::seedTemplateInto(
     for (auto& value : pending) {
         remapTree(value.item.get(), identities);
         remintSubentityStableIds(project, value.item.get());
+        if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(value.item->type))
+            ConversionDefaults::applyRootDefaults(project, value.item->fieldGroups.conversion);
         ProjectFileBinding binding;
         binding.parentFolder = value.folder;
         binding.rootItem = std::move(value.item);

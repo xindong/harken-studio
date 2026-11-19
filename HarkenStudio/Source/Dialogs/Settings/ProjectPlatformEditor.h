@@ -5,15 +5,12 @@
 #include <QWidget>
 #include <QStringList>
 
-class QCheckBox;
 class QComboBox;
-class QDialogButtonBox;
 class QLineEdit;
 
-namespace VNX {
+namespace VNX { class DialogFormLayout; }
 
-class ProportionalTreeWidget;
-class TableWidget;
+namespace VNX {
 
 class ProjectPlatformEditor : public QWidget
 {
@@ -27,15 +24,13 @@ public:
     bool hasPendingName() const;
     void finishNameEditing();
     void discardNameEditing();
+    void addField(const QString& label, QWidget* field);
 
 signals:
     void platformChanged(const ProjectPlatform& before);
 
 private:
-    void refreshPolicies(int selected = -1);
     void updateControls();
-    void resetProfile();
-    void storePolicy(const SizePolicy& policy, int index);
     QString nameError() const;
 
     ProjectPlatform platform_;
@@ -43,10 +38,7 @@ private:
     bool readOnly_ = false;
     QLineEdit* name_ = nullptr;
     QComboBox* base_ = nullptr;
-    QCheckBox* resample_ = nullptr;
-    TableWidget* content_ = nullptr;
-    ProportionalTreeWidget* policies_ = nullptr;
-    QDialogButtonBox* buttons_ = nullptr;
+    DialogFormLayout* form_ = nullptr;
 };
 
 }

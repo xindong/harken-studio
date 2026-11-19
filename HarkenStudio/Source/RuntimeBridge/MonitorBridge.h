@@ -27,10 +27,5 @@ int32_t applyCapturePlan(uint64_t handle, uint64_t lease,
 int32_t stopCapture(uint64_t handle, uint64_t lease, VNX::Monitor::MonitorEffectiveCapturePlan* out);
 int32_t getEffectiveCapturePlan(uint64_t handle, uint64_t generation,
                                 VNX::Monitor::MonitorEffectiveCapturePlan* out);
-int32_t startRecording(uint64_t handle, uint64_t lease, const VNX::Monitor::MonitorRecordingDesc* desc);
-int32_t stopRecording(uint64_t handle, uint64_t lease);
-int32_t getRecordingStatus(uint64_t handle, VNX::Monitor::MonitorRecordingStatus* out);
-int32_t compareSessions(const VNX::Monitor::MonitorSessionCompareDesc* desc,
-                        VNX::Monitor::MonitorCompareResult* out);
 
 }

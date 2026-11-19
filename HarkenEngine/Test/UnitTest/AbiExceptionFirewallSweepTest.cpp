@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "Common/TestUtil.h"

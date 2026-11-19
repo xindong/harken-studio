@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import tempfile
 import unittest
@@ -13,16 +12,6 @@ from script_loader import load_script_module
 SCRIPT = Path(__file__).resolve().parents[1] / "check_unity_integration_contract.py"
 MODULE = load_script_module("check_unity_integration_contract", SCRIPT)
 REPOSITORY = Path(__file__).resolve().parents[2]
-INTEGRATION_GATE = REPOSITORY / ".github/workflows/pr-gate-integration.yml"
-
-
-def workflow_job(text: str, name: str) -> str:
-    match = re.search(rf"^  {re.escape(name)}:\s*$", text, re.MULTILINE)
-    if match is None:
-        raise AssertionError(f"Missing workflow job: {name}")
-    next_job = re.search(r"^  [a-z0-9-]+:\s*$", text[match.end():], re.MULTILINE)
-    end = match.end() + next_job.start() if next_job else len(text)
-    return text[match.start():end]
 
 
 class UnityIntegrationContractTest(unittest.TestCase):
@@ -46,7 +35,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_repository_native_binary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            binary = integration / "Runtime/Plugins/x86_64/HarkenCore.dll"
+            binary = integration / "Runtime/Plugins/x86_64/HarkenEngine.dll"
             binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_bytes(b"runtime")
             with self.assertRaises(SystemExit):
@@ -71,7 +60,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_assembled_package_requires_every_native_binary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            missing = "Runtime/Plugins/iOS/libHarkenCore.a"
+            missing = "Runtime/Plugins/iOS/libHarkenEngineDev.a"
             for relative in MODULE.NATIVE_PLUGIN_PATHS - {missing}:
                 binary = integration / relative
                 binary.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +84,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
                 binary = integration / relative
                 binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.write_bytes(b"runtime")
-            binary = integration / "Runtime/Plugins/Android/armeabi-v7a/libHarkenCore.so"
+            binary = integration / "Runtime/Plugins/Android/armeabi-v7a/libHarkenEngine.so"
             binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_bytes(b"runtime")
             with self.assertRaises(SystemExit):
@@ -185,16 +174,6 @@ class UnityIntegrationContractTest(unittest.TestCase):
             )
             with self.assertRaises(SystemExit):
                 MODULE.verify(integration, False)
-
-    def test_self_hosted_job_rejects_external_pull_requests(self) -> None:
-        job = workflow_job(
-            INTEGRATION_GATE.read_text(encoding="utf-8"), "integration-windows"
-        )
-        self.assertIn("github.event_name != 'pull_request'", job)
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            job,
-        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -497,7 +497,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.model["artifacts"] = [
             {"target": target, "type": kind, "name": path.name,
              "sha256": evidence.sha256(path), "path": path.relative_to(self.build).as_posix()}
-            for target, kind, path in (("harken_editor", "EXECUTABLE", binary),
+            for target, kind, path in (("harken_studio", "EXECUTABLE", binary),
                                       ("QWKCore", "SHARED_LIBRARY", library),
                                       ("harken_studio_cli", "EXECUTABLE", cli))]
         tool = self.root / "macdeployqt"
@@ -775,7 +775,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
             (plugin / "LICENSE.md").write_text("license\n", encoding="utf-8")
             (plugin / "NOTICE.md").write_text("notice\n", encoding="utf-8")
             evidence.write_json(plugin / "package.json", {"version": "2.3.4"})
-        binaries = [integration / "Unity/Harken/Runtime/Plugins/Windows/HarkenCore.dll"]
+        binaries = [integration / "Unity/Harken/Runtime/Plugins/Windows/HarkenEngine.dll"]
         for binary in binaries:
             binary.parent.mkdir(parents=True)
             shutil.copyfile(self.payload / "app.exe", binary)
@@ -788,7 +788,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         receipt = {"identity": {**self.identity, "gitCommit": commit, "platform": "android-arm64", "channel": "stable"},
                    "sourceState": {"configuredDirty": False, "checkoutDirty": False},
                    "artifacts": self.model["artifacts"], "components": [], "toolchains": [],
-                   "targets": ["harken_core_shared"], "cmakeVersion": "3.31.6",
+                   "targets": ["harken_engine_release", "harken_engine_dev"], "cmakeVersion": "3.31.6",
                    "notices": [evidence.file_record(notice, runtime)]}
         evidence.write_json(runtime / "runtime-build.json", receipt)
         second_runtime = self.root / "runtime/android-armv7"

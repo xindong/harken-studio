@@ -1,6 +1,6 @@
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/WaveformCache.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 
 #include <gtest/gtest.h>
 

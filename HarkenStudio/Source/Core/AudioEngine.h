@@ -21,6 +21,7 @@
 #include "RuntimeBridge/PlaybackBridge.h"
 #include "RuntimeBridge/PreviewBridge.h"
 #include "RuntimeBridge/DiagnosticsBridge.h"
+#include "RuntimeSyncCoordinator.h"
 #include "Utils/ObjectId.h"
 #include "VariableSemantics.h"
 
@@ -28,7 +29,6 @@ namespace VNX {
 
 struct ProjectItem;
 struct ProjectData;
-class RuntimeSyncCoordinator;
 class VariableRehearsal;
 class ProjectManager;
 struct LivePropertyPreview;
@@ -63,6 +63,7 @@ public:
     bool isPlaying() const { return playing_; }
     RuntimeSyncCoordinator& runtimeSyncCoordinator() noexcept;
     const RuntimeSyncCoordinator& runtimeSyncCoordinator() const noexcept;
+    RuntimeSyncCoordinator::RevisionBarrierSnapshot currentWorldPlaybackBarrier() const noexcept;
     void bindVariableRehearsal(VariableRehearsal& rehearsal);
 
     enum class RehearsalPushPath : uint8_t { None = 0, Global = 1, Emitter = 2 };

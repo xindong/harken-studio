@@ -150,7 +150,7 @@ std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldBodyV20(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCurrentWorldBodyVintageV20;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -158,16 +158,16 @@ std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb
     header.partitionRevision = revision;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeader(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, partition.data());
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
     std::copy(body.begin(), body.end(), partition.begin() + header.headerBytes);
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kResidentPackStableId,
         RequirementPayload(kResidentPackStableId, revision, revision, 0, body.size(), bus.triple));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kResidentPackStableId, std::move(partition));
-    builder.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(kInitPackStableId, 1, bus.triple), kPackPackDependencyEdgeVintage);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kResidentPackStableId, std::move(partition));
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+        DependencyPayload(kInitPackStableId, 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     return builder.Build();
 }
 

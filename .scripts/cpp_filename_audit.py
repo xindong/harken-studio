@@ -15,8 +15,8 @@ from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = (
-    "HarkenEngine/Source/Runtime/",
-    "HarkenEngine/Source/Tooling/",
+    "HarkenEngine/Source/Core/",
+    "HarkenEngine/Source/Development/",
     "HarkenEngine/Tool/",
     "HarkenEngine/Test/",
     "HarkenStudio/Test/",
@@ -43,7 +43,7 @@ OLD_PATH_EXCLUDED_PREFIXES = (
     "HarkenStudio/ThirdParty/",
 )
 CPP_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl"}
-PROJECT_HEADER_PREFIXES = ("harken/", "harken_remote/")
+PROJECT_HEADER_PREFIXES = ("harken/", "harken_remote/", "harken_host_control/")
 PASCAL_FILENAME = re.compile(r"^[A-Z][A-Za-z0-9]*\.(?:h|cpp)$")
 INCLUDE_LINE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]')
 TOKEN_BOUNDARY = r"A-Za-z0-9_"

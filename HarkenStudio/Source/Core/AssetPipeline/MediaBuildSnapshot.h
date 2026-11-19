@@ -1,42 +1,40 @@
 #pragma once
 
-#include "../ProjectPlatform.h"
+#include "../ConversionResolution.h"
 #include "BuildSourceInputs.h"
 
 namespace VNX {
 
 struct MediaConversionRequest
 {
-    QString projectRoot;
-    QUuid registrySession;
-    QUuid platformRevision;
     ProjectPlatform platform;
     AssetInfo asset;
-    ConversionSettings settings;
+    std::optional<ResolvedConversion> conversion;
     std::shared_ptr<const BuildSourceInput> sourceInput;
 
     QString inputPath() const;
-    QString fingerprint() const;
-    QString cachePath() const;
-    QString jobKey() const;
-    bool sourceMatches() const;
-    bool cacheValid() const;
 };
 
 struct MediaBuildSnapshot
 {
     QString projectRoot;
-    QUuid registrySession;
-    QHash<ProjectPlatformId, QUuid> platformRevisions;
     QVector<ProjectPlatform> platforms;
     QHash<uint32_t, AssetInfo> assets;
-    QHash<uint32_t, ConversionSettings> fileOverrides;
     std::shared_ptr<BuildSourceInputs> sourceInputs;
 
+    bool captureConversions(const ProjectData& project, QString* error = nullptr);
     std::optional<MediaConversionRequest> inspectRequest(
-        uint32_t sourceID, ProjectPlatformId platformId, QString* error = nullptr) const;
+        const QUuid& soundGuid, uint32_t sourceID, ProjectPlatformId platformId,
+        QString* error = nullptr) const;
     std::optional<MediaConversionRequest> request(
-        uint32_t sourceID, ProjectPlatformId platformId, QString* error = nullptr) const;
+        const QUuid& soundGuid, uint32_t sourceID, ProjectPlatformId platformId,
+        QString* error = nullptr) const;
+
+private:
+    std::optional<MediaConversionRequest> buildRequest(
+        const QUuid& soundGuid, uint32_t sourceID, ProjectPlatformId platformId,
+        bool capture, QString* error) const;
+    std::shared_ptr<const QHash<ProjectPlatformId, QHash<QUuid, ConversionPresetSnapshot>>> conversions_;
 };
 
 }

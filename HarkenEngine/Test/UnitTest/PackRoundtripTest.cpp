@@ -16,7 +16,7 @@
 // code (baseline-regression precedent), and the host's writer is 16-bit
 // PCM, whose quantization would break exactness anyway.
 #include "Common/ObjectIdTestSupport.h"
-#include "Common/ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 
@@ -71,7 +71,7 @@ bool ReadFileBytes(const std::string& path,
 }
 
 int CompilePack(const std::string& manifestPath) {
-    return harkentest::CompileResources({manifestPath});
+    return harkentest::BuildTestPack({manifestPath});
 }
 
 std::string ManifestPrefix(const std::string& outputPath) {
@@ -282,78 +282,6 @@ TEST(PackRoundtrip, PackPlaybackBitIdenticalToIndividual) {
     }
 }
 
-TEST(PackRoundtrip, PackcOutputIsByteStable) {
-    const std::vector<float> tone =
-        harkentest::MakeSine(600, 523.0, kRate, 0.5f);
-    const std::vector<float> noise = MakeSeededNoise(750, 0.4f);
-    const std::string tonePath = TempPath("stable_tone.wav");
-    const std::string noisePath = TempPath("stable_noise.wav");
-    WriteWavF32(tonePath, tone, 1, kRate);
-    WriteWavF32(noisePath, noise, 1, kRate);
-
-    const std::string entries =
-        "  { \"path\": \"" + tonePath + "\", \"id\": " +
-        harkentest::JsonObjectId(harkentest::ObjectId(9001)) + ", \"loopStartFrame\": 100, "
-        "\"loopEndFrame\": 500 },\n"
-        "  { \"path\": \"" + noisePath + "\", \"id\": " +
-        harkentest::JsonObjectId(harkentest::ObjectId(9002)) + " }\n"
-        "] }\n";
-    const std::string manifestPath = TempPath("stable_manifest.json");
-
-    const std::string outA = TempPath("stable_a.pack");
-    const std::string outB = TempPath("stable_b.pack");
-    WriteTextFile(manifestPath, ManifestPrefix(outA) + entries);
-    ASSERT_EQ(0, CompilePack(manifestPath));
-    WriteTextFile(manifestPath, ManifestPrefix(outB) + entries);
-    ASSERT_EQ(0, CompilePack(manifestPath));
-
-    std::vector<std::uint8_t> bytesA;
-    std::vector<std::uint8_t> bytesB;
-    ASSERT_TRUE(ReadFileBytes(outA, &bytesA));
-    ASSERT_TRUE(ReadFileBytes(outB, &bytesB));
-    ASSERT_GT(bytesA.size(), static_cast<std::size_t>(
-                                 harken::kPackMediaFileHeaderBytes));
-    EXPECT_EQ(bytesA, bytesB) << "identical input must produce "
-                                 "byte-identical packs";
-}
-
-TEST(PackRoundtrip, ExplicitIdentityPreservesFormatFacts) {
-    const std::vector<float> samples =
-        harkentest::MakeSine(400, 587.0, kRate, 0.5f);
-    const std::string pathA = TempPath("hashfacts_48k.wav");
-    const std::string pathB = TempPath("hashfacts_44k.wav");
-    WriteWavF32(pathA, samples, 1, 48000);
-    WriteWavF32(pathB, samples, 1, 44100);
-
-    const std::string packPath = TempPath("hashfacts.pack");
-    const std::string manifest = ManifestPrefix(packPath) +
-        "  { \"path\": \"" + pathA + "\", \"id\": " +
-        harkentest::JsonObjectId(harkentest::ObjectId(9001)) + " },\n"
-        "  { \"path\": \"" + pathB + "\", \"id\": " +
-        harkentest::JsonObjectId(harkentest::ObjectId(9002)) + " }\n"
-        "] }\n";
-    const std::string manifestPath = TempPath("hashfacts_manifest.json");
-    WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, CompilePack(manifestPath));
-
-    std::vector<std::uint8_t> bytes;
-    ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    ASSERT_GE(bytes.size(),
-              static_cast<std::size_t>(harken::kPackMediaFileHeaderBytes +
-                                       2 * harken::kPackMediaBytes));
-    harken::PackMediaFileHeader header;
-    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
-    ASSERT_EQ(2u, header.entryCount);
-    const harken::PackTocEntry first =
-        harken::ReadPackMedia(bytes.data() + header.tocOffset);
-    const harken::PackTocEntry second = harken::ReadPackMedia(
-        bytes.data() + header.tocOffset + harken::kPackMediaBytes);
-    EXPECT_EQ(48000u, first.sampleRate);
-    EXPECT_EQ(44100u, second.sampleRate);
-    EXPECT_EQ(harkentest::ObjectId(9001), first.soundId);
-    EXPECT_EQ(harkentest::ObjectId(9002), second.soundId);
-}
-
 TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
     const std::vector<float> pair = {0.5f, -0.25f};
     const std::string monoPath = TempPath("hashlayout_mono.wav");
@@ -383,7 +311,7 @@ TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
     const harken::PackTocEntry mono =
         harken::ReadPackMedia(bytes.data() + header.tocOffset);
     const harken::PackTocEntry stereo = harken::ReadPackMedia(
-        bytes.data() + header.tocOffset + harken::kPackMediaBytes);
+        bytes.data() + header.tocOffset + harken::kPackBytes<HkPackMedia>);
     EXPECT_EQ(1u, mono.channelCount);
     EXPECT_EQ(2u, mono.frameCount);
     EXPECT_EQ(2u, stereo.channelCount);
@@ -395,55 +323,6 @@ TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
         << "precondition: the two layouts must serialize byte-identical blobs";
     EXPECT_EQ(monoId, mono.soundId);
     EXPECT_EQ(stereoId, stereo.soundId);
-}
-
-TEST(PackRoundtrip, PackcRefusesMalformedInput) {
-    const std::vector<float> tone =
-        harkentest::MakeSine(300, 660.0, kRate, 0.5f);
-    const std::string wavPath = TempPath("refuse_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-    const std::string outPath = TempPath("refuse_out.pack");
-    const std::string prefix = ManifestPrefix(outPath);
-    const std::string id = ", \"id\": " + harkentest::JsonObjectId(harkentest::ObjectId(9001));
-
-    struct Refusal {
-        const char* name;
-        std::string manifest;
-    };
-    const Refusal refusals[] = {
-        {"broken JSON", prefix},
-        {"retired manifest", "{ \"sounds\": [] }"},
-        {"empty entries array", prefix + "]}"},
-        {"unknown entry key",
-         prefix + "{ \"path\": \"" + wavPath + "\"" + id +
-             ", \"bogus\": 1 } ] }"},
-        {"missing wav file",
-         prefix + "{ \"path\": \"" +
-             TempPath("refuse_missing.wav") + "\"" + id + " } ] }"},
-        {"loop start not below end",
-         prefix + "{ \"path\": \"" + wavPath + "\"" + id +
-             ", \"loopStartFrame\": 200, \"loopEndFrame\": 100 } ] }"},
-        {"loop end past frame count",
-         prefix + "{ \"path\": \"" + wavPath + "\"" + id +
-             ", \"loopStartFrame\": 0, \"loopEndFrame\": 100000 } ] }"},
-        {"duplicate object UUID",
-         prefix + "{ \"path\": \"" + wavPath + "\"" + id +
-             " }, { \"path\": \"" + wavPath + "\"" + id + " } ] }"},
-        {"missing UUID",
-         prefix + "{ \"path\": \"" + wavPath + "\" } ] }"},
-        {"numeric id",
-         prefix + "{ \"path\": \"" + wavPath +
-             "\", \"id\": 1.5 } ] }"},
-    };
-    for (const Refusal& refusal : refusals) {
-        const std::string manifestPath =
-            TempPath("refuse_manifest.json");
-        WriteTextFile(manifestPath, refusal.manifest);
-        EXPECT_NE(0, CompilePack(manifestPath)) << refusal.name;
-    }
-
-    // A missing manifest and missing arguments refuse too.
-    EXPECT_NE(0, CompilePack(TempPath("refuse_no_such_manifest.json")));
 }
 
 

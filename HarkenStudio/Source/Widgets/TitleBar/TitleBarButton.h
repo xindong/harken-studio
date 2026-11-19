@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QColor>
-#include <QPushButton>
+#include <QAbstractButton>
 
 namespace VNX {
 
@@ -12,7 +12,7 @@ enum class TitleBarButtonKind {
     Close
 };
 
-class TitleBarButton : public QPushButton {
+class TitleBarButton : public QAbstractButton {
 public:
     explicit TitleBarButton(TitleBarButtonKind kind, QWidget* parent = nullptr);
 

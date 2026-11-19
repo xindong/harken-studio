@@ -18,7 +18,7 @@
 #include <thread>
 #include <gtest/gtest.h>
 
-TEST(ShellIconsTest, ShellReadableImagesPreserveEverySourceSizeAndPixelAlpha)
+TEST(ShellIconsTest, ShellReadableImagesPreserveEverySourceSizeAndPixel)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -51,8 +51,8 @@ TEST(ShellIconsTest, ShellReadableImagesPreserveEverySourceSizeAndPixelAlpha)
                     ASSERT_EQ(qAlpha(stored.pixel(x, y)), alpha);
                     ASSERT_EQ(qAlpha(shell.pixel(x, y)), alpha);
                     if (alpha) {
-                        ASSERT_EQ(stored.pixelColor(x, y).rgb(), color.rgb());
-                        ASSERT_EQ(shell.pixelColor(x, y).rgb(), color.rgb());
+                        ASSERT_EQ(stored.pixelColor(x, y).rgb(), source.pixelColor(x, y).rgb());
+                        ASSERT_EQ(shell.pixelColor(x, y).rgb(), source.pixelColor(x, y).rgb());
                     }
                 }
             }

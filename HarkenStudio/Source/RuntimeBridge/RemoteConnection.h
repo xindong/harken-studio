@@ -63,7 +63,6 @@ struct RemoteTarget
 struct RemoteCatalogEntry
 {
     harkenstudio::ObjectId id{};
-    QString name;
     quint32 kind = 0;
 };
 

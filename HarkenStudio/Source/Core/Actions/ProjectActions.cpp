@@ -21,7 +21,7 @@
 #include "../PropertyEditSession.h"
 #include "../ActionStepEditing.h"
 #include "../ActionStepUtils.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "../UndoCommands.h"
 #include "../Components/VAudio.h"
 #include "../Components/VMixNode.h"
@@ -2085,6 +2085,7 @@ void registerProjectActions(ActionManager& mgr,
 {
     registerProjectPlatformActions(mgr, projectManager);
     registerFieldGroupActions(mgr, projectManager);
+    registerConversionActions(mgr, projectManager);
     {
         ActionDef def;
         def.id = "save_project";

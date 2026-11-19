@@ -1,5 +1,5 @@
 #include "RuntimeSyncCoordinator.h"
-#include <harken_playable_properties.g.h>
+#include <harken_playable_properties/PlayableProperties.h>
 
 #include <gtest/gtest.h>
 
@@ -18,7 +18,7 @@ std::unique_ptr<QCoreApplication> ensureApplication()
         return {};
 
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     return std::make_unique<QCoreApplication>(argc, argv);
 }

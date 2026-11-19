@@ -13,6 +13,7 @@
 #include "VoiceTimelineSinkTestAccess.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "harken/abi/TimelineStopContract.h"
 
 #include "Engine.h"
@@ -35798,7 +35799,7 @@ void ExpectEmitterStopsPlayable(int kind) {
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     if (kind == 0) {
         image.properties[0].payload.presentMask |= UINT64_C(0x8);
-        image.properties[0].payload.values[3].bits = UINT32_MAX;
+        image.properties[0].payload.values[3].bits = HK_PACK_PROPERTY_LOOP_COUNT_MAX;
         image.RelinkFirstSound();
         image.MakeImmediateSoundPlayAction();
     } else if (kind == 1) image.MakeImmediateCompositeTrackPlayAction();
@@ -47932,7 +47933,7 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
         std::vector<std::uint8_t> body;
         ASSERT_TRUE(EncodeCurrentWorldShippingBody(packWorld, body));
         PackCanonicalPartitionHeader header{};
-        header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+        header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
         header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
         header.bodyBytes = body.size();
         header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -47941,32 +47942,32 @@ void CheckNestedSegmentEmitterBatchesAndSiblingPlayback(bool packEntry) {
         header.ownedDefinitionCount = definitionCount;
         ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
         std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
-        SerializePackCanonicalPartitionHeader(header, partition.data());
-        header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-        SerializePackCanonicalPartitionHeader(header, partition.data());
+        SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+        header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+        SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
         std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-        ImageBuilder content(kPackKindCanonicalContent);
-        content.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
+        ImageBuilder content(HK_PACK_KIND_CANONICAL_CONTENT);
+        content.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kResidentPackStableId,
             RequirementPayload(kResidentPackStableId, 1, 1, definitionCount, body.size()));
-        content.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kResidentPackStableId,
+        content.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kResidentPackStableId,
             std::move(partition));
-        content.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
+        content.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
             DependencyPayload(kInitPackStableId, 1, DefaultFixtureBusTriple()),
-            kPackPackDependencyEdgeVintage);
-        std::vector<std::uint8_t> bindingBytes(kPackBindingDefinitionBytes);
+            HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
+        std::vector<std::uint8_t> bindingBytes(kPackBytes<HkPackBindingDefinition>);
         WritePackBindingDefinition(bindingId, binding, bindingBytes.data());
-        content.AddEntry(kPackEntryKindBindingDefinition, bindingId, std::move(bindingBytes),
-            kPackBindingDefinitionVintage);
+        content.AddEntry(HK_PACK_ENTRY_KIND_BINDING_DEFINITION, bindingId, std::move(bindingBytes),
+            HK_PACK_BINDING_DEFINITION_VINTAGE);
         std::uint64_t relationOrdinal = 0;
         for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
             PackBindingAttachmentEntry attachment{};
             attachment.bindingId = bindingId;
             attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
             attachment.objectId = sound;
-            std::vector<std::uint8_t> attachmentBytes(kPackBindingAttachmentBytes);
-            SerializePackBindingAttachment(attachment, attachmentBytes.data());
-            const auto entry = content.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
-                std::move(attachmentBytes), kPackBindingAttachmentVintage);
+            std::vector<std::uint8_t> attachmentBytes(kPackBytes<HkPackBindingAttachment>);
+            SerializePackRow<HkPackBindingAttachment>(attachment, attachmentBytes.data());
+            const auto entry = content.AddEntry(HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT, VnObjectId{},
+                std::move(attachmentBytes), HK_PACK_BINDING_ATTACHMENT_VINTAGE);
             content.SetRelationOrdinal(entry, relationOrdinal++);
         }
         content.AddMedia(CanonicalActionWorld::kFirstSound, first);

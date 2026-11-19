@@ -28,8 +28,7 @@ MonitorRemoteStatusStrip::MonitorRemoteStatusStrip(QWidget* parent)
 void MonitorRemoteStatusStrip::applyState(const Monitor::MonitorRemoteStatusState& state)
 {
     controlEnabled_ = Monitor::connectedHasControl(state);
-    recordEnabled_ = Monitor::permissionGranted(state, VNX::Monitor::kMonitorPermRecord)
-        && controlEnabled_;
+    recordEnabled_ = controlEnabled_;
     recordDeniedReason_.clear();
     if (!recordEnabled_)
         recordDeniedReason_ = QString::fromStdString(Monitor::recordDeniedReason(state));

@@ -1,6 +1,6 @@
 # harken_editor_blueprint -- STATIC library for the Blueprint (S1a derivation only).
 # Pattern: same as harken_editor_meter / foundation / common. S1a follows the leaf template.
-# Consumers: harken_editor_lib (transitively from MainWindow once S1b lands), harken_editor_tests.
+# Consumers: harken_editor_lib (transitively from MainWindow once S1b lands), harken_studio_tests.
 # Depends on: harken_editor_foundation (Core/ProjectTypes.h via Foundation's PUBLIC include dir).
 #
 add_library(harken_editor_blueprint STATIC

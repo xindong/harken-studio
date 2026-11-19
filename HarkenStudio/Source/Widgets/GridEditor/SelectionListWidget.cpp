@@ -303,8 +303,8 @@ QWidget* SelectionListWidget::buildRow(int index, const SelectionEntry& occurren
     auto* waveformCell = box_->createCell(row);
     waveformCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* waveform = new SelectionWaveform(child->guid, waveformCell);
-    connect(waveform, &SelectionWaveform::sourceEditorRequested,
-            this, &SelectionListWidget::sourceEditorRequested);
+    connect(waveform, &SelectionWaveform::fileViewerRequested,
+            this, &SelectionListWidget::fileViewerRequested);
     waveformCell->addWidget(waveform);
     layout->addWidget(waveformCell);
 

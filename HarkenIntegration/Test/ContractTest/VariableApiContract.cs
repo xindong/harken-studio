@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
 using System.Globalization;
@@ -287,25 +288,8 @@ namespace Harken.Test
         private static unsafe void ActivateInit(string path)
         {
             byte[] utf8 = Encoding.UTF8.GetBytes(Path.GetFullPath(path) + "\0");
-            byte[] nameUtf8 = Encoding.UTF8.GetBytes("VehicleRPM\0");
             fixed (byte* p = utf8)
-            fixed (byte* name = nameUtf8)
             {
-                byte empty = 0;
-                VnPackVariableNameV1 variable = new VnPackVariableNameV1
-                {
-                    variableId = HarkenVariables.VehicleRPM,
-                    utf8Name = (IntPtr)name
-                };
-                VnPackNamesV1 names = new VnPackNamesV1
-                {
-                    structSize = (uint)sizeof(VnPackNamesV1),
-                    projectId = new VnObjectId(0, 1),
-                    utf8RootName = (IntPtr)(&empty),
-                    utf8Language = (IntPtr)(&empty),
-                    variableCount = 1,
-                    variables = (IntPtr)(&variable)
-                };
                 VnCanonicalPackSetMemberV2 member = default;
                 member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV2);
                 member.operation = VnConstants.VN_PACK_MEMBER_CONTENT;
@@ -313,7 +297,6 @@ namespace Harken.Test
                 member.source.packStableId = 11;
                 member.source.packKind = VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT;
                 member.source.utf8Path = (IntPtr)p;
-                member.names = (IntPtr)(&names);
                 VnCanonicalPackSetMemberResultV1 row = default;
                 row.structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
                 VnCanonicalPackSetActivationDescV2 desc = default;
@@ -329,6 +312,13 @@ namespace Harken.Test
                 report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
                 Require(HarkenNative.Vn_ActivateCanonicalPackSetV2(in desc, ref report));
             }
+            var names = new PackCompanion
+            {
+                ProjectId = new VnObjectId(0, 1),
+                Variables = new[] { new PackCompanion.Variable(HarkenVariables.VehicleRPM, "VehicleRPM") }
+            };
+            GameplayNames.Publish(GameplayNames.Prepare(names.ProjectId, names,
+                Array.Empty<KeyValuePair<string, GameplayNames.Action>>()));
         }
 
         private static void Require(VnResult result)

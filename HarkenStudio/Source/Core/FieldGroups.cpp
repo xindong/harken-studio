@@ -178,6 +178,7 @@ DefinitionFieldGroups MakeRootFieldGroups(AuthoringGuid masterBusGuid)
     groups.spatialRating.shared = {
         FieldGroupMode::Inherit, SpatialRatingFieldGroup{}};
     groups.effects.shared = {FieldGroupMode::Inherit, EffectFieldGroup{}};
+    groups.conversion.shared = {FieldGroupMode::Local, ConversionFieldGroup{}};
     return groups;
 }
 
@@ -188,6 +189,7 @@ std::string_view FieldGroupName(FieldGroupId group) noexcept
     case FieldGroupId::Send: return "send";
     case FieldGroupId::SpatialRating: return "spatialRating";
     case FieldGroupId::Effect: return "effect";
+    case FieldGroupId::Conversion: return "conversion";
     }
     return {};
 }
@@ -198,6 +200,7 @@ std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept
         return FieldGroupId::Output;
     if (field == "sends") return FieldGroupId::Send;
     if (field == "effects") return FieldGroupId::Effect;
+    if (field == "settingsRef") return FieldGroupId::Conversion;
     if (field == "spatialPanning" || field == "spatialIs3DEnabled" ||
         field == "spatialAttenuationRef" ||
         field == "spatialAttenuationDistanceScaling")
@@ -232,6 +235,7 @@ std::uint64_t FieldGroupPropertyMask(FieldGroupId group) noexcept
     case FieldGroupId::Send: return UINT64_C(0x80);
     case FieldGroupId::SpatialRating: return UINT64_C(0x2d00);
     case FieldGroupId::Effect: return FieldGroupFieldMask(PropertyId::SignalGraph);
+    case FieldGroupId::Conversion: return FieldGroupFieldMask(ConversionFieldId::Settings);
     }
     return 0;
 }
@@ -314,6 +318,10 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
         }
         break;
     }
+    case FieldGroupId::Conversion:
+        if (!std::holds_alternative<ConversionFieldGroup>(payload))
+            AddDiagnostic(diagnostics, DiagnosticCode::PayloadGroupMismatch, group);
+        break;
     default:
         AddDiagnostic(diagnostics, DiagnosticCode::UnknownGroup, group);
         break;
@@ -331,6 +339,7 @@ std::vector<FieldGroupDiagnostic> ValidateDefinitionFieldGroups(
     ValidateAuthoredGroup(groups.spatialRating, FieldGroupId::SpatialRating,
                           definition, diagnostics);
     ValidateAuthoredGroup(groups.effects, FieldGroupId::Effect, definition, diagnostics);
+    ValidateAuthoredGroup(groups.conversion, FieldGroupId::Conversion, definition, diagnostics);
     return diagnostics;
 }
 
@@ -348,6 +357,7 @@ FieldGroupReferenceCatalog::FieldGroupReferenceCatalog(
         const bool validKind = target.kind == FieldGroupReferenceKind::Bus ||
                                target.kind == FieldGroupReferenceKind::Attenuation ||
                                target.kind == FieldGroupReferenceKind::Effect ||
+                               target.kind == FieldGroupReferenceKind::Conversion ||
                                target.kind == FieldGroupReferenceKind::Other;
         if (harkenstudio::IsNull(target.guid) || !validKind ||
             !targets_.emplace(target.guid, target.kind).second)
@@ -401,6 +411,12 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                               "spatialAttenuationRef");
         break;
     }
+    case FieldGroupId::Conversion: {
+        const auto guid = std::get<ConversionFieldGroup>(payload).settingsRef;
+        if (!harkenstudio::IsNull(guid))
+            validateReference(guid, FieldGroupReferenceKind::Conversion, "settingsRef");
+        break;
+    }
     case FieldGroupId::Effect: {
         const auto& effects = std::get<EffectFieldGroup>(payload).effects.entries();
         for (std::size_t i = 0; i < effects.size(); ++i) {
@@ -447,6 +463,8 @@ FieldGroupResolver::FieldGroupResolver(
                     FieldGroupId::SpatialRating, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->effects,
                     FieldGroupId::Effect, definition.guid, diagnostics_);
+                ValidateRootGroup(definition.groups->conversion,
+                    FieldGroupId::Conversion, definition.guid, diagnostics_);
             }
         }
         if (!harkenstudio::IsNull(definition.guid) &&
@@ -518,6 +536,9 @@ FieldGroupResolutionResult FieldGroupResolver::Resolve(
     case FieldGroupId::Effect:
         return ResolveGroup(definitions_, found->second, scope, group,
                             &DefinitionFieldGroups::effects);
+    case FieldGroupId::Conversion:
+        return ResolveGroup(definitions_, found->second, scope, group,
+                            &DefinitionFieldGroups::conversion);
     }
     return result;
 }

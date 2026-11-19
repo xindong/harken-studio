@@ -35,9 +35,8 @@ harken/
 ├── (.venv/)                              # Python 虚拟环境，不入仓
 ├── (build*/)                             # 构建产出内容，编译输出，不入仓
 ├── cmake/                                # 项目构建身份注入
-├── HarkenEngine/                         # harken_core — 声音引擎运行核心
+├── HarkenEngine/                         # HarkenEngine — 声音引擎（正式版与开发版）
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序
-├── HarkenSchema/                         # Editor 与 Pack 各自独立的 JSON 合同
 ├── HarkenIntegration/                    # HarkenIntegration — 游戏引擎侧第三方集成
 ├── HarkenStudio/                         # HarkenEditor — 前端编辑器
 ├── CLAUDE.md | AGENTS.md                 # AI 项目高层指令

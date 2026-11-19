@@ -19,7 +19,7 @@ def deploy(build_dir: Path, bundle: Path, tool: Path, configuration: str) -> Non
     binary = bundle / "Contents/MacOS/HarkenStudio"
     if (bundle.name != "HarkenStudio.app" or not bundle.is_relative_to(build_dir)
             or not model["identity"]["platform"].startswith("macos-")
-            or not any(artifact["target"] == "harken_editor"
+            or not any(artifact["target"] == "harken_studio"
                        and build_dir / artifact["path"] == binary
                        for artifact in model["artifacts"])):
         raise ValueError("deployment bundle does not match the configured Studio target")

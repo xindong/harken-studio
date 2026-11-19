@@ -69,8 +69,8 @@ COMPONENT_INPUTS = (
     {"id": "heroicons", "notice": "Heroicons", "products": ["hub"],
      "url": "https://github.com/tailwindlabs/heroicons", "legalFiles": ["Heroicons-LICENSE.txt"]},
 )
-ROOT_TARGETS = {"studio": ("harken_editor", "harken_studio_cli"), "hub": ("harken_hub",),
-                "runtime": ("harken_core_shared",)}
+ROOT_TARGETS = {"studio": ("harken_studio", "harken_studio_cli"), "hub": ("harken_hub",),
+                "runtime": ("harken_engine_release", "harken_engine_dev")}
 
 
 def read_json(path: Path) -> dict:
@@ -174,8 +174,6 @@ def build_model(build_dir: Path, product: str, configuration: str, extra_targets
     roots = list(ROOT_TARGETS[product]) + list(extra_targets)
     if product == "hub" and "harken_hub_update_bridge" in by_name:
         roots.append("harken_hub_update_bridge")
-    if product == "runtime" and "harken_core_shared" not in by_name:
-        roots = ["harken_core"]
     if any(name not in by_name for name in roots):
         raise ValueError(f"build is missing product targets: {roots}")
     targets = {}

@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -70,6 +73,7 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator WarmNameEditUsesTheNewActionWithoutDisablingOrRestarting()
         {
@@ -98,7 +102,9 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator MultiplePacksRemainPreparedAcrossIndependentABAPlaybacks()
         {
@@ -128,7 +134,9 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator AnotherProjectRejectsPersistedConfigurationUntilExplicitRebind()
         {
@@ -151,7 +159,9 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator RestartWithRenameRefusesThePersistedOldNameUntilExplicitlyEdited()
         {
@@ -175,6 +185,7 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+#endif
 
         private static ActionFiring Post(HarkenAction action)
         {
@@ -198,6 +209,7 @@ namespace Harken.Unity.Tests
             Assert.That(info.actionId, Is.EqualTo(expectedId));
         }
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator StopAndRelease(Fixture fixture, HarkenAction action)
         {
             PackBootstrapSession session = fixture.Runtime.Session;
@@ -218,7 +230,9 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("The same session did not publish a newer block and release the stopped firing.");
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator NewBlock(Fixture fixture, ulong baseline)
         {
             PackBootstrapSession session = fixture.Runtime.Session;
@@ -232,13 +246,16 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("No fresh block was published by the same real-device session.");
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static ulong CaptureBlock()
         {
             VnSnapshot snapshot = HarkenEngine.DefaultSnapshot();
             Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
             return snapshot.blockIndex;
         }
+#endif
 
         private static T Get<T>(object target, string name)
             => (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);

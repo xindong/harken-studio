@@ -57,6 +57,8 @@ struct EffectiveDefinitionFieldGroups {
     FieldGroupSource spatialRatingSource;
     EffectFieldGroup effects;
     FieldGroupSource effectsSource;
+    ConversionFieldGroup conversion;
+    FieldGroupSource conversionSource;
 };
 
 struct FieldGroupEffectiveSnapshot {

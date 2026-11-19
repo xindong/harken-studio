@@ -2,6 +2,7 @@
 #include "Monitor/MonitorTypes.h"
 #include "RuntimeBridge/MonitorBridge.h"
 #include "MonitorCaptureControl.h"
+#include "harken_buildinfo.h"
 
 #include <cstring>
 #include <functional>
@@ -67,9 +68,20 @@ void MonitorAdapter::snapshotSession(MonitorSessionHandle* handle, uint64_t* epo
         *epoch = session_ ? session_->epoch : uint64_t{0};
 }
 
+void MonitorAdapter::recordInto(MonitorAdapter& owner)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    recorder_ = owner.recorder_;
+    ownsRecorder_ = false;
+}
+
 void MonitorAdapter::clearSessionLocked()
 {
     session_.reset();
+    if (ownsRecorder_) {
+        std::lock_guard<std::mutex> recording(recorder_->mutex);
+        recorder_->writer.close();
+    }
 }
 
 void MonitorAdapter::zeroSubscription(MonitorSubscriptionStatus* outStatus)
@@ -213,6 +225,11 @@ MonitorResult MonitorAdapter::poll(MonitorSessionHandle handle,
     MonitorPollResult local = {};
 
     const MonitorResult polled = HarkenEditor::Bridge::Monitoring::poll(handle, desc, &local);
+    if (polled == kOk) {
+        std::lock_guard<std::mutex> recording(recorder_->mutex);
+        if (recorder_->writer.isOpen())
+            recorder_->writer.append(static_cast<const uint8_t*>(desc->buffer), local.bytesWritten);
+    }
     if (polled == kOk)
         *outResult = local;
     else
@@ -414,8 +431,14 @@ MonitorResult MonitorAdapter::startRecording(MonitorSessionHandle handle,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!isCurrentControl(handle, epoch))
             return kMonitorStaleSession;
-        recordTrace("Vn_MonitorStartRecording");
-        return HarkenEditor::Bridge::Monitoring::startRecording(handle, leaseGeneration, desc);
+        std::lock_guard<std::mutex> recording(recorder_->mutex);
+        if (desc->utf8Path == nullptr || recorder_->writer.isOpen())
+            return kInvalidArg;
+        MonitorSessionSource source;
+        source.engineVersion = std::string(Harken::BuildInfo::Version);
+        source.engineMonitorInstanceId = handle;
+        return recorder_->writer.open(desc->utf8Path, source, desc->fileByteBudget)
+            ? kOk : kMonitorIncompatible;
     });
 }
 
@@ -427,8 +450,9 @@ MonitorResult MonitorAdapter::stopRecording(MonitorSessionHandle handle,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!isCurrentControl(handle, epoch))
             return kMonitorStaleSession;
-        recordTrace("Vn_MonitorStopRecording");
-        return HarkenEditor::Bridge::Monitoring::stopRecording(handle, leaseGeneration);
+        std::lock_guard<std::mutex> recording(recorder_->mutex);
+        recorder_->writer.close();
+        return kOk;
     });
 }
 
@@ -443,13 +467,9 @@ MonitorResult MonitorAdapter::getRecordingStatus(MonitorSessionHandle handle,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!isCurrentSession(handle))
             return kMonitorStaleSession;
-        recordTrace("Vn_MonitorGetRecordingStatus");
-        MonitorRecordingStatus local = {};
-
-        const MonitorResult status = HarkenEditor::Bridge::Monitoring::getRecordingStatus(handle, &local);
-        if (status == kOk)
-            *outStatus = local;
-        return status;
+        std::lock_guard<std::mutex> recording(recorder_->mutex);
+        *outStatus = recorder_->writer.status();
+        return kOk;
     });
 }
 

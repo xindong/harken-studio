@@ -30,6 +30,7 @@
 #include "Core/Components/VEffect.h"
 #include "Core/Components/VAudio.h"
 #include "Core/Components/VBus.h"
+#include "Core/Components/VConversion.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSelection.h"
 #include "Core/Components/VSound.h"
@@ -484,6 +485,8 @@ void PropertyEditorEngine::releasePage()
     sectionBindings_.clear();
     groupBindings_.clear();
     groupPreviews_.clear();
+    conversionSelection_.clear();
+    conversionViews_.clear();
 }
 
 std::optional<PlayablePropertyLocatorV1>
@@ -1539,6 +1542,7 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
         case ComponentType::Track:       return item->comp<VTrack>();
         case ComponentType::Segment:       return item->comp<VSegment>();
         case ComponentType::Sound:       return item->comp<VSound>();
+        case ComponentType::Conversion:  return item->comp<VConversion>();
         default:                         return nullptr;
     }
 }
@@ -1609,6 +1613,7 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
 {
     cancelGroupEdits(item == currentItem_);
     ProjectItem* previousItem = currentItem_;
+    if (item != previousItem) conversionSelection_.clear();
     for (auto& binding : bindings_)
     {
         if (binding.parameterBinding && binding.parameterBinding->isEditing())
@@ -1808,6 +1813,10 @@ bool PropertyEditorEngine::playablePropertyEventRelated(
 {
     if (owner && currentItem_
         && (field == QLatin1String("fieldGroups") || fieldGroup(field))) {
+        for (const auto& guid : conversionSelection_)
+            for (auto* ancestor = ProjectManager::instance().findItemByGuid(guid);
+                 ancestor; ancestor = ancestor->parent)
+                if (ancestor == owner) return true;
         for (auto* ancestor = currentItem_; ancestor; ancestor = ancestor->parent)
             if (ancestor == owner) return true;
         return false;

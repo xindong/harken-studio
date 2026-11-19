@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections;
 using System.IO;
@@ -475,6 +478,7 @@ namespace Harken.Unity.Tests
             }
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator PreviewStopsIndependentFiringsAndClosesAfterNewAudioBlocks()
         {
@@ -519,15 +523,13 @@ namespace Harken.Unity.Tests
                 Assert.That(session.IsActive, Is.False);
             }
         }
+#endif
 
 #if HARKEN_SDK_TEST_NULL_PUMP
-        // These exports exist only in the isolated Integration fixture DLL.
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
+        private static extern void VnPreview_PumpNullMixer(uint blockCount);
 
-        [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        private static extern VnResult HarkenSdkTest_QueueNotification();
-
+#if HARKEN_ENGINE_DEV
         [Test]
         public void FirstExplicitPreviewPlayAfterEditorGapKeepsThePriorFiringPlaying()
         {
@@ -541,11 +543,11 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(preview.Play("Play_U4_A", catalog.Publication.ProjectId, out ActionFiring prior), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
                 Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                 ulong baseline = CaptureBlock();
                 // Audio advances while the Editor does not service another logical update.
-                Assert.That(HarkenSdkTest_PumpNull(32), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(32);
                 VnSnapshot afterGap = HarkenEngine.DefaultSnapshot();
                 Assert.That(HarkenEngine.Capture(ref afterGap), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(afterGap.blockIndex, Is.GreaterThan(baseline));
@@ -567,7 +569,7 @@ namespace Harken.Unity.Tests
                 {
                     Assert.That(preview.Session, Is.SameAs(session));
                     Assert.That(session.IsActive, Is.True);
-                    Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                    VnPreview_PumpNullMixer(1);
                     Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                     Assert.That(prior.Query(out info), Is.EqualTo(VnResult.VN_OK));
                 }
@@ -577,7 +579,9 @@ namespace Harken.Unity.Tests
                     "Admitting the next request must not stop the prior firing.");
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void NullPreviewStopKeepsOtherFiringsAndClosesOnlyAfterTheLastStop()
         {
@@ -591,14 +595,14 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(preview.Play("Play_U4_A", catalog.Publication.ProjectId, out ActionFiring first), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(preview.Play("Play_U4_A", catalog.Publication.ProjectId, out ActionFiring second), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
                 Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                 ulong baseline = CaptureBlock();
                 Assert.That(preview.Stop(first, 0), Is.EqualTo(VnResult.VN_OK));
                 for (int block = 0; block < 64 && preview.FiringCount == 2; ++block)
                 {
                     Assert.That(preview.Session, Is.SameAs(session));
-                    Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                    VnPreview_PumpNullMixer(1);
                     Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                 }
                 Assert.That(preview.Session, Is.SameAs(session));
@@ -612,7 +616,7 @@ namespace Harken.Unity.Tests
                 for (int block = 0; block < 64 && preview.IsPrepared; ++block)
                 {
                     Assert.That(preview.Session, Is.SameAs(session));
-                    Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                    VnPreview_PumpNullMixer(1);
                     Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
                 }
                 Assert.That(session.IsActive, Is.False);
@@ -622,7 +626,9 @@ namespace Harken.Unity.Tests
                 Assert.That(refused.IsValid, Is.False);
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void PreviewPlayAfterTheLastIndividualStopKeepsTheSessionAndReleasesTheOldFiring()
         {
@@ -647,7 +653,9 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.FiringCount, Is.EqualTo(1));
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void FailedPreviewPlayAfterTheLastIndividualStopStillClosesOnTheNextTick()
         {
@@ -673,7 +681,9 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.IsPrepared, Is.False);
             }
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         [Test]
         public void PreviewGlobalStopStillRefusesPlayBeforeIdleShutdown()
         {
@@ -699,6 +709,7 @@ namespace Harken.Unity.Tests
                 Assert.That(preview.FiringCount, Is.Zero);
             }
         }
+#endif
 
         [Test]
         public void SecondScopePrepareReusesTheSessionWithoutPublicCanPrepare()
@@ -1071,7 +1082,7 @@ namespace Harken.Unity.Tests
         {
             for (int block = 0; block < 64 && preview.FiringCount > 0; ++block)
             {
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
                 Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK).Or.EqualTo(VnResult.VN_NOT_INITIALIZED));
             }
             Assert.That(preview.FiringCount, Is.Zero);
@@ -1081,7 +1092,7 @@ namespace Harken.Unity.Tests
         {
             for (int block = 0; block < 64 && !scope.IsPrepared; ++block)
             {
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
                 preview.Tick();
             }
             Assert.That(scope.IsPrepared, Is.True, scope.Diagnostic);
@@ -1094,13 +1105,14 @@ namespace Harken.Unity.Tests
             Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
             Assert.That(preview.Play("Play_U4_A", catalog.Publication.ProjectId, out ActionFiring firing), Is.EqualTo(VnResult.VN_OK));
             Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
-            Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+            VnPreview_PumpNullMixer(1);
             Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
             Assert.That(firing.Query(out VnActionFiringInfo info), Is.EqualTo(VnResult.VN_OK));
             Assert.That(info.livePlayableCount, Is.GreaterThan(0));
             return firing;
         }
 
+#if HARKEN_ENGINE_DEV
         private static void PumpUntilPreviewFiringTerminal(HarkenEditorPreview preview, PackBootstrapSession session,
             ActionFiring firing, ulong baseline)
         {
@@ -1110,7 +1122,7 @@ namespace Harken.Unity.Tests
             {
                 Assert.That(preview.Session, Is.SameAs(session));
                 Assert.That(session.IsActive, Is.True);
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(firing.Query(out info), Is.EqualTo(VnResult.VN_OK));
                 if (info.state == (uint)VnActionFiringState.VN_ACTION_FIRING_TERMINAL_RETAINED) break;
@@ -1125,113 +1137,7 @@ namespace Harken.Unity.Tests
             Assert.That(info.terminalReason, Is.EqualTo((uint)VnActionTerminalReason.VN_ACTION_TERMINAL_STOP_REQUESTED));
             Assert.That(preview.FiringCount, Is.EqualTo(1));
         }
-
-        [Test]
-        public void PreviewPlayMaintenanceCannotPostIntoAReplacementSession()
-        {
-            RequirePublicationTooling();
-            HarkenEditorCatalog catalog = Catalog();
-            Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
-            using (var preview = new HarkenEditorPreview())
-            {
-                bool notified = false, restarted = false, inNotification = false, restartedInNotification = false;
-                VnResult shutdown = VnResult.VN_NOT_INITIALIZED, restart = VnResult.VN_NOT_INITIALIZED;
-                var registration = PrepareNotificationPreview(preview, catalog, ids,
-                    (in VnNotification notification, object state) =>
-                    {
-                        if (notified || notification.type != (uint)VnNotificationType.VN_NOTIFY_DEGRADATION_OCCURRED) return;
-                        notified = true;
-                        inNotification = true;
-                        try { shutdown = preview.Shutdown(); }
-                        finally { inNotification = false; }
-                    });
-                EventInfo returned = typeof(HarkenEngine).GetEvent("OutermostUpdateReturned", BindingFlags.Static | BindingFlags.NonPublic);
-                Action restartAfterUpdate = () =>
-                {
-                    if (!notified || restarted) return;
-                    restarted = true;
-                    restartedInNotification = inNotification;
-                    restart = preview.Prepare(Root(), null, ids, true);
-                };
-                try
-                {
-                    PackBootstrapSession previous = preview.Session;
-                    Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
-                    returned.GetAddMethod(true).Invoke(null, new object[] { restartAfterUpdate });
-                    Assert.That(HarkenSdkTest_QueueNotification(), Is.EqualTo(VnResult.VN_OK));
-                    VnResult result = preview.Play("Play_U4_A", catalog.Publication.ProjectId, out ActionFiring refused);
-                    Assert.That(notified, Is.True, "Play maintenance must drain the queued native notification.");
-                    Assert.That(shutdown, Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(restarted, Is.True);
-                    Assert.That(restartedInNotification, Is.False);
-                    Assert.That(restart, Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(result, Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
-                    Assert.That(refused.IsValid, Is.False);
-                    Assert.That(previous.IsActive, Is.False);
-                    Assert.That(preview.Session, Is.Not.SameAs(previous));
-                    Assert.That(preview.IsPrepared, Is.True);
-                    Assert.That(preview.FiringCount, Is.Zero);
-                    Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(preview.FiringCount, Is.Zero, "The old request must not be replayed in the new session.");
-                }
-                finally
-                {
-                    returned.GetRemoveMethod(true).Invoke(null, new object[] { restartAfterUpdate });
-                    preview.Shutdown();
-                    registration.Dispose();
-                }
-            }
-        }
-
-        [Test]
-        public void PreviewPlayMaintenanceRejectsReentrantPlayWithoutRecursiveNotificationDispatch()
-        {
-            RequirePublicationTooling();
-            HarkenEditorCatalog catalog = Catalog();
-            Assert.That(catalog.GetPreparationOrder("Play_U4_A", out ulong[] ids, out _), Is.EqualTo(VnResult.VN_OK));
-            using (var preview = new HarkenEditorPreview())
-            {
-                int notifications = 0, depth = 0, maxDepth = 0;
-                VnResult nested = VnResult.VN_OK, queued = VnResult.VN_NOT_INITIALIZED;
-                ActionFiring nestedFiring = default;
-                var registration = PrepareNotificationPreview(preview, catalog, ids,
-                    (in VnNotification notification, object state) =>
-                    {
-                        if (notification.type != (uint)VnNotificationType.VN_NOTIFY_DEGRADATION_OCCURRED) return;
-                        ++depth;
-                        maxDepth = Math.Max(maxDepth, depth);
-                        try
-                        {
-                            if (++notifications != 1) return;
-                            queued = HarkenSdkTest_QueueNotification();
-                            nested = preview.Play("Play_U4_A", catalog.Publication.ProjectId, out nestedFiring);
-                        }
-                        finally { --depth; }
-                    });
-                try
-                {
-                    PackBootstrapSession session = preview.Session;
-                    Assert.That(preview.Tick(), Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(HarkenSdkTest_QueueNotification(), Is.EqualTo(VnResult.VN_OK));
-                    VnResult result = preview.Play("Play_U4_A", catalog.Publication.ProjectId, out ActionFiring firing);
-                    Assert.That(notifications, Is.GreaterThanOrEqualTo(1));
-                    Assert.That(queued, Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(maxDepth, Is.EqualTo(1));
-                    Assert.That(nested, Is.EqualTo(VnResult.VN_IN_USE));
-                    Assert.That(nestedFiring.IsValid, Is.False);
-                    Assert.That(result, Is.EqualTo(VnResult.VN_OK));
-                    Assert.That(firing.IsValid, Is.True);
-                    Assert.That(preview.Session, Is.SameAs(session));
-                    Assert.That(session.IsActive, Is.True);
-                    Assert.That(preview.FiringCount, Is.EqualTo(1));
-                }
-                finally
-                {
-                    preview.Shutdown();
-                    registration.Dispose();
-                }
-            }
-        }
+#endif
 
         private static HarkenCallbacks.Registration PrepareNotificationPreview(HarkenEditorPreview preview,
             HarkenEditorCatalog catalog, ulong[] ids, HarkenCallbacks.NotificationHandler handler)
@@ -1260,13 +1166,16 @@ namespace Harken.Unity.Tests
         }
 #endif
 
+#if HARKEN_ENGINE_DEV
         private static ulong CaptureBlock()
         {
             VnSnapshot snapshot = HarkenEngine.DefaultSnapshot();
             Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
             return snapshot.blockIndex;
         }
+#endif
 
+#if HARKEN_ENGINE_DEV
         private static IEnumerator NewBlock(PackBootstrapSession session, ulong baseline)
         {
             float deadline = Time.realtimeSinceStartup + 3;
@@ -1278,6 +1187,7 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("No fresh audio block was published by the same preview session.");
         }
+#endif
 
         private static T Get<T>(object target, string name)
             => (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);

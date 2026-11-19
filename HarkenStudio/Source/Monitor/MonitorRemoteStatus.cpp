@@ -5,22 +5,20 @@ namespace VNX {
 namespace Monitor {
 namespace {
 
-const uint32_t kPermissionMasks[7] = {
+const uint32_t kPermissionMasks[6] = {
     kMonitorPermObserveState,
     kMonitorPermObserveEvents,
     kMonitorPermObserveMeasurements,
     kMonitorPermCaptureControl,
-    kMonitorPermRecord,
     kMonitorPermRawAudio,
     kMonitorPermSymbols,
 };
 
-const char* kPermissionIds[7] = {
+const char* kPermissionIds[6] = {
     "ObserveState",
     "ObserveEvents",
     "ObserveMeasurements",
     "CaptureControl",
-    "Record",
     "RawAudio",
     "Symbols",
 };
@@ -42,7 +40,7 @@ MonitorRemoteStatusState projectRemoteStatus(const MonitorRemoteStatusInput& inp
     state.leaseGeneration = input.captureControl.leaseGeneration;
     state.captureControl = input.captureControl;
 
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < 6; ++i)
     {
         state.permissions[i].id = kPermissionIds[i];
         state.permissions[i].mask = kPermissionMasks[i];
@@ -75,7 +73,7 @@ MonitorRemoteStatusState projectRemoteStatus(const MonitorRemoteStatusInput& inp
         return state;
     }
 
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < 6; ++i)
         state.permissions[i].granted =
             (input.permissionMask & kPermissionMasks[i]) == kPermissionMasks[i];
 
@@ -143,8 +141,6 @@ std::string permissionDeniedReason(uint32_t mask)
         return "ObserveMeasurements denied";
     case kMonitorPermCaptureControl:
         return "CaptureControl denied";
-    case kMonitorPermRecord:
-        return "Record denied";
     case kMonitorPermRawAudio:
         return "RawAudio denied";
     case kMonitorPermSymbols:
@@ -156,7 +152,7 @@ std::string permissionDeniedReason(uint32_t mask)
 
 std::string recordDeniedReason(const MonitorRemoteStatusState& state)
 {
-    if (permissionGranted(state, kMonitorPermRecord) && connectedHasControl(state))
+    if (connectedHasControl(state))
         return {};
     if (state.face == MonitorRemoteFace::Unsupported)
         return "Unsupported";
@@ -166,8 +162,6 @@ std::string recordDeniedReason(const MonitorRemoteStatusState& state)
         return "Disconnecting";
     if (state.face == MonitorRemoteFace::Disconnected)
         return "Disconnected";
-    if (!permissionGranted(state, kMonitorPermRecord))
-        return permissionDeniedReason(kMonitorPermRecord);
     if (!permissionGranted(state, kMonitorPermCaptureControl))
         return permissionDeniedReason(kMonitorPermCaptureControl);
     return "StaleLease";

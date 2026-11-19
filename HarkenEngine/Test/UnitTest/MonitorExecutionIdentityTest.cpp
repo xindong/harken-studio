@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "AllocationProbe.h"
 #include <new>
 #include "MonitorIdentityCut.h"
@@ -10,7 +11,7 @@
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "MonitorExecutionCodec.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
@@ -396,21 +397,18 @@ TEST(MonitorExecutionRequest, RefusalsAndEmptyStopAllKeepOneRequestAndLegacyProj
     StopDrainForTests();
     const auto before = engine.Engine()->monitorRequests.LastSequence();
     EXPECT_EQ(VN_INVALID_ARG, Vn_PostAction(nullptr, nullptr));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_PostActionByName(nullptr, nullptr));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_PostActionPinned(nullptr, nullptr));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_PostActionResolved(nullptr, 0, 0, nullptr));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_Stop(0, 0));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_StopActionFiring(0, 0));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_StopEmitter(0, 0));
     EXPECT_EQ(VN_OK, Vn_StopAll(0));
-    EXPECT_EQ(before + 8, engine.Engine()->monitorRequests.LastSequence());
+    EXPECT_EQ(before + 5, engine.Engine()->monitorRequests.LastSequence());
     std::uint32_t typedOperations = 0, oldOperations = 0;
     const auto records = ReadRequestEvents(session, &typedOperations);
-    ASSERT_EQ(16u, records.size());
+    ASSERT_EQ(10u, records.size());
     EXPECT_EQ(0u, typedOperations);
     EXPECT_TRUE(ReadRequestEvents(legacy, &oldOperations).empty());
-    EXPECT_EQ(8u, oldOperations);
-    for (unsigned i = 0; i != 8; ++i) {
+    EXPECT_EQ(5u, oldOperations);
+    for (unsigned i = 0; i != 5; ++i) {
         const auto& submitted = records[i * 2];
         const auto& returned = records[i * 2 + 1];
         EXPECT_EQ(VN_MONITOR_FACT_REQUEST_SUBMITTED, submitted.fact.factKind);
@@ -422,8 +420,8 @@ TEST(MonitorExecutionRequest, RefusalsAndEmptyStopAllKeepOneRequestAndLegacyProj
         EXPECT_FALSE(FactHas(returned.fact, VN_MONITOR_FACT_FIELD_TARGET_VALIDATED));
         EXPECT_LE(submitted.fact.timestampNs, returned.fact.timestampNs);
         EXPECT_LT(submitted.header.sourceSequence, returned.header.sourceSequence);
-        EXPECT_EQ(i < 4 ? VN_INVALID_ARG : (i < 7 ? VN_STALE_HANDLE : VN_OK), returned.fact.result);
-        EXPECT_EQ(i >= 4 && i < 7, FactHas(returned.fact, VN_MONITOR_FACT_FIELD_TARGET_HANDLE));
+        EXPECT_EQ(i < 1 ? VN_INVALID_ARG : (i < 4 ? VN_STALE_HANDLE : VN_OK), returned.fact.result);
+        EXPECT_EQ(i >= 1 && i < 4, FactHas(returned.fact, VN_MONITOR_FACT_FIELD_TARGET_HANDLE));
     }
     EXPECT_EQ(1u, records.back().fact.target.scope);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(legacy));
@@ -1790,13 +1788,13 @@ TEST(MonitorIdentityHub, TypedStateNeverEntersLegacyInternalQueuesAndIgnoresEven
     // before isolating the typed baseline delivery under test.
     DrainOnceForTests();
     PollState(state);
-    EnableInternalConsumersForTests(7);
+    EnableInternalConsumersForTests(3);
     VnMonitorStateCutDesc cut{};
     cut.structSize = sizeof(cut);
     std::uint64_t id = 0;
     ASSERT_EQ(VN_OK, Vn_MonitorRequestStateCut(state, &cut, &id));
     DrainOnceForTests();
-    for (unsigned i = 0; i != 3; ++i) EXPECT_EQ(0u, InternalQueuedCountForTests(i));
+    for (unsigned i = 0; i != 2; ++i) EXPECT_EQ(0u, InternalQueuedCountForTests(i));
     MonitorExecutionFact foreign{};
     foreign.engine = ExecutionEngineInstance() + 1;
     foreign.kind = VN_MONITOR_FACT_REQUEST_SUBMITTED;

@@ -255,8 +255,27 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
                                                           const QSet<QUuid>& guids)
 {
     cleanActions(content, QStringLiteral("actions"), guids);
+    editObject(content, QStringLiteral("audio"), [&](QJsonObject& audio) {
+        editObject(audio, QStringLiteral("defaultConversions"), [&](QJsonObject& defaults) {
+            for (const auto& key : defaults.keys())
+                if (deleted(defaults.value(key), guids)) defaults.remove(key);
+        });
+    });
     editObject(content, QStringLiteral("playableProperties"), [&](auto& properties) { cleanPlayable(properties, guids); });
     editObject(content, QStringLiteral("fieldGroups"), [&](QJsonObject& groups) {
+        const auto cleanConversion = [&](QJsonObject& scoped) {
+            editObject(scoped, QStringLiteral("conversion"), [&](QJsonObject& state) {
+                editObject(state, QStringLiteral("values"), [&](QJsonObject& values) {
+                    if (deleted(values.value(QStringLiteral("settingsRef")), guids))
+                        values.insert(QStringLiteral("settingsRef"), QUuid{}.toString(QUuid::WithoutBraces));
+                });
+            });
+        };
+        editObject(groups, QStringLiteral("shared"), cleanConversion);
+        editObject(groups, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
+            for (const auto& key : platforms.keys())
+                editObject(platforms, key, cleanConversion);
+        });
         const auto cleanEffectGroup = [&](QJsonObject& scoped) {
             editObject(scoped, QStringLiteral("effect"), [&](QJsonObject& state) {
                 editObject(state, QStringLiteral("values"), [&](QJsonObject& values) {

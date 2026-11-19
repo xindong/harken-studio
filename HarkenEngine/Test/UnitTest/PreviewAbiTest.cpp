@@ -6,7 +6,7 @@
 #include "Common/MonitorExecutionTestSupport.h"
 #include "SharedFrontierTrace.h"
 #include "harken/core/CurrentWorld.h"
-#include "harken_preview/PreviewAbi.h"
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 

@@ -34,7 +34,15 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
         const auto send = resolver.Resolve(definition.guid, {}, FieldGroupId::Send);
         const auto spatial = resolver.Resolve(definition.guid, {}, FieldGroupId::SpatialRating);
         const auto effects = resolver.Resolve(definition.guid, {}, FieldGroupId::Effect);
-        if (!output.ok() || !send.ok() || !spatial.ok() || !effects.ok()) return false;
+        const auto conversion = resolver.Resolve(definition.guid, {}, FieldGroupId::Conversion);
+        if (!output.ok() || !send.ok() || !spatial.ok() || !effects.ok() || !conversion.ok()) return false;
+        const auto settingsRef = std::get<ConversionFieldGroup>(conversion.value->payload).settingsRef;
+        if (!harkenprojectschema::IsNull(settingsRef)) {
+            const auto settings = source->byGuid.find(settingsRef);
+            if (settings == source->byGuid.end()
+                || settings->second->type != ProjectItem::Type::Conversion)
+                return false;
+        }
         const auto& outputFields = std::get<OutputFieldGroup>(output.value->payload);
         const auto& rating = std::get<SpatialRatingFieldGroup>(spatial.value->payload);
         const auto bus = source->byGuid.find(outputFields.outputBusRef);

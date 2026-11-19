@@ -1,4 +1,5 @@
 #include "CommandSchemas.h"
+#include "Components/VConversion.h"
 #include "EffectChainSemantics.h"
 #include "ItemPropertySchema.h"
 #include "ProjectPlatformCommandSchema.h"
@@ -178,6 +179,13 @@ const QMap<QString, Contract>& contracts()
              "list_packs", "list_project_languages", "search_status", "validate_pack", "validate_pack_build_readiness"},
             object(), true);
         put({"save_project", "close_project", "shutdown_engine", "start_output", "stop_output", "undo", "redo"}, object());
+        put({"remote_disconnect", "stop_remote_capture"}, object());
+        put({"start_remote_capture"}, object({{"output_path", text()}}));
+        put({"get_remote_status", "get_remote_catalog"}, object(), true);
+        put({"remote_discover"}, object({{"discovery_port", withDefault(integer(1, 65535), 37840)}}));
+        put({"remote_connect"}, object({{"address", text()}, {"port", integer(1, 65535)}}, {"address", "port"}));
+        put({"poll_remote_events"}, object({{"cursor", withDefault(integer(0, 9007199254740991.0), 0)},
+                                            {"max", withDefault(integer(1, 1000), 100)}}), true);
         put({"get_command_schema"}, object({{"command", text()}}, {"command"}), true);
         put({"open_project", "load_pack", "unload_pack"}, object({{"path", text()}}, {"path"}));
         put({"get_pack_info", "get_folder_info", "list_folders", "get_modulator_binding"}, object({{"path", text()}}, {"path"}), true);
@@ -185,7 +193,7 @@ const QMap<QString, Contract>& contracts()
         put({"get_item_info", "get_container_info", "get_signal_chain", "get_referencing_actions"}, itemSelector(), true);
         put({"get_inspector_schema"}, object({{"schema_id", choice({"Sound", "Container", "Track", "Segment", "Layer",
             "Bus", "Action", "Variable", "Attenuation", "Effect"})}}, {"schema_id"}), true);
-        put({"get_asset_info", "get_conversion_settings"}, object({{"source_id", uint32()}}, {"source_id"}), true);
+        put({"get_asset_info"}, object({{"source_id", uint32()}}, {"source_id"}), true);
         put({"get_bus_properties"}, object({{"bus_id", QJsonObject{{"anyOf", QJsonArray{uuid(), uint32()}}}}}, {"bus_id"}), true);
         put({"get_bus_pitch", "get_bus_volume_db", "get_output_bus_gain"}, object({{"bus_name", text()}}, {"bus_name"}), true);
         put({"get_action_definition"}, object({{"name", text()}}, {"name"}), true);
@@ -204,18 +212,55 @@ const QMap<QString, Contract>& contracts()
         capability.insert("not", QJsonObject{{"required", QJsonArray{"rootStableId", "actionStableId"}}});
         put({"get_runtime_capability_matrix"}, capability, true);
 
-        for (const auto* name : {"list_project_platforms", "get_platform_profile", "get_action_pack_plan",
-                                "get_pack_build_status", "get_last_pack_build_records", "get_transcode_status", "get_media_status"})
+        for (const auto* name : {"list_project_platforms", "get_action_pack_plan",
+                                "get_pack_build_status", "get_last_pack_build_records", "get_media_status"})
             put({name}, projectPlatformCommandSchema(QLatin1String(name)), true);
         for (const auto* name : {"create_project_platform", "rename_project_platform", "delete_project_platform",
-                                "set_project_platform_base", "set_project_platform_profile", "apply_project_platforms",
-                                "export_pack", "cancel_pack_build", "transcode_asset", "batch_convert_media",
-                                "cancel_transcode", "rescan_media_sources"})
+                                "set_project_platform_base", "apply_project_platforms",
+                                "export_pack", "cancel_pack_build",
+                                "rescan_media_sources"})
             put({name}, projectPlatformCommandSchema(QLatin1String(name)));
+
+        const auto conversionSelector = described(text(), "Conversion preset GUID or unambiguous project path or name.");
+        const auto nullableConversion = QJsonObject{{"anyOf", QJsonArray{conversionSelector, QJsonObject{{"type", "null"}}}}};
+        put({"create_conversion"}, object({{"name", text()}, {"folder", described(text(),
+            "Existing directory in Conversions, relative to that bucket or prefixed with Conversions/.")}}, {"name"}));
+        auto tierLimit = integer(0, 9223372036854775807.0);
+        const auto tier = object({{"max_bytes", QJsonObject{{"anyOf", QJsonArray{tierLimit, QJsonObject{{"type", "null"}}}}}},
+            {"sample_rate", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000}}}}},
+            {"max_bytes", "sample_rate"});
+        const auto quality = integer(0, kMaxVorbisQuality);
+        const auto ruleSchema = [&](bool vorbis) {
+            auto properties = tier.value("properties").toObject();
+            properties.insert("format", choice({vorbis ? "Vorbis" : "PCM"}));
+            QJsonArray required{"max_bytes", "sample_rate", "format"};
+            if (vorbis) {
+                properties.insert("quality", quality);
+                required.append("quality");
+            }
+            return object(properties, required);
+        };
+        const QJsonObject rule{{"oneOf", QJsonArray{ruleSchema(false), ruleSchema(true)}}};
+        auto conversionFields = object({{"conversion", conversionSelector},
+            {"rules", described(array(rule, 1), "Complete size-ordered encoding rules. The last max_bytes is null. Vorbis requires an integer quality from 0 to 10.")},
+            {"format", choice({"PCM", "Vorbis"})}, {"quality", quality}, {"sample_rate_tiers", array(tier, 1)}}, {"conversion"});
+        conversionFields.insert("oneOf", QJsonArray{QJsonObject{{"required", QJsonArray{"rules"}}},
+            alternatives({"format", "quality", "sample_rate_tiers"})});
+        put({"set_conversion_fields"}, conversionFields);
+        put({"set_object_conversion"}, object({{"object", text()}, {"inherit", boolean()},
+            {"settings", described(nullableConversion, "Local preset reference, or null for no conversion. Omit to retain local history; unavailable when inherit is true.")},
+            {"platform_id", described(projectPlatformIdSchema(), "Platform override to edit. Omit to edit Shared.")}},
+            {"object", "inherit"}));
+        put({"set_default_conversion"}, object({{"platform_id", projectPlatformIdSchema()}, {"conversion", nullableConversion}},
+            {"platform_id", "conversion"}));
+        put({"get_effective_conversion"}, object({{"object", text()}, {"platform_id", projectPlatformIdSchema()}}, {"object"}), true);
+        const auto conversionQuery = object({{"conversion", conversionSelector}, {"platform_id", projectPlatformIdSchema()}}, {"conversion"});
+        put({"get_conversion_results"}, conversionQuery, true);
+        put({"convert"}, conversionQuery);
 
         auto platformRows = projectPlatformCommandSchema("apply_project_platforms").value("properties").toObject().value("platforms").toObject();
         auto platformRow = platformRows.value("items").toObject();
-        platformRow.insert("required", QJsonArray{"id", "name", "basePlatform", "profile"});
+        platformRow.insert("required", QJsonArray{"id", "name", "basePlatform"});
         platformRows.insert("items", platformRow);
         auto createProject = object({{"name", text()}, {"location", text()},
             {"sample_rate", withDefault(integer(1), 48000)},
@@ -293,7 +338,7 @@ const QMap<QString, Contract>& contracts()
             {"value", number()}}, {"property", "value"});
         put({"set_container_property"}, containerProperty);
 
-        const auto scopeProperties = QJsonObject{{"definition_guid", uuid()}, {"group", choice({"output", "send", "spatialRating", "effect"})},
+        const auto scopeProperties = QJsonObject{{"definition_guid", uuid()}, {"group", choice({"output", "send", "spatialRating", "effect", "conversion"})},
             {"scope", choice({"Shared"})}, {"platform_ids", array(projectPlatformIdSchema(), 1, true)},
             {"expected_before", described({{"type", "object"}}, "Complete previous fieldGroups state for optimistic concurrency; validated by the field-group domain parser.")}};
         for (const auto* name : {"set_field_group_mode", "set_field_group_field", "clear_field_group_field_override",
@@ -303,7 +348,7 @@ const QMap<QString, Contract>& contracts()
             const QString command = QLatin1String(name);
             if (command == "set_field_group_mode") { fields.insert("mode", choice({"Local", "Inherit", "UseShared"})); required.append("mode"); }
             if (command == "set_field_group_field" || command == "clear_field_group_field_override") { fields.insert("field", text()); required.append("field"); }
-            if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master.")); required.append("value"); }
+            if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef/settingsRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master or clears settingsRef.")); required.append("value"); }
             if (command == "replace_field_group_sends") {
                 fields.insert("sends", array(object({{"targetBusID", uuid()}, {"sendLevel", number()},
                     {"mode", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 1, 2}}}},
@@ -317,11 +362,11 @@ const QMap<QString, Contract>& contracts()
             auto schema = object(fields, required);
             if (command == "set_field_group_field") {
                 schema.insert("allOf", QJsonArray{QJsonObject{{"oneOf", QJsonArray{
-                    QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef"})}, {"value", QJsonObject{{"anyOf", QJsonArray{uuid(), QJsonObject{{"type", "null"}}}}}}}}},
+                    QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef", "settingsRef"})}, {"value", QJsonObject{{"anyOf", QJsonArray{uuid(), QJsonObject{{"type", "null"}}}}}}}}},
                     QJsonObject{{"properties", QJsonObject{{"field", choice({"spatial.attenuationRef"})}, {"value", uuid()}}}},
                     QJsonObject{{"properties", QJsonObject{{"field", choice({"spatial.is3DEnabled"})}, {"value", boolean()}}}},
                     QJsonObject{{"properties", QJsonObject{{"field", text()}, {"value", number()}}},
-                        {"not", QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef", "spatial.attenuationRef", "spatial.is3DEnabled"})}}}}}}
+                        {"not", QJsonObject{{"properties", QJsonObject{{"field", choice({"outputBusRef", "settingsRef", "spatial.attenuationRef", "spatial.is3DEnabled"})}}}}}}
                 }}}});
             }
             schema.insert("oneOf", QJsonArray{QJsonObject{{"required", QJsonArray{"scope"}}}, QJsonObject{{"required", QJsonArray{"platform_ids"}}}});
@@ -342,7 +387,7 @@ const QMap<QString, Contract>& contracts()
 
         put({"init_engine"}, object({{"sample_rate", described(withDefault(integer(), 0), "Sample rate in Hz. Zero selects the engine/device default.")},
             {"buffer_size", described(withDefault(integer(), 0), "Buffer size in frames. Zero selects the engine/device default.")}, {"max_voices", withDefault(integer(1), 64)},
-            {"device_mode", described(withDefault(choice({"real", "null"}), "real"), "real uses an audio device; null runs the actual runtime silently without audio hardware.")}}));
+            {"device_mode", described(withDefault(choice({"real", "null", "null_realtime"}), "real"), "real uses an audio device; null runs the actual runtime silently without audio hardware and advances audio only when explicitly pumped; null_realtime also runs silently but advances audio in real time while output is started.")}}));
         put({"set_buffer_size"}, object({{"block_size", integer(1)}}, {"block_size"}));
         put({"post_action"}, object({{"name", text()}}, {"name"}));
         put({"post_action_3d"}, object({{"name", text()}, {"x", withDefault(number(), 0)}, {"y", withDefault(number(), 0)}, {"z", withDefault(number(), 0)}}, {"name"}));
@@ -372,11 +417,6 @@ const QMap<QString, Contract>& contracts()
         put({"import_audio"}, importAudio);
         put({"import_audio_files"}, object({{"files", array(text(), 1)}, {"target_container_id", described(uint32(),
             "Target authoring handle: container, sound or output bus. Omit to import at the project root.")}}, {"files"}));
-        put({"set_conversion_settings"}, requireAny(object({{"source_id", uint32()},
-            {"codec", choice({"PCM_Float", "Vorbis", "ADPCM"})},
-            {"quality", QJsonObject{{"type", "number"}, {"minimum", -0.1}, {"maximum", 1}}},
-            {"resample", boolean()}, {"target_sample_rate", uint32()}, {"as_override", withDefault(boolean(), false)}}, {"source_id"}),
-            {"codec", "quality", "resample", "target_sample_rate", "as_override"}));
         put({"cleanup_cache"}, object({{"max_age_days", withDefault(integer(), 90)}, {"max_size_bytes", withDefault(integer(0, 9007199254740991.0), 0)}}));
         put({"regenerate_waveform_cache"}, object({{"path", described(text(), "Imported audio path. Omit to rebuild every waveform in the open project.")}}));
         const auto replacements = QJsonObject{{"type", "object"}, {"minProperties", 1},
@@ -421,12 +461,19 @@ const QMap<QString, Contract>& contracts()
             {"shutdown_engine", "Stop and release the audio runtime."},
             {"start_output", "Start audio output on the initialized runtime."},
             {"stop_output", "Stop audio output while retaining the initialized runtime."},
+            {"remote_discover", "Broadcast discovery for running games with the development runtime; poll get_remote_status for discovered targets."},
+            {"remote_connect", "Connect to a development runtime at address and port; poll get_remote_status until connected or failed."},
+            {"remote_disconnect", "Disconnect from the current remote runtime."},
+            {"get_remote_status", "Return the remote connection state, discovered targets and event capture state."},
+            {"get_remote_catalog", "Return the connected runtime's Action, Variable and Bus IDs, with names resolved from the open project."},
+            {"poll_remote_events", "Return captured remote events from cursor onward, the next cursor, and how many events were missed or dropped."},
+            {"start_remote_capture", "Start capturing events from the connected remote runtime; with output_path, received records are also written to a session file that only this Studio version opens."},
+            {"stop_remote_capture", "Stop capturing remote events; captured events remain pollable."},
             {"post_action", "Execute an authored Action and return its playback handle."},
             {"seek_action", "Request a seek in milliseconds. Poll query_seek_action with seek_operation_id to observe completion, then release_seek_action to release its record."},
             {"query_seek_action", "Read the state and results of a seek operation without changing it."},
             {"release_seek_action", "Release a completed seek operation record."},
             {"batch_replace_media", "Replace imported sources by source ID. All input rows must be valid; per-source I/O failures return an error with partial results."},
-            {"set_conversion_settings", "Update an imported source's conversion settings. Supported codecs are PCM_Float, ADPCM and Vorbis; as_override applies a file override."},
             {"regenerate_waveform_cache", "Regenerate one source's waveform cache, or rebuild all project waveforms when path is omitted."},
             {"set_container_property", "Set a supported container scalar property using value. Output, Send and Spatial Rating definitions use field-group commands."},
             {"set_bus_volume_db", "Set a bus's authored volume in decibels."},

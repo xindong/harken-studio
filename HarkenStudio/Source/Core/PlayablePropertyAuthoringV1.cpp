@@ -130,13 +130,15 @@ QVariant canonicalValue(const JsonFieldV1& field)
 std::optional<QVariant> valueFromJson(const QJsonValue& value,
                                       const JsonFieldV1& field)
 {
+    const auto range = harkenplayableproperties::PublishedRangeV1(
+        static_cast<harkenplayableproperties::PlayablePropertyIdV1>(field.id));
     if (field.wire == PlayablePropertyWireV1::F32) {
         if (!value.isDouble()) return std::nullopt;
-        const double number = value.toDouble();
-        if (PlayablePropertyAuthoringV1::isComponentStored(field.id)
-            && (number < 0.0 || number > 1.0)) return std::nullopt;
-        if (!std::isfinite(number)
-            || number < -std::numeric_limits<float>::max()
+        double number = value.toDouble();
+        if (!std::isfinite(number)) return std::nullopt;
+        if (range)
+            number = std::clamp(number, range->minimum, range->maximum);
+        if (number < -std::numeric_limits<float>::max()
             || number > std::numeric_limits<float>::max())
             return std::nullopt;
         return QVariant(static_cast<float>(number));
@@ -147,9 +149,11 @@ std::optional<QVariant> valueFromJson(const QJsonValue& value,
     }
     if (field.wire == PlayablePropertyWireV1::U32) {
         if (!value.isDouble()) return std::nullopt;
-        const double number = value.toDouble(-1.0);
-        if (!std::isfinite(number) || std::trunc(number) != number
-            || number < 0.0
+        double number = value.toDouble(-1.0);
+        if (!std::isfinite(number) || std::trunc(number) != number) return std::nullopt;
+        if (range)
+            number = std::clamp(number, range->minimum, range->maximum);
+        if (number < 0.0
             || number > static_cast<double>(std::numeric_limits<uint32_t>::max()))
             return std::nullopt;
         return QVariant::fromValue(static_cast<uint32_t>(number));

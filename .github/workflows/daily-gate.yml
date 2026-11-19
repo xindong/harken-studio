@@ -55,8 +55,8 @@ jobs:
       - name: Configure (windows-release, runtime and editor tests)
         run: >-
           cmake --fresh --preset windows-release -B build-daily
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_TOOLS=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in harken_runtime_ci_tests harken_editor_ci_tests; do
+          for target in harken_runtime_ci_tests harken_studio_ci_tests; do
             cmake --build build-daily --config Release --target "$target"
           done
 
@@ -93,6 +93,20 @@ jobs:
           --mode full --include-label harken-daily --budget-seconds 900
           --group-timeout-seconds 300
           --output-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/editor
+
+      - name: Run cross-product verification
+        id: crossproduct
+        if: ${{ steps.build.outcome == 'success' && (success() || failure()) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build-daily --config Release --target harken_engine harken_studio_cli
+          cmake --install build-daily --config Release --prefix .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install
+          python .scripts/crossproduct-test/run.py \
+            --engine-install .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install \
+            --studio-cli build-daily/bin/Release/HarkenStudioCLI.exe \
+            --work-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/crossproduct \
+            --require studio-cli --require engine-release --require engine-development
 
       - name: Upload test evidence
         if: always()

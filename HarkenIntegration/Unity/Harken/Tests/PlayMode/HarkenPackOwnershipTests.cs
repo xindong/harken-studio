@@ -14,7 +14,7 @@ namespace Harken.Unity.Tests
 #if HARKEN_SDK_TEST_NULL_PUMP
         [System.Runtime.InteropServices.DllImport(HarkenNative.LibraryName,
             CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
-        private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
+        private static extern void VnPreview_PumpNullMixer(uint blockCount);
 #endif
 
         [UnityTest]
@@ -252,7 +252,7 @@ namespace Harken.Unity.Tests
                 Assert.That(Runtime.Session.ReleasePack(callerId, caller), Is.EqualTo(VnResult.VN_OK));
 #if HARKEN_SDK_TEST_NULL_PUMP
                 // Null devices render only when explicitly pumped; Unity frames service logic alone.
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
 #endif
             }
 

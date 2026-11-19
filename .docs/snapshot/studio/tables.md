@@ -5,8 +5,8 @@
 | 类别 | 去重用途数 | 页面 / 对象类型位置数 |
 |---|---:|---:|
 | 配置表 | 11 | 21 |
-| 展示表 | 13 | 13 |
-| 普通表格合计 | 24 | 34 |
+| 展示表 | 14 | 14 |
+| 普通表格合计 | 25 | 35 |
 | 导航配置（不计入普通表格） | 2 | 2 |
 
 注：Sends、Effects 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
@@ -24,7 +24,7 @@
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sends | 六类对象的发送配置 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
-| C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
+| C12 | 配置 | Conversion Editor / Configuration | # / Size range / Sample rate / Format / Quality。表上方的文件大小分段条与行号从 1 开始对应，规则按原始文件大小从 `0 B` 到 `Inf` 排列 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
@@ -39,6 +39,7 @@
 | D12 | 展示 | Monitor / Effects | Effect 运行记录 |
 | D13 | 展示 | Monitor / Events | 事件运行记录 |
 | D14 | 展示 | Sources Import / 同名音频冲突选择 | 导入冲突处理 |
+| D15 | 展示 | Conversion Editor / Result | Sound / Source / Language / Original format / Original rate / Original channels / Original size / Converted format / Converted rate / Converted size / Ratio。只读，表体直达底边。无表脚、状态列或汇总行 |
 
 ## 分类与公共能力
 
@@ -89,14 +90,30 @@
 
 | ID / 位置 | 内容与当前行为 |
 |---|---|
-| C10 / Platform Configuration | 左侧平台导航、右侧名称与转换配置；进入时选首个平台，加号打开支持平台选择与默认配置预览 |
+| C10 / Platform Configuration | 左侧平台导航；右侧为所选平台的名称、基础平台类型与 Default conversion ObjectRef，指定该平台新建根对象的默认预设，可清空 |
 | C11 / Language Configuration | 左侧语言导航与增删，右侧名称；无语言时右侧留空，加号通过弹窗新增 |
 | 平台与语言编辑 | 结束编辑即提交，无效输入恢复旧值；支持项目撤销并随项目保存 |
-| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；Reset 恢复所选基础平台的默认转换配置 |
+| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；默认工程只有 Low Quality 一个 Conversion 预设，仅 Android／iOS 将其作为平台默认值 |
 | 导航布局 | 无表头，保留当前激活项；纵向槽常驻、无横向滚动，不适用普通表格的空白与 Esc 清选 |
-| 主 toolbar | Capture 后为平台（含 ALL）与语言，播放控件居中，Layout 在最右侧 |
+| 主 toolbar | 提供 Original / Converted 试听开关，与平台（含 ALL）、语言一起按本机工程记忆；播放控件居中，Layout 在最右侧 |
 | Layout 切换与保存 | 切换保留各布局在当前工程的工作状态；同名保存更新预设，另存后切换当前布局身份 |
 | Layout 重置与删除 | 重置当前或经确认重置全部均保留预设；Default 恢复内置状态，删除当前预设后恢复 Default 工作状态 |
+
+## Conversion Editor 与源文件属性
+
+| 项目 | 当前表现 |
+|---|---|
+| 入口与布局 | 双击 Assets 中的 Conversion 预设或 Inspector 的 Settings 引用，在中央区域下方打开独立 Conversion Editor。Configuration 在上，Result 在下，与 Selection Editor 共用居中标题、可折叠分区和可拖动的分隔线。规则表脚仅保留增删按钮，结果表铺满 Result 分区。Conversion Editor 独立记忆分区高度和展开状态 |
+| 配置规则 | Size range 只读，范围用半角连接号分隔，整体左对齐，例如 `0 B - 32 KB`、`32 KB - 256 KB`。等于切点的文件使用左段的采样率、格式和质量。不同平台可引用不同预设 |
+| 切分大小 | 编号区块使用主题的多类顺序色，文件大小每满 1024 进一档单位。刻度、范围和切点输入框最多显示两位小数，省略末尾的零。切换单位保留原始字节数。区块至少留出表格编号列的点选宽度，上方的密集刻度优先显示当前切点。色块间的空隙透出 Configuration 背景，默认缩放下宽 2 px。悬停或拖动时，整条空隙使用表头分隔线的高亮色。拖动时相邻两行实时预览，松开后可一步撤销。双击分隔线可编辑大小，选 `B` 可精确输入整数字节数 |
+| 悬浮与添加切点 | 在可添加切点的位置，文件大小读数叠画在色块上方同一行的固定刻度上，轮廓外的文字始终可见。色块内显示高亮竖虚线，色块下方的圆形 `+` 与读数对齐。`+` 和读数沿用坐标轴指示块的底色与前景色。`+` 使用控件描边 `border.secondary`，悬浮时仅填充色切换为 `background.hover`。悬停或拖动分隔条时只显示分隔条高亮和固定刻度。单击 `+` 或从右键菜单选择 `Add Split...`，均以预览处的大小打开切分弹窗。固定刻度与游标读数只读。表脚加号切分选中段，未选中时切分末段。新段继承原段配置，可在弹窗中调整并确认 |
+| 选行与删除 | 单击色块内部选中对应行，选择表格行也会高亮同编号区块。选框画在色块内部，四边等宽。分隔条占用独立空间，按下实际分隔条清除选行，拖动和松开时均保持空选。减号仅对选中的有限规则可用。删除后其区间并入下一条规则，下一条自动选中，区块与行号同步更新 |
+| 格式与采样率 | Format 为 PCM／Vorbis；Vorbis 的 Quality 通过滑块或数值框选择 0–10 的整数档，默认 4，PCM 的 Quality 单元格留空。采样率可选 Original（不重采样）或受支持的离散值，有限阈值可增删，`Inf` 末行不可删除 |
+| 引用结果 | 下半区按 Toolbar 当前平台展示有效引用此预设的 Sound Source，包含各语言；没有有效缓存时 Converted 各列和 Ratio 留空 |
+| Convert | Convert 是 Configuration 右下角的独立按钮，位于规则表下方，与表格右缘对齐。点击后为当前平台引用该预设的源文件生成产物，已有缓存直接跳过。收起 Result 后仍可执行转换。转换不显示进度或状态，Esc 可取消未完成工作 |
+| 文件属性 | Sound → Sources 引用行打开的 External Editor（波形编辑）下半区显示 File Properties，可拖动分隔条调整高度；Original／Converted 共用路径、声道、采样率、时长、大小和格式字段 |
+| 属性切换 | 跟随 Toolbar 的 Original／Converted 与当前平台；Converted 无缓存时留空，有效 Conversion 为空时显示原件；File Viewer 不显示 Studio 处理后的信息，始终显示并播放源文件 |
+| Part A 播放边界 | Studio 的 Vorbis 试听使用过渡解码路径；Pack 编译仍拒绝 Vorbis，Engine 原生解码与 Pack 放开留待 Part B |
 
 ## Selection Editor
 

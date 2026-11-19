@@ -91,6 +91,8 @@ FieldGroupProjectView buildFieldGroupProjectView(
             kind = FieldGroupReferenceKind::Attenuation;
         else if (item->type == ProjectItem::Type::Effect)
             kind = FieldGroupReferenceKind::Effect;
+        else if (item->type == ProjectItem::Type::Conversion)
+            kind = FieldGroupReferenceKind::Conversion;
         result.referenceTargets.push_back({guid, kind});
     }
     for (ProjectItem* item : source.definitions) {
@@ -140,6 +142,7 @@ FieldGroupProjectView buildFieldGroupProjectView(
         validatePlatforms(groups->send);
         validatePlatforms(groups->spatialRating);
         validatePlatforms(groups->effects);
+        validatePlatforms(groups->conversion);
         auto definition = fieldGroupDefinitionView(*item);
         definition.guid = identity->second;
         definition.parentGuid = parentGuid;
@@ -243,19 +246,21 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
         const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
         const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
         const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
-        for (const auto* resolved : {&output, &send, &spatial, &effects}) {
+        const auto conversion = resolver.Resolve(definition.guid, scope, FieldGroupId::Conversion);
+        for (const auto* resolved : {&output, &send, &spatial, &effects, &conversion}) {
             append(resolved->diagnostics, definition.guid);
             if (resolved->value)
                 append(references.Validate(resolved->value->group,
                     resolved->value->payload), definition.guid);
         }
-        if (!output.ok() || !send.ok() || !spatial.ok() || !effects.ok()) continue;
+        if (!output.ok() || !send.ok() || !spatial.ok() || !effects.ok() || !conversion.ok()) continue;
         EffectiveDefinitionFieldGroups groups{
             std::get<OutputFieldGroup>(output.value->payload),
             std::get<SendFieldGroup>(send.value->payload),
             std::get<SpatialRatingFieldGroup>(spatial.value->payload),
             output.value->source, send.value->source, spatial.value->source,
-            std::get<EffectFieldGroup>(effects.value->payload), effects.value->source};
+            std::get<EffectFieldGroup>(effects.value->payload), effects.value->source,
+            std::get<ConversionFieldGroup>(conversion.value->payload), conversion.value->source};
         for (const auto& row : groups.send.sends) {
             if (row.mode != harkenprojectschema::SendMode::Sidechain
                 && row.targetBusID == groups.output.outputBusRef)

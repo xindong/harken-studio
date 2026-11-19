@@ -194,7 +194,7 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
     assert not reader.is_alive()
 
 
-def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) -> None:
+def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
     environment = {**os.environ, "QT_QPA_PLATFORM": "harken-cli-must-not-load-a-display"}
 
     def call(*arguments, data=None, exit_code=0):
@@ -232,7 +232,9 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
     human_schema = run(cli, ["exec", "open_project", "--help", "--project", "missing.hsp"], environment)
     assert human_schema.returncode == 0 and b"path" in human_schema.stdout and b"[required]" in human_schema.stdout
     names = {entry["command"] for entry in catalog}
-    assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack"} <= names
+    assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack",
+        "create_conversion", "set_conversion_fields", "set_object_conversion", "set_default_conversion",
+        "get_effective_conversion", "get_conversion_results", "convert"} <= names
     for entry in catalog:
         assert entry["registered"] and entry["inputSchema"]["type"] == "object", entry
         assert entry["schemaSource"] == "declared" and entry["inputSchema"]["additionalProperties"] is False, entry
@@ -266,7 +268,10 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
                     data={"typo": True}, exit_code=2)
     assert rejected["code"] == "INVALID_ARGUMENTS" and "typo" in rejected["message"], rejected
     for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener",
-                     "set_platform_profile", "set_preferred_format", "audition_get_speed"):
+                     "set_platform_profile", "set_preferred_format", "audition_get_speed",
+                     "transcode_asset", "batch_convert_media", "get_transcode_status", "cancel_transcode",
+                     "get_conversion_settings", "set_conversion_settings", "get_platform_profile",
+                     "set_project_platform_profile"):
         assert excluded not in names
         assert call("commands", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
         assert call("exec", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
@@ -360,6 +365,8 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
             stream.writeframes(b"".join(struct.pack("<h", int(6000 * math.sin(2 * math.pi * 440 * i / 48000)))
                                        for i in range(24000)))
         imported = execute("import_audio", {"path": str(audio)}, save=True)["result"]
+        tone_guid = execute("get_item_info", {"path": "tone"})["result"]["runtime_stable_id"]
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": None}, save=True)
         assert "languages" in execute("list_project_languages")["result"]
         states = call("run", "--project", str(project), "--input", "-", data=[
             {"cmd": "get_project_state"},
@@ -373,6 +380,47 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
         assert [states[i]["result"]["is_dirty"] for i in (0, 2, 4, 7)] == [False, True, False, False], states
         platforms = execute("list_project_platforms")["result"]["platforms"]
         platform = platforms[0]["id"]
+        previous_default = execute("get_project_info")["result"]["default_conversions"].get(platform)
+        execute("create_folder", {"path": "Conversions/CLI"}, save=True)
+        preset = execute("create_conversion", {"name": "CLIConversion", "folder": "Conversions/CLI"}, save=True)["result"]
+        conversion = preset["guid"]
+        execute("set_conversion_fields", {"conversion": conversion,
+            "format": "PCM", "sample_rate_tiers": [{"max_bytes": None, "sample_rate": 24000}]}, save=True)
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": conversion,
+                                          "platform_id": platform}, save=True)
+        effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
+        assert effective["conversion"] == conversion and effective["sample_rate"] == 24000, effective
+        readback = execute("get_item_info", {"path": "tone"})["result"]
+        assert readback["fieldGroups"]["platforms"][platform]["conversion"]["values"]["settingsRef"] == conversion, readback
+        conversion_args = {"conversion": conversion, "platform_id": platform}
+        before_convert = authored_contents()
+        queried = execute("get_conversion_results", conversion_args)["result"]["sources"]
+        assert len(queried) == 1 and queried[0]["converted"] is None, queried
+        pcm = execute("convert", conversion_args)["result"]
+        assert pcm["sources"][0]["converted"]["format"] == "PCM", pcm
+        assert pcm["sources"][0]["converted"]["sample_rate"] == 24000, pcm
+        assert authored_contents() == before_convert
+        execute("set_conversion_fields", {"conversion": conversion}, exit_code=2)
+        execute("set_conversion_fields", {"conversion": conversion, "rules": [
+            {"max_bytes": 1, "sample_rate": 0, "format": "PCM"},
+            {"max_bytes": None, "sample_rate": 24000, "format": "Vorbis", "quality": 6}]}, save=True)
+        effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
+        assert (effective["format"], effective["quality"], effective["sample_rate"]) == ("Vorbis", 6, 24000), effective
+        encoded = execute("convert", conversion_args)["result"]
+        encoded_file = encoded["sources"][0]["converted"]
+        assert encoded_file["format"] == "Vorbis" and encoded_file["bytes"] > 0, encoded
+        repeated = execute("convert", conversion_args)["result"]
+        assert repeated["conversion_result"]["cached"] == 1, repeated
+        assert repeated["sources"] == encoded["sources"], (repeated, encoded)
+        execute("set_default_conversion", {"platform_id": platform, "conversion": conversion}, save=True)
+        defaults = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "set_default_conversion", "args": {"platform_id": platform, "conversion": None}},
+            {"cmd": "get_project_info"}, {"cmd": "undo"}, {"cmd": "get_project_info"},
+            {"cmd": "redo"}, {"cmd": "get_project_info"}])["results"]
+        assert [defaults[index]["result"]["default_conversions"].get(platform)
+                for index in (1, 3, 5)] == [None, conversion, None], defaults
+        execute("set_default_conversion", {"platform_id": platform, "conversion": previous_default}, save=True)
+        execute("set_object_conversion", {"object": tone_guid, "inherit": False, "settings": None}, save=True)
         saved = authored_contents()
         targets = call("list-targets", "--project", str(project))["result"]
         assert any(value["id"] == platform for value in targets["platforms"]), targets
@@ -385,13 +433,6 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
         call("list-targets", "--project", str(project), "--all", exit_code=2)
         call(*build_flags, "--platform-id", platform, exit_code=2)
         assert authored_contents() == saved
-        converted = execute("transcode_asset", {"source_id": imported["source_id"], "platform_id": platform})
-        assert converted["result"]["success"] and not converted["result"].get("async"), converted
-        batch = execute("batch_convert_media", {"source_ids": [imported["source_id"]], "platform_id": platform})
-        assert batch["result"]["success"] and batch["result"]["completed"] == batch["result"]["total"] == 1, batch
-        assert batch["result"]["results"][0]["response"]["result"]["cache_path"] == converted["result"]["cache_path"]
-        for invalid in ([imported["source_id"], "invalid"], [imported["source_id"], imported["source_id"]]):
-            execute("batch_convert_media", {"source_ids": invalid, "platform_id": platform}, exit_code=2)
         workflow = root / "workflow.json"
         workflow.write_text(json.dumps([
             {"cmd": "create_action", "args": {"name": "PlayTone"}},
@@ -536,25 +577,17 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
             assert authored_contents() == saved
             assert not recovery_output.exists()
         journal.unlink()
-        if host:
-            platform_dir = next(pack.parent for pack in packs if pack.stem == "PlayTone")
-            playback = run(host, ["pack-play", "--root", str(platform_dir), "--action-name", "PlayTone",
-                                  "--seconds", "1", "--null"], environment)
-            assert playback.returncode == 0, (
-                playback.stdout.decode("utf-8", "replace"), playback.stderr.decode("utf-8", "replace"))
     print("CLI protocol, desktop isolation, persistence, conversion, read-only builds and pack equivalence passed.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify the native Studio CLI against real project and pack services.")
     parser.add_argument("--cli", type=Path, required=True)
-    parser.add_argument("--host", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path(".temp"))
     parser.add_argument("--skip-audio-output", action="store_true",
                         help="Skip hardware audio output checks for runners without an audio device.")
     args = parser.parse_args()
-    verify(args.cli.resolve(), args.host.resolve() if args.host else None,
-           args.work_dir.resolve(), not args.skip_audio_output)
+    verify(args.cli.resolve(), args.work_dir.resolve(), not args.skip_audio_output)
 
 
 if __name__ == "__main__":
