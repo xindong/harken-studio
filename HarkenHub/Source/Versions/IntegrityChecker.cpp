@@ -41,8 +41,7 @@ InstallationSnapshot IntegrityChecker::snapshot(const QString& installPath)
 }
 
 IntegrityReport IntegrityChecker::check(
-    const QString& installPath, const QString& expectedPackageManifestHash,
-    const QString& expectedCapabilitiesHash)
+    const QString& installPath, const QString& expectedPackageManifestHash)
 {
     IntegrityReport report;
 
@@ -108,15 +107,6 @@ IntegrityReport IntegrityChecker::check(
             PackageReader::fileSha256Hex(absolutePath).toLower() != sha256)
             report.mismatchedFiles.append(relativePath);
     }
-
-    const QString capabilitiesPath =
-        installPath + QStringLiteral("/capabilities.json");
-    if (!QFileInfo::exists(capabilitiesPath))
-        report.missingFiles.append(QStringLiteral("capabilities.json"));
-    else if (!expectedCapabilitiesHash.isEmpty() &&
-             PackageReader::fileSha256Hex(capabilitiesPath).toLower() !=
-                 expectedCapabilitiesHash.toLower())
-        report.mismatchedFiles.append(QStringLiteral("capabilities.json"));
 
     if (!report.missingFiles.isEmpty() || !report.mismatchedFiles.isEmpty()) {
         report.error = QStringLiteral("%1 missing and %2 mismatched files")

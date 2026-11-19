@@ -4,7 +4,6 @@
 #include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
 #include "Versions/SelfTestRunner.h"
-#include "Versions/StudioCapabilities.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -48,13 +47,11 @@ QJsonObject toJson(const LocalBuildRecord& record)
     object[QStringLiteral("reportedBuildId")] = record.reportedBuildId;
     object[QStringLiteral("version")] = record.semanticVersion;
     object[QStringLiteral("channel")] = record.channel;
-    object[QStringLiteral("buildType")] = record.buildType;
     object[QStringLiteral("lastProbeError")] = record.lastProbeError;
     object[QStringLiteral("executableFingerprint")] = record.executableFingerprint;
     object[QStringLiteral("executableSize")] = record.executableSize;
     object[QStringLiteral("executableModifiedMs")] =
         record.executableModifiedMs;
-    object[QStringLiteral("capabilitiesVersion")] = record.capabilitiesVersion;
     object[QStringLiteral("releaseSequence")] = record.releaseSequence;
     return object;
 }
@@ -68,15 +65,12 @@ LocalBuildRecord fromJson(const QJsonObject& object)
         object[QStringLiteral("reportedBuildId")].toString();
     record.semanticVersion = object[QStringLiteral("version")].toString();
     record.channel = object[QStringLiteral("channel")].toString();
-    record.buildType = object[QStringLiteral("buildType")].toString();
     record.lastProbeError = object[QStringLiteral("lastProbeError")].toString();
     record.executableFingerprint = object[QStringLiteral("executableFingerprint")].toString();
     record.executableSize =
         object[QStringLiteral("executableSize")].toInteger(-1);
     record.executableModifiedMs =
         object[QStringLiteral("executableModifiedMs")].toInteger(0);
-    record.capabilitiesVersion =
-        object[QStringLiteral("capabilitiesVersion")].toInt(0);
     record.releaseSequence = object[QStringLiteral("releaseSequence")].toInteger(0);
     return record;
 }
@@ -104,8 +98,7 @@ QString LocalBuildRegistry::fileFingerprint(const QString& executablePath)
 bool LocalBuildRegistry::metadataMatchesFile(const LocalBuildRecord& record)
 {
     const QFileInfo executable(record.executablePath);
-    return (record.capabilitiesVersion == 1 || record.capabilitiesVersion == kStudioCapabilitiesVersion)
-        && !record.executableFingerprint.isEmpty()
+    return !record.executableFingerprint.isEmpty()
         && record.lastProbeError.isEmpty()
         && !record.reportedBuildId.isEmpty() && !record.semanticVersion.isEmpty()
         && executable.exists() && executable.isFile() &&
@@ -218,11 +211,9 @@ bool LocalBuildRegistry::probe(const QString& executablePath,
         record->reportedBuildId = result.reportedBuildId;
         record->semanticVersion = result.reportedVersion;
         record->channel = result.channel;
-        record->buildType = result.buildType;
         record->executableSize = refreshed.size();
         record->executableModifiedMs =
             refreshed.lastModified().toMSecsSinceEpoch();
-        record->capabilitiesVersion = result.capabilitiesVersion;
         record->lastProbeError.clear();
     }
     return true;

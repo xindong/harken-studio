@@ -28,7 +28,7 @@
 #include "Versions/LocalBuildRegistry.h"
 #include "Versions/SelfTestRunner.h"
 #include "Versions/StudioLaunchTarget.h"
-#include "Versions/StudioCapabilities.h"
+#include "Versions/StudioInterface.h"
 
 #include <QCoreApplication>
 #include <QComboBox>
@@ -615,7 +615,7 @@ void VersionsPage::addVersionRow(int row, const InstalledVersion& version,
     if (version.isLocalBuild())
         displayName += version.available ? QCoreApplication::translate("HarkenHub", " (Standalone)")
                                          : QCoreApplication::translate("HarkenHub", " (Standalone, Unavailable)");
-    if (version.available && version.capabilitiesVersion < kStudioCapabilitiesVersion)
+    if (version.available && !StudioInterface::canCreateProjects(version.semanticVersion))
         displayName += QCoreApplication::translate("HarkenHub", " (Legacy)");
     auto* versionItem = new QTableWidgetItem(displayName);
     versionItem->setData(kVersionBuildIdRole, version.buildId);
@@ -627,11 +627,9 @@ void VersionsPage::addVersionRow(int row, const InstalledVersion& version,
             ? QCoreApplication::translate("HarkenHub", "Build: %1\nChannel: %2")
                   .arg(version.launchBuildId(), version.channel)
             : version.availabilityError);
-    if (version.available && version.capabilitiesVersion != kStudioCapabilitiesVersion)
+    if (version.available && !StudioInterface::canCreateProjects(version.semanticVersion))
         versionItem->setToolTip(versionItem->toolTip() + QLatin1Char('\n')
-            + (version.capabilitiesVersion > kStudioCapabilitiesVersion
-                ? QCoreApplication::translate("HarkenHub", "This Studio uses a newer protocol than Hub supports. Hub can request project opening but cannot report its result or preview upgrades.")
-                : QCoreApplication::translate("HarkenHub", "Projects open in this Studio version. Hub upgrade previews are unavailable.")));
+            + QCoreApplication::translate("HarkenHub", "Projects open in this Studio version. Creating projects from Hub is unavailable."));
     table_->setItem(row, kColumnVersion, versionItem);
 
     const QString installPath = QDir::toNativeSeparators(
@@ -1495,7 +1493,7 @@ void VersionsPage::runSelfTest(const QString& buildId)
     QString installPath;
     for (const auto& version : VersionScanner::scanInstalled()) {
         if (version.buildId == buildId) {
-            if (version.capabilitiesVersion != kStudioCapabilitiesVersion)
+            if (!StudioInterface::canSelfTest(version.semanticVersion))
                 return;
             installPath = version.installPath;
             break;

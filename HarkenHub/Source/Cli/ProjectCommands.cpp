@@ -12,7 +12,7 @@
 #include "Projects/ProjectIntakeConsumer.h"
 #include "Projects/ProjectStore.h"
 #include "Projects/ProjectVersionSelection.h"
-#include "Templates/ProjectTemplateCatalog.h"
+#include "Versions/StudioInterface.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -35,10 +35,10 @@ InstalledVersion selectedVersion(const QString& build)
 QJsonObject projectJson(const ProjectRecord& project)
 {
     const auto probe = ProjectProbe::probe(project.canonicalPath);
-    return {{"id", project.projectId}, {"path", project.canonicalPath},
+    return {{"path", project.canonicalPath},
         {"name", probe.ok ? probe.displayName : QFileInfo(project.canonicalPath).completeBaseName()},
         {"available", probe.ok}, {"error", probe.error}, {"preferredBuild", project.preferredStudioBuildId},
-        {"lastOpenedAt", project.lastOpenedAt}, {"schema", probe.schemaVersion}};
+        {"lastOpenedAt", project.lastOpenedAt}};
 }
 
 }
@@ -47,20 +47,13 @@ Reply projects(const Arguments& args)
 {
     if (args.operation == "templates") {
         const auto version = selectedVersion(args.required("build"));
+        QString error;
+        const auto templates = StudioInterface::listTemplates(version, &error);
+        require(templates.has_value(), error);
         QJsonArray entries;
-        for (const auto& item : ProjectTemplateCatalog::listAvailable(QFileInfo(version.executablePath).absolutePath()))
-            entries.append(QJsonObject{{"id", item.id}, {"name", item.displayName}, {"description", item.description}, {"path", item.filePath}, {"userTemplate", item.userTemplate}, {"content", item.content}});
-        return success({{"templates", entries}, {"userTemplateDirectory", ProjectTemplateCatalog::userTemplateDir()}});
-    }
-    if (args.operation == "import-template") {
-        const QString path = QFileInfo(args.required("path")).absoluteFilePath();
-        const auto validation = ProjectTemplateCatalog::validateFile(path);
-        require(validation.valid, validation.toUserText());
-        confirm(args, {{"source", path}, {"sha256", fileHash(path)}, {"destination", ProjectTemplateCatalog::userTemplateDir()}});
-        TemplateValidationResult result;
-        const auto imported = ProjectTemplateCatalog::importFromFile(path, &result);
-        require(imported.has_value(), result.toUserText());
-        return success({{"id", imported->id}, {"path", imported->filePath}});
+        for (const auto& item : *templates)
+            entries.append(QJsonObject{{"id", item.id}, {"name", item.displayName}, {"description", item.description}});
+        return success({{"templates", entries}});
     }
     if (args.operation == "create") {
         requireConsent("studio");
@@ -72,31 +65,22 @@ Reply projects(const Arguments& args)
             const auto record = std::find_if(index.records.begin(), index.records.end(),
                 [&](const auto& item) { return item.buildId == request.version.buildId; });
             require(record != index.records.end(), "The selected version has no trusted installation record");
-            const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash, record->capabilitiesHash);
+            const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash);
             require(integrity.ok, integrity.error, "VersionNeedsRepair");
         }
         request.name = args.required("name").trimmed();
         request.location = QFileInfo(args.required("location")).absoluteFilePath();
         require(QFileInfo(request.location).isDir(), "The project location must be an existing directory", "InvalidArguments");
         request.templateId = args.value("template");
-        request.templatePath = args.value("template-file");
         require(!request.name.contains(QRegularExpression("[<>:\"/\\\\|?*\\x00-\\x1f]")) && request.name != "." && request.name != ".." && !request.name.endsWith('.'), "Invalid project name", "InvalidArguments");
         require(!QFileInfo::exists(QDir(request.location).filePath(request.name)), "The project directory already exists");
-        require(request.templateId.isEmpty() || request.templatePath.isEmpty(), "Use either --template or --template-file", "InvalidArguments");
-        if (!request.templateId.isEmpty()) {
-            const auto templates = ProjectTemplateCatalog::listAvailable(QFileInfo(request.version.executablePath).absolutePath());
-            const auto matches = std::count_if(templates.begin(), templates.end(), [&](const auto& entry) { return entry.id == request.templateId; });
-            require(matches == 1, matches == 0 ? "Unknown template id; use projects templates to list available templates"
-                : "The template id is ambiguous; use --template-file with the desired template path", "InvalidArguments");
-            request.templatePath = std::find_if(templates.begin(), templates.end(), [&](const auto& entry) { return entry.id == request.templateId; })->filePath;
-        }
-        if (!request.templatePath.isEmpty()) {
-            request.templatePath = QFileInfo(request.templatePath).absoluteFilePath();
-            const auto validation = ProjectTemplateCatalog::validateFile(request.templatePath);
-            require(validation.valid, validation.toUserText());
-            if (request.templateId.isEmpty()) request.templateId = QFileInfo(request.templatePath).completeBaseName();
-        }
         QString error;
+        if (!request.templateId.isEmpty()) {
+            const auto templates = StudioInterface::listTemplates(request.version, &error);
+            require(templates.has_value(), error);
+            require(std::any_of(templates->begin(), templates->end(), [&](const auto& entry) { return entry.id == request.templateId; }),
+                "Unknown template id; use projects templates to list the templates of the selected Studio", "InvalidArguments");
+        }
         const QString projectPath = QDir(request.location).filePath(request.name + '/' + request.name + ".hsp");
         require(ProjectIntakeConsumer::rememberCreationBuild(projectPath, request.version.buildId, request.version.expectedBuildId(), &error), error);
         if (!ProjectCreateFlow::create(request, &error)) {

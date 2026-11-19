@@ -45,7 +45,6 @@ class BuildStudioPackageTest(unittest.TestCase):
                 "version": "1.4.0",
                 "buildId": "run12.abcd1234",
                 "channel": self.self_test_channel,
-                "capabilitiesVersion": 2,
                 "editorSchemaVersion": schema["trees"]["Editor"]["currentVersion"],
                 "schemaArchiveOk": True,
                 "schemaSnapshotHash": schema["snapshotHash"],
@@ -148,7 +147,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(archive.read("HarkenStudioCLI.exe"), b"stub-cli")
             self.assertIn("data/asset.bin", names)
             self.assertIn("package-manifest.json", names)
-            self.assertIn("capabilities.json", names)
+            self.assertNotIn("capabilities.json", names)
             archived_schema_files = {name for name in names if name.startswith("schema/")}
             self.assertEqual(archived_schema_files, schema_files)
             for relative in schema_files:
@@ -185,17 +184,9 @@ class BuildStudioPackageTest(unittest.TestCase):
                 },
             }])
 
-            capabilities = json.loads(archive.read("capabilities.json"))
-            self.assertEqual(capabilities, {
-                "studioVersion": "1.4.0",
-                "buildId": "run12.abcd1234",
-                "capabilitiesVersion": 2,
-            })
-
-            for name in ("package-manifest.json", "capabilities.json"):
-                info = archive.getinfo(name)
-                self.assertEqual(info.create_system, 3)
-                self.assertEqual((info.external_attr >> 16) & 0o7777, 0o644)
+            info = archive.getinfo("package-manifest.json")
+            self.assertEqual(info.create_system, 3)
+            self.assertEqual((info.external_attr >> 16) & 0o7777, 0o644)
 
     def test_manifest_hashes_match_payload(self):
         self.make_input()
@@ -560,7 +551,6 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.make_input()
         report = self.module.run_studio_self_test(self.input_dir / "HarkenStudio.exe")
         current = report.pop("editorSchemaVersion")
-        report["capabilitiesVersion"] = 1
         report["projectSchema"] = {
             "current": current,
             "openableAsIs": [current],
@@ -580,10 +570,6 @@ class BuildStudioPackageTest(unittest.TestCase):
         for field, value in (
             ("product", "HarkenHub"),
             ("product", None),
-            ("capabilitiesVersion", 1),
-            ("capabilitiesVersion", 2.0),
-            ("capabilitiesVersion", "2"),
-            ("capabilitiesVersion", None),
             ("editorSchemaVersion", editor_generation + 1),
             ("editorSchemaVersion", 3.0),
             ("editorSchemaVersion", "3"),

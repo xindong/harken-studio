@@ -220,9 +220,6 @@ TEST(HubLocalizationTest, SimplifiedChineseCatalogIsCompleteAndLoadable)
                   .arg(QStringLiteral("demo.hsp")),
               QStringLiteral("\u5de5\u7a0b\u6587\u4ef6\u5df2\u4e0d\u5b58\u5728\uff1ademo.hsp"));
     EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Studio capabilities must use the three-field version 2 report."),
-              QStringLiteral("Studio \u80fd\u529b\u62a5\u544a\u5fc5\u987b\u4f7f\u7528\u4ec5\u542b\u4e09\u4e2a\u5b57\u6bb5\u7684\u7248\u672c 2 \u534f\u8bae\u3002"));
-    EXPECT_EQ(QCoreApplication::translate(
                   "HarkenHub", "Install finished · self-test issue"),
               QString::fromUtf8("安装完成 · 自检发现问题"));
     EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(

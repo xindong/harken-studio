@@ -15,7 +15,6 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QTimer>
-#include <QUuid>
 
 namespace VNH {
 
@@ -171,10 +170,8 @@ ProjectIntakeConsumer::applyRecord(const QJsonObject& record)
     };
     if (!store_->contains(probe.canonicalPath)) {
         ProjectRecord project;
-        project.projectId = probe.projectId;
         project.canonicalPath = probe.canonicalPath;
         project.displayName = probe.displayName;
-        project.detectedSchema = probe.schemaVersion;
         project.lastKnownGoodStudioBuildId = buildId;
         project.preferredStudioBuildId = preferredBuild;
         project.lastOpenedAt = openedAt;
@@ -183,17 +180,13 @@ ProjectIntakeConsumer::applyRecord(const QJsonObject& record)
     for (const auto& project : store_->listProjects()) {
         if (project.canonicalPath != probe.canonicalPath)
             continue;
-        if ((!project.projectId.isEmpty() && !probe.projectId.isEmpty()
-             && QUuid(project.projectId) != QUuid(probe.projectId))
-            || timestamp <= QDateTime::fromString(project.lastOpenedAt, Qt::ISODateWithMs))
+        if (timestamp <= QDateTime::fromString(project.lastOpenedAt, Qt::ISODateWithMs))
             return RecordAction::Drop;
         if (project.preferredStudioBuildId.isEmpty() && !preferredBuild.isEmpty()
             && !store_->setPreferredBuild(probe.canonicalPath, preferredBuild)) return RecordAction::Keep;
         return completed(store_->recordSuccessfulOpen(
                    probe.canonicalPath,
-                   probe.projectId.isEmpty() ? project.projectId : probe.projectId,
                    probe.metadataWarning.isEmpty() ? probe.displayName : project.displayName,
-                   probe.schemaVersion > 0 ? probe.schemaVersion : project.detectedSchema,
                    buildId.isEmpty() ? project.lastKnownGoodStudioBuildId : buildId,
                    openedAt));
     }

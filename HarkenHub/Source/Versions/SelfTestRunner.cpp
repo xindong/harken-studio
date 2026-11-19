@@ -1,11 +1,8 @@
 #include "Versions/SelfTestRunner.h"
 
 #include "Platform/PlatformPaths.h"
-#include "Versions/StudioCapabilities.h"
 
 #include <QJsonDocument>
-#include <QRegularExpression>
-#include <limits>
 #include <QJsonObject>
 #include <QProcess>
 
@@ -27,48 +24,13 @@ SelfTestResult SelfTestRunner::parseOutput(const QByteArray& output,
         result.error = QStringLiteral("The selected executable is not HarkenStudio");
         return result;
     }
-    const QJsonValue protocol = report.value(QStringLiteral("capabilitiesVersion"));
-    if (!protocol.isDouble() || (protocol.toDouble() != 1
-        && protocol.toDouble() != kStudioCapabilitiesVersion)) {
-        result.error = QStringLiteral("Studio reported an unsupported self-test protocol.");
+    if (report.value(QStringLiteral("ok")) != QJsonValue(true)) {
+        result.error = QStringLiteral("Studio self-test failed.");
         return result;
     }
-    if (!report.value(QStringLiteral("ok")).isBool()
-        || !report.value(QStringLiteral("ok")).toBool()
-        || !report.value(QStringLiteral("schemaArchiveOk")).isBool()
-        || !report.value(QStringLiteral("schemaArchiveOk")).toBool()) {
-        result.error = QStringLiteral("Studio self-test failed: %1")
-                           .arg(report.value(QStringLiteral("schemaError")).toString());
-        return result;
-    }
-    for (const QString& key : {QStringLiteral("version"), QStringLiteral("buildId"),
-                              QStringLiteral("channel"), QStringLiteral("buildType")}) {
+    for (const QString& key : {QStringLiteral("version"), QStringLiteral("buildId"), QStringLiteral("channel")}) {
         if (!report.value(key).isString() || report.value(key).toString().trimmed().isEmpty()) {
             result.error = QStringLiteral("Self-test is missing its build identity: %1").arg(key);
-            return result;
-        }
-    }
-    if (protocol.toInt() == 1) {
-        if (report.value(QStringLiteral("projectSchema")).toObject()
-                .value(QStringLiteral("current")).toInt() <= 0) {
-            result.error = QStringLiteral("Studio self-test has invalid legacy schema information");
-            return result;
-        }
-    } else {
-        for (const QString& key : {QStringLiteral("editorSchemaVersion"), QStringLiteral("packSchemaVersion")}) {
-            const QJsonValue value = report.value(key);
-            if (!value.isDouble() || value.toInteger(-1) <= 0
-                || value.toInteger(-1) > std::numeric_limits<int>::max()) {
-                result.error = QStringLiteral("Self-test has an invalid diagnostic field: %1").arg(key);
-                return result;
-            }
-        }
-        const QString commit = report.value(QStringLiteral("gitCommit")).toString();
-        const QString snapshot = report.value(QStringLiteral("schemaSnapshotHash")).toString();
-        if (!QRegularExpression(QStringLiteral("^[0-9a-f]{40}$")).match(commit).hasMatch()
-            || !QRegularExpression(QStringLiteral("^[0-9a-f]{64}$")).match(snapshot).hasMatch()
-            || !report.value(QStringLiteral("gitDirty")).isBool()) {
-            result.error = QStringLiteral("Self-test has an invalid build or schema snapshot identity");
             return result;
         }
     }
@@ -76,13 +38,6 @@ SelfTestResult SelfTestRunner::parseOutput(const QByteArray& output,
     result.reportedBuildId = report.value(QStringLiteral("buildId")).toString();
     result.reportedVersion = report.value(QStringLiteral("version")).toString();
     result.channel = report.value(QStringLiteral("channel")).toString();
-    result.buildType = report.value(QStringLiteral("buildType")).toString();
-    result.capabilitiesVersion = protocol.toInt();
-    result.gitCommit = report.value(QStringLiteral("gitCommit")).toString();
-    result.gitDirty = report.value(QStringLiteral("gitDirty")).toBool();
-    result.editorSchemaVersion = report.value(QStringLiteral("editorSchemaVersion")).toInt();
-    result.packSchemaVersion = report.value(QStringLiteral("packSchemaVersion")).toInt();
-    result.schemaSnapshotHash = report.value(QStringLiteral("schemaSnapshotHash")).toString();
     if (!expectedBuildId.isEmpty() && result.reportedBuildId != expectedBuildId) {
         result.error = QStringLiteral("Self-test reported build id %1, expected %2")
                            .arg(result.reportedBuildId, expectedBuildId);

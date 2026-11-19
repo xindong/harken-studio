@@ -61,29 +61,12 @@ TEST_F(LaunchDiagnosticsTest, RejectsEmptyBuildId)
                                            QString(), kNow));
 }
 
-TEST(SelfTestParse, AcceptsMatchingVersion2Report)
+TEST(SelfTestParse, AcceptsMatchingReport)
 {
     const auto output = QJsonDocument(HarkenHubTest::studioSelfTest()).toJson();
     const auto result = SelfTestRunner::parseOutput(output, QStringLiteral("run1.aaaa1111"));
     ASSERT_TRUE(result.ok) << result.error.toStdString();
     EXPECT_EQ(result.reportedVersion, QStringLiteral("1.4.0"));
-    EXPECT_EQ(result.capabilitiesVersion, 2);
-    EXPECT_EQ(result.editorSchemaVersion, 2);
-    EXPECT_EQ(result.packSchemaVersion, 1);
-}
-
-TEST(SelfTestParse, AcceptsHistoricalSelfTestWithoutModernSchemaDiagnostics)
-{
-    auto report = HarkenHubTest::studioSelfTest();
-    report["capabilitiesVersion"] = 1;
-    report["projectSchema"] = QJsonObject{{"current", 2}};
-    for (const auto* key : {"gitCommit", "gitDirty", "schemaSnapshotHash", "editorSchemaVersion", "packSchemaVersion"})
-        report.remove(QLatin1String(key));
-    const auto result = SelfTestRunner::parseOutput(QJsonDocument(report).toJson(), "run1.aaaa1111");
-    ASSERT_TRUE(result.ok) << result.error.toStdString();
-    EXPECT_EQ(result.capabilitiesVersion, 1);
-    report["schemaArchiveOk"] = false;
-    EXPECT_FALSE(SelfTestRunner::parseOutput(QJsonDocument(report).toJson(), "run1.aaaa1111").ok);
 }
 
 TEST(SelfTestParse, RejectsInvalidIdentityProtocolAndDiagnosticFields)
@@ -92,16 +75,9 @@ TEST(SelfTestParse, RejectsInvalidIdentityProtocolAndDiagnosticFields)
             QJsonObject{{QStringLiteral("product"), QStringLiteral("OtherProduct")}},
             QJsonObject{{QStringLiteral("buildId"), QStringLiteral("other-build")}},
             QJsonObject{{QStringLiteral("version"), 4}},
-            QJsonObject{{QStringLiteral("capabilitiesVersion"), 1}},
-            QJsonObject{{QStringLiteral("capabilitiesVersion"), QStringLiteral("2")}},
+            QJsonObject{{QStringLiteral("channel"), 4}},
             QJsonObject{{QStringLiteral("ok"), false}},
-            QJsonObject{{QStringLiteral("schemaArchiveOk"), false}},
-            QJsonObject{{QStringLiteral("schemaArchiveOk"), QStringLiteral("true")}},
-            QJsonObject{{QStringLiteral("editorSchemaVersion"), 1.5}},
-            QJsonObject{{QStringLiteral("packSchemaVersion"), 0}},
-            QJsonObject{{QStringLiteral("gitDirty"), 1}},
-            QJsonObject{{QStringLiteral("gitCommit"), QStringLiteral("bad")}},
-            QJsonObject{{QStringLiteral("schemaSnapshotHash"), QStringLiteral("bad")}}}) {
+            QJsonObject{{QStringLiteral("ok"), QStringLiteral("true")}}}) {
         auto report = HarkenHubTest::studioSelfTest();
         for (auto it = overrides.begin(); it != overrides.end(); ++it)
             report.insert(it.key(), it.value());

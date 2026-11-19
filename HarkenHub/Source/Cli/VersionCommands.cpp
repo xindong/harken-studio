@@ -72,7 +72,7 @@ QJsonObject packageReview(const QString& path, const ReleaseManifest& manifest)
     QJsonObject files;
     for (auto it = verified.fileSha256ByPath.cbegin(); it != verified.fileSha256ByPath.cend(); ++it)
         files[it.key()] = it.value();
-    for (const auto* name : {"package-manifest.json", "capabilities.json"}) {
+    for (const QString& name : verified.metadataEntries) {
         QByteArray bytes;
         QString error;
         require(PackageReader::readEntry(path, name, &bytes, &error), error);
@@ -299,7 +299,7 @@ Reply versions(const Arguments& args)
         require(index.ok, index.error);
         const auto record = std::find_if(index.records.begin(), index.records.end(), [&](const auto& value) { return value.buildId == build; });
         require(record != index.records.end(), "The build is not a managed installation");
-        const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash, record->capabilitiesHash);
+        const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash);
         if (args.operation == "verify")
             return {integrity.ok ? 0 : 3, {{"ok", integrity.ok}, {"data", QJsonObject{{"error", integrity.error},
                 {"missing", QJsonArray::fromStringList(integrity.missingFiles)}, {"modified", QJsonArray::fromStringList(integrity.mismatchedFiles)}}}}};

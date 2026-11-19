@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
@@ -143,9 +144,6 @@ int main(int argc, char* argv[])
                 || (createDirectory.isEmpty() && (!supplied.contains(QStringLiteral("--project-name"))
                     || !supplied.contains(QStringLiteral("--project-location"))))))
             argumentError = QStringLiteral("Use --create-project <directory>, or --create-project with both --project-name and --project-location.");
-        if (argumentError.isEmpty() && supplied.contains(QStringLiteral("--project-template-id"))
-            && !supplied.contains(QStringLiteral("--project-template-file")))
-            argumentError = QStringLiteral("--project-template-id requires --project-template-file.");
         if (!argumentError.isEmpty()) {
             HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("INVALID_ARGUMENTS"), argumentError));
             return 2;
@@ -212,7 +210,6 @@ int main(int argc, char* argv[])
             report[QStringLiteral("buildType")] = QString::fromUtf8(
                 Harken::BuildInfo::BuildType.data(),
                 static_cast<int>(Harken::BuildInfo::BuildType.size()));
-            report[QStringLiteral("capabilitiesVersion")] = 2;
             report[QStringLiteral("editorSchemaVersion")] =
                 VNX::ProjectSchema::kProjectSchemaVersion;
             report[QStringLiteral("schemaArchiveOk")] = schemaArchiveOk;
@@ -229,6 +226,29 @@ int main(int argc, char* argv[])
             std::fflush(stdout);
             return schemaArchiveOk ? 0 : 2;
         }
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--list-templates") != 0)
+            continue;
+        QCoreApplication app(argc, argv);
+        app.setApplicationName(QStringLiteral("HarkenStudio"));
+        app.setOrganizationName(QStringLiteral("HarkenSound"));
+        VNX::ProjectTemplateLoader::ensureUserTemplatesSeeded();
+        QJsonArray templates;
+        for (const auto& location : VNX::ProjectTemplateLoader::listAvailable()) {
+            if (!VNX::ProjectTemplateLoader::load(location.id))
+                continue;
+            templates.append(QJsonObject{{QStringLiteral("id"), location.id},
+                                         {QStringLiteral("displayName"), location.displayName},
+                                         {QStringLiteral("description"), location.description}});
+        }
+        const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("templates"), templates}})
+                                    .toJson(QJsonDocument::Compact);
+        std::fwrite(json.constData(), 1, static_cast<size_t>(json.size()), stdout);
+        std::fputc('\n', stdout);
+        std::fflush(stdout);
+        return 0;
     }
 
     for (int i = 1; i + 1 < argc; ++i) {

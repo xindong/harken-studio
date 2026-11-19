@@ -14,13 +14,6 @@ struct SelfTestResult
     QString reportedBuildId;
     QString reportedVersion;
     QString channel;
-    QString buildType;
-    int capabilitiesVersion = 0;
-    QString gitCommit;
-    bool gitDirty = false;
-    int editorSchemaVersion = 0;
-    int packSchemaVersion = 0;
-    QString schemaSnapshotHash;
 };
 
 class SelfTestRunner

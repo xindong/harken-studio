@@ -21,7 +21,6 @@ from release import collect_legal_texts, integration_layout, release_evidence
 
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
 PACKAGE_MANIFEST_NAME = "package-manifest.json"
-CAPABILITIES_NAME = "capabilities.json"
 SCHEMA_SOURCE = (
     Path(__file__).resolve().parents[2]
     / "HarkenStudio"
@@ -120,8 +119,6 @@ def verify_studio_self_test(report: dict, schema: dict) -> None:
         report.get("ok") is not True
         or report.get("product") != "HarkenStudio"
         or report.get("schemaArchiveOk") is not True
-        or type(report.get("capabilitiesVersion")) is not int
-        or report["capabilitiesVersion"] != 2
         or report.get("schemaSnapshotHash") != schema["snapshotHash"]
         or type(report.get("editorSchemaVersion")) is not int
         or report["editorSchemaVersion"] != schema["trees"]["Editor"]["currentVersion"]
@@ -177,9 +174,8 @@ def collect_payload(input_dir: Path) -> list[Path]:
             "error: input directory does not contain a Studio binary "
             f"({' or '.join(STUDIO_BINARIES)})"
         )
-    for name in (PACKAGE_MANIFEST_NAME, CAPABILITIES_NAME):
-        if name in rel_names:
-            raise SystemExit(f"error: input directory already contains {name}")
+    if PACKAGE_MANIFEST_NAME in rel_names:
+        raise SystemExit(f"error: input directory already contains {PACKAGE_MANIFEST_NAME}")
     return files
 
 
@@ -263,11 +259,6 @@ def build_package(args: argparse.Namespace) -> dict:
         "components": integration_components(input_dir),
         "files": file_records,
     }
-    capabilities = {
-        "studioVersion": args.version,
-        "buildId": args.build_id,
-        "capabilitiesVersion": 2,
-    }
 
     manifest_content = json.dumps(package_manifest, indent=2).encode("utf-8")
     with release_evidence.package_output(output_dir) as staging:
@@ -286,10 +277,6 @@ def build_package(args: argparse.Namespace) -> dict:
             archive.writestr(
                 metadata_entry(PACKAGE_MANIFEST_NAME),
                 manifest_content,
-            )
-            archive.writestr(
-                metadata_entry(CAPABILITIES_NAME),
-                json.dumps(capabilities, indent=2),
             )
 
         artifacts = release_evidence.finalize(

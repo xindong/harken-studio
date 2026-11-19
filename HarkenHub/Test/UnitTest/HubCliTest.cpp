@@ -221,12 +221,12 @@ TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStu
 {
     const auto version = run({"versions", "add-local", "--path", QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE)})["data"].toObject()["buildId"].toString();
     ASSERT_FALSE(version.isEmpty());
-    const auto templatePath = directory.filePath("user/Templates/audio.json");
-    write(templatePath, R"({"displayName":"Audio","description":"Test template","bus":{"name":"Master Bus"}})");
     const auto templates = run({"projects", "templates", "--build", version})["data"].toObject()["templates"].toArray();
     ASSERT_EQ(templates.size(), 1);
+    const auto filePath = directory.filePath("not-a-directory.txt");
+    write(filePath, "file");
     approve({"legal", "accept", "--product", "studio"});
-    for (const auto& parent : {directory.filePath("missing"), templatePath}) {
+    for (const auto& parent : {directory.filePath("missing"), filePath}) {
         run({"projects", "create", "--build", version, "--name", "Demo", "--location", parent}, 2);
         EXPECT_FALSE(QFileInfo::exists(parent + "/Demo"));
     }
@@ -245,9 +245,10 @@ TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStu
     const auto stop = qScopeGuard([&] { if (pid > 0) VNH::terminateProcessById(pid); });
     ASSERT_GT(pid, 0);
     const auto arguments = launch["arguments"].toArray().toVariantList();
-    const auto templateIndex = arguments.indexOf(QStringLiteral("--project-template-file"));
+    const auto templateIndex = arguments.indexOf(QStringLiteral("--project-template-id"));
     ASSERT_GE(templateIndex, 0);
-    EXPECT_EQ(arguments.value(templateIndex + 1).toString(), templatePath);
+    EXPECT_EQ(arguments.value(templateIndex + 1).toString(), QStringLiteral("audio"));
+    EXPECT_FALSE(arguments.contains(QStringLiteral("--project-template-file")));
     write(project, R"({"harkenDocument":{"type":"project.root"},"metadata":{"name":"Old name"}})");
     const auto intakePath = directory.filePath("user/project-intake/created.json");
     const auto openedAt = QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs);

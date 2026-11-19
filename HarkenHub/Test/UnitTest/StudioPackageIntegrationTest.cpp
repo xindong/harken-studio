@@ -14,7 +14,6 @@
 #include "Versions/IntegrityChecker.h"
 #include "Versions/LocalBuildRegistry.h"
 #include "Versions/SelfTestRunner.h"
-#include "Versions/StudioCapabilities.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -101,9 +100,6 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     const auto manifest = QJsonDocument::fromJson(manifestBytes).object();
     const auto build = manifest.value("buildId").toString();
     const auto version = manifest.value("version").toString();
-    QByteArray capabilitiesBytes;
-    ASSERT_TRUE(VNH::PackageReader::readEntry(package, "capabilities.json", &capabilitiesBytes, &error));
-    const auto protocol = QJsonDocument::fromJson(capabilitiesBytes).object().value("capabilitiesVersion").toInt();
     auto payload = HarkenHubTest::baseManifestPayload();
     payload["version"] = version;
     payload["buildId"] = build;
@@ -124,7 +120,6 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     const auto versions = VNH::VersionScanner::scanInstalled();
     ASSERT_EQ(versions.size(), 1u);
     EXPECT_EQ(versions.front().expectedBuildId(), build);
-    EXPECT_EQ(versions.front().capabilitiesVersion, protocol);
     const auto selfTest = VNH::SelfTestRunner::runForInstall(installed.installPath, build);
     ASSERT_TRUE(selfTest.ok) << selfTest.error.toStdString();
     EXPECT_TRUE(VNH::IntegrityChecker::check(installed.installPath).ok);
@@ -197,11 +192,9 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     ASSERT_TRUE(runStudio(true));
     const auto probe = VNH::ProjectProbe::probe(project);
     ASSERT_TRUE(probe.ok);
-    if (protocol == VNH::kStudioCapabilitiesVersion)
-        EXPECT_EQ(probe.savedStudioVersion, version);
+    EXPECT_EQ(probe.savedStudioVersion, version);
     VNH::ProjectRecord record;
     record.canonicalPath = probe.canonicalPath;
-    record.projectId = probe.projectId;
     const auto decision = VNH::LaunchPreflight::evaluate(record, versions, VNH::InstallIndex::snapshot(), build);
     ASSERT_EQ(decision.verdict, VNH::LaunchVerdict::Ready) << decision.reason.toStdString();
     ASSERT_TRUE(runStudio(false));

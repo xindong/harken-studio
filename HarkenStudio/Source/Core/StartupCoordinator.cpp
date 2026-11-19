@@ -118,6 +118,14 @@ void StartupCoordinator::startProjectPreparation()
                                     ? projectTemplate->id
                                     : startupArguments_.projectTemplateId;
             config.templateData = projectTemplate->toJson();
+        } else if (!startupArguments_.projectTemplateId.isEmpty()) {
+            const auto projectTemplate = ProjectTemplateLoader::load(startupArguments_.projectTemplateId);
+            if (!projectTemplate) {
+                fail(tr("The project template is unavailable: %1").arg(startupArguments_.projectTemplateId));
+                return;
+            }
+            config.templateId = startupArguments_.projectTemplateId;
+            config.templateData = projectTemplate->toJson();
         }
         preparationWatcher_.setFuture(QtConcurrent::run(
             [config, cancelled = cancellationRequested_]() {

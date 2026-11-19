@@ -1294,14 +1294,6 @@ Error code: %1</source>
 错误码：%1</translation>
     </message>
     <message>
-        <source>Studio capabilities has an invalid protocol version.</source>
-        <translation>版本能力信息中的协议版本无效。</translation>
-    </message>
-    <message>
-        <source>Studio capabilities has invalid legacy schema information.</source>
-        <translation>旧版的数据格式能力信息无效。</translation>
-    </message>
-    <message>
         <source>Installation metadata is missing: %1</source>
         <translation>安装信息文件缺失：%1</translation>
     </message>
@@ -1340,14 +1332,6 @@ Error code: %1</source>
     <message>
         <source> (Legacy)</source>
         <translation>（旧版）</translation>
-    </message>
-    <message>
-        <source>Projects open in this Studio version. Hub upgrade previews are unavailable.</source>
-        <translation>工程由此版本 Studio 打开。此版本不提供 Hub 内的工程升级预检。</translation>
-    </message>
-    <message>
-        <source>This Studio uses a newer protocol than Hub supports. Hub can request project opening but cannot report its result or preview upgrades.</source>
-        <translation>此 Studio 使用了当前 Hub 尚不支持的新版协议。Hub 可以请求打开工程，但无法报告打开结果或提供升级预检。</translation>
     </message>
     <message>
         <source>The installation record is no longer available.</source>
@@ -1464,27 +1448,6 @@ Error code: %1</source>
         <translation>选择工程位置</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="469"/>
-        <source>Template</source>
-        <translation>模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="478"/>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="746"/>
-        <source>Add Template</source>
-        <translation>添加模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="512"/>
-        <source>Bus</source>
-        <translation>总线</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="514"/>
-        <source>Attenuation</source>
-        <translation>衰减</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="524"/>
         <location filename="../Source/UI/ProjectsPage.cpp" line="895"/>
         <source>Create Project</source>
@@ -1522,11 +1485,6 @@ Error code: %1</source>
         <translation type="vanished">创建不使用模板的工程</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="636"/>
-        <source>Create a project that can handle an mmorpg genre</source>
-        <translation>创建适用于 MMORPG 类型的工程</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="788"/>
         <source>The project location could not be saved. It will not be restored after restarting Harken Hub.</source>
         <translation>无法保存工程位置。重启 Harken Hub 后不会恢复此位置。</translation>
@@ -1556,66 +1514,9 @@ Error code: %1</source>
         <translation type="vanished">所选模板已不可用。</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="614"/>
-        <source>Create a clean empty project without using any template</source>
-        <translation>创建一个干净的空工程，不使用任何模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="621"/>
-        <source>Create a clean empty project without using any template.</source>
-        <translation>创建一个干净的空工程，不使用任何模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="725"/>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="861"/>
-        <source>Invalid Template</source>
-        <translation>无效模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="726"/>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="862"/>
-        <source>The selected template failed its validation and health check.
-
-%1</source>
-        <translation>所选模板未通过合法性与健康性检查。
-
-%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="748"/>
-        <source>Template JSON (*.json);;All Files (*)</source>
-        <translation>模板 JSON (*.json);;所有文件 (*)</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="759"/>
-        <source>Template Not Added</source>
-        <translation>模板未添加</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="760"/>
-        <source>The template failed its validation and health check, so it was not added.
-
-%1</source>
-        <translation>模板未通过合法性与健康性检查，因此未添加。
-
-%1</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="887"/>
         <source>Confirm New Project</source>
         <translation>确认新建工程</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="888"/>
-        <source>Confirm the HarkenStudio version and template before creating the project.</source>
-        <translation>创建工程前，请确认 HarkenStudio 版本和模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="892"/>
-        <source>HarkenStudio: %1
-Template: %2</source>
-        <translation>HarkenStudio：%1
-模板：%2</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="940"/>
@@ -2258,199 +2159,6 @@ Diagnostic log: %2</source>
         <location filename="../Source/UI/VersionsPage.cpp" line="1416"/>
         <source>Set as Launch Harken Default</source>
         <translation>设为 Launch Harken 默认版本</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="68"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="164"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="200"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="230"/>
-        <source>must be an object</source>
-        <translation>必须是对象</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="76"/>
-        <source>must be the Bus project item type</source>
-        <translation>必须是总线工程项类型</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="82"/>
-        <source>missing or non-string</source>
-        <translation>缺失或不是字符串</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="87"/>
-        <source>invalid name</source>
-        <translation>名称无效</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="90"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="180"/>
-        <source>duplicate name: %1</source>
-        <translation>名称重复：%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="101"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="156"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="223"/>
-        <source>must be an array</source>
-        <translation>必须是数组</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="116"/>
-        <source>must be an array of [x,y] pairs</source>
-        <translation>必须是由 [x,y] 点组成的数组</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="121"/>
-        <source>must have at least 2 points</source>
-        <translation>必须至少包含 2 个点</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="129"/>
-        <source>must be a [x,y] array</source>
-        <translation>必须是 [x,y] 数组</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="137"/>
-        <source>must be exactly two numbers</source>
-        <translation>必须恰好包含两个数字</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="143"/>
-        <source>x must be between 0 and %1</source>
-        <translation>x 必须介于 0 和 %1 之间</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="146"/>
-        <source>x values must be monotonically increasing</source>
-        <translation>x 值必须单调递增</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="172"/>
-        <source>must be the Attenuation project item type</source>
-        <translation>必须是衰减工程项类型</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="177"/>
-        <source>missing or invalid name</source>
-        <translation>名称缺失或无效</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="188"/>
-        <source>must be a number</source>
-        <translation>必须是数字</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="194"/>
-        <source>must be greater than 0</source>
-        <translation>必须大于 0</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="207"/>
-        <source>missing or empty curve type</source>
-        <translation>曲线类型缺失或为空</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="237"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="267"/>
-        <source>must be an integer</source>
-        <translation>必须是整数</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="242"/>
-        <source>unexpected project item type</source>
-        <translation>工程项类型不符合要求</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="246"/>
-        <source>must be a content project item type</source>
-        <translation>必须是内容工程项类型</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="256"/>
-        <source>The top-level JSON must be an object.</source>
-        <translation>顶层 JSON 必须是对象。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="259"/>
-        <source>not a JSON object</source>
-        <translation>不是 JSON 对象</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="273"/>
-        <source>unsupported template format version: %1</source>
-        <translation>不支持的模板格式版本：%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="278"/>
-        <source>missing or empty string</source>
-        <translation>字符串缺失或为空</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="282"/>
-        <source>missing string</source>
-        <translation>字符串缺失</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="305"/>
-        <source>unsupported template section</source>
-        <translation>不支持的模板区段</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="311"/>
-        <source>missing object</source>
-        <translation>对象缺失</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="316"/>
-        <source>must be &apos;Master Bus&apos;</source>
-        <translation>必须是“Master Bus”</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="324"/>
-        <source>The template is valid.</source>
-        <translation>模板有效。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="325"/>
-        <source>Found %1 issue(s) in %2:</source>
-        <translation>在 %2 中发现 %1 个问题：</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="336"/>
-        <source>The template could not be read.</source>
-        <translation>无法读取模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="343"/>
-        <source>The template file size is invalid.</source>
-        <translation>模板文件大小无效。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="345"/>
-        <source>The file must be between 1 byte and 10 MB.</source>
-        <translation>文件大小必须介于 1 字节和 10 MB 之间。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="362"/>
-        <source>The template contains invalid JSON.</source>
-        <translation>模板包含无效的 JSON。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="365"/>
-        <source>%1 at offset %2</source>
-        <translation>%1，位置偏移 %2</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="498"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="517"/>
-        <source>The template could not be added.</source>
-        <translation>无法添加模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="501"/>
-        <source>The template directory could not be created.</source>
-        <translation>无法创建模板目录。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="134"/>
@@ -4372,10 +4080,6 @@ To integrate again later, select or drop this Integration Package source: %2</so
         <translation>无法读取工程文件</translation>
     </message>
     <message>
-        <source>The project file identity has changed; it may have been replaced by a different project</source>
-        <translation>工程文件标识已更改，可能已被其他工程替换</translation>
-    </message>
-    <message>
         <source>Choose a Harken Studio version first.</source>
         <translation>请先选择 Harken Studio 版本。</translation>
     </message>
@@ -4733,21 +4437,6 @@ The previous version association was kept. You can retry, select another version
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="32"/>
         <source>Several installations match this project. Choose a specific Studio installation.</source>
         <translation>有多个安装符合此工程的推荐版本，请选择具体的 Studio 安装。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="33"/>
-        <source>Studio capabilities build identity does not match the package.</source>
-        <translation>Studio 能力报告中的构建身份与安装包不一致。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="34"/>
-        <source>Studio capabilities must use the three-field version 2 report.</source>
-        <translation>Studio 能力报告必须使用仅含三个字段的版本 2 协议。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="35"/>
-        <source>Studio capabilities version does not match the package.</source>
-        <translation>Studio 能力报告中的软件版本与安装包不一致。</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="44"/>
@@ -5406,5 +5095,9 @@ Integration settings outside this directory and the project relationship are kep
     <message><source>Check completed. The selected version is already installed; installing again replaces the installation directory.</source><translation>检查完成。所选版本已安装；再次安装会替换安装目录。</translation></message>
     <message><source>Check completed. The installed version will be replaced; no Integration Package files were changed.</source><translation>检查完成。已安装的版本将被替换；尚未修改任何集成包文件。</translation></message>
     <message><source>Integration Package installation failed. Retry, or use Restore Previous Version to put the previous version back.</source><translation>集成包安装失败。请重试，或使用“恢复之前的版本”放回之前的版本。</translation></message>
+    <message><source>Confirm the HarkenStudio version before creating the project.</source><translation>创建工程前，请确认 HarkenStudio 版本。</translation></message>
+    <message><source>HarkenStudio: %1</source><translation>HarkenStudio：%1</translation></message>
+    <message><source>Projects open in this Studio version. Creating projects from Hub is unavailable.</source><translation>可以用此 Studio 版本打开工程，但无法从 Hub 新建工程。</translation></message>
+    <message><source>Studio did not list its project templates.</source><translation>Studio 未能列出其工程模板。</translation></message>
 </context>
 </TS>

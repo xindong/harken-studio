@@ -159,7 +159,7 @@ TEST_F(IntegrityAndRepairTest, RejectsMissingManifest)
 TEST_F(IntegrityAndRepairTest, RejectsModifiedPackageMetadata)
 {
     const auto report = IntegrityChecker::check(
-        installPath, QString(64, QLatin1Char('f')), QString());
+        installPath, QString(64, QLatin1Char('f')));
     EXPECT_FALSE(report.ok);
     EXPECT_EQ(report.mismatchedFiles,
               QStringList{QStringLiteral("package-manifest.json")});
