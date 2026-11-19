@@ -14,12 +14,14 @@ QStringList texts()
             return {QString::fromUtf8(file.readAll())};
     }
     const QString suffix = HubLocalization::effectiveLanguage() == HubLocalization::simplifiedChinesePreference()
-        ? QStringLiteral(".zh-CN.txt") : QStringLiteral(".txt");
-    QFile agreement(QStringLiteral(":/Resources/legal/USER_AGREEMENT") + suffix);
-    QFile privacy(QStringLiteral(":/Resources/legal/PRIVACY_POLICY") + suffix);
-    if (!agreement.open(QIODevice::ReadOnly | QIODevice::Text) || !privacy.open(QIODevice::ReadOnly | QIODevice::Text))
+        ? QStringLiteral(".zh-CN.md") : QStringLiteral(".md");
+    QFile terms(QStringLiteral(":/Resources/legal/USER_TERMS") + suffix);
+    if (!terms.open(QIODevice::ReadOnly | QIODevice::Text))
         return {};
-    return {QString::fromUtf8(agreement.readAll()), QString::fromUtf8(privacy.readAll())};
+    const QStringList sections = QString::fromUtf8(terms.readAll()).split(QStringLiteral("\n---\n\n"));
+    if (sections.size() != 2)
+        return {};
+    return {sections.at(0).mid(2), sections.at(1).mid(2)};
 }
 
 QString version() { return QStringLiteral("2026-10-28"); }

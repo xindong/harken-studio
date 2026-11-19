@@ -1,3 +1,4 @@
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Hub")
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Test)
 add_executable(harken_hub_cli_fixture
     ../Source/App/Main.cpp

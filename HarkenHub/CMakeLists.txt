@@ -1,39 +1,22 @@
 find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Svg LinguistTools)
-find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Hub")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Hub")
 
-set(HARKEN_HUB_LEGAL_DIR "${CMAKE_CURRENT_BINARY_DIR}/legal")
-set(HARKEN_HUB_LEGAL_FILES
-    "${HARKEN_HUB_LEGAL_DIR}/USER_AGREEMENT.txt"
-    "${HARKEN_HUB_LEGAL_DIR}/USER_AGREEMENT.zh-CN.txt"
-    "${HARKEN_HUB_LEGAL_DIR}/PRIVACY_POLICY.txt"
-    "${HARKEN_HUB_LEGAL_DIR}/PRIVACY_POLICY.zh-CN.txt")
-add_custom_command(
-    OUTPUT ${HARKEN_HUB_LEGAL_FILES}
-    COMMAND Python3::Interpreter "${CMAKE_SOURCE_DIR}/.scripts/release/product_legal.py"
-        --source-root "${CMAKE_SOURCE_DIR}"
-        --hub-resources "${HARKEN_HUB_LEGAL_DIR}"
-    DEPENDS
-        "${CMAKE_SOURCE_DIR}/.scripts/release/product_legal.py"
-        "${CMAKE_SOURCE_DIR}/USER_TERMS.md"
-        "${CMAKE_SOURCE_DIR}/USER_TERMS.zh-CN.md"
-    VERBATIM)
-add_custom_target(harken_hub_legal_documents DEPENDS ${HARKEN_HUB_LEGAL_FILES})
+harken_read_version("${CMAKE_CURRENT_SOURCE_DIR}/VERSION" HARKEN_HUB_VERSION)
+file(CONFIGURE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.h"
+    CONTENT "#pragma once\n\n#include <string_view>\n\nnamespace VNH {\n\ninline constexpr std::string_view HubVersion = \"@HARKEN_HUB_VERSION@\";\n\n}\n"
+    @ONLY)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.txt" CONTENT "@HARKEN_HUB_VERSION@\n" @ONLY)
 
 function(harken_add_hub_legal_resources target)
-    set(legal_dir "${CMAKE_BINARY_DIR}/HarkenHub/legal")
-    set(legal_files)
-    foreach(name USER_AGREEMENT.txt USER_AGREEMENT.zh-CN.txt
-                 PRIVACY_POLICY.txt PRIVACY_POLICY.zh-CN.txt)
-        list(APPEND legal_files "${legal_dir}/${name}")
-        set_source_files_properties("${legal_dir}/${name}" PROPERTIES
-            GENERATED TRUE QT_RESOURCE_ALIAS "${name}")
-    endforeach()
     qt_add_resources(${target} "harken_hub_legal"
-        PREFIX "/Resources/legal" FILES ${legal_files})
-    add_dependencies(${target} harken_hub_legal_documents)
+        PREFIX "/Resources/legal"
+        BASE "${CMAKE_SOURCE_DIR}"
+        FILES "${CMAKE_SOURCE_DIR}/USER_TERMS.md" "${CMAKE_SOURCE_DIR}/USER_TERMS.zh-CN.md")
 endfunction()
 
 include(FetchContent)
@@ -207,7 +190,7 @@ else()
 endif()
 
 function(harken_configure_hub_library target)
-    target_include_directories(${target} PUBLIC Source Source/Integrations/Unity)
+    target_include_directories(${target} PUBLIC Source Source/Integrations/Unity "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(${target} PUBLIC
         Qt6::Widgets
         Qt6::Sql
@@ -292,7 +275,7 @@ harken_attach_version_resource(
     harken_hub
     "Harken Hub"
     "HarkenHub.exe"
-    hub)
+    VERSION "${HARKEN_HUB_VERSION}")
 
 if(APPLE)
     set_source_files_properties(Resources/icons/HubIcon.icns PROPERTIES
@@ -303,9 +286,8 @@ if(APPLE)
         MACOSX_BUNDLE_ICON_FILE "HubIcon.icns"
         MACOSX_BUNDLE_BUNDLE_NAME "HarkenHub"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.harkensound.harkenhub"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${HARKEN_BI_HUB_VERSION_QUAD}"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING
-            "${HARKEN_BI_HUB_VERSION_MAJOR}.${HARKEN_BI_HUB_VERSION_MINOR}.${HARKEN_BI_HUB_VERSION_PATCH}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${HARKEN_HUB_VERSION}.${HARKEN_BI_VERSION_BUILD}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${HARKEN_HUB_VERSION}"
         MACOSX_BUNDLE_COPYRIGHT "Copyright (C) ${HARKEN_BI_YEAR} XD."
         MACOSX_BUNDLE_INFO_PLIST
             "${CMAKE_CURRENT_SOURCE_DIR}/Resources/macOS/Info.plist.in"
@@ -349,7 +331,7 @@ if(WIN32)
         harken_hub_setup
         "Harken Hub Setup"
         "HarkenHubSetup.exe"
-        hub)
+        VERSION "${HARKEN_HUB_VERSION}")
 
     add_executable(harken_hub_legacy_launcher WIN32
         Source/App/LegacyLauncherMain.cpp "HarkenHub.rc")
@@ -362,15 +344,13 @@ if(WIN32)
         harken_hub_legacy_launcher
         "Harken Hub Compatibility Launcher"
         "HarkenStudioHub.exe"
-        hub)
+        VERSION "${HARKEN_HUB_VERSION}")
     add_dependencies(harken_hub harken_hub_legacy_launcher)
 
-    if(NOT TARGET harken_studio)
-        file(GENERATE
-            OUTPUT "$<TARGET_FILE_DIR:harken_hub>/qt.conf"
-            CONTENT "[Paths]\nPlugins = .\n"
-        )
-    endif()
+    file(GENERATE
+        OUTPUT "$<TARGET_FILE_DIR:harken_hub>/qt.conf"
+        CONTENT "[Paths]\nPlugins = .\n"
+    )
 
     find_program(WINDEPLOYQT_EXE windeployqt
         HINTS ${Qt6_DIR}/../../../bin
@@ -394,13 +374,13 @@ if(WIN32)
         Source/App/UpdateBridgeMain.cpp "HarkenHub.rc")
     set_target_properties(harken_hub_update_bridge PROPERTIES
         OUTPUT_NAME "HarkenHubUpdateBridge"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Updater")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Hub/Updater")
     target_link_libraries(harken_hub_update_bridge PRIVATE harken_hub_lib)
     harken_attach_version_resource(
         harken_hub_update_bridge
         "Harken Hub Update Bridge"
         "HarkenHubUpdateBridge.exe"
-        hub)
+        VERSION "${HARKEN_HUB_VERSION}")
 
     add_custom_command(TARGET harken_hub_update_bridge POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}

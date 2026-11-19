@@ -13,7 +13,6 @@ inline constexpr std::string_view BuildChannel     = "@HARKEN_BI_BUILD_CHANNEL@"
 inline constexpr std::string_view BuildChannelValues = "@HARKEN_BI_BUILD_CHANNEL_VALUES_TEXT@";
 inline constexpr std::string_view Version          = "@HARKEN_VERSION@";
 inline constexpr std::string_view VersionQuad      = "@HARKEN_BI_VERSION_QUAD@";
-inline constexpr std::string_view HubVersion       = "@HARKEN_HUB_VERSION@";
 
 inline constexpr std::string_view GitCommit        = "@HARKEN_BI_GIT_COMMIT@";
 inline constexpr std::string_view GitCommitShort   = "@HARKEN_BI_GIT_COMMIT_SHORT@";
