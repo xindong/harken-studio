@@ -271,11 +271,11 @@ internal static class Program
     }
 
     // Compiled public signatures supplement the executed file/byte host flow.
-    private static void SupportedCalls(Voice voice, VnObjectId id, HarkenVariableId typed, ActionFiring firing)
+    private static void SupportedCalls(Voice voice, VnObjectId id, ActionFiring firing)
     {
         firing.Seek(100, VnActionSeekMode.VN_ACTION_SEEK_ABSOLUTE, out ActionSeekTicket seek);
         seek.Query(out _); seek.Release();
-        Values.SetValue(id, 0.5f); Values.SetValue(typed, 0.5f);
+        Values.SetValue(id, 0.5f);
         Values.SetValue(id, id); Values.SetValue(id, "Label");
         voice.SetPan(0); voice.SetWidth(1); voice.SetPitch(1); voice.SetPosition(default);
         voice.SetOrientation(default); voice.SetSpatializationMix(1); voice.SetDistanceScale(1);

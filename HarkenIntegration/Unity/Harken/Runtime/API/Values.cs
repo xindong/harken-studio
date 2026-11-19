@@ -1,18 +1,9 @@
 using System;
-using System.Runtime.InteropServices;
 
 namespace Harken
 {
     public static class Values
     {
-        public static VnResult RegisterGeneratedCatalog(ulong executionFingerprint,
-            ulong catalogFingerprint, Type symbols)
-        {
-            if (symbols == null) return VnResult.VN_INVALID_ARG;
-            VariableCatalogGuard.Register(executionFingerprint, catalogFingerprint, symbols);
-            return VnResult.VN_OK;
-        }
-
         public static unsafe VnResult SetValue(string variableName, string projectId,
             float value, Emitter? emitter = null)
         {
@@ -53,26 +44,6 @@ namespace Harken
             if (!VariableGameplay.IsGameThread || (emitter.HasValue && !emitter.Value.IsValid))
                 return VnResult.VN_INVALID_ARG;
             return HarkenNative.Vn_SetValueByLabelId(variableId, labelId, emitter?.Handle ?? 0);
-        }
-
-        public static VnResult SetValue(HarkenVariableId variable, VnObjectId labelId,
-            Emitter? emitter = null)
-        {
-            if (!variable.IsAssigned || (emitter.HasValue && !emitter.Value.IsValid))
-                return VnResult.VN_INVALID_ARG;
-            VnResult guard = VariableCatalogGuard.QueryAndEvaluate();
-            return guard == VnResult.VN_OK
-                ? SetValue(variable.stableId, labelId, emitter) : guard;
-        }
-
-        public static VnResult SetValue(HarkenVariableId variable, string name,
-            Emitter? emitter = null)
-        {
-            if (!variable.IsAssigned || string.IsNullOrEmpty(name) || name.IndexOf('\0') >= 0 ||
-                (emitter.HasValue && !emitter.Value.IsValid)) return VnResult.VN_INVALID_ARG;
-            VnResult guard = VariableCatalogGuard.QueryAndEvaluate();
-            return guard == VnResult.VN_OK
-                ? SetValue(variable.stableId, name, emitter) : guard;
         }
 
         public static unsafe VnResult SetValue(VnObjectId variableId, string name,
@@ -139,62 +110,19 @@ namespace Harken
             return HarkenNative.Vn_SetValue(variableId, value);
         }
 
-        public static VnResult SetValue(HarkenVariableId variable, float value,
-            Emitter? emitter = null)
-        {
-            if (!variable.IsAssigned || (emitter.HasValue && !emitter.Value.IsValid))
-                return VnResult.VN_INVALID_ARG;
-            VnResult guard = VariableCatalogGuard.QueryAndEvaluate();
-            return guard == VnResult.VN_OK
-                ? SetValue(variable.stableId, value, emitter) : guard;
-        }
-
         [Obsolete("Use SetValue(variable, value, optional emitter).")]
         internal static VnResult SetValues(VnVariableWriteV1[] writes, int count,
             out VnVariableTicketV1 ticket)
             => DispatchRaw(0, false, writes, count, out ticket);
-
-        [Obsolete("Use SetValue(variable, value).")]
-        internal static VnResult SetValues(HarkenVariableId variable, float value)
-            => SetValue(variable, value);
 
         [Obsolete("Use SetValue with the Variable default value.")]
         internal static VnResult ResetValues(VnVariableWriteV1[] writes, int count,
             out VnVariableTicketV1 ticket)
             => DispatchRaw(0, true, writes, count, out ticket);
 
-        [Obsolete("Use SetValue with the Variable default value.")]
-        internal static unsafe VnResult ResetValues(HarkenVariableId variable)
-        {
-            if (!variable.IsAssigned) return VnResult.VN_INVALID_ARG;
-            VnResult guard = VariableCatalogGuard.QueryAndEvaluate();
-            if (guard != VnResult.VN_OK) return guard;
-            VnVariableWriteV1 write = default;
-            write.variableId = variable.stableId;
-            VnVariableBatchDescV1 desc = default;
-            desc.structSize = (uint)sizeof(VnVariableBatchDescV1);
-            desc.writeCount = 1;
-            desc.writes = (IntPtr)(&write);
-            VnVariableTicketV1 ticket = default;
-            return HarkenNative.Vn_ResetValues(in desc, ref ticket);
-        }
-
         public static VnResult QueryVariable(in VnVariableQueryDescV1 desc,
             ref VnVariableQueryResultV1 result)
             => HarkenNative.Vn_QueryVariable(in desc, ref result);
-
-        public static VnResult QueryVariable(HarkenVariableId variable,
-            out VnVariableQueryResultV1 result)
-        {
-            result = default;
-            result.structSize = (uint)Marshal.SizeOf<VnVariableQueryResultV1>();
-            VnResult guard = VariableCatalogGuard.QueryAndEvaluate();
-            if (guard != VnResult.VN_OK) return guard;
-            VnVariableQueryDescV1 desc = default;
-            desc.structSize = (uint)Marshal.SizeOf<VnVariableQueryDescV1>();
-            desc.variableId = variable.stableId;
-            return HarkenNative.Vn_QueryVariable(in desc, ref result);
-        }
 
         public static VnResult QueryVariableTicket(in VnVariableTicketQueryDescV1 desc,
             ref VnVariableTicketQueryResultV1 result)

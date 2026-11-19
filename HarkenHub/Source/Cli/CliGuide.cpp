@@ -44,16 +44,15 @@ QString writeGuides(QString* error)
         "Repair plans expose add/replace/remove/preserve actions under <code>changes</code>, including removal of unowned files. "
         "A <code>ReviewChanged</code> error requires a fresh command without <code>--confirm</code> and a new user review.</p>"
         "<p>Unity integration packages are identified by <code>package.json</code>. Installation success means the reviewed file operation completed; "
-        "<code>integrations verify</code> compares installed files with their installation record. Neither result validates Unity compilation, playback or target-platform support. "
-        "No native-runtime platform preflight is performed. Test those capabilities in Unity. "
-        "Files owned by the previous package and absent from the new source appear as removals, even if edited; require the user to review and back up needed edits before confirmation. "
-        "Unowned project files absent from the source are preserved.</p>"
+        "it does not validate Unity compilation, playback or target-platform support. No native-runtime platform preflight is performed. Test those capabilities in Unity. "
+        "Installing or updating replaces the whole installation directory with the selected package; files the user changed or added inside it are not kept, so ask the user to keep needed edits in version control. "
+        "The installation directory must be empty or already contain the Harken integration. Project settings created by the integration live outside it and are not touched.</p>"
         "<h2>Approval workflow</h2><p>For a command marked <code>reviewBeforeApply</code>, run without <code>--confirm</code> first. "
         "Present the returned plan to the user; submit its opaque token with the identical options only after approval. "
         "Do not automatically accept a replacement token: file or option changes invalidate prior approval. "
         "Document acceptance is a separate user decision: show the complete current documents before submitting a legal acceptance token.</p>"
-        "<p><code>--backup</code> must name a new backup directory. Repeat the same path with the confirmation token. "
-        "Restoration verifies the original official release; <code>--accept-conflicts true</code> separately permits backing up and replacing conflicting unowned paths. "
+        "<p>Hub keeps a temporary backup of the previous integration directory while installing or removing. If the operation fails or is interrupted, "
+        "<code>integrations restore</code> puts that version back; after a successful operation the backup is deleted. "
         "Mutating integration commands require the game editor to be closed. Machine-wide installation/repair/uninstall can display the operating system's administrator prompt.</p>");
     if (chinese) {
         QFile introduction(QStringLiteral(":/Resources/cli-ai-reference.zh_CN.html"));

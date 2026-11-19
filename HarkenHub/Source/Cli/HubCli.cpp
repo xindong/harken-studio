@@ -55,14 +55,10 @@ const Command commands[] = {
     {"integrations add-target", "engine path!", "Register a Unity project."},
     {"integrations link", "engine path! project! source confirm", "Associate an engine project with a Harken project."},
     {"integrations unlink", "id! confirm", "Remove an association without removing integration files."},
-    {"integrations locate", "engine path! location!", "Rediscover and save an installed integration location."},
-    {"integrations verify", "engine path! location", "Compare installed integration files with their installation record; does not test Unity or target-platform support."},
-    {"integrations install", "engine path! source! location preserve-unowned confirm", "Review or apply an integration installation/update."},
-    {"integrations remove", "engine path! location backup! confirm", "Review or remove managed integration files with a backup."},
-    {"integrations move", "engine path! location destination! backup! confirm", "Review or migrate an installed integration."},
-    {"integrations recover-move", "engine path! location destination! backup! confirm", "Review or recover an interrupted integration migration."},
-    {"integrations restore", "engine path! location source build backup! accept-conflicts confirm", "Restore the installed Unity integration from a verified official package."},
-    {"integrations recover-restore", "engine path! location confirm", "Recover an interrupted Unity restoration."},
+    {"integrations locate", "engine path! location", "Rediscover and save the installed integration location and version."},
+    {"integrations install", "engine path! source! location confirm", "Review or apply an integration installation/update; the installation directory is replaced as a whole."},
+    {"integrations remove", "engine path! location confirm", "Review or remove the installed integration directory."},
+    {"integrations restore", "engine path! confirm", "Restore the integration version that was installed before an unfinished install or removal."},
     {"settings get", "", "Read Hub settings and data locations."},
     {"settings set", "key! value!", "Set theme, language, project-location, auto-hub-update or auto-studio-download."},
     {"updates check", "product!", "Check the signed latest release for hub or studio."},
@@ -93,12 +89,8 @@ QJsonObject parameters(const Command& command)
         {"allow-expired", "Explicitly allow an expired signed manifest when installing a local Studio package."},
         {"engine", "Engine type supported by the public integration workflow."},
         {"project", "Harken .hsp project file to associate with the Unity project."},
-        {"source", "Unity integration source folder. For restoration, an optional verified official source."},
+        {"source", "Unity integration source folder."},
         {"id", "Association id returned by integrations list."},
-        {"preserve-unowned", "Permit preserving an unowned existing integration during replacement; inspect the returned plan first."},
-        {"backup", "New backup directory for removal, migration or restoration; repeat the identical path when confirming. Recovery uses the interrupted operation's backup."},
-        {"destination", "New integration path relative to the Unity project."},
-        {"accept-conflicts", "Permit backing up and replacing unowned paths that conflict with an official restoration."},
         {"key", "Setting name. theme: system/light/dark; language: system/en/zh_CN; project-location: directory; auto options: true/false."},
         {"value", "New value for the selected setting."},
         {"product", "hub or studio."},
@@ -110,7 +102,7 @@ QJsonObject parameters(const Command& command)
         const bool required = key.endsWith('!');
         if (required) key.chop(1);
         QJsonObject option{{"type", "string"}, {"required", required}, {"description", descriptions.value(key)}};
-        if (QStringList{"allow-expired", "preserve-unowned", "accept-conflicts"}.contains(key)) {
+        if (key == "allow-expired") {
             option["enum"] = QJsonArray{"true", "false"};
             option["default"] = "false";
         }

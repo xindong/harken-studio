@@ -41,7 +41,6 @@
     <Compile Include="CompanionVersionContract.cs" />
     <Compile Include="StreamSourceContract.cs" />
     <Content Include="Fixtures/StreamSource.stream" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Fixtures/VariableCatalog.json" Link="VariableCatalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -11,7 +11,7 @@ namespace Harken.Unity.Editor
 {
     public static class HarkenProjectSettingsProvider
     {
-        public const string AssetPath = "Assets/Harken/Resources/HarkenProjectSettings.asset";
+        public const string AssetPath = "Assets/Resources/HarkenProjectSettings.asset";
 
         [SettingsProvider]
         public static SettingsProvider CreateSettingsProvider()
@@ -210,10 +210,8 @@ namespace Harken.Unity.Editor
             if (settings != null) return settings;
             if (AssetDatabase.LoadMainAssetAtPath(AssetPath) != null || File.Exists(AssetPath))
                 throw new InvalidOperationException("The Harken settings path contains a different asset: " + AssetPath);
-            if (!AssetDatabase.IsValidFolder("Assets/Harken"))
-                AssetDatabase.CreateFolder("Assets", "Harken");
-            if (!AssetDatabase.IsValidFolder("Assets/Harken/Resources"))
-                AssetDatabase.CreateFolder("Assets/Harken", "Resources");
+            if (!AssetDatabase.IsValidFolder("Assets/Resources"))
+                AssetDatabase.CreateFolder("Assets", "Resources");
             settings = ScriptableObject.CreateInstance<HarkenProjectSettings>();
             AssetDatabase.CreateAsset(settings, AssetPath);
             AssetDatabase.SaveAssetIfDirty(settings);

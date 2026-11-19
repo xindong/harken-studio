@@ -26,7 +26,7 @@
 <tr><td>下载指定版本</td><td><code>versions download --build BUILD_ID</code></td></tr>
 <tr><td>登记本地 Studio 构建</td><td><code>versions add-local --path "D:\Build\HarkenStudio.exe"</code></td></tr>
 <tr><td>查看工程集成关系</td><td><code>integrations list</code></td></tr>
-<tr><td>校验已安装的 Unity 集成包</td><td><code>integrations verify --path "D:\UnityGame"</code></td></tr>
+<tr><td>查找已安装的 Unity 集成包</td><td><code>integrations locate --path "D:\UnityGame"</code></td></tr>
 <tr><td>切换主题</td><td><code>settings set --key theme --value dark</code>；浅色为 <code>light</code>，跟随系统为 <code>system</code></td></tr>
 <tr><td>检查更新</td><td><code>updates check --product hub</code>；检查 Studio 时改用 <code>studio</code></td></tr>
 <tr><td>读取最近活动日志</td><td><code>diagnostics logs --lines 100</code></td></tr>
@@ -41,9 +41,9 @@
 <h2>第四步：安装或更新 Unity 集成包</h2>
 <pre>.\HarkenHub.exe --cli integrations install --path "D:\UnityGame" --source "D:\Integration\Harken"</pre>
 <p>修改前请关闭 Unity。阅读返回的文件变更清单，再使用相同参数加上确认标识执行，安装或更新所选集成包。</p>
-<p>请使用可信发布来源的完整集成包。Hub 通过 <code>package.json</code> 识别包并检查文件操作；安装成功或 <code>integrations verify</code> 通过，不代表 Unity 编译、播放和目标平台测试已通过，这些仍需在 Unity 中验证。</p>
-<p>升级时，旧包管理、但新包已不再提供的文件会列入删除清单，包括旧版文档和示例。改过的受管文件也可能被删除，请在确认前备份需要保留的修改。由你自行添加、且不与新包冲突的非受管文件会保留。</p>
-<p>移除整个集成包可用 <code>integrations remove --path "D:\UnityGame" --backup "D:\Backups\Game-integration-01"</code>。备份位置必须是尚不存在的新目录，确认时保持同一路径。迁移、还原也采用先检查再确认的方式，完整参数见命令参考。</p>
+<p>请使用可信发布来源的完整集成包。Hub 通过 <code>package.json</code> 识别包并检查文件操作；安装成功不代表 Unity 编译、播放和目标平台测试已通过，这些仍需在 Unity 中验证。</p>
+<p>安装或升级会用所选集成包整体替换安装目录，你在目录内做的修改或新增的文件不会保留，请用版本控制保存需要的修改。集成的设置保存在安装目录之外，不受影响。</p>
+<p>移除集成包可用 <code>integrations remove --path "D:\UnityGame"</code>。安装或移除失败、中断后，可用 <code>integrations restore --path "D:\UnityGame"</code> 恢复之前安装的版本。两者都采用先检查再确认的方式。</p>
 <h2>更新、协议与出错后的处理</h2>
 <p>如果在 Studio 安装程序开始前关闭 CLI，恢复流程可能取消这次待执行的安装。请查看 <code>updates status</code>，再重新审阅并确认更新。</p>
 <p>工程命令成功但包含 <code>data.warnings</code> 时，工程改动已经保存，请阅读警告，不要重复移除。修改语言也会通知正在运行的后台服务。新建工程时，父目录必须已经存在。</p>

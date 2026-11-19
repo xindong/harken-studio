@@ -413,8 +413,16 @@ namespace HarkenCrossProduct
             Assert.That(Values.Resolve(inputs.variable, out VnObjectId variableId), Is.EqualTo(VnResult.VN_OK));
             Assert.That(Values.SetValue(inputs.variable, 0.5f), Is.EqualTo(VnResult.VN_OK));
             yield return null;
-            Assert.That(Values.QueryVariable(HarkenVariableId.FromGenerated(inputs.variable, variableId),
-                out VnVariableQueryResultV1 _), Is.EqualTo(VnResult.VN_OK));
+            var query = new VnVariableQueryDescV1
+            {
+                structSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<VnVariableQueryDescV1>(),
+                variableId = variableId
+            };
+            var result = new VnVariableQueryResultV1
+            {
+                structSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<VnVariableQueryResultV1>()
+            };
+            Assert.That(Values.QueryVariable(in query, ref result), Is.EqualTo(VnResult.VN_OK));
         }
     }
 }

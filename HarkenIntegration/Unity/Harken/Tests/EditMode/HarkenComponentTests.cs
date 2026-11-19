@@ -66,7 +66,6 @@ namespace Harken.Unity.Tests
             AssertScriptGuid("93afe7f51ef944b48c2b367b71da7449", typeof(HarkenPackSource));
             AssertScriptGuid("287bcdb1554757942a41316f40863746", typeof(HarkenPackStartup));
             AssertScriptGuid("a16a98bff1bb7844eb17fbb89499c665", typeof(HarkenVariable));
-            AssertScriptGuid("8d1c4e7a2b9f4c0ea5d16f3b7c8e9012", typeof(HarkenVariableReference));
             AssertScriptGuid("e2504957c026421881d6e090940d852c", typeof(HarkenProjectSettings));
         }
 
@@ -182,6 +181,51 @@ namespace Harken.Unity.Tests
             Assert.That(Actions.Resolve("Play_Exact_Name", projectId, out ActionResolved resolved),
                 Is.EqualTo(VnResult.VN_INVALID_ARG));
             Assert.That(resolved.ActionId.IsNull, Is.True);
+        }
+
+        [Test]
+        public void DestroyedEmitterComponentNeverBecomesGlobalWrite()
+        {
+            var owner = new GameObject("VariableEmitterScope");
+            owner.SetActive(false);
+            try
+            {
+                var component = owner.AddComponent<HarkenVariable>();
+                var emitter = owner.AddComponent<HarkenEmitter>();
+                typeof(HarkenVariable).GetField("emitter", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .SetValue(component, emitter);
+                Object.DestroyImmediate(emitter);
+                Assert.That(ReferenceEquals(emitter, null), Is.False);
+                Assert.That(emitter == null, Is.True);
+                Assert.That(component.Apply(), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+            }
+            finally
+            {
+                Object.DestroyImmediate(owner);
+            }
+        }
+
+        [Test]
+        public void LocalClearAndPluralSettersAreAbsentAndScalarSettersRemainPublic()
+        {
+            Assert.That(typeof(Emitter).GetMethod("ClearValue"), Is.Null);
+            Assert.That(typeof(Emitter).GetMethod("ClearValues"), Is.Null);
+            Assert.That(typeof(HarkenEmitter).GetMethod("ResetVariables"), Is.Null);
+            Assert.That(typeof(Emitter).GetMethod("SetValue"), Is.Null);
+            Assert.That(typeof(Emitter).GetMethod("SetValues"), Is.Null);
+            Assert.That(typeof(Values).GetMethod("SetValues"), Is.Null);
+            Assert.That(typeof(Values).GetMethod("ResetValues"), Is.Null);
+            MethodInfo scalar = typeof(Values).GetMethod("SetValue",
+                new[] { typeof(VnObjectId), typeof(float), typeof(Emitter?) });
+            Assert.That(scalar, Is.Not.Null);
+            Assert.That(scalar.GetParameters()[2].ParameterType, Is.EqualTo(typeof(Emitter?)));
+            Assert.That(scalar.GetParameters()[2].IsOptional, Is.True);
+            MethodInfo named = typeof(Values).GetMethod("SetValue",
+                new[] { typeof(string), typeof(string), typeof(float), typeof(Emitter?) });
+            Assert.That(named, Is.Not.Null);
+            Assert.That(named.GetParameters()[3].IsOptional, Is.True);
+            Assert.That(typeof(Actions).GetMethod("Post",
+                new[] { typeof(string), typeof(Emitter), typeof(ActionFiring).MakeByRefType() }), Is.Not.Null);
         }
     }
 }

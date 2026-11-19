@@ -14,7 +14,7 @@ namespace Harken.Unity.Editor
 
     public sealed class HarkenEditorProjectSettings : ScriptableObject
     {
-        public const string AssetPath = "Assets/Harken/Editor/HarkenEditorProjectSettings.asset";
+        public const string AssetPath = "Assets/Editor/HarkenEditorProjectSettings.asset";
 
         [SerializeField] private string audioProjectDirectory = string.Empty;
         [SerializeField] private HarkenNativeLibrary nativeLibrary = HarkenNativeLibrary.Automatic;
@@ -54,8 +54,7 @@ namespace Harken.Unity.Editor
         {
             HarkenEditorProjectSettings settings = Load();
             if (settings != null) return settings;
-            EnsureFolder("Assets/Harken");
-            EnsureFolder("Assets/Harken/Editor");
+            EnsureFolder("Assets/Editor");
             settings = CreateInstance<HarkenEditorProjectSettings>();
             AssetDatabase.CreateAsset(settings, AssetPath);
             AssetDatabase.SaveAssetIfDirty(settings);
