@@ -139,10 +139,16 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("background.hover"), QStringLiteral("Interaction"),
          QStringLiteral("Hover background"),
-         QStringLiteral("Hovered controls and selected node bodies."),
+         QStringLiteral("Solid menu bar highlights and selected node bodies."),
          {
              {QStringLiteral("background.hover"), std::nullopt},
              {QStringLiteral("nodeGraph.node.bodySelected"), std::nullopt},
+         }},
+        {QStringLiteral("background.hoverOverlay"), QStringLiteral("Interaction"),
+         QStringLiteral("Hover overlay"),
+         QStringLiteral("Tint over buttons, toolbar selectors, section headers, tabs and rows on hover. Alpha controls the strength."),
+         {
+             {QStringLiteral("background.hoverOverlay"), std::nullopt},
          }},
         {QStringLiteral("background.selected"), QStringLiteral("Interaction"),
          QStringLiteral("Selected background"),

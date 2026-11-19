@@ -211,6 +211,7 @@ public:
             bucket->setData(0, kRoleFolderPath, folder);
             bucket->setFlags(bucket->flags() & ~Qt::ItemIsSelectable);
             tree->addTopLevelItem(bucket);
+            bucket->setFirstColumnSpanned(true);
             buckets[folder] = bucket;
             return bucket;
         };

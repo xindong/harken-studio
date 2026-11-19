@@ -91,7 +91,7 @@
 #include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
-#include "Widgets/Common/MenuComboBox.h"
+#include "Widgets/Common/ToolBarComboBox.h"
 #include "Monitor/MonitorAdapter.h"
 #include "Monitor/MonitorCaptureControlHost.h"
 #include "Monitor/MonitorHostContext.h"
@@ -1329,9 +1329,8 @@ void MainWindow::setupMainToolBar()
     connect(playbackControls_, &PlaybackControls::stopClicked, this, &MainWindow::onStopPressed);
     connect(playbackControls_, &PlaybackControls::resetClicked, this, &MainWindow::onResetPressed);
 
-    auto* layoutSelector = new MenuComboBox(toolbar);
+    auto* layoutSelector = new ToolBarMenuComboBox(toolbar);
     layoutSelector->setObjectName(QStringLiteral("layoutSelector"));
-    layoutSelector->setMinimumContentsLength(12);
     layoutSelector->setAccessibleName(tr("Layout"));
     toolbar->addTrailingWidget(layoutSelector);
     auto* layoutsMenu = layoutSelector->menu();

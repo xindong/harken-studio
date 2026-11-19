@@ -49,7 +49,7 @@
 | `sectionGap` | 8 | 同一面板内区块之间 |
 | `controlGap` | 4 | 同一行内控件之间、控件内部组成部分之间、表单行之间 |
 | `tightGap` | 2 | 图标组、工具按钮组等紧凑排列 |
-| `fieldHeight` | 20（控件高度档位） | 下拉框、输入框、数值框、按钮、行内重命名编辑框等基本控件一律等高；字段内的下拉箭头使用小图标 |
+| `fieldHeight` | 20（控件高度档位） | 普通下拉框、输入框、数值框、按钮和行内重命名编辑框等基本控件等高。字段内的下拉箭头使用小图标 |
 | `rowInset` | 2 | 行内控件上下留白 |
 | `rowHeight` | 24 = 字段高 + 上下留白 | 树、列表、表格、表头的行；字体较高时取字体高加上下留白 |
 | `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
@@ -57,9 +57,13 @@
 
 Explorer 的 Assets / Sources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
-主窗口、浮动窗口与对话框标题栏共用 `TitleBarBase`，由它负责背景绘制、标题栏与窗口按钮尺寸，以及主题、字体、屏幕和最大化状态变化。窗口按钮基于 `QAbstractButton`，尺寸只由标题栏根据主题壳层尺寸和内容高度设置，不继承表单 `QPushButton` 的字段高度限制；QSS 只声明其视觉状态。各类标题栏仅保留菜单、项目名、对话框名称等内容差异。
+主窗口、浮动窗口与对话框标题栏共用 `TitleBarBase`，由它负责背景绘制、标题栏与窗口按钮尺寸，以及主题、字体、屏幕和最大化状态变化。窗口按钮基于 `QAbstractButton`，尺寸只由标题栏根据主题壳层尺寸和内容高度设置，不继承表单 `QPushButton` 的字段高度限制；QSS 只声明其视觉状态。各类标题栏按菜单、项目名或对话框名称计算所需的内容高度。
 
-`ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距；主工具栏高度为行高加上下行内留白（32），内容容器固定为一行高度，按钮上下各 4px 对称，HarkenStyle 不再给 `QToolBar` 追加条目边距和框架宽度。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
+`ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距。主窗口菜单栏的高度基准为 `chrome.mainWindowMenuBarHeight`，默认 30 个逻辑像素。主窗口工具栏使用 `chrome.mainWindowToolBarHeight`，默认 36 个逻辑像素。内容行在工具栏内垂直居中，容器高度包含该行及上下紧凑间距。标题文字或菜单项超过基准时，菜单栏按内容增高。HarkenStyle 将 `QToolBar` 的条目边距和框架宽度设为 0。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
+
+主窗口工具栏的平台、语言和布局选择器共用 `ToolBarComboBox`。选择器与 Remote、Capture、ALL 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote 和 Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。ALL 按钮的宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台和语言弹出选项列表，布局弹出操作菜单。
+
+工具栏中央按阅读方向依次排列 Play、Stop、Reset，三者共用普通按钮底色 `background.tertiary` 和 24 个逻辑像素的工具栏控件高度。`background.hoverOverlay` 只叠加在指针所在的可用按钮上，播放中的 Play 保留成功色提示。Play 和 Reset 的外侧使用 `radius.medium` 圆角，默认 6 个逻辑像素。Stop 为直角，两侧各留 1 个逻辑像素的空隙，露出工具栏背景。
 
 组件层字段（如 `timeAxis.labelPadding`、`table.footerHeight`）保留各自语义名称，值由档位推导，不再是主题键。跨组件语义相同的字段已合并：分节标题高度、Inspector 行高和表头高度统一使用 `controlHeight`；表格按钮与 Inspector 槽位高度使用紧凑控件高度；复选框尺寸使用小图标；对象图标与导航 chevron 合并为 `iconExtent`；弹出项文字边距与控件文字边距合并；Inspector 与表单的列比例合并为 `form` 的 3 : 7；参数与通用 Slider 槽厚合并；Timeline 与时间轴的刻度长度（4 / 8）和标记手柄带高合并。Qt-ADS 不再有独立尺寸结构，适配器直接读取档位，Dock 分隔条与通用分隔条同宽。
 
@@ -129,7 +133,8 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 | 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
 | 强调底上的文字 | `accent.text` | 高亮菜单和选择背景上的文字，不能直接用普通字段文字替代 |
 | 基础表面 | `background.primary/secondary/tertiary` | 保留既有表面层级，节点普通主体使用 tertiary |
-| 交互表面 | `background.hover/selected` | 悬停与选中；节点选中主体沿用 hover 的既有视觉 |
+| 悬浮叠加 | `background.hoverOverlay` | Explorer 的 Assets / Sources 标题与树行、普通按钮、工具栏选择器、播放按钮和标签页共用。Alpha 为零时完整显示原底色 |
+| 交互表面 | `background.hover/selected` | 菜单栏活动项与节点选中主体使用 hover 底色，列表行和标签的选中状态使用 selected 底色 |
 | 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Sources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
 | 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
@@ -258,6 +263,8 @@ Studio Default 提供 71 个可编辑源颜色角色，共 11 类。每项包含
 
 Theme Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列默认使用 48 个逻辑像素宽的色块，下方等宽的 4 个逻辑像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。色块外框与内部横线使用次要边界 `border.secondary`，两列均随实时预览刷新。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。选中项在下方显示用途说明。双击表格行打开 `ColorEditorDialog`：上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，底部通过公有 `LinearSliderPresenter` 提供共用的 A 透明度滑条与数值。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
 
+吸管右侧的 HEX 输入框与选色区域、通道数值和屏幕拾色同步。它支持输入或粘贴 `#RRGGBB`（不透明）和 `#AARRGGBB`（前两位为透明度），输入时可省略 `#`。完整色值会实时预览，未写完或无效的输入在结束编辑时恢复为最近的有效色值。
+
 底部右侧并排保留 `Reset Selected` 和 `Reset All`，分别恢复当前主题所选色卡中的选中角色和全部颜色覆盖。默认值来自该色卡，恢复操作立即保存，其他主题和色卡的修改保持不变。
 
 选色器的 SV 二维颜色区域与 H 色相条都是输入控件，两者外框统一使用次要边界 `border.secondary`，每次绘制读取当前主题颜色，并随主题统一发布实时重绘。
@@ -321,7 +328,8 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 | `border.accent`、`slider.fill`、`knob.arc`、`shell.menuPressed` | `accent.primary` |
 | `panel.border` | `border.primary` |
 | `knob.face`、`shell.buttonPressed` | `background.tertiary` |
-| `shell.menuHover`、`shell.buttonHover` | `background.hover` |
+| `shell.menuHover` | `background.hover` |
+| `shell.buttonHover` | `background.hoverOverlay` |
 | `shell.menuPressedText` | `accent.text` |
 
 以上 10 个 UI 字段连同独立配置键均已删除，保留的消费者直接使用共同来源。表中的旋钮绑定是历史收束记录，旋钮实现与剩余的指示线职责已在 2026-11-01 清理。窗口关闭按钮、标题栏文字等仍保留其视觉职责。
@@ -332,7 +340,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
 
-**状态层。** 业务侧不再用 `lighter()` / `darker()` 生成悬停、按下和高亮色，统一调用 `ThemeColors::stateColor`：职责色向首要文字色分别混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source Editor 手柄）的悬停与选中使用 `Highlight`：保持色相，按首要文字相对底色的明暗方向调亮或调暗 35%，Dark 下与原 `lighter(130)` 观感一致，Light 下变深而不是变浅。比例属于交互规范，作为代码常量集中在 `ThemeSnapshot.h`。Dark 下状态变亮，Light 下变暗，两张色卡都可辨认。未选中的 Mixing 曲线改为源 Alpha 乘 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255），悬停叠加使用首要文字 8%。业务侧按比例乘透明度的做法保持不变。
+**状态层。** 普通交互表面的悬浮叠加由 `background.hoverOverlay` 单独配置 RGB 和 Alpha。Dark 默认 `#14E0E0E0`，Light 默认 `#14202B38`，格式为 `#AARRGGBB`。带状态含义的颜色通过 `ThemeColors::stateColor` 向首要文字色混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source Editor 手柄）的悬停与选中使用 `Highlight`，按首要文字相对底色的明暗方向调亮或调暗 35%。未选中的 Mixing 曲线使用源 Alpha 的 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255）。
 
 **QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮改用 `@success@ / @warning@ / @error@` 及其 `Hover` 状态层令牌；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
 

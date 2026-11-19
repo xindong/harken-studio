@@ -6,12 +6,20 @@ class QMenu;
 
 namespace VNX {
 
-class MenuComboBox final : public QComboBox
+class ToolBarComboBox : public QComboBox
 {
     Q_OBJECT
 
 public:
-    explicit MenuComboBox(QWidget* parent = nullptr);
+    explicit ToolBarComboBox(QWidget* parent = nullptr);
+};
+
+class ToolBarMenuComboBox final : public ToolBarComboBox
+{
+    Q_OBJECT
+
+public:
+    explicit ToolBarMenuComboBox(QWidget* parent = nullptr);
 
     QMenu* menu() const { return menu_; }
     void setDisplayText(const QString& text);

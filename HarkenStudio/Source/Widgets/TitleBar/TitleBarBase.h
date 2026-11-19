@@ -10,6 +10,8 @@ class QScreen;
 
 namespace VNX {
 
+struct ThemeMetrics;
+
 class TitleBarBase : public QWidget {
     Q_OBJECT
 public:
@@ -26,7 +28,7 @@ protected:
 
     void requestChromeMetricsSync();
     void syncChromeMetrics();
-    virtual int syncContentMetrics();
+    virtual int syncContentMetrics(const ThemeMetrics& metrics);
     virtual void updateContentGeometry();
 
     QHBoxLayout* layout_;

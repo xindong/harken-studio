@@ -130,16 +130,6 @@ protected:
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
                  const QModelIndex& index) const override
     {
-        if (index.data(TreeRowStyle::kBucketRole).toBool())
-        {
-            int depth = 0;
-            for (QModelIndex p = index.parent(); p.isValid(); p = p.parent())
-                ++depth;
-            QStyleOptionViewItem opt = option;
-            opt.rect.setLeft(opt.rect.left() + depth * indentation());
-            TreeRowStyle::paintBucketRow(painter, opt, index, isExpanded(index));
-            return;
-        }
         QTreeWidget::drawRow(painter, option, index);
         if (selectionModel()->isSelected(index))
             TreeRowStyle::paintRowAccent(painter, option.rect);
@@ -490,6 +480,7 @@ void SelectorWindow::rebuildLocations(bool preserveState)
         root->setData(0, kRoleSelectable, true);
         root->setData(0, kRoleSearchPath, bucket);
         tree_->addTopLevelItem(root);
+        root->setFirstColumnSpanned(true);
         locationFolders_.insert(root, nullptr);
         const auto addFolder = [&](auto&& self, const PhysicalFolder* folder, QTreeWidgetItem* parent) -> void {
             auto* row = TreeRowStyle::makeFolderRow(folder->name);

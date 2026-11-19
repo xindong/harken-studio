@@ -29,12 +29,13 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.bgPrimary = QColor("#0D111A");
     colors.bgSecondary = QColor("#171C28");
     colors.bgTertiary = QColor("#222836");
-    colors.bgHover = QColor("#2A3140");
+    colors.bgHover = QColor("#212838");
+    colors.hoverOverlay = QColor("#14E0E0E0");
     colors.bgSelected = QColor("#143C48");
     colors.bgDropTarget = QColor("#2400F0FF");
 
-    colors.borderPrimary = QColor("#313848");
-    colors.borderSecondary = QColor("#3D4554");
+    colors.borderPrimary = QColor("#222A3D");
+    colors.borderSecondary = QColor("#2F3644");
     colors.borderTick = QColor("#272E3C");
 
     colors.textPrimary = QColor("#E0E0E0");
@@ -299,10 +300,11 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.bgSecondary = QColor("#FFFFFF");
     colors.bgTertiary = QColor("#E8EDF3");
     colors.bgHover = QColor("#DCE5EE");
+    colors.hoverOverlay = QColor("#14202B38");
     colors.bgSelected = QColor("#D0E8EE");
     colors.bgDropTarget = QColor("#24007B8B");
-    colors.borderPrimary = QColor("#BCC7D3");
-    colors.borderSecondary = QColor("#8D9EAF");
+    colors.borderPrimary = QColor("#B8C4D4");
+    colors.borderSecondary = QColor("#C8D2DF");
     colors.borderTick = QColor("#B9C5D1");
     colors.textPrimary = QColor("#202B38");
     colors.textSecondary = QColor("#506174");

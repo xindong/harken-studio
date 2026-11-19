@@ -1,4 +1,6 @@
-#include "MenuComboBox.h"
+#include "ToolBarComboBox.h"
+
+#include "Core/QtControlSkin.h"
 
 #include <QKeyEvent>
 #include <QMenu>
@@ -7,12 +9,19 @@
 
 namespace VNX {
 
-MenuComboBox::MenuComboBox(QWidget* parent)
+ToolBarComboBox::ToolBarComboBox(QWidget* parent)
     : QComboBox(parent)
+{
+    QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("toolBar"));
+    setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    setMinimumContentsLength(12);
+    setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+}
+
+ToolBarMenuComboBox::ToolBarMenuComboBox(QWidget* parent)
+    : ToolBarComboBox(parent)
     , menu_(new QMenu(this))
 {
-    setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     addItem(QString());
     connect(menu_, &QMenu::aboutToHide, this, [this] {
         QComboBox::hidePopup();
@@ -20,13 +29,13 @@ MenuComboBox::MenuComboBox(QWidget* parent)
     });
 }
 
-void MenuComboBox::setDisplayText(const QString& text)
+void ToolBarMenuComboBox::setDisplayText(const QString& text)
 {
     setItemText(0, text);
     setAccessibleDescription(text);
 }
 
-QSize MenuComboBox::minimumSizeHint() const
+QSize ToolBarMenuComboBox::minimumSizeHint() const
 {
     QStyleOptionComboBox option;
     initStyleOption(&option);
@@ -34,7 +43,7 @@ QSize MenuComboBox::minimumSizeHint() const
         QSize(0, fontMetrics().height()), this);
 }
 
-void MenuComboBox::showPopup()
+void ToolBarMenuComboBox::showPopup()
 {
     menu_->setMinimumWidth(width());
     menu_->popup(mapToGlobal(QPoint(0, height())));
@@ -47,13 +56,13 @@ void MenuComboBox::showPopup()
     }
 }
 
-void MenuComboBox::hidePopup()
+void ToolBarMenuComboBox::hidePopup()
 {
     menu_->hide();
     QComboBox::hidePopup();
 }
 
-void MenuComboBox::paintEvent(QPaintEvent*)
+void ToolBarMenuComboBox::paintEvent(QPaintEvent*)
 {
     QStylePainter painter(this);
     QStyleOptionComboBox option;
@@ -67,7 +76,7 @@ void MenuComboBox::paintEvent(QPaintEvent*)
     painter.drawControl(QStyle::CE_ComboBoxLabel, option);
 }
 
-void MenuComboBox::keyPressEvent(QKeyEvent* event)
+void ToolBarMenuComboBox::keyPressEvent(QKeyEvent* event)
 {
     switch (event->key()) {
     case Qt::Key_Space:
@@ -84,7 +93,7 @@ void MenuComboBox::keyPressEvent(QKeyEvent* event)
     }
 }
 
-void MenuComboBox::wheelEvent(QWheelEvent* event)
+void ToolBarMenuComboBox::wheelEvent(QWheelEvent* event)
 {
     event->ignore();
 }

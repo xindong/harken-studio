@@ -14,6 +14,7 @@
 #include <QGridLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
@@ -26,6 +27,18 @@
 #include <functional>
 
 namespace VNX {
+
+namespace {
+
+QColor parseHexColor(QString text)
+{
+    text = text.trimmed();
+    if (!text.startsWith(u'#')) text.prepend(u'#');
+    if (text.size() != 7 && text.size() != 9) return {};
+    return QColor::fromString(text);
+}
+
+}
 
 class ColorPicker final : public QWidget
 {
@@ -287,14 +300,26 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     connect(screenPickTimer_, &QTimer::timeout, this, [this] {
         if (!updateScreenColor()) finishScreenPick(false);
     });
+    hexEdit_ = new QLineEdit(this);
+    hexEdit_->setObjectName(QStringLiteral("colorHex"));
+    hexEdit_->setAccessibleName(tr("Hex color"));
+    hexEdit_->setPlaceholderText(QStringLiteral("#RRGGBB"));
+    hexEdit_->setToolTip(tr("Hex color (#RRGGBB or #AARRGGBB)"));
+    connect(hexEdit_, &QLineEdit::textEdited, this, [this](const QString& text) {
+        setCurrentColor(parseHexColor(text));
+    });
+    connect(hexEdit_, &QLineEdit::editingFinished, this, [this] {
+        hexEdit_->setText(hexText(color_));
+    });
     setupStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     auto* actions = new QHBoxLayout();
     actions->addWidget(screenPick);
+    actions->addWidget(hexEdit_);
     actions->addStretch();
     actions->addWidget(buttonBox());
     layout->addLayout(actions);
     setDialogTabOrder({picker_, channels_[0], channels_[1], channels_[2], channels_[3],
-                       channels_[4], channels_[5], alpha->primaryEditor(), alpha->valueEditor(), screenPick});
+                       channels_[4], channels_[5], alpha->primaryEditor(), alpha->valueEditor(), screenPick, hexEdit_});
     setCurrentColor(color);
 }
 
@@ -372,6 +397,11 @@ void ColorEditorDialog::finishScreenPick(bool accept)
     }
 }
 
+QString ColorEditorDialog::hexText(const QColor& color)
+{
+    return color.name(color.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb).toUpper();
+}
+
 void ColorEditorDialog::setCurrentColor(const QColor& color)
 {
     if (!color.isValid()) return;
@@ -398,6 +428,7 @@ void ColorEditorDialog::publishColor(const QColor& color)
         channels_[i]->setValue(values[i]);
     }
     if (alpha_->value() != color.alpha()) alpha_->setValue(color.alpha());
+    if (parseHexColor(hexEdit_->text()) != color) hexEdit_->setText(hexText(color));
     picker_->setHsv(hue_, saturation_, value_);
     if (changed) emit currentColorChanged(color_);
 }

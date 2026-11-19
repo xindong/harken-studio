@@ -324,6 +324,12 @@ int QtControlSkin::fieldHeight() const
                      QFontMetrics(font).height() + metrics().borderWidth * 2});
 }
 
+int QtControlSkin::toolBarControlHeight() const
+{
+    const auto& layout = metrics().layout;
+    return std::max({layout.fieldHeight + layout.controlGap, fieldHeight(), metrics().iconExtent});
+}
+
 QMargins QtControlSkin::fieldTextMargins() const
 {
     const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
@@ -493,6 +499,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@bgSecondary@"), color(colors().bgSecondary));
     replace(QStringLiteral("@bgTertiary@"), color(colors().bgTertiary));
     replace(QStringLiteral("@bgHover@"), color(colors().bgHover));
+    replace(QStringLiteral("@hoverOverlay@"), color(colors().hoverOverlay));
     replace(QStringLiteral("@bgSelected@"), color(colors().bgSelected));
     replace(QStringLiteral("@bgDropTarget@"), color(colors().bgDropTarget));
     replace(QStringLiteral("@panelBackground@"), color(colors().panelBackground));
@@ -504,8 +511,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@textTitle@"), color(colors().textTitle));
     replace(QStringLiteral("@textDisabled@"), color(colors().textDisabled));
     replace(QStringLiteral("@sliderTrack@"), color(colors().sliderTrack));
-    replace(QStringLiteral("@hoverOverlay@"),
-            rgba(colors().textPrimary, qRound(255 * 0.08)));
     replace(QStringLiteral("@success@"), color(colors().success));
     replace(QStringLiteral("@successHover@"), hover(colors().success));
     replace(QStringLiteral("@successSoft@"), soft(colors().success));
@@ -526,7 +531,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@alternateBase@"), color(palette.alternateBase));
     replace(QStringLiteral("@button@"), color(palette.button));
     replace(QStringLiteral("@brightText@"), color(palette.brightText));
-    replace(QStringLiteral("@disabledHighlight@"), color(palette.disabledHighlight));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
     replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));
@@ -560,6 +564,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@radiusLarge@"), QString::number(metrics().radiusLarge));
     replace(QStringLiteral("@popupPaddingY@"), QString::number(metrics().popup.rowPadding));
     replace(QStringLiteral("@fieldHeight@"), QString::number(fieldHeight()));
+    replace(QStringLiteral("@toolBarControlHeight@"), QString::number(toolBarControlHeight()));
     const auto& layout = metrics().layout;
     replace(QStringLiteral("@panelPadding@"), QString::number(layout.panelPadding));
     replace(QStringLiteral("@sectionGap@"), QString::number(layout.sectionGap));
@@ -616,7 +621,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
     const QString font = FontManager::instance().styleSheet(snapshot_, FontRole::Body, FontEmphasis::Strong);
-    QString bg, border, hoverBg;
+    QString bg, border;
     int verticalBorder = 0;
     if (level <= 0)
     {
@@ -630,7 +635,6 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             border += QStringLiteral(" border-top: %1px solid %2;").arg(metrics().borderWidth).arg(borderPrimary());
             verticalBorder += metrics().borderWidth;
         }
-        hoverBg  = bgTertiary();
     }
     else if (level == 1)
     {
@@ -640,14 +644,12 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         verticalBorder = metrics().borderWidth;
         if (custom)
             border += QString(" border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor);
-        hoverBg  = bgTertiary();
     }
     else
     {
         bg       = custom ? rgba(indicator, 16) : QStringLiteral("transparent");
         border   = custom ? QString("border: none; border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor)
                           : QStringLiteral("border: none;");
-        hoverBg  = QStringLiteral("transparent");
     }
     const QString pad = QString("padding: 0px %1px 0px 0px;").arg(metrics().layout.panelPadding);
     const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
@@ -668,11 +670,10 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             max-height: %5px;
         }
         QToolButton:hover {
-            background-color: %6;
-            color: %7;
+            background-overlay: %6;
         }
         QToolButton:disabled {
-            color: %8;
+            color: %7;
         }
     )")
         .arg(bg)
@@ -680,8 +681,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         .arg(font + pad)
         .arg(titleColor)
         .arg(contentHeight)
-        .arg(hoverBg)
-        .arg(titleColor)
+        .arg(colors().hoverOverlay.name(QColor::HexArgb))
         .arg(textDisabled());
 }
 
