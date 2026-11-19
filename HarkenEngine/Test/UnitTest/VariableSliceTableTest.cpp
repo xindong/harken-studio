@@ -77,13 +77,33 @@ void PublishAndApply(harken::VariableSliceTable& table,
                             ApplyCommand));
 }
 
+TEST(VariableSliceTable, WithdrawalGrowthKeepsBackingForAcceptedWrites) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    ASSERT_TRUE(table.PrepareWriteBacking(128));
+    harken::VariableSliceRef meter;
+    ASSERT_TRUE(table.Reserve(1, 1, 0, 64, 1, 1, &meter, true));
+    table.SetRowCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.PrepareWriteBacking(8192));
+    std::array<harken::VariableSliceRef, 128> writes{};
+    for (unsigned i = 0; i < writes.size(); ++i)
+        ASSERT_TRUE(ReserveTargets(table, 0, i + 1u, &writes[i]));
+    EXPECT_EQ(harken::VariableSliceState::Prepared, table.State(meter));
+    for (auto write : writes) ASSERT_TRUE(table.AbandonPrepared(write));
+    ASSERT_TRUE(table.AbandonPrepared(meter));
+    EXPECT_EQ(0u, table.UsedRowCount());
+    EXPECT_EQ(0u, table.UsedPayloadCount());
+    table.SetRowCommitPageLimitForTests(SIZE_MAX);
+    EXPECT_TRUE(table.PrepareWriteBacking(8192));
+}
+
 TEST(VariableSliceTable, ReservationProbeSeparatesProofPayloadAndFragmentedSpan) {
     using Status = harken::VariableSliceTable::ReservationStatus;
     harken::VariableSliceTable table;
     ASSERT_TRUE(table.Reset(8, 4, 8, 8));
     EXPECT_EQ(0u, table.RowStorageBytes());
     EXPECT_EQ(0u, table.RowCommittedBytes());
-    EXPECT_GT(table.RowReservedBytes(), 0u);
+    EXPECT_EQ(0u, table.RowReservedBytes());
     table.SetRowCommitPageLimitForTests(0);
     harken::VariableSliceRef refused{};
     EXPECT_FALSE(ReserveTargets(table, 2, 1, &refused));

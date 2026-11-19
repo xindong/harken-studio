@@ -62,7 +62,6 @@ MonoBehaviour:
   unityAudioCaptured: 0
   previousUnityAudioPause: 0
   previousUnityAudioVolume: 0
-  maxEmitters: 0
   emitterVariableSlots: 0
   ready:
     m_PersistentCalls:

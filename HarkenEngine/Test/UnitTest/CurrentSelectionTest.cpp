@@ -151,7 +151,7 @@ TEST(CurrentSelectionMemory, RestartIdentityOffsetPreservesRandomSequencesAndLif
             EXPECT_FALSE(restarted.Snapshot(beforeKey).found);
             EXPECT_EQ(incarnation, restarted.SeedEmitterGeneration(0, incarnation + 83));
             EXPECT_EQ(incarnation + 1, restarted.SeedEmitterGeneration(0, incarnation + 84));
-            EXPECT_EQ(1u, restarted.SeedEmitterGeneration(config.maxEmitters - 1, 1));
+            EXPECT_EQ(1u, restarted.SeedEmitterGeneration(128u, 1));
             EXPECT_EQ(0u, restarted.SeedEmitterGeneration(UINT32_MAX, 0));
         }
     }

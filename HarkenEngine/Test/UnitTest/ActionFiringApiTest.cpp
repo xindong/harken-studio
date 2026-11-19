@@ -18056,23 +18056,7 @@ TEST(ActionFiringApi,
               engine->timelinePlanner.PostPlay(laterProgram, post).status);
     ASSERT_EQ(3u, engine->timelineDeferred.Count());
 
-    const harken::VariableCallObservation observed =
-        harken::ObserveVariableCallAt(
-            engine->variables.CurrentWorldGeneration(),
-            engine->variables.CurrentTransportEpoch(),
-            engine->config.blockFrames,
-            engine->timelinePool.WindowStartFrame(),
-            engine->timelinePool.PublishCutoffFrame());
-    std::vector<harken::PreparedVariableWriteToken> occupied(
-        engine->variables.PendingCapacity());
-    for (std::uint32_t index = 0; index < occupied.size(); ++index) {
-        ASSERT_EQ(VN_OK,
-                  engine->variables
-                      .PrepareGlobalWrite(image.variables[0].variableId,
-                                          0.25f, observed, index,
-                                          &occupied[index])
-                      .result);
-    }
+    engine->variables.SetRevisionCommitPageLimitForTests(0);
 
     bool windowContainsSameDue = false;
     for (std::uint32_t step = 0; step < 128; ++step) {
@@ -18113,9 +18097,7 @@ TEST(ActionFiringApi,
         EXPECT_EQ(harken::DeferredIntentRefusal::None,
                   engine->timelineDeferred.Retry(leftover[index].token, 0));
     }
-    for (auto& prepared : occupied) {
-        engine->variables.CancelPreparedWrite(&prepared);
-    }
+    engine->variables.SetRevisionCommitPageLimitForTests(SIZE_MAX);
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firing));
 }
 
@@ -64725,33 +64707,14 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    const harken::VariableCallObservation observed =
-        harken::ObserveVariableCallAt(
-            engine->variables.CurrentWorldGeneration(),
-            engine->variables.CurrentTransportEpoch(),
-            engine->config.blockFrames,
-            engine->timelinePool.WindowStartFrame(),
-            engine->timelinePool.PublishCutoffFrame());
-    std::vector<harken::PreparedVariableWriteToken> occupied(
-        engine->variables.PendingCapacity());
-    for (std::uint32_t index = 0; index < occupied.size(); ++index) {
-        ASSERT_EQ(VN_OK,
-                  engine->variables
-                      .PrepareGlobalWrite(image.variables[0].variableId,
-                                          0.25f, observed, index,
-                                          &occupied[index])
-                      .result);
-    }
+    engine->variables.SetRevisionCommitPageLimitForTests(0);
     ASSERT_EQ(0u, engine->variables.PendingCount());
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(41), 0, VN_VARIABLE_TRANSACTION_EXHAUSTED, before);
+        *engine, harkentest::ObjectId(41), 0, VN_OUT_OF_MEMORY, before);
 
-    for (auto& prepared : occupied) {
-        engine->variables.CancelPreparedWrite(&prepared);
-        EXPECT_FALSE(prepared.Valid());
-    }
+    engine->variables.SetRevisionCommitPageLimitForTests(SIZE_MAX);
     VnPostActionDesc desc = ValidPostDesc();
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));

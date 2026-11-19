@@ -114,7 +114,7 @@ bool SelectionMemoryTableV1::ValidKey(
         return key.emitterSlot == UINT32_MAX && key.emitterGeneration == 0;
     }
     return key.memoryScope == MemoryScopeV1::Emitter &&
-           key.emitterSlot < config_.maxEmitters &&
+           key.emitterSlot != UINT32_MAX &&
            key.emitterGeneration != 0;
 }
 
@@ -1641,7 +1641,7 @@ bool SelectionMemoryTableV1::ValidBatchIdentity(const SelectionPendingBatchIdent
         identity.eventCount != 0 && identity.eventCount - 1u <= UINT32_MAX - identity.eventBegin &&
         (!identity.operationIndexed || identity.eventCount == 1u) &&
         ((identity.emitterSlot == UINT32_MAX && identity.emitterGeneration == 0) ||
-         (identity.emitterSlot < config_.maxEmitters && identity.emitterGeneration != 0));
+         (identity.emitterSlot != UINT32_MAX && identity.emitterGeneration != 0));
 }
 
 bool SelectionMemoryTableV1::MatchesBatchIdentity(const SelectionPendingBatchIdentityV1& identity,

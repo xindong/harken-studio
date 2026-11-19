@@ -596,13 +596,12 @@ void MixerLoop::ApplyConsumedCurrentSlices(std::uint64_t blockIndex,
 
 void MixerLoop::InitializeVariableSliceConsumptionStorage() {
     assert(!memguard::IsAudioTagged() && m_pendingSliceCount == 0 && m_stagedCurrentSliceCount == 0);
-    const auto capacity = m_variableSlices == nullptr ? 0u : m_variableSlices->Capacity();
-    if (capacity != m_pendingSliceConsumptions.Capacity()) {
-        StableRowStorage<PendingSliceConsumption> consumptions;
-        StableRowStorage<std::uint32_t> order;
-        if (!consumptions.Reserve(capacity) || !order.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
-        m_pendingSliceConsumptions.Swap(consumptions);
-        m_pendingSliceOrder.Swap(order);
+    if (m_variableSlices != nullptr) {
+        m_variableSlices->AttachConsumer(this, [](void* context, std::uint32_t count) noexcept {
+            auto& mixer = *static_cast<MixerLoop*>(context);
+            return mixer.m_pendingSliceConsumptions.ConstructThrough(count) &&
+                mixer.m_pendingSliceOrder.ConstructThrough(count);
+        });
     }
     if (m_timelinePool != nullptr && m_timelinePool->Valid()) {
         if (!PrepareCurrentSliceStorage(m_timelinePool->PreparedCurrentSliceRowCount()))
@@ -616,9 +615,7 @@ void MixerLoop::InitializeVariableSliceConsumptionStorage() {
 
 bool MixerLoop::PrepareCurrentSliceStorage(std::size_t required) noexcept {
     if (required == 0) return true;
-    return m_currentSliceScratch.ConstructThrough(std::min(required, m_currentSliceScratch.Capacity())) &&
-        m_pendingSliceConsumptions.ConstructThrough(m_pendingSliceConsumptions.Capacity()) &&
-        m_pendingSliceOrder.ConstructThrough(m_pendingSliceOrder.Capacity());
+    return m_currentSliceScratch.ConstructThrough(std::min(required, m_currentSliceScratch.Capacity()));
 }
 
 std::size_t MixerLoop::VariableSliceConsumptionStorageBytes() const noexcept {

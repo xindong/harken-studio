@@ -110,13 +110,23 @@ public:
         using reference = std::conditional_t<Const, const T&, T&>;
         using pointer = std::conditional_t<Const, const T*, T*>;
         using difference_type = std::ptrdiff_t;
-        using iterator_category = std::forward_iterator_tag;
+        using iterator_category = std::random_access_iterator_tag;
         Iterator() = default;
         Iterator(Owner* owner, std::uint32_t slot) noexcept : owner_(owner), slot_(slot) {}
         reference operator*() const noexcept { return (*owner_)[slot_]; }
         pointer operator->() const noexcept { return &**this; }
         Iterator& operator++() noexcept { ++slot_; return *this; }
         Iterator operator++(int) noexcept { auto old = *this; ++*this; return old; }
+        Iterator& operator--() noexcept { --slot_; return *this; }
+        Iterator operator--(int) noexcept { auto old = *this; --*this; return old; }
+        Iterator& operator+=(difference_type offset) noexcept { slot_ = static_cast<std::uint32_t>(slot_ + offset); return *this; }
+        Iterator& operator-=(difference_type offset) noexcept { return *this += -offset; }
+        friend Iterator operator+(Iterator it, difference_type n) noexcept { return it += n; }
+        friend Iterator operator+(difference_type n, Iterator it) noexcept { return it += n; }
+        friend Iterator operator-(Iterator it, difference_type n) noexcept { return it -= n; }
+        difference_type operator-(const Iterator& other) const noexcept { return static_cast<difference_type>(slot_) - other.slot_; }
+        reference operator[](difference_type n) const noexcept { return *(*this + n); }
+        auto operator<=>(const Iterator& other) const noexcept { return slot_ <=> other.slot_; }
         bool operator==(const Iterator& other) const noexcept {
             return owner_ == other.owner_ && slot_ == other.slot_;
         }

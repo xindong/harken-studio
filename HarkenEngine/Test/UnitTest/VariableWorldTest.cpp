@@ -526,7 +526,7 @@ TEST(VariableWorld, EqualGlobalWriteRemovesEmitterOverride) {
 TEST(VariableWorld, EmitterBanksAndOverrideSlotsHonorResolvedCapacity) {
     {
         VnConfig config = MakeNullConfig();
-        config.maxEmitters = 129;
+        config.maxVoices = 4;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
@@ -538,7 +538,11 @@ TEST(VariableWorld, EmitterBanksAndOverrideSlotsHonorResolvedCapacity) {
         for (std::uint32_t i = 0; i < 129; ++i) {
             ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
         }
-        EXPECT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9001), 0.5f));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9001), 0.5f));
+        harkentest::AdvanceVariableWrite(engine);
+        float value = 0;
+        ASSERT_TRUE(engine->variables.CurrentValue(emitter, harkentest::ObjectId(9001), &value));
+        EXPECT_FLOAT_EQ(0.5f, value);
     }
     {
         VnConfig config = MakeNullConfig();
@@ -1077,7 +1081,7 @@ TEST(VariableWorld, MoreDefinitionsThanRevisionCapacityKeepEveryCompletedCurrent
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
-    const auto capacity = e.variables.RevisionCapacity();
+    constexpr unsigned capacity = 4354;
     std::vector<harken::VariableDefinitionV1> defs;
     for (unsigned i = 0; i < capacity + 1; ++i)
         defs.push_back(MakeVariableDefinition(harkentest::ObjectId(10000+i), harken::VariableKindV1::Smooth, 0, 8, 2));
@@ -1086,7 +1090,7 @@ TEST(VariableWorld, MoreDefinitionsThanRevisionCapacityKeepEveryCompletedCurrent
         ASSERT_EQ(VN_OK, Vn_SetValue(d.variableId, 7));
         harkentest::AdvanceVariableWrite(&e);
     }
-    EXPECT_EQ(capacity, e.variables.RevisionCapacity());
+    EXPECT_LT(e.variables.ConstructedRevisionCount(), capacity);
     for (const auto& d : defs) {
         float value = 0;
         ASSERT_TRUE(e.variables.CurrentValue(d.variableId, &value));

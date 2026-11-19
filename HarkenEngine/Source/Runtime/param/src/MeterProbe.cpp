@@ -252,7 +252,7 @@ bool MeterProbeSystem::PrepareWithdrawalChunk(
             engine.variables.CurrentWorldGeneration(),
             engine.variables.CurrentTransportEpoch(),
             0, frame,
-            probe.identity.probeGeneration, chunkCount, &slice)) {
+            probe.identity.probeGeneration, chunkCount, &slice, true)) {
         return false;
     }
     for (std::uint32_t i = 0; i < chunkCount; ++i) {

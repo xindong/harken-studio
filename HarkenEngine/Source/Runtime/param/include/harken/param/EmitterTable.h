@@ -21,6 +21,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/EngineConfig.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <cstdint>
 #include <vector>
@@ -51,9 +52,12 @@ public:
         m_variableObserver = observer;
     }
 
-    // Mints a fresh emitter at a free slot, forming its handle. Returns false
-    // when every slot is live (the caller maps this to VN_NO_EMITTER). A new
-    // emitter starts at the origin, facing (0,0,-1), with no local overrides.
+    static constexpr std::uint32_t kDefaultSlot = 128;
+    VnResult PrepareCreate(VnEmitterHandle& candidate) noexcept;
+    void PublishCreate(VnEmitterHandle candidate, bool stateOnly) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_emitters.SetCommitPageLimitForTests(pages);
+    }
     bool Create(VnEmitterHandle* outHandle, bool stateOnly = false);
     bool IsPublicLive(VnEmitterHandle handle) const noexcept;
     VnEmitterHandle DefaultState() const noexcept;
@@ -134,7 +138,17 @@ private:
     const Emitter* Live(VnEmitterHandle handle) const noexcept;
     void NotifyVariableChange(VnEmitterHandle handle, VnVariableId variableId) const noexcept;
 
-    std::vector<Emitter> m_emitters;
+    static std::uint32_t PublicSlot(std::uint32_t index) noexcept {
+        return index < kDefaultSlot ? index : index + 1u;
+    }
+    static std::uint32_t StorageIndex(std::uint32_t slot) noexcept {
+        return slot < kDefaultSlot ? slot : slot - 1u;
+    }
+    GrowingRowStorage<Emitter> m_emitters;
+    Emitter m_default;
+    std::uint32_t m_firstFree = 0;
+    std::uint32_t m_initialGeneration;
+    std::uint32_t m_initialLocalSlots;
     bool m_projectionActive = false;
     std::uint32_t m_activeCount = 0;
     std::uint64_t m_highWater = 0;

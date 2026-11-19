@@ -82,6 +82,7 @@ namespace Harken.Unity.Tests
                 Assert.That(generated.FindProperty("maxPacks").longValue, Is.EqualTo(256L));
                 Assert.That(generated.FindProperty("maxActions"), Is.Null);
                 Assert.That(generated.FindProperty("emitterVariableSlots"), Is.Null);
+                Assert.That(generated.FindProperty("maxEmitters"), Is.Null);
                 Assert.That(generated.FindProperty("maxActionFirings").longValue, Is.EqualTo(256L));
                 var config = new VnConfig();
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
@@ -125,10 +126,11 @@ namespace Harken.Unity.Tests
         public void PersistedSettingsKeepExplicitStartupCapacities()
         {
             // Old assets may retain this field; it must no longer set a quota.
-            JsonUtility.FromJsonOverwrite("{\"emitterVariableSlots\":1}", settings);
+            JsonUtility.FromJsonOverwrite("{\"emitterVariableSlots\":1,\"maxEmitters\":1}", settings);
             var migrated = new VnConfig();
             HarkenProjectSettings.ApplyStartupCapacity(ref migrated);
             Assert.That(migrated.emitterVariableSlots, Is.Zero);
+            Assert.That(migrated.maxEmitters, Is.Zero);
             var serialized = new SerializedObject(settings);
             serialized.FindProperty("maxVoices").longValue = 111;
             serialized.FindProperty("maxPacks").longValue = 112;

@@ -224,7 +224,6 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string PlatformName",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string [ ] PlayerExports",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxActionFirings",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxEmitters",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxPacks",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public uint MaxVoices",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenSpatialSource.cs/Harken.Unity.HarkenSpatialSource::public VnResult EndFollow ( )",

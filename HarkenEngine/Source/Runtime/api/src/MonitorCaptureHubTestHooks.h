@@ -19,6 +19,7 @@ void DrainRoundForTests();
 void PumpRecorderForTests();
 void ReleaseRecorderScratchForTests();
 VnMonitorSessionHandle RecordingReceiverForTests();
+void SetMonitorProcessBudgetForTests(std::uint64_t bytes);
 void SetRecordingQueueBudgetForTests(std::uint64_t bytes);
 void DrainOneProducerForTests(bool audioProducer);
 void DrainOneIdentityForTests();
