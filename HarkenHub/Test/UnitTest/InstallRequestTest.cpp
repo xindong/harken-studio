@@ -202,7 +202,6 @@ TEST_F(InstallRequestTest, LegacyPackageInstallsRemainsAvailableAndCanBeRepaired
     ASSERT_TRUE(installed.ok) << installed.error.toStdString();
     const auto versions = VNH::VersionScanner::scanAvailable();
     ASSERT_EQ(versions.size(), 1u);
-    EXPECT_EQ(versions.front().capabilitiesVersion, 0);
     EXPECT_TRUE(versions.front().available);
     QString error;
     ASSERT_TRUE(VNH::InstallIndex::setHealthState(installed.buildId, "NeedsRepair", &error));

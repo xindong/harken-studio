@@ -82,7 +82,6 @@ private:
     void onPrepared(const InstallPreparation& preparation);
     void onElevatedPoll();
     void finishElevatedFlow(const QString& status);
-    void runSelfTest(const QString& buildId);
     void updateRepairBanner(const std::vector<InstalledVersionRecord>& broken);
     void updateSelectedIssue();
     void updateHubUpdateBanner();

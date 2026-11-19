@@ -357,7 +357,7 @@ TEST_F(InstallExecutorTest, FailedRepairVerificationRestoresTheOriginalTreeAndKe
     const QString transactionId = placeHandoff(payloadForArchive());
     ASSERT_TRUE(InstallExecutor::run(transactionId, keys.publicKey, kNow).ok);
     auto record = InstallIndex::snapshot().records.front();
-    record.capabilitiesHash = QString(64, QLatin1Char('f'));
+    record.packageManifestHash = QString(64, QLatin1Char('f'));
     QString error;
     ASSERT_TRUE(InstallIndex::commitInstallation(record, 7, &error));
     QFile damaged(targetPath() + QStringLiteral("/data/asset.bin"));

@@ -116,7 +116,6 @@ TEST_F(ProjectIntakeConsumerTest, RegistersUnknownProject)
     ASSERT_EQ(records.size(), 1u);
     EXPECT_EQ(records.front().canonicalPath, projectPath);
     EXPECT_EQ(records.front().displayName, QStringLiteral("Alpha"));
-    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run1.aaaa1111"));
     EXPECT_EQ(records.front().lastOpenedAt,
@@ -131,7 +130,6 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     ProjectRecord seed;
     seed.canonicalPath = projectPath;
     seed.displayName = QStringLiteral("Old project name");
-    seed.detectedSchema = 1;
     ASSERT_TRUE(store.addProject(seed));
     ASSERT_TRUE(store.setPreferredBuild(projectPath,
                                         QStringLiteral("run1.pinned")));
@@ -153,7 +151,6 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run2.bbbb2222"));
     EXPECT_EQ(records.front().displayName, QStringLiteral("Beta"));
-    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastOpenedAt,
               QStringLiteral("2026-07-28T04:00:00.000Z"));
 }

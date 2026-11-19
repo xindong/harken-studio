@@ -184,6 +184,22 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 
 废弃 Pack 手动管理、旧平台配置、未实现的运行时观测/空间/调制/流式/旧 HarkenLink 等接口不再公开。当前可用能力以运行产物的 `list_commands` 为准；工程平台使用 UUID 命令，空间衰减使用字段组，运行观测使用已实现的性能、Voice 与快照查询。
 
+## Hub 使用的启动接口
+
+以下是 Studio 对 Hub 的稳定接口：只新增，不改含义、不删除。Hub 按 Studio 版本决定使用哪些入口，不读取 Studio 的能力声明；Studio 新增入口时，在下表注明起始版本，并同步 Hub 的版本表。
+
+| 入口 | 起始版本 | 行为 |
+|---|---|---|
+| `--project <path>` | 所有版本 | 打开工程 |
+| `--create-project --project-name <name> --project-location <dir>` | 0.7.0 | 在 `<dir>/<name>/` 新建空工程 |
+| `--project-template-id <id>`（随 `--create-project`） | 0.9.4 之后的版本 | 用 Studio 自己的模板库中的模板新建；模板不可用时报错，不创建工程 |
+| `--list-templates --json` | 0.9.4 之后的版本 | 不启动界面，标准输出一个 JSON 对象 `{"templates":[{"id","displayName","description"}]}`，只列出能通过 Studio 校验的模板，退出码 0 |
+| `--version --json` | 0.9.4 之后的版本 | 不启动界面，标准输出 `{"status":"ok","result":{...}}`；`result` 含 `product`（`HarkenStudio`）、`version`、`buildId`、`channel`，以及供发布脚本核对的 `gitCommit`、`gitDirty`、`editorSchemaVersion`、`packSchemaVersion`、`schemaSnapshotHash`、`schemaArchiveOk`。Hub 只读前四项，用于识别本地构建 |
+
+工程文件 `project.root` 头部的 `studioVersion`（保存时的 Studio 版本）同样是稳定字段，Hub 用它推荐打开工程的版本；更早的工程使用旧名 `savedStudioVersion`。Hub 不读取工程头的其他字段。
+
+已删除的入口：`--self-test`（由 `--version --json` 取代）、`--project-template-file`（改用 `--project-template-id`）。Studio 发布包不再包含 `capabilities.json`。
+
 ## 实现与验证
 
 [EditorCommandCatalog.cpp](../../../HarkenStudio/Source/Core/EditorCommandCatalog.cpp) 定义宿主边界与统一描述；[CommandSchemas.cpp](../../../HarkenStudio/Source/Core/CommandSchemas.cpp) 与 [DesktopCommandSchemas.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopCommandSchemas.cpp) 定义参数合同；[CommandArgumentValidator.cpp](../../../HarkenStudio/Source/Core/CommandArgumentValidator.cpp) 递归校验。[IPCServer.cpp](../../../HarkenStudio/Source/Core/IPC/IPCServer.cpp) 统一分派与状态限制。[DesktopWidgetTargets.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopWidgetTargets.cpp) 统一桌面目标身份、交互限制和队列状态。

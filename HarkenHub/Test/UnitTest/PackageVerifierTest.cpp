@@ -31,12 +31,10 @@ struct PackageSpec
     QString version = QStringLiteral("1.4.0");
     QString buildId = QStringLiteral("run12.abcd1234");
     QString channel = QStringLiteral("stable");
-    bool includeCapabilities = true;
+    bool includeLegacyCapabilities = false;
     bool includeUnlistedFile = false;
     bool lieAboutSize = false;
     bool invalidHashFormat = false;
-    QJsonObject capabilityOverrides;
-    bool addLegacyFields = false;
     bool wrongProduct = false;
     QString binaryPath = VNH::studioBinaryRelativePath();
 
@@ -69,18 +67,6 @@ QString buildPackage(const QString& path, const PackageSpec& spec)
     manifest[QStringLiteral("channel")] = spec.channel;
     manifest[QStringLiteral("files")] = files;
 
-    QJsonObject capabilities;
-    capabilities[QStringLiteral("studioVersion")] = spec.version;
-    capabilities[QStringLiteral("buildId")] = spec.buildId;
-    capabilities[QStringLiteral("capabilitiesVersion")] = 2;
-    if (spec.addLegacyFields) {
-        capabilities.remove(QStringLiteral("capabilitiesVersion"));
-        capabilities[QStringLiteral("readableSchemaMin")] = 1;
-        capabilities[QStringLiteral("readableSchemaMax")] = 2;
-        capabilities[QStringLiteral("writableSchema")] = 2;
-    }
-    for (auto it = spec.capabilityOverrides.begin(); it != spec.capabilityOverrides.end(); ++it)
-        capabilities.insert(it.key(), it.value());
     if (spec.wrongProduct)
         manifest[QStringLiteral("product")] = QStringLiteral("AnotherProduct");
 
@@ -90,9 +76,8 @@ QString buildPackage(const QString& path, const PackageSpec& spec)
         {QByteArrayLiteral("package-manifest.json"),
          QJsonDocument(manifest).toJson(QJsonDocument::Compact)},
     };
-    if (spec.includeCapabilities)
-        entries.push_back({QByteArrayLiteral("capabilities.json"),
-                           QJsonDocument(capabilities).toJson(QJsonDocument::Compact)});
+    if (spec.includeLegacyCapabilities)
+        entries.push_back({QByteArrayLiteral("capabilities.json"), QByteArrayLiteral("{}")});
     if (spec.includeUnlistedFile)
         entries.push_back({QByteArrayLiteral("extra/unlisted.bin"),
                            QByteArrayLiteral("surprise")});
@@ -147,40 +132,6 @@ TEST(PackageVerifier, ForeignPlatformIsRejectedBeforeManifestLookup)
     const auto result = PackageVerifier::verify(archive, expectedFor(archive, spec));
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.error, error);
-}
-
-TEST(PackageVerifier, RejectsMalformedProtocolAndIdentityMismatches)
-{
-    for (const QJsonObject& overrides : {
-             QJsonObject{{QStringLiteral("capabilitiesVersion"), -1}},
-             QJsonObject{{QStringLiteral("capabilitiesVersion"), QStringLiteral("2")}},
-             QJsonObject{{QStringLiteral("capabilitiesVersion"), 2.5}},
-             QJsonObject{{QStringLiteral("studioVersion"), QStringLiteral("9.0.0")}},
-             QJsonObject{{QStringLiteral("buildId"), QStringLiteral("another-build")}}}) {
-        QTemporaryDir dir;
-        PackageSpec spec;
-        spec.capabilityOverrides = overrides;
-        const auto archive = buildPackage(dir.filePath(QStringLiteral("p.zip")), spec);
-        ASSERT_FALSE(archive.isEmpty());
-        EXPECT_FALSE(PackageVerifier::verify(archive, expectedFor(archive, spec)).ok);
-    }
-}
-
-TEST(PackageVerifier, AcceptsHistoricalAndNewerCapabilitiesWithoutRequiringNewHubFeatures)
-{
-    for (const int protocol : {0, 1, 2, 3}) {
-        QTemporaryDir dir;
-        PackageSpec spec;
-        spec.addLegacyFields = protocol == 0;
-        if (protocol > 0)
-            spec.capabilityOverrides = {{QStringLiteral("capabilitiesVersion"), protocol},
-                                       {QStringLiteral("projectSchema"), QJsonObject{}}};
-        const auto archive = buildPackage(dir.filePath(QStringLiteral("p.zip")), spec);
-        ASSERT_FALSE(archive.isEmpty());
-        const auto result = PackageVerifier::verify(archive, expectedFor(archive, spec));
-        ASSERT_TRUE(result.ok) << result.error.toStdString();
-        EXPECT_EQ(result.capabilitiesVersion, protocol);
-    }
 }
 
 TEST(PackageVerifier, RejectsWrongProduct)
@@ -249,16 +200,18 @@ TEST(PackageVerifier, BuildIdMismatchFails)
     EXPECT_FALSE(PackageVerifier::verify(archive, expected).ok);
 }
 
-TEST(PackageVerifier, MissingCapabilitiesFails)
+TEST(PackageVerifier, AcceptsPackagesWithOrWithoutTheRetiredCapabilitiesFile)
 {
-    QTemporaryDir dir;
-    ASSERT_TRUE(dir.isValid());
-    PackageSpec spec;
-    spec.includeCapabilities = false;
-    const QString archive = buildPackage(dir.filePath(QStringLiteral("p.zip")), spec);
-    ASSERT_FALSE(archive.isEmpty());
-
-    EXPECT_FALSE(PackageVerifier::verify(archive, expectedFor(archive, spec)).ok);
+    for (const bool legacy : {false, true}) {
+        QTemporaryDir dir;
+        PackageSpec spec;
+        spec.includeLegacyCapabilities = legacy;
+        const QString archive = buildPackage(dir.filePath(QStringLiteral("p.zip")), spec);
+        ASSERT_FALSE(archive.isEmpty());
+        const auto result = PackageVerifier::verify(archive, expectedFor(archive, spec));
+        ASSERT_TRUE(result.ok) << result.error.toStdString();
+        EXPECT_EQ(result.metadataEntries.contains(QStringLiteral("capabilities.json")), legacy);
+    }
 }
 
 TEST(PackageVerifier, ManifestSizeLieFails)
@@ -300,18 +253,12 @@ TEST(PackageVerifier, ResultCarriesPerFileHashesForExtraction)
     ASSERT_EQ(result.fileSha256ByPath.size(), 2);
 
     QString error;
-    QByteArray manifestData;
-    QByteArray capabilitiesData;
-    ASSERT_TRUE(PackageReader::readEntry(archive, QStringLiteral("package-manifest.json"),
-                                         &manifestData, &error));
-    ASSERT_TRUE(PackageReader::readEntry(archive, QStringLiteral("capabilities.json"),
-                                         &capabilitiesData, &error));
-
     QHash<QString, QString> verified = result.fileSha256ByPath;
-    verified.insert(QStringLiteral("package-manifest.json"),
-                    QString::fromLatin1(sha256Hex(manifestData)));
-    verified.insert(QStringLiteral("capabilities.json"),
-                    QString::fromLatin1(sha256Hex(capabilitiesData)));
+    for (const QString& name : result.metadataEntries) {
+        QByteArray data;
+        ASSERT_TRUE(PackageReader::readEntry(archive, name, &data, &error));
+        verified.insert(name, QString::fromLatin1(sha256Hex(data)));
+    }
     EXPECT_TRUE(PackageReader::extractAllVerified(
         archive, dir.filePath(QStringLiteral("outOk")), verified, &error))
         << error.toStdString();

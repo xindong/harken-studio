@@ -64,9 +64,7 @@ bool expectedHashesFor(const QString& packagePath,
                        QHash<QString, QString>* hashes, QString* error)
 {
     *hashes = packageResult.fileSha256ByPath;
-    for (const QString& metadataName :
-         {QStringLiteral("package-manifest.json"),
-          QStringLiteral("capabilities.json")}) {
+    for (const QString& metadataName : packageResult.metadataEntries) {
         QByteArray bytes;
         if (!PackageReader::readEntry(packagePath, metadataName, &bytes, error))
             return false;
@@ -183,8 +181,7 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
                                QStringLiteral("Repairing"), QString(), now);
 
     const IntegrityReport current = IntegrityChecker::check(
-        record->installPath, record->packageManifestHash,
-        record->capabilitiesHash);
+        record->installPath, record->packageManifestHash);
     if (current.ok) {
         QString identityError;
         if (VersionScanner::inspect(*record, nullptr, &identityError) != InstallationIssue::None)
@@ -293,7 +290,7 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
 
     QString validationError;
     const auto repaired = IntegrityChecker::check(
-        record->installPath, record->packageManifestHash, record->capabilitiesHash);
+        record->installPath, record->packageManifestHash);
     const bool valid = repaired.ok
         && VersionScanner::inspect(*record, nullptr, &validationError) == InstallationIssue::None;
     if (!valid)

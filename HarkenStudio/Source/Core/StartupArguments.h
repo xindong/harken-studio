@@ -14,7 +14,6 @@ struct StartupArguments
     QString projectName;
     QString projectLocation;
     QString projectTemplateId;
-    QString projectTemplatePath;
 
     static StartupArguments parse(const QStringList& args);
 };

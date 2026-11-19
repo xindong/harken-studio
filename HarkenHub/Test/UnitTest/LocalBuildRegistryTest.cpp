@@ -36,8 +36,6 @@ protected:
         value.reportedBuildId = QStringLiteral("local.aaaa1111");
         value.semanticVersion = QStringLiteral("0.1.21-dev");
         value.channel = QStringLiteral("dev");
-        value.buildType = QStringLiteral("Debug");
-        value.capabilitiesVersion = 2;
         return value;
     }
 
@@ -212,7 +210,6 @@ TEST_F(LocalBuildRegistryTest, VerifiedHistoricalProtocolRemainsAvailableUntilFi
     binary.write("unchanged old binary");
     binary.close();
     auto record = recordForExistingFile(executable);
-    record.capabilitiesVersion = 1;
     EXPECT_TRUE(LocalBuildRegistry::metadataMatchesFile(record));
     QString error;
     ASSERT_TRUE(LocalBuildRegistry::upsert(record, &error));

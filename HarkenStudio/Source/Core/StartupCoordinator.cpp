@@ -106,17 +106,13 @@ void StartupCoordinator::startProjectPreparation()
         ProjectConfig config;
         config.name = startupArguments_.projectName.trimmed();
         config.location = startupArguments_.projectLocation.trimmed();
-        if (!startupArguments_.projectTemplatePath.isEmpty()) {
-            ValidationResult validation;
-            const auto projectTemplate = ProjectTemplateLoader::loadFile(
-                startupArguments_.projectTemplatePath, &validation);
+        if (!startupArguments_.projectTemplateId.isEmpty()) {
+            const auto projectTemplate = ProjectTemplateLoader::load(startupArguments_.projectTemplateId);
             if (!projectTemplate) {
-                fail(validation.toUserText());
+                fail(tr("The project template is unavailable: %1").arg(startupArguments_.projectTemplateId));
                 return;
             }
-            config.templateId = startupArguments_.projectTemplateId.isEmpty()
-                                    ? projectTemplate->id
-                                    : startupArguments_.projectTemplateId;
+            config.templateId = startupArguments_.projectTemplateId;
             config.templateData = projectTemplate->toJson();
         }
         preparationWatcher_.setFuture(QtConcurrent::run(

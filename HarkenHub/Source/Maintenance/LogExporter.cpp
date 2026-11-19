@@ -3,7 +3,6 @@
 #include "Platform/PlatformPaths.h"
 #include "Transactions/InstallIndex.h"
 #include "Transactions/TransactionJournal.h"
-#include "Versions/LaunchDiagnostics.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -28,8 +27,6 @@ QList<QPair<QString, QString>> LogExporter::defaultSources()
                 QStringLiteral("machine/transactions.log"));
     addIfExists(InstallIndex::filePath(),
                 QStringLiteral("machine/install-index.json"));
-    addIfExists(LaunchDiagnostics::filePath(),
-                QStringLiteral("user/launch-diagnostics.json"));
     addIfExists(userDataDir() + QStringLiteral("/update-state.json"),
                 QStringLiteral("user/update-state.json"));
 

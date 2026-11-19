@@ -345,9 +345,7 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
                     QStringLiteral("Cannot create the versions directory"));
 
     QHash<QString, QString> expectedHashes = packageResult.fileSha256ByPath;
-    for (const QString& metadataName :
-         {QStringLiteral("package-manifest.json"),
-          QStringLiteral("capabilities.json")}) {
+    for (const QString& metadataName : packageResult.metadataEntries) {
         QByteArray metadataBytes;
         QString metadataError;
         if (!PackageReader::readEntry(stagedPackage, metadataName, &metadataBytes,
@@ -394,8 +392,6 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
     record.packageHash = manifest.sha256Hex.toLower();
     record.packageManifestHash = expectedHashes.value(
         QStringLiteral("package-manifest.json"));
-    record.capabilitiesHash = expectedHashes.value(
-        QStringLiteral("capabilities.json"));
     record.installedAt = now.toUTC().toString(Qt::ISODateWithMs);
     record.healthState = QStringLiteral("Installing");
     QString indexError;

@@ -27,8 +27,7 @@ public:
     static InstallationSnapshot snapshot(const QString& installPath);
     static IntegrityReport check(
         const QString& installPath,
-        const QString& expectedPackageManifestHash = QString(),
-        const QString& expectedCapabilitiesHash = QString());
+        const QString& expectedPackageManifestHash = QString());
 };
 
 }

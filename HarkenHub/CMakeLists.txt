@@ -84,7 +84,6 @@ set(HARKEN_HUB_SOURCES
     Source/ReleaseNotes/ReleaseNotesStrings.cpp
     Source/ReleaseNotes/VersionReleaseNotes.cpp
     Source/Settings/HubSettings.cpp
-    Source/Templates/ProjectTemplateCatalog.cpp
     Source/UI/ButtonPulseAnimator.cpp
     Source/UI/NoHoverItemDelegate.cpp
     Source/UI/TableSorting.cpp
@@ -124,14 +123,12 @@ set(HARKEN_HUB_SOURCES
     Source/Projects/ProjectProbe.cpp
     Source/Projects/ProjectVersionSelection.cpp
     Source/Projects/ProjectIntakeConsumer.cpp
-    Source/Versions/StudioCapabilities.cpp
+    Source/Versions/StudioInterface.cpp
     Source/Versions/VersionScanner.cpp
     Source/Versions/LocalBuildRegistry.cpp
     Source/Versions/LocalBuildRefreshCoordinator.cpp
     Source/Versions/StudioLaunchTarget.cpp
     Source/Versions/IntegrityChecker.cpp
-    Source/Versions/LaunchDiagnostics.cpp
-    Source/Versions/SelfTestRunner.cpp
     Source/Launch/LaunchPreflight.cpp
     Source/Launch/ProjectCreateFlow.cpp
     Source/Launch/ProjectOpenFlow.cpp

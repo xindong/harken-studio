@@ -1835,10 +1835,8 @@ bool EngineIntegrationsPage::acceptHarkenProject(
     }
     if (!projects_->contains(probe.canonicalPath)) {
         ProjectRecord record;
-        record.projectId = probe.projectId;
         record.canonicalPath = probe.canonicalPath;
         record.displayName = probe.displayName;
-        record.detectedSchema = probe.schemaVersion;
         if (!projects_->addProject(record)) {
             MessageDialog::warning(
                 this, QCoreApplication::translate("HarkenHub", "Manage Integration"),

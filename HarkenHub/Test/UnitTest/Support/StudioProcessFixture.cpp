@@ -24,8 +24,15 @@ int main(int argc, char* argv[])
         QTextStream(stdout) << "locked" << Qt::endl;
         return app.exec();
     }
-    if (arguments.contains(QStringLiteral("--self-test"))) {
-        QTextStream(stdout) << QJsonDocument(HarkenHubTest::studioSelfTest()).toJson(QJsonDocument::Compact);
+    if (arguments.contains(QStringLiteral("--version"))) {
+        QTextStream(stdout) << QJsonDocument(HarkenHubTest::studioVersionReport()).toJson(QJsonDocument::Compact);
+        return 0;
+    }
+    if (arguments.contains(QStringLiteral("--list-templates"))) {
+        const QJsonArray templates{QJsonObject{{QStringLiteral("id"), QStringLiteral("audio")},
+                                               {QStringLiteral("displayName"), QStringLiteral("Audio")},
+                                               {QStringLiteral("description"), QStringLiteral("Test template")}}};
+        QTextStream(stdout) << QJsonDocument(QJsonObject{{QStringLiteral("templates"), templates}}).toJson(QJsonDocument::Compact);
         return 0;
     }
     const bool create = arguments.contains(QStringLiteral("--create-project"));
