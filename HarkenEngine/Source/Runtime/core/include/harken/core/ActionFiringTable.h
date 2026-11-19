@@ -384,7 +384,7 @@ private:
 
     static ActionFiringHandle MakeHandle(std::uint32_t slot,
                                          std::uint64_t generation) noexcept;
-    static std::uint32_t SlotOf(ActionFiringHandle handle) noexcept;
+    std::uint32_t ResolveSlot(ActionFiringHandle handle) const noexcept;
     static std::uint64_t GenerationOf(ActionFiringHandle handle) noexcept;
     Row* Resolve(ActionFiringHandle handle) noexcept;
     const Row* Resolve(ActionFiringHandle handle) const noexcept;

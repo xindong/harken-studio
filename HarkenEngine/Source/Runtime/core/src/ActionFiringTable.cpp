@@ -86,7 +86,7 @@ std::uint64_t PreparedActionFiring::InheritedSequence() const noexcept {
 
 std::uint64_t ActionFiringTable::InheritedSequence(const PreparedActionFiring& child) const noexcept {
     if (child.owner_ != this || !child.Valid()) return 0;
-    const auto& row = rows_[SlotOf(child.handle_)];
+    const auto& row = rows_[ResolveSlot(child.handle_)];
     PreparedChildIdentity identity;
     return CapturePreparedChildIdentity(child, row.cancellationEpoch, &identity) ? identity.Sequence() : 0;
 }
@@ -95,7 +95,7 @@ bool ActionFiringTable::CapturePreparedChildIdentity(const PreparedActionFiring&
     std::uint64_t originalCancellationEpoch, PreparedChildIdentity* out) const noexcept {
     if (out == nullptr || out->HasPreparation() || prepared.owner_ != this || !prepared.Valid() ||
         originalCancellationEpoch == 0) return false;
-    const auto& row = rows_[SlotOf(prepared.handle_)];
+    const auto& row = rows_[ResolveSlot(prepared.handle_)];
     PreparedChildIdentity identity;
     identity.owner_ = this;
     identity.child_ = prepared.handle_;
@@ -112,7 +112,7 @@ bool ActionFiringTable::CapturePreparedChildIdentity(const PreparedActionFiring&
 bool ActionFiringTable::MatchesChildIdentity(const PreparedChildIdentity& identity, bool prepared) const noexcept {
     if (identity.owner_ != this || identity.child_ == 0 || identity.parent_ == 0 || identity.root_ == 0 ||
         identity.sequence_ == 0 || identity.epoch_ == 0 || identity.rootEpoch_ == 0) return false;
-    const auto slot = SlotOf(identity.child_);
+    const auto slot = ResolveSlot(identity.child_);
     if (slot >= rows_.ConstructedCount()) return false;
     const auto& child = rows_[slot];
     const auto* parent = Resolve(identity.parent_);
@@ -137,13 +137,20 @@ bool ActionFiringTable::IsChildActivationCurrent(const ChildActivationReceipt& r
 
 ActionFiringHandle ActionFiringTable::MakeHandle(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    return (generation << kActionFiringSlotBits) | slot;
+    return (generation << kActionFiringSlotBits) | (slot & (kMaxActionFiringsHard - 1u));
 }
 
-std::uint32_t ActionFiringTable::SlotOf(
-    ActionFiringHandle handle) noexcept {
-    return static_cast<std::uint32_t>(
-        handle & (kMaxActionFiringsHard - 1u));
+std::uint32_t ActionFiringTable::ResolveSlot(
+    ActionFiringHandle handle) const noexcept {
+    const auto generation = GenerationOf(handle);
+    if (generation == 0) return UINT32_MAX;
+    const auto count = rows_.ConstructedCount();
+    for (std::uint64_t slot = handle & (kMaxActionFiringsHard - 1u);
+         slot < count; slot += kMaxActionFiringsHard) {
+        const auto index = static_cast<std::uint32_t>(slot);
+        if (rows_[index].generation == generation) return index;
+    }
+    return UINT32_MAX;
 }
 
 std::uint64_t ActionFiringTable::GenerationOf(
@@ -152,7 +159,7 @@ std::uint64_t ActionFiringTable::GenerationOf(
 }
 
 bool ActionFiringTable::Reset(std::uint32_t capacity) {
-    if (memguard::IsAudioTagged() || capacity == 0 || capacity > kMaxActionFiringsHard) {
+    if (memguard::IsAudioTagged() || capacity == 0) {
         return false;
     }
     StableRowStorage<Row> rows;
@@ -204,7 +211,7 @@ ActionFiringTable::Row* ActionFiringTable::Resolve(
     if (handle == 0) {
         return nullptr;
     }
-    const std::uint32_t slot = SlotOf(handle);
+    const std::uint32_t slot = ResolveSlot(handle);
     if (slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
@@ -227,7 +234,7 @@ ActionFiringTable::Row* ActionFiringTable::ResolvePrepared(
     if (!prepared.Valid() || prepared.owner_ != this) {
         return nullptr;
     }
-    const std::uint32_t slot = SlotOf(prepared.handle_);
+    const std::uint32_t slot = ResolveSlot(prepared.handle_);
     if (slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
@@ -666,10 +673,11 @@ bool ActionFiringTable::AddLivePlayableCount(
 }
 
 bool ActionFiringTable::AcquireDeferred(ActionFiringHandle handle) noexcept {
-    if (handle == 0 || SlotOf(handle) >= rows_.ConstructedCount()) {
+    const auto slot = ResolveSlot(handle);
+    if (slot == UINT32_MAX) {
         return false;
     }
-    Row& candidate = rows_[SlotOf(handle)];
+    Row& candidate = rows_[slot];
     if (candidate.generation != GenerationOf(handle) ||
         (candidate.state != SlotState::Prepared &&
          candidate.state != SlotState::Active &&
@@ -682,10 +690,11 @@ bool ActionFiringTable::AcquireDeferred(ActionFiringHandle handle) noexcept {
 }
 
 bool ActionFiringTable::ReleaseDeferred(ActionFiringHandle handle) noexcept {
-    if (handle == 0 || SlotOf(handle) >= rows_.ConstructedCount()) {
+    const auto slot = ResolveSlot(handle);
+    if (slot == UINT32_MAX) {
         return false;
     }
-    Row& candidate = rows_[SlotOf(handle)];
+    Row& candidate = rows_[slot];
     if (candidate.generation != GenerationOf(handle) ||
         (candidate.state != SlotState::Prepared &&
          candidate.state != SlotState::Active &&
@@ -1005,7 +1014,7 @@ void ActionFiringTable::ObserveStepExecution(ActionFiringHandle handle, std::uin
 void ActionFiringTable::ObserveActionTerminal(Row& row) noexcept {
     if (row.monitorTerminalPublished) return;
     row.monitorTerminalPublished = true;
-    const auto handle = MakeHandle(static_cast<std::uint32_t>(&row - rows_.data()), row.generation);
+    const auto handle = MakeHandle(rows_.IndexOf(row), row.generation);
     auto facts = CaptureMonitorFacts(row);
     facts.actionOutcome = static_cast<std::uint8_t>(row.outcome);
     facts.terminalResult = row.terminalResult;
@@ -1078,7 +1087,7 @@ bool ActionFiringTable::UnlinkChild(
     ActionFiringHandle* link = &parent.firstChild;
     while (*link != 0) {
         if (*link == child) {
-            const std::uint32_t slot = SlotOf(child);
+            const std::uint32_t slot = ResolveSlot(child);
             if (slot >= rows_.ConstructedCount()) {
                 return false;
             }
@@ -1104,7 +1113,7 @@ bool ActionFiringTable::ActivatePreparedSubtree(
     if (committed == nullptr || handle == 0 || acceptedLogicSequence == 0) {
         return false;
     }
-    const std::uint32_t slot = SlotOf(handle);
+    const std::uint32_t slot = ResolveSlot(handle);
     if (slot >= rows_.ConstructedCount()) {
         return false;
     }
@@ -1115,7 +1124,7 @@ bool ActionFiringTable::ActivatePreparedSubtree(
     }
     ActionFiringHandle child = row.firstChild;
     while (child != 0) {
-        const std::uint32_t childSlot = SlotOf(child);
+        const std::uint32_t childSlot = ResolveSlot(child);
         if (childSlot >= rows_.ConstructedCount()) {
             return false;
         }
@@ -1202,7 +1211,7 @@ bool ActionFiringTable::Abandon(PreparedActionFiring* prepared) noexcept {
 
 bool ActionFiringTable::AbandonPreparedSubtree(
     ActionFiringHandle handle) noexcept {
-    const std::uint32_t slot = SlotOf(handle);
+    const std::uint32_t slot = ResolveSlot(handle);
     if (handle == 0 || slot >= rows_.ConstructedCount()) {
         return false;
     }
@@ -1214,7 +1223,7 @@ bool ActionFiringTable::AbandonPreparedSubtree(
     }
     ActionFiringHandle child = row.firstChild;
     while (child != 0) {
-        const std::uint32_t childSlot = SlotOf(child);
+        const std::uint32_t childSlot = ResolveSlot(child);
         if (childSlot >= rows_.ConstructedCount()) {
             return false;
         }
@@ -1402,7 +1411,7 @@ bool ActionFiringTable::ReleaseTerminalSubtree(
         }
         child = next;
     }
-    const std::uint32_t slot = SlotOf(handle);
+    const std::uint32_t slot = ResolveSlot(handle);
     --liveCount_;
     (void)Recycle(slot, *row);
     return true;
@@ -1626,7 +1635,7 @@ bool ActionFiringTable::IsPrepared(ActionFiringHandle handle) const noexcept {
     if (handle == 0) {
         return false;
     }
-    const std::uint32_t slot = SlotOf(handle);
+    const std::uint32_t slot = ResolveSlot(handle);
     return slot < rows_.ConstructedCount() && rows_[slot].state == SlotState::Prepared &&
            rows_[slot].generation == GenerationOf(handle);
 }

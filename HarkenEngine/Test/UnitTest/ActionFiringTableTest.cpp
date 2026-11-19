@@ -95,7 +95,7 @@ TEST(ActionFiringTable, ExactCapacityAndOneMoreRefusalHaveNoVisibleEffect) {
 
 TEST(ActionFiringTable, UnissuedRowsStayUncommittedAndGrowthPreservesRetainedResults) {
     harken::ActionFiringTable table;
-    constexpr auto capacity = harken::kMaxActionFiringsHard;
+    constexpr auto capacity = harken::kMaxActionFiringsHard + 1u;
     ASSERT_TRUE(table.Reset(capacity));
     EXPECT_EQ(capacity, table.Capacity());
     EXPECT_EQ(capacity, table.FreeCount());
@@ -126,6 +126,11 @@ TEST(ActionFiringTable, UnissuedRowsStayUncommittedAndGrowthPreservesRetainedRes
     EXPECT_EQ(capacity, table.LiveCount());
     EXPECT_EQ(capacity, table.HighWater());
     EXPECT_EQ(0u, table.FreeCount());
+    EXPECT_EQ(firings.front().Handle() & 4095u, firings.back().Handle() & 4095u);
+    for (std::uint32_t i = 0; i < capacity; ++i) {
+        ASSERT_TRUE(table.Capture(firings[i].Handle(), &snapshot));
+        ASSERT_EQ(harkentest::ObjectId(i + 1u), snapshot.actionId);
+    }
     ASSERT_TRUE(table.CaptureStep(firings[0].Handle(), 0, &result));
     EXPECT_EQ(123u, result.executionOrdinal);
     const auto committed = table.RowCommittedBytes();

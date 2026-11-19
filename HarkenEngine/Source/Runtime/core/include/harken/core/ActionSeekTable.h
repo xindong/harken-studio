@@ -2,6 +2,7 @@
 #define HARKEN_CORE_ACTION_SEEK_TABLE_H
 
 #include <harken/Harken.h>
+#include "harken/core/GrowingRowStorage.h"
 
 #include <atomic>
 #include <cstdint>
@@ -57,7 +58,7 @@ private:
     struct Row {
         std::atomic<std::uint32_t> lifecycle{
             static_cast<std::uint32_t>(ActionSeekLifecycle::Free)};
-        std::uint64_t generation = 0;
+        std::atomic<std::uint64_t> generation{0};
         VnActionFiringHandle firing = 0;
         std::uint64_t acceptedLogicSequence = 0;
         std::uint64_t appliedAudioBlockSequence = 0;
@@ -72,13 +73,12 @@ private:
 
     static VnActionSeekTicket MakeTicket(std::uint32_t slot,
                                          std::uint64_t generation) noexcept;
-    static std::uint32_t SlotOf(VnActionSeekTicket ticket) noexcept;
     static std::uint64_t GenerationOf(VnActionSeekTicket ticket) noexcept;
     Row* Resolve(VnActionSeekTicket ticket) noexcept;
     const Row* Resolve(VnActionSeekTicket ticket) const noexcept;
-    bool Recycle(std::uint32_t slot, Row& row) noexcept;
+    bool Recycle(Row& row) noexcept;
 
-    std::unique_ptr<Row[]> rows_;
+    GrowingRowStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
 };
 

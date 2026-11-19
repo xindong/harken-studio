@@ -30,11 +30,7 @@ std::uint32_t Value(ActionSeekLifecycle state) noexcept {
 
 VnActionSeekTicket ActionSeekTable::MakeTicket(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    return (generation << kActionSeekSlotBits) | slot;
-}
-
-std::uint32_t ActionSeekTable::SlotOf(VnActionSeekTicket ticket) noexcept {
-    return static_cast<std::uint32_t>(ticket & (kMaxActionSeeksHard - 1u));
+    return (generation << kActionSeekSlotBits) | (slot & (kMaxActionSeeksHard - 1u));
 }
 
 std::uint64_t ActionSeekTable::GenerationOf(
@@ -43,25 +39,24 @@ std::uint64_t ActionSeekTable::GenerationOf(
 }
 
 bool ActionSeekTable::Reset(std::uint32_t capacity) {
-    if (capacity == 0 || capacity > kMaxActionSeeksHard) return false;
-    std::unique_ptr<Row[]> rows;
-    try {
-        rows = std::make_unique<Row[]>(capacity);
-    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
-        return false;
-    }
-    rows_ = std::move(rows);
+    if (capacity == 0 || memguard::IsAudioTagged()) return false;
+    GrowingRowStorage<Row> rows;
+    rows_.Swap(rows);
     capacity_ = capacity;
     return true;
 }
 
 ActionSeekTable::Row* ActionSeekTable::Resolve(
     VnActionSeekTicket ticket) noexcept {
-    if (ticket == 0) return nullptr;
-    const std::uint32_t slot = SlotOf(ticket);
-    if (slot >= capacity_) return nullptr;
-    Row& row = rows_[slot];
-    return row.generation == GenerationOf(ticket) ? &row : nullptr;
+    const auto generation = GenerationOf(ticket);
+    if (generation == 0) return nullptr;
+    const auto count = rows_.ConstructedCount();
+    for (std::uint64_t slot = ticket & (kMaxActionSeeksHard - 1u);
+         slot < count; slot += kMaxActionSeeksHard) {
+        auto& row = rows_[static_cast<std::uint32_t>(slot)];
+        if (row.generation.load(std::memory_order_relaxed) == generation) return &row;
+    }
+    return nullptr;
 }
 
 const ActionSeekTable::Row* ActionSeekTable::Resolve(
@@ -78,7 +73,10 @@ bool ActionSeekTable::Prepare(
         return false;
     }
     *outTicket = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    if (memguard::IsAudioTagged() || capacity_ == 0) return false;
+    const auto count = rows_.ConstructedCount();
+    for (std::uint32_t slot = 0; slot < UINT32_MAX; ++slot) {
+        if (slot >= count && !rows_.ConstructThrough(slot + 1u)) return false;
         Row& row = rows_[slot];
         if (row.lifecycle.load(std::memory_order_relaxed) !=
             Value(ActionSeekLifecycle::Free)) {
@@ -89,6 +87,7 @@ bool ActionSeekTable::Prepare(
             if (row.generation == 0) {
                 row.lifecycle.store(Value(ActionSeekLifecycle::Quarantined),
                                     std::memory_order_relaxed);
+                if (slot >= count || slot + 1u == count) return false;
                 continue;
             }
         }
@@ -125,12 +124,12 @@ bool ActionSeekTable::Abandon(VnActionSeekTicket ticket) noexcept {
                               Value(ActionSeekLifecycle::Prepared)) {
         return false;
     }
-    return Recycle(SlotOf(ticket), *row);
+    return Recycle(*row);
 }
 
 bool ActionSeekTable::HasOutstanding(
     VnActionFiringHandle firing) const noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const Row& row = rows_[slot];
         const auto state = static_cast<ActionSeekLifecycle>(
             row.lifecycle.load(std::memory_order_acquire));
@@ -263,12 +262,12 @@ VnResult ActionSeekTable::Release(VnActionSeekTicket ticket) noexcept {
         state != ActionSeekLifecycle::Cancelled) {
         return VN_IN_USE;
     }
-    Recycle(SlotOf(ticket), *row);
+    Recycle(*row);
     return VN_OK;
 }
 
 void ActionSeekTable::CancelAllAfterAudioJoin(VnResult result) noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         Row& row = rows_[slot];
         const auto state = static_cast<ActionSeekLifecycle>(
             row.lifecycle.load(std::memory_order_relaxed));
@@ -284,7 +283,7 @@ void ActionSeekTable::CancelAllAfterAudioJoin(VnResult result) noexcept {
     }
 }
 
-bool ActionSeekTable::Recycle(std::uint32_t, Row& row) noexcept {
+bool ActionSeekTable::Recycle(Row& row) noexcept {
     row.firing = 0;
     row.acceptedLogicSequence = 0;
     row.appliedAudioBlockSequence = 0;

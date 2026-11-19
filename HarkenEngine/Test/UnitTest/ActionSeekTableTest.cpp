@@ -5,6 +5,29 @@
 #include <atomic>
 #include <thread>
 #include <utility>
+#include <vector>
+
+TEST(ActionSeekTable, RetainedTicketsWithTheSameHintCompleteIndependently) {
+    harken::ActionSeekTable table;
+    ASSERT_TRUE(table.Reset(1));
+    std::vector<VnActionSeekTicket> tickets(4097);
+    for (std::size_t i = 0; i < tickets.size(); ++i) {
+        ASSERT_TRUE(table.Prepare(i + 1, 1, i + 1, &tickets[i]));
+        ASSERT_TRUE(table.Commit(tickets[i]));
+    }
+    EXPECT_EQ(tickets.front() & 4095u, tickets.back() & 4095u);
+    ASSERT_TRUE(table.TryBeginApply(tickets.back()));
+    ASSERT_TRUE(table.FinishApplied(tickets.back(), 9, 11, 11));
+    ASSERT_TRUE(table.RequestCancel(tickets.front(), VN_STALE_HANDLE));
+    ASSERT_TRUE(table.FinishRequestedCancellation(tickets.front()));
+    VnActionSeekInfoV1 info{};
+    ASSERT_EQ(VN_OK, table.Query(tickets.back(), &info));
+    EXPECT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+    EXPECT_EQ(4097u, info.firing);
+    ASSERT_EQ(VN_OK, table.Release(tickets.front()));
+    EXPECT_EQ(VN_STALE_HANDLE, table.Query(tickets.front(), &info));
+    EXPECT_EQ(VN_OK, table.Release(tickets.back()));
+}
 
 TEST(ActionSeekTable, ConcurrentQueryObservesWholeCompletionRecords) {
     harken::ActionSeekTable table;
