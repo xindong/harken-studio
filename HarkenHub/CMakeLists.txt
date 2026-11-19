@@ -129,8 +129,6 @@ set(HARKEN_HUB_SOURCES
     Source/Versions/LocalBuildRefreshCoordinator.cpp
     Source/Versions/StudioLaunchTarget.cpp
     Source/Versions/IntegrityChecker.cpp
-    Source/Versions/LaunchDiagnostics.cpp
-    Source/Versions/SelfTestRunner.cpp
     Source/Launch/LaunchPreflight.cpp
     Source/Launch/ProjectCreateFlow.cpp
     Source/Launch/ProjectOpenFlow.cpp

@@ -193,13 +193,12 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | `--project <path>` | 所有版本 | 打开工程 |
 | `--create-project --project-name <name> --project-location <dir>` | 0.7.0 | 在 `<dir>/<name>/` 新建空工程 |
 | `--project-template-id <id>`（随 `--create-project`） | 0.9.4 之后的版本 | 用 Studio 自己的模板库中的模板新建；模板不可用时报错，不创建工程 |
-| `--project-template-file <path>`（随 `--create-project`） | 0.7.0 | 用指定的模板文件新建；Hub 不再使用，保留给旧版 Hub |
 | `--list-templates --json` | 0.9.4 之后的版本 | 不启动界面，标准输出一个 JSON 对象 `{"templates":[{"id","displayName","description"}]}`，只列出能通过 Studio 校验的模板，退出码 0 |
-| `--self-test --json` | 0.7.0 | 不启动界面，标准输出一个 JSON 对象；Hub 只读 `ok`（布尔）、`product`（`HarkenStudio`）、`version`、`buildId`、`channel` |
+| `--version --json` | 0.9.4 之后的版本 | 不启动界面，标准输出 `{"status":"ok","result":{...}}`；`result` 含 `product`（`HarkenStudio`）、`version`、`buildId`、`channel`，以及供发布脚本核对的 `gitCommit`、`gitDirty`、`editorSchemaVersion`、`packSchemaVersion`、`schemaSnapshotHash`、`schemaArchiveOk`。Hub 只读前四项，用于识别本地构建 |
 
 工程文件 `project.root` 头部的 `studioVersion`（保存时的 Studio 版本）同样是稳定字段，Hub 用它推荐打开工程的版本；更早的工程使用旧名 `savedStudioVersion`。Hub 不读取工程头的其他字段。
 
-Studio 发布包不再包含 `capabilities.json`，自检报告也不再输出 `capabilitiesVersion`。
+已删除的入口：`--self-test`（由 `--version --json` 取代）、`--project-template-file`（改用 `--project-template-id`）。Studio 发布包不再包含 `capabilities.json`。
 
 ## 实现与验证
 

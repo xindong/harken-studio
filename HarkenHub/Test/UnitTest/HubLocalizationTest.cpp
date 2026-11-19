@@ -219,9 +219,6 @@ TEST(HubLocalizationTest, SimplifiedChineseCatalogIsCompleteAndLoadable)
                   "HarkenHub", "Project file no longer exists: %1")
                   .arg(QStringLiteral("demo.hsp")),
               QStringLiteral("\u5de5\u7a0b\u6587\u4ef6\u5df2\u4e0d\u5b58\u5728\uff1ademo.hsp"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Install finished · self-test issue"),
-              QString::fromUtf8("安装完成 · 自检发现问题"));
     EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(
                   QStringLiteral("[INFO] HarkenHub 0.1.36-dev state -> "
                                  "AwaitingBridge")),

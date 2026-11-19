@@ -3,7 +3,7 @@
 #include "Packaging/PackageReader.h"
 #include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
-#include "Versions/SelfTestRunner.h"
+#include "Versions/StudioInterface.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -190,27 +190,25 @@ bool LocalBuildRegistry::probe(const QString& executablePath,
     }
 
     const QString fingerprint = fileFingerprint(executablePath);
-    const SelfTestResult result = SelfTestRunner::run(
-        executable.absoluteFilePath(),
-        {QStringLiteral("--self-test"), QStringLiteral("--json")},
-        QString(), 10000);
-    if (!result.ok) {
+    QString identifyError;
+    const auto identity = StudioInterface::identify(executable.absoluteFilePath(), &identifyError);
+    if (!identity) {
         if (error)
-            *error = result.error;
+            *error = identifyError;
         return false;
     }
     if (fingerprint.isEmpty() || fileFingerprint(executablePath) != fingerprint) {
         if (error)
-            *error = QStringLiteral("The executable changed during its self-test. Try again.");
+            *error = QStringLiteral("The executable changed while Hub read its version. Try again.");
         return false;
     }
     if (record) {
         const QFileInfo refreshed(executable.absoluteFilePath());
         record->executablePath = refreshed.absoluteFilePath();
         record->executableFingerprint = fingerprint;
-        record->reportedBuildId = result.reportedBuildId;
-        record->semanticVersion = result.reportedVersion;
-        record->channel = result.channel;
+        record->reportedBuildId = identity->buildId;
+        record->semanticVersion = identity->version;
+        record->channel = identity->channel;
         record->executableSize = refreshed.size();
         record->executableModifiedMs =
             refreshed.lastModified().toMSecsSinceEpoch();

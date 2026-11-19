@@ -16,6 +16,7 @@ namespace VNH::StudioInterface {
 namespace {
 
 constexpr int kListTemplatesTimeoutMs = 30000;
+constexpr int kIdentifyTimeoutMs = 10000;
 
 int compare(const QString& studioVersion, const char* reference)
 {
@@ -35,11 +36,6 @@ bool canCreateProjects(const QString& studioVersion)
     return compare(studioVersion, "0.7.0") >= 0;
 }
 
-bool canSelfTest(const QString& studioVersion)
-{
-    return compare(studioVersion, "0.7.0") >= 0;
-}
-
 bool canListTemplates(const QString& studioVersion)
 {
     return compare(studioVersion, "0.9.4") > 0;
@@ -50,6 +46,34 @@ QString executable(const InstalledVersion& version)
     return version.executablePath.isEmpty()
         ? QDir(version.installPath).filePath(studioBinaryRelativePath())
         : version.executablePath;
+}
+
+std::optional<StudioIdentity> identify(const QString& executable, QString* error)
+{
+    QProcess process;
+    process.start(executable, {QStringLiteral("--version"), QStringLiteral("--json")});
+    if (!process.waitForFinished(kIdentifyTimeoutMs)) {
+        process.kill();
+        process.waitForFinished();
+        *error = QStringLiteral("HarkenStudio did not report its version: %1").arg(executable);
+        return std::nullopt;
+    }
+    const QJsonObject response = QJsonDocument::fromJson(process.readAllStandardOutput()).object();
+    const QJsonObject result = response.value(QStringLiteral("result")).toObject();
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0
+        || response.value(QStringLiteral("status")).toString() != QStringLiteral("ok")
+        || result.value(QStringLiteral("product")).toString() != QStringLiteral("HarkenStudio")) {
+        *error = QStringLiteral("The selected executable is not a HarkenStudio that reports its version: %1").arg(executable);
+        return std::nullopt;
+    }
+    StudioIdentity identity{result.value(QStringLiteral("version")).toString().trimmed(),
+                            result.value(QStringLiteral("buildId")).toString().trimmed(),
+                            result.value(QStringLiteral("channel")).toString().trimmed()};
+    if (identity.version.isEmpty() || identity.buildId.isEmpty() || identity.channel.isEmpty()) {
+        *error = QStringLiteral("HarkenStudio did not report a complete build identity: %1").arg(executable);
+        return std::nullopt;
+    }
+    return identity;
 }
 
 std::optional<std::vector<StudioTemplate>> listTemplates(const InstalledVersion& version, QString* error)

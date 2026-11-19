@@ -106,19 +106,7 @@ void StartupCoordinator::startProjectPreparation()
         ProjectConfig config;
         config.name = startupArguments_.projectName.trimmed();
         config.location = startupArguments_.projectLocation.trimmed();
-        if (!startupArguments_.projectTemplatePath.isEmpty()) {
-            ValidationResult validation;
-            const auto projectTemplate = ProjectTemplateLoader::loadFile(
-                startupArguments_.projectTemplatePath, &validation);
-            if (!projectTemplate) {
-                fail(validation.toUserText());
-                return;
-            }
-            config.templateId = startupArguments_.projectTemplateId.isEmpty()
-                                    ? projectTemplate->id
-                                    : startupArguments_.projectTemplateId;
-            config.templateData = projectTemplate->toJson();
-        } else if (!startupArguments_.projectTemplateId.isEmpty()) {
+        if (!startupArguments_.projectTemplateId.isEmpty()) {
             const auto projectTemplate = ProjectTemplateLoader::load(startupArguments_.projectTemplateId);
             if (!projectTemplate) {
                 fail(tr("The project template is unavailable: %1").arg(startupArguments_.projectTemplateId));

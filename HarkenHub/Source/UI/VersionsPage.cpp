@@ -24,9 +24,7 @@
 #include "Update/HubSelfUpdate.h"
 #include "Update/ServerEndpoints.h"
 #include "Update/UpdateStateStore.h"
-#include "Versions/LaunchDiagnostics.h"
 #include "Versions/LocalBuildRegistry.h"
-#include "Versions/SelfTestRunner.h"
 #include "Versions/StudioLaunchTarget.h"
 #include "Versions/StudioInterface.h"
 
@@ -1444,7 +1442,6 @@ void VersionsPage::onElevatedPoll()
                 pendingUpdate.buildId == activeBuildId_)
                 UpdateStateStore::clear(pendingUpdate);
             finishElevatedFlow(QCoreApplication::translate("HarkenHub", "Install finished"));
-            runSelfTest(activeBuildId_);
             break;
         }
         case ElevatedMode::Uninstall:
@@ -1484,46 +1481,6 @@ void VersionsPage::onElevatedPoll()
     }
     activeBuildId_.clear();
     emit launchTargetChanged();
-}
-
-void VersionsPage::runSelfTest(const QString& buildId)
-{
-    if (buildId.isEmpty())
-        return;
-    QString installPath;
-    for (const auto& version : VersionScanner::scanInstalled()) {
-        if (version.buildId == buildId) {
-            if (!StudioInterface::canSelfTest(version.semanticVersion))
-                return;
-            installPath = version.installPath;
-            break;
-        }
-    }
-    if (installPath.isEmpty())
-        return;
-
-    LaunchDiagnostics::record(buildId, QStringLiteral("SelfTesting"),
-                              QString(), QDateTime::currentDateTimeUtc());
-    const QPointer<VersionsPage> self(this);
-    QThreadPool::globalInstance()->start([self, buildId, installPath]() {
-        const SelfTestResult result =
-            SelfTestRunner::runForInstall(installPath, buildId);
-        LaunchDiagnostics::record(
-            buildId,
-            result.ok ? QStringLiteral("Ready") : QStringLiteral("LaunchIssue"),
-            result.ok ? QString() : result.error,
-            QDateTime::currentDateTimeUtc());
-        QMetaObject::invokeMethod(
-            QCoreApplication::instance(),
-            [self, result]() {
-                if (self)
-                    self->installStatusLabel_->setText(
-                        result.ok
-                            ? QCoreApplication::translate("HarkenHub", "Install finished · self-test OK")
-                            : QCoreApplication::translate("HarkenHub", "Install finished · self-test issue"));
-            },
-            Qt::QueuedConnection);
-    });
 }
 
 void VersionsPage::finishElevatedFlow(const QString& status)

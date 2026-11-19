@@ -13,7 +13,7 @@
 #include "Transactions/RepairExecutor.h"
 #include "Versions/IntegrityChecker.h"
 #include "Versions/LocalBuildRegistry.h"
-#include "Versions/SelfTestRunner.h"
+#include "Versions/StudioInterface.h"
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -120,8 +120,10 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     const auto versions = VNH::VersionScanner::scanInstalled();
     ASSERT_EQ(versions.size(), 1u);
     EXPECT_EQ(versions.front().expectedBuildId(), build);
-    const auto selfTest = VNH::SelfTestRunner::runForInstall(installed.installPath, build);
-    ASSERT_TRUE(selfTest.ok) << selfTest.error.toStdString();
+    QString identifyError;
+    const auto identity = VNH::StudioInterface::identify(VNH::StudioInterface::executable(versions.front()), &identifyError);
+    ASSERT_TRUE(identity.has_value()) << identifyError.toStdString();
+    EXPECT_EQ(identity->buildId, build);
     EXPECT_TRUE(VNH::IntegrityChecker::check(installed.installPath).ok);
 
     const auto files = manifest.value("files").toArray();
@@ -137,7 +139,7 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     ASSERT_TRUE(VNH::InstallPackageCache::store(build, package, envelopePath, &error));
     const auto repaired = VNH::RepairExecutor::run(build, now);
     ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
-    EXPECT_TRUE(VNH::SelfTestRunner::runForInstall(installed.installPath, build).ok);
+    EXPECT_TRUE(VNH::StudioInterface::identify(VNH::StudioInterface::executable(versions.front()), &identifyError).has_value());
 
     VNH::LocalBuildRecord local;
     ASSERT_TRUE(VNH::LocalBuildRegistry::probe(versions.front().executablePath, &local, &error)) << error.toStdString();

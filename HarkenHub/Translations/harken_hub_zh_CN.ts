@@ -2140,16 +2140,6 @@ Diagnostic log: %2</source>
 诊断日志：%2</translation>
     </message>
     <message>
-        <location filename="../Source/UI/VersionsPage.cpp" line="1374"/>
-        <source>Install finished · self-test OK</source>
-        <translation>安装完成 · 自检通过</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/VersionsPage.cpp" line="1375"/>
-        <source>Install finished · self-test issue</source>
-        <translation>安装完成 · 自检发现问题</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="447"/>
         <location filename="../Source/UI/VersionsPage.cpp" line="1395"/>
         <source>Open Folder</source>

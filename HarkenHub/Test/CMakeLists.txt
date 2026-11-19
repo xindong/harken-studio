@@ -30,7 +30,6 @@ add_executable(harken_hub_tests
     UnitTest/IntegrationStoreTest.cpp
     UnitTest/EngineIntegrationsPageTest.cpp
     UnitTest/IntegrityAndRepairTest.cpp
-    UnitTest/LaunchDiagnosticsTest.cpp
     UnitTest/LocalBuildRegistryTest.cpp
     UnitTest/LaunchPreflightTest.cpp
     UnitTest/ProjectOpenFlowTest.cpp

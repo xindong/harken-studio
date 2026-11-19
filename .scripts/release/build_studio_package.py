@@ -80,24 +80,26 @@ def studio_binary(input_dir: Path) -> Path:
     raise SystemExit("error: deployed Studio binary is missing")
 
 
-def run_studio_self_test(binary: Path) -> dict:
+def run_studio_version_report(binary: Path) -> dict:
     try:
         completed = subprocess.run(
-            [str(binary), "--self-test"],
+            [str(binary), "--version", "--json"],
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise SystemExit(f"error: cannot run Studio self-test: {error}") from error
+        raise SystemExit(f"error: cannot run Studio --version --json: {error}") from error
     try:
-        report = json.loads(completed.stdout.strip())
+        response = json.loads(completed.stdout.strip())
     except json.JSONDecodeError as error:
-        raise SystemExit("error: Studio self-test did not return valid JSON") from error
-    if completed.returncode != 0 or not isinstance(report, dict):
-        raise SystemExit("error: Studio self-test failed")
-    return report
+        raise SystemExit("error: Studio --version --json did not return valid JSON") from error
+    if (completed.returncode != 0 or not isinstance(response, dict) or response.get("status") != "ok"
+            or not isinstance(response.get("result"), dict)):
+        raise SystemExit("error: Studio --version --json failed")
+    return response["result"]
 
 
 def run_studio_cli_smoke_test(binary: Path) -> None:
@@ -114,10 +116,9 @@ def run_studio_cli_smoke_test(binary: Path) -> None:
         raise SystemExit(f"error: HarkenStudioCLI startup verification failed: {error}") from error
 
 
-def verify_studio_self_test(report: dict, schema: dict) -> None:
+def verify_studio_version_report(report: dict, schema: dict) -> None:
     if (
-        report.get("ok") is not True
-        or report.get("product") != "HarkenStudio"
+        report.get("product") != "HarkenStudio"
         or report.get("schemaArchiveOk") is not True
         or report.get("schemaSnapshotHash") != schema["snapshotHash"]
         or type(report.get("editorSchemaVersion")) is not int
@@ -130,7 +131,7 @@ def verify_studio_self_test(report: dict, schema: dict) -> None:
         or type(report.get("gitDirty")) is not bool
     ):
         raise SystemExit(
-            "error: Studio self-test does not match the packaged Schema snapshot"
+            "error: Studio version report does not match the packaged Schema snapshot"
         )
 
 
@@ -142,14 +143,14 @@ def metadata_entry(name: str) -> zipfile.ZipInfo:
     return info
 
 
-def verify_release_candidate(args: argparse.Namespace, self_test: dict) -> None:
+def verify_release_candidate(args: argparse.Namespace, version_report: dict) -> None:
     if args.channel not in {"stable", "beta"}:
         return
     try:
         report = schema_release_audit.verify_current_release("WORKTREE")
         if report["errors"]:
             raise ValueError("; ".join(report["errors"]))
-        schema_release_audit.require_current_reader({"currentReader": self_test})
+        schema_release_audit.require_current_reader({"currentReader": version_report})
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         raise SystemExit(f"error: Schema release verification failed: {error}") from error
 
@@ -226,13 +227,13 @@ def build_package(args: argparse.Namespace) -> dict:
     except (ValueError, OSError) as error:
         raise SystemExit(f"error: invalid integration deployment: {error}") from error
     deployed_schema = verify_schema_directory(binary.parent / "schema")
-    self_test = run_studio_self_test(binary)
-    verify_studio_self_test(self_test, deployed_schema)
-    if (self_test.get("version") != args.version
-            or self_test.get("buildId") != args.build_id
-            or self_test.get("channel") != args.channel):
+    version_report = run_studio_version_report(binary)
+    verify_studio_version_report(version_report, deployed_schema)
+    if (version_report.get("version") != args.version
+            or version_report.get("buildId") != args.build_id
+            or version_report.get("channel") != args.channel):
         raise SystemExit("error: Studio binary identity does not match package arguments")
-    verify_release_candidate(args, self_test)
+    verify_release_candidate(args, version_report)
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -251,8 +252,8 @@ def build_package(args: argparse.Namespace) -> dict:
         "product": "HarkenStudio",
         "version": args.version,
         "buildId": args.build_id,
-        "gitCommit": self_test["gitCommit"],
-        "gitDirty": self_test["gitDirty"],
+        "gitCommit": version_report["gitCommit"],
+        "gitDirty": version_report["gitDirty"],
         "channel": args.channel,
         "createdAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "releaseSequence": args.release_sequence,
@@ -267,7 +268,7 @@ def build_package(args: argparse.Namespace) -> dict:
         staged_manifest.write_bytes(manifest_content)
         evidence = release_evidence.prepare(
             "studio", input_dir, Path(args.build_dir).resolve(), staging,
-            args.version, args.build_id, binary_identity=self_test, payload_records=file_records,
+            args.version, args.build_id, binary_identity=version_report, payload_records=file_records,
             payload_manifest={"artifact": package_path.name, "path": PACKAGE_MANIFEST_NAME,
                               "sha256": hashlib.sha256(manifest_content).hexdigest(),
                               "fileCount": len(file_records)})

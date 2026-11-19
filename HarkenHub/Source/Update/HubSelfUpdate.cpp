@@ -445,7 +445,6 @@ bool HubSelfUpdate::backupUserData(const QDateTime& now, QString* error)
         QStringLiteral("projects.db"),
         QStringLiteral("update-state.json"),
         QStringLiteral("consents.json"),
-        QStringLiteral("launch-diagnostics.json"),
     };
     for (const QString& name : candidates) {
         const QString sourcePath = source.filePath(name);
