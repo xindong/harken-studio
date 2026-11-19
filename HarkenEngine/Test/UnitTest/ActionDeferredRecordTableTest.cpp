@@ -1226,7 +1226,7 @@ TEST(ActionDeferredRecordTable, ClaimedResetOrderRejectsStalePairsAndSettledStep
     for (unsigned mismatch = 0; mismatch < 11; ++mismatch) {
         SCOPED_TRACE(mismatch);
         harken::ActionFiringTable firings;
-        ASSERT_TRUE(firings.Reset(1));
+        ASSERT_TRUE(firings.Reset());
         harken::PreparedActionFiring firing;
         ASSERT_TRUE(firings.PrepareRoot(harkentest::ObjectId(41), 11, 1, &firing));
         auto record = MakeRecord();

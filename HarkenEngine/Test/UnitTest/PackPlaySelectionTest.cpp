@@ -46,7 +46,7 @@ int NestedFiringSelectionSelfTest() {
     if (!harken::ParseObjectId(kLeaf, &action) ||
         !harken::ParseObjectId(kOtherLeaf, &childAction) ||
         !harken::ParseObjectId("11111111-2222-3333-4444-555555555555", &nestedAction) ||
-        !table.Reset(5) ||
+        !table.Reset() ||
         !table.PrepareRoot(action, 1, 1, &root) ||
         !table.PrepareChild(root, childAction, 1, 1, &child) ||
         !table.PrepareChild(child, nestedAction, 1, 1, &nested) ||

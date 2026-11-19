@@ -2596,7 +2596,6 @@ TEST(PackComposition,
         WriteTemp("f3-cross-post-refuse-b.pack", packBBytes);
 
     VnConfig config = MakeNullConfig();
-    config.maxActionFirings = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     VnCanonicalPackSetMemberV1 members[3]{};
@@ -2619,7 +2618,9 @@ TEST(PackComposition,
     post.structSize = sizeof(post);
     post.actionId = harkentest::ObjectId(2002);
     VnActionFiringHandle firing = 99;
-    ASSERT_EQ(VN_NO_ACTION, Vn_PostAction(&post, &firing));
+    session.Engine()->actionFirings.SetRowCommitPageLimitForTests(0);
+    ASSERT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&post, &firing));
+    session.Engine()->actionFirings.SetRowCommitPageLimitForTests(SIZE_MAX);
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(0u, session.Engine()->actionFirings.LiveCount());
     ASSERT_GE(session.Engine()->actionFiringPlanScratch.size(), 2u);
@@ -11497,7 +11498,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         ASSERT_EQ(0u, before.participantCount);
         ASSERT_EQ(1u, before.sliceCount);
         ASSERT_EQ(0u, before.consumedSlices);
-        const auto attempts = engine.immediateEntryAttempts.data();
+        const auto attempts = engine.immediateEntryAttempts.begin();
         const auto end = attempts + engine.immediateEntryAttempts.size();
         const auto attempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
@@ -11591,14 +11592,14 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     } publicationReset{session.Engine()};
     if (failAfterC0Publication) {
         if (holdPublishedReaderThroughRelease) {
-            const auto attempts = session.Engine()->immediateEntryAttempts.data();
+            const auto attempts = session.Engine()->immediateEntryAttempts.begin();
             const auto held = std::find_if(attempts,
                 attempts + session.Engine()->immediateEntryAttempts.size(),
                 [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
             ASSERT_NE(attempts + session.Engine()->immediateEntryAttempts.size(), held);
             publication.coordinator = held->QueueCoordinators().initialQueueCoordinator;
             publication.primary = held->QueueCoordinators().initialQueuePrimaryGroup;
-            publication.attempt = held;
+            publication.attempt = &*held;
             ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(
                 publication.primary, &publication.reader));
         }
@@ -11652,10 +11653,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto ticket = row->ticket;
         const auto transaction = row->schedule.transactionId;
         const auto sequence = event.logicCommitSequence;
-        const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.data(),
-            session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.begin(),
+            session.Engine()->immediateEntryAttempts.end(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
-        ASSERT_NE(session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(session.Engine()->immediateEntryAttempts.end(), attempt);
         ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
@@ -11687,11 +11688,12 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     harken::DecisionToken heldCoordinator{};
     harken::Plan03GroupSliceIdentity heldPrimary{};
     if (holdPrivateReaderThroughRelease) {
-        const auto attempts = session.Engine()->immediateEntryAttempts.data();
+        const auto attempts = session.Engine()->immediateEntryAttempts.begin();
         const auto end = attempts + session.Engine()->immediateEntryAttempts.size();
-        heldAttempt = std::find_if(attempts, end,
+        const auto held = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
-        ASSERT_NE(end, heldAttempt);
+        ASSERT_NE(end, held);
+        heldAttempt = &*held;
         heldCoordinator = heldAttempt->QueueCoordinators().initialQueueCoordinator;
         heldPrimary = heldAttempt->QueueCoordinators().initialQueuePrimaryGroup;
         ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(heldPrimary, &heldPrivateReader));
@@ -20207,14 +20209,15 @@ struct OriginalActionFiringCapacityFill {
         EXPECT_EQ(VN_OK, engine.AcquirePackIdentityLease(ContainerMatrixWorld::kAction, &owner));
         const auto stamp = ActionFiringOwnerStamp::Pack(owner.lease,
             engine.packComposition.ProjectIdAtLease(owner.lease));
-        for (;;) {
+        engine.actionFirings.SetRowCommitPageLimitForTests(0);
+        for (std::uint32_t i = 0; i <= engine.actionFirings.RowCommittedBytes(); ++i) {
             PreparedActionFiring row;
             if (!engine.actionFirings.PrepareRoot(ContainerMatrixWorld::kAction, stamp, 0, &row)) break;
             prepared.push_back(row);
         }
-        EXPECT_FALSE(prepared.empty());
     }
     void Return() {
+        engine.actionFirings.SetRowCommitPageLimitForTests(SIZE_MAX);
         for (auto& row : prepared) EXPECT_TRUE(engine.actionFirings.Abandon(&row));
         prepared.clear();
         EXPECT_EQ(VN_OK, engine.ReleasePackIdentityLease(owner.lease));
@@ -20236,7 +20239,7 @@ static void CheckOriginalActionDefinitionCapacityReturn(bool fault) {
         ++out.acquired; out.lease = lease; out.lease.resourceClosureToken = closure;
         if (out.fault) EXPECT_EQ(VN_OK, actual.packs.ReleaseResourceClosure(closure));
     };
-    EXPECT_EQ(fault ? VN_RUNTIME_RECREATE_REQUIRED : VN_NO_ACTION, fixture.PostOperation());
+    EXPECT_EQ(fault ? VN_RUNTIME_RECREATE_REQUIRED : VN_OUT_OF_MEMORY, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     ASSERT_EQ(1u, observed.acquired);

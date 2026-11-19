@@ -7923,7 +7923,7 @@ void FinishEngineOriginalLaneAttempt(harken::Engine& engine,
 TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExactOwnerUntilRealReturnAndReuse) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
-    ASSERT_GT(engine.immediateEntryAttempts.Capacity(), 0u);
+    EXPECT_EQ(0u, engine.immediateEntryAttempts.size());
     ASSERT_TRUE(engine.EnsureImmediateEntryAttempt(0));
     auto& attempt = engine.immediateEntryAttempts[0];
     ASSERT_NO_FATAL_FAILURE(PrepareEngineOriginalLaneAttempt(engine, attempt, 1201, 1));

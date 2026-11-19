@@ -43880,7 +43880,7 @@ harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
     harken::Engine& engine, harken::ActionFiringHandle root,
     harken::EngineImmediateEntryStorageDemand storageDemand = {}) noexcept {
     for (std::uint32_t index = 0;
-         index < engine.immediateEntryAttempts.Capacity(); ++index) {
+         index < UINT32_MAX; ++index) {
         if (!engine.EnsureImmediateEntryAttempt(index)) return nullptr;
         auto& attempt = engine.immediateEntryAttempts[index];
         if (attempt.active || attempt.originalLaneLifetime.HandleObservation().Valid() ||
@@ -85885,7 +85885,7 @@ bool ReserveImmediateActionFirings(void* opaque,
     std::uint32_t originalCount = plan->originalDeferredPostRecord.Valid() ? 1u : 0u;
     for (std::uint32_t index = 0; index < plan->firingCount; ++index)
         originalCount += plan->engine->actionFiringPlanScratch[index].originalPackLease.Valid() ? 1u : 0u;
-    if (!plan->engine->OriginalActionFiringCapacity(originalCount)) {
+    if (!plan->engine->PrepareActionFiringOwners(originalCount)) {
         (void)plan->engine->actionFirings.Abandon(&plan->engine->actionFiringPlanScratch[0].prepared);
         plan->result = VN_BACKPRESSURE;
         return false;
@@ -104971,7 +104971,7 @@ bool CaptureOriginalPlainActionManifest(ImmediateActionPlan& plan,
         event.frozenTxnValid = true;
         ++attempt.plainSourceCount;
     }
-    const auto attemptSlot = static_cast<std::uint32_t>(&attempt - engine.immediateEntryAttempts.data());
+    const auto attemptSlot = engine.immediateEntryAttempts.IndexOf(&attempt);
     for (std::uint32_t capture = 0; capture < plan.stopCaptureCount; ++capture) {
         const auto& prepared = engine.actionStopScratch[capture].authoredStop;
         auto slot = prepared.firstResource;

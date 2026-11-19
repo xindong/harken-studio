@@ -5,10 +5,33 @@
 #include <atomic>
 #include <thread>
 #include <utility>
+#include <vector>
+
+TEST(ActionSeekTable, RetainedTicketsWithTheSameHintCompleteIndependently) {
+    harken::ActionSeekTable table;
+    ASSERT_TRUE(table.Reset());
+    std::vector<VnActionSeekTicket> tickets(4097);
+    for (std::size_t i = 0; i < tickets.size(); ++i) {
+        ASSERT_TRUE(table.Prepare(i + 1, 1, i + 1, &tickets[i]));
+        ASSERT_TRUE(table.Commit(tickets[i]));
+    }
+    EXPECT_EQ(tickets.front() & 4095u, tickets.back() & 4095u);
+    ASSERT_TRUE(table.TryBeginApply(tickets.back()));
+    ASSERT_TRUE(table.FinishApplied(tickets.back(), 9, 11, 11));
+    ASSERT_TRUE(table.RequestCancel(tickets.front(), VN_STALE_HANDLE));
+    ASSERT_TRUE(table.FinishRequestedCancellation(tickets.front()));
+    VnActionSeekInfoV1 info{};
+    ASSERT_EQ(VN_OK, table.Query(tickets.back(), &info));
+    EXPECT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+    EXPECT_EQ(4097u, info.firing);
+    ASSERT_EQ(VN_OK, table.Release(tickets.front()));
+    EXPECT_EQ(VN_STALE_HANDLE, table.Query(tickets.front(), &info));
+    EXPECT_EQ(VN_OK, table.Release(tickets.back()));
+}
 
 TEST(ActionSeekTable, ConcurrentQueryObservesWholeCompletionRecords) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     std::atomic<VnActionSeekTicket> requested{0};
     std::atomic<VnActionSeekTicket> finished{0};
     std::atomic<bool> stopping{false};
@@ -86,7 +109,7 @@ TEST(ActionSeekTable, ConcurrentQueryObservesWholeCompletionRecords) {
 
 TEST(ActionSeekTable, CancellationAndApplyUseOneAtomicWinner) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     VnActionSeekTicket cancelled = 0;
     ASSERT_TRUE(table.Prepare(101, 2, 7, &cancelled));
@@ -124,12 +147,12 @@ TEST(ActionSeekTable, CancellationAndApplyUseOneAtomicWinner) {
 
 TEST(ActionSeekTable, ResetDoesNotReviveAnOldTicket) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     VnActionSeekTicket oldTicket = 0;
     ASSERT_TRUE(table.Prepare(101, 1, 1, &oldTicket));
     ASSERT_TRUE(table.Commit(oldTicket));
 
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     VnActionSeekTicket newTicket = 0;
     ASSERT_TRUE(table.Prepare(202, 1, 2, &newTicket));
     ASSERT_TRUE(table.Commit(newTicket));
@@ -143,7 +166,7 @@ TEST(ActionSeekTable, ResetDoesNotReviveAnOldTicket) {
 
 TEST(ActionSeekTable, ShutdownCancelsEveryNonTerminalOperation) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
 
     VnActionSeekTicket accepted = 0;
     VnActionSeekTicket cancelRequested = 0;

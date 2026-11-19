@@ -7106,8 +7106,6 @@ public:
                          resolved.maxDeferredIntents,
                      voices.Capacity(), resolved.maxVariableSliceTargetsTotal),
           actionFiringPlanScratch(1),
-          actionFiringOwnerReleaseScratch(resolved.maxActionFirings),
-          originalActionFiringPackHolders(resolved.maxActionFirings),
           actionStepPlanScratch(1),
           actionVariableWriteScratch(1),
           actionSelectionResetScratch(1),
@@ -7295,9 +7293,6 @@ public:
             !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
-            !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
-            !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw harken::detail::LogicPreparationFailure{};
@@ -7460,12 +7455,6 @@ public:
         if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw harken::detail::LogicPreparationFailure{};
         if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw harken::detail::LogicPreparationFailure{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
-        const auto plainCapacity = immediateActionLane.EventsPerAttempt();
-        const auto plainRows = static_cast<std::uint64_t>(resolved.maxActionFirings) * plainCapacity;
-        if (plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateSource) ||
-            plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateStopRef))
-            throw harken::detail::LogicPreparationFailure{};
-        if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw harken::detail::LogicPreparationFailure{};
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxPlan03GroupHeadersPerPage;
         if (pageGroupRows >
@@ -7570,8 +7559,8 @@ public:
             resolved.maxQueueChildren > kMaxQueueChildren ||
             !queueInstances.Valid() ||
             !queueCheckpoints.Valid() ||
-            !actionFirings.Reset(resolved.maxActionFirings) ||
-            !actionSeeks.Reset(resolved.maxActionFirings) ||
+            !actionFirings.Reset() ||
+            !actionSeeks.Reset() ||
             !streamSeekHandoffs.Reset(resolved.maxStreams) ||
             !actionDeferredRecords.Reset(resolved.maxDeferredIntents) ||
             !actionCooldowns.Reset(resolved.maxActionCooldownRows) ||
@@ -7937,11 +7926,22 @@ public:
         return false;
     }
 
-    bool OriginalActionFiringCapacity(std::uint32_t count) const noexcept {
+    bool PrepareActionFiringOwners(std::uint32_t count) noexcept {
+        const auto issued = actionFirings.ConstructedRowCount();
+        try {
+            if (actionFiringOwnerReleaseScratch.size() < issued)
+                actionFiringOwnerReleaseScratch.resize(issued);
+        } catch (const std::bad_alloc&) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
         std::uint32_t free = 0;
         for (const auto& holder : originalActionFiringPackHolders)
             if (holder.firing_ == 0 && !holder.original_.Valid()) ++free;
-        return count <= free;
+        if (free >= count) return true;
+        const auto existing = originalActionFiringPackHolders.size();
+        return count - free <= UINT32_MAX - existing &&
+            originalActionFiringPackHolders.ConstructThrough(existing + (count - free));
     }
 
     bool AdoptOriginalActionFiringPack(ActionFiringHandle firing,
@@ -7957,7 +7957,7 @@ public:
             return false;
         ActionFiringHandle root = firing;
         for (std::size_t depth = 0; actual.parent != 0; ++depth) {
-            if (depth >= originalActionFiringPackHolders.size()) return false;
+            if (depth >= actionFirings.ConstructedRowCount()) return false;
             root = actual.parent;
             if (!actionFirings.Capture(root, &actual)) return false;
         }
@@ -8263,8 +8263,10 @@ public:
     }
     bool EnsureImmediateEntryAttempt(std::uint32_t slot) noexcept {
         if (slot < immediateEntryAttempts.size()) return true;
-        if (slot != immediateEntryAttempts.size()) return false;
-        return immediateEntryAttempts.EmplaceBack();
+        if (slot != immediateEntryAttempts.size() || slot == UINT32_MAX || memguard::IsAudioTagged()) return false;
+        if (immediateEntryAttempts.ConstructThrough(slot + 1u)) return true;
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return false;
     }
     std::size_t ImmediateEntryAttemptStorageBytes() const noexcept {
         auto bytes = immediateEntryAttempts.RequestedBytes();
@@ -13884,7 +13886,7 @@ public:
     std::vector<EngineActionFiringPlanRow> actionFiringPlanScratch;
     std::vector<ActionFiringOwnerStamp> actionFiringOwnerReleaseScratch;
     OriginalPackIdentityLease originalActionFiringPreparation;
-    std::vector<EngineOriginalActionFiringPackHolder> originalActionFiringPackHolders;
+    GrowingRowStorage<EngineOriginalActionFiringPackHolder> originalActionFiringPackHolders;
     std::vector<EngineActionStepPlanRow> actionStepPlanScratch;
     std::vector<PreparedVariableWriteToken> actionVariableWriteScratch;
     std::vector<PreparedSelectionResetV1> actionSelectionResetScratch;
@@ -13946,7 +13948,7 @@ public:
         initialQueueTimingGroupsScratch;
     StableRowStorage<Plan03ImmediateLaneGroupDescriptor>
         initialQueueLaneGroupsScratch;
-    StableRowStorage<EngineImmediateEntryAttempt> immediateEntryAttempts;
+    GrowingRowStorage<EngineImmediateEntryAttempt> immediateEntryAttempts;
     std::uint32_t activeImmediateEntryAttemptCount = 0;
     void SetImmediateEntryAttemptActive(EngineImmediateEntryAttempt& attempt,
                                         bool active) noexcept {
