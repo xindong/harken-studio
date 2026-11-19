@@ -1,7 +1,8 @@
+#include <harken/HarkenDevelopment.h>
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorRecordPack.h"
 #include "Common/TestUtil.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 
 #include <gtest/gtest.h>
 

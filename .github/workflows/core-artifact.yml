@@ -35,27 +35,24 @@ jobs:
         shell: pwsh
         run: >-
           cmake --fresh --preset windows-release -B build-runtime
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build HarkenCore.dll
-        run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
+      - name: Build Engine editions
+        run: cmake --build build-runtime --config Release --parallel
 
-      - name: Stage Windows runtime
+      - name: Install Windows runtime
         shell: pwsh
         run: |
-          $source = "build-runtime/bin/Release/HarkenCore.dll"
-          $importSource = "build-runtime/lib/Release/HarkenCoreImport.lib"
-          if (-not (Test-Path -LiteralPath $source)) {
-            throw "Windows runtime was not produced at $source"
-          }
-          if (-not (Test-Path -LiteralPath $importSource)) {
-            throw "Windows import library was not produced at $importSource"
-          }
           $destination = ".temp/runtime/windows-x64"
-          New-Item -ItemType Directory -Force -Path $destination | Out-Null
-          Copy-Item -LiteralPath $source -Destination "$destination/HarkenCore.dll"
-          Copy-Item -LiteralPath $importSource -Destination "$destination/HarkenCoreImport.lib"
+          cmake --install build-runtime --config Release --prefix $destination
+          foreach ($relative in @("bin/HarkenEngine.dll", "bin/HarkenEngineDev.dll",
+                                  "lib/HarkenEngine.lib", "lib/HarkenEngineDev.lib",
+                                  "share/HarkenEngine/harken_abi_manifest.json")) {
+            if (-not (Test-Path -LiteralPath "$destination/$relative")) {
+              throw "Windows install is missing $relative"
+            }
+          }
 
       - name: Record Runtime build inputs
         run: python .scripts/release/release_evidence.py --build-dir build-runtime --runtime-receipt .temp/runtime/windows-x64/runtime-build.json
@@ -87,29 +84,31 @@ jobs:
         run: |
           cmake --fresh --preset macos-release -B build-runtime \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DHARKEN_BUILD_CORE=ON \
-            -DHARKEN_BUILD_SHARED=ON
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build universal libHarkenCore.dylib
-        run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
+      - name: Build universal Engine editions
+        run: cmake --build build-runtime --config Release --parallel
 
-      - name: Verify and stage macOS runtime
+      - name: Install and verify macOS runtime
         shell: bash
         run: |
           set -euo pipefail
-          source="build-runtime/bin/Release/libHarkenCore.dylib"
-          test -f "$source"
-          archs=$(lipo -archs "$source")
-          echo "macOS HarkenCore architectures: $archs"
-          for required_arch in arm64 x86_64; do
-            case " $archs " in
-              *" $required_arch "*) ;;
-              *) echo "::error file=$source::missing $required_arch slice; found: $archs"; exit 1 ;;
-            esac
-          done
           destination=".temp/runtime/macos-universal"
-          mkdir -p "$destination"
-          cp "$source" "$destination/libHarkenCore.dylib"
+          cmake --install build-runtime --config Release --prefix "$destination"
+          test -f "$destination/share/HarkenEngine/harken_abi_manifest.json"
+          for library in libHarkenEngine.dylib libHarkenEngineDev.dylib; do
+            source="$destination/lib/$library"
+            test -f "$source"
+            archs=$(lipo -archs "$source")
+            echo "macOS $library architectures: $archs"
+            for required_arch in arm64 x86_64; do
+              case " $archs " in
+                *" $required_arch "*) ;;
+                *) echo "::error file=$source::missing $required_arch slice; found: $archs"; exit 1 ;;
+              esac
+            done
+          done
 
       - name: Record Runtime build inputs
         run: python3 .scripts/release/release_evidence.py --build-dir build-runtime --runtime-receipt .temp/runtime/macos-universal/runtime-build.json
@@ -141,35 +140,29 @@ jobs:
             -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DHARKEN_BUILD_CORE=ON
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build libHarkenCore.a
-        run: cmake --build build-ios --config Release --target harken_core --parallel
+      - name: Build iOS Engine editions
+        run: cmake --build build-ios --config Release --parallel
 
-      - name: Verify and stage iOS runtime
+      - name: Install and verify iOS runtime
         shell: bash
         run: |
           set -euo pipefail
-          candidates=()
-          while IFS= read -r candidate; do
-            candidates+=("$candidate")
-          done < <(find build-ios -type f -name libHarkenCore.a -print)
-          if [ "${#candidates[@]}" -ne 1 ]; then
-            printf '::error::Expected one iOS libHarkenCore.a, found %s\n' "${#candidates[@]}"
-            printf '%s\n' "${candidates[@]}"
-            exit 1
-          fi
-          source="${candidates[0]}"
-          test -s "$source"
-          archs=$(lipo -archs "$source")
-          echo "iOS HarkenCore architectures: $archs"
-          if [ "$archs" != "arm64" ]; then
-            echo "::error file=$source::expected an arm64-only iOS device runtime; found: $archs"
-            exit 1
-          fi
           destination=".temp/runtime/ios-arm64"
-          mkdir -p "$destination"
-          cp "$source" "$destination/libHarkenCore.a"
+          cmake --install build-ios --config Release --prefix "$destination"
+          test -f "$destination/share/HarkenEngine/harken_abi_manifest.json"
+          for library in libHarkenEngine.a libHarkenEngineDev.a; do
+            source="$destination/lib/$library"
+            test -s "$source"
+            archs=$(lipo -archs "$source")
+            echo "iOS $library architectures: $archs"
+            if [ "$archs" != "arm64" ]; then
+              echo "::error file=$source::expected an arm64-only iOS device runtime; found: $archs"
+              exit 1
+            fi
+          done
 
       - name: Record Runtime build inputs
         run: python3 .scripts/release/release_evidence.py --build-dir build-ios --runtime-receipt .temp/runtime/ios-arm64/runtime-build.json
@@ -200,21 +193,21 @@ jobs:
         shell: bash
         run: |
           cmake --fresh --preset linux-release -B build-runtime \
-            -DHARKEN_BUILD_CORE=ON \
-            -DHARKEN_BUILD_SHARED=ON
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build libHarkenCore.so
-        run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
+      - name: Build Engine editions
+        run: cmake --build build-runtime --config Release --parallel
 
-      - name: Stage Linux runtime
+      - name: Install Linux runtime
         shell: bash
         run: |
           set -euo pipefail
-          source="build-runtime/bin/Release/libHarkenCore.so"
-          test -f "$source"
           destination=".temp/runtime/linux-x64"
-          mkdir -p "$destination"
-          cp "$source" "$destination/libHarkenCore.so"
+          cmake --install build-runtime --config Release --prefix "$destination"
+          for relative in lib/libHarkenEngine.so lib/libHarkenEngineDev.so share/HarkenEngine/harken_abi_manifest.json; do
+            test -f "$destination/$relative"
+          done
 
       - name: Record Runtime build inputs
         run: python3 .scripts/release/release_evidence.py --build-dir build-runtime --runtime-receipt .temp/runtime/linux-x64/runtime-build.json
@@ -266,29 +259,31 @@ jobs:
             -DANDROID_PLATFORM=android-21 \
             -DANDROID_STL=c++_static \
             -DANDROID_ABI=arm64-v8a \
-            -DHARKEN_BUILD_CORE=ON \
-            -DHARKEN_BUILD_SHARED=ON
-          cmake --build build-android-arm64-v8a --config Release --target harken_core_shared --parallel
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
+          cmake --build build-android-arm64-v8a --config Release --parallel
 
-      - name: Stage Android arm64 runtime
+      - name: Install and verify Android arm64 runtime
         shell: bash
         run: |
           set -euo pipefail
-          source="build-android-arm64-v8a/bin/Release/libHarkenCore.so"
-          test -s "$source"
+          destination=".temp/runtime/android/arm64-v8a"
+          cmake --install build-android-arm64-v8a --config Release --prefix "$destination"
+          test -f "$destination/share/HarkenEngine/harken_abi_manifest.json"
           readelf=$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" \
             -name llvm-readelf -print -quit)
           if [ -z "$readelf" ] || [ ! -x "$readelf" ]; then
             echo "::error::Android NDK llvm-readelf was not found or is not executable"
             exit 1
           fi
-          if "$readelf" -d "$source" | grep -q 'libc++_shared.so'; then
-            echo "::error file=$source::Android runtime is not self-contained; libc++_shared.so is still required"
-            exit 1
-          fi
-          destination=".temp/runtime/android/arm64-v8a"
-          mkdir -p "$destination"
-          cp "$source" "$destination/libHarkenCore.so"
+          for library in libHarkenEngine.so libHarkenEngineDev.so; do
+            source="$destination/lib/$library"
+            test -s "$source"
+            if "$readelf" -d "$source" | grep -q 'libc++_shared.so'; then
+              echo "::error file=$source::Android runtime is not self-contained; libc++_shared.so is still required"
+              exit 1
+            fi
+          done
 
       - name: Record Runtime build inputs
         run: >-

@@ -187,7 +187,7 @@ void ProjectExplorer::setupPanelChrome()
                     TreeExpansion::toggle(item, QApplication::keyboardModifiers());
                     return;
                 }
-                emit sourceEditorRequested(sourceId);
+                emit fileViewerRequested(sourceId);
             });
     sourcesLayout->addWidget(sourcesTree_, 1);
 

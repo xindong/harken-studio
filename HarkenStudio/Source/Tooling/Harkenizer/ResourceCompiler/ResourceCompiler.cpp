@@ -54,6 +54,7 @@ struct PackEntry {
     std::string path;         // resolved path the file was read from
     std::string sourceText;   // path as written (report/cache identity)
     std::vector<float> planar; // channel planes concatenated
+    std::shared_ptr<const VNX::VorbisEncoder::EncodedMedia> encodedMedia;
     std::uint32_t sampleRate = 0;
     std::uint16_t channelCount = 0;
     std::uint64_t frameCount = 0;
@@ -242,7 +243,7 @@ bool ValidateLoopPoints(const PackEntry& entry, std::size_t entryIndex,
 }
 
 std::uint64_t AlignUp64(std::uint64_t value) {
-    const std::uint64_t align = harkenstudiobuild::kPackBlobAlign;
+    const std::uint64_t align = HK_PACK_BLOB_ALIGN;
     return (value + align - 1) / align * align;
 }
 
@@ -250,10 +251,10 @@ bool BuildPackBytes(const std::vector<PackEntry>& entries,
                     std::vector<std::uint8_t>* out, Diag* diag) {
     const std::uint32_t entryCount =
         static_cast<std::uint32_t>(entries.size());
-    const std::uint64_t tocOffset = harkenstudiobuild::kPackMediaFileHeaderBytes;
+    const std::uint64_t tocOffset = harkenstudiobuild::kPackBytes<HkPackMediaFileHeader>;
     const std::uint64_t tocBytes =
         static_cast<std::uint64_t>(entryCount) *
-        harkenstudiobuild::kPackMediaBytes;
+        harkenstudiobuild::kPackBytes<HkPackMedia>;
 
     // Blob placement: packed in manifest order, each aligned. fileBytes
     // ends exactly at the last blob's end — no trailing padding.
@@ -290,30 +291,30 @@ bool BuildPackBytes(const std::vector<PackEntry>& entries,
         toc.soundId = entry.soundId;
         toc.sampleRate = entry.sampleRate;
         toc.channelCount = entry.channelCount;
-        toc.sampleFormat = harkenstudiobuild::kPackSampleFormatF32Planar;
+        toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
         toc.frameCount = entry.frameCount;
         toc.blobOffset = blobOffsets[i];
         toc.blobBytes = blobBytes;
         toc.blobChecksum =
             harkenstudiobuild::Fnv1a64(out->data() + blobOffsets[i],
                            static_cast<std::size_t>(blobBytes));
-        toc.flags = entry.loopable ? harkenstudiobuild::kPackFlagLoopable : 0;
+        toc.flags = entry.loopable ? HK_PACK_MEDIA_FLAG_LOOPABLE : 0;
         toc.loopStartFrame = entry.loopable ? entry.loopStartFrame : 0;
         toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
-        harkenstudiobuild::SerializePackMedia(
-            toc, tocImage.data() + i * harkenstudiobuild::kPackMediaBytes);
+        harkenstudiobuild::SerializePackRow<HkPackMedia>(
+            toc, tocImage.data() + i * harkenstudiobuild::kPackBytes<HkPackMedia>);
     }
     std::memcpy(out->data() + tocOffset, tocImage.data(),
                 tocImage.size());
 
     harkenstudiobuild::PackMediaFileHeader header;
-    header.formatVersion = harkenstudiobuild::kPackFormatVersion;
-    header.headerBytes = harkenstudiobuild::kPackMediaFileHeaderBytes;
+    header.formatVersion = HK_PACK_FORMAT_VERSION;
+    header.headerBytes = harkenstudiobuild::kPackBytes<HkPackMediaFileHeader>;
     header.fileBytes = fileBytes;
     header.entryCount = entryCount;
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harkenstudiobuild::Fnv1a64(tocImage.data(), tocImage.size());
-    harkenstudiobuild::SerializePackMediaFileHeader(header, out->data());
+    harkenstudiobuild::SerializePackRow<HkPackMediaFileHeader>(header, out->data());
     return true;
 }
 
@@ -364,7 +365,7 @@ harkenstudiobuild::BindingCurve ToBindingCurve(const ManifestCurve& curve) {
 // entry kind, manifest order within a kind; the relation kinds (bus
 // send, binding attachment) carry their 0-based within-kind ordinal as
 // the directory id — then the payload region (each payload aligned to
-// kPackPayloadAlign), then the media blob region (kPackBlobAlign,
+// HK_PACK_PAYLOAD_ALIGN), then the media blob region (HK_PACK_BLOB_ALIGN,
 // manifest order). fileBytes ends at the last blob, or at the last
 // payload when the pack carries no media. The image is
 // zero-initialized so every alignment gap stays zeroed, and nothing
@@ -392,33 +393,33 @@ std::vector<EntryPlacement> BuildEntryPlacements(
         placements.push_back(placement);
     };
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindMedia, entries[i].soundId, i,
-              harkenstudiobuild::kPackMediaBytes);
+        place(HK_PACK_ENTRY_KIND_MEDIA, entries[i].soundId, i,
+              harkenstudiobuild::kPackBytes<HkPackMedia>);
     }
     for (std::size_t i = 0; i < manifest.buses.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindBus, manifest.buses[i].id, i,
-              harkenstudiobuild::kPackBusBytes);
+        place(HK_PACK_ENTRY_KIND_BUS, manifest.buses[i].id, i,
+              harkenstudiobuild::kPackBytes<HkPackBus>);
     }
     for (std::size_t i = 0; i < manifest.busSends.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindBusSend, {}, i,
-              harkenstudiobuild::kPackBusSendBytes);
+        place(HK_PACK_ENTRY_KIND_BUS_SEND, {}, i,
+              harkenstudiobuild::kPackBytes<HkPackBusSend>);
     }
     for (std::size_t i = 0; i < manifest.attenuations.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindAttenuation,
+        place(HK_PACK_ENTRY_KIND_ATTENUATION,
               manifest.attenuations[i].id, i,
-              harkenstudiobuild::kPackAttenuationBytes);
+              harkenstudiobuild::kPackBytes<HkPackAttenuation>);
     }
     for (std::size_t i = 0; i < manifest.bindings.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindBindingDefinition,
+        place(HK_PACK_ENTRY_KIND_BINDING_DEFINITION,
               manifest.bindings[i].id, i,
-              harkenstudiobuild::kPackBindingDefinitionBytes);
+              harkenstudiobuild::kPackBytes<HkPackBindingDefinition>);
     }
     for (std::size_t i = 0; i < manifest.attachments.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindBindingAttachment, {}, i,
-              harkenstudiobuild::kPackBindingAttachmentBytes);
+        place(HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT, {}, i,
+              harkenstudiobuild::kPackBytes<HkPackBindingAttachment>);
     }
     for (std::size_t i = 0; i < manifest.containers.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindContainer, manifest.containers[i].id,
+        place(HK_PACK_ENTRY_KIND_CONTAINER, manifest.containers[i].id,
               i,
               harkenstudiobuild::PackContainerPayloadBytes(
                   static_cast<std::uint32_t>(
@@ -430,17 +431,17 @@ std::vector<EntryPlacement> BuildEntryPlacements(
             static_cast<std::uint32_t>(recipe.effects.size());
         const std::uint32_t bindingCount =
             static_cast<std::uint32_t>(recipe.bindings.size());
-        place(harkenstudiobuild::kPackEntryKindVoiceRecipe, recipe.playable, i,
+        place(HK_PACK_ENTRY_KIND_VOICE_RECIPE, recipe.playable, i,
               harkenstudiobuild::PackVoiceRecipePayloadBytes(installCount,
                                                   bindingCount));
     }
     for (std::size_t i = 0; i < manifest.busEffects.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindBusEffect, {}, i,
-              harkenstudiobuild::kPackBusEffectBytes);
+        place(HK_PACK_ENTRY_KIND_BUS_EFFECT, {}, i,
+              harkenstudiobuild::kPackBytes<HkPackBusEffect>);
     }
     for (std::size_t i = 0; i < manifest.dynamicRoutes.size(); ++i) {
-        place(harkenstudiobuild::kPackEntryKindEffectDynamicRoute, {}, i,
-              harkenstudiobuild::kPackEffectDynamicRouteBytes);
+        place(HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE, {}, i,
+              harkenstudiobuild::kPackBytes<HkPackEffectDynamicRoute>);
     }
 
     return placements;
@@ -452,48 +453,50 @@ bool SerializeEntryPayload(const Manifest& manifest,
                            const std::uint8_t* blob, std::uint8_t* dst, Diag* diag,
                            const std::uint64_t* blobChecksum = nullptr) {
     switch (placement.kind) {
-    case harkenstudiobuild::kPackEntryKindMedia: {
+    case HK_PACK_ENTRY_KIND_MEDIA: {
         const PackEntry& entry = entries[placement.index];
+        if (entry.encodedMedia)
+            return Fail(diag, "Vorbis Pack writing is not integrated");
         const std::uint64_t blobBytes =
             entry.frameCount * entry.channelCount * sizeof(float);
         harkenstudiobuild::PackTocEntry toc;
         toc.soundId = entry.soundId;
         toc.sampleRate = entry.sampleRate;
         toc.channelCount = entry.channelCount;
-        toc.sampleFormat = harkenstudiobuild::kPackSampleFormatF32Planar;
+        toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
         toc.frameCount = entry.frameCount;
         toc.blobOffset = blobOffset;
         toc.blobBytes = blobBytes;
         toc.blobChecksum = blobChecksum ? *blobChecksum : harkenstudiobuild::Fnv1a64(
             blob, static_cast<std::size_t>(blobBytes));
-        toc.flags = entry.loopable ? harkenstudiobuild::kPackFlagLoopable : 0;
+        toc.flags = entry.loopable ? HK_PACK_MEDIA_FLAG_LOOPABLE : 0;
         toc.loopStartFrame =
             entry.loopable ? entry.loopStartFrame : 0;
         toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
-        harkenstudiobuild::SerializePackMedia(toc, dst);
+        harkenstudiobuild::SerializePackRow<HkPackMedia>(toc, dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindBus: {
+    case HK_PACK_ENTRY_KIND_BUS: {
         const ManifestBus& bus = manifest.buses[placement.index];
         harkenstudiobuild::PackBusEntry wire;
         wire.busId = bus.id;
         wire.parentBusId = bus.parent;
         wire.volume = bus.volume;
         wire.outputBusVolume = bus.outputBusVolume;
-        harkenstudiobuild::SerializePackBus(wire, dst);
+        harkenstudiobuild::SerializePackRow<HkPackBus>(wire, dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindBusSend: {
+    case HK_PACK_ENTRY_KIND_BUS_SEND: {
         const ManifestBusSend& send =
             manifest.busSends[placement.index];
         harkenstudiobuild::PackBusSendEntry wire;
         wire.fromBusId = send.from;
         wire.toBusId = send.to;
         wire.levelDb = send.levelDb;
-        harkenstudiobuild::SerializePackBusSend(wire, dst);
+        harkenstudiobuild::SerializePackRow<HkPackBusSend>(wire, dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindAttenuation: {
+    case HK_PACK_ENTRY_KIND_ATTENUATION: {
         const ManifestAttenuation& attenuation =
             manifest.attenuations[placement.index];
         harkenstudiobuild::AttenuationDefinition desc{};
@@ -517,10 +520,10 @@ bool SerializeEntryPayload(const Manifest& manifest,
             attenuation.lowpassCurve, attenuation.hasLowpassCurve);
         desc.widthCurve = ToAttenuationCurve(
             attenuation.widthCurve, attenuation.hasWidthCurve);
-        harkenstudiobuild::SerializePackAttenuation(desc, dst);
+        harkenstudiobuild::SerializePackRow<HkPackAttenuation>(desc, dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindBindingDefinition: {
+    case HK_PACK_ENTRY_KIND_BINDING_DEFINITION: {
         const ManifestBinding& binding =
             manifest.bindings[placement.index];
         harkenstudiobuild::BindingDefinition desc{};
@@ -534,17 +537,17 @@ bool SerializeEntryPayload(const Manifest& manifest,
                                                 dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindBindingAttachment: {
+    case HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT: {
         const ManifestAttachment& attachment =
             manifest.attachments[placement.index];
         harkenstudiobuild::PackBindingAttachmentEntry wire;
         wire.bindingId = attachment.binding;
         wire.scopeKind = attachment.scope;
         wire.objectId = attachment.object;
-        harkenstudiobuild::SerializePackBindingAttachment(wire, dst);
+        harkenstudiobuild::SerializePackRow<HkPackBindingAttachment>(wire, dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindContainer: {
+    case HK_PACK_ENTRY_KIND_CONTAINER: {
         const ManifestContainer& container =
             manifest.containers[placement.index];
         harkenstudiobuild::PackContainerEntryHeader header;
@@ -572,7 +575,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
             return Fail(diag, "container payload size mismatch");
         break;
     }
-    case harkenstudiobuild::kPackEntryKindVoiceRecipe: {
+    case HK_PACK_ENTRY_KIND_VOICE_RECIPE: {
         const ManifestVoiceRecipe& recipe =
             manifest.voiceRecipes[placement.index];
         harkenstudiobuild::PackVoiceRecipeEntryHeader header;
@@ -586,16 +589,16 @@ bool SerializeEntryPayload(const Manifest& manifest,
             tone.present = 1u;
             tone.sectionEnableMask =
                 (recipe.tone.lowpassEnabled
-                     ? harkenstudiobuild::kPackVoiceToneLowpassEnabled
+                     ? HK_PACK_VOICE_TONE_LOWPASS
                      : 0u) |
                 (recipe.tone.highpassEnabled
-                     ? harkenstudiobuild::kPackVoiceToneHighpassEnabled
+                     ? HK_PACK_VOICE_TONE_HIGHPASS
                      : 0u) |
                 (recipe.tone.lowShelfEnabled
-                     ? harkenstudiobuild::kPackVoiceToneLowShelfEnabled
+                     ? HK_PACK_VOICE_TONE_LOW_SHELF
                      : 0u) |
                 (recipe.tone.highShelfEnabled
-                     ? harkenstudiobuild::kPackVoiceToneHighShelfEnabled
+                     ? HK_PACK_VOICE_TONE_HIGH_SHELF
                      : 0u);
             tone.lowpassFrequencyHz = recipe.tone.lowpassFrequencyHz;
             tone.lowpassQ = recipe.tone.lowpassQ;
@@ -661,7 +664,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
             return Fail(diag, "voice recipe payload size mismatch");
         break;
     }
-    case harkenstudiobuild::kPackEntryKindBusEffect: {
+    case HK_PACK_ENTRY_KIND_BUS_EFFECT: {
         const ManifestBusEffect& effect =
             manifest.busEffects[placement.index];
         harkenstudiobuild::PackBusEffectEntry wire;
@@ -678,10 +681,10 @@ bool SerializeEntryPayload(const Manifest& manifest,
         for (std::uint32_t p = 0; p < wire.paramCount; ++p) {
             wire.params[p] = effect.parameters[p];
         }
-        harkenstudiobuild::SerializePackBusEffect(wire, dst);
+        harkenstudiobuild::SerializePackRow<HkPackBusEffect>(wire, dst);
         break;
     }
-    case harkenstudiobuild::kPackEntryKindEffectDynamicRoute: {
+    case HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE: {
         const ManifestDynamicRoute& route =
             manifest.dynamicRoutes[placement.index];
         harkenstudiobuild::PackEffectDynamicRouteEntry wire;
@@ -694,7 +697,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         wire.tap = route.tap;
         wire.sourceId = route.sourceBus;
         wire.levelDb = route.levelDb;
-        harkenstudiobuild::SerializePackEffectDynamicRoute(wire, dst);
+        harkenstudiobuild::SerializePackRow<HkPackEffectDynamicRoute>(wire, dst);
         break;
     }
     default:
@@ -713,17 +716,17 @@ bool BuildPackBytesV2(const Manifest& manifest,
         static_cast<std::uint32_t>(placements.size());
     const std::uint64_t directoryBytes =
         static_cast<std::uint64_t>(entryCount) *
-        harkenstudiobuild::kPackDirectoryEntryBytes;
-    std::uint64_t cursor = harkenstudiobuild::kPackFileHeaderBytes + directoryBytes;
+        harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
+    std::uint64_t cursor = harkenstudiobuild::kPackBytes<HkPackFileHeader> + directoryBytes;
     for (EntryPlacement& placement : placements) {
         placement.offset =
-            AlignUpTo(cursor, harkenstudiobuild::kPackPayloadAlign);
+            AlignUpTo(cursor, HK_PACK_PAYLOAD_ALIGN);
         cursor = placement.offset + placement.size;
     }
     std::vector<std::uint64_t> blobOffsets(entries.size());
     std::uint64_t fileBytes = cursor;
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        blobOffsets[i] = AlignUpTo(fileBytes, harkenstudiobuild::kPackBlobAlign);
+        blobOffsets[i] = AlignUpTo(fileBytes, HK_PACK_BLOB_ALIGN);
         fileBytes = blobOffsets[i] +
                     static_cast<std::uint64_t>(
                         entries[i].planar.size()) *
@@ -743,7 +746,7 @@ bool BuildPackBytesV2(const Manifest& manifest,
     }
 
     for (const EntryPlacement& placement : placements) {
-        const auto blobOffset = placement.kind == harkenstudiobuild::kPackEntryKindMedia
+        const auto blobOffset = placement.kind == HK_PACK_ENTRY_KIND_MEDIA
             ? blobOffsets[placement.index] : 0;
         if (!SerializeEntryPayload(manifest, entries, placement, blobOffset,
                                    out->data() + blobOffset,
@@ -764,27 +767,27 @@ bool BuildPackBytesV2(const Manifest& manifest,
         entry.payloadChecksum =
             harkenstudiobuild::Fnv1a64(out->data() + placement.offset,
                            static_cast<std::size_t>(placement.size));
-        harkenstudiobuild::SerializePackDirectoryEntry(
+        harkenstudiobuild::SerializePackRow<HkPackDirectoryEntry>(
             entry, directoryImage.data() +
-                       i * harkenstudiobuild::kPackDirectoryEntryBytes);
+                       i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
     }
     if (!directoryImage.empty()) {
-        std::memcpy(out->data() + harkenstudiobuild::kPackFileHeaderBytes,
+        std::memcpy(out->data() + harkenstudiobuild::kPackBytes<HkPackFileHeader>,
                     directoryImage.data(), directoryImage.size());
     }
 
     harkenstudiobuild::PackFileHeader header;
-    header.formatVersion = harkenstudiobuild::kPackFormatVersion;
-    header.headerBytes = harkenstudiobuild::kPackFileHeaderBytes;
+    header.formatVersion = HK_PACK_FORMAT_VERSION;
+    header.headerBytes = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
     header.fileBytes = fileBytes;
     header.packKind = manifest.packKind == "resident"
-                          ? harkenstudiobuild::kPackKindResident
-                          : harkenstudiobuild::kPackKindContent;
+                          ? HK_PACK_KIND_RESIDENT
+                          : HK_PACK_KIND_CONTENT;
     header.entryCount = entryCount;
-    header.directoryOffset = harkenstudiobuild::kPackFileHeaderBytes;
+    header.directoryOffset = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
     header.directoryChecksum =
         harkenstudiobuild::Fnv1a64(directoryImage.data(), directoryImage.size());
-    harkenstudiobuild::SerializePackFileHeader(header, out->data());
+    harkenstudiobuild::SerializePackRow<HkPackFileHeader>(header, out->data());
     return true;
 }
 
@@ -1160,8 +1163,8 @@ bool BuildOnePack(const Manifest& manifest, const Request& request,
         for (std::size_t i = 0; i < entries.size(); ++i) {
             const harkenstudiobuild::PackDirectoryEntry dirEntry =
                 harkenstudiobuild::ReadPackDirectoryEntry(
-                    packBytes.data() + harkenstudiobuild::kPackFileHeaderBytes +
-                    i * harkenstudiobuild::kPackDirectoryEntryBytes);
+                    packBytes.data() + harkenstudiobuild::kPackBytes<HkPackFileHeader> +
+                    i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
             tocReadback.push_back(harkenstudiobuild::ReadPackMedia(
                 packBytes.data() + dirEntry.offset));
         }
@@ -1173,7 +1176,7 @@ bool BuildOnePack(const Manifest& manifest, const Request& request,
         for (std::size_t i = 0; i < entries.size(); ++i) {
             tocReadback.push_back(harkenstudiobuild::ReadPackMedia(
                 packBytes.data() + header.tocOffset +
-                i * harkenstudiobuild::kPackMediaBytes));
+                i * harkenstudiobuild::kPackBytes<HkPackMedia>));
         }
     }
     std::vector<CacheRecord> newRecords;
@@ -1540,22 +1543,27 @@ bool compileEntries(const std::string& logicSections, bool resident,
         source.loopStartFrame = input.loopStartFrame;
         source.loopEndFrame = input.loopEndFrame;
         PackEntry entry = MakePackEntry(source);
-        if (!PrepareAudioLayout(&entry, input.interleavedSamples, input.sampleCount,
-                                input.channels, input.sampleRate, &diag)
-            || !ValidateLoopPoints(entry, i, &diag)) return refuse();
+        if (input.encodedMedia) {
+            entry.encodedMedia = input.encodedMedia;
+            entry.sampleRate = input.sampleRate;
+            entry.channelCount = input.channels;
+            entry.frameCount = input.frameCount;
+        } else if (!PrepareAudioLayout(&entry, input.interleavedSamples, input.sampleCount,
+                                      input.channels, input.sampleRate, &diag)) return refuse();
+        if (!ValidateLoopPoints(entry, i, &diag)) return refuse();
         manifest.entries.push_back(std::move(source));
         prepared.push_back(std::move(entry));
 
         EntryPlacement placement;
-        placement.kind = harkenstudiobuild::kPackEntryKindMedia;
+        placement.kind = HK_PACK_ENTRY_KIND_MEDIA;
         placement.id = input.id;
         placement.index = i;
-        placement.size = harkenstudiobuild::kPackMediaBytes;
+        placement.size = harkenstudiobuild::kPackBytes<HkPackMedia>;
         CompiledEntry resource;
         resource.kind = placement.kind;
         resource.vintage = harkenstudiobuild::PackEntryVintage(placement.kind);
         resource.id = placement.id;
-        const auto audio = mediaCache->prepare(input);
+        const auto audio = input.encodedMedia ? PreparedMediaBlob{} : mediaCache->prepare(input);
         resource.media = audio.samples;
         resource.payload.resize(static_cast<std::size_t>(placement.size));
         if (!SerializeEntryPayload(manifest, prepared, placement, 0, nullptr,
@@ -1567,7 +1575,7 @@ bool compileEntries(const std::string& logicSections, bool resident,
     const auto placements = BuildEntryPlacements(manifest, prepared);
     compiled.reserve(placements.size());
     for (const auto& placement : placements) {
-        if (placement.kind == harkenstudiobuild::kPackEntryKindMedia) continue;
+        if (placement.kind == HK_PACK_ENTRY_KIND_MEDIA) continue;
         CompiledEntry entry;
         entry.kind = placement.kind;
         entry.vintage = harkenstudiobuild::PackEntryVintage(placement.kind);

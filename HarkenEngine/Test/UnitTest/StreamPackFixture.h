@@ -221,7 +221,7 @@ private:
         if (!(world.sourceBodyVintage == kCurrentWorldBodyVintageV19
             ? EncodeCurrentWorldBodyV19(world, body) : EncodeCurrentWorldShippingBody(world, body))) return {};
         PackCanonicalPartitionHeader header{};
-        header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+        header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
         header.bodyVintage = world.sourceBodyVintage;
         header.bodyBytes = body.size();
         header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -230,18 +230,18 @@ private:
         header.ownedDefinitionCount = world.variableCount + world.playablePropertyCount + world.actionCount;
         ApplyCanonicalBusTriple(&header, bus.triple);
         std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-        SerializePackCanonicalPartitionHeader(header, partition.data());
-        header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-        SerializePackCanonicalPartitionHeader(header, partition.data());
+        SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+        header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+        SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
         std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-        ImageBuilder image(init ? kPackKindInit : kPackKindCanonicalContent);
-        image.AddEntry(kPackEntryKindPackRequirementBlock, id,
+        ImageBuilder image(init ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT);
+        image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
             RequirementPayload(id, header.partitionRevision, header.partitionRevision, header.ownedDefinitionCount, body.size(), bus.triple));
-        image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
+        image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
         if (init) AppendRuntimeBusFixture(&image, bus);
         else {
-            image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-                DependencyPayload(kInitPackStableId, 1, bus.triple), kPackPackDependencyEdgeVintage);
+            image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+                DependencyPayload(kInitPackStableId, 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
             // Prepared samples replace the temporary directory's PCM payloads.
             for (const auto& row : rows_)
                 image.AddMedia(row.id, std::vector<float>(row.facts.frames * row.facts.channelCount),
@@ -249,14 +249,14 @@ private:
         }
         if (!init) for (std::size_t index = 0; index < bindings_.size(); ++index) {
             const auto& binding = bindings_[index];
-            std::vector<std::uint8_t> definition(kPackBindingDefinitionBytes);
+            std::vector<std::uint8_t> definition(kPackBytes<HkPackBindingDefinition>);
             WritePackBindingDefinition(binding.id, binding.desc, definition.data());
-            image.AddEntry(kPackEntryKindBindingDefinition, binding.id, std::move(definition),
-                kPackBindingDefinitionVintage);
-            std::vector<std::uint8_t> attachment(kPackBindingAttachmentBytes);
-            SerializePackBindingAttachment(binding.attachment, attachment.data());
-            const auto entry = image.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
-                std::move(attachment), kPackBindingAttachmentVintage);
+            image.AddEntry(HK_PACK_ENTRY_KIND_BINDING_DEFINITION, binding.id, std::move(definition),
+                HK_PACK_BINDING_DEFINITION_VINTAGE);
+            std::vector<std::uint8_t> attachment(kPackBytes<HkPackBindingAttachment>);
+            SerializePackRow<HkPackBindingAttachment>(binding.attachment, attachment.data());
+            const auto entry = image.AddEntry(HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT, VnObjectId{},
+                std::move(attachment), HK_PACK_BINDING_ATTACHMENT_VINTAGE);
             image.SetRelationOrdinal(entry, index);
         }
         return image.Build();

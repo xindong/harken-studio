@@ -3,7 +3,7 @@
 #include "Common/DirectSoundActionWorld.h"
 #include "AllocationProbe.h"
 #include "harken/core/CpuClock.h"
-#include "harken_preview/PreviewProject.h"
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Engine.h"
@@ -721,6 +721,7 @@ TEST(TimelineVoiceInstall, BorrowedInputValidatesEveryActiveRangeBeforeNativeAcq
         harken::TimelineVoiceInstallInput{&facts}));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnapshotAfterCallerRelease) {
     for (const auto pathCount : {1u, harken::kPlaybackPathRowCapacity}) {
         SCOPED_TRACE(pathCount);
@@ -838,6 +839,7 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
+#endif
 
 TEST(TimelineVoiceInstall, DefaultEffectBackingGrowsAcrossVoicesAndBusAndRetires) {
     EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
@@ -2900,6 +2902,7 @@ TEST(TimelineVoiceInstall, EmptyInitialSourceClearsAllEightMirrorsAfterDirectVoi
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, LiveEffectChainIsAtomicPreservesStateAndRetiresAcrossWorkers) {
     for (auto workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
@@ -3242,8 +3245,10 @@ TEST(TimelineVoiceInstall, LiveEffectChainEightSlotsUseOneCommandAndPreserveBypa
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
+#endif
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, LiveEffectChainActiveWorkerQuarantineRetainsScratchUntilActualJoin) {
     struct Gate {
         harken::InsertEffect original{};
@@ -3322,7 +3327,9 @@ TEST(TimelineVoiceInstall, LiveEffectChainActiveWorkerQuarantineRetainsScratchUn
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
 #endif
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, LiveEightLimiterInsertionDoesNotMultiplyTransientDetectorHistory) {
     for (auto block : {32u, 64u, 256u}) {
         SCOPED_TRACE(block);
@@ -3421,3 +3428,4 @@ TEST(TimelineVoiceInstall, LiveEightLimiterInsertionDoesNotMultiplyTransientDete
         EXPECT_EQ(middle.generation, context->fxSlotEffectRef[1].generation);
     }
 }
+#endif

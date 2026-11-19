@@ -1,14 +1,7 @@
-#include <harken_project_schema/FrontEnd.h>
-#include <harken_studio_build/WorldCodec.h>
-#include <harken_studio_build/MediaContentRevision.h>
-#include <harken_studio_build/VariableExecutionFingerprint.h>
-#include <harken_studio_build/VariableDefinition.h>
-#include <harken_bus_compiler/BusCompiler.h>
-
 #include "CurrentWorldSyncBridge.h"
 #include "NativeValues.h"
 #include "CurrentWorldSyncBridgeInternal.h"
-#include "PackagingBridge.h"
+#include "MediaRegistry.h"
 #include "PlaybackBridge.h"
 #include "RuntimeLink.h"
 #include "RuntimeLinkInternal.h"
@@ -19,8 +12,6 @@
 #include <map>
 #include <optional>
 #include <vector>
-#include <QFileInfo>
-#include <QDateTime>
 
 namespace HarkenEditor::Bridge {
 namespace {
@@ -28,7 +19,6 @@ namespace {
 struct PreparedProjectGenerationHold {
     Detail::RuntimePreparedProject prepared;
     CurrentWorldSyncToken token;
-    std::unique_ptr<harkencurrentworldcompiler::OwningCurrentWorldV1> world;
     VnPreviewProjectDescV1 view{};
     VnPreviewProjectDescV2 volumeView{};
     VnPreviewProjectDescV3 sendView{};
@@ -38,12 +28,14 @@ struct PreparedProjectGenerationHold {
     std::vector<VnPreviewBusVolumeV2> volumes;
     std::vector<VnPreviewBusSendV1> sends;
     std::vector<float> sendLevelsDb;
+    std::vector<CurrentWorldArtifact::Bus> artifactBuses;
+    std::vector<CurrentWorldArtifact::Send> artifactSends;
+    std::vector<CurrentWorldArtifact::Effect> artifactEffects;
+    std::vector<CurrentWorldArtifact::EffectParameter> artifactEffectParameters;
     std::vector<VnPreviewBusEffectV1> effects;
     std::vector<VnPreviewBusEffectParameterV1> effectParameters;
     std::vector<std::uint32_t> faderAfterSlots;
-    std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> busResult;
     std::shared_ptr<const CurrentWorldSoundPreparation> soundPreparation;
-    harkenbuscompiler::PublishedBusProjectionV1 projection;
     std::uint64_t installedWorldGeneration = 0;
     bool committed = false;
     bool testOpen = false;
@@ -56,7 +48,7 @@ struct PreparedProjectGenerationHold {
 std::optional<PreparedProjectGenerationHold> generationHold;
 std::uint64_t publishedOwnerId = 0;
 std::uint64_t publishedRuntimeEpoch = 0;
-std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> publishedBusResult;
+std::shared_ptr<const std::vector<CurrentWorldArtifact::Effect>> publishedEffects;
 struct PublishedBusEffectValues {
     std::vector<float> parameters;
     bool bypass = false;
@@ -118,23 +110,21 @@ CurrentWorldSyncStatus mapCommitStatus(
 
 void confirmPublishedBuses(const PreparedProjectGenerationHold& hold)
 {
-    if (!hold.busResult)
-        return;
     std::vector<RuntimeBusDefinition> buses;
-    buses.reserve(hold.projection.buses.size());
-    for (const auto& bus : hold.projection.buses) {
+    buses.reserve(hold.artifactBuses.size());
+    for (const auto& bus : hold.artifactBuses) {
         RuntimeBusDefinition definition;
-        definition.id = bus.busId;
+        definition.id = bus.id;
         definition.parentId = bus.parentId;
         buses.push_back(std::move(definition));
     }
     std::vector<RuntimeBusSendDefinition> sends;
-    sends.reserve(hold.projection.sends.size());
-    for (const auto& send : hold.projection.sends) {
+    sends.reserve(hold.artifactSends.size());
+    for (const auto& send : hold.artifactSends) {
         RuntimeBusSendDefinition definition;
-        definition.sourceId = send.sourceBusId;
-        definition.targetId = send.targetBusId;
-        definition.levelDb = send.sendLevelDb;
+        definition.sourceId = send.sourceId;
+        definition.targetId = send.targetId;
+        definition.levelDb = send.levelDb;
         sends.push_back(std::move(definition));
     }
     Detail::runtimeConfirmBusTopologyWithoutApply(buses, sends);
@@ -154,13 +144,20 @@ CurrentWorldSyncResult registerPreparedSounds(PreparedProjectGenerationHold& hol
         return result;
     for (const auto& sound : hold.soundPreparation->sounds) {
         const auto revision = hold.soundPreparation->contentRevisions.find(sound.binding.soundId);
+        if (sound.media && (revision == hold.soundPreparation->contentRevisions.end()
+            || revision->second == 0 || revision->second != sound.media->contentRevision)) {
+            result.relatedStableId = sound.binding.soundId;
+            result.status = CurrentWorldSyncStatus::InvalidProject;
+            return result;
+        }
         if (revision != hold.soundPreparation->contentRevisions.end()
             && revision->second != 0
             && Detail::runtimeRegisteredSoundRevision(sound.binding.soundId) == revision->second)
             continue;
-        const auto registered = Detail::runtimeRegisterSoundPcm(
-            sound.binding.soundId, sound.samples, sound.channels, sound.sampleRate,
-            sound.loopStartFrame, sound.loopEndFrame);
+        const auto registered = sound.media
+            ? Detail::runtimeRegisterPreviewMedia(sound.binding.soundId, *sound.media)
+            : Detail::runtimeRegisterSoundPcm(sound.binding.soundId, sound.samples,
+                sound.channels, sound.sampleRate, sound.loopStartFrame, sound.loopEndFrame);
         if (registered == VN_OK)
             continue;
         result.relatedStableId = sound.binding.soundId;
@@ -222,13 +219,12 @@ CurrentWorldSyncResult prepareAndCommitHold(PreparedProjectGenerationHold& hold)
         return result;
     }
     if (installBackend) {
-        const harkenstudiobuild::WorldInstallResult installed =
-            installBackend(hold.world->View());
-        if (installed.status == harkenstudiobuild::WorldInstallStatus::Backpressure) {
+        const CurrentWorldTestInstallResult installed = installBackend();
+        if (installed.status == CurrentWorldTestInstallResult::Status::Backpressure) {
             result.status = CurrentWorldSyncStatus::Pending;
             return result;
         }
-        if (installed.status != harkenstudiobuild::WorldInstallStatus::Ok) {
+        if (installed.status != CurrentWorldTestInstallResult::Status::Ok) {
             result.status = CurrentWorldSyncStatus::InstallFailed;
             return result;
         }
@@ -283,13 +279,14 @@ CurrentWorldSyncResult prepareAndCommitHold(PreparedProjectGenerationHold& hold)
     hold.installedWorldGeneration = generation;
     publishedOwnerId = hold.view.ownerId;
     publishedRuntimeEpoch = hold.token.runtimeEpoch;
-    publishedBusResult = hold.busResult;
+    publishedEffects = std::make_shared<const std::vector<CurrentWorldArtifact::Effect>>(
+        hold.artifactEffects);
     publishedBusEffectValues.clear();
-    for (const auto& effect : hold.busResult->effects) {
+    for (const auto& effect : hold.artifactEffects) {
         auto& values = publishedBusEffectValues[effect.effectId];
         values.bypass = (effect.flags & 1u) != 0;
         for (std::uint32_t i = 0; i < effect.parameterCount; ++i)
-            values.parameters.push_back(hold.busResult->effectParameters[effect.parameterFirst + i].value);
+            values.parameters.push_back(hold.artifactEffectParameters[effect.parameterFirst + i].value);
     }
     result.status = CurrentWorldSyncStatus::Pending;
     result.worldGeneration = generation;
@@ -334,34 +331,32 @@ CurrentWorldSyncResult finishOpenIfReady(PreparedProjectGenerationHold& hold)
 }
 
 CurrentWorldSyncResult installCompiledWorld(
-    std::unique_ptr<harkencurrentworldcompiler::OwningCurrentWorldV1> world,
-    CurrentWorldSyncRequestPtr request,
+    CurrentWorldArtifact artifact,
     CurrentWorldSyncToken token,
     std::uint64_t ownerId,
-    bool emptyWorldClose = false,
-    CurrentWorldCompileResult* compiled = nullptr,
-    std::optional<std::uint64_t> ownerBaseRevision = std::nullopt)
+    bool emptyWorldClose,
+    std::uint64_t ownerBaseRevision)
 {
     CurrentWorldSyncResult result;
     result.token = token;
-    if (!request || !request->busResult) {
-        result.status = CurrentWorldSyncStatus::CompileFailed;
-        return result;
-    }
 
     PreparedProjectGenerationHold hold;
     hold.token = token;
     hold.emptyWorldClose = emptyWorldClose;
-    hold.world = std::move(world);
-    hold.busResult = request->busResult;
-    hold.voiceEffects = request->previewEffects;
-    if (publishedBusResult && publishedOwnerId == ownerId
+    hold.soundPreparation = std::move(artifact.soundPreparation);
+    hold.body = std::move(artifact.body);
+    hold.artifactBuses = std::move(artifact.buses);
+    hold.artifactSends = std::move(artifact.sends);
+    hold.artifactEffects = std::move(artifact.effects);
+    hold.artifactEffectParameters = std::move(artifact.effectParameters);
+    hold.voiceEffects = std::move(artifact.voiceEffects);
+    if (publishedEffects && publishedOwnerId == ownerId
         && publishedRuntimeEpoch == token.runtimeEpoch) {
-        std::map<harkenstudio::ObjectId, harkenprojectschema::AuthoringGuid> definitions;
-        for (const auto& effect : publishedBusResult->effects)
-            definitions.emplace(effect.effectId, effect.definitionGuid);
-        hold.effectDefinitionChanged = std::any_of(hold.busResult->effects.begin(),
-            hold.busResult->effects.end(), [&](const auto& effect) {
+        std::map<harkenstudio::ObjectId, harkenstudio::ObjectId> definitions;
+        for (const auto& effect : *publishedEffects)
+            definitions.emplace(effect.effectId, effect.definitionId);
+        hold.effectDefinitionChanged = std::any_of(hold.artifactEffects.begin(),
+            hold.artifactEffects.end(), [&](const auto& effect) {
                 const auto previous = definitions.find(effect.effectId);
                 const auto limiterOnly = [&](const auto& rows) {
                     return std::all_of(rows.begin(), rows.end(), [&](const auto& row) {
@@ -369,44 +364,28 @@ CurrentWorldSyncResult installCompiledWorld(
                     });
                 };
                 return previous != definitions.end()
-                    && previous->second != effect.definitionGuid
-                    && !(limiterOnly(publishedBusResult->effects) && limiterOnly(hold.busResult->effects));
+                    && previous->second != effect.definitionId
+                    && !(limiterOnly(*publishedEffects) && limiterOnly(hold.artifactEffects));
             });
     }
-    hold.soundPreparation = request->soundPreparation;
-    if (compiled && !compiled->body.empty()) {
-        hold.projection = std::move(compiled->projection);
-        hold.body = std::move(compiled->body);
-    } else {
-        hold.projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
-            *request->busResult,
-            harkenbuscompiler::BusPublicationCapabilityVintageV1::
-                TopologyVolumeSendAndEffectsNeutralOtherProperties);
-    }
-    if (hold.body.empty()
-        && !harkenstudiobuild::EncodeCurrentWorldPreviewBody(hold.world->View(), hold.body)) {
-        result.status = CurrentWorldSyncStatus::CompileFailed;
-        return result;
-    }
-    for (const auto& bus : hold.projection.buses) {
-        hold.buses.push_back({toNative(bus.busId), toNative(bus.parentId)});
-        hold.volumes.push_back({toNative(bus.busId), bus.faderDb,
-            bus.outputBusVolumeDb});
+    for (const auto& bus : hold.artifactBuses) {
+        hold.buses.push_back({toNative(bus.id), toNative(bus.parentId)});
+        hold.volumes.push_back({toNative(bus.id), bus.faderDb, bus.outputBusVolumeDb});
         hold.faderAfterSlots.push_back(bus.faderAfterSlot);
     }
-    for (const auto& send : hold.projection.sends) {
-        hold.sends.push_back({toNative(send.sourceBusId), toNative(send.targetBusId)});
-        hold.sendLevelsDb.push_back(send.sendLevelDb);
+    for (const auto& send : hold.artifactSends) {
+        hold.sends.push_back({toNative(send.sourceId), toNative(send.targetId)});
+        hold.sendLevelsDb.push_back(send.levelDb);
     }
-    for (const auto& effect : hold.projection.effects) {
+    for (const auto& effect : hold.artifactEffects) {
         hold.effects.push_back({toNative(effect.busId), toNative(effect.effectId),
             effect.slot, effect.effectType, effect.descriptorVintage, effect.flags,
             effect.parameterFirst, effect.parameterCount});
     }
-    for (const auto& parameter : hold.projection.effectParameters)
+    for (const auto& parameter : hold.artifactEffectParameters)
         hold.effectParameters.push_back({parameter.index, parameter.value});
     hold.view.structSize = sizeof(hold.view);
-    hold.view.bodyVintage = hold.world->View().sourceBodyVintage;
+    hold.view.bodyVintage = artifact.bodyVintage;
     hold.view.projectSessionId = token.projectSessionId;
     hold.view.authoringRevision = token.authoringRevision;
     hold.view.runtimeEpoch = token.runtimeEpoch;
@@ -417,26 +396,21 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.view.busCount = static_cast<std::uint32_t>(hold.buses.size());
     hold.view.sends = hold.sends.data();
     hold.view.sendCount = static_cast<std::uint32_t>(hold.sends.size());
-    hold.view.publishedBusFingerprint = hold.projection.fingerprint;
-    hold.view.compileTargetProfileFingerprint =
-        request->compileTargetProfile
-            ? harkenprojectschema::compileTargetProfileFingerprintV1(
-                  *request->compileTargetProfile)
-            : 0;
+    hold.view.publishedBusFingerprint = artifact.publishedBusFingerprint;
+    hold.view.compileTargetProfileFingerprint = artifact.compileTargetProfileFingerprint;
     hold.view.ownerId = ownerId;
-    hold.view.ownerBaseRevision = ownerBaseRevision.value_or(request->ownerBaseRevision);
+    hold.view.ownerBaseRevision = ownerBaseRevision;
     hold.view.ownerRevision = token.authoringRevision;
     hold.volumeView.base = hold.view;
     hold.volumeView.base.structSize = sizeof(hold.volumeView);
     hold.volumeView.busVolumes = hold.volumes.data();
     hold.volumeView.busVolumeCount = static_cast<std::uint32_t>(hold.volumes.size());
-    if (hold.projection.compileTargetProfile) {
-        const auto& profile = *hold.projection.compileTargetProfile;
-        hold.volumeView.profileVintage = profile.vintage;
-        hold.volumeView.renderSampleRateHz = profile.sampleRate;
-        hold.volumeView.mixLayout = profile.mixLayout;
-        hold.volumeView.deviceLayout = profile.deviceLayout;
-        hold.volumeView.runtimeCapabilityMask = profile.capabilityMask;
+    if (artifact.profile) {
+        hold.volumeView.profileVintage = artifact.profile->vintage;
+        hold.volumeView.renderSampleRateHz = artifact.profile->sampleRate;
+        hold.volumeView.mixLayout = artifact.profile->mixLayout;
+        hold.volumeView.deviceLayout = artifact.profile->deviceLayout;
+        hold.volumeView.runtimeCapabilityMask = artifact.profile->capabilityMask;
     }
     hold.sendView.base = hold.volumeView;
     hold.sendView.base.base.structSize = sizeof(hold.sendView);
@@ -485,204 +459,12 @@ CurrentWorldSyncResult installCompiledWorld(
 
 } // namespace
 
-CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
-    CurrentWorldSyncRequestPtr replacement,
-    const std::vector<CurrentWorldScalarUpdate>& updates,
-    CurrentWorldSyncToken token)
-{
-    if (replacement) {
-        request_ = std::move(replacement);
-        nodes_.clear();
-        for (std::size_t index = 0; index < request_->project.nodes.size(); ++index)
-            nodes_.emplace(request_->project.nodes[index].guid, index);
-    } else if (!request_ || token.projectSessionId != token_.projectSessionId
-               || token.runtimeEpoch != token_.runtimeEpoch) {
-        return {};
-    }
-    auto candidate = std::make_shared<CurrentWorldSyncRequest>(*request_);
-    if (candidate->busResult
-        && candidate->busResult->projectGeneration != token.authoringRevision) {
-        auto buses = std::make_shared<harkenbuscompiler::CompiledBusResultV1>(
-            *candidate->busResult);
-        buses->projectGeneration = token.authoringRevision;
-        buses->deterministicBytes = harkenbuscompiler::SerializeCompiledBusResultV1(*buses);
-        candidate->busResult = std::move(buses);
-    }
-    using Property = harkenplayableproperties::PlayablePropertyIdV1;
-    for (const auto& update : updates) {
-        const auto* claim = candidate->identityIndex
-            ? candidate->identityIndex->find(update.stableId) : nullptr;
-        if (!claim || claim->authoringGuid != update.guid
-            || !std::isfinite(update.value))
-            return {};
-        const auto property = static_cast<Property>(update.propertyId);
-        if (property != Property::Volume && property != Property::Pitch)
-            return {};
-        const auto found = nodes_.find(update.guid);
-        if (found == nodes_.end())
-            continue;
-        auto& node = candidate->project.nodes[found->second];
-        if (update.present) node.presence.Set(property);
-        else node.presence.Clear(property);
-        switch (property) {
-        case Property::Volume: node.volume = update.value; break;
-        case Property::Pitch: node.pitch = update.value; break;
-        default: return {};
-        }
-    }
-    request_ = candidate;
-    token_ = token;
-    return candidate;
-}
-
-void CurrentWorldRequestCache::acknowledgePublication(CurrentWorldSyncToken token)
-{
-    if (!request_ || !(token == token_) || !request_->soundPreparation)
-        return;
-    const auto& current = *request_->soundPreparation;
-    if (std::none_of(current.sounds.begin(), current.sounds.end(),
-                     [](const auto& sound) { return !sound.samples.empty(); }))
-        return;
-    auto preparation = std::make_shared<CurrentWorldSoundPreparation>();
-    preparation->sources = current.sources;
-    preparation->contentRevisions = current.contentRevisions;
-    preparation->sounds.reserve(current.sounds.size());
-    for (const auto& sound : current.sounds) {
-        preparation->sounds.push_back({sound.binding, sound.sourcePath, {},
-            sound.channels, sound.sampleRate, sound.loopStartFrame, sound.loopEndFrame});
-    }
-    auto request = std::make_shared<CurrentWorldSyncRequest>(*request_);
-    request->soundPreparation = std::move(preparation);
-    request_ = std::move(request);
-}
-
-CurrentWorldCompileResult compileCurrentWorldRequest(
-    CurrentWorldSyncRequest& request, bool prepareForInstall)
-{
-    CurrentWorldCompileResult result;
-    result.identityIndex = request.identityIndex;
-    result.compileTargetProfile = request.compileTargetProfile;
-    result.busResult = request.busResult;
-    result.compileTargetProfileFingerprint = request.compileTargetProfile
-        ? harkenprojectschema::compileTargetProfileFingerprintV1(
-              *request.compileTargetProfile)
-        : 0;
-    if (!result.identityIndex || !result.compileTargetProfile
-        || !request.busResult
-        || request.busResult->identityIndex.get() != result.identityIndex.get()
-        || request.busResult->compileTargetProfile.get()
-            != result.compileTargetProfile.get())
-        return result;
-    if (prepareForInstall && request.soundPreparation) {
-        for (const auto& source : request.soundPreparation->sources) {
-            const QFileInfo file(source.path);
-            if (file.isFile() != source.fileExists || file.size() != source.size
-                || file.lastModified().toMSecsSinceEpoch() != source.lastModifiedMs) {
-                result.requiresFullRefresh = true;
-                return result;
-            }
-        }
-    }
-    const auto frontEnd = harkenprojectschema::CompileFrontEnd(request.project);
-    if (!frontEnd.ok() || !frontEnd.project)
-        return result;
-
-    for (auto& row : request.materializations) {
-        if (row.kind != harkenplayableproperties::ContentPropertyKindV1::Sound)
-            continue;
-        const auto suppliedRevision = request.soundContentRevisions.find(
-            row.stableId);
-        if (suppliedRevision != request.soundContentRevisions.end()) {
-            if (suppliedRevision->second == 0) {
-                result.status = CurrentWorldSyncStatus::MediaUnavailable;
-                result.relatedStableId = row.stableId;
-                return result;
-            }
-            row.contentRevision = suppliedRevision->second;
-            continue;
-        }
-        if (prepareForInstall) {
-            result.status = CurrentWorldSyncStatus::MediaUnavailable;
-            result.relatedStableId = row.stableId;
-            return result;
-        }
-        const auto source = std::find_if(
-            request.soundSources.begin(), request.soundSources.end(),
-            [&](const auto& candidate) {
-                return candidate.stableId == row.stableId;
-            });
-        if (source == request.soundSources.end() || source->sourceId == 0) {
-            result.status = CurrentWorldSyncStatus::MediaUnavailable;
-            result.relatedStableId = row.stableId;
-            return result;
-        }
-        const QString path = mediaRegistryFindPath(source->sourceId);
-        std::vector<float> interleaved;
-        int channelCount = 0;
-        int sampleRate = 0;
-        if (path.isEmpty()
-            || !decodeAudioFileInterleaved(path, interleaved, channelCount,
-                                           sampleRate)
-            || channelCount <= 0 || sampleRate <= 0
-            || interleaved.empty()
-            || interleaved.size() % static_cast<std::size_t>(channelCount)
-                != 0) {
-            result.status = CurrentWorldSyncStatus::MediaUnavailable;
-            result.relatedStableId = row.stableId;
-            return result;
-        }
-        const std::uint64_t frameCount = interleaved.size()
-            / static_cast<std::size_t>(channelCount);
-        std::vector<const float*> channels(
-            static_cast<std::size_t>(channelCount));
-        for (int channel = 0; channel < channelCount; ++channel) {
-            channels[static_cast<std::size_t>(channel)] =
-                interleaved.data() + channel;
-        }
-        if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
-                static_cast<std::uint32_t>(sampleRate),
-                static_cast<std::uint32_t>(channelCount), frameCount,
-                channels.data(), static_cast<std::uint32_t>(channelCount),
-                &row.contentRevision)) {
-            result.status = CurrentWorldSyncStatus::MediaUnavailable;
-            result.relatedStableId = row.stableId;
-            return result;
-        }
-    }
-
-    auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        *frontEnd.project, request.variables, request.materializations,
-        request.containers, {}, request.transitions, request.actions,
-        &request.busResult->idSet,
-        harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
-        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders, request.duckingSends, request.includePreviewDucking);
-    if (!compiled.ok() || !compiled.world) {
-        result.status = CurrentWorldSyncStatus::CompileFailed;
-        result.relatedStableId = compiled.relatedStableId;
-        return result;
-    }
-    result.status = CurrentWorldSyncStatus::Ok;
-    result.world = std::move(compiled.world);
-    if (prepareForInstall) {
-        result.projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
-            *request.busResult,
-            harkenbuscompiler::BusPublicationCapabilityVintageV1::
-                TopologyVolumeSendAndEffectsNeutralOtherProperties);
-        if (!harkenstudiobuild::EncodeCurrentWorldPreviewBody(result.world->View(), result.body)) {
-            result.status = CurrentWorldSyncStatus::CompileFailed;
-            result.world.reset();
-        }
-    }
-    return result;
-}
-
-CurrentWorldSyncResult installCompiledCurrentWorld(
-    CurrentWorldSyncRequestPtr request, CurrentWorldCompileResult compiled,
-    CurrentWorldSyncToken token)
+CurrentWorldSyncResult submitCompiledCurrentWorld(
+    CurrentWorldArtifactResult compiled, CurrentWorldSyncToken token)
 {
     CurrentWorldSyncResult result;
     result.token = token;
-    if (!request || !compiled.ok()) {
+    if (!compiled.ok()) {
         result.status = compiled.status;
         result.relatedStableId = compiled.relatedStableId;
         return result;
@@ -699,17 +481,16 @@ CurrentWorldSyncResult installCompiledCurrentWorld(
         discardPendingCurrentWorld(PendingCurrentWorldDisposition::Superseded);
     }
     const auto live = Detail::runtimeLiveOwnerRevision(token.projectSessionId);
-    return installCompiledWorld(std::move(compiled.world), std::move(request),
-        token, token.projectSessionId, false, &compiled,
-        live.found ? live.currentRevision : 0);
+    return installCompiledWorld(std::move(compiled.artifact), token,
+        token.projectSessionId, false, live.found ? live.currentRevision : 0);
 }
 
-CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
-                                        CurrentWorldSyncToken token)
+CurrentWorldSyncResult submitCurrentWorld(CurrentWorldSyncToken token,
+                                          const CurrentWorldArtifactBuilder& build)
 {
     CurrentWorldSyncResult result;
     result.token = token;
-    if (!request) {
+    if (!build) {
         result.status = CurrentWorldSyncStatus::InvalidProject;
         return result;
     }
@@ -734,18 +515,20 @@ CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
         return result;
     }
 
-    CurrentWorldCompileResult compiled = compileCurrentWorldRequest(*request);
+    CurrentWorldArtifactResult compiled = build();
     if (!compiled.ok()) {
         result.status = compiled.status;
         result.relatedStableId = compiled.relatedStableId;
         return result;
     }
 
-    return installCompiledWorld(std::move(compiled.world), std::move(request),
-                                token, token.projectSessionId, false, &compiled);
+    const auto ownerBaseRevision = compiled.artifact.ownerBaseRevision;
+    return installCompiledWorld(std::move(compiled.artifact), token,
+                                token.projectSessionId, false, ownerBaseRevision);
 }
 
-CurrentWorldSyncResult clearCurrentWorld(CurrentWorldSyncToken token)
+CurrentWorldSyncResult closeCurrentWorld(CurrentWorldSyncToken token,
+                                         const CurrentWorldArtifactBuilder& buildEmpty)
 {
     CurrentWorldSyncResult result;
     result.token = token;
@@ -764,21 +547,16 @@ CurrentWorldSyncResult clearCurrentWorld(CurrentWorldSyncToken token)
         result.status = CurrentWorldSyncStatus::RuntimeUnavailable;
         return result;
     }
-    auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        harkenprojectschema::CanonicalProject{}, {}, {}, {});
-    if (!compiled.ok() || !compiled.world) {
+    auto compiled = buildEmpty ? buildEmpty() : CurrentWorldArtifactResult{};
+    if (!compiled.ok()) {
         result.status = CurrentWorldSyncStatus::CompileFailed;
         return result;
     }
-    auto request = std::make_shared<CurrentWorldSyncRequest>();
     const auto ownerId = publishedOwnerId != 0 && publishedRuntimeEpoch == token.runtimeEpoch
         ? publishedOwnerId : token.projectSessionId;
     const auto live = Detail::runtimeLiveOwnerRevision(ownerId);
-    request->ownerBaseRevision = live.found ? live.currentRevision : 0;
-    request->busResult =
-        std::make_shared<const harkenbuscompiler::CompiledBusResultV1>();
-    return installCompiledWorld(std::move(compiled.world), std::move(request),
-                                token, ownerId, true);
+    return installCompiledWorld(std::move(compiled.artifact), token, ownerId, true,
+                                live.found ? live.currentRevision : 0);
 }
 
 void servicePendingCurrentWorld() noexcept
@@ -870,7 +648,7 @@ void resetCurrentWorldSyncStateForTesting() noexcept
     generationHold.reset();
     publishedOwnerId = 0;
     publishedRuntimeEpoch = 0;
-    publishedBusResult.reset();
+    publishedEffects.reset();
     publishedVoiceEffects.clear();
     publishedVoiceEffectEpoch = 0;
     publishedVoiceEffectGeneration = 0;
@@ -902,14 +680,14 @@ bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t author
     harkenstudio::ObjectId busId,
     harkenstudio::ObjectId definitionId, const PreviewEffectSource& effect)
 {
-    if (!publishedBusResult || runtimeEpoch != publishedRuntimeEpoch) return false;
-    const auto installed = std::find_if(publishedBusResult->effects.begin(),
-        publishedBusResult->effects.end(), [&](const auto& candidate) {
+    if (!publishedEffects || runtimeEpoch != publishedRuntimeEpoch) return false;
+    const auto installed = std::find_if(publishedEffects->begin(),
+        publishedEffects->end(), [&](const auto& candidate) {
             return candidate.effectId == effect.id && candidate.busId == busId;
         });
-    if (installed == publishedBusResult->effects.end()) return false;
+    if (installed == publishedEffects->end()) return false;
     auto& applied = publishedBusEffectValues.at(effect.id);
-    const auto& parameters = installed->definitionGuid == definitionId && installed->effectType == effect.type
+    const auto& parameters = installed->definitionId == definitionId && installed->effectType == effect.type
         ? effect.parameters : applied.parameters;
     if (parameters == applied.parameters && effect.bypass == applied.bypass) return true;
     if (Detail::runtimeSetPreviewBusEffect(publishedOwnerId, busId, effect.id,

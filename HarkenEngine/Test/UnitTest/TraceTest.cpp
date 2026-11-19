@@ -10,12 +10,13 @@
 // thread API journal. The recorder is owned by the Engine, written only
 // from public API entry hooks, Vn_Update, and Vn_TraceStart/Stop — all
 // externally synchronized logic-thread calls. Nothing under
-// Source/Runtime/render includes TraceRecorder.h, and the mixer's render
+// Source/Core/render includes TraceRecorder.h, and the mixer's render
 // path carries no trace branch; the recorder OBSERVES the audio thread only
 // through the snapshot double buffer's reader side, which the audio thread
 // never waits on. Tracing OFF is one null-pointer test per API call.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "TraceFormat.h"
@@ -51,7 +52,7 @@ static_assert(VN_TRACE_TOO_LATE == -318,
               "trace gate refusal sits in the -3xx state band");
 static_assert(VN_BAD_TRACE_FILE == -403,
               "trace file refusal sits in the -4xx system band");
-static_assert(harken::kTraceFormatVersion == 7,
+static_assert(harken::kTraceFormatVersion == 8,
               "the portable semantic trace format is VTRC v6");
 static_assert(harken::kTraceCaptureResultFeature == 0x52504356u &&
                   harken::kTraceCaptureResultVintage == 1u &&

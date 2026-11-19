@@ -1,6 +1,6 @@
 #pragma once
 
-#include "AssetPipeline/PlatformProfile.h"
+#include "AssetPipeline/AssetTypes.h"
 
 #include <QUuid>
 #include <QVector>
@@ -15,21 +15,11 @@ enum class BasePlatform { Windows, macOS, Linux, Android, iOS };
 using ProjectPlatformId = QUuid;
 using PlatformScope = std::optional<ProjectPlatformId>;
 
-struct ProjectPlatformProfile
-{
-    bool performResample = false;
-    std::vector<SizePolicy> sizePolicies{{}};
-
-    static ProjectPlatformProfile fromBasePlatform(BasePlatform platform);
-    QJsonObject toJson() const;
-};
-
 struct ProjectPlatform
 {
     ProjectPlatformId id;
     QString name;
     BasePlatform basePlatform = BasePlatform::Windows;
-    ProjectPlatformProfile profile = ProjectPlatformProfile::fromBasePlatform(basePlatform);
 
     QJsonObject toJson() const;
 };

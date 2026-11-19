@@ -128,6 +128,8 @@ namespace Harken
             internal int ByteCount;
             internal PackCompanion Names;
             internal PackStreamBinding Streams;
+            internal ulong NameRevision;
+            internal ulong CallableFingerprint;
             public Pack Handle;
             public int Requests;
             public byte[] Bytes;

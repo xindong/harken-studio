@@ -2,15 +2,17 @@ name: PR Gate Studio
 
 # Editor gate: checks Studio local QSS ownership, compiles HarkenEditor on
 # Windows + macOS and runs the editor unit tests on Windows (offscreen Qt).
-# Also triggered by engine changes —
-# the editor links harken_core through the runtime bridge. Not a required
+# Also triggered by Pack format and Engine public header changes —
+# the editor links HarkenEngineDev through the runtime bridge. Not a required
 # status check (path-filtered workflows must not be).
 
 on:
   pull_request:
     paths:
       - 'HarkenStudio/**'
-      - 'HarkenSchema/Pack/**'
+      - 'HarkenEngine/Schema/**'
+      - 'HarkenEngine/Source/Core/api/include/harken/**'
+      - 'HarkenEngine/Source/Development/include/harken/**'
       - '.scripts/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
@@ -102,8 +104,8 @@ jobs:
       - name: Configure (windows-release, editor tests)
         run: >-
           cmake --fresh --preset windows-release -B build-studio
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
           -DHARKEN_BUILD_EDITOR_UNIT_TESTS=ON
@@ -116,7 +118,7 @@ jobs:
       - name: Build Studio and all registered editor test targets
         shell: bash
         run: |
-          for target in harken_editor harken_editor_ci_tests; do
+          for target in harken_studio harken_studio_ci_tests; do
             cmake --build build-studio --config Release --target "$target"
           done
 
@@ -232,7 +234,7 @@ jobs:
         run: >-
           cmake --fresh --preset macos-release
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 
@@ -284,5 +286,5 @@ jobs:
               print(item)
           PY
 
-      - name: Build (harken_editor)
-        run: cmake --build --preset macos-release --target harken_editor --parallel
+      - name: Build (harken_studio)
+        run: cmake --build --preset macos-release --target harken_studio --parallel

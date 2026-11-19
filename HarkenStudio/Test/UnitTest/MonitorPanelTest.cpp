@@ -1,5 +1,5 @@
-#include "Engine.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "Widgets/Monitor/MonitorPanel.h"
 #include "Widgets/Selector/ObjectRefNavigation.h"
 #include "AssetPipeline/AssetRegistry.h"
@@ -41,7 +41,7 @@ void ensureApp()
     if (qApp)
         return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -117,24 +117,22 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
         ASSERT_NE(sounds[i], nullptr);
     }
     ProjectManager::syncProjectToRuntime(projects.currentProject());
-    auto* runtime = harken::detail::ActiveEngine();
-    ASSERT_NE(runtime, nullptr);
     Monitor::EventCaptureController capture(nullptr);
     capture.setLocalRuntimeAvailable(true);
     capture.setProjectObjects(ProjectObjectIndex::fromProject(projects.currentProject()));
     MonitorPanel panel;
     panel.setCaptureController(&capture);
-    quint64 renderedFrames = 0;
+    quint64 renderedBlocks = 0;
     const auto waitFor = [&](const auto& ready) -> ::testing::AssertionResult {
         QElapsedTimer timeout;
         timeout.start();
-        const auto firstFrame = renderedFrames;
+        const auto firstBlock = renderedBlocks;
         while (!ready() && timeout.elapsed() < 3000) {
             QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
             const auto beforeRender = Vn_Update();
             if (beforeRender != VN_OK) return ::testing::AssertionFailure() << "Vn_Update before render: " << beforeRender;
-            runtime->nullBackend.Pump(1);
-            renderedFrames += runtime->nullBackend.BlockFrames();
+            VnPreview_PumpNullMixer(1);
+            ++renderedBlocks;
             const auto afterRender = Vn_Update();
             if (afterRender != VN_OK) return ::testing::AssertionFailure() << "Vn_Update after render: " << afterRender;
             capture.pollLocal();
@@ -144,7 +142,7 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
         if (ready()) return ::testing::AssertionSuccess();
         auto failure = ::testing::AssertionFailure();
         failure << "Capture: " << capture.statusText().toStdString()
-                << "; rendered frames: " << renderedFrames - firstFrame
+                << "; rendered blocks: " << renderedBlocks - firstBlock
                 << "; visible records: " << panel.visibleRowCount();
         for (int row = 0; row < capture.rowCount(); ++row) {
             const auto& event = capture.eventAt(row);

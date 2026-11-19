@@ -154,6 +154,8 @@ ActionClosurePlan buildForContext(const ProjectData& project,
                                   const ActionClosureBuildContext* buildContext = nullptr);
 ActionClosurePlan contentReferences(const ProjectData& project,
                                     harkenstudio::ObjectId actionStableId);
+ActionClosurePlan playbackContentReferences(const ProjectData& project,
+    harkenstudio::ObjectId rootStableId, ProjectPlatformId platform);
 QString edgeReasonName(ActionClosureEdgeReason reason);
 QString diagnosticCodeName(ActionClosureDiagnosticCode code);
 

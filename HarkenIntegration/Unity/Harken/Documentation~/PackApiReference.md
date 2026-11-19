@@ -7,8 +7,9 @@ allocate memory. Prepare content before a timing-sensitive trigger.
 ## Export identity and selection
 
 Supply `Init.bytes` / `Init.json` and the requested Action's `.bytes` / `.json`
-pair from the same export. JSON `schemaVersion` must match its binary header;
-the native runtime validates support against the current Pack schema manifest.
+pair from the same export. JSON `packMetadataVersion` must equal the Pack metadata
+version this package supports; the native runtime separately validates the
+binary against the Pack format versions it can read.
 Optional `metadata` and `waveforms` are not playback dependencies.
 
 Select a platform directory explicitly, or select its direct child by exact

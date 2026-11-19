@@ -78,7 +78,7 @@
     },
     "audio.loopCount": {
       "title": "Loop",
-      "body": "播放总次数：1 为一次，Infinite 持续循环直到停止。在哪个对象上设置，就让哪个对象重复。",
+      "body": "播放总次数：1 为一次，Inf 持续循环直到停止。在哪个对象上设置，就让哪个对象重复。",
       "byType": {
         "Container": "Random 或 Sequence 的 Queue 模式下，一次指完整播放一轮队列。"
       }

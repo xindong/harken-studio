@@ -1396,8 +1396,8 @@ def rule_build_identity(files: list[str], findings: list[Finding]) -> None:
 
 
 def rule_miniaudio_scope(files: list[str], findings: list[Finding]) -> None:
-    impl = "HarkenEngine/Source/Runtime/api/src/MiniaudioImpl.cpp"
-    loader = "HarkenEngine/Source/Tooling/Common/WavLoader.h"
+    impl = "HarkenEngine/Source/Core/api/src/MiniaudioImpl.cpp"
+    loader = "HarkenEngine/Tool/Common/WavLoader.h"
     documented = any(
         "miniaudio" in line and "Compiled without feature trimming" in line
         for line in read_text("NOTICE").splitlines()

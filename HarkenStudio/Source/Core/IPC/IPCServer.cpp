@@ -124,8 +124,6 @@ IPCServer::~IPCServer()
 
 void IPCServer::waitForPendingOperations()
 {
-    if (transcodeCancel_) transcodeCancel_->store(true);
-    if (transcodeThread_) transcodeThread_->wait();
     if (packBuildThread_) {
         packBuildThread_->wait();
     }
@@ -461,14 +459,9 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         return withRequestId(errorResponse("DESKTOP_REQUIRED",
             "This command requires the desktop editor. Use the corresponding project operation for headless authoring."));
 
-    if (transcodeInProgress_ && !isReadOnlyCommand(cmd) && cmd != QLatin1String("cancel_transcode"))
-        return withRequestId(errorResponse("TRANSCODE_IN_PROGRESS",
-            "The project is read-only while media is being converted. Wait for completion or cancel_transcode."));
-
     if (PackGenerationRecordStore::instance().isExporting()
         && !isReadOnlyCommand(cmd)
         && cmd != QLatin1String("cancel_pack_build")
-        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("batch")
         && cmd != QLatin1String("query")
         && cmd != QLatin1String("find_widget")
@@ -484,9 +477,7 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         && cmd != QLatin1String("list_commands")
         && cmd != QLatin1String("get_command_schema")
         && cmd != QLatin1String("get_ui_operation")
-        && cmd != QLatin1String("get_transcode_status")
         && cmd != QLatin1String("audition_get_seek_status")
-        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("create_project")
         && cmd != QLatin1String("open_project"))
     {
@@ -552,25 +543,29 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 
     if (!context.expectedProjectSession.isEmpty()
         && (!projectManager_ || !projectManager_->isProjectOpen() || !engine_
-            || QString::number(engine_->runtimeSyncCoordinator().barrier(
-                engine_->runtimeSyncCoordinator().currentAuthoringRevision()).projectSessionId)
+            || QString::number(engine_->currentWorldPlaybackBarrier().projectSessionId)
                 != context.expectedProjectSession))
         return withRequestId(errorResponse("PROJECT_CHANGED", "The project changed while preparing playback."));
 
     if ((cmd == QLatin1String("post_action") || cmd == QLatin1String("post_action_3d")
-         || cmd == QLatin1String("audition_play"))
+         || cmd == QLatin1String("audition_play") || cmd == QLatin1String("audition_reset"))
         && projectManager_ && projectManager_->isProjectOpen()
         && engine_ && engine_->isInitialized() && !engine_->isSimulationMode()) {
         if (cmd == QLatin1String("audition_play") && !engine_->isPlaying() && !engine_->startOutput())
             return withRequestId(errorResponse("START_OUTPUT_FAILED", "Failed to start audio output."));
         auto& coordinator = engine_->runtimeSyncCoordinator();
         coordinator.flushPendingMutationNow();
-        const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+        const auto barrier = engine_->currentWorldPlaybackBarrier();
         using Barrier = RuntimeSyncCoordinator::RevisionBarrierState;
         if (barrier.state != Barrier::Ready) {
+            const bool reset = cmd == QLatin1String("audition_reset");
             auto response = barrier.state == Barrier::Pending
-                ? errorResponse("RUNTIME_SYNC_PENDING", "The current project is still being prepared for playback. Playback has not started.")
-                : errorResponse("RUNTIME_SYNC_FAILED", "The current project could not be prepared for playback.");
+                ? errorResponse("RUNTIME_SYNC_PENDING", reset
+                    ? "The current project is still being prepared for reset. The reset has not been applied."
+                    : "The current project is still being prepared for playback. Playback has not started.")
+                : errorResponse("RUNTIME_SYNC_FAILED", reset
+                    ? "The current project could not be prepared for reset."
+                    : "The current project could not be prepared for playback.");
             response.insert("result", QJsonObject{
                 {"runtime_sync_status", static_cast<int>(barrier.failure)},
                 {"project_session_id", QString::number(barrier.projectSessionId)},
@@ -759,8 +754,6 @@ bool IPCServer::isJsonCommandAvailableInCurrentState(const QString& cmd) const
         QStringLiteral("list_commands"),
         QStringLiteral("get_command_schema"),
         QStringLiteral("get_ui_operation"),
-        QStringLiteral("get_transcode_status"),
-        QStringLiteral("cancel_transcode"),
         QStringLiteral("open_project"),
         QStringLiteral("create_project"),
     };

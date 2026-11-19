@@ -16,6 +16,7 @@ class QLabel;
 namespace VNX {
 
 class ProjectPlatformEditor;
+class ObjectRefWidget;
 
 inline constexpr const char* kSettingsPageConfig = "config";
 
@@ -38,6 +39,7 @@ private:
     void refreshPlatforms(int selectedIndex = -1);
     void syncPlatforms(bool finishEditing = false, int selectedIndex = -1);
     void syncLanguages(bool finishEditing = false, int selectedIndex = -1);
+    void syncDefaultConversion();
     void updatePlatformAvailability();
     void commitPlatform(const ProjectPlatform& before);
     void addPlatform();
@@ -56,6 +58,7 @@ private:
     QToolButton* platformRemoveButton_ = nullptr;
     QToolButton* platformAddButton_ = nullptr;
     QLabel* platformBusyLabel_ = nullptr;
+    ObjectRefWidget* defaultConversion_ = nullptr;
     QVector<ProjectPlatform> platforms_;
     std::weak_ptr<ProjectData> projectLease_;
     QListWidget* targetLanguagesList_ = nullptr;

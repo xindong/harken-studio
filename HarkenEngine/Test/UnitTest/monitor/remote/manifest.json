@@ -6,7 +6,7 @@
   "files": [
     {
       "path": "allowlist_monitor_functions.json",
-      "sha256": "c11813a004c37c48d2b30fe265b2c3681733cace16af4decd609c7dde91740c1",
+      "sha256": "54973904519932087ebd69bc5e2bca16526ed7be329edf816049bed69e7ebec8",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -15,7 +15,7 @@
     },
     {
       "path": "allowlist_wire_opcodes.json",
-      "sha256": "ba25929e80c39ee27a13510dd1fff93c6485922c862a6449e0626141a68b3c05",
+      "sha256": "fc72a3902f507516faf5f716a87f1e57a6d1fab3046a90690b6f87cd6fc1d345",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -24,7 +24,7 @@
     },
     {
       "path": "contract.expected.json",
-      "sha256": "80923171e1abe985c640042a031e03342e4a2923ce6b0380d2fd883d42cffcfa",
+      "sha256": "2cb705a642e2b84ce447aedd43e874a36c37fd18f68ae6ba78bcb969ce8647d6",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -69,7 +69,7 @@
     },
     {
       "path": "handshake_local_acl.bin",
-      "sha256": "12c6e07604ef00fe28e5346b9226cbf43e254c2a027f109f3ebb97789302e90c",
+      "sha256": "f66cd12b69bbc74d9626772cc8cc42eaf8dea86ebcdefdf1e858882ca1260ed8",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -105,7 +105,7 @@
     },
     {
       "path": "handshake_unknown_permission.bin",
-      "sha256": "73f8fed13c38ec6df8690ff67a762c841436a469c851d28c523219867396f1d3",
+      "sha256": "90afa161141136c0bc8905a506736b22ef68051c1afb64a031f2b48a3f05c240",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -167,15 +167,6 @@
       "fixtureRole": "remote-file"
     },
     {
-      "path": "perm_deny_record.bin",
-      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
-      "isProvisional": false,
-      "producingPackage": "m0-5",
-      "contractVersion": 1,
-      "formatVersion": 1,
-      "fixtureRole": "remote-file"
-    },
-    {
       "path": "perm_deny_symbols.bin",
       "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
       "isProvisional": false,
@@ -223,15 +214,6 @@
     {
       "path": "perm_grant_raw_audio.bin",
       "sha256": "fe766c117e8511ee5bfec1e37e0442febc9e80c54586be28241dd8ea92e9b68c",
-      "isProvisional": false,
-      "producingPackage": "m0-5",
-      "contractVersion": 1,
-      "formatVersion": 1,
-      "fixtureRole": "remote-file"
-    },
-    {
-      "path": "perm_grant_record.bin",
-      "sha256": "936ca771cd075ba1a0db16bdda5973847350bea6892979ecbb57c678570be13e",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,

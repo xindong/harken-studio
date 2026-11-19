@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -20,6 +23,7 @@ namespace Harken
         private static int updateDepth;
         internal static bool IsUpdating => updateDepth != 0;
         internal static event Action OutermostUpdateReturned;
+        internal static event Action Initialized;
 
         /// <summary>
         /// A <see cref="VnConfig"/> with <c>structSize</c> preset to the current
@@ -38,10 +42,21 @@ namespace Harken
 
         public static VnResult Init(in VnConfig config)
         {
+            VnAbiVersionInfo abi = default;
+            abi.structSize = (uint)Marshal.SizeOf<VnAbiVersionInfo>();
+            try
+            {
+                if (HarkenNative.Vn_QueryAbiVersion(ref abi) != VnResult.VN_OK ||
+                    abi.major != VnConstants.VN_ABI_VERSION_MAJOR)
+                    return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            }
+            catch (EntryPointNotFoundException) { return VnResult.VN_CAPABILITY_UNAVAILABLE; }
             VnResult support = Emitter.CheckStateOnlySupport();
             if (support != VnResult.VN_OK) return support;
             VnResult result = HarkenNative.Vn_Init(config);
-            if (result == VnResult.VN_OK) VariableGameplay.NotifySessionChanged();
+            if (result != VnResult.VN_OK) return result;
+            VariableGameplay.NotifySessionChanged();
+            Initialized?.Invoke();
             return result;
         }
 
@@ -57,6 +72,14 @@ namespace Harken
         /// </summary>
         public static VnResult Resume() => HarkenNative.Vn_Resume();
 
+        /// <summary>
+        /// Silences or restores the platform device output for the host, such as
+        /// an editor mute toggle. Mixing, metering and audio time are unaffected.
+        /// </summary>
+        public static VnResult SetHostOutputMute(uint mute01, uint fadeMs)
+            => HarkenNative.Vn_SetHostOutputMute(mute01, fadeMs);
+
+#if HARKEN_ENGINE_DEV
         /// <summary>
         /// Explicitly enables optional communication for the initialized host.
         /// Call on the externally synchronized engine thread. Failure leaves
@@ -75,11 +98,16 @@ namespace Harken
         /// <summary>Reads communication state, including the last startup failure.</summary>
         public static VnResult QueryRemoteCommunication(out VnRemoteStatus status)
             => RemoteCommunication.GetStatus(out status);
+#endif
 
         public static VnResult Term()
         {
             VnResult result = HarkenNative.Vn_Term();
-            if (result == VnResult.VN_OK) VariableGameplay.NotifySessionChanged();
+            if (result == VnResult.VN_OK)
+            {
+                GameplayNames.Clear();
+                VariableGameplay.NotifySessionChanged();
+            }
             return result;
         }
 
@@ -99,6 +127,7 @@ namespace Harken
             }
         }
 
+#if HARKEN_ENGINE_DEV
         /// <summary>A <see cref="VnSnapshot"/> with <c>structSize</c> preset; pass
         /// by ref to <see cref="Capture"/>.</summary>
         internal static VnSnapshot DefaultSnapshot()
@@ -110,6 +139,7 @@ namespace Harken
 
         internal static VnResult Capture(ref VnSnapshot snapshot)
             => HarkenNative.Vn_CaptureSnapshot(ref snapshot);
+#endif
 
         /// <summary>
         /// Applies one complete owner-scoped Bus and Send snapshot. The arrays

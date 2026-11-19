@@ -104,9 +104,9 @@ QString nodeContentToolTip(const NodeContentInfo& info, NodeContentFields fields
         const auto value = fieldValue(info, field);
         const auto unit = property.unit.trimmed();
         const QString text = field == NodeContentField::Loop
-            ? (value == 0.0 ? QString(QChar(0x221E)) : QString::number(*info.loopCount))
+            ? (value == 0.0 ? kPositiveInfinityText : QString::number(*info.loopCount))
             : unit == QLatin1String("dB") && value <= -96.0
-                ? QStringLiteral("-inf") : formatDecimal(value, property.decimals);
+                ? kNegativeInfinityText : formatDecimal(value, property.decimals);
         lines.append(QStringLiteral("%1: %2 %3").arg(property.label, text, unit).trimmed());
     }
     return lines.join(QLatin1Char('\n'));
@@ -408,11 +408,11 @@ void NodeContentEditor::setValues(const NodeContentInfo& info)
                 if (!row->binding->isEditing()) row->binding->setValue(fieldValue(info, row->field));
             } else if (row->field == NodeContentField::Loop) {
                 const auto count = info.loopCount.value_or(1);
-                row->value->setText(count == 0 ? QString(QChar(0x221E)) : QString::number(count));
+                row->value->setText(count == 0 ? kPositiveInfinityText : QString::number(count));
                 if (row->loop && !row->loop->isEditing()) row->loop->setValue(count);
             } else {
                 const double value = fieldValue(info, row->field);
-                row->value->setText(value <= -96.0 ? QStringLiteral("-inf")
+                row->value->setText(value <= -96.0 ? kNegativeInfinityText
                     : formatDecimal(value, row->property.decimals));
             }
             refreshValue(*row);
@@ -502,7 +502,7 @@ void NodeContentEditor::refreshValue(Row& row)
 {
     if (row.binding)
         row.value->setText(row.property.unit.trimmed() == QLatin1String("dB")
-            && row.binding->value() <= -96.0 ? QStringLiteral("-inf")
+            && row.binding->value() <= -96.0 ? kNegativeInfinityText
             : formatDecimal(row.binding->value(), row.property.decimals));
     const QString tip = QStringLiteral("%1 %2").arg(row.value->text(), row.property.unit.trimmed()).trimmed();
     row.value->setToolTip(tip);

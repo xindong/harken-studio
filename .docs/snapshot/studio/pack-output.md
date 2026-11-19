@@ -13,13 +13,21 @@ v7/v8 工程升级时同步转换历史输出路由字段及效果条目结构�
 | Publish Directory | 工程目录下 BuildPacks | 以工程目录为相对路径基准，无法相对化时保留绝对路径 |
 | Waveform File Directory | BuildPacks/Waveforms | 与发布目录采用相同路径保存方式 |
 | Pack 包体 | 平台目录下的 Init.bytes、Action 包等 | Init 始终包含，未变化时可复用 |
-| 包伴随 JSON | 每个 .bytes 同目录、同名 .json | 必含 schemaVersion 和名称映射；可附加 metadata、waveforms |
+| 包伴随 JSON | 每个 .bytes 同目录、同名 .json | 必含 packMetadataVersion 和名称映射；可附加 metadata、waveforms |
 | Export Project Information | 默认关闭 | 开启后在发布根目录输出 Project.json，与平台目录并列 |
 | Export Pack MetaData | 默认关闭 | 在本次构建包的伴随 JSON 中写入 metadata |
 | Export Wave Buffer | 独立开关 | 在波形目录输出按内容 SHA-256 命名的 `<hash>.vkd`，并在伴随 JSON 写入 waveforms |
 | 配置提交 | 编辑完成即更新项目，支持撤销 | 写入工程文件仍需 Save；保存与发布先提交有效编辑，无效输入标红并恢复旧值 |
 
 表注：Project.json 是供集成侧按需使用的可选项目元数据；元数据及波形开关不改变 .bytes 包体或原有名称映射。
+
+## Conversion（Part A）
+
+Conversion 预设位于 `Conversions/`，按原始文件大小保存有序规则，每条规则独立指定采样率、PCM／Vorbis 格式和适用于 Vorbis 的质量。Sound、Container、Layer、Track、Segment 的 Conversion 字段组按目标平台（Shared 加平台覆写）沿层级解析 Settings 引用；空引用表示不转换，仍以原始采样率导出 PCM，Bus／Action 不适用。各平台 Default Conversion 只决定新根对象的初始平台覆写。
+
+命中 PCM 规则的源文件可正常导出。Vorbis 已能编码、缓存及在 Studio 中试听；Pack 媒体写入处仍明确报错，相关包失败，不写入半成品，也不回退 PCM。默认工程中 Android／iOS 的新根对象使用 Vorbis 预设 Low Quality，因此 Part A 默认不能为其完成含媒体的包。Engine Pack 布局、Engine Vorbis 解码及 Integration 按平台混音采样率属于 Part B。
+
+CLI 构建结果的每个媒体包含 `format`、`originalBytes`、`outputBytes`；Vorbis 的产物大小只计编码块，不计 `.vcm` 缓存头及摘要。这些字段不进入包伴随 JSON；`builds.json` 保存成功包的媒体结果以恢复 Skipped／部分发布报告，区分未记录结果与已知空媒体列表。
 
 ## 导出范围
 
@@ -107,13 +115,13 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 ├── waveforms/<source-relative-path>.vkd
 └── pack/
     ├── builds.json
-    ├── media/<conversion-key>.pcm
+    ├── media/<conversion-key>.pcm 或 .vcm
     └── .build.lock                  仅持锁期间存在
 ```
 
 | 文件／字段 | 生产者 → 消费者 | 内容与目的 |
 |---|---|---|
-| `asset_registry/assets.json` | AssetRegistry／BuildSourceInputs → 编辑器、媒体准备 | 既有资产登记：sourceID、relativePath、contentHash、lastModified、metadata、settings、ownerObjectGuid、isOrphaned、platformCaches。打包在同一条目补充 sourceState、waveformState，不复制一张源表；absolutePath 从工程目录推导，不保存 |
+| `asset_registry/assets.json` | AssetRegistry／BuildSourceInputs → 编辑器、媒体准备 | 既有资产登记：sourceID、relativePath、contentHash、lastModified、metadata、ownerObjectGuid、isOrphaned。打包在同一条目补充 sourceState、waveformState，不复制一张源表；absolutePath 从工程目录推导，不保存 |
 | `sourceState` | 源识别 → 下次源识别 | 文件身份、大小及写入／变更时间的原生状态，十六进制保存；相同即可复用既有 contentHash 和 metadata |
 | `waveformState` | 波形生成 → 波形读取 | 共享 .vkd 的文件身份、大小和修改时间；源内容变化时清空，用于判断已生成波形是否变化 |
 | `builds.json.version` | PackBuildState → 后续构建、Publisher | 缓存格式版本，当前 2 |
@@ -122,15 +130,17 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | `input` | 当前计划 → 下次比较 | 本包输入摘要，用于决定该包是否需要构建；不保存整棵工程树 |
 | `state`、`companionState` | 成功写入 → 下次比较 | 包体和同名 JSON 的文件身份、大小和修改时间，检测缺失、替换和一般修改；权限变化不使内容失效，不保存全文件摘要 |
 | `resourceFingerprint` | 资源编译 → 后续资源复用 | 仅在已知时保存；用于判断旧包内资源能否复用，与该包 state 绑定 |
+| `packs[...].media` | 构建结果 → Skipped／保留包报告 | 成功包的媒体格式、原始及产物字节数；未记录与空数组分别保留 |
 | `packs[...].waveforms` | 启用波形导出时 → 下次比较、自清理 | 相对伴随文件目录的波形路径数组；仅保存本包引用，未导出波形则没有该字段 |
 | `builds.json.waveforms` | 波形成功写入 → 下次比较 | 波形绝对路径到原生状态的唯一表；多个包／平台共享同一文件记录，空表不保存 |
 | `media/<conversion-key>.pcm` | SoundSourceDerivative → 媒体编译 | 40 字节头、32 字节 SHA-256、交错 float PCM。头含 magic、格式版本、采样率、声道数、循环起止和媒体修订；帧数从载荷推导 |
+| `media/<conversion-key>.vcm` | SoundSourceDerivative → 转换结果、Studio 试听 | 104 字节固定头、32 字节 SHA-256 及 Vorbis 编码块；保存预滚、帧数、循环点、包和 seek 表，独立于 Engine Pack 布局 |
 | `waveforms/<source-relative-path>.vkd` | WaveformCache → 编辑器、波形导出 | 共用波形数据；不再附带 .vkd.source.json 或第二份源摘要 |
 | `.build.lock` | 构建服务 → 其他构建请求 | QLockFile 进程锁记录，串行维护同一工程的 builds.json 和转换缓存；不是历史或成功标记 |
 
-转换 key 只包含源内容摘要、有效裁剪／循环、已启用 Source 淡入淡出的有效时长与曲线、量化到实际采样帧的调度偏移、实际重采样目标及转换格式版本；不含源 ID、平台 UUID 或不影响实际转换的参数。淡入淡出在源采样率下按裁剪两端处理，随后重采样并添加调度前置静音；与对象试听共用处理算法。等价转换跨平台复用；实际载入 PCM 时读取并校验其摘要一次。资产既有 `platformCaches` 服务编辑器／预览；本链不借它额外生成转换 WAV。
+转换 key 包含源内容摘要、有效裁剪／循环、已启用 Source 淡入淡出的有效时长与曲线、量化到实际采样帧的调度偏移、实际采样率、格式及有效编码参数；Vorbis 另包含 quality、编码器版本、声道映射和 seek 粒度。无效果的设置及 PCM 的 quality 不改变 key；不含源 ID、预设 GUID 或平台 UUID。淡入淡出在源采样率下按裁剪两端处理，随后重采样并添加调度前置静音；与对象试听共用算法。打包、Converted 试听与 Convert 使用同一物化任务表，相同 key 的并发请求共用编码，等价转换跨平台复用。`platformCaches` 已退役，不生成逐资产转换 WAV。
 
-`builds.json` 不保存 units、counts、warnings、完整结果、平台配置副本、逐包媒体引用历史或源摘要副本。名称、语言、统计、警告由当前计划推导，大小／时间由实际文件查询。Publisher 从这张状态表恢复产物显示，后续只维护内存，不再写 `pack-artifacts.json`。包勾选与 Export Platforms 保存到既有用户 QSettings 的 `PackExportSelection/<projectId>`，不作为构建缓存。
+`builds.json` 不保存 units、counts、warnings、完整结果、平台配置副本、独立的媒体依赖历史或源摘要副本。名称、语言、统计、警告由当前计划推导，大小／时间由实际文件查询。Publisher 从这张状态表恢复产物显示，后续只维护内存，不再写 `pack-artifacts.json`。包勾选与 Export Platforms 保存到既有用户 QSettings 的 `PackExportSelection/<projectId>`，不作为构建缓存。
 
 导出波形成功写入后立即记录一次文件状态；请求内按绝对路径共用查询结果，保存包记录时复用该结果。构建状态有变化而需要落盘时，按仍有效的包引用回收波形状态，避免不同平台持有同一文件的互相过期副本。
 
@@ -144,10 +154,10 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 稳定源副本 | 本请求内按真实文件共享，使用系统临时目录，释放输入时删除；Windows 读取句柄禁止同时写入／替换，读取完成不重复查状态；其他系统读取前后核对状态，避免把不同内容的头和样本组合使用 |
 | 旧包资源读取 | 只有实际构建需要复用旧包资源时发生；完整相等跳过不读旧包 |
 | 包体写入 | 直接打开目标 .bytes 并截断，按头、目录、条目和媒体顺序写；没有整平台暂存、复制保留包、发布证明、恢复标记或目录事务 |
-| 单文件替换 | JSON、波形和 PCM 缓存仍使用单文件临时写入后替换，避免留下半份共享记录／缓存；不复制或回滚平台目录 |
+| 单文件替换 | JSON、波形和 PCM／Vorbis 缓存仍使用单文件临时写入后替换，避免留下半份共享记录／缓存；不复制或回滚平台目录 |
 | 锁文件 | 输出根 .harken-pack-build.lock、平台 .harken-pack-platform.lock、共享波形 .harken-pack-waveforms.lock；持有期间存在，防止同一输出被同时修改 |
 | 平台大小写改名 | 必要时通过 .harken-pack-rename-* 中转目录完成一次改名；不是打包暂存区 |
-| 转换回收 | 每次实际构建结束后、状态落盘前，按当前工程 Sound／平台／语言的有效源和转换设置推导所需 key，删除无用 .pcm 及遗留 .pcm.?????? 临时文件；不读音频载荷，不维护持久引用清单；删除失败只记日志、不重试 |
+| 转换回收 | 每次实际构建结束后、状态落盘前，按当前工程 Sound／平台／语言的有效源和转换设置推导所需 key，删除无用 .pcm／.vcm 及其遗留临时文件；不读音频载荷，不维护持久引用清单；删除失败只记日志、不重试 |
 | 旧缓存清理 | 仅未读到 version 2 的首次／旧状态构建，在保存 version 2 前移除 pack/targets、pack/sources.json、pack-build、pack-inputs、media/pack-derivatives、pack-artifacts.json 和 .vkd.source.json。已读到 version 2 就不再扫描；没有额外迁移标记，删除失败只记日志、不重试 |
 | 旧选择记录处理 | 读取旧 pack-export-selection.json 时，有效内容成功迁移到 QSettings 后删除，无效或版本不支持则直接清除 |
 | 部分打包的保留包发现 | 仅部分打包实际进入构建时枚举最终平台目录，发现仍在磁盘上的保留包，用于容量合并与必要更新；成功缓存不是完整产物清单。完整复用不增加扫描，不保存失败清单或恢复标记 |
@@ -258,28 +268,21 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 新一轮构建 | 本轮参与行 | 清零进度及旧 Result／Cost；未参与行保留 |
 | 清缓存 | 本地产物 | 构建记录清空后产物列留空；包选择属于用户偏好，工程配置仍由工程保存 |
 
-## Pack 二进制合同（2026-11-05）
+## Pack 二进制合同（2026-11-12）
 
-`HarkenSchema/Pack/current/PackManifestSchema.json` 的 `x-harken-format.binaryLayout` 描述当前有效生产写入路径的 `.bytes` 布局，是 Engine 和 Studio 共用的布局来源。合同包含字段顺序、类型、固定值、保留字段、行数与章节顺序、偏移、对齐以及目录 kind／vintage；C++ 类型和成员映射单独保存在 `.scripts/pack-wire-bindings.json`。
+Pack 的 `.bytes` 布局由 Engine 定义，唯一来源是 `HarkenEngine/Schema/Pack/current` 下的手写纯 C 头文件（总入口 `HarkenPack.h`，按段族拆分为 `PackFile.h`、`PackMedia.h`、`PackBus.h`、`PackCurve.h`、`PackBinding.h`、`PackVoiceRecipe.h`、`PackContainer.h`、`PackVariable.h`、`PackWorldBody.h`、`PackEffects.h`、`PackProperties.h`、`PackSlots.h`、`PackChecksum.h`），经只含头文件的 `Harken::PackFormat` 目标发布，消费方以 `harken_pack/` 前缀引用。
 
-| 覆盖范围 | 当前内容 |
+| 方面 | 当前做法 |
 |---|---|
-| 文件框架 | 文件前缀、包头、媒体文件头、目录条目 |
-| 资源条目 | Media(1)、Bus(2)、BusSend(3)、Attenuation(4)、BindingDefinition(7)、BindingAttachment(8)、BusEffect(12)、EffectDynamicRoute(13) |
-| 低层资源写入 | Container(9)、VoiceRecipe(11)；虽不由常规最终组包直接生成，仍有有效生产写入路径 |
-| 组合与依赖 | CanonicalDefinitionPartition(21)、RequirementBlock(22)、DependencyEdge(23)、BusDefinitionSnapshot(24) |
-| 变量 | VariablePolicyOverlay(26)、VariableRequirements(27) |
-| 分区 body | shipping V18，包括可播放属性、时间表、容器、转换与 Action 章节；V19 的入口时间线与 V20 的信号表扩展同样由合同生成 |
+| 记录与取值域 | 固定宽度、小端、显式填充的 `HkPack*` 结构体；枚举、单位、可接受范围、世界能力位和硬上限与布局写在同一处 |
+| 布局锁 | 每条记录以 `HK_PACK_SIZE`／`HK_PACK_OFFSET` 静态断言锁定，编译期保证两侧读写布局一致 |
+| 读写映射 | Engine 读取端 `harken/media/PackWire.h` 与 Studio 写入端 `harken_studio_build/PackWire.h` 各自手写映射，不使用代码生成器；构建路径不运行 Python |
+| 版本 | 与 Studio 的两棵 Schema 树同一机制：`manifest.json` + `current/` + 冻结版本号目录（3、4 为旧 `HarkenSchema` 原文留档）。`HK_PACK_FORMAT_VERSION` 由构建按 manifest 最后一个已发布版本生成到 `harken_pack/PackVersion.h`，当前为 4；是否换代由发布者经 `.scripts/schema_lock.py stage --pack same|next` 决定，`--pack` 同时冻结 PackMetadata 与 Pack 二进制。Engine 经 `Vn_QueryPackFormatVersion` 声明可读范围 |
+| 伴随 JSON | 由 Studio 定义，Schema 位于 `HarkenStudio/Schema/PackMetadata`；Engine 不读取伴随文件，Pack 激活只接收二进制 |
 
-有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 共 6 个列入 `retiredKinds`，读取端不再接纳；其中 Action 的当前生产数据位于分区 body。独立的 `Vn_SetGameplayCatalog` 接口与伴随 JSON 的变量名称映射继续保留，不作为 Pack 目录条目。
+有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 已退役，读取端不再接纳；Action 的当前生产数据位于分区 body。Engine 只以 ID 识别创作内容，名称与 ID 的换算由 Studio 与 Integration 依据伴随 JSON 完成。
 
-`.scripts/pack_wire_codegen.py` 从合同和绑定表生成四份入仓头文件：Engine 的 `Runtime/media/include/harken/media/generated/` 与 Studio 的 `Tooling/PackBuild/include/harken_studio_build/generated/` 下各有 `harken_pack_wire_constants.g.h` 和 `harken_pack_wire.g.h`，目录均相对于各端 `Source`。前置常量头提供 `binaryLayout.constants`，供域结构的定长数组等声明使用；布局头生成定长记录访问及变长章节顺序。域结构、分配和字段语义校验仍由调用方负责。生成的定长读写直接操作调用方内存，变长读取通过 visitor 使用调用方存储，不新增中间容器。
-
-修改布局后运行 `python .scripts/pack_wire_codegen.py`，或显式构建 `harken_pack_wire_regen`。普通构建直接使用入仓产物，不运行 Pack 布局生成器，也不新增 Engine 对 Studio 的依赖。`pack_wire_generated_check` 运行 `--check`，核对生成结果并扫描布局源码中的手写字节访问；Core 和 Studio PR 门禁覆盖合同、生成器及绑定表的改动。发布审计范围保留既有 Pack 范围并加入生成器、绑定表和四份产物，迁移期间增加的手写布局文件列表已移除。
-
-Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可读的 V18、V19、V20 分区，用于原生音乐和信号发布，Studio 的 Pack 读取只接受 shipping V18；V19、V20 的扩展段与主体一样来自合同。`.stream`、独立 Gameplay catalog 数据及 World artifact 外层封装不在本次合同内；Effect 参数定义仍来自既有 registry，指纹和校验和算法保持原有职责。
-
-`current` 已补齐实际布局，与已发布的 Pack 4 档案不同。此次只更新当前合同和实现，不修改 `HarkenSchema/Pack/3`、`HarkenSchema/Pack/4` 档案或发布版本，不执行 Pack 5 发布。发布审计仍要求不同合同换代，后续由发布者完成；当前版本号保持 4 不表示本次合同变化已经完成发布。
+Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可读的 V18、V19、V20 分区，用于原生音乐和信号发布；Studio 的 Pack 读取只接受 shipping V18。
 
 ## Limiter 试听与 Pack 桥接（2026-11-12）
 
@@ -348,7 +351,7 @@ Bus 即时编辑独立读取当前创作值，只对已安装且来源兼容的�
 
 | 验证范围 | 实际结果 |
 |---|---|
-| 构建 | `harken_editor_tests`、`harkenizer`、`harken_host`、`harken_runtime_tests`、`harken_core` 及资格测试目标编译通过 |
+| 构建 | `harken_studio_tests`、`harkenizer`、`harken_host`、`harken_runtime_tests`、`harken_core` 及资格测试目标编译通过 |
 | Runtime | 执行 6457 项，6451 通过、6 跳过、0 失败；跳过集合与基线一致 |
 | Editor PR／daily 范围 | 执行 622 项，620 通过、1 跳过、1 失败；另有 1 项禁用。失败为 `EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem`，基线同样失败，基线单独重跑通过 |
 | 导出 | 22 个产物文件与基线逐字节一致，167 项打包回归通过 |

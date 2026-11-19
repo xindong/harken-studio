@@ -42,6 +42,7 @@ inline QJsonObject projectDocument(const QString& type,
                     {QStringLiteral("send"), inherit},
                     {QStringLiteral("spatialRating"), inherit},
                     {QStringLiteral("effect"), inherit},
+                    {QStringLiteral("conversion"), inherit},
                 }},
             });
         }
@@ -59,7 +60,7 @@ inline QJsonObject projectDocument(const QString& type,
     if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion
         && type == QStringLiteral("project.root")) {
         header.insert(QStringLiteral("studioVersion"), QStringLiteral("1.0.0"));
-        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_SCHEMA_VERSION);
+        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION);
     }
     return {
         {QStringLiteral("harkenDocument"), header},

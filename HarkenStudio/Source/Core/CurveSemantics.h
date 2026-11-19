@@ -13,7 +13,7 @@ namespace VNX {
 // the natural single-segment degenerate, never a second form.
 
 // Runtime curves carry at most 8 control points (harkenstudiobuild::kMaxCurvePoints,
-// HarkenEngine/Source/Runtime/param/include/harken_studio_build/Curve.h); authoring
+// HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/Curve.h); authoring
 // write paths refuse to grow a curve past this so export never has to trim.
 inline constexpr int kCurveMaxPoints = 8;
 

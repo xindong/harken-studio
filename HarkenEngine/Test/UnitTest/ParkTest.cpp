@@ -12,6 +12,7 @@
 // double-buffer read is at most one block stale. So a returned voice resumes
 // within (1 block + FIFO + history) source frames of its virtual position; the
 // resume assertions use that bound.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
@@ -143,7 +144,7 @@ harkentest::RecipePackArtifact BuildSpatialRecipePack(
             return artifact;
         }
     }
-    artifact.built = harkentest::CompileResources({manifest}) == 0;
+    artifact.built = harkentest::BuildTestPack({manifest}) == 0;
     return artifact;
 }
 

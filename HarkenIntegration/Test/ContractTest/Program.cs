@@ -14,7 +14,7 @@ namespace Harken.Test
     //      including a Unity left/right pan-sign regression.
     //   3. Zero-GC hot path — drives Play / SetValue / SetVoice* / PostAction
     //      (by id) / Update and asserts the managed-allocation delta is zero;
-    //      needs the native HarkenCore library. If it is not loadable the gate
+    //      needs the native Harken Engine library. If it is not loadable the gate
     //      is reported SKIPPED (never silently green), per the honesty rule.
     //
     // Exit code: 0 when the ABI and coordinate gates pass and the zero-GC gate
@@ -264,7 +264,7 @@ namespace Harken.Test
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine("[NamePost] SKIP: native 'HarkenCore' library not found.");
+                Console.WriteLine("[NamePost] SKIP: native '" + HarkenNative.LibraryName + "' library not found.");
                 return 2;
             }
             catch (BadImageFormatException)
@@ -557,7 +557,7 @@ namespace Harken.Test
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine("[PackNative] SKIP: native 'HarkenCore' library not found.");
+                Console.WriteLine("[PackNative] SKIP: native '" + HarkenNative.LibraryName + "' library not found.");
                 return 2;
             }
             catch (BadImageFormatException)
@@ -621,14 +621,14 @@ namespace Harken.Test
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine("[GC] SKIP: native 'HarkenCore' library not found. Build HARKEN_BUILD_SHARED");
-                Console.WriteLine("      and set HARKEN_NATIVE_DIR to the directory holding HarkenCore.dll,");
+                Console.WriteLine("[GC] SKIP: native '" + HarkenNative.LibraryName + "' library not found. Build HARKEN_BUILD_SHARED");
+                Console.WriteLine("      and set HARKEN_NATIVE_DIR to the directory holding the Harken Engine library,");
                 Console.WriteLine("      or place it next to the runner. ABI gate above is independent of this.");
                 return 2;
             }
             catch (BadImageFormatException)
             {
-                Console.WriteLine("[GC] SKIP: native 'HarkenCore' library architecture mismatch (need x64).");
+                Console.WriteLine("[GC] SKIP: native '" + HarkenNative.LibraryName + "' library architecture mismatch (need x64).");
                 return 2;
             }
 
@@ -757,7 +757,7 @@ namespace Harken.Test
         }
 
         // Harness-only helper (not part of the shipped binding): points the
-        // DllImport at the dev build's HarkenCore so `dotnet run` can find it.
+        // DllImport at the dev build's Harken Engine library so `dotnet run` can find it.
         // The binding itself uses the compile-time-baked name and never does
         // runtime resolution.
         private static void InstallNativeResolver(bool requireNative)
@@ -776,7 +776,7 @@ namespace Harken.Test
                     {
                         continue;
                     }
-                    foreach (string file in new[] { "HarkenCore.dll", "libHarkenCore.so", "libHarkenCore.dylib" })
+                    foreach (string file in new[] { name + ".dll", "lib" + name + ".so", "lib" + name + ".dylib" })
                     {
                         string candidate = Path.Combine(dir, file);
                         if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out IntPtr h))
@@ -788,7 +788,7 @@ namespace Harken.Test
                 if (explicitDirIsRequired)
                 {
                     throw new DllNotFoundException(
-                        "No loadable HarkenCore library found in required HARKEN_NATIVE_DIR: " + explicitDir);
+                        "No loadable " + name + " library found in required HARKEN_NATIVE_DIR: " + explicitDir);
                 }
                 return IntPtr.Zero; // fall back to the default OS search
             });

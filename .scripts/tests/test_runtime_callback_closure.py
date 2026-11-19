@@ -22,7 +22,7 @@ SPEC.loader.exec_module(MODULE)
 def node(
     node_id: str,
     qualified: str,
-    source: str = "HarkenEngine/Source/Runtime/render/src/Test.cpp",
+    source: str = "HarkenEngine/Source/Core/render/src/Test.cpp",
     body: str = "a" * 64,
 ):
     return MODULE.Node(
@@ -376,7 +376,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             "other": node(
                 "other",
                 "harken::MixerLoop::RenderBlock",
-                "HarkenEngine/Source/Runtime/render/src/Other.cpp",
+                "HarkenEngine/Source/Core/render/src/Other.cpp",
             )
         }
         with self.assertRaises(MODULE.ClosureError):
@@ -387,11 +387,11 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             root = Path(temporary).resolve()
             project = root / "harken_core.vcxproj"
             include = (
-                root / "HarkenEngine/Source/Runtime/render/include"
+                root / "HarkenEngine/Source/Core/render/include"
             )
             include.mkdir(parents=True)
             missing = (
-                root / "HarkenEngine/Source/Runtime/render/src/Missing.cpp"
+                root / "HarkenEngine/Source/Core/render/src/Missing.cpp"
             )
             project.write_text(
                 f"""<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
@@ -442,7 +442,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             for path in sources
         }
         probe = (
-            "HarkenEngine/Source/Runtime/core/src/RtProbe.cpp"
+            "HarkenEngine/Source/Core/core/src/RtProbe.cpp"
         )
         self.assertNotIn(probe, relative)
         self.assertIn(probe, record["conditionalProbeSources"])
@@ -647,7 +647,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             kind="CALL_EXPR",
             expression="fn(user, index)",
             member="fn",
-            source="HarkenEngine/Source/Runtime/render/src/Test.cpp",
+            source="HarkenEngine/Source/Core/render/src/Test.cpp",
             line=10,
             column=5,
         )
@@ -692,7 +692,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             expression="source [ i ] . load ( std :: memory_order_seq_cst )",
             member="memory_order_seq_cst",
             source=(
-                "HarkenEngine/Source/Runtime/core/src/CompletionProgress.cpp"
+                "HarkenEngine/Source/Core/core/src/CompletionProgress.cpp"
             ),
             line=53,
             column=20,
@@ -738,17 +738,17 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             )
 
     def test_implicit_raii_requires_ast_constructor_evidence(self) -> None:
-        source = "HarkenEngine/Source/Runtime/render/src/Test.cpp"
+        source = "HarkenEngine/Source/Core/render/src/Test.cpp"
         caller = node("caller", "harken::MixerLoop::RenderBlock", source)
         constructor = node(
             "constructor",
             "harken::memguard::AudioThreadScope::AudioThreadScope",
-            "HarkenEngine/Source/Runtime/core/include/AllocGuard.h",
+            "HarkenEngine/Source/Core/core/include/AllocGuard.h",
         )
         destructor = node(
             "destructor",
             "harken::memguard::AudioThreadScope::~AudioThreadScope",
-            "HarkenEngine/Source/Runtime/core/include/AllocGuard.h",
+            "HarkenEngine/Source/Core/core/include/AllocGuard.h",
         )
         nodes = {
             item.id: item for item in (caller, constructor, destructor)
@@ -817,7 +817,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
         target = node(
             "target",
             "harken::VoiceTimelineSink::BeginQuantum",
-            "HarkenEngine/Source/Runtime/render/include/harken/render/"
+            "HarkenEngine/Source/Core/render/include/harken/render/"
             "VoiceTimelineSink.h",
         )
         method = {
@@ -848,7 +848,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
     def test_realtime_worker_domain_authority_is_exact_and_fail_closed(
         self,
     ) -> None:
-        source = "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+        source = "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
         factory = node("factory", "harken::DeviceBackend::WorkerDomain", source)
         factory.line = 914
         factory.column = 37
@@ -930,7 +930,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
     def test_avrt_pointer_field_authority_binds_exact_system_target_and_fails_closed(
         self,
     ) -> None:
-        source = "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+        source = "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
         target = node(
             "avrt-set",
             "AvSetMmThreadCharacteristicsA",
@@ -1010,7 +1010,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
     def test_spin_until_jobs_drained_authority_is_exact_and_fail_closed(
         self,
     ) -> None:
-        source = "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp"
+        source = "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp"
         template = node("template", "harken::RenderWorkerPool::SpinUntil", source)
         template.line = 1125
         template.column = 33
@@ -1023,7 +1023,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
         caller.column = 47
         target = node(
             "target",
-            "harken::RenderWorkerPool::Run::(lambda at F:\\HarkenStudio\\HarkenEngine\\Source\\Runtime\\render\\src\\RenderWorkerPool.cpp:1463:30)::operator()",
+            "harken::RenderWorkerPool::Run::(lambda at F:\\HarkenStudio\\HarkenEngine\\Source\\Core\\render\\src\\RenderWorkerPool.cpp:1463:30)::operator()",
             source,
         )
         target.line = 1463
@@ -1056,7 +1056,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
                 "source": source,
                 "line": 1463,
                 "column": 16,
-                "type": "const (lambda at F:\\HarkenStudio\\HarkenEngine\\Source\\Runtime\\render\\src\\RenderWorkerPool.cpp:1463:30)",
+                "type": "const (lambda at F:\\HarkenStudio\\HarkenEngine\\Source\\Core\\render\\src\\RenderWorkerPool.cpp:1463:30)",
             },
             "callSites": [
                 {
@@ -1118,7 +1118,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
                 REPO_ROOT, authority
             )
         for source in (
-            "HarkenEngine/Source/Runtime/DigestSink.cpp",
+            "HarkenEngine/Source/Core/DigestSink.cpp",
             "HarkenStudio/Test/UnitTest/DigestSink.cpp",
             "HarkenHub/Test/UnitTest/DigestSink.cpp",
             "HarkenIntegration/Test/ContractTest/DigestSink.cpp",
@@ -1135,7 +1135,7 @@ class RuntimeCallbackClosureTest(unittest.TestCase):
             kind="CALL_EXPR",
             expression="hook()",
             member="hook",
-            source="HarkenEngine/Source/Runtime/render/src/Test.cpp",
+            source="HarkenEngine/Source/Core/render/src/Test.cpp",
             line=10,
             column=5,
         )

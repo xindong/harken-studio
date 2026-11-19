@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PlaybackBridge.h"
-#include <harken_studio_build/AuthoredParameters.h>
+#include <harken_studio/AudioValues.h>
 
 namespace HarkenEditor::Bridge {
 
@@ -48,8 +48,21 @@ enum class VariableWriteState { Pending, Applied, Unavailable };
 VariableWriteState queryVariableWriteState(const VariableTicket& ticket);
 EngineResult writePreviewVariable(harkenstudio::ObjectId id, float value,
                                   uint64_t emitter, VariableTicket& ticket);
+struct PreviewBindingDefinition
+{
+    struct Point { float x = 0; float y = 0; };
+    struct Handles { float h1x = 0; float h1y = 0; float h2x = 0; float h2y = 0; };
+    harkenstudio::ObjectId variableId{};
+    uint32_t targetScopeKind = 0;
+    uint32_t targetId = 0;
+    uint32_t transitionMs = 0;
+    uint32_t pointCount = 0;
+    Point points[harkenstudio::kCurveMaxPoints]{};
+    Handles handles[harkenstudio::kCurveMaxPoints - 1]{};
+};
+
 EngineResult setPreviewBinding(harkenstudio::ObjectId id,
-                               const harkenstudiobuild::BindingDefinition& definition);
+                               const PreviewBindingDefinition& definition);
 EngineResult attachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudio::ObjectId object);
 void detachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudio::ObjectId object);
 void removePreviewBinding(harkenstudio::ObjectId id);

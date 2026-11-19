@@ -29,6 +29,7 @@
 #include "UnitTest/RedTestGate.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 
@@ -49,7 +50,7 @@ static_assert(offsetof(VnSnapshot, toneEffectHighWater) == 1784,
 #ifdef HARKEN_EFFECT_TYPE_STATS_PUBLISHED
 #include "Common/TestUtil.h"
 #include "harken/render/BuiltinEffects.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <cstring>
 #include <type_traits>
@@ -313,11 +314,7 @@ TEST(EffectTypeStatsSeam, PoolExhaustionIncrementsRefusalCountPerType) {
 // Facet (c): the generated registry is complete and self-consistent — every
 // row is present in effect-type order, each released type's public parameter
 // count agrees with the dispatch, each row reads its own EngineConfig capacity
-// source, and every row is labelled. Detecting a PUBLIC effect id added to
-// Harken.h with no manifest row is NOT done here (the compiled registry cannot
-// see an id that has no row); that absence is owned by the
-// effect_registry_manifest_check ctest, which parses Harken.h against the source
-// table.
+// source, and every row is labelled.
 TEST(EffectTypeStatsSeam, GeneratedRegistryCompletenessProof) {
 #ifdef HARKEN_EFFECT_TYPE_STATS_PUBLISHED
     ASSERT_GE(harken::kEffectRegistryRowCount, 4u)

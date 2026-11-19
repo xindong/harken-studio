@@ -29,8 +29,8 @@
             "generator": "Visual Studio 17 2022",
             "binaryDir": "${sourceDir}/build-vs",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_EDITOR": "ON",
                 "HARKEN_BUILD_HUB": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
@@ -46,8 +46,8 @@
             "binaryDir": "${sourceDir}/build-nc",
             "cacheVariables": {
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_EDITOR": "ON",
                 "HARKEN_BUILD_HUB": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
@@ -68,8 +68,8 @@
             "inherits": "windows-ninja-clang-base",
             "binaryDir": "${sourceDir}/build-ci-au",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_EDITOR": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
                 "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
@@ -105,8 +105,8 @@
             "inherits": "linux-base",
             "binaryDir": "${sourceDir}/build-ci-alu",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_EDITOR": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
                 "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
@@ -121,8 +121,8 @@
             "inherits": "linux-base",
             "binaryDir": "${sourceDir}/build-ci-t",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
                 "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
                 "HARKEN_ENABLE_TSAN": "ON"
@@ -149,8 +149,8 @@
             "inherits": "macos-base",
             "binaryDir": "${sourceDir}/build-nc",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_EDITOR": "ON",
                 "HARKEN_BUILD_HUB": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
@@ -171,8 +171,8 @@
             "inherits": "macos-base",
             "binaryDir": "${sourceDir}/build-ci-au",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_EDITOR": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
                 "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
@@ -187,8 +187,8 @@
             "inherits": "macos-base",
             "binaryDir": "${sourceDir}/build-ci-t",
             "cacheVariables": {
-                "HARKEN_BUILD_CORE": "ON",
-                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_ENGINE": "ON",
+                "HARKEN_BUILD_ENGINE_DEV": "ON",
                 "HARKEN_BUILD_TOOLS": "ON",
                 "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
                 "HARKEN_ENABLE_TSAN": "ON"

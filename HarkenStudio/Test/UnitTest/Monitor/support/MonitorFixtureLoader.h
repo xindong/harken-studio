@@ -18,8 +18,6 @@ struct LoadedFixture
     std::string expected;
 };
 
-LoadedFixture loadRuntimeLegalEvent();
-LoadedFixture loadLifecycleLegalEvent();
 LoadedFixture loadEditorFixture(const std::string& fileName);
 
 } // namespace TestSupport

@@ -17,6 +17,16 @@ AudioEngine::PreviewPlayableStartResult AudioEngine::playPreviewPlayable(
     uint32_t playableKind, harkenstudio::ObjectId stableId, quint64 emitterHandle)
 {
     PreviewPlayableStartResult result;
+    if (!session_) {
+        result.status = HarkenEditor::Bridge::kPreviewHostError;
+        return result;
+    }
+    const auto barrier = currentWorldPlaybackBarrier();
+    if (barrier.state != RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
+        result.status = barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending
+            ? HarkenEditor::Bridge::kPreviewBackpressure : HarkenEditor::Bridge::kPreviewHostError;
+        return result;
+    }
     if (emitterHandle == 0 && !harkenstudio::IsNull(stableId)
         && playableKind <= HarkenEditor::Bridge::kPreviewPlayableSegment) {
         emitterHandle = ensurePreviewEmitter();
@@ -45,6 +55,13 @@ int32_t AudioEngine::resetPreviewPlayable(uint32_t playableKind, harkenstudio::O
 {
     if (playableKind != HarkenEditor::Bridge::kPreviewPlayableContainer || harkenstudio::IsNull(stableId))
         return HarkenEditor::Bridge::kPreviewInvalidArg;
+    if (!session_)
+        return HarkenEditor::Bridge::kPreviewHostError;
+
+    const auto barrier = currentWorldPlaybackBarrier();
+    if (barrier.state != RuntimeSyncCoordinator::RevisionBarrierState::Ready)
+        return barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending
+            ? HarkenEditor::Bridge::kPreviewBackpressure : HarkenEditor::Bridge::kPreviewHostError;
 
     quint64 emitterHandle = previewEmitterHandle_;
     if (emitterHandle == 0) {

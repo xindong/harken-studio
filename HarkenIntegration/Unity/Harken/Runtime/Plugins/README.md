@@ -1,7 +1,8 @@
 # Native plugin placement
 
-The C# binding is a thin P/Invoke projection; it needs the native `HarkenCore`
-library present for each target platform. Unity resolves native libraries from
+The C# binding is a thin P/Invoke projection; it needs both native Harken Engine
+editions present for each target platform: the release library `HarkenEngine`
+and the development library `HarkenEngineDev`. Unity resolves native libraries from
 the `Plugins/<platform>/` layout and creates the corresponding importer metadata
 when the assembled package is imported.
 
@@ -15,11 +16,21 @@ to integrate; when bundled, every declared runtime is validated and installed.
 The binding resolves the library by the name baked at compile time in
 `HarkenNative.LibraryName` (`Generated/HarkenNative.g.cs`):
 
-- Desktop / macOS / Android: `HarkenCore` (a shared library — `.dll` / `.dylib`
-  / `.so`).
+- Desktop / macOS / Android: `HarkenEngineDev` when `HARKEN_ENGINE_DEV` is
+  defined, otherwise `HarkenEngine` (shared libraries — `.dll` / `.dylib` / `.so`).
 - iOS / visionOS / tvOS: `__Internal` — the runtime is **statically linked**
-  into the app; iOS forbids dynamic loading. Ship the static library (`.a`) and
-  let the linker fold it in; do **not** rename it to `HarkenCore`.
+  into the app; iOS forbids dynamic loading. Ship the static libraries (`.a`)
+  and let the linker fold the selected one in.
+
+`HARKEN_ENGINE_DEV` is defined in the Editor and in Development Builds. The
+development-only managed API (remote communication, snapshots, Monitor
+observation) exists only when it is defined. **Project Settings > Harken >
+Project > Native Library** overrides the choice: *Automatic* follows the build
+type, *Release* and *Development* force one edition for the Editor and every
+build by adding `HARKEN_NATIVE_RELEASE` or `HARKEN_NATIVE_DEVELOPMENT` to the
+scripting define symbols. Restart Unity after changing it so the Editor loads
+the selected library. A pre-build hook enables exactly one edition per
+platform for each build.
 
 ## Expected layout
 
@@ -27,12 +38,12 @@ Android runtime support is limited to ARM64 (`arm64-v8a`).
 
 ```
 Runtime/Plugins/
-├── x86_64/         HarkenCore.dll        (Windows editor + standalone; desktop dev/test)
-│                   libHarkenCore.so      (Linux editor + standalone, if used)
-├── macOS/          libHarkenCore.dylib   — Apple silicon + Intel
+├── x86_64/         HarkenEngine.dll, HarkenEngineDev.dll          (Windows editor + standalone)
+│                   libHarkenEngine.so, libHarkenEngineDev.so      (Linux editor + standalone)
+├── macOS/          libHarkenEngine.dylib, libHarkenEngineDev.dylib — Apple silicon + Intel
 ├── Android/
-│   └── arm64-v8a/  libHarkenCore.so
-└── iOS/            libHarkenCore.a        (static; linked as __Internal)
+│   └── arm64-v8a/  libHarkenEngine.so, libHarkenEngineDev.so
+└── iOS/            libHarkenEngine.a, libHarkenEngineDev.a        (static; linked as __Internal)
 ```
 
 ## Per-platform import settings
@@ -52,39 +63,26 @@ or registry package, include complete Unity `.meta` files with the native platfo
 settings already configured. Unity ignores assets without metadata in immutable
 packages; the editor importer cannot configure a library that Unity did not import.
 
-Select each binary in the Unity Project window and set:
+The importer keeps the Editor on the development library (unless the override
+selects *Release*) and enables exactly one edition per platform for players:
 
-- **x86_64/HarkenCore.dll** — Platform: *Editor* + *Standalone*; CPU x86_64; OS
-  Windows. (Enables desktop-editor play-mode and the standalone player.)
-- **x86_64/libHarkenCore.so** — Platform: *Editor* + *Standalone*; CPU x86_64;
-  OS Linux.
-- **macOS/libHarkenCore.dylib** — Platform: *Editor* + *Standalone*; CPU
-  *AnyCPU* for the required x86_64 + arm64 universal library.
-- **Android/arm64-v8a/libHarkenCore.so** — Platform: *Android*; CPU *ARM64*.
-- **iOS/libHarkenCore.a** — Platform: *iOS*; add to the generated Xcode project;
-  the binding's `__Internal` import name links it statically. No CPU scoping —
-  the static lib carries its slices.
+- **x86_64 Windows** — CPU x86_64; OS Windows.
+- **x86_64 Linux** — CPU x86_64; OS Linux.
+- **macOS** — CPU *AnyCPU* for the required x86_64 + arm64 universal library.
+- **Android/arm64-v8a** — CPU *ARM64*.
+- **iOS** — added to the generated Xcode project; the binding's `__Internal`
+  import name links it statically. No CPU scoping — the static lib carries its slices.
 
-Set exactly one enabled library per (platform, CPU) so Unity does not report a
-"multiple plugins with the same name" conflict. The `x86_64` desktop library is
-what the standalone dotnet ABI / zero-GC harness under `HarkenIntegration/Test/ContractTest` loads
-as well (see that project's README).
+The standalone dotnet ABI / zero-GC harness under `HarkenIntegration/Test/ContractTest`
+defines `HARKEN_NATIVE_DEVELOPMENT` and loads `HarkenEngineDev` (see that project's README).
 
 ## Building the native library
 
-`HarkenCore` is built from the engine sources. The repository provides an
-optional shared-library CMake target (`HARKEN_BUILD_SHARED`, default OFF) that
-produces `HarkenCore.dll` / `libHarkenCore.{so,dylib}` from the same sources as
-the static `harken_core`. The macOS/Android/iOS device backends and their
-real-hardware validation are the device-backend segment's concern; this package
-consumes whatever libraries that build produces.
-
-`.github/workflows/core-artifact.yml` builds the native libraries. Desktop
-builds use `windows-release`, `macos-release`, and `linux-release`; Android and
-iOS provide their toolchain and architecture parameters directly. All build
-options default OFF. Shared-library builds enable `HARKEN_BUILD_CORE` and
-`HARKEN_BUILD_SHARED`; iOS enables only `HARKEN_BUILD_CORE` and builds the static
-`harken_core` target.
+Both editions are built from the Engine sources: `HARKEN_BUILD_ENGINE` produces
+`HarkenEngine` (Core only) and `HARKEN_BUILD_ENGINE_DEV` produces `HarkenEngineDev`
+(Core + Development). `cmake --install` publishes the libraries, public headers,
+Pack format headers and the ABI manifest. `.github/workflows/core-artifact.yml`
+builds and installs both editions for every platform; iOS builds both as static libraries.
 
 `.github/workflows/integration-artifact.yml` assembles these libraries with the Unity
 Integration Package sources and validates the package layout. Integration contract tests belong

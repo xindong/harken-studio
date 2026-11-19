@@ -401,19 +401,19 @@
       "opcode": 105
     },
     {
-      "name": "Vn_PostActionByName",
+      "name": "ReservedPostActionByName",
       "opcode": 128
     },
     {
-      "name": "Vn_ResolveActionByName",
+      "name": "ReservedResolveActionByName",
       "opcode": 129
     },
     {
-      "name": "Vn_PostActionPinned",
+      "name": "ReservedPostActionPinned",
       "opcode": 130
     },
     {
-      "name": "Vn_PostActionResolved",
+      "name": "ReservedPostActionResolved",
       "opcode": 131
     },
     {

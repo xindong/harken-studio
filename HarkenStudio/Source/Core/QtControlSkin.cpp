@@ -539,8 +539,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@startupProgressHeight@"), QString::number(metrics().startup.progressHeight));
     replace(QStringLiteral("@scrollbarMinimumLength@"), QString::number(metrics().control.scrollbarMinimumLength));
     replace(QStringLiteral("@splitterExtent@"), QString::number(metrics().control.splitterExtent));
-    replace(QStringLiteral("@windowButtonWidth@"), QString::number(metrics().chrome.windowButtonWidth));
-    replace(QStringLiteral("@titleBarHeight@"), QString::number(metrics().chrome.titleBarHeight));
     replace(QStringLiteral("@compactSliderHeight@"), QString::number(metrics().parameter.compactSliderHeight));
     replace(QStringLiteral("@compactSliderHandleWidth@"), QString::number(metrics().parameter.compactSliderHandleWidth));
     replace(QStringLiteral("@buttonMinimumWidth@"), QString::number(metrics().control.buttonMinimumWidth));

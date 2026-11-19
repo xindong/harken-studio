@@ -11,6 +11,7 @@
 #include "E2E/PipeClient.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 

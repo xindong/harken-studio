@@ -856,7 +856,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         QColor borderColor = ngn.borderNormal;
         if (isSelected()) borderColor = theme->ui.colors.accent;
         else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
-        painter->setBrush(isSelected() ? ngn.bodySelected : ngn.bodyNormal);
+        painter->setBrush(ngn.bodyNormal);
         painter->setPen(QPen(borderColor, lineWidth * (isSelected() ? 2.0 : 1.0),
             Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
         painter->drawRect(QRectF(0, 0, width_, height_));
@@ -899,7 +899,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         QColor borderColor = ngn.borderNormal;
         if (isSelected()) borderColor = theme->ui.colors.accent;
         else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
-        painter->setBrush(isSelected() ? ngn.bodySelected : ngn.bodyNormal);
+        painter->setBrush(ngn.bodyNormal);
         painter->setPen(QPen(borderColor, isSelected() ? metrics.accentBorderWidth : metrics.borderWidth,
             Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
         painter->drawPath(routeGainShape(0.0));
@@ -924,8 +924,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
                                  width_ + pad * 2.0, height_ + pad * 2.0));
     }
 
-    QColor bodyColor = isSelected() ? ngn.bodySelected : ngn.bodyNormal;
-    painter->setBrush(bodyColor);
+    painter->setBrush(ngn.bodyNormal);
 
     QColor borderColor = ngn.borderNormal;
     qreal  borderWidth = metrics.borderWidth;
@@ -1120,7 +1119,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
         y += contentPresentation_->size.height();
     } else {
         const auto decibels = [](float value) {
-            return value <= -96.0f ? QStringLiteral("-inf") : formatDecimal(value, 1);
+            return value <= -96.0f ? kNegativeInfinityText : formatDecimal(value, 1);
         };
         if (fields.testFlag(NodeContentField::Volume))
             drawParamRow(QObject::tr("Volume"), decibels(*contentInfo_.volume));
@@ -1130,7 +1129,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
             drawParamRow(QObject::tr("Offset of Start"), formatDecimal(*contentInfo_.offsetOfStart, 3));
         if (fields.testFlag(NodeContentField::Loop)) {
             const auto count = *contentInfo_.loopCount;
-            drawParamRow(QObject::tr("Loop"), count == 0 ? QString(QChar(0x221E)) : QString::number(count));
+            drawParamRow(QObject::tr("Loop"), count == 0 ? kPositiveInfinityText : QString::number(count));
         }
         if (fields.testFlag(NodeContentField::OutputVolume))
             drawParamRow(routeGainMode_ ? QObject::tr("Volume") : QObject::tr("Output Volume"),

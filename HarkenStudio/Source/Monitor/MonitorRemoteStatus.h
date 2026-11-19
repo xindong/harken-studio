@@ -41,7 +41,7 @@ struct MonitorRemoteStatusState
     uint32_t dropCount = 0;
     uint64_t leaseGeneration = 0;
     MonitorCaptureControlState captureControl {};
-    MonitorRemotePermissionRow permissions[7] {};
+    MonitorRemotePermissionRow permissions[6] {};
 };
 
 struct MonitorRemoteStatusInput

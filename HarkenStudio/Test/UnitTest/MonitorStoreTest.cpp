@@ -12,7 +12,6 @@ using VNX::Monitor::MonitorDecodeBatch;
 using VNX::Monitor::MonitorStore;
 using VNX::Monitor::MonitorStoreBudget;
 using VNX::Monitor::TestSupport::loadEditorFixture;
-using VNX::Monitor::TestSupport::loadRuntimeLegalEvent;
 
 namespace {
 
@@ -41,21 +40,13 @@ MonitorDecodeBatch decodeNamed(const char* file)
                                fixture.expectedRecords);
 }
 
-MonitorDecodeBatch decodeLegal()
-{
-    const auto fixture = loadRuntimeLegalEvent();
-    EXPECT_EQ(fixture.status, VN_OK);
-    return decodePackedRecords(fixture.packed.data(), fixture.packed.size(),
-                               fixture.expectedRecords);
-}
-
 }
 
 TEST(MonitorStore, SnapshotSurvivesLaterAppend)
 {
     resetBudget();
     MonitorStore store(makeCaps(1ull << 20, 1ull << 20));
-    ASSERT_EQ(store.appendBatch(decodeLegal()).status, VN_OK);
+    ASSERT_EQ(store.appendBatch(decodeNamed("optional_unknown.bin")).status, VN_OK);
     const auto oldSnap = store.snapshot();
     auto extra = decodeNamed("optional_unknown.bin");
     ASSERT_EQ(store.appendBatch(std::move(extra)).status, VN_OK);

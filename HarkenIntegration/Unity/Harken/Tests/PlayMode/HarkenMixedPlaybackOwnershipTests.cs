@@ -1,3 +1,7 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
+#if HARKEN_ENGINE_DEV
 #if !HARKEN_SDK_TEST_NULL_PUMP
 using System;
 using System.Collections;
@@ -114,4 +118,5 @@ namespace Harken.Unity.Tests
         }
     }
 }
+#endif
 #endif

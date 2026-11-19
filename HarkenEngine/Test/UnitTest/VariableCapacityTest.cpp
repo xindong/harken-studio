@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "Common/VariableOutcomeCapture.h"

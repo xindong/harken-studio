@@ -7,6 +7,7 @@
 // attached per-voice spatial writes, destroy-detaches-with-frozen-state, stale
 // emitter ops, Vn_StopEmitter, capacity exhaustion VN_NO_EMITTER, and a play
 // naming a dead emitter.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

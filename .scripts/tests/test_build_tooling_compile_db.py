@@ -52,7 +52,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
     def _required_entries(self) -> list[dict[str, str]]:
         return [
             self._entry(
-                "HarkenEngine/Source/Runtime/core/src/Core.cpp", "harken_core"
+                "HarkenEngine/Source/Core/core/src/Core.cpp", "harken_core"
             ),
             self._entry(
                 "HarkenEngine/Tool/Host/Main.cpp", "harken_host"
@@ -66,7 +66,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
             ),
             self._entry(
                 "HarkenStudio/Test/UnitTest/StableIdTest.cpp",
-                "harken_editor_tests",
+                "harken_studio_tests",
             ),
         ]
 
@@ -81,7 +81,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         entries = self._required_entries()
         entries.append(
             self._entry(
-                "HarkenEngine/Source/Runtime/core/src/Core.cpp",
+                "HarkenEngine/Source/Core/core/src/Core.cpp",
                 "harken_core",
                 "Release",
             )
@@ -107,8 +107,8 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         entries.extend(
             [
                 self._entry(
-                    "HarkenEngine/Source/Runtime/core/src/Core.cpp",
-                    "harken_core_shared",
+                    "HarkenEngine/Source/Core/core/src/Core.cpp",
+                    "harken_engine_release",
                     extra="-DSHARED_VARIANT=1",
                 ),
                 self._entry(
@@ -133,7 +133,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         )
         self.assertIn("harken_core.dir", runtime_entry["output"])
         self.assertIn("harken_host.dir", host_entry["output"])
-        self.assertIn("harken_editor_tests.dir", editor_entry["output"])
+        self.assertIn("harken_studio_tests.dir", editor_entry["output"])
 
         for relative, target in (
             ("Harkenizer/ResourceCompiler/ResourceCompiler.cpp", "harkenizer_resource_compiler"),
@@ -146,7 +146,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
             with self.subTest(source=relative):
                 source = "HarkenStudio/Source/Tooling/" + relative
                 owned = self._entry(source, target)
-                alternate = self._entry(source, "harken_editor_tests", extra="-DTEST_VARIANT=1")
+                alternate = self._entry(source, "harken_studio_tests", extra="-DTEST_VARIANT=1")
                 selected = MODULE._choose_entry(
                     Path(owned["file"]), [alternate, owned], "tooling", self.root)
                 self.assertEqual(selected, owned)
@@ -156,7 +156,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         entries.extend(
             [
                 self._entry(
-                    "HarkenEngine/Source/Runtime/third_party/vendor/Vendor.cpp",
+                    "HarkenEngine/Source/Core/third_party/vendor/Vendor.cpp",
                     "vendor",
                 ),
                 self._entry(
@@ -172,8 +172,8 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
                     "HarkenStudio/Test/ThirdParty/VendorTest.cpp", "vendor_test"
                 ),
                 self._entry(
-                    "HarkenEngine/Tool/Remote/generated/Wire.cpp",
-                    "harken_remote",
+                    "HarkenEngine/Tool/HostControl/generated/Wire.cpp",
+                    "harken_host_control",
                 ),
             ]
         )
@@ -227,7 +227,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
 
     def test_fails_when_inventory_translation_unit_is_missing_from_database(self) -> None:
         entries = self._required_entries()
-        self._path("HarkenEngine/Source/Runtime/core/src/Unlisted.cpp")
+        self._path("HarkenEngine/Source/Core/core/src/Unlisted.cpp")
 
         with self.assertRaisesRegex(MODULE.CompilationDatabaseError, 'Unlisted\\.cpp'):
             self._build(entries)
@@ -235,7 +235,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
     def test_fails_when_database_contains_unexpected_translation_unit(self) -> None:
         entries = self._required_entries()
         unexpected = self._entry(
-            "HarkenEngine/Source/Runtime/core/src/Removed.cpp", "harken_core"
+            "HarkenEngine/Source/Core/core/src/Removed.cpp", "harken_core"
         )
         Path(unexpected["file"]).unlink()
         entries.append(unexpected)

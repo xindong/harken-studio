@@ -443,7 +443,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 node.nodeId = sourceNode.nodeId;
                 node.effectId = sourceNode.effectId;
                 node.effectType = harkenstudio::IsNull(sourceNode.presetId)
-                    ? sourceNode.effectType : harkenstudiobuild::kPackEffectPresetReferenceType;
+                    ? sourceNode.effectType : HK_PACK_EFFECT_PRESET_REFERENCE_TYPE;
                 node.flags = sourceNode.flags;
                 node.presetId = sourceNode.presetId;
                 output.effectNodes.push_back(node);

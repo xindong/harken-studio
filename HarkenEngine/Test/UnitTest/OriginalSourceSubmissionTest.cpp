@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "Common/EffectPoolTestAccess.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"

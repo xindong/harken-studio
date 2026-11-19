@@ -5,14 +5,15 @@
 /.docs/quality/ @liuxin2-sys
 /.docs/snapshot/engine/ @zqm-web
 /.docs/snapshot/hub/ @liuxin2-sys
-/.docs/snapshot/integration/ @zqm-web
+/.docs/snapshot/integration/ @Probus-XD
 /.docs/snapshot/studio/ @Probus-XD
 /.scripts/ @liuxin2-sys @Probus-XD
 /HarkenEngine/ @zqm-web
 /HarkenHub/ @liuxin2-sys
-/HarkenIntegration/ @zqm-web
+/HarkenIntegration/ @Probus-XD
 /HarkenStudio/ @Probus-XD
-/HarkenSchema/ @Probus-XD @liuxin2-sys
+/HarkenStudio/Schema/ @Probus-XD @liuxin2-sys
+/HarkenEngine/Schema/ @Probus-XD @liuxin2-sys
 /README* @Probus-XD
 /LICENSE @liuxin2-sys
 /NOTICE @liuxin2-sys

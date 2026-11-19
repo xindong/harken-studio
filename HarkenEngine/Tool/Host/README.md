@@ -1,43 +1,25 @@
 # Native Pack playback
 
-For companion exports, select the platform directory explicitly and post by
-Action name:
+Select the Init Pack and one content Pack explicitly and post the Action by ID:
 
 ```sh
-harken_host pack-play --root /path/to/Windows --action-name Play_Head --seconds 1 --repeats 2
+harken_host pack-play --init-pack /path/to/Init.bytes --content-pack /path/to/Content.bytes --action-id <guid> --seconds 1 --repeats 2
 ```
 
-The directory contains `Init.bytes`, `Init.json`, `Play_Head.bytes`, and
-`Play_Head.json`. The Action pack already contains its nested Action dependencies.
-The Host reads only these pairs and uses their authored IDs; it does not require
-a manifest or scan the directory. Use the Host, native runtime and packs from the same release.
+The content Pack already contains its nested Action dependencies. The Host reads
+only the two selected files; it does not read Studio metadata, require a
+manifest or scan a directory. `--action-id` must name the authored root Action
+of the content Pack. Use the Host, native runtime and Packs from the same release.
 
-Both JSON files require top-level numeric `schemaVersion` equal to the compiled
-Pack schema version. Missing, mistyped, fractional or unsupported versions fail with `VN_BAD_PACK`; re-export these
-resources with the matching Studio release. Exact integer spellings such as
-`N.0` and `Ne0` for the current version `N` are also valid. Optional `metadata`
-and `waveforms` do not affect playback admission. A version error in a localized pair does not fall back to
-General. Errors identify the selected pair and failing stage.
-
-Add `--language English` to request `English/Play_Head.bytes` and its JSON.
-Only when both localized files are absent does the Host use the General pair at
-the root. A partial pair, malformed metadata, redirected file, or active
-`.harken-pack-publishing` marker fails the command. Init is always read at the
-root. Keep the publisher's marker present for the complete publication.
-
-Legacy manifest/index exports and the `--action`, `--content`, `--platform-id`,
-and `--platform-name` selectors are unsupported. Re-export with the matching
-Studio release and select its platform directory explicitly.
-
-The attenuation probe uses the same companion contract:
+The attenuation probe uses the same selection:
 
 ```sh
-harken_host att04-nearfar --root /path/to/Windows --action-name Play_NearFar --distance 1 --null
+harken_host att04-nearfar --init-pack /path/to/Init.bytes --content-pack /path/to/Content.bytes --action-id <guid> --distance 1 --null
 ```
 
 The Host reports the selected Sound under the posted firing, including a Sound reached by nested
 Actions. Concurrently starting several Sounds remains ambiguous for the
-single-selection diagnostic. Recovery reuses the captured companion bytes.
+single-selection diagnostic. Recovery reuses the captured Pack bytes.
 
 Add `--null` for an offline smoke run. It checks rendered PCM and playback
 records; it does not validate a physical device or replace listening acceptance.

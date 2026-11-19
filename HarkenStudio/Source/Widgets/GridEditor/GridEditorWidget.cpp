@@ -103,24 +103,15 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
 
     gridPage_ = new PaneSectionStack(QStringLiteral("SelectionEditor"), stack_);
     gridPage_->setObjectName(QStringLiteral("selectionEditorPage"));
-    const auto fill = [](PaneSection* section, QWidget* content) {
-        auto* layout = new QVBoxLayout(section->content());
-        layout->setSpacing(0);
-        layout->addWidget(content, 1);
-        ThemeManager::instance().bindMetrics(content, [layout](const ThemeMetrics& metrics) {
-            const int padding = metrics.layout.panelPadding;
-            layout->setContentsMargins(padding, padding, padding, padding);
-        });
-    };
     contentSection_ = gridPage_->addSection(tr("Content"), QStringLiteral("content"), 300);
     contentSection_->setObjectName(QStringLiteral("selectionContentSection"));
     editorStack_ = new QStackedWidget(contentSection_->content());
     editorStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    fill(contentSection_, editorStack_);
+    contentSection_->setContentWidget(editorStack_);
     transitionSection_ = gridPage_->addSection(tr("Transition"), QStringLiteral("transition"), 200);
     transitionSection_->setObjectName(QStringLiteral("selectionTransitionSection"));
     transitionTable_ = new TransitionTableWidget(transitionSection_->content());
-    fill(transitionSection_, transitionTable_);
+    transitionSection_->setContentWidget(transitionTable_);
 
     discreteGrid_ = new DiscreteGridWidget(editorStack_);
     editorStack_->addWidget(discreteGrid_);
@@ -155,12 +146,12 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             this, &GridEditorWidget::navigateToItem);
     connect(selectionList_, &SelectionListWidget::locateItem,
             this, &GridEditorWidget::locateItem);
-    connect(selectionList_, &SelectionListWidget::sourceEditorRequested,
-            this, &GridEditorWidget::sourceEditorRequested);
-    connect(discreteGrid_, &DiscreteGridWidget::sourceEditorRequested,
-            this, &GridEditorWidget::sourceEditorRequested);
-    connect(mixingEditor_, &MixingEditorWidget::sourceEditorRequested,
-            this, &GridEditorWidget::sourceEditorRequested);
+    connect(selectionList_, &SelectionListWidget::fileViewerRequested,
+            this, &GridEditorWidget::fileViewerRequested);
+    connect(discreteGrid_, &DiscreteGridWidget::fileViewerRequested,
+            this, &GridEditorWidget::fileViewerRequested);
+    connect(mixingEditor_, &MixingEditorWidget::fileViewerRequested,
+            this, &GridEditorWidget::fileViewerRequested);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { refreshChrome(); });
 

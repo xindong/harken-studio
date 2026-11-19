@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "published": [
+    7,
+    8,
+    9
+  ],
+  "supportedHistorical": [
+    7,
+    8,
+    9
+  ],
+  "tip": "current",
+  "developmentVersion": 10
+}

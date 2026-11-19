@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections;
 using System.IO;
@@ -63,6 +66,7 @@ namespace Harken.Unity.Tests
             finally { session?.Shutdown(); }
         }
 
+#if HARKEN_ENGINE_DEV
         [UnityTest]
         public IEnumerator RealDeviceOutsidePlayModeStopsReplaysAndNaturallyEnds()
         {
@@ -94,6 +98,7 @@ namespace Harken.Unity.Tests
                 Assert.That(second.IsPrepared, Is.False);
             }
         }
+#endif
 
         [UnityTest]
         public IEnumerator PlayModeAndDomainReloadReleaseEditorOwnership()
@@ -119,12 +124,15 @@ namespace Harken.Unity.Tests
             }
         }
 
+#if HARKEN_ENGINE_DEV
         private static ulong Block()
         {
             VnSnapshot snapshot = HarkenEngine.DefaultSnapshot();
             Assert.That(HarkenEngine.Capture(ref snapshot), Is.EqualTo(VnResult.VN_OK));
             return snapshot.blockIndex;
         }
+#endif
+#if HARKEN_ENGINE_DEV
         private static IEnumerator FreshBlock(HarkenEditorPreview preview, PackBootstrapSession session, ulong baseline)
         {
             double end = EditorApplication.timeSinceStartup + 3;
@@ -138,6 +146,7 @@ namespace Harken.Unity.Tests
             }
             Assert.Fail("No fresh real-device block from the same preview session.");
         }
+#endif
         private static IEnumerator Idle(HarkenEditorPreview preview, double seconds)
         {
             double end = EditorApplication.timeSinceStartup + seconds;

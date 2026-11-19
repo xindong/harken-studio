@@ -22,6 +22,7 @@ void registerEditorCommands(const EditorCommandContext& context)
     registerAssetActions(manager, context.engine, context.project);
     registerSystemActions(manager, context.engine, context.audition,
                           context.dispatcher->activePlaybacksMap());
+    registerRemoteActions(manager);
     registerReadonlyActions(manager, context.dispatcher);
 }
 

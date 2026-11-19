@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "Common/MonitorExecutionTestSupport.h"
@@ -119,17 +120,6 @@ TEST(VariableBatchWrite, MonitorKeepsEmitterResultsAndRejectedRequestsDistinct) 
     EXPECT_EQ(rejectedRequest, records[0].fact.fact.playbackRequest.sequence);
     EXPECT_EQ(VN_NO_VARIABLE, records[0].fact.fact.result);
     EXPECT_EQ(0u, records[0].fact.activity.variableTicket);
-    ASSERT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_SetValueByName("Missing", 0.25f));
-    records = ReadVariableResults(capture);
-    ASSERT_EQ(1u, records.size());
-    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, records[0].fact.fact.result);
-    EXPECT_TRUE(harken::IsNull(records[0].header.stableId));
-    ASSERT_EQ(VN_NO_VARIABLE_LABEL,
-        Vn_SetValueByLabelName(harkentest::ObjectId(7), "Missing", 0));
-    records = ReadVariableResults(capture);
-    ASSERT_EQ(1u, records.size());
-    EXPECT_EQ(VN_NO_VARIABLE_LABEL, records[0].fact.fact.result);
-    EXPECT_EQ(harkentest::ObjectId(7), records[0].header.stableId);
     ASSERT_EQ(VN_STALE_HANDLE, Vn_SetEmitterValue(1, harkentest::ObjectId(7), 0.5f));
     records = ReadVariableResults(capture);
     ASSERT_EQ(1u, records.size());

@@ -14,9 +14,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / ".scripts" / "schema_archive.py"
+SCRIPT = REPO_ROOT / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive" / "schema_archive.py"
 MODULE = runpy.run_path(str(SCRIPT))
-SCHEMA_ROOT = REPO_ROOT / "HarkenSchema"
+SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Schema"
 GENERATED_NAMES = {
     "ProjectSchemaGenerated.h",
     "ProjectSchemaValidator.generated.h",
@@ -24,6 +24,7 @@ GENERATED_NAMES = {
     "SchemaBuildGenerated.h",
 }
 EDITOR_VERSION = MODULE["load_tree"]("Editor")["currentVersion"]
+EDITOR_PUBLISHED_VERSION = max(MODULE["load_tree"]("Editor")["manifest"]["published"])
 PACK_VERSION = MODULE["load_tree"]("Pack")["currentVersion"]
 
 
@@ -37,7 +38,7 @@ def write_json(path: Path, value: dict) -> None:
 
 
 def copy_schema(directory: str) -> Path:
-    root = Path(directory) / "HarkenSchema"
+    root = Path(directory) / "Format"
     shutil.copytree(SCHEMA_ROOT, root)
     return root
 
@@ -64,13 +65,13 @@ class SchemaArchiveTest(unittest.TestCase):
         self.assertNotIn("schema_version", pack["current"].get("properties", {}))
         self.assertEqual(pack["current"]["x-harken-format"]["formatVersion"], PACK_VERSION)
         next_pack = MODULE["materialize_source"]("Pack", pack["currentSource"], PACK_VERSION + 1)
-        self.assertEqual(pack["currentSource"]["$defs"]["schemaVersion"], {"type": "integer"})
-        self.assertEqual(next_pack["$defs"]["schemaVersion"]["const"],
+        self.assertEqual(pack["currentSource"]["$defs"]["packMetadataVersion"], {"type": "integer"})
+        self.assertEqual(next_pack["$defs"]["packMetadataVersion"]["const"],
                          next_pack["x-harken-format"]["formatVersion"])
         for branch in next_pack["oneOf"]:
             document = next_pack["$defs"][branch["$ref"].removeprefix("#/$defs/")] if "$ref" in branch else branch
-            self.assertEqual(document["properties"]["schemaVersion"], {"$ref": "#/$defs/schemaVersion"})
-            self.assertIn("schemaVersion", document["required"])
+            self.assertEqual(document["properties"]["packMetadataVersion"], {"$ref": "#/$defs/packMetadataVersion"})
+            self.assertIn("packMetadataVersion", document["required"])
 
     def test_current_rejects_embedded_generations(self) -> None:
         for tree, top, slot in (
@@ -95,11 +96,11 @@ class SchemaArchiveTest(unittest.TestCase):
 
         pack = MODULE["load_tree"]("Pack")
         invalid = copy.deepcopy(pack["currentSource"])
-        invalid["$defs"]["schemaVersion"]["const"] = PACK_VERSION
+        invalid["$defs"]["packMetadataVersion"]["const"] = PACK_VERSION
         with self.assertRaises(ValueError):
             MODULE["materialize_source"]("Pack", invalid, PACK_VERSION)
         invalid = copy.deepcopy(pack["current"])
-        invalid["$defs"]["schemaVersion"]["const"] = PACK_VERSION + 1
+        invalid["$defs"]["packMetadataVersion"]["const"] = PACK_VERSION + 1
         with self.assertRaises(ValueError):
             MODULE["validate_pack_source"](invalid)
 
@@ -125,6 +126,9 @@ class SchemaArchiveTest(unittest.TestCase):
             {"published": [2, 1]}, {"published": [1, 1, 2]}, {"published": [True, 2]},
             {"supportedHistorical": [2]}, {"supportedHistorical": [EDITOR_VERSION]},
             {"currentVersion": 2}, {"rootHash": "0" * 64},
+            {"developmentVersion": None}, {"developmentVersion": True},
+            {"developmentVersion": EDITOR_PUBLISHED_VERSION},
+            {"developmentVersion": EDITOR_PUBLISHED_VERSION + 2},
         )
         for change in invalid_fields:
             with self.subTest(change=change):
@@ -132,7 +136,7 @@ class SchemaArchiveTest(unittest.TestCase):
                     MODULE["validate_tree_manifest"]("Editor", {**original, **change})
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
-            (root / "Editor" / str(EDITOR_VERSION + 1)).mkdir()
+            (root / "Project" / str(EDITOR_VERSION + 1)).mkdir()
             with self.assertRaises(ValueError):
                 MODULE["build_bundle"](root)
 
@@ -140,7 +144,7 @@ class SchemaArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
             current = MODULE["load_tree"]("Editor", root)["currentSource"]
-            path = root / "Editor" / str(EDITOR_VERSION) / "ProjectSerializedSchema.json"
+            path = root / "Project" / str(EDITOR_PUBLISHED_VERSION) / "ProjectSerializedSchema.json"
             write_json(path, MODULE["materialize_source"]("Editor", current, EDITOR_VERSION + 1))
             with self.assertRaises(ValueError):
                 MODULE["build_bundle"](root)
@@ -149,9 +153,9 @@ class SchemaArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
             before = MODULE["build_bundle"](root)
-            published = root / "Editor" / str(EDITOR_VERSION) / "ProjectSerializedSchema.json"
+            published = root / "Project" / str(EDITOR_PUBLISHED_VERSION) / "ProjectSerializedSchema.json"
             published_bytes = published.read_bytes()
-            current_path = root / "Editor" / "current" / "ProjectSerializedSchema.json"
+            current_path = root / "Project" / "current" / "ProjectSerializedSchema.json"
             current = read_json(current_path)
             project = next(item for item in current["x-harken-documentTypes"] if item["type"] == "project.root")
             project["schema"]["properties"]["harkenDocument"]["properties"]["studioVersion"]["minLength"] = 2
@@ -162,22 +166,24 @@ class SchemaArchiveTest(unittest.TestCase):
             self.assertNotEqual(after["generated"]["ProjectSchemaValidator.generated.cpp"], before["generated"]["ProjectSchemaValidator.generated.cpp"])
             self.assertEqual(published.read_bytes(), published_bytes)
             self.assertNotEqual(after["installed"][f"Editor/{EDITOR_VERSION}/ProjectSerializedSchema.json"], MODULE["canonical_bytes"](read_json(published)))
-            write_json(published, after["trees"]["Editor"]["current"])
-            synchronized = MODULE["build_bundle"](root)
-            self.assertEqual(after["manifest"], synchronized["manifest"])
-            self.assertEqual(after["generated"], synchronized["generated"])
+            if EDITOR_VERSION == EDITOR_PUBLISHED_VERSION:
+                write_json(published, after["trees"]["Editor"]["current"])
+                synchronized = MODULE["build_bundle"](root)
+                self.assertEqual(after["manifest"], synchronized["manifest"])
+                self.assertEqual(after["generated"], synchronized["generated"])
 
     def test_historical_validation_is_explicit_and_reference_files_do_not_imply_support(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
-            path = root / "Editor" / "manifest.json"
+            path = root / "Project" / "manifest.json"
             manifest = read_json(path)
-            historical_version = EDITOR_VERSION
+            historical_version = EDITOR_PUBLISHED_VERSION
             current_version = historical_version + 1
+            manifest.pop("developmentVersion", None)
             manifest["published"].append(current_version)
             manifest["supportedHistorical"] = []
-            current = read_json(root / "Editor/current/ProjectSerializedSchema.json")
-            write_json(root / f"Editor/{current_version}/ProjectSerializedSchema.json", MODULE["materialize_source"]("Editor", current, current_version))
+            current = read_json(root / "Project/current/ProjectSerializedSchema.json")
+            write_json(root / f"Project/{current_version}/ProjectSerializedSchema.json", MODULE["materialize_source"]("Editor", current, current_version))
             write_json(path, manifest)
             bundle = MODULE["build_bundle"](root)
             self.assertEqual([source["projectSchemaVersion"] for source in MODULE["read_project_sources"](root)], [current_version])
@@ -186,7 +192,7 @@ class SchemaArchiveTest(unittest.TestCase):
             self.assertNotIn(f"validateProjectV{historical_version}", generated)
             self.assertIn(f"validateProjectV{current_version}", generated)
             self.assertIn("kProjectSchemaVersions[] = {" + str(current_version) + "}", bundle["generated"]["ProjectSchemaGenerated.h"].decode("ascii"))
-            historical_path = root / "Editor" / str(historical_version) / "ProjectSerializedSchema.json"
+            historical_path = root / "Project" / str(historical_version) / "ProjectSerializedSchema.json"
             historical = read_json(historical_path)
             historical["$defs"]["uuid"]["maxLength"] = 36
             write_json(historical_path, historical)
@@ -203,13 +209,14 @@ class SchemaArchiveTest(unittest.TestCase):
             with self.subTest(tree=changed_tree), tempfile.TemporaryDirectory() as directory:
                 root = copy_schema(directory)
                 loaded = MODULE["load_tree"](changed_tree, root)
-                current = loaded["currentVersion"]
+                current = max(loaded["manifest"]["published"])
                 manifest = loaded["manifest"]
+                manifest.pop("developmentVersion", None)
                 manifest["published"].append(current + 1)
-                manifest["supportedHistorical"].append(current)
-                write_json(root / changed_tree / "manifest.json", manifest)
+                manifest["supportedHistorical"] = sorted(set(manifest["supportedHistorical"]) | {current})
+                write_json(root / MODULE["TREE_DIRECTORIES"][changed_tree] / "manifest.json", manifest)
                 name = MODULE["TREE_SCHEMA_NAMES"][changed_tree]
-                write_json(root / changed_tree / str(current + 1) / name, MODULE["materialize_source"](changed_tree, loaded["currentSource"], current + 1))
+                write_json(root / MODULE["TREE_DIRECTORIES"][changed_tree] / str(current + 1) / name, MODULE["materialize_source"](changed_tree, loaded["currentSource"], current + 1))
                 bundle = MODULE["build_bundle"](root)
                 editor_current = MODULE["load_tree"]("Editor", root)["currentVersion"]
                 pack_current = MODULE["load_tree"]("Pack", root)["currentVersion"]
@@ -237,7 +244,7 @@ class SchemaArchiveTest(unittest.TestCase):
         self.assertEqual({entry["path"] for entry in manifest["files"]}, set(bundle["installed"]) - {"build.json"})
         self.assertEqual({entry["path"] for entry in manifest["generated"]}, GENERATED_NAMES - {"SchemaBuildGenerated.h"})
         input_paths = {entry["path"] for entry in manifest["inputs"]}
-        expected_inputs = set()
+        expected_inputs = {"Editor/migration-inputs/development-9/ProjectSerializedSchema.json"}
         for tree in ("Editor", "Pack"):
             loaded = MODULE["load_tree"](tree)
             name = MODULE["TREE_SCHEMA_NAMES"][tree]
@@ -272,7 +279,8 @@ class SchemaArchiveTest(unittest.TestCase):
             files = {path.relative_to(target).as_posix(): path.read_bytes() for path in target.rglob("*") if path.is_file()}
             self.assertEqual(files, MODULE["installed_files"](self.bundle))
             self.assertFalse(any(path.name == "current" for path in target.rglob("*")))
-            self.assertEqual({path.name for path in (target / "Editor").iterdir()}, {str(v) for v in MODULE["load_tree"]("Editor")["manifest"]["published"]})
+            self.assertEqual({path.name for path in (target / "Editor").iterdir()},
+                             {str(v) for v in MODULE["load_tree"]("Editor")["manifest"]["published"]} | {str(EDITOR_VERSION)})
             self.assertEqual({path.name for path in (target / "Pack").iterdir()}, {str(v) for v in MODULE["load_tree"]("Pack")["manifest"]["published"]})
             source = copy_schema(directory)
             staged = MODULE["build_bundle"](source)
@@ -306,7 +314,7 @@ class SchemaArchiveTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserved")
         with self.assertRaises(ValueError):
-            MODULE["write_generated_code"](REPO_ROOT / "HarkenStudio" / "Source" / "Core" / "generated", self.bundle)
+            MODULE["write_generated_code"](SCHEMA_ROOT / "generated", self.bundle)
 
     def test_two_processes_can_publish_the_same_snapshot_to_one_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -348,10 +356,13 @@ class SchemaArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
             loaded = MODULE["load_tree"]("Editor", root)
-            loaded["manifest"]["published"].append(EDITOR_VERSION + 1)
-            loaded["manifest"]["supportedHistorical"].append(EDITOR_VERSION)
-            write_json(root / "Editor" / "manifest.json", loaded["manifest"])
-            write_json(root / "Editor" / str(EDITOR_VERSION + 1) / "ProjectSerializedSchema.json", MODULE["materialize_source"]("Editor", loaded["currentSource"], EDITOR_VERSION + 1))
+            candidate_version = max(loaded["manifest"]["published"]) + 1
+            loaded["manifest"].pop("developmentVersion", None)
+            loaded["manifest"]["published"].append(candidate_version)
+            loaded["manifest"]["supportedHistorical"] = sorted(
+                set(loaded["manifest"]["supportedHistorical"]) | {candidate_version - 1})
+            write_json(root / "Project" / "manifest.json", loaded["manifest"])
+            write_json(root / "Project" / str(candidate_version) / "ProjectSerializedSchema.json", MODULE["materialize_source"]("Editor", loaded["currentSource"], candidate_version))
             generated = Path(directory) / "Core"
             target = Path(directory) / "schema"
             result = subprocess.run(
@@ -362,7 +373,7 @@ class SchemaArchiveTest(unittest.TestCase):
             expected = MODULE["build_bundle"](root)
             self.assertEqual(read_json(target / "build.json"), expected["manifest"])
             self.assertEqual(MODULE["check_generated"](generated, expected), [])
-            self.assertFalse((SCHEMA_ROOT / "Editor" / str(EDITOR_VERSION + 1)).exists())
+            self.assertFalse((SCHEMA_ROOT / "Project" / str(candidate_version)).exists())
 
     def test_document_extension_boundaries_match_the_generation(self) -> None:
         for source in MODULE["read_project_sources"]():
@@ -437,52 +448,6 @@ class SchemaArchiveTest(unittest.TestCase):
         pack["$defs"]["guid"]["anyOf"] = []
         with self.assertRaises(ValueError):
             MODULE["validate_pack_source"](pack)
-
-    def test_new_generations_require_binary_layout_and_older_trees_still_load(self) -> None:
-        current = copy.deepcopy(MODULE["load_tree"]("Pack")["currentSource"])
-        current["x-harken-format"].pop("binaryLayout")
-        MODULE["materialize_source"]("Pack", current, 4)
-        with self.assertRaises(ValueError):
-            MODULE["materialize_source"]("Pack", current, 5)
-        for version in (3, 4):
-            archive = read_json(SCHEMA_ROOT / "Pack" / str(version) / "PackManifestSchema.json")
-            MODULE["validate_pack_source"](archive)
-        future = copy.deepcopy(MODULE["load_tree"]("Pack")["current"])
-        future["x-harken-format"].pop("binaryLayout")
-        future["x-harken-format"]["formatVersion"] = 5
-        future["$defs"]["schemaVersion"]["const"] = 5
-        with self.assertRaises(ValueError):
-            MODULE["validate_pack_source"](future)
-
-    def test_pack_rejects_invalid_binary_layouts(self) -> None:
-        source = MODULE["load_tree"]("Pack")["current"]
-        layout = {
-            "byteOrder": "little", "constants": {},
-            "kinds": [{"name": "example", "id": 1, "vintage": 1, "record": "example"}],
-            "records": {"example": {"mode": "fixed", "fields": [{"name": "value", "type": "u32"}]}},
-        }
-        valid = copy.deepcopy(source)
-        valid["x-harken-format"]["binaryLayout"] = layout
-        MODULE["validate_pack_source"](valid)
-        invalid_layouts = [None, {}]
-        duplicate = copy.deepcopy(layout)
-        duplicate["records"]["example"]["fields"] *= 2
-        invalid_layouts.append(duplicate)
-        unknown = copy.deepcopy(layout)
-        unknown["records"]["example"]["fields"][0]["type"] = "u24"
-        invalid_layouts.append(unknown)
-        missing = copy.deepcopy(layout)
-        missing["kinds"][0]["record"] = "missing"
-        invalid_layouts.append(missing)
-        recursive = copy.deepcopy(layout)
-        recursive["records"]["example"]["fields"] = [{"name": "nested", "type": "record", "record": "example"}]
-        invalid_layouts.append(recursive)
-        for invalid_layout in invalid_layouts:
-            with self.subTest(layout=invalid_layout):
-                invalid = copy.deepcopy(source)
-                invalid["x-harken-format"]["binaryLayout"] = invalid_layout
-                with self.assertRaises(ValueError):
-                    MODULE["validate_pack_source"](invalid)
 
     def test_one_of_requires_schema_alternatives(self) -> None:
         schema = {"oneOf": [{"type": "object", "required": ["platforms"]},

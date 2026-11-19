@@ -67,6 +67,14 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         out.insert(afterPitch == out.end() ? out.end() : std::next(afterPitch), *filter);
     }
     out.push_back(effectsInspectorDescriptor());
+    PropertyDescriptor conversion;
+    conversion.field = QStringLiteral("settingsRef");
+    conversion.type = PropType::ObjectRef;
+    conversion.label = QStringLiteral("Settings");
+    conversion.section = PropertySection::Conversion;
+    conversion.flags.serialize = false;
+    conversion.refFilter = static_cast<int>(ProjectItem::Type::Conversion);
+    out.push_back(std::move(conversion));
     out.push_back(notesInspectorDescriptor());
     return out;
 }

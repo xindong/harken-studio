@@ -7,11 +7,14 @@
 #include "../FilterSemantics.h"
 #include "../PropertyDescriptor.h"
 #include "../ProjectTypes.h"
+#include <harken_pack/PackBus.h>
+#include <harken_pack/PackProperties.h>
 
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -111,10 +114,18 @@ inline const PropertySchema& VMixNode::schema()
     static const PropertySchema s = [] {
         auto schema = withOwner<VMixNode>({
         { .field="volume", .type=PropType::Float, .label="Volume", .section=PropertySection::Playback,
-          .unit=" dB", .min=-96.0, .max=24.0, .decimals=1, .flags={.sourceIndicator=true},
-          .get=VNX_PROP_GET(VMixNode, volume), .set=VNX_PROP_SET_F(VMixNode, volume) },
+          .unit=" dB", .min=HK_PACK_PROPERTY_VOLUME_MIN, .max=HK_PACK_PROPERTY_VOLUME_MAX, .decimals=1,
+          .flags={.sourceIndicator=true},
+          .get=VNX_PROP_GET(VMixNode, volume), .set=[](IComponent* c, const QVariant& v) {
+              auto* m = static_cast<VMixNode*>(c);
+              const bool bus = m->hostItem() && m->hostItem()->type == ProjectItem::Type::Bus;
+              m->volume = std::clamp(v.toFloat(), bus ? HK_PACK_BUS_VOLUME_MIN : HK_PACK_PROPERTY_VOLUME_MIN,
+                                     bus ? HK_PACK_BUS_VOLUME_MAX : HK_PACK_PROPERTY_VOLUME_MAX);
+              return true;
+          } },
         { .field="pitch", .type=PropType::Float, .label="Pitch", .section=PropertySection::Playback,
-          .unit=" cent", .min=-4800.0, .max=4800.0, .decimals=0, .flags={.sourceIndicator=true},
+          .unit=" cent", .min=HK_PACK_PROPERTY_PITCH_MIN, .max=HK_PACK_PROPERTY_PITCH_MAX, .decimals=0,
+          .flags={.sourceIndicator=true},
           .get=VNX_PROP_GET(VMixNode, pitch), .set=VNX_PROP_SET_F(VMixNode, pitch) },
         { .field="filter", .type=PropType::Struct, .label="Filter", .section=PropertySection::Playback,
           .def=FilterSemantics::toJson(FilterState{}).toVariantMap(),
@@ -162,7 +173,8 @@ inline const PropertySchema& VMixNode::schema()
               return true;
           } },
         { .field="outputBusVolume", .type=PropType::Float, .label="Volume", .section=PropertySection::Output,
-          .unit=" dB", .min=-96.0, .max=24.0, .decimals=1, .aliases={"outputbusvolume"},
+          .unit=" dB", .min=HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MIN, .max=HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MAX,
+          .decimals=1, .aliases={"outputbusvolume"},
           .get=VNX_PROP_GET(VMixNode, outputBusVolume), .set=[](IComponent* c, const QVariant& v) {
               auto* m = static_cast<VMixNode*>(c);
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
@@ -175,7 +187,7 @@ inline const PropertySchema& VMixNode::schema()
               { .field="targetBusID", .type=PropType::ObjectRef, .label="Target", .def=0u,
                 .refFilter=static_cast<int>(ProjectItem::Type::Bus) },
               { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
-                .min=-96.0, .max=24.0, .def=0.0, .decimals=1,
+                .min=HK_PACK_PROPERTY_SEND_LEVEL_MIN, .max=HK_PACK_PROPERTY_SEND_LEVEL_MAX, .def=0.0, .decimals=1,
                 .toolTip="Gain applied to the sent signal. In Ducking mode, this controls the detector input level, not the target bus attenuation." },
               { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
                 .options={{"Mix", 0}, {"Ducking", 1}, {"Sidechain", 2}},

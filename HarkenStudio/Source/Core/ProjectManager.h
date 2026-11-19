@@ -28,6 +28,7 @@
 #include "ProjectContract.h"
 #include "FileWatcher.h"
 #include "StartupProgress.h"
+#include "ConversionResolution.h"
 
 
 namespace harkenbuscompiler {
@@ -36,6 +37,7 @@ struct CompiledBusResultV1;
 
 namespace HarkenEditor::Bridge {
 struct CurrentWorldSoundPreparation;
+struct PreparedPreviewMedia;
 }
 
 namespace VNX {
@@ -123,7 +125,9 @@ public:
         QString* error = nullptr);
     static bool prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& snapshot,
         HarkenEditor::Bridge::CurrentWorldSoundPreparation& preparation,
-        QString* error = nullptr);
+        QString* error = nullptr,
+        const QSet<harkenstudio::ObjectId>* requested = nullptr);
+    QSet<harkenstudio::ObjectId> prepareRuntimePreview(const ProjectItem& root);
     static void syncProjectToRuntimeAsync(ProjectData* project,
                                           QObject* context,
                                           std::function<void()> finished);
@@ -545,6 +549,7 @@ public:
     void setBuildProjectDataExportInternal(bool enabled);
     void setBuildPackMetadataExportInternal(bool enabled);
     void setBuildWaveformSettingsInternal(bool enabled, const QString& directory);
+    bool setDefaultConversion(const ProjectPlatformId& platform, const QUuid& guid);
 
     PackExportSelection packExportSelection() const;
     void setPackExportSelectionInternal(PackExportSelection selection);
@@ -595,6 +600,8 @@ signals:
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
     void projectPublishSettingsChanged();
+    void defaultConversionChanged(const QUuid& platform, const QUuid& guid);
+    void previewMediaInvalidated(const QUuid& soundGuid);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void actionPackTargetingChanged();
@@ -610,6 +617,9 @@ private:
     explicit ProjectManager(QObject* parent = nullptr);
     ~ProjectManager() override;
     void initializeRuntimeSync();
+    void bindPreviewMediaContext();
+    void refreshPreviewConversions();
+    void invalidatePreviewMedia(const QVector<ProjectItem*>& sounds);
 
     bool createDirectoryStructure(const QString& projectRoot);
     bool createMainProjectFile(const ProjectConfig& config, const QString& projectRoot);
@@ -657,14 +667,28 @@ private:
         qint64 modifiedMs = 0;
         SoundSourceDef source;
         double scheduleOffsetSec = 0;
+        std::optional<ResolvedConversion> conversion;
 
         bool operator==(const RuntimeSoundPreparationKey&) const = default;
     };
     struct RuntimeSoundPreparationEntry {
         RuntimeSoundPreparationKey key;
         uint64_t revision = 0;
+        std::shared_ptr<const HarkenEditor::Bridge::PreparedPreviewMedia> media = {};
     };
     QHash<harkenstudio::ObjectId, RuntimeSoundPreparationEntry> m_runtimeSoundPreparation;
+    struct PreviewConversionState {
+        bool converted = false;
+        ProjectPlatformId platform;
+        QUuid presetGuid;
+        std::optional<ConversionConfig> config;
+        QString error;
+
+        bool operator==(const PreviewConversionState&) const = default;
+    };
+    QHash<harkenstudio::ObjectId, PreviewConversionState> m_previewConversions;
+    bool m_previewMediaContextBound = false;
+    bool m_refreshingPreviewConversions = false;
 
     std::shared_ptr<ProjectData> m_pendingDestruction;
     void drainPendingDestruction();

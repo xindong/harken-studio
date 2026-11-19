@@ -359,7 +359,7 @@ if(WIN32)
         hub)
     add_dependencies(harken_hub harken_hub_legacy_launcher)
 
-    if(NOT TARGET harken_editor)
+    if(NOT TARGET harken_studio)
         file(GENERATE
             OUTPUT "$<TARGET_FILE_DIR:harken_hub>/qt.conf"
             CONTENT "[Paths]\nPlugins = .\n"
@@ -385,7 +385,7 @@ if(WIN32)
     )
 
     add_executable(harken_hub_update_bridge WIN32
-        Source/App/UpdateBridgeMain.cpp)
+        Source/App/UpdateBridgeMain.cpp "HarkenHub.rc")
     set_target_properties(harken_hub_update_bridge PROPERTIES
         OUTPUT_NAME "HarkenHubUpdateBridge"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Updater")

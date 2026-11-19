@@ -1,0 +1,195 @@
+#ifndef HARKEN_CORE_MONITOR_LIFECYCLE_SINK_H
+#define HARKEN_CORE_MONITOR_LIFECYCLE_SINK_H
+
+#include "harken/core/MonitorField.h"
+
+#include <harken/ObjectId.h>
+#include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
+#include "harken/core/MonitorRequest.h"
+#include "harken/core/MonitorEmitterIdentity.h"
+#include "harken/core/MonitorIdentity.h"
+#include <cstdint>
+
+namespace harken {
+
+// Projection phases for already-decided Runtime facts. Values are local to
+// this sink; public Monitor event classes are chosen by the Hub mapper.
+enum class MonitorLifecyclePhase : std::uint8_t {
+    PlayableStart = 1,
+    PlayableLogicalComplete = 2,
+    PlayableAudibleRetiring = 3,
+    PlayableRetired = 4,
+    PlayableCancel = 5,
+    ActionAccept = 6,
+    ActionStop = 7,
+    ActionResult = 8,
+    ActionReject = 9,
+    QueueAdvance = 10,
+    QueueFail = 11,
+    TransitionStart = 12,
+    TransitionStop = 13,
+    TransitionReject = 14,
+    VoicePending = 15,
+    VoiceLive = 16,
+    VoicePark = 17,
+    VoiceEnd = 18,
+    EffectInstalled = 19,
+    EffectReleased = 20,
+    SelectionCommitted = 21,
+    PreparedCandidate = 22,
+    PlayableStarted = 23,
+    StepExecuted = 24,
+    ActionTerminal = 25,
+    PlayableFinished = 26
+};
+
+// Called after the reported Runtime decision succeeds. No-op when Monitor is absent,
+// the Hub is down, or the caller is not the logic thread. Never writes
+// Runtime tables and never invents a VariableControl entity.
+//
+// Facts already present on the committing table row. Missing values stay 0
+// and must not be invented by the Hub mapper.
+struct MonitorLifecycleFacts {
+#if HARKEN_ENGINE_DEV
+    MonitorRequestContext playbackRequest{};
+    MonitorEmitterOrigin emitterOrigin{};
+    MonitorControlCause controlCause{};
+    MonitorControlCause selectionCause{};
+    bool controlObservationIncomplete = false;
+    bool identityObservationIncomplete = false;
+    bool publishLegacy = true;
+    bool reasonKnown = true;
+    std::uint8_t terminalKind = 0;
+    std::int32_t terminalResult = 0;
+    std::uint32_t terminalReason = 0;
+    std::uint8_t actionOutcome = 0;
+    std::uint32_t stepIndex = 0;
+    std::uint32_t stepExecutionOrdinal = 0;
+    std::uint32_t stepOpcode = 0;
+    VnObjectId stepTargetId{};
+    std::uint32_t stepTargetKind = 0;
+    MonitorOccurrenceIdentity occurrenceIdentity{};
+    MonitorPlayableProvenance playableProvenance{};
+    VnObjectId contentObject{};
+    std::uint64_t contentWorld = 0;
+    std::uint8_t contentKind = 0;
+    std::uint64_t contentRevision = 0;
+    std::uint64_t parentPlayable = 0;
+    std::uint64_t parentAction = 0;
+    std::uint64_t root = 0;
+    std::uint64_t relatedAction = 0;
+    std::uint64_t serviceLeaf = 0;
+    std::uint64_t resourceOwner = 0;
+    std::uint64_t ownerEpoch = 0;
+    std::uint64_t logicalVoice = 0;
+    std::uint64_t renderActivation = 0;
+    VnObjectId projectId{};
+    std::uint64_t programSemanticFingerprint = 0;
+    std::uint64_t runtimeLineageFingerprint = 0;
+    std::uint64_t arrangingInstance = 0;
+    std::uint64_t logicCommitSequence = 0;
+    std::uint64_t audioBlock = 0;
+    std::uint64_t executeFrame = 0;
+    float volumeDb = 0.0f;
+    bool volumeKnown = false;
+    std::uint32_t notifyType = 0;
+#endif
+};
+
+struct MonitorVariableResultFacts {
+#if HARKEN_ENGINE_DEV
+    MonitorRequestContext request{};
+    MonitorEmitterOrigin emitterOrigin{};
+    VnObjectId projectId{};
+    VnObjectId variableId{};
+    std::uint64_t worldGeneration = 0;
+    std::uint64_t logicCommitSequence = 0;
+    std::uint64_t actionFiring = 0;
+    std::uint64_t actualFrame = 0;
+    std::uint32_t executionOrdinal = UINT32_MAX;
+    std::uint32_t outcome = 0;
+    std::int32_t result = 0;
+    float value = 0.0f;
+    bool emitterScope = false;
+#endif
+};
+
+struct MonitorEffectFacts {
+#if HARKEN_ENGINE_DEV
+    std::uint32_t bypass01 = 0;
+    std::uint32_t latencyFrames = 0;
+    std::uint32_t tailFrames = 0;
+    bool tailKnown = false;
+#endif
+};
+
+struct MonitorBusFacts {
+#if HARKEN_ENGINE_DEV
+    std::uint32_t mute01 = 0;
+    std::uint32_t solo01 = 0;
+    VnObjectId routeBusId{};
+#endif
+};
+
+#if HARKEN_ENGINE_DEV
+
+void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
+                             std::uint64_t instanceHandle,
+                             std::uint64_t instanceGeneration,
+                             std::uint64_t worldGeneration,
+                             VnObjectId stableId,
+                             std::uint64_t relatedPlayableHandle,
+                             std::uint64_t relatedActionHandle,
+                             std::uint32_t reason,
+                             std::uint8_t playableKind,
+                             std::uint64_t occurrence = 0,
+                             const MonitorLifecycleFacts& facts = {}) noexcept;
+// Called after a successful non-idempotent CurrentWorld install. Reads the
+// already-committed generation; does not drive world replacement.
+void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept;
+void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexcept;
+void ObserveMonitorEffect(std::uint64_t instanceHandle,
+                          std::uint64_t instanceGeneration,
+                          VnObjectId stableId, std::uint32_t reason,
+                          const MonitorEffectFacts& facts) noexcept;
+void ObserveMonitorBus(std::uint64_t instanceHandle,
+                       std::uint64_t instanceGeneration, VnObjectId stableId,
+                       const MonitorBusFacts& facts) noexcept;
+void ObserveMonitorEffectRelease(std::uint64_t instanceHandle,
+                                 std::uint64_t instanceGeneration,
+                                 VnObjectId stableId,
+                                 std::uint32_t reason) noexcept;
+void ObserveMonitorDspGap() noexcept;
+// Logic-owned supply snapshot. The sink may fill known playback associations;
+// those values remain attached to this ring after the ledger row retires.
+bool MonitorStreamObservationEnabled() noexcept;
+void ObserveMonitorStream(VnMonitorStreamFactV1& fact) noexcept;
+void ObserveMonitorSelectionUnavailable() noexcept;
+
+#else
+
+inline void ObserveMonitorLifecycle(MonitorLifecyclePhase, std::uint64_t, std::uint64_t,
+                                    std::uint64_t, VnObjectId, std::uint64_t,
+                                    std::uint64_t, std::uint32_t, std::uint8_t,
+                                    std::uint64_t = 0,
+                                    const MonitorLifecycleFacts& = {}) noexcept {}
+inline void ObserveMonitorCurrentWorld(std::uint64_t) noexcept {}
+inline void ObserveMonitorVariableResult(const MonitorVariableResultFacts&) noexcept {}
+inline void ObserveMonitorEffect(std::uint64_t, std::uint64_t, VnObjectId, std::uint32_t,
+                                 const MonitorEffectFacts&) noexcept {}
+inline void ObserveMonitorBus(std::uint64_t, std::uint64_t, VnObjectId,
+                              const MonitorBusFacts&) noexcept {}
+inline void ObserveMonitorEffectRelease(std::uint64_t, std::uint64_t, VnObjectId,
+                                        std::uint32_t) noexcept {}
+inline void ObserveMonitorDspGap() noexcept {}
+inline bool MonitorStreamObservationEnabled() noexcept { return false; }
+inline void ObserveMonitorSelectionUnavailable() noexcept {}
+
+#endif
+
+} // namespace harken
+
+#endif

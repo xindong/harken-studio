@@ -5,7 +5,7 @@
 #include "MediaPool.h"
 #include "PathUtils.h"
 #include "WaveformCache.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "../ProjectDataPolicy.h"
 #include "../NameValidator.h"
 #include "../ProjectManager.h"
@@ -140,7 +140,6 @@ void publishChanges(const QList<Change>& changes, bool record)
             WaveformCache::remove(path);
             if (asset) {
                 const uint32_t sourceID = asset->sourceID;
-                registry.invalidateAllCaches(sourceID);
                 if (!registry.updateSourceFile(sourceID, change.after->metadata, path,
                     change.after->hash, QFileInfo(path).lastModified().toSecsSinceEpoch()))
                     emit registry.assetModified(sourceID);

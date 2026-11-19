@@ -194,7 +194,7 @@ void InstallGainRecipe(harken::Engine* engine, VnSoundId playable,
     install.slot = 0;
     install.effectType = VN_EFFECT_GAIN;
     install.descriptorVintage =
-        harken::kPackEffectDescriptorVintage;
+        HK_PACK_EFFECT_DESCRIPTOR_VINTAGE;
     install.paramCount = 1;
     install.params[0] = gainDb;
     recipe.installs.push_back(install);
@@ -214,7 +214,7 @@ void InstallCompressorRecipe(harken::Engine* engine, VnSoundId playable) {
     harken::PackVoiceRecipeInstall install;
     install.slot = 0;
     install.effectType = VN_EFFECT_COMPRESSOR;
-    install.descriptorVintage = harken::kPackEffectDescriptorVintage;
+    install.descriptorVintage = HK_PACK_EFFECT_DESCRIPTOR_VINTAGE;
     install.paramCount = harken::kCompressorParamCount;
     install.params[harken::kCompressorParamThresholdDb] = -18.0f;
     install.params[harken::kCompressorParamRatio] = 4.0f;
@@ -240,7 +240,7 @@ void InstallTwoGainRecipe(harken::Engine* engine, VnSoundId playable,
         harken::PackVoiceRecipeInstall install;
         install.slot = slot;
         install.effectType = VN_EFFECT_GAIN;
-        install.descriptorVintage = harken::kPackEffectDescriptorVintage;
+        install.descriptorVintage = HK_PACK_EFFECT_DESCRIPTOR_VINTAGE;
         install.paramCount = 1;
         install.params[0] = gainDb;
         recipe.installs.push_back(install);
@@ -297,7 +297,7 @@ static void CheckOrderedRecipeFirstPcm(std::uint32_t type, bool refuseArena) {
     recipe.header.installCount = 1;
     harken::PackVoiceRecipeInstall install;
     install.effectType = type;
-    install.descriptorVintage = harken::kPackEffectDescriptorVintage;
+    install.descriptorVintage = HK_PACK_EFFECT_DESCRIPTOR_VINTAGE;
     struct Input { std::uint32_t param; float a; float b; };
     std::vector<Input> inputs;
     if (type == VN_EFFECT_GAIN) {

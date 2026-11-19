@@ -11,6 +11,7 @@
 #include "PlaybackBridge.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <QString>
 #include <cstdint>
@@ -61,6 +62,9 @@ void runtimeRegisterSoundName(const QString& name, harkenstudio::ObjectId object
                               harkenstudio::ObjectId attenuationId);
 bool runtimePrepareMedia(uint32_t sourceId);
 uint64_t runtimeRegisteredSoundRevision(harkenstudio::ObjectId soundId);
+std::optional<PreparedPreviewMedia> runtimePreparePreviewMedia(
+    const VNX::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error);
+VnResult runtimeRegisterPreviewMedia(harkenstudio::ObjectId soundId, const PreparedPreviewMedia& media);
 VnResult runtimeRegisterSoundPcm(harkenstudio::ObjectId soundId, const std::vector<float>& samples,
                                   uint32_t channels, uint32_t sampleRate,
                                   uint64_t loopStartFrame, uint64_t loopEndFrame);
@@ -72,6 +76,9 @@ void runtimeUnregisterActionName(harkenstudio::ObjectId actionId);
 void runtimeClearActionNames();
 
 bool runtimeLoadPack(const QString& path, EngineResult* outResult = nullptr);
+bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
+                              uint64_t packStableId, uint32_t packKind,
+                              EngineResult* outResult = nullptr);
 bool runtimeUnloadPack(const QString& path, EngineResult* outResult = nullptr);
 uint32_t runtimeLoadedPackCount();
 QStringList runtimeLoadedPackPaths();

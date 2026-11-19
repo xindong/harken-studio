@@ -15,6 +15,7 @@
 //      the parallel scene observes no opcode beyond the frozen set.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"

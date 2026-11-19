@@ -15,6 +15,7 @@
 //     the capacity-0 probe not counted;
 //   - the refusal matrix (NULL requiredCount, NULL buffer under nonzero
 //     capacity, unknown row vintage).
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

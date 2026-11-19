@@ -3,6 +3,8 @@
 #include "AssetPipeline/PathUtils.h"
 #include "ProjectTypes.h"
 
+#include <harken_pack/PackFile.h>
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -51,7 +53,7 @@ void PackArtifactCache::openProject(const ProjectData& project)
                     artifact.outputPath = output.absoluteFilePath();
                     artifact.bytes = output.size();
                     artifact.modified = output.lastModified();
-                    artifact.version = HARKEN_PACK_SCHEMA_VERSION;
+                    artifact.version = HK_PACK_FORMAT_VERSION;
                     artifacts_.append(std::move(artifact));
                 }
             }

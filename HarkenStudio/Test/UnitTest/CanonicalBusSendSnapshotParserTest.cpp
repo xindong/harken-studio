@@ -1,10 +1,9 @@
-#include "UnitTest/ObjectIdTestSupport.h"
+#include "UnitTest/StudioObjectIdTestSupport.h"
 #include "harken_studio_build/PackImage.h"
 
 #include <harken/Harken.h>
-#include <harken/media/CanonicalBusSnapshot.h>
-#include <harken/media/PackFormatV2.h>
-#include <harken/media/PackLogicImage.h>
+#include "harken_studio_build/BusSnapshot.h"
+#include "harken_studio_build/PackFormatV2.h"
 
 #include <gtest/gtest.h>
 
@@ -18,41 +17,41 @@
 namespace {
 
 std::uint64_t AlignPackPayload(std::uint64_t value) {
-    return (value + harken::kPackPayloadAlign - 1) /
-        harken::kPackPayloadAlign * harken::kPackPayloadAlign;
+    return (value + HK_PACK_PAYLOAD_ALIGN - 1) /
+        HK_PACK_PAYLOAD_ALIGN * HK_PACK_PAYLOAD_ALIGN;
 }
 
 std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     std::uint32_t capability, bool destinationIsChildOfSource,
-    std::initializer_list<std::pair<VnObjectId, VnObjectId>> sends,
-    const std::function<void(harken::PackCanonicalImage&)>& edit = {}) {
-    const VnObjectId source = harkentest::ObjectId(801);
-    const VnObjectId destination = harkentest::ObjectId(802);
-    harken::PackCanonicalImage image;
+    std::initializer_list<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> sends,
+    const std::function<void(harkenstudiobuild::PackCanonicalImage&)>& edit = {}) {
+    const harkenstudio::ObjectId source = harkentest::StudioObjectId(801);
+    const harkenstudio::ObjectId destination = harkentest::StudioObjectId(802);
+    harkenstudiobuild::PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& snapshot = image.busDefinitionSnapshotHeader;
     snapshot.schemaVersion = 2;
     snapshot.storageModelVersion = 2;
-    snapshot.headerBytes = harken::kPackBusDefinitionSnapshotHeaderBytes;
+    snapshot.headerBytes = harkenstudiobuild::kPackBytes<HkPackBusDefinitionSnapshotHeader>;
     snapshot.publicationCapabilityVintage = capability;
     snapshot.profileVintage = 1;
     snapshot.renderSampleRateHz = 48000;
     snapshot.mixLayout = VN_CHANNEL_LAYOUT_STEREO;
     snapshot.deviceLayout = VN_CHANNEL_LAYOUT_STEREO;
     snapshot.runtimeCapabilityMask =
-        harken::busfingerprint::kRequiredBusCapabilityMaskV1;
+        harkenstudiobuild::busfingerprint::kRequiredBusCapabilityMaskV1;
     snapshot.compileTargetProfileFingerprint =
-        harken::busfingerprint::ProfileFingerprintV1(
+        harkenstudiobuild::busfingerprint::ProfileFingerprintV1(
             snapshot.profileVintage, snapshot.renderSampleRateHz,
             snapshot.mixLayout, snapshot.deviceLayout,
             snapshot.runtimeCapabilityMask);
-    const VnObjectId ids[] = {VN_BUS_MASTER, source, destination};
-    const VnObjectId parents[] = {VnObjectId{}, VN_BUS_MASTER,
-        destinationIsChildOfSource ? source : VN_BUS_MASTER};
+    const harkenstudio::ObjectId ids[] = {harkenstudio::kMasterBusObjectId, source, destination};
+    const harkenstudio::ObjectId parents[] = {harkenstudio::ObjectId{}, harkenstudio::kMasterBusObjectId,
+        destinationIsChildOfSource ? source : harkenstudio::kMasterBusObjectId};
     for (std::uint32_t i = 0; i < 3; ++i) {
         image.busDefinitionBusesV2.push_back({ids[i], parents[i], i,
-            0.0f, 0.0f, 0.0f,
-            harken::busfingerprint::kNeutralFaderAfterSlotV1,
+            0.0f, 0.0f,
+            harkenstudiobuild::busfingerprint::kNeutralFaderAfterSlotV1,
             VN_CHANNEL_LAYOUT_STEREO, 0, 0, i, 1});
         image.busDefinitionDownmixesV2.push_back({ids[i],
             VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO, i * 64, 64});
@@ -68,21 +67,21 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     snapshot.sendCount = static_cast<std::uint32_t>(sends.size());
     snapshot.downmixCount = 3;
     snapshot.coefficientCount = 192;
-    snapshot.busRowBytes = harken::kPackBusDefinitionBusBytes;
-    snapshot.sendRowBytes = harken::kPackBusDefinitionSendBytes;
-    snapshot.downmixRowBytes = harken::kPackBusDefinitionDownmixBytes;
-    snapshot.coefficientRowBytes = harken::kPackBusDefinitionCoefficientBytes;
+    snapshot.busRowBytes = harkenstudiobuild::kPackBytes<HkPackBusDefinitionBus>;
+    snapshot.sendRowBytes = harkenstudiobuild::kPackBytes<HkPackBusDefinitionSend>;
+    snapshot.downmixRowBytes = harkenstudiobuild::kPackBytes<HkPackBusDefinitionDownmix>;
+    snapshot.coefficientRowBytes = harkenstudiobuild::kPackBytes<HkPackBusDefinitionCoefficient>;
     if (edit) edit(image);
-    snapshot.contentGeneration = harken::CanonicalVolumeBusFingerprint(image,
+    snapshot.contentGeneration = harkenstudiobuild::CanonicalVolumeBusFingerprint(image,
         image.busDefinitionEffects, image.busDefinitionEffectParameters);
     snapshot.publishedBusFingerprint = snapshot.contentGeneration;
     snapshot.busOffset = snapshot.headerBytes;
     snapshot.sendOffset = snapshot.busOffset + snapshot.busCount * snapshot.busRowBytes;
     snapshot.effectOffset = snapshot.sendOffset + snapshot.sendCount * snapshot.sendRowBytes;
     snapshot.effectParameterOffset = snapshot.effectOffset +
-        snapshot.effectCount * harken::kPackBusDefinitionEffectBytes;
+        snapshot.effectCount * harkenstudiobuild::kPackBytes<HkPackBusDefinitionEffect>;
     snapshot.downmixOffset = snapshot.effectParameterOffset +
-        snapshot.effectParameterCount * harken::kPackBusDefinitionEffectParameterBytes;
+        snapshot.effectParameterCount * harkenstudiobuild::kPackBytes<HkPackBusDefinitionEffectParameter>;
     snapshot.coefficientOffset = snapshot.downmixOffset +
         snapshot.downmixCount * snapshot.downmixRowBytes;
     snapshot.payloadBytes = snapshot.coefficientOffset +
@@ -90,30 +89,30 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     std::vector<std::uint8_t> payload(
         static_cast<std::size_t>(snapshot.headerBytes + snapshot.payloadBytes), 0);
     for (std::uint32_t i = 0; i < snapshot.busCount; ++i) {
-        harken::SerializePackBusDefinitionBus(image.busDefinitionBusesV2[i],
+        harkenstudiobuild::SerializePackRow<HkPackBusDefinitionBus>(image.busDefinitionBusesV2[i],
             payload.data() + snapshot.busOffset + i * snapshot.busRowBytes);
-        harken::SerializePackBusDefinitionDownmix(image.busDefinitionDownmixesV2[i],
+        harkenstudiobuild::SerializePackRow<HkPackBusDefinitionDownmix>(image.busDefinitionDownmixesV2[i],
             payload.data() + snapshot.downmixOffset + i * snapshot.downmixRowBytes);
     }
     for (std::uint32_t i = 0; i < snapshot.sendCount; ++i) {
-        harken::SerializePackBusDefinitionSend(image.busDefinitionSendsV2[i],
+        harkenstudiobuild::SerializePackRow<HkPackBusDefinitionSend>(image.busDefinitionSendsV2[i],
             payload.data() + snapshot.sendOffset + i * snapshot.sendRowBytes);
     }
     for (std::uint32_t i = 0; i < snapshot.coefficientCount; ++i) {
-        harken::StoreLEF32(payload.data() + snapshot.coefficientOffset +
+        harkenstudiobuild::StoreLEF32(payload.data() + snapshot.coefficientOffset +
             i * snapshot.coefficientRowBytes, image.busDefinitionCoefficients[i]);
     }
     for (std::uint32_t i = 0; i < snapshot.effectCount; ++i)
-        harken::SerializePackBusDefinitionEffect(image.busDefinitionEffects[i],
-            payload.data() + snapshot.effectOffset + i * harken::kPackBusDefinitionEffectBytes);
+        harkenstudiobuild::SerializePackRow<HkPackBusDefinitionEffect>(image.busDefinitionEffects[i],
+            payload.data() + snapshot.effectOffset + i * harkenstudiobuild::kPackBytes<HkPackBusDefinitionEffect>);
     for (std::uint32_t i = 0; i < snapshot.effectParameterCount; ++i)
-        harken::SerializePackBusDefinitionEffectParameter(image.busDefinitionEffectParameters[i],
-            payload.data() + snapshot.effectParameterOffset + i * harken::kPackBusDefinitionEffectParameterBytes);
-    harken::SerializePackBusDefinitionSnapshotHeader(snapshot, payload.data());
-    snapshot.checksum = harken::Fnv1a64(payload.data(), payload.size());
-    harken::SerializePackBusDefinitionSnapshotHeader(snapshot, payload.data());
+        harkenstudiobuild::SerializePackRow<HkPackBusDefinitionEffectParameter>(image.busDefinitionEffectParameters[i],
+            payload.data() + snapshot.effectParameterOffset + i * harkenstudiobuild::kPackBytes<HkPackBusDefinitionEffectParameter>);
+    harkenstudiobuild::SerializePackRow<HkPackBusDefinitionSnapshotHeader>(snapshot, payload.data());
+    snapshot.checksum = harkenstudiobuild::Fnv1a64(payload.data(), payload.size());
+    harkenstudiobuild::SerializePackRow<HkPackBusDefinitionSnapshotHeader>(snapshot, payload.data());
 
-    harken::PackRequirementBlock requirement;
+    harkenstudiobuild::PackRequirementBlock requirement;
     requirement.schemaVersion = 2;
     requirement.storageModelVersion = 2;
     requirement.packStableId = 801;
@@ -123,103 +122,100 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     requirement.compileTargetProfileFingerprint =
         snapshot.compileTargetProfileFingerprint;
     std::vector<std::uint8_t> requirementPayload(
-        harken::kPackRequirementBlockBytes, 0);
-    harken::SerializePackRequirementBlock(requirement, requirementPayload.data());
+        harkenstudiobuild::kPackBytes<HkPackRequirementBlock>, 0);
+    harkenstudiobuild::SerializePackRow<HkPackRequirementBlock>(requirement, requirementPayload.data());
     requirement.payloadChecksumCoverage =
-        harken::Fnv1a64(requirementPayload.data(), 104);
-    harken::SerializePackRequirementBlock(requirement, requirementPayload.data());
+        harkenstudiobuild::Fnv1a64(requirementPayload.data(), 104);
+    harkenstudiobuild::SerializePackRow<HkPackRequirementBlock>(requirement, requirementPayload.data());
 
     constexpr std::uint32_t entryCount = 2;
-    const std::uint64_t directoryOffset = harken::kPackFileHeaderBytes;
+    const std::uint64_t directoryOffset = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
     const std::uint64_t requirementOffset = AlignPackPayload(directoryOffset +
-        entryCount * harken::kPackDirectoryEntryBytes);
+        entryCount * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
     const std::uint64_t snapshotOffset = AlignPackPayload(
         requirementOffset + requirementPayload.size());
     std::vector<std::uint8_t> bytes(snapshotOffset + payload.size(), 0);
     std::memcpy(bytes.data() + requirementOffset, requirementPayload.data(),
                 requirementPayload.size());
     std::memcpy(bytes.data() + snapshotOffset, payload.data(), payload.size());
-    harken::PackDirectoryEntry requirementEntry;
-    requirementEntry.kind = harken::kPackEntryKindPackRequirementBlock;
-    requirementEntry.vintage = harken::kPackPackRequirementBlockVintage;
+    harkenstudiobuild::PackDirectoryEntry requirementEntry;
+    requirementEntry.kind = HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK;
+    requirementEntry.vintage = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
     requirementEntry.offset = requirementOffset;
     requirementEntry.size = requirementPayload.size();
-    requirementEntry.payloadChecksum = harken::Fnv1a64(
+    requirementEntry.payloadChecksum = harkenstudiobuild::Fnv1a64(
         requirementPayload.data(), requirementPayload.size());
-    harken::SerializePackDirectoryEntry(requirementEntry,
+    harkenstudiobuild::SerializePackRow<HkPackDirectoryEntry>(requirementEntry,
         bytes.data() + directoryOffset);
-    harken::PackDirectoryEntry snapshotEntry;
-    snapshotEntry.kind = harken::kPackEntryKindBusDefinitionSnapshot;
-    snapshotEntry.vintage = harken::kPackBusDefinitionSnapshotVintage;
+    harkenstudiobuild::PackDirectoryEntry snapshotEntry;
+    snapshotEntry.kind = HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT;
+    snapshotEntry.vintage = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
     snapshotEntry.relationOrdinal = 1;
     snapshotEntry.offset = snapshotOffset;
     snapshotEntry.size = payload.size();
-    snapshotEntry.payloadChecksum = harken::Fnv1a64(payload.data(), payload.size());
-    harken::SerializePackDirectoryEntry(snapshotEntry,
-        bytes.data() + directoryOffset + harken::kPackDirectoryEntryBytes);
-    harken::PackFileHeader packHeader;
-    packHeader.formatVersion = harken::kPackFormatVersion;
-    packHeader.headerBytes = harken::kPackFileHeaderBytes;
+    snapshotEntry.payloadChecksum = harkenstudiobuild::Fnv1a64(payload.data(), payload.size());
+    harkenstudiobuild::SerializePackRow<HkPackDirectoryEntry>(snapshotEntry,
+        bytes.data() + directoryOffset + harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+    harkenstudiobuild::PackFileHeader packHeader;
+    packHeader.formatVersion = HK_PACK_FORMAT_VERSION;
+    packHeader.headerBytes = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
     packHeader.fileBytes = bytes.size();
-    packHeader.packKind = harken::kPackKindInit;
+    packHeader.packKind = HK_PACK_KIND_INIT;
     packHeader.entryCount = entryCount;
     packHeader.directoryOffset = directoryOffset;
-    packHeader.directoryChecksum = harken::Fnv1a64(
+    packHeader.directoryChecksum = harkenstudiobuild::Fnv1a64(
         bytes.data() + directoryOffset,
-        entryCount * harken::kPackDirectoryEntryBytes);
-    harken::SerializePackFileHeader(packHeader, bytes.data());
+        entryCount * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+    harkenstudiobuild::SerializePackRow<HkPackFileHeader>(packHeader, bytes.data());
     return bytes;
 }
 
-void ExpectBothParsers(const std::vector<std::uint8_t>& bytes, bool accepted) {
-    harken::PackCanonicalImage runtime;
-    harkenstudiobuild::PackCanonicalImage studio;
-    EXPECT_EQ(accepted ? VN_OK : VN_BAD_PACK,
-        harken::ParsePackCanonicalImage(bytes.data(), bytes.size(), &runtime));
+void ExpectParser(const std::vector<std::uint8_t>& bytes, bool accepted) {
+    harkenstudiobuild::PackCanonicalImage image;
     EXPECT_EQ(accepted ? harkenstudiobuild::kPackOk : harkenstudiobuild::kPackInvalid,
-        harkenstudiobuild::ParsePackCanonicalImage(bytes.data(), bytes.size(), &studio));
+        harkenstudiobuild::ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
 TEST(CanonicalBusSendSnapshotParser, CapabilityFourRejectsCombinedGraphCycles) {
-    const VnObjectId source = harkentest::ObjectId(801);
-    const VnObjectId destination = harkentest::ObjectId(802);
-    ExpectBothParsers(MakeBusSendSnapshotPack(4, false,
+    const harkenstudio::ObjectId source = harkentest::StudioObjectId(801);
+    const harkenstudio::ObjectId destination = harkentest::StudioObjectId(802);
+    ExpectParser(MakeBusSendSnapshotPack(4, false,
         {{source, destination}}), true);
-    ExpectBothParsers(MakeBusSendSnapshotPack(4, false,
+    ExpectParser(MakeBusSendSnapshotPack(4, false,
         {{source, destination}, {destination, source}}), false);
-    ExpectBothParsers(MakeBusSendSnapshotPack(4, true,
+    ExpectParser(MakeBusSendSnapshotPack(4, true,
         {{source, destination}}), false);
 }
 
 TEST(CanonicalBusSendSnapshotParser, EffectPublicationSharesIdentitySliceAndValueValidation) {
-    const auto withEffects = [](harken::PackCanonicalImage& image) {
+    const auto withEffects = [](harkenstudiobuild::PackCanonicalImage& image) {
         auto& header = image.busDefinitionSnapshotHeader;
         header.effectCount = 2;
         header.effectParameterCount = 4;
         header.runtimeCapabilityMask |= (UINT64_C(1) << 19) |
             (UINT64_C(1) << (32 + VN_EFFECT_LIMITER));
-        header.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
+        header.compileTargetProfileFingerprint = harkenstudiobuild::busfingerprint::ProfileFingerprintV1(
             header.profileVintage, header.renderSampleRateHz, header.mixLayout,
             header.deviceLayout, header.runtimeCapabilityMask);
         image.busDefinitionBusesV2[1].effectCount = 2;
         image.busDefinitionBusesV2[2].effectFirst = 2;
         image.busDefinitionEffects = {
-            {harkentest::ObjectId(801), harkentest::ObjectId(901), 0, VN_EFFECT_LIMITER, 2, 0, 0, 2},
-            {harkentest::ObjectId(801), harkentest::ObjectId(902), 1, VN_EFFECT_LIMITER, 2, 1, 2, 2}};
+            {harkentest::StudioObjectId(801), harkentest::StudioObjectId(901), 0, VN_EFFECT_LIMITER, 2, 0, 0, 2},
+            {harkentest::StudioObjectId(801), harkentest::StudioObjectId(902), 1, VN_EFFECT_LIMITER, 2, 1, 2, 2}};
         image.busDefinitionEffectParameters = {{0, -6.0f}, {1, 100.0f}, {0, -12.0f}, {1, 50.0f}};
     };
-    ExpectBothParsers(MakeBusSendSnapshotPack(5, false, {}, withEffects), true);
+    ExpectParser(MakeBusSendSnapshotPack(5, false, {}, withEffects), true);
     for (const auto bit : {19u, 32u + VN_EFFECT_LIMITER}) {
-        ExpectBothParsers(MakeBusSendSnapshotPack(5, false, {}, [&](auto& image) {
+        ExpectParser(MakeBusSendSnapshotPack(5, false, {}, [&](auto& image) {
             withEffects(image);
             auto& header = image.busDefinitionSnapshotHeader;
             header.runtimeCapabilityMask &= ~(UINT64_C(1) << bit);
-            header.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
+            header.compileTargetProfileFingerprint = harkenstudiobuild::busfingerprint::ProfileFingerprintV1(
                 header.profileVintage, header.renderSampleRateHz, header.mixLayout,
                 header.deviceLayout, header.runtimeCapabilityMask);
         }), false);
     }
-    for (const auto& corrupt : std::vector<std::function<void(harken::PackCanonicalImage&)>>{
+    for (const auto& corrupt : std::vector<std::function<void(harkenstudiobuild::PackCanonicalImage&)>>{
         [](auto& image) { image.busDefinitionEffects[0].flags = 2; },
         [](auto& image) { image.busDefinitionEffects[1].effectId = image.busDefinitionEffects[0].effectId; },
         [](auto& image) { image.busDefinitionEffects[1].slot = 0; },
@@ -230,7 +226,7 @@ TEST(CanonicalBusSendSnapshotParser, EffectPublicationSharesIdentitySliceAndValu
         [](auto& image) { image.busDefinitionBusesV2[1].faderAfterSlot = 4; },
         [](auto& image) { image.busDefinitionBusesV2[2].effectFirst = 0; },
     }) {
-        ExpectBothParsers(MakeBusSendSnapshotPack(5, false, {}, [&](auto& image) {
+        ExpectParser(MakeBusSendSnapshotPack(5, false, {}, [&](auto& image) {
             withEffects(image);
             corrupt(image);
         }), false);

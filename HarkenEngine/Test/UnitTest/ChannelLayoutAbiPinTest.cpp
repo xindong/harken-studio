@@ -7,6 +7,7 @@
 // discovery and reporting. A renumber, a mid-struct insertion, or a packing
 // change fails compilation.
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "harken/core/ChannelLayout.h"
 

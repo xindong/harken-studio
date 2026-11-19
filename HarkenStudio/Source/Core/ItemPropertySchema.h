@@ -3,7 +3,7 @@
 #include "PlayablePropertyAuthoringV1.h"
 #include "FilterSemantics.h"
 #include "Components/VEffect.h"
-#include "harken_playable_property_studio.g.h"
+#include "harken_playable_properties/PlayablePropertyStudio.h"
 
 #include <QJsonArray>
 #include <QJsonObject>

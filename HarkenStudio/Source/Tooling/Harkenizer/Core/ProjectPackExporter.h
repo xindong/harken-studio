@@ -9,7 +9,7 @@
 #include "PackArtifactCache.h"
 #include "PackGenerationRecord.h"
 #include "ProjectTypes.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include <QObject>
 #include <QMap>
 #include <QSet>
@@ -117,6 +117,7 @@ public:
         QStringList warnings;
         int     mediaCacheHits = 0;
         int     mediaConversions = 0;
+        QJsonArray media;
         uint64_t currentWorldSemanticFingerprint = 0;
         std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         QString resourceFingerprint;
@@ -276,6 +277,7 @@ private:
         std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
         int cacheHits = 0;
         int conversions = 0;
+        QJsonArray media;
         QStringList warnings;
     };
 

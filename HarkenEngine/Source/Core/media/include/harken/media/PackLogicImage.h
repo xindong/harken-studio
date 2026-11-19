@@ -1,0 +1,452 @@
+// Pack logic image: the validated in-memory form of a v2 .pack file's
+// entry set, and the reference-closure checker over it.
+//
+// ParsePackV2Image is the v2 counterpart of the v1 ReadAndValidate
+// front half: it proves every container invariant — header sanity,
+// directory checksum, per-entry payload checksums, schema vintages,
+// wire-level parse rules, media blob integrity (the v1 checks,
+// replicated so the v1 parser stays untouched line for line), pack-kind
+// entry discipline, per-kind id uniqueness, and intra-pack relation
+// uniqueness — before the caller touches any registry or table state.
+// Illegal directory vintage, and canonical pack/entry kinds on this
+// path, refuse with VN_PACK_INCOMPATIBLE. Every other failure refuses
+// the whole image with VN_BAD_PACK.
+//
+// CheckPackClosure then proves the section-19.4 closure rule: every
+// logic reference the pack makes must resolve against {the pack itself +
+// already-loaded state}, the latter reached through caller-supplied
+// resolver callbacks so this module stays free of engine dependencies
+// (and unit tests can drive it synthetically). Closure is deliberately
+// STRICTER than live registration where the two differ. That is pack-only
+// content discipline, not a claim of validator equivalence.
+//
+// Logic thread only, like every other pack surface.
+#ifndef HARKEN_MEDIA_PACK_LOGIC_IMAGE_H
+#define HARKEN_MEDIA_PACK_LOGIC_IMAGE_H
+
+#include <harken/ObjectId.h>
+#include <harken/Harken.h>
+#include <harken/BusDefinitionFingerprintValue.h>
+#include "harken/core/VariableLabel.h"
+
+#include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
+#include "harken/media/PcmRegistry.h"
+#include "harken/media/PackMediaRange.h"
+
+#include <cstdint>
+#include "harken/core/detail/PackDecodeBudget.h"
+#include <span>
+#include <vector>
+
+namespace harken {
+
+struct ContainerWorldInstallViewV1;
+struct PackCanonicalImage;
+
+// Decoded Sound definition streaming choices of one artifact, sorted by
+// id. Runtime-internal summary of the partition; not a wire structure.
+struct PackSoundStreamingRow {
+    VnObjectId soundId{};
+    bool streamed = false;
+};
+
+// Appends the Sound rows of a decoded definition view, then sorts by id.
+void CollectSoundStreaming(const ContainerWorldInstallViewV1& view,
+                           std::vector<PackSoundStreamingRow>* out);
+// True when rows define soundId; *streamed receives its mode.
+bool FindSoundStreaming(const std::vector<PackSoundStreamingRow>& rows,
+                        VnSoundId soundId, bool* streamed) noexcept;
+
+// Storage a media item needs in the candidate publication. Media with no
+// Sound definition anywhere keep resident capability.
+enum class PackMediaDemand : std::uint8_t { Resident, Stream };
+struct PackMediaDemandResolver {
+    void* ctx = nullptr;
+    PackMediaDemand (*resolve)(void* ctx, const PackCanonicalImage& image,
+                               VnSoundId soundId) = nullptr;
+};
+
+inline PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
+    if ((media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) == 0) return {};
+    // Pack permits EOF as zero; keep the default PCM region representation.
+    return {media.loopStartFrame,
+            media.loopStartFrame != 0 && media.loopEndFrame == 0
+                ? media.frameCount : media.loopEndFrame};
+}
+
+// One parsed v2 pack, typed by entry kind. Media entries keep the v1
+// record form (their wire format is the v1 TOC entry, untouched);
+// container children live in per-entry vectors, and the
+// registration-facing descriptor structs are assembled by the
+// consumer, which owns wiring the array pointers.
+struct PackLogicImage {
+    std::uint32_t packKind = HK_PACK_KIND_CONTENT;
+
+    std::vector<PackTocEntry> media;
+    std::vector<PackBusEntry> buses;
+    std::vector<PackBusSendEntry> busSends;
+    std::vector<PackBusEffectEntry> busEffects;
+    std::vector<PackEffectDynamicRouteEntry> dynamicRoutes;
+
+    struct Attenuation {
+        VnAttenuationId id{};
+        VnAttenuationDesc desc{};
+    };
+    std::vector<Attenuation> attenuations;
+
+    struct BindingDefinition {
+        VnBindingId id{};
+        VnBindingDesc desc{};
+    };
+    std::vector<BindingDefinition> bindingDefinitions;
+
+    std::vector<PackBindingAttachmentEntry> bindingAttachments;
+
+    struct Container {
+        PackContainerEntryHeader header{};
+        std::vector<PackContainerChild> children;
+    };
+    std::vector<Container> containers;
+
+    struct VoiceRecipe {
+        PackVoiceRecipeEntryHeader header{};
+        PackVoiceRecipeTone tone{};
+        PackVoiceRecipeSpatial spatial{};
+        PackVoiceRecipePlayback playback{};
+        std::vector<PackVoiceRecipeInstall> installs;
+        std::vector<VnBindingId> bindings;
+    };
+    std::vector<VoiceRecipe> voiceRecipes;
+
+    // One (kind, id, payloadChecksum) triple per directory entry, in
+    // directory order. Replace staging diffs revisions with them: a
+    // same-id entry whose payload checksum is unchanged is a no-op, so
+    // an idempotent replace touches nothing. Relation kinds carry
+    // ordinal ids and are diffed by their payload identity instead.
+    struct Stamp {
+        std::uint32_t kind = 0;
+        VnObjectId id{};
+        std::uint64_t checksum = 0;
+    };
+    std::vector<Stamp> stamps;
+
+    std::uint32_t EntryCount() const {
+        return static_cast<std::uint32_t>(
+            media.size() + buses.size() + busSends.size() +
+            busEffects.size() + dynamicRoutes.size() +
+            attenuations.size() + bindingDefinitions.size() +
+            bindingAttachments.size() + containers.size() +
+            voiceRecipes.size());
+    }
+};
+
+struct PackCanonicalImage {
+    PackCanonicalImage() = default;
+    PackCanonicalImage(const PackCanonicalImage&) = default;
+    PackCanonicalImage(PackCanonicalImage&&) noexcept = default;
+    PackCanonicalImage& operator=(PackCanonicalImage&&) noexcept = default;
+    PackCanonicalImage& operator=(const PackCanonicalImage& source) {
+        if (this != &source) {
+            PackCanonicalImage copy(source);
+            *this = std::move(copy);
+        }
+        return *this;
+    }
+    detail::PackDecodeCharge staging;
+    std::vector<PackExternalMediaReference> externalMedia;
+    std::uint32_t packKind = 0;
+    std::uint64_t packStableId = 0;
+    PackRequirementBlock requirement{};
+    bool hasRequirement = false;
+    bool hasPartition = false;
+    PackCanonicalPartitionHeader partitionHeader{};
+    std::vector<std::uint8_t> partitionBody;
+    std::vector<PackDependencyEdge> dependencyEdges;
+    struct VariablePolicyOverlay {
+        VnObjectId variableId{};
+        std::uint8_t writers = 0;
+        std::uint64_t executionFingerprint = 0;
+        std::vector<std::int32_t> discreteAnchors;
+        std::uint64_t labelMappingFingerprint = 0;
+        std::uint64_t catalogFingerprint = 0;
+        std::vector<VariableLabelDefinitionV1> labels;
+    };
+    std::vector<VariablePolicyOverlay> variablePolicyOverlays;
+    bool hasVariablePolicyOverlay = false;
+    struct VariableRequirement {
+        std::uint8_t identityClass = 0;
+        VnObjectId stableId{};
+        std::uint64_t expectedExecutionFingerprint = 0;
+        std::uint64_t expectedLabelMappingFingerprint = 0;
+    };
+    std::vector<VariableRequirement> variableRequirements;
+    bool hasVariableRequirements = false;
+    std::vector<PackSoundStreamingRow> soundStreaming;
+    std::vector<PackTocEntry> media;
+    std::vector<PackBusEntry> buses;
+    std::vector<PackBusSendEntry> busSends;
+    std::vector<PackBusEffectEntry> busEffects;
+    std::vector<PackEffectDynamicRouteEntry> dynamicRoutes;
+    std::vector<PackLogicImage::Attenuation> attenuations;
+    std::vector<PackEffectPreset> effectPresets;
+    std::vector<PackLogicImage::BindingDefinition> bindingDefinitions;
+    std::vector<PackBindingAttachmentEntry> bindingAttachments;
+    bool hasBusDefinitionSnapshot = false;
+    PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
+    std::vector<PackBusDefinitionBus> busDefinitionBusesV2;
+    std::vector<PackBusDefinitionSend> busDefinitionSendsV2;
+    std::vector<PackBusDefinitionEffect> busDefinitionEffects;
+    std::vector<PackBusDefinitionEffectParameter> busDefinitionEffectParameters;
+    std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
+    std::vector<float> busDefinitionCoefficients;
+};
+
+PackCanonicalImage CopyCanonicalImageWithBudget(const PackCanonicalImage& source,
+    const detail::PackDecodeBudget& budget);
+
+inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image,
+    std::span<const PackBusDefinitionEffect> effects,
+    std::span<const PackBusDefinitionEffectParameter> parameters) noexcept {
+    const auto& header = image.busDefinitionSnapshotHeader;
+    if (header.effectCount != effects.size() || header.effectParameterCount != parameters.size() ||
+        header.busCount != image.busDefinitionBusesV2.size() ||
+        header.sendCount != image.busDefinitionSendsV2.size() ||
+        header.downmixCount != image.busDefinitionDownmixesV2.size() ||
+        header.coefficientCount != image.busDefinitionCoefficients.size()) return 0;
+    std::uint64_t hash = busfingerprint::kOffsetBasis;
+    const auto byte = [&](std::uint8_t value) { hash = busfingerprint::Step(hash, value); };
+    const auto u32 = [&](std::uint32_t value) { busfingerprint::AppendU32(byte, value); };
+    const auto u64 = [&](std::uint64_t value) { busfingerprint::AppendU64(byte, value); };
+    const auto f32 = [&](float value) { u32(busfingerprint::CanonicalFloatBits(value)); };
+    const auto id = [&](VnObjectId value) {
+        std::uint8_t bytes[16];
+        StoreObjectId(bytes, value);
+        for (std::uint8_t valueByte : bytes) byte(valueByte);
+    };
+    constexpr char tag[] = "harken.bus.published.v2";
+    u32(static_cast<std::uint32_t>(sizeof(tag) - 1));
+    for (std::size_t i = 0; i + 1 < sizeof(tag); ++i) byte(static_cast<std::uint8_t>(tag[i]));
+    u32(2);
+    u32(header.publicationCapabilityVintage);
+    u32(header.profileVintage);
+    u32(header.renderSampleRateHz);
+    u32(header.mixLayout);
+    u32(header.deviceLayout);
+    u64(header.runtimeCapabilityMask);
+    u64(header.compileTargetProfileFingerprint);
+    u32(header.busCount);
+    u32(header.sendCount);
+    u32(header.effectCount);
+    u32(header.effectParameterCount);
+    u32(header.downmixCount);
+    u32(header.coefficientCount);
+    for (const auto& row : image.busDefinitionBusesV2) {
+        id(row.busId);
+        id(row.parentId);
+        u32(row.feedsFirstOrdinal);
+        f32(row.faderDb);
+        u32(row.faderAfterSlot);
+        u32(row.outputLayout);
+        u32(row.effectFirst);
+        u32(row.effectCount);
+        u32(row.downmixFirst);
+        u32(row.downmixCount);
+        f32(row.outputBusVolumeDb);
+    }
+    for (const auto& row : image.busDefinitionSendsV2) {
+        id(row.source);
+        id(row.target);
+        f32(row.levelDb);
+        u32(0);
+    }
+    for (const auto& row : effects) {
+        id(row.busId);
+        id(row.effectId);
+        u32(row.slot);
+        u32(row.effectType);
+        u32(row.descriptorVintage);
+        u32(row.flags);
+        u32(row.parameterFirst);
+        u32(row.parameterCount);
+    }
+    for (const auto& row : parameters) {
+        u32(row.index);
+        f32(row.value);
+    }
+    for (const auto& row : image.busDefinitionDownmixesV2) {
+        id(row.busId);
+        u32(row.sourceLayout);
+        u32(row.destinationLayout);
+        u32(row.coefficientFirst);
+        u32(row.coefficientCount);
+    }
+    for (float value : image.busDefinitionCoefficients) f32(value);
+    return busfingerprint::Finalize(hash);
+}
+
+inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
+    return CanonicalVolumeBusFingerprint(image, {}, {});
+}
+// Parses and validates a whole v2 file image (bytes[0..fileBytes)).
+// VN_PACK_INCOMPATIBLE for an illegal directory vintage (layout id the
+// current reader does not accept) and for canonical pack/entry kinds on
+// this path. VN_BAD_PACK for every structural failure: header/directory/
+// payload checksum or bounds violations, unknown kinds, wire parse
+// refusals (size mismatches, nonzero reserved bytes), media entries
+// failing the v1 container invariants, entry kinds illegal for the pack
+// kind (a content pack carrying a resident-only kind, a resident pack
+// carrying media/containers or a non-BUS-scope binding surface),
+// directory ids disagreeing with payload ids, duplicate ids within a
+// kind, or duplicate relations (send edges, attachments). The caller
+// passes the exact file size; a header whose fileBytes disagrees
+// refuses. Touches no engine state.
+VnResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
+                          PackLogicImage* out);
+
+// Checks the complete decoded edge list before optional-edge filtering. The
+// expected Init identity must come from the export plan or validated Init,
+// not from the edge under validation. Does not resolve loaded providers.
+VnResult ValidateCanonicalInitDependency(
+    std::span<const PackDependencyEdge> edges,
+    std::uint64_t expectedInitPackStableId) noexcept;
+
+inline constexpr std::uint64_t kNeutralMasterBusContentGeneration = 1;
+inline constexpr std::uint64_t kNeutralMasterPublishedBusFingerprint =
+    0xB15C0001ull;
+inline constexpr std::uint64_t kNeutralMasterCompileTargetProfileFingerprint =
+    0xB15C0002ull;
+
+struct CanonicalBusTriple {
+    std::uint64_t busContentGeneration = 0;
+    std::uint64_t publishedBusFingerprint = 0;
+    std::uint64_t compileTargetProfileFingerprint = 0;
+};
+
+inline CanonicalBusTriple NeutralMasterBusTriple() noexcept {
+    return {kNeutralMasterBusContentGeneration,
+            kNeutralMasterPublishedBusFingerprint,
+            kNeutralMasterCompileTargetProfileFingerprint};
+}
+
+inline bool CanonicalBusTripleFullyNonzero(const CanonicalBusTriple& triple) noexcept {
+    return triple.busContentGeneration != 0 &&
+           triple.publishedBusFingerprint != 0 &&
+           triple.compileTargetProfileFingerprint != 0;
+}
+
+inline bool CanonicalBusTripleEqual(const CanonicalBusTriple& left,
+                                    const CanonicalBusTriple& right) noexcept {
+    return left.busContentGeneration == right.busContentGeneration &&
+           left.publishedBusFingerprint == right.publishedBusFingerprint &&
+           left.compileTargetProfileFingerprint ==
+               right.compileTargetProfileFingerprint;
+}
+
+inline CanonicalBusTriple RequirementBusTriple(const PackRequirementBlock& block) noexcept {
+    return {block.busContentGeneration, block.publishedBusFingerprint,
+            block.compileTargetProfileFingerprint};
+}
+
+inline CanonicalBusTriple PartitionBusTriple(
+    const PackCanonicalPartitionHeader& header) noexcept {
+    return {header.busContentGeneration, header.publishedBusFingerprint,
+            header.compileTargetProfileFingerprint};
+}
+
+inline CanonicalBusTriple SnapshotBusTriple(
+    const PackBusDefinitionSnapshotHeader& header) noexcept {
+    return {header.contentGeneration, header.publishedBusFingerprint,
+            header.compileTargetProfileFingerprint};
+}
+
+inline CanonicalBusTriple DependencyBusTriple(const PackDependencyEdge& edge) noexcept {
+    return {edge.expectedBusContentGeneration, edge.expectedPublishedBusFingerprint,
+            edge.expectedCompileTargetProfileFingerprint};
+}
+
+// The v2 snapshot parent check accepts any Bus row order and bounds a full
+// 4096-row chain without recursive traversal.
+bool ValidateCanonicalBusParentForestV2(
+    std::span<const PackBusDefinitionBus> buses);
+
+// Shipping decode of Init / CanonicalContent files (LoadCanonicalPack).
+// The old LoadPackV2 / ParsePackV2Image path refuses those artifacts
+// with VN_PACK_INCOMPATIBLE before this runs. Illegal directory vintage,
+// a program-chapter bodyVintage that is not the current write table,
+// and v2 Container / VoiceRecipe entries are VN_PACK_INCOMPATIBLE too.
+// An optional artifact hash covers the original bytes, including on parse
+// failure. It is independent of all parser checks and their error order.
+VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
+                                 std::uint64_t fileBytes,
+                                 PackCanonicalImage* out,
+                                 std::uint64_t* artifactHash = nullptr);
+
+VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes,
+    std::uint64_t fileBytes, PackCanonicalImage* out,
+    std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget);
+
+// Uses the same semantic parser, then verifies the cached metadata and all
+// physical bytes before returning immutable sample owners. Image and sample
+// outputs are unchanged on failure. Unsupported layouts request a byte-span retry.
+// One opened source serves metadata, validation and later range reads.
+// Media whose demand is Stream get a validated range owner instead of
+// resident samples; without a resolver only the artifact's own Sound
+// definitions decide. With metadataOnly no physical bytes are consumed and
+// no samples are produced.
+struct PackCanonicalReadHooksForTests {
+    void (*beforeSequentialRead)(void*, std::uint64_t) = nullptr;
+    void* userData = nullptr;
+};
+VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
+    PackCanonicalImage* out, std::vector<PCMRegistry::PreparedPackSamples>* samples,
+    std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
+    std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates = {},
+    bool* retryWithBytes = nullptr, const PackCanonicalReadHooksForTests* hooks = nullptr,
+    const detail::PackDecodeBudget& budget = {},
+    detail::PackDecodeCharge* sampleStaging = nullptr,
+    const PackMediaDemandResolver* demand = nullptr, bool metadataOnly = false);
+
+// Already-loaded-state view for the closure check. Every callback
+// answers "does this id resolve outside the pack right now": playables
+// cover the whole flat playable-ID space (PCM, streams, containers),
+// buses the live bus table, and bindings the definition registry. Null
+// function pointers answer "no".
+struct PackClosureResolver {
+    void* ctx = nullptr;
+    bool (*playableExists)(void* ctx, VnObjectId id) = nullptr;
+    bool (*busExists)(void* ctx, VnBusId id) = nullptr;
+    bool (*bindingExists)(void* ctx, VnBindingId id) = nullptr;
+};
+
+// The reference classes a closure failure is reported against, for the
+// refusal log record.
+enum class PackClosureRef : std::uint32_t {
+    SendBus = 1,          // a send edge's from/to bus
+    MeterBus = 2,         // a meter wiring's bus
+    AttachmentBinding = 3, // an attachment's binding id
+    AttachmentBus = 4,     // a BUS attachment's object
+    AttachmentPlayable = 5, // a VOICE attachment's object
+    ContainerChild = 6,    // a container child playable
+    BusParent = 10,        // a bus entry's parent bus
+    RecipePlayable = 11,   // a Voice Recipe's playable id
+    RecipeBinding = 12,    // a Voice Recipe's binding id
+    BusEffectTarget = 13,  // a Bus Effect's target bus
+    DynamicRouteTarget = 14, // a route's target bus
+    DynamicRouteSource = 15  // a route's source bus
+};
+
+// Verifies the closure rule. VN_OK when every reference resolves against
+// {the image itself + the resolver}; VN_UNKNOWN_ID otherwise, with the
+// failing reference class, the referring entry's id, and the missing id
+// written to the out parameters (any may be null) so the loader's log
+// record can name them. Touches no engine state.
+VnResult CheckPackClosure(const PackLogicImage& image,
+                          const PackClosureResolver& resolver,
+                          PackClosureRef* outRefClass,
+                          VnObjectId* outReferrerId,
+                          VnObjectId* outMissingId);
+
+} // namespace harken
+
+#endif // HARKEN_MEDIA_PACK_LOGIC_IMAGE_H
