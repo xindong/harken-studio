@@ -52,7 +52,7 @@ TEST(CanonicalPackSetStorage, CompactMediaSharesExactBitsAndDistinguishesSignedZ
     for (const int path : {0, 1, 2}) {
         SCOPED_TRACE(path);
         harken::PCMRegistry registry;
-        harken::PackTable packs(3, 4);
+        harken::PackTable packs{};
         const auto sound = harkentest::ObjectId(100);
         SetStorageMember a(21, sound, 0.0f, frames), b(22, sound, 0.0f, frames),
                          negative(23, sound, -0.0f, frames);
@@ -372,7 +372,7 @@ TEST(CanonicalPackSetStorage, WindowedDuplicateSharesOnlyExactUnpublishedSamples
 
 TEST(CanonicalPackSetStorage, DistinctHandlesAndTokensShareEqualMedia) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation prepared;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &prepared));
@@ -396,7 +396,7 @@ TEST(CanonicalPackSetStorage, DistinctHandlesAndTokensShareEqualMedia) {
 
 TEST(CanonicalPackSetStorage, EqualMediaRevisionsDoNotPinOldRowsForCurrentReaders) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 1, 1);
+    harken::PackTable packs{};
     const auto sound = harkentest::ObjectId(100);
     SetStorageMember member(21, sound, 0.25f);
     harken::PackTable::PreparedSetMutation initial;
@@ -430,7 +430,7 @@ TEST(CanonicalPackSetStorage, EqualMediaRevisionsDoNotPinOldRowsForCurrentReader
 
 TEST(CanonicalPackSetStorage, KeptOwnerSurvivesSharedOwnerRemovalAndOldReaderReplacement) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4, 2);
+    harken::PackTable packs{};
     const auto sound = harkentest::ObjectId(100);
     SetStorageMember a(21, sound, 0.25f), b(22, sound, 0.25f);
     harken::PackTable::PreparedSetMutation first;
@@ -479,7 +479,7 @@ TEST(CanonicalPackSetStorage, KeptOwnerSurvivesSharedOwnerRemovalAndOldReaderRep
 
 TEST(CanonicalPackSetStorage, MixedKeepMutationsPreserveDistinctTokensAndOldReaders) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(3, 8, 4);
+    harken::PackTable packs{};
     const auto soundA = harkentest::ObjectId(100), soundB = harkentest::ObjectId(101);
     SetStorageMember init(20, harkentest::ObjectId(99), 0.0f);
     SetStorageMember a(21, soundA, 0.25f), b(22, soundB, 0.5f);
@@ -528,7 +528,7 @@ TEST(CanonicalPackSetStorage, MixedKeepMutationsPreserveDistinctTokensAndOldRead
 
 TEST(CanonicalPackSetStorage, CancellationPreservesHandleTokenAndCookieFloors) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(101), 0.5f);
     VnPackHandle handle = 0;
     harken::PackResourceRevisionToken token = 0;
@@ -551,7 +551,7 @@ TEST(CanonicalPackSetStorage, CancellationPreservesHandleTokenAndCookieFloors) {
 
 TEST(CanonicalPackSetStorage, LaterSharedMismatchPublishesNothing) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.5f);
     harken::PackTable::PreparedSetMutation refused;
     EXPECT_EQ(VN_IN_USE, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &refused));
@@ -566,7 +566,7 @@ TEST(CanonicalPackSetStorage, LaterSharedMismatchPublishesNothing) {
 
 TEST(CanonicalPackSetStorage, SharedRevisionRequiresAllOwnersAndKeepsOldClosure) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &first));
@@ -607,7 +607,7 @@ TEST(CanonicalPackSetStorage, SharedRevisionRequiresAllOwnersAndKeepsOldClosure)
 
 TEST(CanonicalPackSetStorage, FullTableReusesRemovedSlotWithFreshHandle) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(101), 0.5f), c(23, harkentest::ObjectId(102), 0.75f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &first));
@@ -627,9 +627,9 @@ TEST(CanonicalPackSetStorage, FullTableReusesRemovedSlotWithFreshHandle) {
     EXPECT_NE(0u, registry.CookieOf(harkentest::ObjectId(102)));
 }
 
-TEST(CanonicalPackSetStorage, LateRetirementCapacityFailureCancelsAllReservations) {
+TEST(CanonicalPackSetStorage, RetirementGrowthFailureCancelsReservations) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 1);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(101), 0.5f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &first));
@@ -637,19 +637,21 @@ TEST(CanonicalPackSetStorage, LateRetirementCapacityFailureCancelsAllReservation
     const auto handleA = first.HandleAt(0), handleB = first.HandleAt(1);
     const auto cookie = registry.CookieOf(harkentest::ObjectId(100));
     harken::PackTable::PreparedSetMutation refused;
+    packs.SetStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, 0);
     EXPECT_EQ(VN_BACKPRESSURE, packs.PrepareCanonicalSet(
         {a.Input(handleA), b.Input(handleB)}, {}, registry, &refused));
     EXPECT_FALSE(refused.IsPrepared());
     EXPECT_EQ(2u, packs.LoadedCount());
     EXPECT_EQ(cookie, registry.CookieOf(harkentest::ObjectId(100)));
     harken::PackTable::PreparedSetMutation retry;
+    packs.SetStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, SIZE_MAX);
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(handleA)}, {}, registry, &retry));
     EXPECT_EQ(3u, retry.ResourceTokenAt(0));
 }
 
 TEST(CanonicalPackSetStorage, PcmAllocationFailureRestoresAllReservations) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &first));
@@ -714,7 +716,7 @@ TEST(CanonicalPackSetStorage, AllocationProbeDetectsNormalArrayAlignedAndNothrow
 
 TEST(CanonicalPackSetStorage, CommitHasNoAllocationsWithReplacementAndSharedFanout) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(3, 6, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f), c(23, harkentest::ObjectId(101), 0.5f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input(), c.Input()}, {}, registry, &first));
@@ -749,7 +751,7 @@ TEST(CanonicalPackSetStorage, LoopViewAndContentIdentityMatchDirectRegistration)
                             harken::PcmLoopRegion{2, 6},
                             harken::PcmLoopRegion{2, 0}}) {
         harken::PCMRegistry registry, direct;
-        harken::PackTable packs(2, 4);
+        harken::PackTable packs{};
         SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
         a.media[0].flags = b.media[0].flags = harken::kPackFlagLoopable;
         a.media[0].loopStartFrame = b.media[0].loopStartFrame = loop.startFrame;
@@ -786,7 +788,7 @@ TEST(CanonicalPackSetStorage, LoopViewAndContentIdentityMatchDirectRegistration)
 
 TEST(CanonicalPackSetStorage, DefaultAndNonLoopableInputsHaveEmptyLoop) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 2);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     a.media[0].loopStartFrame = 2;
     a.media[0].loopEndFrame = 6;
@@ -802,7 +804,7 @@ TEST(CanonicalPackSetStorage, DefaultAndNonLoopableInputsHaveEmptyLoop) {
 
 TEST(CanonicalPackSetStorage, SinglePackEofLoopLoadsSharesAndReplaces) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4, 4);
+    harken::PackTable packs{};
     const auto sound = harkentest::ObjectId(100);
     const auto entriesFor = [](const SetStorageMember& member) {
         std::vector<harken::PackEntry> entries(1);
@@ -888,7 +890,7 @@ TEST(CanonicalPackSetStorage, SinglePackEofLoopLoadsSharesAndReplaces) {
 TEST(CanonicalPackSetStorage, MetadataMismatchPublishesNothing) {
     for (int field = 0; field < 6; ++field) {
         harken::PCMRegistry registry;
-        harken::PackTable packs(2, 4);
+        harken::PackTable packs{};
         SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
         switch (field) {
         case 0: b.media[0].sampleRate = 44100; break;
@@ -910,7 +912,7 @@ TEST(CanonicalPackSetStorage, MetadataMismatchPublishesNothing) {
 
 TEST(CanonicalPackSetStorage, LoopOnlyReplacementChangesIdentityAndKeepsOldClosure) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 2, 2);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     a.media[0].flags = harken::kPackFlagLoopable;
     a.media[0].loopEndFrame = 6;
@@ -938,7 +940,7 @@ TEST(CanonicalPackSetStorage, LoopOnlyReplacementChangesIdentityAndKeepsOldClosu
 
 TEST(CanonicalPackSetStorage, MoveAndExplicitCancelReleaseReservations) {
     harken::PCMRegistry registry, otherRegistry;
-    harken::PackTable packs(1, 1), otherPacks(1, 1);
+    harken::PackTable packs{}, otherPacks{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -965,7 +967,7 @@ TEST(CanonicalPackSetStorage, MoveAndExplicitCancelReleaseReservations) {
 
 TEST(CanonicalPackSetStorage, RemovalOnlyPreservesSharedMediaUntilLastOwner) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4, 2);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input(), b.Input()}, {}, registry, &first));
@@ -993,7 +995,7 @@ TEST(CanonicalPackSetStorage, RemovalOnlyPreservesSharedMediaUntilLastOwner) {
 
 TEST(CanonicalPackSetStorage, SampleBackingFailurePreservesPublishedGeneration) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 1);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(21, harkentest::ObjectId(100), 0.75f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1016,7 +1018,7 @@ TEST(CanonicalPackSetStorage, SampleBackingFailurePreservesPublishedGeneration) 
 
 TEST(CanonicalPackSetStorage, DuplicateIdentityAndInvalidHandlesDoNotPublish) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), duplicate(21, harkentest::ObjectId(101), 0.5f), other(22, harkentest::ObjectId(101), 0.5f);
     harken::PackTable::PreparedSetMutation refused;
     EXPECT_EQ(VN_INVALID_ARG, packs.PrepareCanonicalSet({a.Input(), duplicate.Input()}, {}, registry, &refused));
@@ -1045,7 +1047,7 @@ TEST(CanonicalPackSetStorage, DuplicateIdentityAndInvalidHandlesDoNotPublish) {
 
 TEST(CanonicalPackSetStorage, RetainedTokenListIsValueOnly) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 2);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1067,7 +1069,7 @@ TEST(CanonicalPackSetStorage, RetainedTokenListIsValueOnly) {
 
 TEST(CanonicalPackSetStorage, InvalidCommitCannotMutateOwnersAndRemainsCancelable) {
     harken::PCMRegistry registry, wrongRegistry;
-    harken::PackTable packs(1, 1), wrongOwner(1, 1);
+    harken::PackTable packs{}, wrongOwner{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1099,7 +1101,7 @@ TEST(CanonicalPackSetStorage, InvalidCommitCannotMutateOwnersAndRemainsCancelabl
 
 TEST(CanonicalPackSetStorage, LegacyEmptyLoopRegistrationIsNotReusedForAuthoredLoop) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember legacy(21, harkentest::ObjectId(100), 0.25f), current(21, harkentest::ObjectId(100), 0.25f), shared(22, harkentest::ObjectId(100), 0.25f);
     // The predecessor has no authored loop; do not rely on registration
     // discarding loop facts to construct the different content identity.
@@ -1136,7 +1138,7 @@ TEST(CanonicalPackSetStorage, LegacyEmptyLoopRegistrationIsNotReusedForAuthoredL
 
 TEST(CanonicalPackSetStorage, EqualLegacyReferenceMediaCannotAcquireAnotherPackOwner) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     const auto sound = harkentest::ObjectId(100);
     SetStorageMember legacy(21, sound, 0.25f), shared(22, sound, 0.25f);
     std::vector<harken::PackEntry> entries(1);
@@ -1166,15 +1168,16 @@ TEST(CanonicalPackSetStorage, EqualLegacyReferenceMediaCannotAcquireAnotherPackO
     EXPECT_EQ(0u, registry.Count());
 }
 
-TEST(CanonicalPackSetStorage, FullTableAndInvalidArgumentsKeepCurrentGeneration) {
+TEST(CanonicalPackSetStorage, CancelledGrowthAndInvalidArgumentsKeepCurrentGeneration) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 1);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(101), 0.5f);
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
     packs.CommitPreparedSet(&first, registry);
     harken::PackTable::PreparedSetMutation refused;
-    EXPECT_EQ(VN_NO_PACK, packs.PrepareCanonicalSet({b.Input()}, {}, registry, &refused));
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({b.Input()}, {}, registry, &refused));
+    packs.CancelPreparedSet(&refused);
     EXPECT_EQ(VN_INVALID_ARG, packs.PrepareCanonicalSet({b.Input()}, {}, registry, nullptr));
     auto bad = b.Input();
     bad.media = nullptr;
@@ -1190,7 +1193,7 @@ TEST(CanonicalPackSetStorage, FullTableAndInvalidArgumentsKeepCurrentGeneration)
 
 TEST(CanonicalPackSetStorage, OverlappingPairPreparePreservesFirstTransaction) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(101), 0.5f);
     harken::PackTable::PreparedSetMutation first, refused;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1216,7 +1219,7 @@ TEST(CanonicalPackSetStorage, OverlappingPairPreparePreservesFirstTransaction) {
 
 TEST(CanonicalPackSetStorage, SameTableBlocksOtherRegistryUntilCancellation) {
     harken::PCMRegistry registry, otherRegistry;
-    harken::PackTable packs(2, 4);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first, refused;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1233,7 +1236,7 @@ TEST(CanonicalPackSetStorage, SameTableBlocksOtherRegistryUntilCancellation) {
 
 TEST(CanonicalPackSetStorage, SameRegistryBlocksOtherTableUntilCommit) {
     harken::PCMRegistry registry;
-    harken::PackTable packs(1, 2), otherPacks(1, 2);
+    harken::PackTable packs{}, otherPacks{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(101), 0.5f);
     harken::PackTable::PreparedSetMutation first, refused;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1251,7 +1254,7 @@ TEST(CanonicalPackSetStorage, SameRegistryBlocksOtherTableUntilCommit) {
 
 TEST(CanonicalPackSetStorage, ForeignLiveOutputDoesNotReserveOrCancelEitherPair) {
     harken::PCMRegistry registry, otherRegistry;
-    harken::PackTable packs(1, 2), otherPacks(1, 2);
+    harken::PackTable packs{}, otherPacks{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first, independent;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1266,7 +1269,7 @@ TEST(CanonicalPackSetStorage, ForeignLiveOutputDoesNotReserveOrCancelEitherPair)
 
 TEST(CanonicalPackSetStorage, MovesKeepSourceReservationAndReleaseOldTargetPair) {
     harken::PCMRegistry registry, otherRegistry;
-    harken::PackTable packs(1, 2), otherPacks(1, 2);
+    harken::PackTable packs{}, otherPacks{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     {
         harken::PackTable::PreparedSetMutation source, target;
@@ -1290,7 +1293,7 @@ TEST(CanonicalPackSetStorage, MovesKeepSourceReservationAndReleaseOldTargetPair)
 
 TEST(CanonicalPackSetStorage, InvalidCommitKeepsPendingReservationUntilCorrectCommit) {
     harken::PCMRegistry registry, wrongRegistry;
-    harken::PackTable packs(1, 2);
+    harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
     harken::PackTable::PreparedSetMutation first, refused;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));

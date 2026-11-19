@@ -383,12 +383,14 @@ struct Provider {
 };
 
 std::vector<std::uint8_t> Build(bool init, std::uint64_t id, std::uint64_t revision = 1,
-                                std::uint32_t actions = 1) {
+                                std::uint32_t actions = 1,
+                                std::uint64_t actionBase = harkentest::packfoundation::kActionBase,
+                                VnObjectId variableId = harkentest::packfoundation::kVariableId) {
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
     std::uint64_t size = 0;
     auto partition = PartitionPayload(id, revision, init ? 0 : actions,
-        std::bit_cast<std::uint32_t>(0.5f), &size, 64, project, bus.triple);
+        std::bit_cast<std::uint32_t>(0.5f), &size, 64, project, bus.triple, actionBase, variableId);
     ImageBuilder image(init ? harken::kPackKindInit : harken::kPackKindCanonicalContent);
     image.AddEntry(harken::kPackEntryKindPackRequirementBlock, id,
         RequirementPayload(id, revision, revision, init ? 0 : actions + 1, size, bus.triple));
@@ -2295,6 +2297,100 @@ int ReplayCompanionTrace(const std::filesystem::path& tracePath, std::string& ou
 #endif
 }
 
+TEST(CanonicalPackSetActivate, BothVintagesLoadAndReplay257Members) {
+    using namespace companionfixture;
+    constexpr std::uint32_t count = 257;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-257";
+    std::filesystem::create_directories(directory);
+    std::vector<std::string> paths(count), labels(count);
+    std::vector<VnPackNamesV1> names(count);
+    std::vector<VnCanonicalPackSetMemberV2> members;
+    const auto initId = PackId("Init");
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto actionBase = harkentest::packfoundation::kActionBase + i;
+        const auto root = i == 0 ? VnObjectId{} : harkentest::ObjectId(actionBase);
+        const auto id = i == 0 ? initId : harken::CompanionActionPackId(initId, root, "");
+        labels[i] = i == 0 ? "" : "Play_" + std::to_string(i);
+        names[i] = {sizeof(VnPackNamesV1), 0, project, root, labels[i].c_str(), "", 0, 0, nullptr, nullptr};
+        paths[i] = (directory / (std::to_string(i) + ".pack")).string();
+        ASSERT_TRUE(harkentest::WriteBytes(paths[i], Build(i == 0, id, 1, 1, actionBase,
+            harkentest::ObjectId(1000 + i))));
+        auto member = Member(id, i == 0, nullptr, &names[i]);
+        member.source.utf8Path = paths[i].c_str();
+        members.push_back(member);
+    }
+    std::sort(members.begin() + 1, members.end(), [](const auto& a, const auto& b) {
+        return a.source.packStableId < b.source.packStableId;
+    });
+    for (unsigned vintage : {1u, 2u}) {
+        SCOPED_TRACE(vintage);
+        auto config = CanonicalActivationConfig();
+        config.maxPacks = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        const auto trace = directory / (std::to_string(vintage) + ".vtrc");
+        ASSERT_EQ(VN_OK, Vn_TraceStart(trace.string().c_str()));
+        VnCanonicalPackSetActivationReportV1 report{};
+        if (vintage == 1) {
+            std::vector<VnCanonicalPackSetMemberV1> sources;
+            for (const auto& member : members) sources.push_back(member.source);
+            std::vector<VnCanonicalPackSetMemberResultV1> rows(count);
+            for (auto& row : rows) row.structSize = sizeof(row);
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
+                sources.data(), count, rows.data(), report));
+            for (const auto& row : rows) EXPECT_NE(0u, row.handle);
+        } else {
+            ASSERT_EQ(VN_OK, Activate(members, report));
+            for (const auto& row : members) EXPECT_NE(0u, row.source.expectedHandle);
+        }
+        EXPECT_EQ(count, session.Engine()->packs.LoadedCount());
+        EXPECT_EQ(count, report.memberCount);
+        ASSERT_EQ(VN_OK, Vn_TraceStop());
+        const auto published = session.Engine()->packComposition.PublishedHandle();
+        std::vector<VnCanonicalPackSetMemberResultV1> output(count);
+        std::memset(output.data(), 0x5a, count * sizeof(output.front()));
+        for (auto& row : output) row.structSize = sizeof(row);
+        auto check = [&](auto desc, auto activate) {
+            desc.structSize = sizeof(desc);
+            desc.expectedCurrentInitHandle = report.initHandle;
+            desc.baseSetRevision = 1;
+            desc.setRevision = 0;
+            desc.memberCount = count;
+            desc.memberStructSize = sizeof(desc.members[0]);
+            desc.outputMemberStructSize = sizeof(output.front());
+            desc.outputMembers = output.data();
+            VnCanonicalPackSetActivationReportV1 sentinel;
+            std::memset(&sentinel, 0x6c, sizeof(sentinel));
+            sentinel.structSize = sizeof(sentinel);
+            std::array<unsigned char, sizeof(sentinel)> before;
+            std::memcpy(before.data(), &sentinel, sizeof(sentinel));
+            std::vector<unsigned char> rowBytes(count * sizeof(output.front()));
+            std::memcpy(rowBytes.data(), output.data(), rowBytes.size());
+            for (auto capacity : {count - 1, count}) {
+                desc.outputMemberCapacity = capacity;
+                EXPECT_EQ(capacity < count ? VN_INVALID_ARG : VN_REVISION_CONFLICT,
+                    activate(&desc, &sentinel));
+                EXPECT_EQ(0, std::memcmp(before.data(), &sentinel, sizeof(sentinel)));
+                EXPECT_EQ(0, std::memcmp(rowBytes.data(), output.data(), rowBytes.size()));
+                EXPECT_EQ(published, session.Engine()->packComposition.PublishedHandle());
+            }
+        };
+        if (vintage == 1) {
+            std::vector<VnCanonicalPackSetMemberV1> sources;
+            for (const auto& member : members) sources.push_back(member.source);
+            VnCanonicalPackSetActivationDescV1 desc{};
+            desc.members = sources.data();
+            check(desc, Vn_ActivateCanonicalPackSetV1);
+        } else {
+            VnCanonicalPackSetActivationDescV2 desc{};
+            desc.members = members.data();
+            check(desc, Vn_ActivateCanonicalPackSetV2);
+        }
+        std::string replay;
+        EXPECT_EQ(0, ReplayCompanionTrace(trace, replay)) << replay;
+    }
+}
+
 TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysRenameReplacementAndRefusals) {
     using namespace companionfixture;
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace";
@@ -4163,11 +4259,20 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         VnCanonicalPackSetMemberResultV1 rows[2]{};
         for (auto& row : rows) row.structSize = sizeof(row);
         VnCanonicalPackSetActivationReportV1 report{};
+        report.structSize = sizeof(report);
+        report.activationGeneration = UINT64_MAX;
+        rows[0].handle = UINT64_MAX;
+        rows[1].handle = UINT64_MAX;
+        unsigned char originalReport[sizeof(report)], originalRows[sizeof(rows)];
+        std::memcpy(originalReport, &report, sizeof(report));
+        std::memcpy(originalRows, rows, sizeof(rows));
         for (unsigned nth : {1u, 2u}) {
             harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::VariableValueStorage);
             const auto result = harkentest::ActivateCanonicalMembersV1(members.data(), members.size(), rows, report);
             harken::detail::DisarmLogicAllocFaultForTests();
             EXPECT_EQ(VN_OUT_OF_MEMORY, result);
+            EXPECT_EQ(0, std::memcmp(originalReport, &report, sizeof(report)));
+            EXPECT_EQ(0, std::memcmp(originalRows, rows, sizeof(rows)));
             EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
             EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
         }

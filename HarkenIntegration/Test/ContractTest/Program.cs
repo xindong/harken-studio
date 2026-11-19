@@ -483,9 +483,9 @@ namespace Harken.Test
             ok &= PackBootstrap.ApplyRecommendations(
                 ref packCountDefault, inspection, 255) == VnResult.VN_OK;
             VnConfig packCountLow = HarkenEngine.DefaultConfig();
+            packCountLow.maxPacks = 1;
             ok &= PackBootstrap.ApplyRecommendations(
-                ref packCountLow, inspection, 256) ==
-                VnResult.VN_INVALID_CONFIG;
+                ref packCountLow, inspection, 256) == VnResult.VN_OK;
 
             if (ok)
             {
@@ -524,7 +524,7 @@ namespace Harken.Test
                 if (result != VnResult.VN_OK) return 1;
                 VnConfig config = HarkenEngine.DefaultConfig();
                 config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-                config.maxPacks = 4;
+                config.maxPacks = 1;
                 config.maxActions = 64;
                 config.maxResidentDefinitionBytes = 32UL << 20;
                 if (PackBootstrap.ApplyRecommendations(ref config, inspection, 1) != VnResult.VN_OK ||

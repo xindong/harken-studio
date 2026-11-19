@@ -24,7 +24,7 @@
 #include <harken/Harken.h>
 
 #include "harken/abi/PackRevisionIdentity.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/PcmRegistry.h"
 
@@ -35,9 +35,6 @@
 #include <vector>
 
 namespace harken {
-
-// Pack table capacity is a runtime config choice (VnConfig.maxPacks);
-// the default lives with every other capacity default in EngineConfig.
 
 // One pack entry's identity and loop metadata, kept after load so later
 // playback features (loop region resolution) can reach it without
@@ -73,12 +70,7 @@ public:
         VnPackHandle m_handle = 0;
     };
 
-    // Slots are preallocated at construction; capacity is fixed for the
-    // engine's life like every other pool.
-    explicit PackTable(std::uint32_t capacity,
-                       std::size_t retirementCapacity = 0,
-                       std::size_t resourceClosureCapacity = 0,
-                       std::uint32_t generationFloor = 0);
+    explicit PackTable(std::uint32_t generationFloor = 0);
     std::uint32_t GenerationHighWater() const noexcept;
 
     // Pack buffers hold reference-mode sample data, so blob addresses must
@@ -106,7 +98,7 @@ public:
         std::vector<PackEntry> m_entries;
     };
 
-    // Move-only identity for the fixed retirement row reserved by
+    // Move-only identity for the stable retirement row reserved by
     // ReplacePreparedV2. The row itself owns all predecessor and restore data.
     struct RetiredReplace {
         RetiredReplace() = default;
@@ -167,7 +159,7 @@ public:
     using ReservedIdFn = bool (*)(void* ctx, VnSoundId id);
 
     // Loads the pack at utf8Path and registers every entry in reference
-    // mode. Returns VN_NO_PACK when the table is full, VN_BAD_PACK for an
+    // mode. Returns VN_BAD_PACK for an
     // unreadable or invalid container (any header, TOC, checksum, bounds,
     // or consistency failure refuses the whole pack), VN_IN_USE when an
     // entry's id is already registered or reserved by `isReserved` (the flat
@@ -321,15 +313,6 @@ public:
     // engine-side v2 loader, which has already parsed and validated the
     // container itself (pack_logic_image) and proven every id vacant. ---
 
-    // Fixed slot capacity, for the loader's staging preflight.
-    std::uint32_t SlotCapacity() const {
-        return m_slots.Capacity();
-    }
-
-    // Books one refused-by-full-table load into the observability
-    // counter when the v2 staging path detects the shortage itself.
-    void NoteNoPack() { ++m_noPackCount; }
-
     // Freezes the exact slot, generation, and handle an initial v2 load
     // will consume. The token is a logic-thread reservation only: no Pack
     // or PCM becomes visible until LoadPrepared commits it.
@@ -375,7 +358,7 @@ public:
     // Replace admission for the v2 revision path, side-effect-free: the
     // A dead handle is VN_STALE_HANDLE, and a new entry id owned by a
     // registration outside this pack (foreign cookie or reserved per
-    // `isReserved`) is VN_IN_USE. Older canonical generations occupy fixed
+    // `isReserved`) is VN_IN_USE. Older canonical generations occupy stable
     // retirement rows and do not block another replacement of this handle.
     // Logic thread only.
     VnResult CanReplacePreparedV2(VnPackHandle handle,
@@ -414,7 +397,7 @@ public:
     // buffer (by reference) and `entries` (by reference, cookies aside)
     // untouched in the caller's revision, and the buffer/entries are
     // consumed only at the noexcept commit tail. The handle survives
-    // unchanged. A fixed retirement row is reserved before registry mutation.
+    // unchanged. A stable retirement row is reserved before registry mutation.
     // When `outPredecessor` is set, its move-only identity lets the caller
     // either park the predecessor or restore it without any later allocation.
     // Logic thread only.
@@ -504,7 +487,7 @@ private:
         std::vector<PackEntry> entries;
     };
 
-    // Fixed rows own replaced pack buffers and extracted registry nodes until
+    // Stable rows own replaced pack buffers and extracted registry nodes until
     // both PCM readers and exact resource-token anchors release them.
     enum class RetiringState : std::uint8_t {
         Free,
@@ -559,7 +542,7 @@ private:
         std::shared_ptr<const std::vector<PackResourceRevisionToken>> tokens;
     };
 
-    bool PrepareContentStorage() noexcept;
+    bool PrepareSlots(std::uint32_t count) noexcept;
     Slot* SlotFor(VnPackHandle handle);
     const Slot* SlotFor(VnPackHandle handle) const;
     bool OtherPackReferences(VnPackHandle excluded, VnSoundId soundId,
@@ -590,7 +573,7 @@ private:
         PackResourceClosureToken closureToken) const noexcept;
     ResourceClosureRow* ResourceClosureRowFor(
         PackResourceClosureToken closureToken) noexcept;
-    VnResult SelectResourceClosureRow(std::size_t* out) const noexcept;
+    VnResult SelectResourceClosureRow(std::size_t* out) noexcept;
     const PackResourceRevisionToken* ResourceClosureTokens(
         std::size_t rowIndex) const noexcept;
 
@@ -600,10 +583,10 @@ private:
     VnResult ReadAndValidate(const char* utf8Path, AlignedBuffer* outBytes,
                              std::vector<PackTocEntry>* outParsed) const;
 
-    StableRowStorage<Slot> m_slots;
+    GrowingRowStorage<Slot> m_slots;
     std::uint32_t m_initialGeneration = 1;
-    StableRowStorage<RetiringGeneration, std::size_t> m_retiring;
-    StableRowStorage<ResourceClosureRow> m_resourceClosures;
+    GrowingRowStorage<RetiringGeneration> m_retiring;
+    GrowingRowStorage<ResourceClosureRow> m_resourceClosures;
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_loadedHighWater = 0;
     std::uint64_t m_noPackCount = 0;

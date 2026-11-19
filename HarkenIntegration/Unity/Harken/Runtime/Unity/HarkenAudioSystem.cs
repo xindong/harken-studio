@@ -49,7 +49,6 @@ namespace Harken.Unity
         [SerializeField, HideInInspector] private bool nullDevice;
         [SerializeField] private bool persistAcrossScenes = true;
         [SerializeField, HideInInspector] private uint maxVoices = 32;
-        [SerializeField, HideInInspector] private uint maxPacks = 16;
         [SerializeField, HideInInspector] private uint maxActionFirings = 64;
         [SerializeField, HideInInspector] private bool suppressUnityAudio;
         [SerializeField] private bool shutdownWhenDisabled;

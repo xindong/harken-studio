@@ -3417,7 +3417,7 @@ TEST(PackCompositionContract,
         SCOPED_TRACE(registrationPath);
         constexpr VnSoundId soundId = harkentest::ObjectId(4481);
         PCMRegistry registry;
-        PackTable packs(1, 1);
+        PackTable packs{};
         auto original = MakeReferenceBackingRevision(soundId, 0.25f);
         ASSERT_EQ(1u, original.image.media.size());
         original.image.media[0].flags = kPackFlagLoopable;
@@ -3492,7 +3492,7 @@ TEST(PackCompositionContract,
         constexpr VnSoundId oldId = harkentest::ObjectId(4482);
         constexpr VnSoundId nextId = harkentest::ObjectId(4483);
         PCMRegistry registry;
-        PackTable packs(1, 1);
+        PackTable packs{};
         auto original = MakeReferenceBackingRevision(oldId, 0.25f);
         auto successor = MakeReferenceBackingRevision(nextId, 0.5f, 2);
         ASSERT_EQ(1u, original.image.media.size());
@@ -3554,7 +3554,7 @@ TEST(PackCompositionContract,
     constexpr VnSoundId oldId = harkentest::ObjectId(4484);
     constexpr VnSoundId nextId = harkentest::ObjectId(4485);
     PCMRegistry registry;
-    PackTable packs(1, 1);
+    PackTable packs{};
     auto original = MakeReferenceBackingRevision(oldId, 0.25f);
     auto successor = MakeReferenceBackingRevision(nextId, 0.5f, 2);
     ASSERT_EQ(1u, original.image.media.size());
@@ -3609,7 +3609,7 @@ TEST(PackCompositionContract,
     EXPECT_EQ(0u, registry.Count());
 }
 
-TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor) {
+TEST(PackCompositionContract, RetirementGrowsAndRollbackRestoresRetainedSuccessor) {
     static_assert(!std::is_copy_constructible_v<PackTable::RetiredReplace>);
     constexpr VnObjectId kSoundId = harkentest::ObjectId(4405);
     struct Revision {
@@ -3650,8 +3650,8 @@ TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor
     Revision revisionC = makeRevision(3, 9, 0.75f, 0x3e800000u);
     Revision revisionD = makeRevision(4, 10, 1.0f, 0x3f800000u);
     PCMRegistry registry;
-    PackTable packs(1, 2);
-    PackComposition composition(3);
+    PackTable packs{};
+    PackComposition composition{};
 
     PackTable::PreparedLoadToken load;
     ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
@@ -3737,11 +3737,16 @@ TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor
     const std::uint64_t cookieBefore = registry.CookieOf(kSoundId);
 
     PackTable::RetiredReplace refused;
-    EXPECT_EQ(VN_BACKPRESSURE,
+    ASSERT_EQ(VN_OK,
               packs.ReplacePreparedV2(
                   handle, revisionD.bytes, revisionD.entries,
                   revisionD.image.media, registry, &refused, &revisionD.key));
-    EXPECT_FALSE(refused.IsPrepared());
+    ASSERT_TRUE(refused.IsPrepared());
+    packs.RestorePreparedReplaceV2(handle, refused, registry);
+    revisionD = makeRevision(4, 10, 1.0f, 0x3f800000u);
+    revisionD.key = revisionC.key;
+    revisionD.key.contentRevision = 4;
+    revisionD.key.partitionRevision = 10;
     PackRevisionKey keyAfterRefusal{};
     PackResourceRevisionToken tokenAfterRefusal = 0;
     ASSERT_TRUE(packs.ActiveRevisionIdentity(
@@ -3846,7 +3851,7 @@ TEST(PackComposition, AttenuationBindingMapValidatesBoundedSortedIdentity) {
 
 class FrozenAttenuationMap : public ::testing::Test {
 protected:
-    PackComposition composition{8};
+    PackComposition composition{};
     PackCanonicalImage image;
 
     void SetUp() override {
@@ -4035,7 +4040,7 @@ TEST(PackCompositionContract, LeaseTokenExhaustionNeverWraps) {
                          packABytes.data(), packABytes.size(), &image));
     constexpr VnPackHandle kPackHandle =
         (static_cast<VnPackHandle>(1) << 32);
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner owner;
     ASSERT_EQ(VN_OK,
               composition.PrepareCandidate(image, kPackHandle, &owner));
@@ -4085,7 +4090,7 @@ TEST(PackComposition, PreparedLeasesNeverShareAToken) {
                          packBytes.data(), packBytes.size(), &image));
     constexpr VnPackHandle kPackHandle =
         (static_cast<VnPackHandle>(1) << 32);
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner owner;
     ASSERT_EQ(VN_OK,
               composition.PrepareCandidate(image, kPackHandle, &owner));
@@ -4127,15 +4132,11 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     }
 
     PCMRegistry registry;
-    PackTable packs(1, 1, 1);
+    PackTable packs{};
     PackTable::PreparedLoadToken load;
-    for (const bool refuseClosure : {true, false}) {
-        packs.SetStorageCommitPageLimitsForTests(refuseClosure ? SIZE_MAX : 0,
-            refuseClosure ? 0 : SIZE_MAX, SIZE_MAX);
-        EXPECT_EQ(VN_BACKPRESSURE, packs.PrepareLoad(&load));
-        EXPECT_EQ(0u, load.Handle());
-        EXPECT_EQ(0u, packs.LoadedCount());
-    }
+    packs.SetStorageCommitPageLimitsForTests(0, SIZE_MAX, SIZE_MAX);
+    EXPECT_EQ(VN_BACKPRESSURE, packs.PrepareLoad(&load));
+    EXPECT_EQ(0u, load.Handle());
     packs.SetStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, SIZE_MAX);
     ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
     packs.SetStorageCommitPageLimitsForTests(0, 0, SIZE_MAX);
@@ -4163,6 +4164,9 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     const PackResourceRevisionToken duplicateTokens[] = {
         resourceToken, resourceToken};
     PackResourceClosureToken first = 0;
+    EXPECT_EQ(VN_BACKPRESSURE, packs.AcquirePreparedResourceClosure(preparedTokens, &first));
+    EXPECT_EQ(0u, first);
+    packs.SetStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, SIZE_MAX);
     ASSERT_EQ(VN_OK, packs.AcquireResourceClosure(
                          duplicateTokens, std::size(duplicateTokens), &first));
     ASSERT_NE(0u, first);
@@ -4174,9 +4178,8 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     EXPECT_FLOAT_EQ(0.25f, exact.ReadSample(0, 0));
 
     PackResourceClosureToken refused = 0;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              packs.AcquirePreparedResourceClosure(preparedTokens, &refused));
-    EXPECT_EQ(0u, refused);
+    ASSERT_EQ(VN_OK, packs.AcquirePreparedResourceClosure(preparedTokens, &refused));
+    ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(refused));
     EXPECT_EQ(VN_OK, packs.ValidateResourceClosure(first));
     PackRevisionKey keyAfterRefusal{};
     PackResourceRevisionToken tokenAfterRefusal = 0;
@@ -4227,10 +4230,11 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     EXPECT_EQ(VN_STALE_HANDLE, packs.ValidateResourceClosure(atMax));
     for (int retry = 0; retry < 2; ++retry) {
         PackResourceClosureToken exhausted = 0;
-        EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED,
+        ASSERT_EQ(VN_OK,
                   packs.AcquireResourceClosure(&resourceToken, 1,
                                                &exhausted));
-        EXPECT_EQ(0u, exhausted);
+        EXPECT_NE(atMax, exhausted);
+        EXPECT_EQ(VN_OK, packs.ReleaseResourceClosure(exhausted));
     }
 }
 
@@ -4433,7 +4437,7 @@ TEST(PackComposition, PreparedMutationUnwindReturnsRetirementCapacity) {
     for (const bool unload : {false, true}) {
         SCOPED_TRACE(unload);
         PCMRegistry registry;
-        PackTable packs(1, 1);
+        PackTable packs{};
         PackTable::PreparedLoadToken load;
         ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
         PackTable::AlignedBuffer bytes;
@@ -4459,7 +4463,7 @@ TEST(PackComposition, PreparedMutationUnwindReturnsRetirementCapacity) {
 
 TEST(PackComposition, PreparedMutationMovesKeepOneReservationOwner) {
     PCMRegistry registry;
-    PackTable packs(2, 2);
+    PackTable packs{};
     VnPackHandle handles[2]{};
     for (auto& handle : handles) {
         PackTable::PreparedLoadToken load;
@@ -4494,7 +4498,7 @@ TEST(PackComposition, PreparedMutationMovesKeepOneReservationOwner) {
 
 TEST(PackComposition, UnloadPrepareRefusesSlotGenerationWrap) {
     PCMRegistry registry;
-    PackTable packs(1, 0, 0, UINT32_MAX - 1u);
+    PackTable packs(UINT32_MAX - 1u);
     PackTable::PreparedLoadToken load;
     ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
     ASSERT_EQ(static_cast<std::uint32_t>(load.Handle() >> 32),
@@ -4514,7 +4518,7 @@ TEST(PackComposition, UnloadPrepareRefusesSlotGenerationWrap) {
     EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, packs.Unload(handle, registry));
     EXPECT_EQ(1u, packs.LoadedCount());
     EXPECT_EQ(UINT32_MAX, packs.GenerationHighWater());
-    EXPECT_THROW((PackTable(1, 0, 0, packs.GenerationHighWater())), std::invalid_argument);
+    EXPECT_THROW((PackTable(packs.GenerationHighWater())), std::invalid_argument);
 }
 
 TEST(PackCompositionContract, CanonicalUnloadExRefusesOwnedPcmInUse) {
@@ -5565,7 +5569,7 @@ TEST(PackComposition, SameIdContainerPropertyAndProgramIndexOnce) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     ASSERT_NE(nullptr, composition.Published());
     ASSERT_EQ(1u, composition.Published()->index.size());
@@ -5605,7 +5609,7 @@ TEST(PackComposition, MissingContainerProgramRefusesWithoutPublication) {
     FinishPlayableWorld(&world);
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 1));
-    PackComposition composition(1);
+    PackComposition composition{};
     const std::uint64_t before = composition.CompositeGeneration();
     EXPECT_EQ(VN_BAD_PACK,
               CommitParsedPack(&composition, bytes, kPackHandle, 8));
@@ -5631,7 +5635,7 @@ TEST(PackComposition,
     FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 1));
-    PackComposition composition(1);
+    PackComposition composition{};
     const std::uint64_t before = composition.CompositeGeneration();
     EXPECT_EQ(VN_BAD_PACK,
               CommitParsedPack(&composition, bytes, kPackHandle, 8));
@@ -5661,7 +5665,7 @@ TEST(PackComposition, MissingTrackScheduleCompanionRefusesWithoutPublication) {
     FinishPlayableWorld(&world);
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 1));
-    PackComposition composition(1);
+    PackComposition composition{};
     const std::uint64_t before = composition.CompositeGeneration();
     EXPECT_EQ(VN_BAD_PACK,
               CommitParsedPack(&composition, bytes, kPackHandle, 8));
@@ -5683,7 +5687,7 @@ TEST(PackComposition, IdenticalContainerDefinitionsHaveIndependentProviders) {
     PackCanonicalImage imageB;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(packA.data(), packA.size(), &imageA));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(packB.data(), packB.size(), &imageB));
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner ownerA;
     PackComposition::CandidateOwner ownerB;
     ASSERT_EQ(VN_OK,
@@ -5706,7 +5710,7 @@ TEST(PackComposition, IdenticalContainerDefinitionsHaveIndependentProviders) {
 }
 
 TEST(PackComposition, InactiveOwnerPreparationAdmitsWorldScratchBeforeAllocation) {
-    PackComposition composition(2);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, composition.Commit({}, nullptr, 0, 8, 0));
     const auto previous = composition.PublishedHandle();
     const auto generation = composition.CompositeGeneration();
@@ -5752,7 +5756,7 @@ TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
     PackCanonicalImage imageA, imageB;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytesA.data(), bytesA.size(), &imageA));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytesB.data(), bytesB.size(), &imageB));
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner a, b;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(imageA, VnPackHandle{1} << 32, &a));
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(imageB, VnPackHandle{2} << 32, &b));
@@ -5996,7 +6000,7 @@ TEST(PackComposition, ActionAndPlayableStableIdCollisionRefuses) {
                     kWorldCapabilityActionDefinitions);
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 2));
-    PackComposition composition(1);
+    PackComposition composition{};
     const std::uint64_t before = composition.CompositeGeneration();
     EXPECT_EQ(VN_BAD_PACK,
               CommitParsedPack(&composition, bytes, kPackHandle, 8));
@@ -6028,7 +6032,7 @@ TEST(PackComposition, UnsortedContainerProgramsRefuseWithoutPublication) {
     FinishPlayableWorld(&world, kWorldCapabilityRandomDraw);
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 2));
-    PackComposition composition(1);
+    PackComposition composition{};
     const std::uint64_t before = composition.CompositeGeneration();
     EXPECT_EQ(VN_BAD_PACK,
               CommitParsedPack(&composition, bytes, kPackHandle, 8));
@@ -6044,7 +6048,7 @@ protected:
     static constexpr VnObjectId kPreset = harkentest::ObjectId(8301);
     static constexpr VnPackHandle kInitHandle = VnPackHandle{1} << 32;
     static constexpr VnPackHandle kContentHandle = VnPackHandle{2} << 32;
-    PackComposition composition{8, 8, 2};
+    PackComposition composition{};
     PackCanonicalImage init;
     PackCanonicalImage content;
 
@@ -6239,7 +6243,7 @@ TEST(PackComposition, DeclaredSharedChildPublishesFromContentRoot) {
                                              contentBytes.size(), &contentImage));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(sharedBytes.data(),
                                              sharedBytes.size(), &sharedImage));
-    PackComposition composition(2, 1, 2);
+    PackComposition composition{};
     PackComposition::CandidateOwner contentOwner;
     PackComposition::CandidateOwner sharedOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
@@ -6362,7 +6366,7 @@ TEST(PackComposition, UndeclaredLoadedPackDoesNotMakeReferenceLegal) {
                                              contentBytes.size(), &contentImage));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(sharedBytes.data(),
                                              sharedBytes.size(), &sharedImage));
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner contentOwner;
     PackComposition::CandidateOwner sharedOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
@@ -6394,7 +6398,7 @@ TEST(PackComposition, DeclaredButInactiveProviderIsContentNotLoaded) {
         ContentContainerWithChildPartitionPayload(kContentPack, 7, kContainerId,
                                                   child),
         kSharedPack);
-    PackComposition composition(1);
+    PackComposition composition{};
     const std::uint64_t before = composition.CompositeGeneration();
     EXPECT_EQ(VN_CONTENT_NOT_LOADED,
               CommitParsedPack(&composition, contentBytes, kContentHandle, 8));
@@ -6442,7 +6446,7 @@ TEST(PackComposition, RequiredDependencyRevisionExactAndWildcardPublish) {
         ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
                              consumerBytes.data(), consumerBytes.size(),
                              &consumerImage));
-        PackComposition composition(2);
+        PackComposition composition{};
         PackComposition::CandidateOwner providerOwner;
         ASSERT_EQ(VN_OK, composition.PrepareCandidate(
                              providerImage, kProviderHandle, &providerOwner));
@@ -6496,7 +6500,7 @@ TEST(PackCompositionContract, RequiredDependencyRevisionMismatchKeepsPublication
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
                          consumerBytes.data(), consumerBytes.size(),
                          &consumerImage));
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner providerOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(
                          providerImage, kProviderHandle, &providerOwner));
@@ -6558,7 +6562,7 @@ TEST(PackComposition, CapacitySummaryMismatchKeepsPublication) {
                          firstBytes.data(), firstBytes.size(), &firstImage));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
                          secondBytes.data(), secondBytes.size(), &secondImage));
-    PackComposition composition(2);
+    PackComposition composition{};
     PackComposition::CandidateOwner firstOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(
                          firstImage, kFirstHandle, &firstOwner));
@@ -6653,7 +6657,7 @@ TEST(PackComposition, CompositeRowAggregateExactThenPlusOneKeepsPublication) {
         ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
                              secondBytes.data(), secondBytes.size(),
                              &secondImage));
-        PackComposition composition(2);
+        PackComposition composition{};
         PackComposition::CandidateOwner firstOwner;
         ASSERT_EQ(VN_OK, composition.PrepareCandidate(
                              firstImage, kFirstHandle, &firstOwner));
@@ -6712,7 +6716,7 @@ TEST(PackComposition, ActionStepFormatBudgetAppliesPerPartition) {
     capacity.maxActionStepsTotal = stepCount * 2;
     capacity.maxActionTriggerDepth = 1;
     capacity.maxActionExpandedWork = stepCount + 1;
-    PackComposition composition(2);
+    PackComposition composition{};
     const auto prepare = [&](std::uint64_t packId, VnPackHandle handle,
                              VnObjectId actionId, VnObjectId variableId,
                              std::uint32_t count, PackComposition::CandidateOwner* out) {
@@ -6850,7 +6854,7 @@ TEST(PackComposition,
         return composition->Commit(std::move(owners), nullptr, 0, 65, 0);
     };
 
-    PackComposition composition(2, 0, 2);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, commitDepth(&composition, 63, 1, 7, 9));
     const auto publishedAtDepth64 = composition.PublishedHandle();
     ASSERT_NE(nullptr, publishedAtDepth64);
@@ -6957,7 +6961,7 @@ TEST(PackComposition,
                          descendantBytes.data(), descendantBytes.size(),
                          &descendantImage));
 
-    PackComposition composition(2, 0, 2);
+    PackComposition composition{};
     PackComposition::CandidateOwner oldAncestorOwner;
     PackComposition::CandidateOwner descendantOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(
@@ -7036,7 +7040,7 @@ TEST(PackComposition,
     PackCanonicalImage standaloneImage;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
         standaloneBytes.data(), standaloneBytes.size(), &standaloneImage));
-    PackComposition withoutAncestor(1, 0, 1);
+    PackComposition withoutAncestor{};
     PackComposition::CandidateOwner standaloneOwner;
     ASSERT_EQ(VN_OK, withoutAncestor.PrepareCandidate(
         standaloneImage, kDescendantHandle, &standaloneOwner));
@@ -7064,7 +7068,7 @@ TEST(PackCompositionContract, OldPlaybackViewReadsOldRevisionAfterReplace) {
     const std::vector<std::uint8_t> packB = BuildCanonicalPartitionPack(
         kPackStableId, 2, 8,
         ContainerOnlyPartitionPayload(kPackStableId, 8, propertyB));
-    PackComposition composition(1, 2, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, packA, kPackHandle, 8));
     PackIdentityLookup oldLookup;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
@@ -7120,7 +7124,7 @@ TEST(PackComposition, DefaultUnloadKeepsFrozenClosureUntilRelease) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     ASSERT_NE(nullptr, composition.Published());
     const std::uint64_t partitionRevision =
@@ -7147,7 +7151,7 @@ TEST(PackComposition, DefaultUnloadKeepsFrozenClosureUntilRelease) {
                                           resourceRevision));
 }
 
-TEST(PackComposition, PlayableSliceExactCapacityThenPlusOneBackpressures) {
+TEST(PackComposition, PlayableLeasesGrowAlongsideSharedLeases) {
     constexpr std::uint64_t kPackStableId = 22;
     constexpr VnObjectId kContainerId = harkentest::ObjectId(8101);
     constexpr VnPackHandle kPackHandle =
@@ -7155,16 +7159,16 @@ TEST(PackComposition, PlayableSliceExactCapacityThenPlusOneBackpressures) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(2, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
                          kContainerId, PackLeaseSlice::Playable, &playable));
     ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&playable.lease, 0));
     PackIdentityLookup plusOne;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
                                         &plusOne));
+    composition.AbandonPreparedLease(plusOne.lease);
     PackIdentityLookup shared;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
     composition.AbandonPreparedLease(shared.lease);
@@ -7179,14 +7183,14 @@ TEST(PackComposition, SharedActionDeferredSlicePlusOneDoesNotConsumePlayableRows
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup shared;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
     ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&shared.lease, 0));
     PackIdentityLookup sharedPlus;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &sharedPlus));
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &sharedPlus));
+    composition.AbandonPreparedLease(sharedPlus.lease);
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
                          kContainerId, PackLeaseSlice::Playable, &playable));
@@ -7194,7 +7198,7 @@ TEST(PackComposition, SharedActionDeferredSlicePlusOneDoesNotConsumePlayableRows
     EXPECT_EQ(VN_OK, composition.ReleaseLease(shared.lease));
 }
 
-TEST(PackComposition, CombinedThreeTermLeaseSaturation) {
+TEST(PackComposition, LeaseDependenciesFailAtomicallyAndRetryAcrossSegments) {
     constexpr std::uint64_t kPackStableId = 22;
     constexpr VnObjectId kContainerId = harkentest::ObjectId(8101);
     constexpr VnPackHandle kPackHandle =
@@ -7202,32 +7206,26 @@ TEST(PackComposition, CombinedThreeTermLeaseSaturation) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
+    ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
+    PackIdentityLookup lookup{};
     for (unsigned stage = 0; stage < 3; ++stage) {
         composition.SetLeaseStorageCommitPageLimitsForTests(stage == 2 ? 0 : SIZE_MAX,
             stage == 0 ? 0 : SIZE_MAX, stage == 1 ? 0 : SIZE_MAX);
-        EXPECT_EQ(VN_BACKPRESSURE, CommitParsedPack(&composition, bytes, kPackHandle, 8));
-        EXPECT_EQ(nullptr, composition.PublishedHandle());
+        EXPECT_EQ(VN_BACKPRESSURE, composition.PrepareLookup(kContainerId, &lookup));
+        EXPECT_EQ(0u, lookup.lease.leaseToken);
     }
     composition.SetLeaseStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, SIZE_MAX);
-    ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
-    composition.SetLeaseStorageCommitPageLimitsForTests(0, 0, 0);
-    PackIdentityLookup shared;
-    PackIdentityLookup playable;
-    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
-    ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&shared.lease, 0));
-    ASSERT_EQ(VN_OK, composition.PrepareLookup(
-                         kContainerId, PackLeaseSlice::Playable, &playable));
-    ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&playable.lease, 0));
-    PackIdentityLookup extraShared;
-    PackIdentityLookup extraPlayable;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &extraShared));
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
-                                        &extraPlayable));
-    EXPECT_EQ(VN_OK, composition.ReleaseLease(shared.lease));
-    EXPECT_EQ(VN_OK, composition.ReleaseLease(playable.lease));
+    std::vector<PackPartitionLease> held;
+    for (unsigned i = 0; i < 257; ++i) {
+        ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &lookup));
+        ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&lookup.lease, 0));
+        held.push_back(lookup.lease);
+    }
+    for (const auto& lease : held) {
+        EXPECT_EQ(VN_OK, composition.ValidateLease(lease));
+        EXPECT_EQ(VN_OK, composition.ReleaseLease(lease));
+    }
 }
 
 TEST(PackComposition, PlayableSliceAdoptDoesNotDoubleOccupy) {
@@ -7238,7 +7236,7 @@ TEST(PackComposition, PlayableSliceAdoptDoesNotDoubleOccupy) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
@@ -7248,9 +7246,9 @@ TEST(PackComposition, PlayableSliceAdoptDoesNotDoubleOccupy) {
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
     composition.AbandonPreparedLease(shared.lease);
     PackIdentityLookup playablePlus;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
                                         &playablePlus));
+    composition.AbandonPreparedLease(playablePlus.lease);
     EXPECT_EQ(VN_OK, composition.ReleaseLease(playable.lease));
 }
 
@@ -7262,7 +7260,7 @@ TEST(PackComposition, LiveSharedLeaseRetagsOntoPlayableSlice) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup shared;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
@@ -7271,8 +7269,8 @@ TEST(PackComposition, LiveSharedLeaseRetagsOntoPlayableSlice) {
     PackPlaybackView before;
     ASSERT_TRUE(composition.PlaybackViewAtLease(shared.lease, &before));
     PackIdentityLookup sharedPlusBefore;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &sharedPlusBefore));
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &sharedPlusBefore));
+    composition.AbandonPreparedLease(sharedPlusBefore.lease);
 
     EXPECT_EQ(VN_OK, composition.RetagLiveLease(shared.lease,
                                                 PackLeaseSlice::Playable));
@@ -7286,13 +7284,13 @@ TEST(PackComposition, LiveSharedLeaseRetagsOntoPlayableSlice) {
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &sharedAfter));
     composition.AbandonPreparedLease(sharedAfter.lease);
     PackIdentityLookup playablePlus;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
                                         &playablePlus));
+    composition.AbandonPreparedLease(playablePlus.lease);
     EXPECT_EQ(VN_OK, composition.ReleaseLease(shared.lease));
 }
 
-TEST(PackComposition, RetagLiveLeaseBackpressuresWhenPlayableSliceFull) {
+TEST(PackComposition, RetagSucceedsWithAnotherPlayableLease) {
     constexpr std::uint64_t kPackStableId = 22;
     constexpr VnObjectId kContainerId = harkentest::ObjectId(8101);
     constexpr VnPackHandle kPackHandle =
@@ -7300,7 +7298,7 @@ TEST(PackComposition, RetagLiveLeaseBackpressuresWhenPlayableSliceFull) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
@@ -7310,18 +7308,18 @@ TEST(PackComposition, RetagLiveLeaseBackpressuresWhenPlayableSliceFull) {
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
     ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&shared.lease, 0));
 
-    EXPECT_EQ(VN_BACKPRESSURE,
+    EXPECT_EQ(VN_OK,
               composition.RetagLiveLease(shared.lease, PackLeaseSlice::Playable));
     EXPECT_EQ(VN_OK, composition.ValidateLease(shared.lease));
     PackPlaybackView view;
     ASSERT_TRUE(composition.PlaybackViewAtLease(shared.lease, &view));
     PackIdentityLookup extraShared;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &extraShared));
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &extraShared));
+    composition.AbandonPreparedLease(extraShared.lease);
     PackIdentityLookup extraPlayable;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, PackLeaseSlice::Playable,
                                         &extraPlayable));
+    composition.AbandonPreparedLease(extraPlayable.lease);
 
     EXPECT_EQ(VN_OK, composition.ReleaseLease(playable.lease));
     PackIdentityLookup playableAfter;
@@ -7329,8 +7327,8 @@ TEST(PackComposition, RetagLiveLeaseBackpressuresWhenPlayableSliceFull) {
                          kContainerId, PackLeaseSlice::Playable, &playableAfter));
     composition.AbandonPreparedLease(playableAfter.lease);
     PackIdentityLookup sharedAfter;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &sharedAfter));
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &sharedAfter));
+    composition.AbandonPreparedLease(sharedAfter.lease);
     EXPECT_EQ(VN_OK, composition.ReleaseLease(shared.lease));
 }
 
@@ -7342,7 +7340,7 @@ TEST(PackComposition, RetagLiveLeaseRejectsAlreadyPlayableRow) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 2, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
@@ -7370,7 +7368,7 @@ TEST(PackComposition, RetagLiveLeaseRejectsNonPlayableTarget) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     PackIdentityLookup shared;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));
@@ -7381,8 +7379,8 @@ TEST(PackComposition, RetagLiveLeaseRejectsNonPlayableTarget) {
                   shared.lease, PackLeaseSlice::SharedActionAndDeferred));
     EXPECT_EQ(VN_OK, composition.ValidateLease(shared.lease));
     PackIdentityLookup extraShared;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &extraShared));
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &extraShared));
+    composition.AbandonPreparedLease(extraShared.lease);
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
                          kContainerId, PackLeaseSlice::Playable, &playable));
@@ -7398,7 +7396,7 @@ TEST(PackComposition, RetagLiveLeaseRejectsUnknownNotLiveAndPreparedOnly) {
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
-    PackComposition composition(1, 1, 1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
 
     PackPartitionLease unknown{};
@@ -7410,8 +7408,8 @@ TEST(PackComposition, RetagLiveLeaseRejectsUnknownNotLiveAndPreparedOnly) {
     EXPECT_EQ(VN_STALE_HANDLE,
               composition.RetagLiveLease(prepared.lease, PackLeaseSlice::Playable));
     PackIdentityLookup extraShared;
-    EXPECT_EQ(VN_BACKPRESSURE,
-              composition.PrepareLookup(kContainerId, &extraShared));
+    ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &extraShared));
+    composition.AbandonPreparedLease(extraShared.lease);
     PackIdentityLookup extraPlayable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(
                          kContainerId, PackLeaseSlice::Playable, &extraPlayable));
@@ -7436,7 +7434,7 @@ TEST(PackComposition, RetagLiveLeaseRejectsUnknownNotLiveAndPreparedOnly) {
     composition.AbandonPreparedLease(playable.lease);
 }
 
-TEST(PackComposition, ClosureOwnerExactThenPlusOneBackpressures) {
+TEST(PackComposition, ClosureIncludesEveryDeclaredOwner) {
     constexpr std::uint64_t kContentPack = 22;
     constexpr std::uint64_t kSharedPack = 33;
     constexpr VnObjectId kContainerId = harkentest::ObjectId(8101);
@@ -7461,7 +7459,7 @@ TEST(PackComposition, ClosureOwnerExactThenPlusOneBackpressures) {
                                              contentBytes.size(), &contentImage));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(sharedBytes.data(),
                                              sharedBytes.size(), &sharedImage));
-    PackComposition composition(2, 0, 1);
+    PackComposition composition{};
     PackComposition::CandidateOwner contentOwner;
     PackComposition::CandidateOwner sharedOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
@@ -7472,10 +7470,11 @@ TEST(PackComposition, ClosureOwnerExactThenPlusOneBackpressures) {
     owners.push_back(std::move(contentOwner));
     owners.push_back(std::move(sharedOwner));
     const std::uint64_t before = composition.CompositeGeneration();
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
+    ASSERT_EQ(VN_OK,
               composition.Commit(std::move(owners), nullptr, 0, 8, 0));
-    EXPECT_EQ(before, composition.CompositeGeneration());
-    EXPECT_EQ(nullptr, composition.Published());
+    EXPECT_GT(composition.CompositeGeneration(), before);
+    ASSERT_NE(nullptr, composition.Published());
+    EXPECT_EQ(2u, composition.Published()->owners.size());
 }
 
 TEST(PackComposition, EmptyContainerChildGraphPublishesAsZeroWork) {
@@ -7527,7 +7526,7 @@ TEST(PackComposition, EmptyContainerChildGraphPublishesAsZeroWork) {
 
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 2));
-    PackComposition composition(1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     EXPECT_NE(nullptr, composition.Published());
 }
@@ -7606,7 +7605,7 @@ TEST(PackComposition, EmptyTrackSiblingDoesNotRefuseSoundingSibling) {
 
     const std::vector<std::uint8_t> bytes = BuildCanonicalPartitionPack(
         kPackStableId, 1, 7, WrapWorldPartition(kPackStableId, 7, world, 3));
-    PackComposition composition(1);
+    PackComposition composition{};
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
     EXPECT_NE(nullptr, composition.Published());
 }
@@ -7748,7 +7747,7 @@ TEST(PackComposition,
         child.playable = throughSegment ? segment.rootDefinition : trackRef;
         allOccurrences[0].childPlayable = child.playable;
         allOccurrences[0].occurrenceSemanticFingerprint = ComputePlayableOccurrenceFingerprintV1(allOccurrences[0]);
-        PackComposition composition(1);
+        PackComposition composition{};
         const PackComposition::PublishedView* before = nullptr;
         std::uint64_t generation = 0;
         for (const std::uint32_t limit : {required, required - 1}) {
@@ -7916,7 +7915,7 @@ TEST(PackComposition,
         owner.hasPartition = true;
         owner.body = std::move(body);
         owner.view = *owner.body->ProductionView();
-        PackComposition composition(1);
+        PackComposition composition{};
         std::vector<PackComposition::CandidateOwner> owners;
         owners.push_back(std::move(owner));
         EXPECT_EQ(test.result,
@@ -7989,7 +7988,7 @@ TEST(PackComposition,
         ASSERT_EQ(VN_OK, ParsePackCanonicalImage(providerBytes.data(),
                                                  providerBytes.size(),
                                                  &providerImage));
-        PackComposition composition(2, 0, 2);
+        PackComposition composition{};
         ASSERT_EQ(VN_OK, CommitParsedPack(&composition, providerBytes,
                                            kProviderHandle, 8));
         const auto before = composition.Published();
@@ -8064,7 +8063,7 @@ TEST(PackComposition, SegmentTrackReferenceMustStayInDeclaredClosure) {
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(providerBytes.data(),
                                              providerBytes.size(),
                                              &providerImage));
-    PackComposition composition(2, 0, 2);
+    PackComposition composition{};
     PackComposition::CandidateOwner contentOwner;
     PackComposition::CandidateOwner providerOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
@@ -8177,58 +8176,13 @@ TEST(PackComposition,
     providerOwner.body = std::move(providerBody);
     providerOwner.view = *providerOwner.body->ProductionView();
 
-    PackComposition composition(2, 0, 2);
+    PackComposition composition{};
     std::vector<PackComposition::CandidateOwner> owners;
     owners.push_back(std::move(consumerOwner));
     owners.push_back(std::move(providerOwner));
     EXPECT_EQ(VN_BAD_PACK,
               composition.Commit(std::move(owners), nullptr, 0, 8, 0));
     EXPECT_EQ(nullptr, composition.Published());
-}
-
-TEST(PackComposition, HighLeaseCapacityDoesNotMultiplyClosureStorage) {
-    EXPECT_NO_THROW({
-        PackComposition composition(4096, 16384, 4096);
-        EXPECT_EQ(0u, composition.CompositeGeneration());
-    });
-}
-
-TEST(PackComposition, PackIdentityLeaseCapacityOverflowThrows) {
-    EngineConfig config{};
-    config.maxActionFirings = std::numeric_limits<std::uint32_t>::max();
-    config.maxDeferredIntents = std::numeric_limits<std::uint32_t>::max();
-    config.maxPlayableInstances = std::numeric_limits<std::uint32_t>::max();
-    const std::uint64_t expected =
-        static_cast<std::uint64_t>(config.maxActionFirings) +
-        config.maxDeferredIntents + config.maxPlayableInstances;
-    if (expected > std::numeric_limits<std::size_t>::max()) {
-        EXPECT_THROW(PackIdentityLeaseCapacity(config), std::length_error);
-    } else {
-        EXPECT_NO_THROW({
-            EXPECT_EQ(static_cast<std::size_t>(expected),
-                      PackIdentityLeaseCapacity(config));
-        });
-    }
-}
-
-TEST(PackComposition, PackRetirementCapacityOverflowThrows) {
-    EngineConfig config{};
-    config.maxPacks = std::numeric_limits<std::uint32_t>::max();
-    config.maxActionFirings = std::numeric_limits<std::uint32_t>::max();
-    config.maxDeferredIntents = std::numeric_limits<std::uint32_t>::max();
-    config.maxPlayableInstances = std::numeric_limits<std::uint32_t>::max();
-    const std::uint64_t expected =
-        static_cast<std::uint64_t>(config.maxPacks) +
-        config.maxActionFirings + config.maxDeferredIntents +
-        config.maxPlayableInstances;
-    if (expected > std::numeric_limits<std::size_t>::max()) {
-        EXPECT_THROW(PackRetirementCapacity(config), std::length_error);
-    } else {
-        EXPECT_NO_THROW({
-            EXPECT_EQ(static_cast<std::size_t>(expected),
-                      PackRetirementCapacity(config));
-        });
-    }
 }
 
 std::vector<std::uint8_t> BuildImmediatePlaySoundPack(
@@ -12818,16 +12772,7 @@ TEST(PackComposition, OriginalDeferredPlayPrecommitFailureRetainsRecordUntilFore
 TEST(PackComposition, OriginalDeferredPlayCapacityDeadlineRetainsActualClaimWithoutRuntimeFault) {
     DelayedPackPlayFixture fixture(MakeNullConfig(8, 256, 48000), "original-deferred-capacity-foreign-deadline");
     auto& engine = *fixture.session.Engine();
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup{};
-        const auto result = engine.AcquirePackIdentityLease(fixture.targetStableId,
-            PackLeaseSlice::Playable, &lookup);
-        if (result == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, result);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine.packComposition.refuseRetagForTests = true;
     EnginePlayablePartitionPool::OriginalStoragePin foreign;
     engine.originalPlayableServiceReservedContextForTest = &foreign;
     engine.originalPlayableServiceReservedHookForTest = [](
@@ -12871,7 +12816,7 @@ TEST(PackComposition, OriginalDeferredPlayCapacityDeadlineRetainsActualClaimWith
     EXPECT_EQ(VN_OK, engine.packs.ValidateResourceClosure(fixture.record.targetPackLease.resourceClosureToken));
     EXPECT_EQ(VN_IN_USE, engine.ReleaseOriginalDeferredPack(fixture.token, fixture.record.targetPackLease));
     foreign.Return();
-    for (const auto& lease : occupying) EXPECT_EQ(VN_OK, engine.ReleasePackIdentityLease(lease));
+    engine.packComposition.refuseRetagForTests = false;
     for (unsigned block = 0; block < 96 && engine.actionDeferredRecords.LiveCount() != 0; ++block) {
         engine.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -15449,19 +15394,7 @@ TEST(PackComposition, PackActionDelayedPlayableSliceFullRetriesWithoutRetag) {
     DelayedPackPlayFixture fixture(MakeNullConfig(8, 256, 48000),
                                    "f5-delayed-playable-full");
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const VnResult acquired =
-            fixture.session.Engine()->AcquirePackIdentityLease(
-                fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) {
-            break;
-        }
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    fixture.session.Engine()->packComposition.refuseRetagForTests = true;
     const std::uint64_t retagBackpressureBefore =
         fixture.session.Engine()->packComposition
             .RetagBackpressureCountForTests();
@@ -15489,9 +15422,7 @@ TEST(PackComposition, PackActionDelayedPlayableSliceFullRetriesWithoutRetag) {
     EXPECT_EQ(nullptr, fixture.LiveStartRow());
     EXPECT_EQ(0u, fixture.session.Engine()->playableInstances.LiveCount());
     for (const auto& scratch : fixture.session.Engine()->actionPlayScratch) EXPECT_FALSE(scratch.prepared);
-    for (const auto& lease : occupying) {
-        EXPECT_EQ(VN_OK, fixture.session.Engine()->ReleasePackIdentityLease(lease));
-    }
+    fixture.session.Engine()->packComposition.refuseRetagForTests = false;
     fixture.PumpUntilDeferredGone();
     const EnginePlayableServiceRow* row = fixture.LiveStartRow();
     ASSERT_NE(nullptr, row);
@@ -15506,16 +15437,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagBackpressureReusesCla
                                    DelayedPackPlayTarget::VariableControl);
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const VnResult acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     const auto retagBefore = engine->packComposition.RetagBackpressureCountForTests();
     for (std::uint32_t tick = 0; tick < 512 &&
          engine->packComposition.RetagBackpressureCountForTests() == retagBefore;
@@ -15534,8 +15456,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagBackpressureReusesCla
         });
     EXPECT_EQ(0, activeOwners)
         << "No previous attempt may remain while the record is retryable";
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
     fixture.PumpUntilDeferredGone();
     EXPECT_NE(nullptr, fixture.LiveStartRow());
     fixture.PumpUntilFiringTerminal();
@@ -15548,16 +15469,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingCleanupRetries
                                    DelayedPackPlayTarget::VariableControl);
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const auto acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     DeferredIntentToken originalPool{};
     ASSERT_TRUE(engine->actionDeferredRecords.PoolToken(
         fixture.token, &originalPool));
@@ -15594,8 +15506,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingCleanupRetries
     step.structSize = sizeof(step);
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(fixture.firing, 0, &step));
     EXPECT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
     bool sawSamePairRetry = false;
     bool materialized = false;
     for (std::uint32_t tick = 0; tick < 64; ++tick) {
@@ -15670,16 +15581,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingStopCancels) {
                                    DelayedPackPlayTarget::VariableControl);
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const auto acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     engine->forceActionVariableControlDeferredCleanupPendingOnceForTest = true;
     const auto retagBefore = engine->packComposition.RetagBackpressureCountForTests();
     for (std::uint32_t tick = 0; tick < 512 &&
@@ -15723,8 +15625,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingStopCancels) {
         EXPECT_EQ(0u, engine->voices.ActiveCount());
     };
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(fixture.firing, 0));
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
     for (std::uint32_t tick = 0; tick < 64 &&
          engine->actionDeferredRecords.LiveCount() != 0; ++tick) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -15772,16 +15673,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingDeadlineFails)
                                    DelayedPackPlayTarget::VariableControl);
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const auto acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     engine->forceActionVariableControlDeferredCleanupPendingOnceForTest = true;
     const auto retagBefore = engine->packComposition.RetagBackpressureCountForTests();
     for (std::uint32_t tick = 0; tick < 512 &&
@@ -15801,8 +15693,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingDeadlineFails)
     ASSERT_TRUE(owned->deferredContainerOwner.retryRequested);
     ASSERT_EQ(ActionDeferredRecordState::Claimed,
               engine->actionDeferredRecords.State(fixture.token));
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
 
     const auto blockFrames = engine->nullBackend.BlockFrames();
     const auto channels = engine->nullBackend.Channels();
@@ -15854,16 +15745,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagRetryKeepsOwnerOnPool
                                    DelayedPackPlayTarget::VariableControl);
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const auto acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     engine->forceActionVariableControlDeferredCleanupPendingOnceForTest = true;
     const auto retagBefore = engine->packComposition.RetagBackpressureCountForTests();
     for (std::uint32_t tick = 0; tick < 512 &&
@@ -15897,8 +15779,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagRetryKeepsOwnerOnPool
         1, engine->playableInstances, &claim, 1));
     ASSERT_EQ(added.token.generation, claim.token.generation);
 
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
     (void)Vn_Update();
     EXPECT_TRUE(engine->runtimeRecreateRequired);
     EXPECT_TRUE(owned->deferredContainerOwner.active);
@@ -15923,16 +15804,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagRetryResetFailureKeep
                                    DelayedPackPlayTarget::VariableControl);
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const auto acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     engine->forceActionVariableControlDeferredCleanupPendingOnceForTest = true;
     const auto retagBefore = engine->packComposition.RetagBackpressureCountForTests();
     for (std::uint32_t tick = 0; tick < 512 &&
@@ -15955,8 +15827,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagRetryResetFailureKeep
     ASSERT_EQ(ActionDeferredRecordState::Claimed,
               engine->actionDeferredRecords.State(fixture.token));
     engine->forceActionVariableControlDeferredRetryResetFailureOnceForTest = true;
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_FALSE(engine->forceActionVariableControlDeferredRetryResetFailureOnceForTest);
     ASSERT_TRUE(owned->deferredContainerOwner.active);
@@ -16032,16 +15903,7 @@ TEST(PackComposition, PackActionDelayedNearBoundaryRetainsAuthoredStart) {
                                    "f5-delayed-near-boundary");
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
     auto* engine = fixture.session.Engine();
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const VnResult acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     while (engine->mixer.BlocksRendered() < 188u) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
@@ -16056,8 +15918,7 @@ TEST(PackComposition, PackActionDelayedNearBoundaryRetainsAuthoredStart) {
                   engine->timelinePool.PublishLeadQuanta() * 256u,
               fixture.record.intendedBoundaryFrame);
     ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
 
     std::uint64_t firstAudibleFrame = UINT64_MAX;
     bool materialized = false;
@@ -16102,24 +15963,14 @@ TEST(PackComposition, PackActionDelayedAdmissionRecheckRejectsPastTarget) {
                                    "f5-delayed-recheck-past-target");
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
     auto* engine = fixture.session.Engine();
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const VnResult acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     while (engine->mixer.BlocksRendered() < 188u) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
     }
     ASSERT_EQ(49024u, fixture.record.intendedBoundaryFrame);
     ASSERT_EQ(48896u, engine->timelinePool.PublishCutoffFrame());
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
 
     struct RecheckProbe {
         bool called = false;
@@ -16206,16 +16057,7 @@ TEST(PackComposition, PackActionDelayedPermanentPlayablePressureExpires) {
                                    "f5-delayed-permanent-pressure");
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
     auto* engine = fixture.session.Engine();
-    std::vector<PackPartitionLease> occupying;
-    for (;;) {
-        PackIdentityLookup lookup;
-        const VnResult acquired = engine->AcquirePackIdentityLease(
-            fixture.targetStableId, PackLeaseSlice::Playable, &lookup);
-        if (acquired == VN_BACKPRESSURE) break;
-        ASSERT_EQ(VN_OK, acquired);
-        occupying.push_back(lookup.lease);
-    }
-    ASSERT_FALSE(occupying.empty());
+    engine->packComposition.refuseRetagForTests = true;
     bool audible = false;
     while (engine->mixer.BlocksRendered() < 220u) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -16243,8 +16085,7 @@ TEST(PackComposition, PackActionDelayedPermanentPlayablePressureExpires) {
     EXPECT_EQ(0u, engine->playableInstances.LiveCount());
     EXPECT_EQ(VN_STALE_HANDLE,
               engine->packComposition.ValidateLease(fixture.record.targetPackLease));
-    for (const auto& lease : occupying)
-        ASSERT_EQ(VN_OK, engine->ReleasePackIdentityLease(lease));
+    engine->packComposition.refuseRetagForTests = false;
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(fixture.firing));
     fixture.firing = 0;
     EXPECT_FALSE(engine->packComposition.HasLiveLease(
@@ -18859,7 +18700,7 @@ TEST(PackComposition, PackActionTwoPlayStepsDifferentPacksRenders) {
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
-TEST(PackComposition, PackActionPlayableSliceFullIsBackpressure) {
+TEST(PackComposition, PackActionStartsWith257OutstandingPlayableLeases) {
     constexpr VnObjectId kSoundId = harkentest::ObjectId(4510);
     constexpr VnObjectId kActionId = harkentest::ObjectId(2002);
     const std::vector<std::uint8_t> packBytes = BuildImmediatePlaySoundPack(
@@ -18887,24 +18728,20 @@ TEST(PackComposition, PackActionPlayableSliceFullIsBackpressure) {
                           members, 2, rows, activated));
     ASSERT_NE(0u, rows[1].handle);
     std::vector<PackIdentityLookup> fillers;
-    for (;;) {
+    for (unsigned i = 0; i < 257; ++i) {
         PackIdentityLookup extra;
         const VnResult acquired = session.Engine()->AcquirePackIdentityLease(
             kSoundId, PackLeaseSlice::Playable, &extra);
-        if (acquired == VN_BACKPRESSURE) {
-            break;
-        }
         ASSERT_EQ(VN_OK, acquired);
         fillers.push_back(extra);
     }
-    ASSERT_FALSE(fillers.empty());
+    ASSERT_EQ(257u, fillers.size());
     VnPostActionDesc post{};
     post.structSize = sizeof(post);
     post.actionId = harkentest::ObjectId(kActionId);
     VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&post, &firing));
-    EXPECT_EQ(0u, firing);
-    EXPECT_EQ(0u, session.Engine()->voices.ActiveCount());
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    ASSERT_NE(0u, firing);
     for (auto& extra : fillers) {
         ASSERT_EQ(VN_OK, session.Engine()->ReleasePackIdentityLease(extra.lease));
     }
@@ -19709,7 +19546,7 @@ TEST(PackComposition, QueueRoleCounterPreservesWorldDirectAndStaticFutureModes) 
 void ExpectFrozenPackQueueRoleCounter(const harken::ContainerWorldInstallViewV1& world,
     const harken::PlayableRefV1& root, std::uint32_t queues, std::uint32_t current,
     std::uint32_t future, std::uint32_t packFlags, std::uint32_t worldFlags) {
-    harken::PackComposition composition(1);
+    harken::PackComposition composition{};
     const auto bytes = BuildCanonicalPartitionPack(22, 1, 7,
         WrapWorldPartition(22, 7, world, 0));
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, UINT64_C(1) << 32, 8));
@@ -19766,7 +19603,7 @@ TEST(PackComposition, QueueRoleCounterUsesResetAuthorityScheduleDepth) {
     using namespace harken::native_backing;
     ContainerMatrixWorld image(ContainerModeV1::SequenceQueue,
         ContainerMatrixChild::Segment, 1, 1);
-    harken::PackComposition composition(1);
+    harken::PackComposition composition{};
     const auto bytes = BuildCanonicalPartitionPack(22, 1, 7,
         WrapWorldPartition(22, 7, image.world, 0));
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, UINT64_C(1) << 32, 8));
@@ -27481,7 +27318,7 @@ TEST(PackComposition, FrozenSelectionIdentityTracksCanonicalUnionNotPublicationH
                                             &firstImage));
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(secondBytes.data(), secondBytes.size(),
                                             &secondImage));
-    PackComposition composition(4, 4, 2);
+    PackComposition composition{};
     PackComposition::CandidateOwner first;
     PackComposition::CandidateOwner second;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(firstImage, 1ull << 32, &first));
@@ -28525,7 +28362,7 @@ TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageThroughActivation)
     PackCanonicalImage image;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
     EXPECT_EQ(19u, image.partitionHeader.bodyVintage);
-    PackComposition composition(4, 8, 4);
+    PackComposition composition{};
     PackComposition::CandidateOwner candidate;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(image, 1, &candidate));
     EXPECT_EQ(19u, candidate.partitionBodyVintage);
@@ -28649,7 +28486,7 @@ TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollba
     oldSegment.markerCount = markers.size();
     oldSegment.scheduleSemanticFingerprint = ComputeSegmentScheduleFingerprintV1(oldSegment);
     legacy.segmentSchedules = &oldSegment;
-    PackComposition preparer(8, 16, 8);
+    PackComposition preparer{};
     const auto candidate = [&](ContainerWorldInstallViewV1 world, std::uint64_t id) {
         world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
         world.identity.runtimeSemanticFingerprint = world.sourceBodyVintage == 19
@@ -28669,7 +28506,7 @@ TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollba
     for (const auto vintage : {18u, 20u}) {
         SCOPED_TRACE(vintage);
         legacy.sourceBodyVintage = vintage;
-        PackComposition composition(8, 16, 8);
+        PackComposition composition{};
         ASSERT_EQ(VN_OK, composition.Commit({candidate(music, 22), candidate(legacy, 33)}, nullptr, 0, 16, 0));
         const auto previous = composition.PublishedHandle();
         ASSERT_NE(nullptr, previous);

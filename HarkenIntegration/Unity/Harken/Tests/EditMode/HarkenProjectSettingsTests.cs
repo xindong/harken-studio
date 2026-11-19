@@ -64,7 +64,6 @@ namespace Harken.Unity.Tests
             {
                 Assert.That(fresh.EnableCommunicationInBuilds, Is.True);
                 Assert.That(fresh.MaxVoices, Is.EqualTo(HarkenProjectSettings.DefaultMaxVoices));
-                Assert.That(fresh.MaxPacks, Is.EqualTo(256u));
                 Assert.That(fresh.MaxActionFirings, Is.EqualTo(256u));
                 Assert.That(fresh.SuppressUnityAudio, Is.False);
             }
@@ -79,7 +78,7 @@ namespace Harken.Unity.Tests
                 Assert.That(File.Exists(settingsPath), Is.True);
                 var generated = new SerializedObject(settings);
                 Assert.That(generated.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
-                Assert.That(generated.FindProperty("maxPacks").longValue, Is.EqualTo(256L));
+                Assert.That(generated.FindProperty("maxPacks"), Is.Null);
                 Assert.That(generated.FindProperty("maxActions"), Is.Null);
                 Assert.That(generated.FindProperty("emitterVariableSlots"), Is.Null);
                 Assert.That(generated.FindProperty("maxEmitters"), Is.Null);
@@ -87,7 +86,7 @@ namespace Harken.Unity.Tests
                 var config = new VnConfig();
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
                 Assert.That(config.maxVoices, Is.EqualTo(256u));
-                Assert.That(config.maxPacks, Is.EqualTo(256u));
+                Assert.That(config.maxPacks, Is.Zero);
                 Assert.That(config.maxActions, Is.Zero);
                 Assert.That(config.maxActionFirings, Is.EqualTo(256u));
             }
@@ -103,7 +102,7 @@ namespace Harken.Unity.Tests
                 Assert.That(asset, Is.Not.Null);
                 var serialized = new SerializedObject(asset);
                 Assert.That(serialized.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
-                Assert.That(serialized.FindProperty("maxPacks").longValue, Is.EqualTo(256L));
+                Assert.That(serialized.FindProperty("maxPacks"), Is.Null);
                 Assert.That(serialized.FindProperty("maxActions"), Is.Null);
                 Assert.That(serialized.FindProperty("maxActionFirings").longValue, Is.EqualTo(256L));
             }
@@ -133,7 +132,6 @@ namespace Harken.Unity.Tests
             Assert.That(migrated.maxEmitters, Is.Zero);
             var serialized = new SerializedObject(settings);
             serialized.FindProperty("maxVoices").longValue = 111;
-            serialized.FindProperty("maxPacks").longValue = 112;
             serialized.FindProperty("maxActionFirings").longValue = 114;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(settings);
@@ -143,7 +141,7 @@ namespace Harken.Unity.Tests
             var config = new VnConfig();
             HarkenProjectSettings.ApplyStartupCapacity(ref config);
             Assert.That(config.maxVoices, Is.EqualTo(111u));
-            Assert.That(config.maxPacks, Is.EqualTo(112u));
+            Assert.That(config.maxPacks, Is.Zero);
             Assert.That(config.maxActions, Is.Zero);
             Assert.That(config.maxActionFirings, Is.EqualTo(114u));
         }
@@ -156,7 +154,7 @@ namespace Harken.Unity.Tests
             HarkenProjectSettings.ApplyStartupCapacity(ref config);
             Assert.That(config.maxActions, Is.Zero);
             Assert.That(config.maxVoices, Is.EqualTo(111u));
-            Assert.That(config.maxPacks, Is.EqualTo(112u));
+            Assert.That(config.maxPacks, Is.Zero);
             Assert.That(config.maxActionFirings, Is.EqualTo(114u));
         }
 

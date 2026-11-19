@@ -1851,8 +1851,8 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         const auto baseRevision = r.U64();
         const auto setRevision = r.U64();
         const auto count = r.U32();
-        if (r.failed || vintage != 1 || count == 0 || count > engine.config.maxPacks ||
-            count > r.Remaining() / 32) return 1;
+        if (r.failed || vintage != 1 || count == 0 || r.Remaining() < 40 ||
+            count > (r.Remaining() - 40) / 32) return 1;
         std::vector<VnCanonicalPackSetMemberV2> members(count);
         std::vector<ReplayPackNames> names(count);
         std::vector<VnPackByteSpan> spans(count);
@@ -1974,6 +1974,7 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         const std::uint32_t memberCount = r.U32();
         const std::uint32_t memberStructSize = r.U32();
         if (r.failed || vintage != 1 || descFlags != 0 || memberCount == 0 ||
+            r.Remaining() < 80 || memberCount > (r.Remaining() - 80) / 73 ||
             descStructSize != sizeof(VnCanonicalPackSetActivationDescV1) ||
             memberStructSize != sizeof(VnCanonicalPackSetMemberV1)) {
             return 1;

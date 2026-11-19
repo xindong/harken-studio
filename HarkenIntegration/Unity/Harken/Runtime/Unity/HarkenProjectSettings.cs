@@ -14,7 +14,6 @@ namespace Harken.Unity
     {
         public const string ResourceName = "HarkenProjectSettings";
         public const uint DefaultMaxVoices = 256;
-        public const uint DefaultMaxPacks = 256;
         public const uint DefaultMaxActionFirings = 256;
         public const uint UnlimitedActionFirings = 256;
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
@@ -27,7 +26,6 @@ namespace Harken.Unity
         [SerializeField, Min(0)] private int remoteDiscoveryPort;
         [SerializeField] private string remoteApplicationName = string.Empty;
         [SerializeField] private uint maxVoices = DefaultMaxVoices;
-        [SerializeField] private uint maxPacks = DefaultMaxPacks;
         [SerializeField] private uint maxActionFirings = DefaultMaxActionFirings;
         [SerializeField] private string language = string.Empty;
         [SerializeField] private string packPlatformId = string.Empty;
@@ -41,7 +39,6 @@ namespace Harken.Unity
 
         public bool EnableCommunicationInBuilds => enableCommunicationInBuilds;
         public uint MaxVoices => NonZero(maxVoices, DefaultMaxVoices);
-        public uint MaxPacks => NonZero(maxPacks, DefaultMaxPacks);
         public uint MaxActionFirings => maxActionFirings != 0 ? maxActionFirings : UnlimitedActionFirings;
         public string Language => language ?? string.Empty;
         public string PlatformId => packPlatformId ?? string.Empty;
@@ -77,7 +74,6 @@ namespace Harken.Unity
 
         internal void SetPackDirectory(string value) => packDirectory = value ?? string.Empty;
         internal void SetMaxVoices(uint value) => maxVoices = value;
-        internal void SetMaxPacks(uint value) => maxPacks = value;
         internal void SetMaxActionFirings(uint value) => maxActionFirings = value;
         internal void SetSuppressUnityAudio(bool value) => suppressUnityAudio = value;
         internal void SetLanguage(string value) => language = value ?? string.Empty;
@@ -100,7 +96,6 @@ namespace Harken.Unity
                 config.commandQueueDepth = Math.Max(config.commandQueueDepth, config.maxVoices);
                 config.maxControlCommandsPerQuantum = Math.Max(config.maxControlCommandsPerQuantum, config.maxVoices);
             }
-            config.maxPacks = settings.MaxPacks;
             config.maxActionFirings = settings.MaxActionFirings;
         }
 
