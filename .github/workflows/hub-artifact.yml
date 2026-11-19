@@ -83,7 +83,7 @@ jobs:
       - name: Smoke-run the update bridge from its deployed directory
         shell: pwsh
         run: |
-          $bridge = Start-Process -FilePath "build/bin/Release/Updater/HarkenHubUpdateBridge.exe" -PassThru -Wait
+          $bridge = Start-Process -FilePath "build/bin/Release/Hub/Updater/HarkenHubUpdateBridge.exe" -PassThru -Wait
           if ($bridge.ExitCode -ne 1) {
             throw "update bridge smoke run exited with $($bridge.ExitCode) instead of the usage code"
           }
@@ -95,7 +95,7 @@ jobs:
           python .scripts/release/collect_legal_texts.py \
             --product hub \
             --qt-version "$(qmake -query QT_VERSION)" \
-            --output build/bin/Release/Legal
+            --output build/bin/Release/Hub/Legal
 
       - name: Build Harken Hub MSI and setup EXE
         shell: bash
@@ -104,7 +104,7 @@ jobs:
           version=$(tr -d '[:space:]' < HarkenHub/VERSION)
           build_id="run${{ github.run_number }}.${GITHUB_SHA::8}"
           python .scripts/release/build_hub_installer.py \
-            --input-dir build/bin/Release \
+            --input-dir build/bin/Release/Hub \
             --output-dir .temp/hub-installer \
             --version "$version" \
             --build-id "$build_id" \
@@ -279,13 +279,13 @@ jobs:
           python3 .scripts/release/collect_legal_texts.py \
             --product hub \
             --qt-version "$(qmake -query QT_VERSION)" \
-            --output "build/bin/Release/HarkenHub.app/Contents/Resources/Legal"
+            --output "build/bin/Release/Hub/HarkenHub.app/Contents/Resources/Legal"
 
       - name: Verify bundle architecture and layout
         shell: bash
         run: |
           set -euo pipefail
-          bundle="build/bin/Release/HarkenHub.app"
+          bundle="build/bin/Release/Hub/HarkenHub.app"
           binary="$bundle/Contents/MacOS/HarkenHub"
           echo "--- bundle layout (depth 2) ---"
           find "$bundle" -maxdepth 2 -print
@@ -322,7 +322,7 @@ jobs:
           version=$(tr -d '[:space:]' < HarkenHub/VERSION)
           build_id="run${{ github.run_number }}.${GITHUB_SHA::8}"
           python3 .scripts/release/build_hub_pkg.py \
-            --bundle build/bin/Release/HarkenHub.app \
+            --bundle build/bin/Release/Hub/HarkenHub.app \
             --output-dir .temp/hub-macos \
             --version "$version" \
             --build-id "$build_id"

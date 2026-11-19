@@ -9,6 +9,7 @@
 #include <QStyleFactory>
 #include <QStyleHints>
 
+#include "HubVersion.h"
 #include "harken_buildinfo.h"
 
 #include <QCoreApplication>
@@ -196,7 +197,7 @@ int main(int argc, char* argv[])
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--cli") != 0) continue;
         QCoreApplication app(argc, argv);
-        app.setApplicationVersion(QString::fromUtf8(Harken::BuildInfo::HubVersion.data(), int(Harken::BuildInfo::HubVersion.size())));
+        app.setApplicationVersion(QString::fromUtf8(VNH::HubVersion.data(), int(VNH::HubVersion.size())));
 #ifdef Q_OS_WIN
         const auto outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
         const bool hasOutput = outputHandle && outputHandle != INVALID_HANDLE_VALUE;
@@ -377,8 +378,8 @@ int main(int argc, char* argv[])
             report[QStringLiteral("product")] = QStringLiteral("HarkenHub");
             report[QStringLiteral("healthy")] = true;
             report[QStringLiteral("version")] = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                VNH::HubVersion.data(),
+                static_cast<int>(VNH::HubVersion.size()));
             report[QStringLiteral("buildId")] = QString::fromUtf8(
                 Harken::BuildInfo::BuildId.data(),
                 static_cast<int>(Harken::BuildInfo::BuildId.size()));
@@ -478,8 +479,8 @@ int main(int argc, char* argv[])
                 return 2;
             }
             const QString ownVersion = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                VNH::HubVersion.data(),
+                static_cast<int>(VNH::HubVersion.size()));
             if (report.version != ownVersion) {
                 qCritical().noquote()
                     << "Health handshake reported version" << report.version
@@ -535,8 +536,8 @@ int main(int argc, char* argv[])
 #endif
 
             const QString currentVersion = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                VNH::HubVersion.data(),
+                static_cast<int>(VNH::HubVersion.size()));
             const bool selfUpdateFinalized =
                 VNH::HubSelfUpdate::finalizeAfterRestart(currentVersion);
             if (selfUpdateFinalized) {
@@ -699,8 +700,8 @@ int main(int argc, char* argv[])
             hubOptions.manifestPublicKey =
                 VNH::TrustAnchors::manifestPublicKey();
             hubOptions.currentVersion = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                VNH::HubVersion.data(),
+                static_cast<int>(VNH::HubVersion.size()));
             anyStarted = selfUpdate.start(hubOptions) || anyStarted;
 
             if (app.arguments().contains(QStringLiteral("--check-now"))) {
@@ -749,8 +750,8 @@ int main(int argc, char* argv[])
         QApplication::setStyle(fusion);
     app.setOrganizationDomain(QStringLiteral("harkensound.com"));
     app.setApplicationVersion(
-        QString::fromUtf8(Harken::BuildInfo::HubVersion.data(),
-                          static_cast<int>(Harken::BuildInfo::HubVersion.size())));
+        QString::fromUtf8(VNH::HubVersion.data(),
+                          static_cast<int>(VNH::HubVersion.size())));
 
     qInfo().noquote() << "Harken Hub"
                       << QString::fromUtf8(Harken::BuildInfo::Label.data(),

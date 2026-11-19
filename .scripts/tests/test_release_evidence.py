@@ -107,6 +107,8 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.write_notice()
         (self.dependency / "LICENSE").write_text("Example license\n", encoding="utf-8")
         (self.dependency / "example.c").write_text("int example(void) { return 1; }\n", encoding="utf-8")
+        (self.repo / "HarkenHub").mkdir()
+        (self.repo / "HarkenHub/VERSION").write_text("1.0.0\n", encoding="utf-8")
         self.entry = {"id": "example", "path": "ThirdParty/example", "notice": "Example",
                       "url": "https://example.invalid/source",
                       "evidence": ["ThirdParty/example/LICENSE"]}
@@ -118,7 +120,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.head = self.run_git("rev-parse", "HEAD")
         (self.payload / "app.exe").write_bytes(b"MZfixture")
         self.identity = {"gitCommit": self.head, "gitDirty": False, "version": "1.0.0",
-                         "hubVersion": "1.0.0", "buildId": "test-build", "platform": "test-x64", "channel": "dev"}
+                         "buildId": "test-build", "platform": "test-x64", "channel": "dev"}
         self.model = {"identity": self.identity, "paths": {self.dependency / "example.c"},
                       "targets": ["harken_hub"], "artifacts": [{"target": "harken_hub", "type": "EXECUTABLE",
                        "name": "app.exe", "sha256": evidence.sha256(self.payload / "app.exe")}],

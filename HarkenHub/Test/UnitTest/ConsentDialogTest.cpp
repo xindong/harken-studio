@@ -1,4 +1,5 @@
 #include "Legal/ConsentStore.h"
+#include "Legal/LegalDocuments.h"
 #include "Settings/HubSettings.h"
 #include "UI/ConsentDialog.h"
 
@@ -65,18 +66,11 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
             });
             ASSERT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, id));
             ASSERT_EQ(shownTexts.size(), 2);
-            const QString suffix = language == QStringLiteral("en")
-                                       ? QStringLiteral(".txt")
-                                       : QStringLiteral(".zh-CN.txt");
-            QFile agreement(QStringLiteral(":/Resources/legal/USER_AGREEMENT") + suffix);
-            QFile privacy(QStringLiteral(":/Resources/legal/PRIVACY_POLICY") + suffix);
-            ASSERT_TRUE(agreement.open(QIODevice::ReadOnly | QIODevice::Text));
-            ASSERT_TRUE(privacy.open(QIODevice::ReadOnly | QIODevice::Text));
-            const QByteArray agreementText = agreement.readAll();
-            const QByteArray privacyText = privacy.readAll();
-            EXPECT_EQ(shownTexts.at(0), QString::fromUtf8(agreementText).replace(QChar::Nbsp, QChar::Space));
-            EXPECT_EQ(shownTexts.at(1), QString::fromUtf8(privacyText).replace(QChar::Nbsp, QChar::Space));
-            const QByteArray content = agreementText + "\n\n" + privacyText;
+            const QStringList documents = VNH::LegalDocuments::texts();
+            ASSERT_EQ(documents.size(), 2);
+            EXPECT_EQ(shownTexts.at(0), QString(documents.at(0)).replace(QChar::Nbsp, QChar::Space));
+            EXPECT_EQ(shownTexts.at(1), QString(documents.at(1)).replace(QChar::Nbsp, QChar::Space));
+            const QByteArray content = documents.at(0).toUtf8() + "\n\n" + documents.at(1).toUtf8();
             const QString hash = QString::fromLatin1(QCryptographicHash::hash(
                 content, QCryptographicHash::Sha256).toHex());
             EXPECT_TRUE(VNH::ConsentStore::hasConsent(

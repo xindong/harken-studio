@@ -18,30 +18,23 @@ class ProductLegalTest(unittest.TestCase):
 
     def test_consent_hashes_match_product_documents(self):
         expected = {
-            ".txt": "370b273640c25743bb4a51eecc019bda785385e526a1076520f0f8e42dd8d3f7",
-            ".zh-CN.txt": "e3f7dd8901a56b49d2f5731cbbce61d2081ab87177b30666740e4703b88fe528",
+            "USER_TERMS.md": "370b273640c25743bb4a51eecc019bda785385e526a1076520f0f8e42dd8d3f7",
+            "USER_TERMS.zh-CN.md": "e3f7dd8901a56b49d2f5731cbbce61d2081ab87177b30666740e4703b88fe528",
         }
-        self.module.write_hub_resources(self.root)
-        for suffix, digest in expected.items():
-            with self.subTest(suffix=suffix):
-                documents = [(self.root / (name + suffix)).read_bytes()
-                             for name in ("USER_AGREEMENT", "PRIVACY_POLICY")]
-                self.assertEqual(hashlib.sha256(b"\n\n".join(documents)).hexdigest(), digest)
+        for name, digest in expected.items():
+            with self.subTest(name=name):
+                documents = self.module.read_documents(REPO_ROOT / name)
+                self.assertEqual(hashlib.sha256("\n\n".join(documents).encode("utf-8")).hexdigest(), digest)
 
     def test_installer_text_matches_product_documents(self):
         digest = hashlib.sha256(self.module.installer_text().encode("utf-8")).hexdigest()
         self.assertEqual(digest, "4e4daa38c1fc5e92620174542f61e9b262f484dda14422b99d61dd8f25006aa5")
 
-    def test_source_edits_reach_resources_and_installer(self):
+    def test_source_edits_reach_installer(self):
         for name in self.module.TERMS_FILES.values():
             (self.root / name).write_bytes(b"# Agreement\r\n\r\nOriginal\r\n\r\n---\r\n\r\n# Privacy\r\n\r\nPolicy\r\n")
-        output = self.root / "generated"
-        self.module.write_hub_resources(output, self.root)
-        self.assertEqual((output / "USER_AGREEMENT.txt").read_bytes(), b"Agreement\n\nOriginal\n")
         source = self.root / "USER_TERMS.md"
         source.write_bytes(source.read_bytes().replace(b"Original", b"Updated"))
-        self.module.write_hub_resources(output, self.root)
-        self.assertEqual((output / "USER_AGREEMENT.txt").read_bytes(), b"Agreement\n\nUpdated\n")
         self.assertEqual(self.module.installer_text(self.root),
                          "Agreement\n\nOriginal\n\nPrivacy\n\nPolicy\n\nAgreement\n\nUpdated\n\nPrivacy\n\nPolicy\n")
 
