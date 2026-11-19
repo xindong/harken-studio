@@ -243,7 +243,9 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         sizeof(VnConfig::maxPackReplacementPeakBytes));
     const std::uint32_t vintage16Size = static_cast<std::uint32_t>(
         offsetof(VnConfig, reserved12) + sizeof(VnConfig::reserved12));
+    const std::uint32_t vintage17Size = vintage16Size + sizeof(std::uint64_t);
     if (config->structSize != sizeof(VnConfig) &&
+        config->structSize != vintage17Size &&
         config->structSize != vintage1Size &&
         config->structSize != vintage2Size &&
         config->structSize != vintage3Size &&
@@ -299,10 +301,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     }
 
     EngineConfig resolved;
-    if (config->structSize >= offsetof(VnConfig, compressedDecoderBytes) + sizeof(config->compressedDecoderBytes) &&
-        config->compressedDecoderBytes != 0)
-        resolved.compressedDecoderBytes = config->compressedDecoderBytes;
-    if (resolved.compressedDecoderBytes > SIZE_MAX) return VN_INVALID_CONFIG;
 
     std::uint32_t renderVoiceCapacity = resolved.voiceCapacity.Render();
     std::uint32_t virtualVoiceCapacity = resolved.voiceCapacity.Virtual();

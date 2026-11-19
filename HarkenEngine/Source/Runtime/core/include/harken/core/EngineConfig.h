@@ -180,7 +180,6 @@ struct EngineConfig {
     std::uint64_t topologyPlanPoolBytes = 0;
     std::uint64_t preparedTopologyPlanPoolBytes = 0;
     std::uint32_t streamRingBytes = 256 * 1024;
-    std::uint64_t compressedDecoderBytes = 2 * 1024 * 1024;
     std::uint32_t maxStreams = 16;
     std::uint32_t prebufferMs = 100;
     std::uint32_t starvationCooldownBlocks = 32;

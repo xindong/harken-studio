@@ -871,7 +871,6 @@ namespace Harken
     public ulong maxPackReplacementPeakBytes;
     public uint maxActionCooldownRows;
     public uint reserved12;
-    public ulong compressedDecoderBytes;
     }
 
     [StructLayout(LayoutKind.Sequential)]

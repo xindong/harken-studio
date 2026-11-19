@@ -1064,11 +1064,11 @@ TEST(TraceCodec, ConfigVintageIsSemanticRatherThanByteSized) {
         const std::uint32_t nativeSize =
             harken::NativeConfigSizeForVintage(vintage);
         EXPECT_NE(0u, nativeSize) << "vintage " << vintage;
-        EXPECT_EQ(vintage, harken::ConfigVintageFromNativeSize(nativeSize));
+        EXPECT_EQ(vintage == 18 ? 16u : vintage, harken::ConfigVintageFromNativeSize(nativeSize));
     }
     EXPECT_EQ(0u, harken::ConfigVintageFromNativeSize(1));
     EXPECT_EQ(0u, harken::ConfigVintageFromNativeSize(
-                      static_cast<std::uint32_t>(sizeof(VnConfig) + 8)));
+                      static_cast<std::uint32_t>(sizeof(VnConfig) + 16)));
 }
 
 TEST(TraceCodec, CurrentWorldRoundTripsEveryUnitTwoRowFamily) {
@@ -1838,7 +1838,6 @@ TEST(TraceCodec, ConfigWireImageRoundTripsWithoutNativePointers) {
     config.maxTopologyPlanBytes = 17u * 1024u * 1024u;
     config.maxActionFirings = 777;
     config.maxActionCooldownRows = 333;
-    config.compressedDecoderBytes = 3456789;
     config.onNotification = reinterpret_cast<VnNotificationCallback>(
         static_cast<std::uintptr_t>(0x1234u));
     config.notificationUserData = reinterpret_cast<void*>(
@@ -1864,7 +1863,6 @@ TEST(TraceCodec, ConfigWireImageRoundTripsWithoutNativePointers) {
     EXPECT_EQ(config.randomSeed, decoded.randomSeed);
     EXPECT_EQ(config.maxTopologyPlanBytes, decoded.maxTopologyPlanBytes);
     EXPECT_EQ(config.maxActionFirings, decoded.maxActionFirings);
-    EXPECT_EQ(config.compressedDecoderBytes, decoded.compressedDecoderBytes);
     EXPECT_EQ(config.maxActionCooldownRows,
               decoded.maxActionCooldownRows);
     EXPECT_EQ(nullptr, decoded.onNotification);
@@ -1878,41 +1876,73 @@ TEST(TraceCodec, VintageFifteenOmitsCooldownCapacity) {
     config.structSize =
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActionCooldownRows));
     config.maxActionCooldownRows = 333;
-    config.compressedDecoderBytes = 3456789;
     config.reserved12 = 1;
 
     std::vector<std::uint8_t> wire;
     ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
-    EXPECT_EQ(harken::kTraceConfigWireBytesV15, wire.size());
+    EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
     EXPECT_EQ(15u, harken::ConfigVintageFromNativeSize(config.structSize));
 
     VnConfig decoded{};
     std::uint32_t vintage = 0;
     ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(),
                                          &decoded, &vintage));
-    EXPECT_EQ(15u, vintage);
+    EXPECT_EQ(18u, vintage);
     EXPECT_EQ(0u, decoded.maxActionCooldownRows);
     EXPECT_EQ(0u, decoded.reserved12);
 }
 
 TEST(TraceCodec, VintageSixteenOmitsDecoderBudget) {
     VnConfig config = MakeNullConfig(7, kBlockFrames, 44100);
-    config.structSize = offsetof(VnConfig, compressedDecoderBytes);
+    config.structSize = sizeof(VnConfig);
     config.maxActionCooldownRows = 333;
     config.streamRingBytes = 2048;
-    config.compressedDecoderBytes = 3456789;
     std::vector<std::uint8_t> wire;
     ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
     EXPECT_EQ(harken::kTraceConfigWireBytesV16, wire.size());
     VnConfig decoded{};
     std::uint32_t vintage = 0;
     ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
-    EXPECT_EQ(16u, vintage);
+    EXPECT_EQ(18u, vintage);
     EXPECT_EQ(333u, decoded.maxActionCooldownRows);
-    EXPECT_EQ(0u, decoded.compressedDecoderBytes);
     EXPECT_EQ(2048u, decoded.streamRingBytes);
     config.reserved12 = 1;
     EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
+}
+
+TEST(TraceCodec, HistoricalSixteenAndSeventeenWireRemainReadable) {
+    auto config = MakeNullConfig(7, kBlockFrames, 44100);
+    config.maxActionCooldownRows = 333;
+    for (std::uint32_t historical : {16u, 17u}) {
+        std::vector<std::uint8_t> wire;
+        ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
+        wire[4] = static_cast<std::uint8_t>(historical);
+        if (historical == 17) wire.insert(wire.end(), 8, 0xff);
+        VnConfig decoded{};
+        std::uint32_t vintage = 0;
+        ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
+        EXPECT_EQ(historical, vintage);
+        EXPECT_EQ(sizeof(VnConfig), decoded.structSize);
+        EXPECT_EQ(333u, decoded.maxActionCooldownRows);
+        EXPECT_EQ(44100u, decoded.sampleRate);
+    }
+}
+
+TEST(TraceCodec, EveryNativeVintageWritesCurrentWireWithAbsentFieldsDefaulted) {
+    for (std::uint32_t historical = 1; historical <= 17; ++historical) {
+        auto config = MakeNullConfig(7, kBlockFrames, 44100);
+        config.structSize = harken::NativeConfigSizeForVintage(historical);
+        config.maxActionCooldownRows = 333;
+        std::vector<std::uint8_t> wire;
+        ASSERT_TRUE(harken::EncodeTraceConfig(config, wire)) << historical;
+        EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
+        VnConfig decoded{};
+        std::uint32_t vintage = 0;
+        ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
+        EXPECT_EQ(18u, vintage);
+        EXPECT_EQ(historical >= 16 ? 333u : 0u, decoded.maxActionCooldownRows);
+        EXPECT_EQ(44100u, decoded.sampleRate);
+    }
 }
 
 TEST(TraceCodec, CurrentRejectsNonZeroReserved12) {
@@ -1929,15 +1959,29 @@ TEST(TraceCodec, HistoricalPendingActionCapacityIsConsumedAndNormalized) {
 
     std::vector<std::uint8_t> wire;
     ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
-    EXPECT_EQ(harken::kTraceConfigWireBytesV13, wire.size());
+    EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
 
     VnConfig decoded{};
     std::uint32_t vintage = 0;
     ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(),
                                          &decoded, &vintage));
-    EXPECT_EQ(13u, vintage);
+    EXPECT_EQ(18u, vintage);
     EXPECT_EQ(0u, decoded.pendingActionCapacity);
     EXPECT_EQ(0u, decoded.maxActionFirings);
+}
+
+TEST(TraceCodec, HistoricalPendingCapacityWireIsConsumed) {
+    auto config = MakeNullConfig(7, kBlockFrames, 44100);
+    std::vector<std::uint8_t> wire;
+    ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
+    wire.resize(harken::kTraceConfigWireBytesV13);
+    wire[4] = 13;
+    wire[16 + 20 * 4] = 37;
+    VnConfig decoded{};
+    std::uint32_t vintage = 0;
+    ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
+    EXPECT_EQ(13u, vintage);
+    EXPECT_EQ(0u, decoded.pendingActionCapacity);
 }
 
 TEST(TraceCodec, CurrentVintageRejectsNonZeroActionCapacityTombstone) {

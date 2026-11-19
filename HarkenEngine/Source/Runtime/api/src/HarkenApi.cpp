@@ -111849,7 +111849,9 @@ VnResult Vn_Init(const VnConfig* config) {
     // origin, including randomSeed). Callback and user-data pointers are
     // process-local and meaningless to a replay, so the stored copy nulls
     // them; ResolveConfig already validated structSize as a known vintage.
-    std::memcpy(&engine->traceOrigin.requested, config, config->structSize);
+    const auto traceConfigBytes = std::min<std::size_t>(config->structSize, sizeof(VnConfig));
+    std::memcpy(&engine->traceOrigin.requested, config, traceConfigBytes);
+    engine->traceOrigin.requested.structSize = static_cast<std::uint32_t>(traceConfigBytes);
     engine->traceOrigin.requested.onNotification = nullptr;
     engine->traceOrigin.requested.notificationUserData = nullptr;
     engine->traceOrigin.requested.logCallback = nullptr;

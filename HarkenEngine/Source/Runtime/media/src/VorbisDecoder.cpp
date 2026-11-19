@@ -7,7 +7,7 @@
 #include <new>
 
 namespace harken {
-VorbisCodec::VorbisCodec(std::size_t budget, unsigned workers) : states(budget) {
+VorbisCodec::VorbisCodec(unsigned workers) {
     if (!settings.Initialize(256 * 1024)) throw std::bad_alloc{};
     for (unsigned i = 0; i <= workers; ++i) {
         auto workspace = std::make_unique<VorbisWorkspace>();
@@ -332,6 +332,7 @@ void VorbisStatePool::Collect() noexcept {
             state->nextFree = free_[state->key]; free_[state->key] = state;
         }
     }
+    if (bytes_ - activeBytes_ > activeBytes_) TrimFree();
 }
 void VorbisStatePool::TrimFree() noexcept {
     free_.fill(nullptr);
@@ -352,8 +353,6 @@ VorbisStatePool::State* VorbisStatePool::Acquire(std::shared_ptr<const VorbisSet
     if (state) { free_[key] = state->nextFree; state->nextFree = nullptr; }
     else {
         const auto required = RequiredBytes(*settings);
-        if (required > budget_ - activeBytes_) return nullptr;
-        if (required > budget_ - bytes_) TrimFree();
         std::unique_ptr<State> created(new (std::nothrow) State);
         if (!created) return nullptr;
         const auto count = AlignCount(settings->StateBytes());

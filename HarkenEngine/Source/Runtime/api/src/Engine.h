@@ -7068,7 +7068,7 @@ public:
                     const EngineHandleGenerationFloors& handleFloors = {})
         : config(resolved),
           playableStorage(resolved),
-          vorbis(resolved.compressedDecoderBytes, resolved.renderWorkerCount),
+          vorbis(resolved.renderWorkerCount),
           logicPacks(resolved.maxPacks),
           packComposition(PackIdentityLeaseCapacity(resolved) -
                               resolved.maxPlayableInstances,

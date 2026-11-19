@@ -7738,19 +7738,9 @@
                 "type": "u32"
               },
               "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "compressedDecoderBytes",
-              "offset": 352,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
             }
           ],
-          "size": 360
+          "size": 352
         },
         "VnCurrentWorldLoadDesc": {
           "alignment": 8,
@@ -22027,10 +22017,6 @@
               {
                 "field": "maxActionCooldownRows",
                 "size": 344
-              },
-              {
-                "field": "compressedDecoderBytes",
-                "size": 352
               }
             ],
             "boundaryFields": [
@@ -22048,12 +22034,14 @@
               "maxBusTopologyOwners",
               "maxActionFirings",
               "maxCatalogEntries",
-              "maxActionCooldownRows",
-              "compressedDecoderBytes"
+              "maxActionCooldownRows"
             ],
-            "currentSize": 360,
+            "currentSize": 352,
             "missingFields": "engine-defaults",
             "mode": "exact-discrete-prefix",
+            "retiredTailBytes": [
+              8
+            ],
             "source": "explicit",
             "unknownSize": "reject"
           },
@@ -24971,12 +24959,13 @@
         "kTraceConfigImageCurrentBytes": 280,
         "kTraceConfigImageLegacyBytes": 264,
         "kTraceConfigSchemaVersion": 1,
-        "kTraceConfigVintageCount": 17,
-        "kTraceConfigWireBytes": 288,
+        "kTraceConfigVintageCount": 18,
+        "kTraceConfigWireBytes": 280,
         "kTraceConfigWireBytesV13": 220,
         "kTraceConfigWireBytesV14": 224,
         "kTraceConfigWireBytesV15": 276,
         "kTraceConfigWireBytesV16": 280,
+        "kTraceConfigWireBytesV17": 288,
         "kTraceCurrentWorldInstallPairedTailBytes": 52,
         "kTraceFixedHeaderBytes": 32,
         "kTraceFlagArgsUnreplayable": 1,
@@ -25016,11 +25005,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "6b419a9fc58315fa6ccf01e9774a77932296ed72fb6a7c99827b1879fe813fe6",
+  "contractSha256": "9096c72cd613a2b43566eec009da06455ee69b2747e6adc2964eabc4bd8391df",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "a140e7e24de88b1fb750d71e36fedeb08f8f8820e9810462ec23ef779dcac0fd",
-      "size": 341471
+      "sha256": "7860396cc779cb2cc2373803b6e0aa81de1501c9ae733d0f39a1bec2fa91c9c0",
+      "size": 341348
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "a9c83b934aa8432149490791fa9b53392c4b4479c828ad7d08c354e202ad6edb",
@@ -25035,49 +25024,49 @@
       "size": 5300
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "9248dae44b834f68e0b2c6260e70fe2ba461957f3f54d80fa7d3703bc282d3ba",
-      "size": 256049
+      "sha256": "ee4a8342f167e52d98dadc7efaa9845137b0b0ad77976a13563000b13e2153e3",
+      "size": 255909
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "8b0c611c2a6912763ef47d07fe81c7f0aa56961242e5101de169589ed46bf4df",
-      "size": 265532
+      "sha256": "f9a28008ea3592cb38735252bf059f8b8b753468fd0fb930572c2bf5350bed13",
+      "size": 265476
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "0060e74f47f0d0c2a55227f9bb4fa9d374de3b1ddf8aad9461b089a8bfcc1bde",
-      "size": 135233
+      "sha256": "3c3f06279970e34b0e8515c0626957fc108600dcc372c682eb2dae8e1abb4652",
+      "size": 135116
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
       "sha256": "5ff2c5dc1896428331330c55d9508e233af57cfec22b96a05077cf8cc34355a2",
       "size": 29885
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "bd8f88b99bfdcedb4bb656453d3632c405cf3cf8d697c15adc07e310488b81d2",
-      "size": 71676
+      "sha256": "15dbcb56ccfda03628949b60f7a40e0d69cada47ecc495e1950320d64fbe2d22",
+      "size": 71635
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "c43dde7a212088032094a84f647717ea041f704b840724956c4bb83e4f781505",
+    "nativeAbiSha256": "45a49ad31ae4feb54590d46000fdfa0ecfeb94ceef0ea2b34a20c6ad553b4333",
     "remoteWireSha256": "6d6fe82bfbc0e1f7af6ed1195a1f8b42fd98ea3b61bc0c4713194ee7665720cf",
-    "traceFormatSha256": "b41aa47236bb26df73342eecb96d0a2d314b231688d06e87febafdb8bc1a15c4"
+    "traceFormatSha256": "c1c8d9ffbc1e31c8d2198e4eee83085c2ce3e3041d581a1d81dfd90d61cad302"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "d4a6a12a1319b8e2b637b0f262968e48c9b6dff5718adecc264a438babee2d6a",
-      "size": 244571
+      "sha256": "07b18193d31dccd2755950dc90769e82ee2a3ed346021c9925cfe752a024943b",
+      "size": 244480
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "3190650b20e672b5d8f772d1cff3af160bae50dd0ca959636e6891beeea1f0be",
-      "size": 19566
+      "sha256": "5d3e9f86c526166154aae15df007e5f1355bdd22aab1017ab1614042a734c969",
+      "size": 19673
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
-      "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",
-      "size": 56134
+      "sha256": "e9a19485caf455fbcc26e19a6d0453bc8d5a43a727d70d4ec9f5a07e293bb87f",
+      "size": 56650
     },
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py": {
       "sha256": "d2325c13504af6b467a8452abbfbbf0accfaa653505d171ca2d7085b5e2de486",
@@ -25088,8 +25077,8 @@
       "size": 30778
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "a576cec5d38184ec7b9ce9c6cca94657b11533e6d55a3c30279fbd6c6eb7f67f",
-      "size": 264287
+      "sha256": "45c83e48afcbd409d4af3ca625a41b755434f16dc8a8409ebd5184e72af576d7",
+      "size": 264231
     }
   }
 }

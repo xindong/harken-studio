@@ -2218,7 +2218,7 @@ bool WriteV3Config(std::vector<std::uint8_t>* bytes,
     std::copy(wire.begin(), wire.end(),
               bytes->begin() + harken::kTraceFixedHeaderBytes);
     const std::uint32_t vintage =
-        harken::ConfigVintageFromNativeSize(config.structSize);
+        harken::kTraceConfigVintageCount;
     std::memcpy(bytes->data() + 12, &vintage, sizeof vintage);
     return true;
 }
@@ -3774,6 +3774,28 @@ TEST(TraceReplayE2E, VersionOneTraceIsExplicitlyRejected) {
         RunHost("trace-replay " + tracePath + " --capture " + outPath);
     EXPECT_EQ(1, run.exitCode) << run.output;
     EXPECT_FALSE(std::filesystem::exists(outPath));
+}
+
+TEST(TraceReplayE2E, HistoricalConfigVintagesReplayWithIgnoredDecoderBudget) {
+    const auto tracePath = TempPath("config_vintage_source.vtrc");
+    ASSERT_TRUE(RecordFormatFixture(tracePath));
+    const auto source = ReadFileBytes(tracePath);
+    const auto configEnd = harken::kTraceFixedHeaderBytes + harken::kTraceConfigWireBytes;
+    ASSERT_GT(source.size(), configEnd);
+    EXPECT_EQ(18u, source[12]);
+    EXPECT_EQ(18u, source[harken::kTraceFixedHeaderBytes + 4]);
+    for (std::uint32_t vintage : {16u, 17u}) {
+        auto bytes = source;
+        bytes[12] = static_cast<std::uint8_t>(vintage);
+        bytes[harken::kTraceFixedHeaderBytes + 4] = static_cast<std::uint8_t>(vintage);
+        if (vintage == 17) {
+            bytes.insert(bytes.begin() + configEnd, 8, 0xff);
+            const std::uint32_t headerBytes = configEnd + 8;
+            std::memcpy(bytes.data() + 8, &headerBytes, sizeof(headerBytes));
+        }
+        const auto run = RunMutatedTrace(bytes, "config_vintage_" + std::to_string(vintage) + ".vtrc");
+        EXPECT_EQ(0, run.exitCode) << run.output;
+    }
 }
 
 TEST(TraceReplayE2E, RetiredTraceVersionsAreRejectedBeforeRecords) {

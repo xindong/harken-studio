@@ -108,7 +108,7 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
     }
 }
 
-TEST(VorbisDecoder, PoolBudgetReuseRetirementAndSharedSetupIdentity) {
+TEST(VorbisDecoder, PoolGrowsReusesRetiresAndReleasesSharedSetup) {
     const auto fixture = harken::test::MakeVorbisFixture(2);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
@@ -120,25 +120,27 @@ TEST(VorbisDecoder, PoolBudgetReuseRetirementAndSharedSetupIdentity) {
     auto b = cache.Prepare(media, kSetupBudget, result);
     ASSERT_EQ(a, b);
     const auto bytes = harken::VorbisStatePool::RequiredBytes(*a);
-    harken::VorbisStatePool pool(bytes * 2);
+    harken::VorbisStatePool pool;
     auto* first = pool.Acquire(a); auto* second = pool.Acquire(b);
     ASSERT_NE(first, nullptr); ASSERT_NE(second, nullptr); ASSERT_NE(first, second);
-    EXPECT_EQ(pool.Acquire(a), nullptr); EXPECT_EQ(pool.ActiveBytes(), bytes * 2);
-    first->Retire(); pool.Collect(); EXPECT_EQ(pool.ActiveBytes(), bytes);
-    auto* reused = pool.Acquire(a); EXPECT_EQ(reused, first); EXPECT_EQ(pool.Bytes(), bytes * 2);
+    auto* third = pool.Acquire(a); ASSERT_NE(third, nullptr);
+    EXPECT_EQ(pool.ActiveBytes(), bytes * 3);
+    first->Retire(); pool.Collect(); EXPECT_EQ(pool.ActiveBytes(), bytes * 2);
+    auto* reused = pool.Acquire(a); EXPECT_EQ(reused, first); EXPECT_EQ(pool.Bytes(), bytes * 3);
     std::weak_ptr<const harken::VorbisSettings> weak = a; a.reset(); b.reset();
-    EXPECT_FALSE(weak.expired()); reused->Retire(); second->Retire(); pool.Collect();
+    EXPECT_FALSE(weak.expired()); reused->Retire(); second->Retire(); third->Retire(); pool.Collect();
     EXPECT_TRUE(weak.expired()); EXPECT_EQ(pool.ActiveBytes(), 0u);
+    EXPECT_EQ(pool.Bytes(), 0u);
     a = cache.Prepare(media, kSetupBudget, result); ASSERT_NE(a, nullptr);
     auto* cached = pool.Acquire(a);
-    EXPECT_TRUE(cached == first || cached == second); EXPECT_EQ(pool.Bytes(), bytes * 2);
+    ASSERT_NE(cached, nullptr); EXPECT_EQ(pool.Bytes(), bytes);
     cached->Retire(); pool.Collect();
 }
 
 TEST(VorbisDecoder, PoolReordersCanonicalChannelsWithoutAllocatingOnRenderRetirement) {
     harken::VorbisSettingsCache cache; ASSERT_TRUE(cache.Initialize(kSetupBudget));
     harken::VorbisWorkspace workspace; ASSERT_TRUE(workspace.Initialize());
-    harken::VorbisStatePool pool(2 * 1024 * 1024);
+    harken::VorbisStatePool pool;
     for (unsigned channels : {1u, 2u, 4u, 6u, 8u}) {
         const auto fixture = harken::test::MakeVorbisFixture(channels);
         harken::VorbisMedia media;
@@ -183,7 +185,7 @@ TEST(VorbisDecoder, DISABLED_DesktopDecodeTiming) {
     auto settings = cache.Prepare(media, kSetupBudget, status); ASSERT_NE(settings, nullptr);
     for (unsigned voices : {1u, 128u}) {
         const auto stateBytes = harken::VorbisStatePool::RequiredBytes(*settings);
-        harken::VorbisStatePool pool(stateBytes * voices);
+        harken::VorbisStatePool pool;
         std::vector<harken::VorbisStatePool::State*> states;
         for (unsigned i = 0; i < voices; ++i) { states.push_back(pool.Acquire(settings)); ASSERT_NE(states.back(), nullptr); }
         std::vector<double> timings; timings.reserve(media.packetBytes / 2 * 10);
@@ -342,7 +344,7 @@ TEST(VorbisDecoder, PreparationFailureReleasesEveryAllocationAndRejectsUnsupport
 
 TEST(VorbisDecoder, ResidentCodecSeekAndRetirementUseNoAudioThreadAllocation) {
     const auto fixture = harken::test::MakeVorbisFixture(6, false, 257, 1023);
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     harken::VorbisPrepareResult result;
     auto source = harken::VorbisResident::Prepare(codec, fixture.media, kSetupBudget, result);
     ASSERT_NE(source, nullptr);
@@ -394,7 +396,7 @@ TEST(VorbisDecoder, RejectsSeekLoopAndDurationMetadataThatDisagreesWithPackets) 
 }
 
 TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
-    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisCodec codec(0);
     for (const unsigned channels : {1u, 2u, 4u, 6u, 8u}) {
         SCOPED_TRACE(channels);
         const auto fixture = harken::test::MakeVorbisFixture(channels, true);
