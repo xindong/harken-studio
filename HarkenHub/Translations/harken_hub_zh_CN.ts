@@ -5349,7 +5349,7 @@ Close Unity and complete any required P4 checkout before continuing.</source>
     <message><source>The selected location does not contain the installed Integration Package.</source><translation>所选位置不是已安装的集成包。</translation></message>
     <message><source>The installed Integration Package cannot be removed safely.</source><translation>无法安全地移除已安装的集成包。</translation></message>
     <message><source>Integration Package %1 is installed at %2 and will be removed.</source><translation>%2 已安装集成包 %1，将被移除。</translation></message>
-    <message><source>Project settings created by the Integration Package are outside the installation directory and are kept.</source><translation>集成包创建的工程设置位于安装目录之外，会被保留。</translation></message>
+    <message><source>Everything inside the installation directory is removed. Files outside it, including Integration settings in their default locations, are kept.</source><translation>安装目录内的所有内容都会删除。目录外的文件（包括位于默认位置的集成设置）会保留。</translation></message>
     <message><source>The Integration Package could not be removed completely.</source><translation>集成包未能完全移除。</translation></message>
     <message><source>Close Unity and any program using the installation directory, then retry, or restore the previous version.</source><translation>请关闭 Unity 及占用安装目录的程序后重试，或恢复之前的版本。</translation></message>
     <message><source>Removed Integration Package %1 from %2.</source><translation>已从 %2 移除集成包 %1。</translation></message>
@@ -5393,13 +5393,13 @@ Close Unity before continuing.</source><translation>集成包目录将被替换�
     <message><source>The installed Integration Package could not be identified. Review the results; no files were changed.</source><translation>无法识别已安装的集成包。请查看结果；未修改任何文件。</translation></message>
     <message><source>Reviewing the installed Unity Integration Package...</source><translation>正在检查已安装的 Unity 集成包...</translation></message>
     <message><source>Removing the Unity Integration Package...</source><translation>正在移除 Unity 集成包...</translation></message>
-    <message><source>The Integration Package directory will be removed:
+    <message><source>The Integration Package directory and everything inside it will be removed:
 %1
 
-Integration settings and the project relationship are kept. Close Unity before continuing.</source><translation>将移除集成包目录：
+Integration settings outside this directory and the project relationship are kept. Close Unity before continuing.</source><translation>将移除集成包目录及其中的所有内容：
 %1
 
-集成设置和工程关联会保留。继续前请关闭 Unity。</translation></message>
+此目录之外的集成设置和工程关联会保留。继续前请关闭 Unity。</translation></message>
     <message><source>The Unity Integration Package was removed. Review is recommended for the highlighted steps.</source><translation>Unity 集成包已移除。建议检查标出的步骤。</translation></message>
     <message><source>The Unity Integration Package was removed.</source><translation>Unity 集成包已移除。</translation></message>
     <message><source>Unity Integration Package removal did not finish. Use Restore Previous Version to put the removed version back.</source><translation>Unity 集成包移除未完成。可使用“恢复之前的版本”放回被移除的版本。</translation></message>

@@ -773,7 +773,7 @@ UnityIntegrationService::Result UnityIntegrationService::remove(const Request& r
         result.installedVersion = packageVersion(target);
         step.summary = QStringLiteral("Integration Package %1 is installed at %2 and will be removed.")
                            .arg(result.installedVersion, result.integrationInstallPath);
-        step.details << QStringLiteral("Project settings created by the Integration Package are outside the installation directory and are kept.");
+        step.details << QStringLiteral("Everything inside the installation directory is removed. Files outside it, including Integration settings in their default locations, are kept.");
         step.artifacts << target;
     });
 
