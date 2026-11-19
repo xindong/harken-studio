@@ -73,7 +73,6 @@ public:
         // Prepare navigation alongside the fixed records, never during a
         // Source reservation or an audio completion publication.
         if (capacity == 0) return;
-        if (!active_.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
         for (std::uint64_t slot = 0; slot < capacity; slot += 256u)
             if (!active_.Prepare({1, static_cast<std::uint32_t>(slot), 0})) throw harken::detail::LogicPreparationFailure{};
     }

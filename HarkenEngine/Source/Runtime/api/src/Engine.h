@@ -7295,9 +7295,6 @@ public:
             !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
-            !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
-            !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw harken::detail::LogicPreparationFailure{};

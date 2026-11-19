@@ -1957,7 +1957,7 @@ private:
     }
 
     std::vector<CommandRecord> m_slots;
-    SparseRowStorage<InitialSourceEntry> m_initialSources;
+    SparseRowSegment<InitialSourceEntry> m_initialSources;
     std::array<CommandRecord, 3> m_initialPreparation{};
     std::atomic<std::uint64_t> m_initialHead{0};
     std::atomic<std::uint64_t> m_initialTail{0};
