@@ -237,6 +237,64 @@ TEST_F(UnityIntegrationTest, FailedInstallationKeepsThePreviousVersionUntilItIsR
     EXPECT_FALSE(restore().success);
 }
 
+TEST_F(UnityIntegrationTest, SettingsInsideTheInstallationDirectoryBlockReplacementAndRemoval)
+{
+    ASSERT_TRUE(install("Assets/Harken").success);
+    writeFile(path("Assets/Harken/Resources/HarkenProjectSettings.asset"), "settings");
+    const auto upgrade = install("Assets/Harken");
+    EXPECT_FALSE(upgrade.success);
+    EXPECT_TRUE(upgrade.steps.front().cause.contains("HarkenProjectSettings.asset"));
+    EXPECT_FALSE(remove().success);
+    EXPECT_EQ(readFile(path("Assets/Harken/Resources/HarkenProjectSettings.asset")), "settings");
+}
+
+TEST_F(UnityIntegrationTest, BackupKeepsEveryFileAndIncompleteBackupsAreNotOffered)
+{
+    const QString installed = path("Packages/com.harken.core");
+    makeCompleteIntegration(installed, "0.0.1-unknown");
+    ASSERT_TRUE(QFile::remove(installed + "/package.json"));
+    writeFile(installed + "/.git/HEAD", "ref: refs/heads/main");
+    writeFile(installed + "/Unreal/Notes.txt", "notes");
+    const auto original = tree(installed);
+    {
+        QFile held(installed + "/Runtime/API/Values.cs");
+#ifdef Q_OS_WIN
+        ASSERT_TRUE(held.open(QIODevice::ReadOnly));
+#else
+        ASSERT_TRUE(QFile::setPermissions(installed + "/Runtime/API", QFile::ReadOwner | QFile::ExeOwner));
+#endif
+        EXPECT_FALSE(install().success);
+#ifndef Q_OS_WIN
+        ASSERT_TRUE(QFile::setPermissions(installed + "/Runtime/API",
+                                          QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+#endif
+    }
+    const QString backup = Service::previousVersionBackup(project);
+    ASSERT_FALSE(backup.isEmpty());
+    ASSERT_TRUE(restore().success);
+    EXPECT_EQ(tree(installed), original);
+
+    ASSERT_TRUE(QDir(installed).removeRecursively());
+    makeCompleteIntegration(installed);
+    {
+        QFile held(installed + "/Runtime/API/Values.cs");
+#ifdef Q_OS_WIN
+        ASSERT_TRUE(held.open(QIODevice::ReadOnly));
+#else
+        ASSERT_TRUE(QFile::setPermissions(installed + "/Runtime/API", QFile::ReadOwner | QFile::ExeOwner));
+#endif
+        EXPECT_FALSE(install().success);
+#ifndef Q_OS_WIN
+        ASSERT_TRUE(QFile::setPermissions(installed + "/Runtime/API",
+                                          QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+#endif
+    }
+    ASSERT_FALSE(Service::previousVersionBackup(project).isEmpty());
+    ASSERT_TRUE(QFile::remove(QDir(Service::previousVersionBackup(project)).filePath("package/package.json")));
+    EXPECT_TRUE(Service::previousVersionBackup(project).isEmpty());
+    EXPECT_FALSE(restore().success);
+}
+
 TEST_F(UnityIntegrationTest, CheckOnlyNeverChangesTheProject)
 {
     ASSERT_TRUE(install({}, true).success);

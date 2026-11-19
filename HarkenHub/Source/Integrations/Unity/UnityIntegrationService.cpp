@@ -61,18 +61,37 @@ bool ignoredRelativePath(const QString& relative)
         || relative.startsWith(QStringLiteral("Unreal/"));
 }
 
-QStringList relativeFiles(const QString& root)
+QStringList allFiles(const QString& root)
 {
     QStringList files;
     QDirIterator it(root, QDir::Files | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
         VNH::IntegrationProgress::inspectedEntry();
-        const QString relative = normalizePath(QDir(root).relativeFilePath(it.next()));
-        if (!ignoredRelativePath(relative)) files << relative;
+        files << normalizePath(QDir(root).relativeFilePath(it.next()));
     }
     files.sort(Qt::CaseSensitive);
     return files;
+}
+
+QStringList relativeFiles(const QString& root)
+{
+    QStringList files;
+    for (const QString& relative : allFiles(root)) {
+        if (!ignoredRelativePath(relative)) files << relative;
+    }
+    return files;
+}
+
+QStringList settingsInside(const QString& root)
+{
+    QStringList settings;
+    for (const QString& relative : allFiles(root)) {
+        const QString name = relative.section(QLatin1Char('/'), -1);
+        if (name == QStringLiteral("HarkenProjectSettings.asset") || name == QStringLiteral("HarkenEditorProjectSettings.asset"))
+            settings << QDir(root).filePath(relative);
+    }
+    return settings;
 }
 
 QByteArray sha256File(const QString& path)
@@ -196,16 +215,49 @@ QString backupDirectory(const QString& project, QString* error)
     return hubProjectDirectory(QStringLiteral("UnityIntegration/Backups"), project, error);
 }
 
-bool backupReady(const QString& backupRoot)
+QStringList backupFiles(const QString& backupRoot)
 {
     const QJsonObject record = readJsonObject(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)));
-    return UnityInstallation::safeRelativePath(record.value(QStringLiteral("install_path")).toString())
-        && QFileInfo(QDir(backupRoot).filePath(QLatin1String(kBackupPackage))).isDir();
+    if (!UnityInstallation::safeRelativePath(record.value(QStringLiteral("install_path")).toString())
+        || !record.value(QStringLiteral("files")).isArray()) return {};
+    const QString packageCopy = QDir(backupRoot).filePath(QLatin1String(kBackupPackage));
+    QStringList files;
+    for (const QJsonValue& value : record.value(QStringLiteral("files")).toArray()) {
+        const QString relative = value.toString();
+        if (!UnityInstallation::safeRelativePath(relative) || !QFileInfo(QDir(packageCopy).filePath(relative)).isFile())
+            return {};
+        files << relative;
+    }
+    return files.isEmpty() ? QStringList() : files;
+}
+
+bool backupReady(const QString& backupRoot)
+{
+    return !backupFiles(backupRoot).isEmpty();
+}
+
+bool removeBackup(const QString& backupRoot, QString* error)
+{
+    const QString record = QDir(backupRoot).filePath(QLatin1String(kBackupRecord));
+    if (QFileInfo::exists(record) && !QFile::remove(record)) {
+        *error = QStringLiteral("Cannot remove %1. Close Unity and any program using it, then retry.").arg(record);
+        return false;
+    }
+    return removeTree(backupRoot, error);
 }
 
 bool discardIncompleteBackup(const QString& backupRoot, QString* error)
 {
-    return backupReady(backupRoot) || removeTree(backupRoot, error);
+    return backupReady(backupRoot) || removeBackup(backupRoot, error);
+}
+
+bool rejectSettingsInside(const QString& target, QString* error)
+{
+    const QStringList settings = settingsInside(target);
+    if (settings.isEmpty()) return true;
+    *error = QStringLiteral("Integration settings are stored inside the installation directory and would be replaced:\n%1\nMove them out of the installation directory in Unity (for example to Assets/Resources and Assets/Editor), then retry.")
+                 .arg(settings.join(QLatin1Char('\n')));
+    return false;
 }
 
 bool lockProject(const QString& project, std::unique_ptr<QLockFile>* lock, QString* error)
@@ -228,9 +280,9 @@ bool lockProject(const QString& project, std::unique_ptr<QLockFile>* lock, QStri
 bool createBackup(const QString& project, const QString& target, const QString& backupRoot, QString* error)
 {
     if (backupReady(backupRoot)) return true;
-    if (!removeTree(backupRoot, error)) return false;
+    if (!removeBackup(backupRoot, error)) return false;
     const QString packageCopy = QDir(backupRoot).filePath(QLatin1String(kBackupPackage));
-    const QStringList files = relativeFiles(target);
+    const QStringList files = allFiles(target);
     if (!QDir().mkpath(packageCopy) || !copyTree(target, packageCopy, files, error)) {
         if (error->isEmpty()) *error = QStringLiteral("Cannot create directory: %1").arg(packageCopy);
         QString cleanup;
@@ -251,6 +303,7 @@ bool createBackup(const QString& project, const QString& target, const QString& 
         {QStringLiteral("project"), projectIdentity(project)},
         {QStringLiteral("install_path"), QDir(project).relativeFilePath(target)},
         {QStringLiteral("version"), packageVersion(target)},
+        {QStringLiteral("files"), QJsonArray::fromStringList(files)},
         {QStringLiteral("created_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}};
     return VNH::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
                                      QJsonDocument(record).toJson(QJsonDocument::Indented), error);
@@ -535,6 +588,7 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
             || (backupRoot = backupDirectory(result.unityProjectPath, &error)).isEmpty()
             || !discardIncompleteBackup(backupRoot, &error)
             || !UnityInstallation::validateTarget(result.unityProjectPath, target, &error)
+            || !rejectSettingsInside(target, &error)
             || !checkUnityProjectClosed(result.unityProjectPath, &error)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The Integration Package installation location is not safe to use.");
@@ -612,7 +666,7 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
             return;
         }
         QString error;
-        if (result.targetInstalled && !createBackup(result.unityProjectPath, target, backupRoot, &error)) {
+        if (!allFiles(target).isEmpty() && !createBackup(result.unityProjectPath, target, backupRoot, &error)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The installed Integration Package could not be backed up. The Unity project was not changed.");
             step.cause = error;
@@ -663,7 +717,7 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
         step.summary = QStringLiteral("Verified %1 installed Integration Package file(s).").arg(sourceFiles.size());
         step.artifacts << target;
         QString error;
-        if (result.previousVersionAvailable && !removeTree(backupRoot, &error)) {
+        if (result.previousVersionAvailable && !removeBackup(backupRoot, &error)) {
             step.status = StepStatus::Warning;
             step.details << QStringLiteral("The installation succeeded, but the backup of the previous version could not be removed.");
             step.artifacts << backupRoot;
@@ -731,7 +785,8 @@ UnityIntegrationService::Result UnityIntegrationService::remove(const Request& r
                 return;
             }
         }
-        if (!UnityInstallation::validateTarget(result.unityProjectPath, target, &error, true)) {
+        if (!UnityInstallation::validateTarget(result.unityProjectPath, target, &error, true)
+            || !rejectSettingsInside(target, &error)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The installed Integration Package cannot be removed safely.");
             step.cause = error;
@@ -772,7 +827,7 @@ UnityIntegrationService::Result UnityIntegrationService::remove(const Request& r
         result.integrationRemoved = true;
         step.summary = QStringLiteral("Removed Integration Package %1 from %2.")
                            .arg(result.installedVersion, result.integrationInstallPath);
-        if (!removeTree(backupRoot, &error)) {
+        if (!removeBackup(backupRoot, &error)) {
             step.status = StepStatus::Warning;
             step.details << QStringLiteral("The removal succeeded, but the backup of the removed version could not be deleted.");
             step.artifacts << backupRoot;
@@ -841,7 +896,7 @@ UnityIntegrationService::Result UnityIntegrationService::restorePrevious(const R
                                .arg(result.installedVersion, result.integrationInstallPath);
             return;
         }
-        const QStringList files = relativeFiles(packageCopy);
+        const QStringList files = backupFiles(backupRoot);
         if (!removeTree(target, &error) || !QDir().mkpath(target) || !copyTree(packageCopy, target, files, &error)
             || !mismatchedFiles(packageCopy, target, files).isEmpty()) {
             step.status = StepStatus::Failed;
@@ -863,7 +918,7 @@ UnityIntegrationService::Result UnityIntegrationService::restorePrevious(const R
         step.summary = QStringLiteral("Restored Integration Package %1 at %2.")
                            .arg(result.installedVersion, result.integrationInstallPath);
         step.artifacts << target;
-        if (!removeTree(backupRoot, &error)) {
+        if (!removeBackup(backupRoot, &error)) {
             step.status = StepStatus::Warning;
             step.details << QStringLiteral("The previous version was restored, but its backup could not be deleted.");
             step.artifacts << backupRoot;

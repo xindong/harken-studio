@@ -122,6 +122,7 @@ const QVector<Template>& templates()
                  QT_TRANSLATE_NOOP("HarkenHub", "Restored Integration Package %1 at %2."),
                  QT_TRANSLATE_NOOP("HarkenHub", "Cannot remove %1. Close Unity and any program using it, then retry."),
                  QT_TRANSLATE_NOOP("HarkenHub", "Backup verification failed for %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Integration settings are stored inside the installation directory and would be replaced:\n%1\nMove them out of the installation directory in Unity (for example to Assets/Resources and Assets/Editor), then retry."),
                  QT_TRANSLATE_NOOP("HarkenHub", "Check write permission for the Hub report directory: %1"),
                  QT_TRANSLATE_NOOP("HarkenHub", "Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again."),
                  QT_TRANSLATE_NOOP("HarkenHub", "Cannot move directory from %1 to %2 (system error %3: %4)."),
