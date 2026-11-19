@@ -10,7 +10,7 @@
 #include "harken/core/PackReadinessContract.h"
 #include "harken/core/PackCompanionNames.h"
 #include "harken/core/PlayablePropertyCut.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/media/PackLogicImage.h"
 
 #include <cstddef>
@@ -251,11 +251,7 @@ public:
     static CandidateOwner Keep(const PublishedOwner& existing,
         const detail::PackDecodeBudget& budget = {});
 
-    explicit PackComposition(std::size_t leaseCapacity)
-        : PackComposition(leaseCapacity, 0, 32) {}
-    PackComposition(std::size_t sharedActionDeferredCapacity,
-                    std::size_t playableCapacity, std::size_t maxPacks,
-                    std::uint64_t generationFloor = 0);
+    explicit PackComposition(std::uint64_t generationFloor = 0);
 
     PackAuthorityMode Authority() const noexcept { return authority_; }
     std::uint64_t CompositeGeneration() const noexcept {
@@ -314,6 +310,7 @@ public:
         originalLeaseRecords_.SetCommitPageLimitForTests(originals);
         frozenClosures_.SetCommitPageLimitForTests(closures);
     }
+    bool refuseRetagForTests = false;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     mutable bool refuseOriginalLeaseCommitOnceForTest = false;
 #endif
@@ -419,7 +416,7 @@ private:
     VnResult PrepareLease(const PublishedOwner& owner, PackLeaseSlice slice,
                           PackPartitionLease* out,
                           OriginalLeaseEpisode* original) const noexcept;
-    bool PrepareLeaseStorage() const noexcept;
+    bool PrepareLeaseStorage(std::uint32_t count) const noexcept;
     std::size_t LeaseIndex(const LeaseRow& row) const noexcept;
     PackFrozenClosure& FrozenClosure(LeaseRow& row) const noexcept;
     const PackFrozenClosure& FrozenClosure(const LeaseRow& row) const noexcept;
@@ -427,23 +424,19 @@ private:
     void ClearLeaseRow(LeaseRow& row) const noexcept;
     VnResult SnapshotFrozenClosure(const PublishedOwner& root,
                                    LeaseRow& row) const noexcept;
-    std::size_t SliceCapacity(PackLeaseSlice slice) const noexcept;
     std::size_t& SliceOccupied(PackLeaseSlice slice) const noexcept;
 
     PackAuthorityMode authority_ = PackAuthorityMode::Unspecified;
     std::shared_ptr<const PublishedView> published_;
-    std::size_t sharedCapacity_ = 0;
-    std::size_t playableCapacity_ = 0;
-    std::size_t maxPacks_ = 0;
     std::uint64_t generationFloor_ = 0;
     mutable std::size_t sharedOccupied_ = 0;
     mutable std::size_t playableOccupied_ = 0;
-    mutable StableRowStorage<LeaseRow, std::size_t> leases_;
+    mutable GrowingRowStorage<LeaseRow> leases_;
     mutable bool retainedDefinitionsChanged_ = false;
-    mutable StableRowStorage<OriginalLeaseRecord, std::size_t> originalLeaseRecords_;
+    mutable GrowingRowStorage<OriginalLeaseRecord> originalLeaseRecords_;
     std::uint64_t originalLeaseIncarnation_ = 0;
     mutable bool originalLeasesQuiesced_ = false;
-    mutable StableRowStorage<PackFrozenClosure, std::size_t> frozenClosures_;
+    mutable GrowingRowStorage<PackFrozenClosure> frozenClosures_;
     mutable std::uint64_t nextLeaseToken_ = 1;
     std::uint64_t retagBackpressureCountForTests_ = 0;
     mutable bool leaseTokensExhausted_ = false;

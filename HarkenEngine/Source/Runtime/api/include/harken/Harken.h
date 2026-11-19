@@ -231,7 +231,7 @@ typedef struct VnConfig {
     uint32_t starvationCooldownBlocks; /* minimum blocks between successive
                                         * starvation notifications per voice;
                                         * 0 = 32 */
-    uint32_t maxPacks;      /* pack table capacity; 0 = 256 */
+    uint32_t maxPacks;      /* reserved; ignored */
     uint32_t reserved2;          /* keeps 8-byte alignment for future fields */
     /* Playback-management capacities (one struct-size vintage,
      * zero-means-default). A shorter struct omitting these reads every field
@@ -2060,7 +2060,7 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
  * every blob checksum, offset bounds) and is all-or-nothing: an invalid or
  * corrupted container refuses with VN_BAD_PACK and an entry id that is
  * already registered refuses with VN_IN_USE, in both cases leaving the
- * registry untouched. A full pack table refuses with VN_NO_PACK. A pack whose
+ * registry untouched. Pack slots grow on demand. A pack whose
  * activation would need more control commands at once than the configured
  * command queue or per-block command ceiling can take refuses with
  * VN_INVALID_CONFIG: that batch applies indivisibly, so no amount of waiting

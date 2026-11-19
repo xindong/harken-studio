@@ -508,9 +508,10 @@ inline std::vector<std::uint8_t> PartitionPayload(
     std::uint32_t actionCount, std::uint32_t valueBits,
     std::uint64_t* bodyBytes, std::uint32_t maxActionDefinitions = 64,
     VnObjectId projectId = {},
-    harken::CanonicalBusTriple triple = DefaultFixtureBusTriple()) {
+    harken::CanonicalBusTriple triple = DefaultFixtureBusTriple(),
+    std::uint64_t actionBase = kActionBase, VnObjectId variableId = kVariableId) {
     harken::VariableDefinitionV1 variable{};
-    variable.variableId = kVariableId;
+    variable.variableId = variableId;
     variable.kind = harken::VariableKindV1::Smooth;
     variable.rangeMin = -1.0f;
     variable.rangeMax = 1.0f;
@@ -520,13 +521,13 @@ inline std::vector<std::uint8_t> PartitionPayload(
     for (std::uint32_t i = 0; i < actionCount; ++i) {
         steps[i].opcode = harken::ActionOpcodeV1::SetVariable;
         steps[i].target.kind = harken::ActionTargetKindV1::Variable;
-        steps[i].target.stableId = kVariableId;
+        steps[i].target.stableId = variableId;
         steps[i].valueBits = valueBits;
         SetAbsoluteTime(&steps[i].delay);
         SetAbsoluteTime(&steps[i].fade);
         SetAbsoluteTime(&steps[i].cooldown);
 
-        actions[i].actionStableId = harkentest::ObjectId(kActionBase + i);
+        actions[i].actionStableId = harkentest::ObjectId(actionBase + i);
         actions[i].steps = &steps[i];
         actions[i].stepCount = 1;
         actions[i].expandedStepOccurrenceCount = 1;

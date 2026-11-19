@@ -74,7 +74,7 @@ TEST(PackSignalRelation, SourceMustBelongToDeclaredClosureAndMatchDefinition) {
     consumer.signalRelationCount = 1;
     consumer.signalReceivers = &receiver;
     consumer.signalReceiverCount = 1;
-    PackComposition composition(4);
+    PackComposition composition{};
     ASSERT_EQ(composition.Commit({Candidate(1, provider, 0, providerVintage)}, nullptr, 0, 8, 0), VN_OK);
     const auto previous = composition.Published();
     const auto generation = composition.CompositeGeneration();
@@ -105,7 +105,7 @@ TEST(PackSignalRelation, ReceiverConfigurationAlsoRequiresDeclaredClosure) {
     ContainerWorldInstallViewV1 consumer;
     consumer.signalRelations = &relation;
     consumer.signalRelationCount = 1;
-    PackComposition composition(4);
+    PackComposition composition{};
     PackComposition::PreparedCommit prepared;
     EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider), Candidate(2, consumer)},
         nullptr, 0, 8, 0, &prepared), VN_BAD_PACK);

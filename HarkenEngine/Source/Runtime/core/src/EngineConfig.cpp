@@ -69,7 +69,6 @@ constexpr std::uint32_t kMaxStreamsCeiling = 1 << 12;
 // is already far past any sane figure, so anything above is a typo.
 constexpr std::uint32_t kMaxPrebufferMsCeiling = 60000;
 constexpr std::uint32_t kMaxStarvationCooldownCeiling = 1 << 20;
-constexpr std::uint32_t kMaxPacksCeiling = 1 << 12;
 constexpr std::uint32_t kMaxCatalogEntriesCeiling = 1048576;
 constexpr std::uint64_t kMaxCatalogBytesCeiling = 64ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxResidentDefinitionBytesCeiling =
@@ -340,8 +339,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (config->starvationCooldownBlocks != 0)
             resolved.starvationCooldownBlocks =
                 config->starvationCooldownBlocks;
-        if (config->maxPacks != 0)
-            resolved.maxPacks = config->maxPacks;
     }
     if (hasPlaybackFields) {
         if (config->maxActions != 0) resolved.maxActions = config->maxActions;
@@ -571,7 +568,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxStreams > kMaxStreamsCeiling ||
         resolved.prebufferMs > kMaxPrebufferMsCeiling ||
         resolved.starvationCooldownBlocks > kMaxStarvationCooldownCeiling ||
-        resolved.maxPacks > kMaxPacksCeiling ||
         resolved.maxCatalogEntries > kMaxCatalogEntriesCeiling ||
         resolved.maxCatalogBytes > kMaxCatalogBytesCeiling ||
         resolved.maxResidentDefinitionBytes >

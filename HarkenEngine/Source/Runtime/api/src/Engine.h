@@ -5975,26 +5975,6 @@ inline std::size_t QueueContinuationRecordCapacity(
     return config.maxScheduledTransactions;
 }
 
-inline std::size_t PackIdentityLeaseCapacity(const EngineConfig& config) {
-    const std::uint64_t total =
-        static_cast<std::uint64_t>(config.maxActionFirings) +
-        config.maxDeferredIntents + config.maxPlayableInstances;
-    if (total > std::numeric_limits<std::size_t>::max()) {
-        throw std::length_error("pack identity lease capacity overflow");
-    }
-    return static_cast<std::size_t>(total);
-}
-
-inline std::size_t PackRetirementCapacity(const EngineConfig& config) {
-    const std::uint64_t total =
-        static_cast<std::uint64_t>(config.maxPacks) +
-        PackIdentityLeaseCapacity(config);
-    if (total > std::numeric_limits<std::size_t>::max()) {
-        throw std::length_error("pack retirement capacity overflow");
-    }
-    return static_cast<std::size_t>(total);
-}
-
 inline std::uint32_t TimelineArmCapacity(const EngineConfig& config) {
     const std::uint64_t total = static_cast<std::uint64_t>(config.voiceCapacity.Render()) +
         config.maxScheduledTransactions;
@@ -7073,13 +7053,8 @@ public:
                     const EngineHandleGenerationFloors& handleFloors = {})
         : config(resolved),
           playableStorage(resolved),
-          logicPacks(resolved.maxPacks),
-          packComposition(PackIdentityLeaseCapacity(resolved) -
-                              resolved.maxPlayableInstances,
-                          resolved.maxPlayableInstances, resolved.maxPacks,
-                          packGenerationFloor),
-          packs(resolved.maxPacks, PackRetirementCapacity(resolved),
-                PackIdentityLeaseCapacity(resolved), handleFloors.pack),
+          packComposition(packGenerationFloor),
+          packs(handleFloors.pack),
           streams(resolved),
           effectBank(resolved),
           decisions(resolved.maxDecisionRows,

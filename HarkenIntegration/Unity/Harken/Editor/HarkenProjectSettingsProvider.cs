@@ -109,7 +109,6 @@ namespace Harken.Unity.Editor
             EditorGUILayout.LabelField("Startup limits", EditorStyles.boldLabel);
             project.Update();
             DrawCapacity(project, "maxVoices", "Max Voices");
-            DrawCapacity(project, "maxPacks", "Max Packs");
             DrawCapacity(project, "maxActionFirings", "Max Simultaneous Playbacks");
             EditorGUILayout.PropertyField(project.FindProperty("language"), new GUIContent("Language"));
             // Temporarily hide inventory-only platform ids until current Pack companions provide this selector.

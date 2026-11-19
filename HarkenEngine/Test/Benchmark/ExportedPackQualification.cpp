@@ -300,33 +300,6 @@ void ReleaseFillers(harken::Engine* engine,
     fillers->clear();
 }
 
-bool FillSlice(harken::Engine* engine, VnObjectId stableId,
-               harken::PackLeaseSlice slice, std::size_t leaveFree,
-               std::vector<harken::PackIdentityLookup>* fillers) {
-    if (engine == nullptr || fillers == nullptr || stableId == VnObjectId{}) {
-        return false;
-    }
-    for (;;) {
-        harken::PackIdentityLookup extra;
-        const VnResult acquired =
-            engine->AcquirePackIdentityLease(stableId, slice, &extra);
-        if (acquired == VN_BACKPRESSURE) {
-            break;
-        }
-        if (acquired != VN_OK) {
-            ReleaseFillers(engine, fillers);
-            return false;
-        }
-        fillers->push_back(extra);
-    }
-    while (leaveFree > 0 && !fillers->empty()) {
-        (void)engine->ReleasePackIdentityLease(fillers->back().lease);
-        fillers->pop_back();
-        --leaveFree;
-    }
-    return leaveFree == 0;
-}
-
 harken::PackIdentityReadiness PeekReadiness(harken::Engine* engine,
                                            VnObjectId stableId) {
     if (engine == nullptr) {
@@ -339,17 +312,6 @@ harken::PackIdentityReadiness PeekReadiness(harken::Engine* engine,
         engine->packComposition.AbandonPreparedLease(peeked.lease);
     }
     return peeked.readiness;
-}
-
-std::size_t RemainingInSlice(harken::Engine* engine, VnObjectId stableId,
-                             harken::PackLeaseSlice slice) {
-    std::vector<harken::PackIdentityLookup> fillers;
-    if (!FillSlice(engine, stableId, slice, 0, &fillers)) {
-        return 0;
-    }
-    const std::size_t remaining = fillers.size();
-    ReleaseFillers(engine, &fillers);
-    return remaining;
 }
 
 VnResult PostQualificationAction(VnObjectId actionId, VnActionFiringHandle* firing) {
@@ -386,132 +348,24 @@ bool ExportedPackLoadOk(const ExportedPackLoad& loaded) {
            loaded.content == VN_OK && loaded.contentHandle != 0;
 }
 
-struct LeaseWindow {
-    std::size_t capacity = 0;
-    std::size_t playableUsed = 0;
-    std::size_t sharedUsed = 0;
-    std::size_t window = 0;
-    bool ok = false;
-};
-
-LeaseWindow MeasureLeaseWindow(harken::Engine* engine, VnObjectId actionId,
-                               VnObjectId playableId) {
-    LeaseWindow measured;
-    if (engine == nullptr || actionId == VnObjectId{} || playableId == VnObjectId{}) {
-        return measured;
-    }
-    measured.capacity = harken::PackIdentityLeaseCapacity(engine->config);
-    const std::size_t playableFree =
-        RemainingInSlice(engine, playableId, harken::PackLeaseSlice::Playable);
-    const std::size_t sharedFree = RemainingInSlice(
-        engine, actionId, harken::PackLeaseSlice::SharedActionAndDeferred);
-    VnActionFiringHandle firing = 0;
-    if (PostQualificationAction(actionId, &firing) != VN_OK || firing == 0) {
-        return measured;
-    }
-    for (int i = 0; i < 8; ++i) {
-        Pump(engine);
-    }
-    const std::size_t playableFreeAfter =
-        RemainingInSlice(engine, playableId, harken::PackLeaseSlice::Playable);
-    const std::size_t sharedFreeAfter = RemainingInSlice(
-        engine, actionId, harken::PackLeaseSlice::SharedActionAndDeferred);
-    if (playableFreeAfter > playableFree || sharedFreeAfter > sharedFree) {
-        DrainFiring(engine, firing);
-        return measured;
-    }
-    measured.playableUsed = playableFree - playableFreeAfter;
-    measured.sharedUsed = sharedFree - sharedFreeAfter;
-    measured.window = measured.playableUsed + measured.sharedUsed;
-    measured.ok = measured.window >= 1;
-    DrainFiring(engine, firing);
-    return measured;
-}
-
-VnResult ObserveMinusOne(const std::string& initPath, const std::string& root,
-                         const ExportedPack& init, const ExportedPack& content,
-                         VnObjectId actionId, const LeaseWindow& window) {
-    EngineGuard guard;
-    if (InitQualification(&guard) != VN_OK) {
-        return VN_DEVICE_ERROR;
-    }
-    harken::Engine* engine = harken::detail::ActiveEngine();
-    const ExportedPackLoad loaded = LoadExportedPack(initPath, root, init, content);
-    if (engine == nullptr || !ExportedPackLoadOk(loaded)) {
-        return VN_DEVICE_ERROR;
-    }
-    const VnObjectId playableId = FirstPlayableId(engine);
-    if (playableId == VnObjectId{}) {
-        return VN_UNKNOWN_ID;
-    }
-    std::vector<harken::PackIdentityLookup> playableFillers;
-    std::vector<harken::PackIdentityLookup> sharedFillers;
-    bool filled = false;
-    if (window.playableUsed >= 1) {
-        filled = FillSlice(engine, playableId, harken::PackLeaseSlice::Playable,
-                           window.playableUsed - 1, &playableFillers);
-    } else {
-        filled = FillSlice(engine, actionId,
-                           harken::PackLeaseSlice::SharedActionAndDeferred,
-                           window.sharedUsed - 1, &sharedFillers);
+bool PostWithHeldLeases(harken::Engine* engine, VnObjectId action, std::size_t count) {
+    const auto playable = FirstPlayableId(engine);
+    std::vector<harken::PackIdentityLookup> held;
+    held.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        harken::PackIdentityLookup lease;
+        const bool shared = i % 2 == 0;
+        if (engine->AcquirePackIdentityLease(shared ? action : playable,
+            shared ? harken::PackLeaseSlice::SharedActionAndDeferred : harken::PackLeaseSlice::Playable,
+            &lease) != VN_OK) break;
+        held.push_back(lease);
     }
     VnActionFiringHandle firing = 0;
-    const VnResult posted =
-        filled ? PostQualificationAction(actionId, &firing) : VN_DEVICE_ERROR;
+    const bool accepted = held.size() == count &&
+        PostQualificationAction(action, &firing) == VN_OK && firing != 0;
     DrainFiring(engine, firing);
-    ReleaseFillers(engine, &playableFillers);
-    ReleaseFillers(engine, &sharedFillers);
-    return posted;
-}
-
-bool ObserveExactAndPlusOne(const std::string& initPath, const std::string& root,
-                            const ExportedPack& init,
-                            const ExportedPack& content, VnObjectId actionId,
-                            const LeaseWindow& window, VnResult* exactResult,
-                            VnResult* plusOneResult) {
-    if (exactResult == nullptr || plusOneResult == nullptr) {
-        return false;
-    }
-    *exactResult = VN_DEVICE_ERROR;
-    *plusOneResult = VN_DEVICE_ERROR;
-    EngineGuard guard;
-    if (InitQualification(&guard) != VN_OK) {
-        return false;
-    }
-    harken::Engine* engine = harken::detail::ActiveEngine();
-    const ExportedPackLoad loaded = LoadExportedPack(initPath, root, init, content);
-    if (engine == nullptr || !ExportedPackLoadOk(loaded)) {
-        return false;
-    }
-    const VnObjectId playableId = FirstPlayableId(engine);
-    if (playableId == VnObjectId{}) {
-        return false;
-    }
-    std::vector<harken::PackIdentityLookup> playableFillers;
-    std::vector<harken::PackIdentityLookup> sharedFillers;
-    const bool filledPlayable =
-        FillSlice(engine, playableId, harken::PackLeaseSlice::Playable,
-                  window.playableUsed, &playableFillers);
-    const bool filledShared = FillSlice(
-        engine, actionId, harken::PackLeaseSlice::SharedActionAndDeferred,
-        window.sharedUsed, &sharedFillers);
-    if (!filledPlayable || !filledShared) {
-        ReleaseFillers(engine, &playableFillers);
-        ReleaseFillers(engine, &sharedFillers);
-        return false;
-    }
-    VnActionFiringHandle firing = 0;
-    *exactResult = PostQualificationAction(actionId, &firing);
-    for (int i = 0; i < 8; ++i) {
-        Pump(engine);
-    }
-    VnActionFiringHandle extra = 0;
-    *plusOneResult = PostQualificationAction(actionId, &extra);
-    DrainFiring(engine, extra);
-    DrainFiring(engine, firing);
-    ReleaseFillers(engine, &playableFillers);
-    ReleaseFillers(engine, &sharedFillers);
-    return true;
+    ReleaseFillers(engine, &held);
+    return accepted;
 }
 
 } // namespace
@@ -570,38 +424,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    LeaseWindow window;
+    constexpr std::size_t heldLeases = 257;
     {
         EngineGuard guard;
-        if (InitQualification(&guard) != VN_OK) {
-            std::fprintf(stderr, "window init failed\n");
-            return 1;
-        }
-        harken::Engine* engine = harken::detail::ActiveEngine();
-        const ExportedPackLoad loaded = LoadExportedPack(initPath, root, *init, *content);
-        if (engine == nullptr || !ExportedPackLoadOk(loaded)) {
-            std::fprintf(stderr, "window load failed\n");
-            return 1;
-        }
-        const VnObjectId playableId = FirstPlayableId(engine);
-        window = MeasureLeaseWindow(engine, actionId, playableId);
-        if (!window.ok) {
-            std::fprintf(stderr, "exported pack resident window is empty\n");
-            return 1;
-        }
+        if (InitQualification(&guard) != VN_OK) return 1;
+        auto* engine = harken::detail::ActiveEngine();
+        const auto loaded = LoadExportedPack(initPath, root, *init, *content);
+        if (!engine || !ExportedPackLoadOk(loaded) ||
+            !PostWithHeldLeases(engine, actionId, heldLeases)) return 1;
     }
-
-    const VnResult minusOneResult =
-        ObserveMinusOne(initPath, root, *init, *content, actionId, window);
-    VnResult exactResult = VN_DEVICE_ERROR;
-    VnResult plusOneResult = VN_DEVICE_ERROR;
-    const bool exactObserved = ObserveExactAndPlusOne(
-        initPath, root, *init, *content, actionId, window, &exactResult,
-        &plusOneResult);
-    const bool minusOneOk = minusOneResult == VN_BACKPRESSURE;
-    const bool exactOk = exactObserved && exactResult == VN_OK;
-    const bool plusOneOk = exactObserved && plusOneResult == VN_BACKPRESSURE;
-
     const ProcessMemory baseline = ReadProcessMemorySample();
     EngineGuard guard;
     const VnResult initResult = InitQualification(&guard);
@@ -702,21 +533,19 @@ int main(int argc, char* argv[]) {
     const ProcessMemory afterUnload = ReadProcessMemorySample();
 
     const harken::EngineConfig resolved = engine->config;
-    const std::size_t leaseCapacity = harken::PackIdentityLeaseCapacity(resolved);
     std::fprintf(stderr,
                  "qual codes: init=%d cold=%d firstUnload=%d warm=%d "
                  "post=%d/%llu warmPost=%d refuse=%d replace=%d unload=%d "
-                 "loaded=%u unloaded=%u retiring=%llu minus=%d exact=%d plus=%d "
-                 "window=%llu\n",
+                 "loaded=%u unloaded=%u retiring=%llu "
+                 "held_leases=%llu\n",
                  loadInitResult, coldLoadResult,
                  firstUnloadResult, warmLoadResult, postResult,
                  static_cast<unsigned long long>(firing), warmPost, refuseResult,
                  replaceResult, unloadResult,
                  static_cast<unsigned>(loadedReadiness),
                  static_cast<unsigned>(unloadedReadiness),
-                 static_cast<unsigned long long>(retiringCount), minusOneResult,
-                 exactResult, plusOneResult,
-                 static_cast<unsigned long long>(window.window));
+                 static_cast<unsigned long long>(retiringCount),
+                 static_cast<unsigned long long>(heldLeases));
 
     const bool behaviorOk = loadInitResult == VN_OK && initHandle != 0 &&
         coldLoadResult == VN_OK && firstUnloadResult == VN_OK &&
@@ -725,8 +554,7 @@ int main(int argc, char* argv[]) {
         unloadResult == VN_OK && replaceResult == VN_OK &&
         loadedReadiness == harken::PackIdentityReadiness::Active &&
         unloadedReadiness == harken::PackIdentityReadiness::Absent &&
-        audioHits == 0 && minusOneOk && exactOk && plusOneOk && retiringOk &&
-        retiringCount == 0 && window.ok && leaseCapacity == window.capacity;
+        audioHits == 0 && retiringOk && retiringCount == 0;
 
     std::printf(
         "{\"benchmark\":\"exported-pack-runtime\","
@@ -744,11 +572,9 @@ int main(int argc, char* argv[]) {
         "\"inspect_us\":%.3f,\"load_init_us\":%.3f,"
         "\"content_cold_us\":%.3f,\"content_warm_us\":%.3f,"
         "\"replace_us\":%.3f,\"unload_us\":%.3f,\"post_us\":%.3f,"
-        "\"lease_capacity\":%llu,\"exported_pack_window\":%llu,"
+        "\"verified_held_leases\":%llu,"
         "\"max_action_firings\":%u,\"max_deferred_intents\":%u,"
         "\"max_playable_instances\":%u,"
-        "\"minus_one_result\":%d,\"exact_result\":%d,\"plus_one_result\":%d,"
-        "\"minus_one_ok\":%s,\"exact_ok\":%s,\"plus_one_ok\":%s,"
         "\"retiring_count\":%llu,"
         "\"audio_alloc_hits\":%llu,"
         "\"warm_post_private_delta\":%lld,"
@@ -773,12 +599,9 @@ int main(int argc, char* argv[]) {
         static_cast<unsigned long long>(FileFnv(initFile)),
         static_cast<unsigned long long>(FileFnv(contentPath)),
         inspectUs, loadInitUs, coldLoadUs, warmLoadUs, replaceUs, unloadUs,
-        postUs, static_cast<unsigned long long>(leaseCapacity),
-        static_cast<unsigned long long>(window.window),
+        postUs, static_cast<unsigned long long>(heldLeases),
         resolved.maxActionFirings, resolved.maxDeferredIntents,
-        resolved.maxPlayableInstances, minusOneResult, exactResult,
-        plusOneResult, minusOneOk ? "true" : "false",
-        exactOk ? "true" : "false", plusOneOk ? "true" : "false",
+        resolved.maxPlayableInstances,
         static_cast<unsigned long long>(retiringCount),
         static_cast<unsigned long long>(audioHits),
         static_cast<long long>(afterWarmPost.privateBytes) -
