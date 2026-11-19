@@ -132174,7 +132174,7 @@ VnResult ActivateCanonicalPackSetImpl(
         std::vector<std::string> paths, roots;
         detail::DecodeResize(paths, input.memberCount, prepared.staging);
         detail::DecodeResize(roots, input.memberCount, prepared.staging);
-        const auto normalize = [](const char* raw, bool absolute) {
+        const auto normalize = [&prepared](const char* raw, bool absolute) {
             std::filesystem::path path;
             if (!TryMakeUtf8Path(raw, &path)) {
                 throw std::invalid_argument("canonical pack path");
@@ -132183,6 +132183,7 @@ VnResult ActivateCanonicalPackSetImpl(
                 path = std::filesystem::absolute(path);
             }
             const auto utf8 = path.lexically_normal().generic_u8string();
+            prepared.staging.Add(utf8.size() + 1);
             return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
         };
         for (std::uint32_t i = 0; i < input.memberCount; ++i) {

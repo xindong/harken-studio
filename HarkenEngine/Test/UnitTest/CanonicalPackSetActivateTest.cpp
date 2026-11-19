@@ -1204,6 +1204,28 @@ TEST(CanonicalPackSetActivate, MasterBus2WritesPackCookieAndUnloads) {
     EXPECT_TRUE(session.Engine()->buses.AliveAt(0));
 }
 
+TEST(CanonicalPackSetActivate, NormalizedMemberPathCopiesShareStagingBudget) {
+    auto config = CanonicalActivationConfig();
+    config.maxPackDecodeStagingBytes = 64u * 1024u;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const std::string path(1024, 'a');
+    std::array<VnCanonicalPackSetMemberV1, 64> members{};
+    std::array<VnCanonicalPackSetMemberResultV1, 64> rows{};
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        members[i].structSize = sizeof(members[i]);
+        members[i].packStableId = i + 1;
+        members[i].packKind = i == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT
+                                     : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        members[i].utf8Path = path.c_str();
+        rows[i].structSize = sizeof(rows[i]);
+    }
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, harkentest::ActivateCanonicalMembersV1(
+        members.data(), static_cast<std::uint32_t>(members.size()), rows.data(), report));
+    EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+}
+
 TEST(CanonicalPackSetActivate, LaterMissingMemberPreservesEmptyState) {
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

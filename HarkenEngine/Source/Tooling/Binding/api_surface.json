@@ -214,7 +214,7 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxActionFirings = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxVoices = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint UnlimitedActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:bd1fb045452c4e463fc4405459e0809f711f966f75f886c3f809217799b1f1fd]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:0f59f59436c502f341a3f0692455fa479403c44e26d9bf411abea465a2e92876]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public static HarkenProjectSettings Load ( )",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string InitPack",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string Language",
@@ -288,7 +288,7 @@
         "native:Vn_StopActionFiring",
         "native:Vn_StopAll",
         "native:Vn_StopEmitter",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:50489d8f10c066b2174f6eb3e1e1e555a4a443ff4d3d68ebfd9117431a909afa]"
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:bde888580950281b647797207f26cce78eb63111d5e1c10d9aa83d68c362babc]"
       ]
     },
     "host": {
@@ -327,7 +327,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult ApplyRecommendations ( ref VnConfig config , in InitPackInspection inspection , int startupPackCount )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult Start ( string initPackPath , string containmentRoot , ulong [ ] startupPackStableIds , ref VnConfig config , out PackBootstrapSession session )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult Start ( string initPackPath , string containmentRoot , ulong [ ] startupPackStableIds , string language , ref VnConfig config , out PackBootstrapSession session )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static partial class PackBootstrap [ordered-members:33c151e373375beb4633e37bdf7bd409340e01a0e5623a29de588ad37ffe32d5]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static partial class PackBootstrap",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public InitPackInspection Inspection { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public Pack InitPack { get ; private set ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public Pack [ ] StartupPacks",
