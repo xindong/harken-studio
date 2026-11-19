@@ -131,7 +131,6 @@ set(HARKEN_HUB_SOURCES
     Source/Integrations/EngineTargetProbe.cpp
     Source/Integrations/ProjectIntegrationExecutor.cpp
     Source/Integrations/HubUnityIntegrationService.cpp
-    Source/Integrations/OfficialUnitySource.cpp
     Source/Integrations/Unity/UnityInstallation.cpp
     Source/Integrations/Unity/UnityInstallation.h
     Source/Integrations/Unity/UnityIntegrationService.cpp

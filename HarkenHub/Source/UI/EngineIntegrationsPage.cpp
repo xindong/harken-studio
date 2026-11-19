@@ -3204,7 +3204,7 @@ void EngineIntegrationsPage::runUnityRemoval()
                 QCoreApplication::translate("HarkenHub", "Uninstall Unity Integration Package"),
                 QCoreApplication::translate(
                     "HarkenHub",
-                    "The Integration Package directory will be removed:\n%1\n\nIntegration settings and the project relationship are kept. Close Unity before continuing.")
+                    "The Integration Package directory and everything inside it will be removed:\n%1\n\nIntegration settings outside this directory and the project relationship are kept. Close Unity before continuing.")
                     .arg(QDir::toNativeSeparators(result.integrationInstallPath)),
                 confirmationDetails(),
                 QCoreApplication::translate("HarkenHub", "Uninstall Integration Package"),

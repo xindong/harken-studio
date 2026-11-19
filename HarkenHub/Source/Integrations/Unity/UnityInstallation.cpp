@@ -267,7 +267,6 @@ Discovery discover(const QString& projectRoot)
 {
     Discovery result;
     DiscoveryBudget budget;
-    QStringList footprints;
     QSet<QString> embeddedPackages;
     QVector<QPair<QString, QString>> references;
     const auto add = [&](const QString& path) {
@@ -318,32 +317,6 @@ Discovery discover(const QString& projectRoot)
                     embeddedPackages.insert(identity);
             }
             dependencies(package, info.absolutePath());
-        } else if (name.endsWith(QStringLiteral(".asmdef"))) {
-            if (name == QStringLiteral("Harken.Core.asmdef") || name == QStringLiteral("Harken.Unity.asmdef"))
-                footprints << path;
-            QJsonObject assembly;
-            QString error;
-            if (!readObject(path, &assembly, &error, budget)) return;
-            const QString identity = assembly.value(QStringLiteral("name")).toString();
-            if (identity == QStringLiteral("Harken.Core") || identity == QStringLiteral("Harken.Unity")) {
-                footprints << path;
-                QDir parent(info.absolutePath());
-                if (identity.endsWith(QStringLiteral(".Unity")) && parent.dirName() == QStringLiteral("Unity"))
-                    parent.cdUp();
-                if (parent.dirName() == QStringLiteral("Runtime")) {
-                    parent.cdUp();
-                    add(parent.absolutePath());
-                }
-            }
-        } else {
-            QString lower = name.toLower();
-            lower.remove(QLatin1Char('_'));
-            if (lower == QStringLiteral("harkencore.dll")
-                || lower == QStringLiteral("harken.core.dll")
-                || lower == QStringLiteral("libharkencore.so")
-                || lower == QStringLiteral("libharkencore.dylib")
-                || lower == QStringLiteral("libharkencore.a"))
-                footprints << path;
         }
     };
     const auto scan = [&](const QString& path) {
@@ -408,14 +381,6 @@ Discovery discover(const QString& projectRoot)
         if (!readObject(path, &package, &error, budget)) result.errors << error;
         else if (package.value(QStringLiteral("name")).toString().trimmed().isEmpty())
             result.errors << QStringLiteral("Cannot determine the Integration Package identity: %1").arg(path);
-    }
-    for (const QString& footprint : footprints) {
-        if (!budget.consume(footprint)) break;
-        if (std::none_of(result.installations.cbegin(), result.installations.cend(),
-                         [&](const Installation& item) {
-                             return !budget.consume(footprint) || containsPath(item.path, footprint);
-                         }))
-            result.errors << QStringLiteral("Integration Package files without an identifiable installation root: %1").arg(footprint);
     }
     if (!budget.error.isEmpty()) result.errors << budget.error;
     result.errors.removeDuplicates();

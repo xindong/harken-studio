@@ -237,22 +237,10 @@ TEST_F(UnityIntegrationTest, FailedInstallationKeepsThePreviousVersionUntilItIsR
     EXPECT_FALSE(restore().success);
 }
 
-TEST_F(UnityIntegrationTest, SettingsInsideTheInstallationDirectoryBlockReplacementAndRemoval)
-{
-    ASSERT_TRUE(install("Assets/Harken").success);
-    writeFile(path("Assets/Harken/Resources/HarkenProjectSettings.asset"), "settings");
-    const auto upgrade = install("Assets/Harken");
-    EXPECT_FALSE(upgrade.success);
-    EXPECT_TRUE(upgrade.steps.front().cause.contains("HarkenProjectSettings.asset"));
-    EXPECT_FALSE(remove().success);
-    EXPECT_EQ(readFile(path("Assets/Harken/Resources/HarkenProjectSettings.asset")), "settings");
-}
-
 TEST_F(UnityIntegrationTest, BackupKeepsEveryFileAndIncompleteBackupsAreNotOffered)
 {
     const QString installed = path("Packages/com.harken.core");
     makeCompleteIntegration(installed, "0.0.1-unknown");
-    ASSERT_TRUE(QFile::remove(installed + "/package.json"));
     writeFile(installed + "/.git/HEAD", "ref: refs/heads/main");
     writeFile(installed + "/Unreal/Notes.txt", "notes");
 #ifndef Q_OS_WIN
@@ -328,7 +316,7 @@ TEST_F(UnityIntegrationTest, ChangesRequireUnityToBeClosed)
     EXPECT_TRUE(install().success);
 }
 
-TEST_F(UnityIntegrationTest, BlocksPackageManagerReferencesAndPartialCopiesButIgnoresCaches)
+TEST_F(UnityIntegrationTest, BlocksPackageManagerReferencesButIgnoresCaches)
 {
     makeCompleteIntegration(path("Library/PackageCache/com.harken.core@unused"));
     makeCompleteIntegration(path("Backups/SDK"));
@@ -340,11 +328,6 @@ TEST_F(UnityIntegrationTest, BlocksPackageManagerReferencesAndPartialCopiesButIg
     const auto referenced = install();
     EXPECT_FALSE(referenced.success);
     EXPECT_TRUE(referenced.steps.front().cause.contains(source));
-    ASSERT_TRUE(QFile::remove(manifest));
-    writeFile(path("Assets/Plugins/libharken_core.so"), "partial");
-    const auto partial = install();
-    EXPECT_FALSE(partial.success);
-    EXPECT_TRUE(partial.steps.front().cause.contains("without an identifiable"));
 }
 
 TEST_F(UnityIntegrationTest, MovedInstallationIsUpdatedInPlace)

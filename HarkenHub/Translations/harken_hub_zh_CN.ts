@@ -714,7 +714,7 @@ Continue?</source>
     <message><source>Harken Unity Integration Package could not be located.</source><translation>未找到 Harken Unity 集成包。</translation></message>
     <message><source>The selected folder is not a valid com.harken.core Integration Package source: %1</source><translation>所选文件夹不是有效的 com.harken.core 集成包来源：%1</translation></message>
     <message><source>Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.</source><translation>请选择 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包根目录，也可清空集成包来源以启用自动查找。</translation></message>
-    <message><source>No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_INTEGRATION_PATH (legacy: HARKEN_UNITY_SDK_PATH).</source><translation>在 Harken Studio 所在目录、仓库上级目录以及 HARKEN_UNITY_INTEGRATION_PATH（兼容 HARKEN_UNITY_SDK_PATH）指定的位置均未找到有效的 com.harken.core 包。</translation></message>
+    <message><source>No Integration Package source was selected, and HARKEN_UNITY_INTEGRATION_PATH does not point to a valid com.harken.core package.</source><translation>未选择集成包来源，且 HARKEN_UNITY_INTEGRATION_PATH 未指向有效的 com.harken.core 包。</translation></message>
     <message><source>Use the Integration Package source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.</source><translation>请在集成包来源栏选择或拖入 HarkenIntegration、Unity/Harken 或完整的外部 Unity 包根目录。</translation></message>
     <message><source>A selected Integration Package source file could not be read.</source><translation>无法读取所选集成包来源中的文件。</translation></message>
     <message><source>Check file locks and permissions, then retry. The existing Integration Package was not changed.</source><translation>请检查文件占用和权限后重试。已有集成包未被修改。</translation></message>
@@ -3124,10 +3124,6 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>Unity Package Manager 已引用集成包：%1。请先处理该依赖，再通过 Hub 安装。</translation>
     </message>
     <message>
-        <source>Integration Package files without an identifiable installation root: %1</source>
-        <translation>发现无法确定安装根目录的集成包文件：%1</translation>
-    </message>
-    <message>
         <source>Resolve Integration Package dependencies before removal; Unity could load the referenced Integration Package after the embedded copy is removed:</source>
         <translation>移除前请先处理集成包依赖，否则移除内嵌集成包后 Unity 可能加载所引用的集成包：</translation>
     </message>
@@ -5353,7 +5349,7 @@ Close Unity and complete any required P4 checkout before continuing.</source>
     <message><source>The selected location does not contain the installed Integration Package.</source><translation>所选位置不是已安装的集成包。</translation></message>
     <message><source>The installed Integration Package cannot be removed safely.</source><translation>无法安全地移除已安装的集成包。</translation></message>
     <message><source>Integration Package %1 is installed at %2 and will be removed.</source><translation>%2 已安装集成包 %1，将被移除。</translation></message>
-    <message><source>Project settings created by the Integration Package are outside the installation directory and are kept.</source><translation>集成包创建的工程设置位于安装目录之外，会被保留。</translation></message>
+    <message><source>Everything inside the installation directory is removed. Files outside it, including Integration settings in their default locations, are kept.</source><translation>安装目录内的所有内容都会删除。目录外的文件（包括位于默认位置的集成设置）会保留。</translation></message>
     <message><source>The Integration Package could not be removed completely.</source><translation>集成包未能完全移除。</translation></message>
     <message><source>Close Unity and any program using the installation directory, then retry, or restore the previous version.</source><translation>请关闭 Unity 及占用安装目录的程序后重试，或恢复之前的版本。</translation></message>
     <message><source>Removed Integration Package %1 from %2.</source><translation>已从 %2 移除集成包 %1。</translation></message>
@@ -5397,23 +5393,18 @@ Close Unity before continuing.</source><translation>集成包目录将被替换�
     <message><source>The installed Integration Package could not be identified. Review the results; no files were changed.</source><translation>无法识别已安装的集成包。请查看结果；未修改任何文件。</translation></message>
     <message><source>Reviewing the installed Unity Integration Package...</source><translation>正在检查已安装的 Unity 集成包...</translation></message>
     <message><source>Removing the Unity Integration Package...</source><translation>正在移除 Unity 集成包...</translation></message>
-    <message><source>The Integration Package directory will be removed:
+    <message><source>The Integration Package directory and everything inside it will be removed:
 %1
 
-Integration settings and the project relationship are kept. Close Unity before continuing.</source><translation>将移除集成包目录：
+Integration settings outside this directory and the project relationship are kept. Close Unity before continuing.</source><translation>将移除集成包目录及其中的所有内容：
 %1
 
-集成设置和工程关联会保留。继续前请关闭 Unity。</translation></message>
+此目录之外的集成设置和工程关联会保留。继续前请关闭 Unity。</translation></message>
     <message><source>The Unity Integration Package was removed. Review is recommended for the highlighted steps.</source><translation>Unity 集成包已移除。建议检查标出的步骤。</translation></message>
     <message><source>The Unity Integration Package was removed.</source><translation>Unity 集成包已移除。</translation></message>
     <message><source>Unity Integration Package removal did not finish. Use Restore Previous Version to put the removed version back.</source><translation>Unity 集成包移除未完成。可使用“恢复之前的版本”放回被移除的版本。</translation></message>
     <message><source>Check completed. The selected version is already installed; installing again replaces the installation directory.</source><translation>检查完成。所选版本已安装；再次安装会替换安装目录。</translation></message>
     <message><source>Check completed. The installed version will be replaced; no Integration Package files were changed.</source><translation>检查完成。已安装的版本将被替换；尚未修改任何集成包文件。</translation></message>
     <message><source>Integration Package installation failed. Retry, or use Restore Previous Version to put the previous version back.</source><translation>集成包安装失败。请重试，或使用“恢复之前的版本”放回之前的版本。</translation></message>
-    <message><source>Integration settings are stored inside the installation directory and would be replaced:
-%1
-Move them out of the installation directory in Unity (for example to Assets/Resources and Assets/Editor), then retry.</source><translation>集成设置位于安装目录内，会被一并替换：
-%1
-请先在 Unity 中把它们移出安装目录（例如移到 Assets/Resources 和 Assets/Editor），然后重试。</translation></message>
 </context>
 </TS>
