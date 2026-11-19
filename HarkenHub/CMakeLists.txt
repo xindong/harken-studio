@@ -10,6 +10,7 @@ file(CONFIGURE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.h"
     CONTENT "#pragma once\n\n#include <string_view>\n\nnamespace VNH {\n\ninline constexpr std::string_view HubVersion = \"@HARKEN_HUB_VERSION@\";\n\n}\n"
     @ONLY)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.txt" CONTENT "@HARKEN_HUB_VERSION@\n" @ONLY)
 
 function(harken_add_hub_legal_resources target)
     qt_add_resources(${target} "harken_hub_legal"

@@ -55,8 +55,14 @@ QString HubLauncher::resolveExecutablePath(
     appendInstallCandidates(
         candidates, qEnvironmentVariable("HARKEN_HUB_INSTALL_DIR"));
 
-    if (localBuild && !applicationDirPath.isEmpty())
-        appendInstallCandidates(candidates, QDir(applicationDirPath).filePath(QStringLiteral("Hub")));
+    if (localBuild && !applicationDirPath.isEmpty()) {
+        QString buildDirectory = applicationDirPath;
+#ifdef Q_OS_MACOS
+        if (buildDirectory.endsWith(QStringLiteral(".app/Contents/MacOS")))
+            buildDirectory = QDir::cleanPath(buildDirectory + QStringLiteral("/../../.."));
+#endif
+        appendInstallCandidates(candidates, QDir(buildDirectory).filePath(QStringLiteral("Hub")));
+    }
 
 #ifdef Q_OS_WIN
     const QSettings machine(

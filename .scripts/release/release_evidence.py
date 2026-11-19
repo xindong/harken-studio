@@ -491,7 +491,7 @@ def prepare(product: str, payload: Path, build_dir: Path, output: Path,
         build_dir, product, configuration, ("harken_hub_setup",) if setup_stub else ())
     identity = model["identity"]
     source_state = model["sourceState"] if "sourceState" in model else check_source(identity)
-    expected_version = ((REPO_ROOT / "HarkenHub/VERSION").read_text(encoding="utf-8").strip()
+    expected_version = ((build_dir / "HarkenHub/generated/HubVersion.txt").read_text(encoding="utf-8").strip()
                         if product == "hub" else identity["version"])
     if version != expected_version:
         raise ValueError("package version differs from its configured source")

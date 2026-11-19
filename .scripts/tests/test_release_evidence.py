@@ -102,13 +102,13 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.payload.mkdir()
         self.output = self.root / "output"
         self.build = self.root / "build"
+        (self.build / "HarkenHub/generated").mkdir(parents=True)
+        (self.build / "HarkenHub/generated/HubVersion.txt").write_text("1.0.0\n", encoding="utf-8")
         self.dependency = self.repo / "ThirdParty" / "example"
         self.dependency.mkdir(parents=True)
         self.write_notice()
         (self.dependency / "LICENSE").write_text("Example license\n", encoding="utf-8")
         (self.dependency / "example.c").write_text("int example(void) { return 1; }\n", encoding="utf-8")
-        (self.repo / "HarkenHub").mkdir()
-        (self.repo / "HarkenHub/VERSION").write_text("1.0.0\n", encoding="utf-8")
         self.entry = {"id": "example", "path": "ThirdParty/example", "notice": "Example",
                       "url": "https://example.invalid/source",
                       "evidence": ["ThirdParty/example/LICENSE"]}

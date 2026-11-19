@@ -73,6 +73,9 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
             const QByteArray content = documents.at(0).toUtf8() + "\n\n" + documents.at(1).toUtf8();
             const QString hash = QString::fromLatin1(QCryptographicHash::hash(
                 content, QCryptographicHash::Sha256).toHex());
+            EXPECT_EQ(hash, language == QStringLiteral("en")
+                ? QStringLiteral("370b273640c25743bb4a51eecc019bda785385e526a1076520f0f8e42dd8d3f7")
+                : QStringLiteral("e3f7dd8901a56b49d2f5731cbbce61d2081ab87177b30666740e4703b88fe528"));
             EXPECT_TRUE(VNH::ConsentStore::hasConsent(
                 id, QStringLiteral("2026-10-28"), hash));
             EXPECT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, id));
