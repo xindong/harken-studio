@@ -16,7 +16,7 @@ harken::PackPartitionLease PackAnchor() {
 
 TEST(ActionFiringTable, PreparedRootStaysHiddenUntilCommittedAndReleased) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring prepared{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(41), 7, 1, &prepared));
@@ -63,9 +63,9 @@ TEST(ActionFiringTable, PreparedRootStaysHiddenUntilCommittedAndReleased) {
     EXPECT_EQ(0u, snapshot.programSemanticFingerprint);
 }
 
-TEST(ActionFiringTable, ExactCapacityAndOneMoreRefusalHaveNoVisibleEffect) {
+TEST(ActionFiringTable, GrowingHiddenPreparationsDoNotPublishLiveRows) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring first{};
     harken::PreparedActionFiring second{};
@@ -75,9 +75,9 @@ TEST(ActionFiringTable, ExactCapacityAndOneMoreRefusalHaveNoVisibleEffect) {
     EXPECT_EQ(0u, table.LiveCount());
     EXPECT_EQ(0u, table.HighWater());
 
-    harken::PreparedActionFiring refused{};
-    EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(3), 1, 1, &refused));
-    EXPECT_FALSE(refused.Valid());
+    harken::PreparedActionFiring third{};
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(3), 1, 1, &third));
+    EXPECT_TRUE(third.Valid());
     EXPECT_EQ(0u, table.LiveCount());
     EXPECT_EQ(0u, table.HighWater());
 
@@ -96,13 +96,13 @@ TEST(ActionFiringTable, ExactCapacityAndOneMoreRefusalHaveNoVisibleEffect) {
 TEST(ActionFiringTable, UnissuedRowsStayUncommittedAndGrowthPreservesRetainedResults) {
     harken::ActionFiringTable table;
     constexpr auto capacity = harken::kMaxActionFiringsHard + 1u;
-    ASSERT_TRUE(table.Reset(capacity));
-    EXPECT_EQ(capacity, table.Capacity());
-    EXPECT_EQ(capacity, table.FreeCount());
+    ASSERT_TRUE(table.Reset());
+    EXPECT_EQ(0u, table.Capacity());
+    EXPECT_EQ(0u, table.FreeCount());
     EXPECT_EQ(0u, table.ConstructedRowCount());
     EXPECT_EQ(0u, table.RowStorageBytes());
     EXPECT_EQ(0u, table.RowCommittedBytes());
-    EXPECT_GT(table.RowReservedBytes(), 0u);
+    EXPECT_EQ(0u, table.RowReservedBytes());
     harken::ActionFiringSnapshot snapshot;
     EXPECT_EQ(0u, table.CaptureMonitorIdentityAt(capacity - 1, &snapshot));
     EXPECT_EQ(0u, table.ActiveRootAt(capacity - 1));
@@ -120,7 +120,7 @@ TEST(ActionFiringTable, UnissuedRowsStayUncommittedAndGrowthPreservesRetainedRes
         ASSERT_TRUE(table.Commit(&firings[index], 9));
     }
     EXPECT_EQ(capacity, table.ConstructedRowCount());
-    EXPECT_EQ(capacity * rowBytes, table.RowStorageBytes());
+    EXPECT_GT(table.RowStorageBytes(), rowBytes);
     EXPECT_GE(table.RowCommittedBytes(), table.RowStorageBytes());
     EXPECT_GE(table.RowReservedBytes(), table.RowCommittedBytes());
     EXPECT_EQ(capacity, table.LiveCount());
@@ -139,15 +139,15 @@ TEST(ActionFiringTable, UnissuedRowsStayUncommittedAndGrowthPreservesRetainedRes
     EXPECT_EQ(0u, table.ResultStorageBytes());
     EXPECT_EQ(committed, table.RowCommittedBytes());
     EXPECT_EQ(capacity, table.HighWater());
-    ASSERT_TRUE(table.Reset(capacity));
+    ASSERT_TRUE(table.Reset());
     EXPECT_EQ(0u, table.RowCommittedBytes());
     EXPECT_EQ(0u, table.ConstructedRowCount());
     EXPECT_FALSE(table.CaptureStep(firings[0].Handle(), 0, &result));
 }
 
-TEST(ActionFiringTable, ReservationFailurePreservesOldTreeResultsAndAllowsResetRetry) {
+TEST(ActionFiringTable, SegmentReservationFailurePreservesOldTreeResultsAndAllowsRetry) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(4));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, child;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ASSERT_TRUE(table.PrepareChild(root, harkentest::ObjectId(2), 7, 1, &child));
@@ -176,14 +176,14 @@ TEST(ActionFiringTable, ReservationFailurePreservesOldTreeResultsAndAllowsResetR
     ASSERT_EQ(harken::ActionFiringState::TerminalRetained, beforeChild.state);
 
     harken::detail::StablePageReservation::FailNextReservationForTests();
-    EXPECT_FALSE(table.Reset(8));
-    EXPECT_EQ(4u, table.Capacity());
+    EXPECT_FALSE(table.SetFreeGenerationForTests(1024, 200));
+    EXPECT_EQ(2u, table.Capacity());
     EXPECT_EQ(2u, table.ConstructedRowCount());
     EXPECT_EQ(free, table.FreeCount());
     EXPECT_EQ(live, table.LiveCount());
     EXPECT_EQ(highWater, table.HighWater());
     EXPECT_EQ(refusals, table.RefusalCount());
-    EXPECT_EQ(rowBytes, table.RowStorageBytes());
+    EXPECT_GE(table.RowStorageBytes(), rowBytes);
     EXPECT_EQ(committed, table.RowCommittedBytes());
     EXPECT_EQ(reserved, table.RowReservedBytes());
     EXPECT_EQ(resultBytes, table.ResultStorageBytes());
@@ -204,8 +204,9 @@ TEST(ActionFiringTable, ReservationFailurePreservesOldTreeResultsAndAllowsResetR
     EXPECT_EQ(harken::ActionStepState::Succeeded, result.state);
     EXPECT_EQ(123u, result.executionOrdinal);
 
-    ASSERT_TRUE(table.Reset(8));
-    EXPECT_EQ(8u, table.Capacity());
+    ASSERT_TRUE(table.SetFreeGenerationForTests(1024, 200));
+    ASSERT_TRUE(table.Reset());
+    EXPECT_EQ(0u, table.Capacity());
     EXPECT_EQ(0u, table.LiveCount());
     EXPECT_EQ(0u, table.HighWater());
     EXPECT_EQ(0u, table.RowCommittedBytes());
@@ -221,7 +222,7 @@ TEST(ActionFiringTable, ReservationFailurePreservesOldTreeResultsAndAllowsResetR
 TEST(ActionFiringTable, PageFailureKeepsUnpublishedPrefixChargedAndParentUnchanged) {
     harken::ActionFiringTable table;
     constexpr auto capacity = harken::kMaxActionFiringsHard;
-    ASSERT_TRUE(table.Reset(capacity));
+    ASSERT_TRUE(table.Reset());
     table.SetRowCommitPageLimitForTests(0);
     harken::PreparedActionFiring root, child;
     EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
@@ -233,28 +234,32 @@ TEST(ActionFiringTable, PageFailureKeepsUnpublishedPrefixChargedAndParentUnchang
     table.SetRowCommitPageLimitForTests(1);
     EXPECT_FALSE(table.SetFreeGenerationForTests(capacity - 1, 100));
     EXPECT_GT(table.RowCommittedBytes(), 0u);
-    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_GT(table.RowStorageBytes(), 0u);
     EXPECT_EQ(0u, table.ConstructedRowCount());
-    EXPECT_EQ(capacity, table.FreeCount());
+    EXPECT_EQ(table.ConstructedRowCount(), table.FreeCount());
     EXPECT_EQ(0u, table.HighWater());
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
     ASSERT_TRUE(table.Commit(&root, 9));
-    const auto rowsOnPage = table.RowCommittedBytes() / table.RowStorageBytes();
+    std::vector<harken::PreparedActionFiring> fillers;
+    for (std::uint32_t i = 0; i < capacity; ++i) {
+        harken::PreparedActionFiring filler;
+        if (!table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &filler)) break;
+        fillers.push_back(filler);
+    }
+    const auto rowsOnPage = table.ConstructedRowCount();
+    ASSERT_EQ(fillers.size() + 1u, rowsOnPage);
     ASSERT_LT(rowsOnPage, capacity);
-    std::vector<harken::PreparedActionFiring> fillers(rowsOnPage - 1);
-    for (auto& filler : fillers)
-        ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &filler));
     const auto resultBytes = table.ResultStorageBytes();
     EXPECT_FALSE(table.PrepareChild(root.Handle(), harkentest::ObjectId(3),
         harken::ActionFiringOwnerStamp::DirectWorld(1), 1, &child));
     EXPECT_FALSE(child.Valid());
     EXPECT_EQ(rowsOnPage, table.ConstructedRowCount());
-    EXPECT_EQ(capacity - rowsOnPage, table.FreeCount());
+    EXPECT_EQ(0u, table.FreeCount());
     EXPECT_EQ(resultBytes, table.ResultStorageBytes());
     harken::ActionFiringSnapshot snapshot;
     ASSERT_TRUE(table.Capture(root.Handle(), &snapshot));
     EXPECT_EQ(0u, snapshot.childFiringCount);
-    EXPECT_EQ(2u, table.RefusalCount());
+    EXPECT_EQ(3u, table.RefusalCount());
     EXPECT_EQ(1u, table.LiveCount());
     EXPECT_EQ(1u, table.HighWater());
     table.SetRowCommitPageLimitForTests(SIZE_MAX);
@@ -266,12 +271,12 @@ TEST(ActionFiringTable, PageFailureKeepsUnpublishedPrefixChargedAndParentUnchang
     ASSERT_TRUE(table.MarkTerminal(root.Handle()));
     ASSERT_TRUE(table.ReleaseRoot(root.Handle()));
     for (auto& filler : fillers) ASSERT_TRUE(table.Abandon(&filler));
-    EXPECT_EQ(capacity, table.FreeCount());
+    EXPECT_EQ(table.ConstructedRowCount(), table.FreeCount());
 }
 
 TEST(ActionFiringTable, AudioThreadCannotGrowResetOrReleaseControlOwnedStorage) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring prepared, terminal, rejected;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &prepared));
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &terminal));
@@ -280,7 +285,7 @@ TEST(ActionFiringTable, AudioThreadCannotGrowResetOrReleaseControlOwnedStorage) 
     const auto resultBytes = table.ResultStorageBytes();
     {
         harken::memguard::AudioThreadScope audio;
-        EXPECT_FALSE(table.Reset(3));
+        EXPECT_FALSE(table.Reset());
         EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(3), 1, 1, &rejected));
         EXPECT_FALSE(table.PrepareChild(prepared, harkentest::ObjectId(3), 1, 1, &rejected));
         EXPECT_FALSE(table.Abandon(&prepared));
@@ -293,12 +298,12 @@ TEST(ActionFiringTable, AudioThreadCannotGrowResetOrReleaseControlOwnedStorage) 
     EXPECT_FALSE(rejected.Valid());
     ASSERT_TRUE(table.Abandon(&prepared));
     ASSERT_TRUE(table.ReleaseRoot(terminal.Handle()));
-    EXPECT_EQ(3u, table.FreeCount());
+    EXPECT_EQ(table.ConstructedRowCount(), table.FreeCount());
 }
 
 TEST(ActionFiringTable, ResultsUseActualLengthAndSurviveTerminalUntilRelease) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(harken::kMaxActionFiringsHard));
+    ASSERT_TRUE(table.Reset());
     EXPECT_EQ(0u, table.ResultStorageBytes());
 
     harken::PreparedActionFiring empty, small, full;
@@ -369,13 +374,13 @@ TEST(ActionFiringTable, ResultsUseActualLengthAndSurviveTerminalUntilRelease) {
 
 TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
     table.SetResultAllocationFailureForTests(true);
     harken::PreparedActionFiring root, child;
     constexpr std::uint32_t largeStepCount = 10000;
     EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(1), 1, largeStepCount, &root));
     EXPECT_FALSE(root.Valid());
-    EXPECT_EQ(3u, table.FreeCount());
+    EXPECT_EQ(table.ConstructedRowCount(), table.FreeCount());
     EXPECT_EQ(0u, table.ResultStorageBytes());
     table.SetResultAllocationFailureForTests(false);
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
@@ -388,7 +393,7 @@ TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged
     table.SetResultAllocationFailureForTests(true);
     EXPECT_FALSE(table.PrepareChild(root, harkentest::ObjectId(2), 1, largeStepCount, &child));
     EXPECT_FALSE(child.Valid());
-    EXPECT_EQ(2u, table.FreeCount());
+    EXPECT_EQ(1u, table.ConstructedRowCount() - table.FreeCount());
     EXPECT_EQ(rootBytes, table.ResultStorageBytes());
     table.SetResultAllocationFailureForTests(false);
     ASSERT_TRUE(table.PrepareChild(root, harkentest::ObjectId(2), 1, largeStepCount, &child));
@@ -397,7 +402,7 @@ TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged
     EXPECT_LE(table.ResultStorageBytes(), rootBytes + largeResultsBytes + largeStepCount);
     ASSERT_TRUE(table.Abandon(&root));
     EXPECT_FALSE(child.Valid());
-    EXPECT_EQ(3u, table.FreeCount());
+    EXPECT_EQ(table.ConstructedRowCount(), table.FreeCount());
     EXPECT_EQ(0u, table.ResultStorageBytes());
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
     table.SetResultAllocationFailureForTests(true);
@@ -409,7 +414,7 @@ TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged
         harken::ActionFiringOwnerStamp::DirectWorld(1), largeStepCount, &child));
     ASSERT_TRUE(table.Capture(root.Handle(), &snapshot));
     EXPECT_EQ(0u, snapshot.childFiringCount);
-    EXPECT_EQ(2u, table.FreeCount());
+    EXPECT_EQ(1u, table.ConstructedRowCount() - table.FreeCount());
     EXPECT_EQ(rootBytes, table.ResultStorageBytes());
     EXPECT_EQ(3u, table.RefusalCount());
     table.SetResultAllocationFailureForTests(false);
@@ -425,7 +430,7 @@ TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged
 
 TEST(ActionFiringTable, InheritedOrderRequiresActualPreparedChildAndLiveUncancelledParent) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, child, unrelated;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     EXPECT_EQ(0u, root.InheritedSequence());
@@ -453,7 +458,7 @@ TEST(ActionFiringTable, InheritedOrderRequiresActualPreparedChildAndLiveUncancel
 
 TEST(ActionFiringTable, PreparedChildCannotCommitAfterItsOriginalParentIsCancelled) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, child;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ASSERT_TRUE(table.Commit(&root, 99));
@@ -470,8 +475,8 @@ TEST(ActionFiringTable, ChildActivationReceiptMatchesActualPreparedIdentityAndTr
     static_assert(!std::is_copy_constructible_v<harken::ActionFiringTable::ChildActivationReceipt>);
     static_assert(!std::is_copy_assignable_v<harken::ActionFiringTable::ChildActivationReceipt>);
     harken::ActionFiringTable table, foreign;
-    ASSERT_TRUE(table.Reset(2));
-    ASSERT_TRUE(foreign.Reset(2));
+    ASSERT_TRUE(table.Reset());
+    ASSERT_TRUE(foreign.Reset());
     harken::PreparedActionFiring root, child;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     harken::ActionFiringTable::PreparedChildIdentity identity;
@@ -508,7 +513,7 @@ TEST(ActionFiringTable, ChildActivationReceiptMatchesActualPreparedIdentityAndTr
 
 TEST(ActionFiringTable, SameSequenceSiblingAndOccupiedReceiptCannotAuthorizeAnotherChild) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, first, second;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ASSERT_TRUE(table.Commit(&root, 99));
@@ -533,7 +538,7 @@ TEST(ActionFiringTable, SameSequenceSiblingAndOccupiedReceiptCannotAuthorizeAnot
 
 TEST(ActionFiringTable, AbandonedPreparedIdentityCannotAuthorizeReusedSlotOrLaterActivation) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, child;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ASSERT_TRUE(table.Commit(&root, 99));
@@ -557,7 +562,7 @@ TEST(ActionFiringTable, AbandonedPreparedIdentityCannotAuthorizeReusedSlotOrLate
 
 TEST(ActionFiringTable, NewChildCannotRecaptureAnOldDeferredCancellationEpoch) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, child;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ASSERT_TRUE(table.Commit(&root, 99));
@@ -574,7 +579,7 @@ TEST(ActionFiringTable, NewChildCannotRecaptureAnOldDeferredCancellationEpoch) {
 
 TEST(ActionFiringTable, ActiveIntermediateParentCannotHideRootCancellationFromPreparedChild) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring root, parent, child;
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ASSERT_TRUE(table.PrepareChild(root, harkentest::ObjectId(2), 7, 1, &parent));
@@ -594,7 +599,7 @@ TEST(ActionFiringTable, ActiveIntermediateParentCannotHideRootCancellationFromPr
 
 TEST(ActionFiringTable, GenerationExhaustionQuarantinesWithoutRevivingAHandle) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     ASSERT_TRUE(table.SetFreeGenerationForTests(
         0, harken::kMaxActionFiringGeneration));
 
@@ -613,14 +618,15 @@ TEST(ActionFiringTable, GenerationExhaustionQuarantinesWithoutRevivingAHandle) {
     harken::ActionFiringSnapshot snapshot{};
     EXPECT_FALSE(table.Capture(maximumHandle, &snapshot));
 
-    harken::PreparedActionFiring refused{};
-    EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &refused));
-    EXPECT_FALSE(refused.Valid());
+    harken::PreparedActionFiring next{};
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &next));
+    EXPECT_NE(maximumHandle, next.Handle());
+    EXPECT_FALSE(table.Capture(maximumHandle, &snapshot));
 }
 
 TEST(ActionFiringTable, TreeDeferredCountIncludesRootAndDescendants) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -650,14 +656,14 @@ TEST(ActionFiringTable, TreeDeferredCountIncludesRootAndDescendants) {
 
 TEST(ActionFiringTable, ResetDoesNotReviveAHandleFromAnEarlierSession) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring first{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 0, &first));
     const harken::ActionFiringHandle oldHandle = first.Handle();
     ASSERT_TRUE(table.Commit(&first, 1));
 
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::PreparedActionFiring second{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 2, 0, &second));
     const harken::ActionFiringHandle newHandle = second.Handle();
@@ -672,7 +678,7 @@ TEST(ActionFiringTable, ResetDoesNotReviveAHandleFromAnEarlierSession) {
 
 TEST(ActionFiringTable, RootOwnsAndReleasesItsCommittedChildTreePostOrder) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -730,7 +736,7 @@ TEST(ActionFiringTable, RootOwnsAndReleasesItsCommittedChildTreePostOrder) {
 
 TEST(ActionFiringTable, CommittedParentCanAttachAPreparedChildLater) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(10), 4, 1, &root));
@@ -770,7 +776,7 @@ TEST(ActionFiringTable, CommittedParentCanAttachAPreparedChildLater) {
 
 TEST(ActionFiringTable, AbandoningPreparedChildOfLiveParentRestoresParent) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(10), 4, 1, &root));
@@ -805,7 +811,7 @@ TEST(ActionFiringTable, AbandoningPreparedChildOfLiveParentRestoresParent) {
 
 TEST(ActionFiringTable, CommitPreparedChildActivatesThePreparedSubtree) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(10), 4, 1, &root));
@@ -862,7 +868,7 @@ TEST(ActionFiringTable, CommitPreparedChildActivatesThePreparedSubtree) {
 
 TEST(ActionFiringTable, AbandoningPreparedRootReleasesItsWholeHiddenTree) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -888,7 +894,7 @@ TEST(ActionFiringTable, AbandoningPreparedRootReleasesItsWholeHiddenTree) {
 
 TEST(ActionFiringTable, ChildSuccessCompletesParentPostActionAndRoot) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -940,7 +946,7 @@ TEST(ActionFiringTable, ChildSuccessCompletesParentPostActionAndRoot) {
 
 TEST(ActionFiringTable, ChildFailurePropagatesResultReasonAndPartialOutcome) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -995,7 +1001,7 @@ TEST(ActionFiringTable, ChildFailurePropagatesResultReasonAndPartialOutcome) {
 
 TEST(ActionFiringTable, GrandchildFailurePropagatesThroughEveryAncestor) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -1064,7 +1070,7 @@ TEST(ActionFiringTable, GrandchildFailurePropagatesThroughEveryAncestor) {
 
 TEST(ActionFiringTable, PlayableFailureRetainsExactResultAndReason) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(10), 4, 1, &root));
@@ -1099,7 +1105,7 @@ TEST(ActionFiringTable, PlayableFailureRetainsExactResultAndReason) {
 
 TEST(ActionFiringTable, RootCancellationPropagatesThroughChildTree) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring root{};
     harken::PreparedActionFiring child{};
@@ -1146,7 +1152,7 @@ TEST(ActionFiringTable, RootCancellationPropagatesThroughChildTree) {
 
 TEST(ActionFiringTable, PackOwnerAndCancellationEpochAreCapturedExactly) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     const auto owner = harken::ActionFiringOwnerStamp::Pack(PackAnchor());
     harken::PreparedActionFiring prepared{};
@@ -1185,7 +1191,7 @@ TEST(ActionFiringTable, PackOwnerAndCancellationEpochAreCapturedExactly) {
 
 TEST(ActionFiringTable, DeferredOwnershipBlocksTerminalFinalizationAndRelease) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     harken::PreparedActionFiring prepared{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(41), 7, 1, &prepared));
@@ -1217,7 +1223,7 @@ TEST(ActionFiringTable, DeferredOwnershipBlocksTerminalFinalizationAndRelease) {
 
 TEST(ActionFiringTable, RequestAndFirstControlCauseSurviveTerminalRetentionAndClearOnReuse) {
     harken::ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::MonitorRequestSource requests(91);
     const auto play = requests.Begin(harken::MonitorRequestOrigin::NativeAPI, 1);
     harken::PreparedActionFiring root, child;

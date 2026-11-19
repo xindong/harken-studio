@@ -1338,7 +1338,7 @@ TEST(MonitorIdentitySnapshot, CopiesCommittedSlotsAndDefaultEmitterWithoutPublis
 
 TEST(MonitorIdentitySnapshot, ActionChildrenRemainIdentifiableUntilNativeRelease) {
     ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     PreparedActionFiring root{}, child{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ActionFiringSnapshot snapshot{};

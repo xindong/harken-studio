@@ -208,7 +208,7 @@ TEST(MonitorObserve, LineageActionFingerprintReachesPollWithoutSymbols) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     harken::PreparedActionFiring prepared{};
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(41), 7, 0, &prepared));
     const harken::ActionFiringHandle handle = prepared.Handle();
@@ -250,7 +250,7 @@ TEST(MonitorObserve, LineageLateWorldStateDoesNotEnterCurrentView) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     harken::PreparedActionFiring prepared{};
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(41), 7, 0, &prepared));
     ASSERT_TRUE(actions.Commit(&prepared, 99));

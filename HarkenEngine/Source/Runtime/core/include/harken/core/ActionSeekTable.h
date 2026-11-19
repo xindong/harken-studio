@@ -28,7 +28,7 @@ enum class ActionSeekLifecycle : std::uint32_t {
 
 class ActionSeekTable {
 public:
-    bool Reset(std::uint32_t capacity);
+    bool Reset();
     bool Prepare(VnActionFiringHandle firing, std::uint32_t targetCount,
                  std::uint64_t acceptedLogicSequence,
                  VnActionSeekTicket* outTicket) noexcept;
@@ -52,7 +52,7 @@ public:
     VnResult Release(VnActionSeekTicket ticket) noexcept;
     void CancelAllAfterAudioJoin(VnResult result) noexcept;
 
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t Capacity() const noexcept { return rows_.ConstructedCount(); }
 
 private:
     struct Row {
@@ -79,7 +79,6 @@ private:
     bool Recycle(Row& row) noexcept;
 
     GrowingRowStorage<Row> rows_;
-    std::uint32_t capacity_ = 0;
 };
 
 } // namespace harken

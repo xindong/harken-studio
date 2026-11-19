@@ -38,11 +38,10 @@ std::uint64_t ActionSeekTable::GenerationOf(
     return ticket >> kActionSeekSlotBits;
 }
 
-bool ActionSeekTable::Reset(std::uint32_t capacity) {
-    if (capacity == 0 || memguard::IsAudioTagged()) return false;
+bool ActionSeekTable::Reset() {
+    if (memguard::IsAudioTagged()) return false;
     GrowingRowStorage<Row> rows;
     rows_.Swap(rows);
-    capacity_ = capacity;
     return true;
 }
 
@@ -73,7 +72,7 @@ bool ActionSeekTable::Prepare(
         return false;
     }
     *outTicket = 0;
-    if (memguard::IsAudioTagged() || capacity_ == 0) return false;
+    if (memguard::IsAudioTagged()) return false;
     const auto count = rows_.ConstructedCount();
     for (std::uint32_t slot = 0; slot < UINT32_MAX; ++slot) {
         if (slot >= count && !rows_.ConstructThrough(slot + 1u)) return false;

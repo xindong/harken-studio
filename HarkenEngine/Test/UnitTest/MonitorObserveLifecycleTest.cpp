@@ -829,7 +829,7 @@ TEST(MonitorObserve, LifecycleActionQueueTransitionProducerPath) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(3));
+    ASSERT_TRUE(actions.Reset());
     harken::ActionFiringStepResult pending{};
     pending.state = harken::ActionStepState::Pending;
     pending.authoredEventIndex = 0;
@@ -1043,7 +1043,7 @@ TEST(MonitorActionActivity, ChildResultsRetainIndependentIdentityAndTerminalOrde
         MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION};
     const auto origin = engine.Engine()->monitorEmitters.CaptureOrigin(emitter);
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(2));
+    ASSERT_TRUE(actions.Reset());
     PreparedActionFiring root, child;
     const auto project = harkentest::ObjectId(100);
     const auto owner = ActionFiringOwnerStamp::DirectWorld(7, project);
@@ -1134,7 +1134,7 @@ TEST(MonitorActionActivity, TerminalWaitsForPlayableRetirementAndKeepsOriginalRe
     const auto session = OpenActivityEvents();
     for (const bool stop : {false, true}) {
         ActionFiringTable actions;
-        ASSERT_TRUE(actions.Reset(1));
+        ASSERT_TRUE(actions.Reset());
         const MonitorRequestContext request{{harken::monitor::ExecutionEngineInstance(), stop ? 602u : 601u},
             MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION};
         PreparedActionFiring prepared;
@@ -1185,7 +1185,7 @@ TEST(MonitorActionActivity, DeferredExecutionAndActionHaveSeparateCompletionBoun
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenActivityEvents();
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     PreparedActionFiring prepared;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(120), 7, 1, &prepared));
     ActionFiringStepResult step;
@@ -1221,7 +1221,7 @@ TEST(MonitorActionActivity, LargeActionStepsPublishOnceAcrossUpdatesAndRowReuse)
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenActivityEvents();
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     const std::set<std::uint32_t> indices{0, 63, 64, 127, 128, 9999};
     for (std::uint32_t reuse = 0; reuse < 2; ++reuse) {
         PreparedActionFiring prepared;
@@ -1262,7 +1262,7 @@ TEST(MonitorActionActivity, AbandonedPreparationAndUntriggeredCancellationDoNotE
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenActivityEvents();
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     PreparedActionFiring prepared;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(130), 7, 1, &prepared));
     ActionFiringStepResult step;
@@ -1312,7 +1312,7 @@ TEST(MonitorObserve, LifecycleZeroStepActionEmitsAcceptThenResult) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     harken::PreparedActionFiring prepared{};
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(41), 7, 0, &prepared));
     const harken::ActionFiringHandle handle = prepared.Handle();
@@ -1392,7 +1392,7 @@ TEST(MonitorObserve, LifecycleMarkTreeStoppingEmitsActionStop) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     harken::ActionFiringStepResult pending{};
     pending.state = harken::ActionStepState::Pending;
     pending.authoredEventIndex = 0;

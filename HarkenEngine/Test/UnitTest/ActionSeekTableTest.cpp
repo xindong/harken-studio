@@ -9,7 +9,7 @@
 
 TEST(ActionSeekTable, RetainedTicketsWithTheSameHintCompleteIndependently) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     std::vector<VnActionSeekTicket> tickets(4097);
     for (std::size_t i = 0; i < tickets.size(); ++i) {
         ASSERT_TRUE(table.Prepare(i + 1, 1, i + 1, &tickets[i]));
@@ -31,7 +31,7 @@ TEST(ActionSeekTable, RetainedTicketsWithTheSameHintCompleteIndependently) {
 
 TEST(ActionSeekTable, ConcurrentQueryObservesWholeCompletionRecords) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     std::atomic<VnActionSeekTicket> requested{0};
     std::atomic<VnActionSeekTicket> finished{0};
     std::atomic<bool> stopping{false};
@@ -109,7 +109,7 @@ TEST(ActionSeekTable, ConcurrentQueryObservesWholeCompletionRecords) {
 
 TEST(ActionSeekTable, CancellationAndApplyUseOneAtomicWinner) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
 
     VnActionSeekTicket cancelled = 0;
     ASSERT_TRUE(table.Prepare(101, 2, 7, &cancelled));
@@ -147,12 +147,12 @@ TEST(ActionSeekTable, CancellationAndApplyUseOneAtomicWinner) {
 
 TEST(ActionSeekTable, ResetDoesNotReviveAnOldTicket) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     VnActionSeekTicket oldTicket = 0;
     ASSERT_TRUE(table.Prepare(101, 1, 1, &oldTicket));
     ASSERT_TRUE(table.Commit(oldTicket));
 
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     VnActionSeekTicket newTicket = 0;
     ASSERT_TRUE(table.Prepare(202, 1, 2, &newTicket));
     ASSERT_TRUE(table.Commit(newTicket));
@@ -166,7 +166,7 @@ TEST(ActionSeekTable, ResetDoesNotReviveAnOldTicket) {
 
 TEST(ActionSeekTable, ShutdownCancelsEveryNonTerminalOperation) {
     harken::ActionSeekTable table;
-    ASSERT_TRUE(table.Reset(3));
+    ASSERT_TRUE(table.Reset());
 
     VnActionSeekTicket accepted = 0;
     VnActionSeekTicket cancelRequested = 0;

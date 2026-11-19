@@ -5425,7 +5425,7 @@ struct ActionPreparationOwnerSnapshot {
     std::uint64_t renderedBlocks = 0;
     std::uint32_t commandFree = 0;
     std::uint32_t firingLive = 0;
-    std::uint32_t firingFree = 0;
+    std::uint32_t firingOccupied = 0;
     std::uint32_t firingHighWater = 0;
     std::uint32_t playableLive = 0;
     std::uint32_t playableFree = 0;
@@ -5470,7 +5470,7 @@ ActionPreparationOwnerSnapshot CaptureActionPreparationOwners(
     snapshot.renderedBlocks = engine.mixer.BlocksRendered();
     snapshot.commandFree = engine.commands.FreeSlots();
     snapshot.firingLive = engine.actionFirings.LiveCount();
-    snapshot.firingFree = engine.actionFirings.FreeCount();
+    snapshot.firingOccupied = (engine.actionFirings.ConstructedRowCount() - engine.actionFirings.FreeCount());
     snapshot.firingHighWater = engine.actionFirings.HighWater();
     snapshot.playableLive = engine.playableInstances.LiveCount();
     snapshot.playableFree = engine.playableInstances.FreeCount();
@@ -5571,7 +5571,7 @@ void ExpectActionPreparationOwnersUnchanged(
     EXPECT_EQ(expected.renderedBlocks, actual.renderedBlocks);
     EXPECT_EQ(expected.commandFree, actual.commandFree);
     EXPECT_EQ(expected.firingLive, actual.firingLive);
-    EXPECT_EQ(expected.firingFree, actual.firingFree);
+    EXPECT_EQ(expected.firingOccupied, actual.firingOccupied);
     EXPECT_EQ(expected.firingHighWater, actual.firingHighWater);
     EXPECT_EQ(expected.playableLive, actual.playableLive);
     EXPECT_EQ(expected.playableFree, actual.playableFree);
@@ -9424,12 +9424,12 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         ASSERT_TRUE(row.InvocationValid());
         ASSERT_TRUE(engine->playablePartitions.Owns(row.partition, row.identity));
         ASSERT_EQ(playFiring, row.PendingImmediateCohortRoot());
-        const auto* pending = std::find_if(engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+        const auto pending = std::find_if(engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [&](const auto& candidate) {
                 return candidate.active && candidate.root == playFiring;
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), pending);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), pending);
         EXPECT_EQ(row.identity, pending->initialService);
         EXPECT_EQ(row.invocationGeneration, pending->initialInvocationGeneration);
         ASSERT_NE(0u, pending->generation);
@@ -14473,28 +14473,11 @@ TEST(ActionFiringApi, ImmediateEntryAttemptPoolExhaustionIsCapacity) {
     engine->immediateEntryAttempts.SetCommitPageLimitForTests(0);
     const auto uncommitted = CaptureActionPreparationOwners(*engine);
     VnActionFiringHandle notConstructed = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &notConstructed));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &notConstructed));
     EXPECT_EQ(0u, notConstructed);
     EXPECT_EQ(0u, engine->immediateEntryAttempts.size());
     ExpectActionPreparationOwnersUnchanged(*engine, uncommitted);
     engine->immediateEntryAttempts.SetCommitPageLimitForTests(SIZE_MAX);
-    for (std::uint32_t index = 0;
-         index < engine->immediateEntryAttempts.Capacity(); ++index) {
-        ASSERT_TRUE(engine->EnsureImmediateEntryAttempt(index));
-        auto& attempt = engine->immediateEntryAttempts[index];
-        engine->SetImmediateEntryAttemptActive(attempt, true);
-        attempt.root = UINT64_MAX;
-        attempt.entryQuantum = UINT64_MAX;
-    }
-    const auto before = CaptureActionPreparationOwners(*engine);
-    VnActionFiringHandle refused = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &refused));
-    EXPECT_EQ(0u, refused);
-    ExpectActionPreparationOwnersUnchanged(*engine, before);
-    EXPECT_FALSE(engine->runtimeRecreateRequired);
-    for (std::uint32_t index = 0;
-         index < engine->immediateEntryAttempts.size(); ++index)
-        engine->SetImmediateEntryAttemptActive(engine->immediateEntryAttempts[index], false);
     VnActionFiringHandle recovered = 0;
     EXPECT_EQ(VN_OK, Vn_PostAction(&desc, &recovered));
     EXPECT_NE(0u, recovered);
@@ -16062,14 +16045,12 @@ void ExpectTwoContinuousVariableControlQueuesReserveBothContinuations(
     const std::array<harken::QueueInstanceToken, 2> queueTokens{
         queues[0]->queueInstance, queues[1]->queueInstance};
     const auto attempted = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempted);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempted);
     bool sawCommitted = false;
     std::array<float, 16> blockMean{};
     for (std::uint32_t update = 0; update < blockMean.size(); ++update) {
@@ -16265,24 +16246,21 @@ TEST(ActionFiringApi, TwoContinuousVariableControlQueueBranchesShareInitialCohor
                   queue->queueInitialCohortEntryFrame);
     }
     const auto rootAttempts = std::count_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& attempt) {
             return attempt.active && attempt.root == firing &&
                    attempt.lane.Valid();
         });
     EXPECT_EQ(1, rootAttempts);
     const auto attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing &&
                    candidate.lane.Valid();
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     EXPECT_NE(queues[0]->initialQueueEntryDecision.slot,
               queues[1]->initialQueueEntryDecision.slot);
     EXPECT_EQ(attempt->generation,
@@ -16473,9 +16451,8 @@ TEST(ActionFiringApi,
         [](const auto& service) {
             return service.phase != harken::EnginePlayableStartPhase::Free;
         }));
-    EXPECT_EQ(0, std::count_if(engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+    EXPECT_EQ(0, std::count_if(engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [](const auto& attempt) { return attempt.active; }));
     harken::UnplacedBatchCredit rollbackProbe{};
     ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit(
@@ -22874,10 +22851,10 @@ static void CheckNestedQueueCancellationPostscanRace(
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     if (rejectForeignFuture) {
-        auto activeAttempt = std::find_if(engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+        auto activeAttempt = std::find_if(engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [&](const auto& attempt) { return attempt.active && attempt.root == firing; });
-        ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), activeAttempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), activeAttempt);
         harken::ImmediateLaneObservation cancelledLane{};
         ASSERT_TRUE(engine->immediateActionLane.Observe(activeAttempt->lane, &cancelledLane));
         ASSERT_TRUE(cancelledLane.committed);
@@ -24899,16 +24876,14 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                     lane.slot, bucket));
         }
         if (finalLaneAnchor == UINT64_MAX) {
-            const auto* attempt = std::find_if(
-                engine->immediateEntryAttempts.data(),
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size(),
+            const auto attempt = std::find_if(
+                engine->immediateEntryAttempts.begin(),
+                engine->immediateEntryAttempts.end(),
                 [&](const auto& candidate) {
                     return candidate.active && candidate.root == firing &&
                         candidate.lane.Valid() && candidate.entryQuantum != 0;
                 });
-            if (attempt != engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size() &&
+            if (attempt != engine->immediateEntryAttempts.end() &&
                 row->phase == harken::EnginePlayableStartPhase::Filed) {
                 finalLaneAnchor = attempt->entryQuantum * config.blockFrames;
                 finalQueueStartFrame = queueService->startFrame;
@@ -24975,16 +24950,14 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         }
         ASSERT_EQ(VN_OK, Vn_Update());
         if (finalLaneAnchor == UINT64_MAX) {
-            const auto* attempt = std::find_if(
-                engine->immediateEntryAttempts.data(),
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size(),
+            const auto attempt = std::find_if(
+                engine->immediateEntryAttempts.begin(),
+                engine->immediateEntryAttempts.end(),
                 [&](const auto& candidate) {
                     return candidate.active && candidate.root == firing &&
                         candidate.lane.Valid() && candidate.entryQuantum != 0;
                 });
-            if (attempt != engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size() &&
+            if (attempt != engine->immediateEntryAttempts.end() &&
                 row->phase == harken::EnginePlayableStartPhase::Filed) {
                 finalLaneAnchor = attempt->entryQuantum * config.blockFrames;
                 finalQueueStartFrame = queueService->startFrame;
@@ -25412,7 +25385,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(admissionRecheck.owners.commandHead, returnedOwners.commandHead);
             EXPECT_EQ(admissionRecheck.owners.commandFree, returnedOwners.commandFree);
             EXPECT_EQ(admissionRecheck.owners.renderedBlocks, returnedOwners.renderedBlocks);
-            EXPECT_EQ(admissionRecheck.owners.firingFree, returnedOwners.firingFree);
+            EXPECT_EQ(admissionRecheck.owners.firingOccupied, returnedOwners.firingOccupied);
             EXPECT_EQ(admissionRecheck.owners.playableFree, returnedOwners.playableFree);
             EXPECT_EQ(admissionRecheck.owners.transitionFree, returnedOwners.transitionFree);
             EXPECT_EQ(admissionRecheck.owners.armGroupFree, returnedOwners.armGroupFree);
@@ -26072,15 +26045,13 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
         for (const auto& witness : partialClaim.armWitnesses)
             ASSERT_TRUE(witness.captured);
         const auto exactAttempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [&](const auto& candidate) {
                 return candidate.active && candidate.root == failed &&
                     candidate.generation == partialClaim.attemptGeneration;
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(), exactAttempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), exactAttempt);
         ASSERT_TRUE(exactAttempt->producerAbortPending);
         ASSERT_TRUE(exactAttempt->producerAbortPartialArmPublished);
         VnPostActionDesc siblingPost = desc;
@@ -26302,16 +26273,14 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
             EXPECT_TRUE(partialClaim.exactPartialPublish);
             EXPECT_TRUE(partialClaim.group.Exact());
             const auto exactAttempt = std::find_if(
-                engine->immediateEntryAttempts.data(),
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size(),
+                engine->immediateEntryAttempts.begin(),
+                engine->immediateEntryAttempts.end(),
                 [&](const auto& candidate) {
                     return candidate.active && candidate.root == failed &&
                         candidate.generation ==
                             partialClaim.attemptGeneration;
                 });
-            ASSERT_NE(engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(), exactAttempt);
+            ASSERT_NE(engine->immediateEntryAttempts.end(), exactAttempt);
             for (std::uint32_t index = 0;
                  index < partialClaim.groupCount; ++index) {
                 harken::Plan03PageGroupView audioGroup{};
@@ -26766,15 +26735,13 @@ TEST(ActionFiringApi,
         std::to_string(sizeof(harken::FrontierGroupBinding)) +
         " descendant=" +
         std::to_string(sizeof(harken::FrontierQueueDescendantIdentity)));
-    const auto* attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+    const auto attempt = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [&](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    if (attempt != engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size()) {
+    if (attempt != engine->immediateEntryAttempts.end()) {
         testing::Test::RecordProperty("deep_route_counts",
             std::string("continuation=") +
                 std::to_string(attempt->queueContinuationCount) +
@@ -26954,15 +26921,13 @@ static void ExpectImmediateDeepNestedQueueWrongIdentityRejected(
         if (!row->frontierEntry.Valid()) engine->nullBackend.Pump(1);
     }
     ASSERT_TRUE(row->frontierEntry.Valid());
-    const auto* attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+    const auto attempt = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [&](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     ASSERT_EQ(1u, attempt->queueContinuationCount);
     ASSERT_EQ(0u, attempt->queueFutureCount);
     ASSERT_LT(attempt->queueContinuationHead,
@@ -30285,10 +30250,10 @@ static void CheckPrivateEntryReceiverStopStage(unsigned stage, bool inspectProdu
             EXPECT_FALSE(row.privateImmediateEntry.stopAccepted);
             EXPECT_EQ(0u, row.pendingCancellationIntent);
         } else if (stage == 1) {
-            const auto* actual = std::find_if(engine->immediateEntryAttempts.data(),
-                engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+            const auto actual = std::find_if(engine->immediateEntryAttempts.begin(),
+                engine->immediateEntryAttempts.end(),
                 [&](const auto& candidate) { return candidate.active && candidate.root == firing; });
-            ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), actual);
+            ASSERT_NE(engine->immediateEntryAttempts.end(), actual);
             EXPECT_FALSE(engine->RegisteredPendingVariableCohortRepreparePending(*actual));
             EXPECT_TRUE(row.pendingRegisteredStopCapture);
             EXPECT_FALSE(row.privateImmediateEntry.stopAccepted);
@@ -37185,8 +37150,8 @@ TEST(ActionFiringApi, AuthoredStopFadeUsesCheckedNanosecondCeiling) {
             engine->logicCommits.IssuedCount();
         const std::uint32_t firingLive =
             engine->actionFirings.LiveCount();
-        const std::uint32_t firingFree =
-            engine->actionFirings.FreeCount();
+        const std::uint32_t firingOccupied =
+            engine->actionFirings.ConstructedRowCount() - engine->actionFirings.FreeCount();
         const std::uint32_t playableLive =
             engine->playableInstances.LiveCount();
         const std::uint32_t playableFree =
@@ -37202,7 +37167,7 @@ TEST(ActionFiringApi, AuthoredStopFadeUsesCheckedNanosecondCeiling) {
             EXPECT_EQ(commandHead, engine->commands.PublishedHead());
             EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
             EXPECT_EQ(firingLive, engine->actionFirings.LiveCount());
-            EXPECT_EQ(firingFree, engine->actionFirings.FreeCount());
+            EXPECT_EQ(firingOccupied, engine->actionFirings.ConstructedRowCount() - engine->actionFirings.FreeCount());
             EXPECT_EQ(playableLive,
                       engine->playableInstances.LiveCount());
             EXPECT_EQ(playableFree,
@@ -39411,15 +39376,13 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
-    const auto* attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+    const auto attempt = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     ASSERT_TRUE(attempt->initialService.Valid());
     ASSERT_LE(attempt->initialEntryFrame, UINT64_MAX - 64u);
     std::size_t memberCount = 0;
@@ -39783,14 +39746,12 @@ void CheckInitialQueueLanePrepareFaultLeavesIndependentActionLive(
     const auto queueCredit = queueRow->QueuePayload().queueUnplacedCredit;
     ASSERT_TRUE(queueDecision.Valid());
     const auto queueAttempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [queueFiring](const auto& candidate) {
             return candidate.active && candidate.root == queueFiring;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), queueAttempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), queueAttempt);
     const auto queueAttemptGeneration = queueAttempt->generation;
     const auto queueLane = queueAttempt->lane;
     ASSERT_TRUE(queueLane.Valid());
@@ -40317,14 +40278,12 @@ TEST(ActionFiringApi, ImmediateSequenceQueuePlayCompletesAfterEveryChildRetires)
             }
         }
         const auto attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [firing](const auto& candidate) {
                 return candidate.active && candidate.root == firing;
             });
-        if (attempt != engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size() &&
+        if (attempt != engine->immediateEntryAttempts.end() &&
             attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
             const auto* activation = engine->decisions.ResolveFrontierActivation(
                 attempt->QueueCoordinators().queueContinuationCoordinator);
@@ -40351,9 +40310,8 @@ TEST(ActionFiringApi, ImmediateSequenceQueuePlayCompletesAfterEveryChildRetires)
                 candidate.queueMode;
         });
     const auto finalAttempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
@@ -40394,20 +40352,16 @@ TEST(ActionFiringApi, ImmediateSequenceQueuePlayCompletesAfterEveryChildRetires)
             (finalQueue == engine->playableServices.end()
                 ? 0u : finalQueue->QueuePayload().queueRetiringOccurrence.generation)
         << " lane attempt=" <<
-            (finalAttempt != engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size())
+            (finalAttempt != engine->immediateEntryAttempts.end())
         << " lane groups=" << remainingGroupCount
         << " lane valid=" <<
-            (finalAttempt != engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size() &&
+            (finalAttempt != engine->immediateEntryAttempts.end() &&
              finalAttempt->lane.Valid())
         << " C0 group=" <<
-            (finalAttempt != engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size() &&
+            (finalAttempt != engine->immediateEntryAttempts.end() &&
              finalAttempt->QueueCoordinators().initialQueuePrimaryGroup.Exact())
         << " C1 group=" <<
-            (finalAttempt != engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size() &&
+            (finalAttempt != engine->immediateEntryAttempts.end() &&
              finalAttempt->QueueCoordinators().queueContinuationPrimaryGroup.Exact()));
     EXPECT_TRUE(observedSecondChild);
     ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
@@ -40450,11 +40404,11 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
-    const auto* before = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+    const auto before = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
-    ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), before);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), before);
     ASSERT_TRUE(before->QueueCoordinators().initialQueuePrimaryGroup.Exact());
     ASSERT_TRUE(before->QueueCoordinators().initialQueueCoordinator.Valid());
     const auto savedGroupCount = engine->timelinePool.CaptureImmediateLaneCohortGroups(
@@ -40472,15 +40426,13 @@ TEST(ActionFiringApi, InitialQueueChildrenStartAfterOneNormalUpdate) {
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
 
-    const auto* attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+    const auto attempt = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     harken::ImmediateLaneObservation initialLane{};
     ASSERT_TRUE(engine->immediateActionLane.Observe(attempt->lane,
                                                   &initialLane));
@@ -41222,13 +41174,12 @@ TEST(ActionFiringApi, InitialQueueArenaRefusalLeavesNoPartialSoundAndRecovers) {
     ASSERT_EQ(VN_OK, Vn_Update());
 
     const auto attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
     ASSERT_TRUE(attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
     ASSERT_TRUE(attempt->lane.Valid());
@@ -41476,13 +41427,12 @@ TEST(ActionFiringApi, InitialQueueContinuationArenaRefusalKeepsFirstSoundAndFail
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
     ASSERT_TRUE(attempt->QueueCoordinators().queueContinuationCoordinator.Valid());
     const auto firstQuantum = attempt->entryQuantum;
@@ -41673,14 +41623,12 @@ TEST(ActionFiringApi, InitialQueueCommittedC0BeforeHandoffPublishFailureReclaims
         VnActionFiringHandle firing = 0;
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
         const auto attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [firing](const auto& candidate) {
                 return candidate.active && candidate.root == firing;
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-                      engine->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
         const auto c0 = attempt->QueueCoordinators().initialQueueCoordinator;
         const auto c1 = attempt->QueueCoordinators().queueContinuationCoordinator;
         ASSERT_TRUE(c0.Valid());
@@ -41788,13 +41736,12 @@ TEST(ActionFiringApi, ImmediateLaneCapacityReasonDoesNotCarryIntoNextProtocolRef
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) {
             return candidate.active && candidate.root == firing;
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
     const auto firstQuantum = attempt->entryQuantum;
     const std::array<harken::DecisionToken, 2> pageDecisions = {
         attempt->QueueCoordinators().initialQueueCoordinator,
@@ -41921,15 +41868,13 @@ TEST(ActionFiringApi, InitialQueueRejectsExtraGroupOutsideExactEntry) {
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
         VnActionFiringHandle firing = 0;
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
-        const auto* attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [firing](const auto& candidate) {
                 return candidate.active && candidate.root == firing;
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-                      engine->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
         std::array<harken::Plan03ImmediateLaneGroupDescriptor, 4> groups{};
         ASSERT_EQ(4u, engine->timelinePool.CaptureImmediateLaneCohortGroups(
             firing, groups.data(), groups.size()));
@@ -42026,15 +41971,13 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
         engine->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
-        auto* attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+        auto attempt = std::find_if(
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [firing](const auto& candidate) {
                 return candidate.active && candidate.root == firing;
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
         if (corruptPrerequisite) {
             harken::Plan03PageGroupView primary{};
             ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
@@ -42064,10 +42007,9 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
             ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
             if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
         }
-        const auto* finalAttempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+        const auto finalAttempt = std::find_if(
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [firing](const auto& candidate) {
                 return candidate.active && candidate.root == firing;
             });
@@ -42085,13 +42027,11 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
             engine->queueInstances.Capture(
                 finalRow->queueInstance, &finalQueue);
         const auto* c0 = finalAttempt ==
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size()
+                engine->immediateEntryAttempts.end()
             ? nullptr : engine->decisions.ResolveFrontierActivation(
                 finalAttempt->QueueCoordinators().initialQueueCoordinator);
         const auto* c1 = finalAttempt ==
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size()
+                engine->immediateEntryAttempts.end()
             ? nullptr : engine->decisions.ResolveFrontierActivation(
                 finalAttempt->QueueCoordinators().queueContinuationCoordinator);
         harken::FrontierActivationReceipt c0Receipt{};
@@ -42103,8 +42043,7 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
             c1->Read(finalAttempt->QueueCoordinators().queueContinuationDescriptor.entry,
                 engine->mixer.BlocksRendered(), &c1Receipt);
         const bool laneObserved = finalAttempt !=
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size() &&
+                engine->immediateEntryAttempts.end() &&
             finalAttempt->lane.Valid() &&
             engine->immediateActionLane.Observe(
                 finalAttempt->lane, &finalLane);
@@ -42114,8 +42053,7 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
             << " lane missed=" << finalLane.missed
             << " lane complete=" << finalLane.complete
             << " attempt active=" << (finalAttempt !=
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size())
+                engine->immediateEntryAttempts.end())
             << " row=" << (finalRow != engine->playableServices.end())
             << " phase=" << (finalRow == engine->playableServices.end()
                 ? -1 : static_cast<int>(finalRow->phase))
@@ -42136,8 +42074,7 @@ TEST(ActionFiringApi, InitialQueueContinuationRejectsMissingPriorReceiptOrIdenti
                 static_cast<int>(c1->State()))
             << " C1 read=" << static_cast<int>(c1Read)
             << " exact version=" << (finalAttempt !=
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size() &&
+                engine->immediateEntryAttempts.end() &&
                 finalAttempt->queueContinuationVersion.Valid())
             << " decision=" << (finalRow != engine->playableServices.end() &&
                 finalRow->HasFeatureArrays() && finalRow->QueueFiling().queueDecision.Valid())
@@ -43303,13 +43240,13 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool segmentChild) {
         return row;
     };
     ASSERT_EQ(&*initialRow, resolveSavedService());
-    const auto* originalAttempt = std::find_if(engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+    const auto originalAttempt = std::find_if(engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
-    ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+    ASSERT_NE(engine->immediateEntryAttempts.end(),
         originalAttempt);
     const auto savedAttemptSlot = static_cast<std::size_t>(
-        originalAttempt - engine->immediateEntryAttempts.data());
+        (originalAttempt - engine->immediateEntryAttempts.begin()));
     const auto savedAttemptGeneration = originalAttempt->generation;
     const auto savedLane = originalAttempt->lane;
     const auto savedC0 = originalAttempt->QueueCoordinators().initialQueueCoordinator;
@@ -43958,11 +43895,11 @@ TEST(ActionFiringApi,
             EXPECT_EQ(0u, original.memberIndex);
         }
     }
-    auto* attempt = std::find_if(engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+    auto attempt = std::find_if(engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& actual) { return actual.active && actual.root == firing; });
-    ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), attempt);
-    const auto savedAttemptSlot = static_cast<std::size_t>(attempt - engine->immediateEntryAttempts.data());
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
+    const auto savedAttemptSlot = static_cast<std::size_t>((attempt - engine->immediateEntryAttempts.begin()));
     const auto savedAttemptGeneration = attempt->generation;
     const auto savedLane = attempt->lane;
     const auto savedC0Coordinator = attempt->QueueCoordinators().initialQueueCoordinator;
@@ -44638,11 +44575,11 @@ void CheckDirectStaggeredCurrentPublicationRefusal(std::uint32_t refusedPublicat
         ASSERT_TRUE(observed.foreignReader.Valid());
         const auto sequenceWhileHeld = engine.mixer.BlocksRendered();
         const auto assertActualOriginalRetained = [&]() {
-            const auto* attempt = std::find_if(engine.immediateEntryAttempts.data(),
-                engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+            const auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+                engine.immediateEntryAttempts.end(),
                 [&](const auto& actual) { return actual.active && actual.root == firing &&
                     actual.generation == observed.attemptGeneration; });
-            ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+            ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
             EXPECT_EQ(observed.lane.slot, attempt->lane.slot);
             EXPECT_EQ(observed.lane.generation, attempt->lane.generation);
             EXPECT_EQ(harken::InitialQueuePrivateCleanupPhase::RootReaders, attempt->privateCleanupPhase);
@@ -45286,16 +45223,17 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         harken::ResolveSequenceQueueStep(image.containers[2], sameWithinCycle, &following));
     ExpectEffectiveQueueState(restartCycle ? following : sameWithinCycle, row->QueueNextState());
 
-    const auto* attempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+    const auto found = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
-    ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), found);
+    const auto* attempt = &*found;
     ASSERT_TRUE(attempt->lane.Valid());
     ASSERT_EQ(savedService.token, attempt->initialService);
     ASSERT_EQ(savedService.invocationGeneration, attempt->initialInvocationGeneration);
     const auto savedAttemptSlot = static_cast<std::size_t>(
-        attempt - engine->immediateEntryAttempts.data());
+        engine->immediateEntryAttempts.IndexOf(attempt));
     const auto savedAttemptGeneration = attempt->generation;
     const auto savedLane = attempt->lane;
     const auto savedInitialCoordinator = attempt->QueueCoordinators().initialQueueCoordinator;
@@ -51948,8 +51886,8 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         return;
     }
-    auto* entryEnd = engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size();
-    const auto* census = std::find_if(engine.immediateEntryAttempts.data(), entryEnd,
+    const auto entryEnd = engine.immediateEntryAttempts.end();
+    const auto census = std::find_if(engine.immediateEntryAttempts.begin(), entryEnd,
         [&](const auto& candidate) { return candidate.active && candidate.root == firing; });
     ASSERT_NE(entryEnd, census);
     EXPECT_EQ(2u, census->selectionProducerCount);
@@ -52083,8 +52021,8 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
                 ASSERT_TRUE(source.source.Borrow(&observed.loan));
                 observed.borrowedChild = &firstChild;
             }
-            auto* end = actual.immediateEntryAttempts.data() + actual.immediateEntryAttempts.size();
-            auto* attempt = std::find_if(actual.immediateEntryAttempts.data(), end, [&](const auto& candidate) {
+            const auto end = actual.immediateEntryAttempts.end();
+            auto attempt = std::find_if(actual.immediateEntryAttempts.begin(), end, [&](const auto& candidate) {
                 return candidate.active && candidate.root == firstChild.row->PendingImmediateCohortRoot() &&
                     candidate.generation == firstChild.pendingVariableReplacementEntryGeneration;
             });
@@ -55507,8 +55445,8 @@ static void CheckPendingVariableSelectedContainerAtPlacement(bool sequence, bool
             auto& source = actual.pendingVariableLeafSources[child.voiceStarts[0].arm.slot];
             ASSERT_TRUE(source.source.Borrow(&observed.loan));
             ASSERT_NE(nullptr, child.row);
-            auto* end = actual.immediateEntryAttempts.data() + actual.immediateEntryAttempts.size();
-            auto* attempt = std::find_if(actual.immediateEntryAttempts.data(), end, [&](const auto& candidate) {
+            const auto end = actual.immediateEntryAttempts.end();
+            auto attempt = std::find_if(actual.immediateEntryAttempts.begin(), end, [&](const auto& candidate) {
                 return candidate.active && candidate.root == child.row->PendingImmediateCohortRoot() &&
                     candidate.generation == child.pendingVariableReplacementEntryGeneration;
             });
@@ -55855,10 +55793,10 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
     harken::TimelineArmToken loanArm{};
     const harken::OriginalSourceSubmissionRegistry::Record* loanRecord = nullptr;
     if (ordinarySuccessor) {
-        const auto* pending = std::find_if(engine.immediateEntryAttempts.data(),
-            engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+        const auto pending = std::find_if(engine.immediateEntryAttempts.begin(),
+            engine.immediateEntryAttempts.end(),
             [&](const auto& attempt) { return attempt.active && attempt.root == firings[1]; });
-        ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), pending);
+        ASSERT_NE(engine.immediateEntryAttempts.end(), pending);
         ASSERT_EQ(1u, pending->selectionProducerCount);
         EXPECT_TRUE(engine.HasPendingOrdinarySelection(*pending));
         const auto token = pending->selectionProducers[0].token;
@@ -55895,10 +55833,10 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
         }
-        auto* pending = std::find_if(engine.immediateEntryAttempts.data(),
-            engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+        auto pending = std::find_if(engine.immediateEntryAttempts.begin(),
+            engine.immediateEntryAttempts.end(),
             [&](const auto& attempt) { return attempt.active && attempt.root == firings[1]; });
-        ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), pending);
+        ASSERT_NE(engine.immediateEntryAttempts.end(), pending);
         ASSERT_EQ(1u, pending->selectionProducerCount);
         const auto& selection = pending->selectionProducers[0];
         auto* holder = engine.PendingOrdinarySelectionFor(engine.actionPlayStorage[selection.token.slot]);
@@ -55958,10 +55896,10 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
                 }
             }
             if (probeOrdinaryNative && firing == firings[1] && !probedOrdinaryNative) {
-                auto* pending = std::find_if(engine.immediateEntryAttempts.data(),
-                    engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+                auto pending = std::find_if(engine.immediateEntryAttempts.begin(),
+                    engine.immediateEntryAttempts.end(),
                     [&](const auto& attempt) { return attempt.active && attempt.root == firing; });
-                ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), pending);
+                ASSERT_NE(engine.immediateEntryAttempts.end(), pending);
                 ASSERT_EQ(1u, pending->selectionProducerCount);
                 auto& storage = engine.actionPlayStorage[pending->selectionProducers[0].token.slot];
                 auto* holder = engine.PendingOrdinarySelectionFor(storage);
@@ -56362,10 +56300,10 @@ TEST(ActionFiringApi, PendingVariableGroupZeroNativeQueueCancelsRetriesAndReturn
         ASSERT_EQ(VN_ACTION_STEP_ACTIVE, accepted[index].state);
         ASSERT_NE(0u, accepted[index].producedPlayableInstance);
     }
-    auto* attempt = std::find_if(engine.immediateEntryAttempts.data(),
-        engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+    auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+        engine.immediateEntryAttempts.end(),
         [&](const auto& candidate) { return candidate.active && candidate.root == firing && candidate.privateVcProducerCount == 0; });
-    ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
     ASSERT_LT(attempt->producerSlot, engine.actionPlayScratch.size());
     std::array<harken::EngineActionPlayScratch*, 1> producers{&engine.actionPlayScratch[attempt->producerSlot]};
     ASSERT_EQ(attempt->producerGeneration, producers[0]->storage.generation);
@@ -56668,10 +56606,10 @@ static void CheckPendingVariableZeroCohort(std::array<std::uint32_t, 2> counts, 
         accepted[index].structSize = sizeof(VnActionStepResult);
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, index, &accepted[index]));
     }
-    auto* attempt = std::find_if(engine.immediateEntryAttempts.data(),
-        engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+    auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+        engine.immediateEntryAttempts.end(),
         [](const auto& candidate) { return candidate.active && candidate.privateVcProducerCount == 2; });
-    ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
     std::array<harken::EngineActionPlayScratch*, 2> producers{};
     std::array<harken::TimelineVoiceInstallDesc, 2> initialVoices{};
     auto token = attempt->privateVcProducerHead;
@@ -57029,10 +56967,10 @@ static void CheckRegisteredInitialCompositeCohort(bool segment, bool reselect,
             segment ? harken::PlayableKind::Segment : harken::PlayableKind::Track, top.kind);
         EXPECT_EQ(row->ownerInstance, top.parent);
     }
-    const auto attempt = std::find_if(engine.immediateEntryAttempts.data(),
-        engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+    const auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+        engine.immediateEntryAttempts.end(),
         [](const auto& candidate) { return candidate.active && candidate.privateVcProducerCount != 0; });
-    ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
     ASSERT_EQ(2u, attempt->privateVcProducerCount);
     EXPECT_EQ(totalPhysicalCount, attempt->originalLaneDemand.members);
     EXPECT_EQ(totalPhysicalCount + 6u, attempt->originalLaneDemand.events);
@@ -57671,10 +57609,10 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
     }
     EXPECT_NE(accepted[0].producedPlayableInstance, accepted[1].producedPlayableInstance);
     if (!outerPrefix) {
-        const auto attempt = std::find_if(engine.immediateEntryAttempts.data(),
-            engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+            engine.immediateEntryAttempts.end(),
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
-        ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
         EXPECT_EQ(2u, attempt->privateVcProducerCount);
         EXPECT_EQ(2u, attempt->queueContinuationCount + attempt->queueFutureCount);
     }
@@ -57922,10 +57860,10 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
             initialVoices[index] = harken::test::ProjectTimelineVoiceInstall(*currentInstall);
         }
     }
-    const auto attempt = std::find_if(engine.immediateEntryAttempts.data(),
-        engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+    const auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+        engine.immediateEntryAttempts.end(),
         [](const auto& candidate) { return candidate.active && candidate.privateVcProducerCount != 0; });
-    ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
     ASSERT_EQ(2u, attempt->privateVcProducerCount);
     if (probeNativeReservation) {
         engine.pendingVariableGroupPlacementContextForTest = &nativeReservationProbed;
@@ -58399,7 +58337,7 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
             }
             if (bindSharedEntries == 11) {
                 const auto head = engine.commands.PublishedHead();
-                engine.privateInitialVcLaneTransferContextForTest = attempt;
+                engine.privateInitialVcLaneTransferContextForTest = &*attempt;
                 engine.privateInitialVcLaneTransferHookForTest = [](harken::Engine&,
                     harken::EngineActionPlayScratch&, unsigned stage, void* opaque) {
                     if (stage != 6) return;
@@ -64674,10 +64612,9 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     PreparationMatrixActionFiringRowCapacityReturnsNoAction) {
+     ActionFiringGrowthFailurePreservesOwnersAndRetries) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig();
-    config.maxActionFirings = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -64685,16 +64622,17 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    harken::PreparedActionFiring occupied{};
-    ASSERT_TRUE(engine->actionFirings.PrepareRoot(
-        harkentest::ObjectId(9001), engine->variables.CurrentWorldGeneration(), 0, &occupied));
-    ASSERT_EQ(0u, engine->actionFirings.FreeCount());
+    engine->actionFirings.SetRowCommitPageLimitForTests(0);
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(41), 0, VN_NO_ACTION, before);
+        *engine, harkentest::ObjectId(41), 0, VN_OUT_OF_MEMORY, before);
 
-    EXPECT_TRUE(engine->actionFirings.Abandon(&occupied));
+    engine->actionFirings.SetRowCommitPageLimitForTests(SIZE_MAX);
+    VnPostActionDesc desc = ValidPostDesc();
+    VnActionFiringHandle recovered = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &recovered));
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(recovered));
 }
 
 TEST(ActionFiringApi,
@@ -67980,15 +67918,13 @@ TEST(ActionFiringApi, PreinitLaneBQueueAndTwoDirectSoundsSameQuantum) {
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(firings[index], 0, &step));
         rootInstances[index] = step.producedPlayableInstance;
         ASSERT_NE(0u, rootInstances[index]);
-        const auto* attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [&](const auto& candidate) {
                 return candidate.active && candidate.root == firings[index];
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
         lanes[index] = attempt->lane;
         attemptGenerations[index] = attempt->generation;
         ASSERT_TRUE(lanes[index].Valid());
@@ -68001,15 +67937,13 @@ TEST(ActionFiringApi, PreinitLaneBQueueAndTwoDirectSoundsSameQuantum) {
         static_cast<unsigned long long>(engine->mixer.BlocksRendered()));
     ASSERT_EQ(VN_OK, update);
     for (std::size_t index = 0; index < firings.size(); ++index) {
-        const auto* attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [&](const auto& candidate) {
                 return candidate.active && candidate.root == firings[index];
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
         ASSERT_EQ(attemptGenerations[index], attempt->generation);
         ASSERT_EQ(lanes[index].slot, attempt->lane.slot);
         ASSERT_EQ(lanes[index].generation, attempt->lane.generation);
@@ -68858,15 +68792,13 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
                 ASSERT_EQ(VN_OK, Vn_QueryActionStep(laneFirings[index], 0, &step));
                 laneRoots[index] = step.producedPlayableInstance;
                 ASSERT_NE(0u, laneRoots[index]);
-                const auto* entry = std::find_if(
-                    engine->immediateEntryAttempts.data(),
-                    engine->immediateEntryAttempts.data() +
-                        engine->immediateEntryAttempts.size(),
+                const auto entry = std::find_if(
+                    engine->immediateEntryAttempts.begin(),
+                    engine->immediateEntryAttempts.end(),
                     [&](const auto& candidate) {
                         return candidate.active && candidate.root == laneFirings[index];
                     });
-                ASSERT_NE(engine->immediateEntryAttempts.data() +
-                          engine->immediateEntryAttempts.size(), entry);
+                ASSERT_NE(engine->immediateEntryAttempts.end(), entry);
                 laneHandles[index] = entry->lane;
                 laneGenerations[index] = entry->generation;
                 ASSERT_TRUE(laneHandles[index].Valid());
@@ -68968,15 +68900,13 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
     const std::array<std::uint32_t, 3> expectedEvents{2, 1, 1};
     const std::array<std::uint32_t, 3> expectedGroups{2, 0, 0};
     for (std::size_t index = 0; index < laneFirings.size(); ++index) {
-        const auto* attempt = std::find_if(
-            engine->immediateEntryAttempts.data(),
-            engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(
+            engine->immediateEntryAttempts.begin(),
+            engine->immediateEntryAttempts.end(),
             [&](const auto& candidate) {
                 return candidate.active && candidate.root == laneFirings[index];
             });
-        ASSERT_NE(engine->immediateEntryAttempts.data() +
-                  engine->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
         ASSERT_EQ(laneGenerations[index], attempt->generation);
         harken::ImmediateLaneObservation lane{};
         ASSERT_TRUE(engine->immediateActionLane.Observe(laneHandles[index], &lane));
@@ -69175,15 +69105,13 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
     ASSERT_TRUE(queueRow->queueMode);
     const auto successorRender = queueRow->QueuePayload().queueSuccessorRenderHandle;
     ASSERT_NE(0u, successorRender);
-    const auto* queueAttempt = std::find_if(
-        engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() +
-            engine->immediateEntryAttempts.size(),
+    const auto queueAttempt = std::find_if(
+        engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [&](const auto& candidate) {
             return candidate.active && candidate.root == laneFirings[0];
         });
-    ASSERT_NE(engine->immediateEntryAttempts.data() +
-              engine->immediateEntryAttempts.size(), queueAttempt);
+    ASSERT_NE(engine->immediateEntryAttempts.end(), queueAttempt);
     const std::array<harken::DecisionToken, 2> queueCoordinators{
         queueAttempt->QueueCoordinators().initialQueueCoordinator,
         queueAttempt->QueueCoordinators().queueContinuationCoordinator};
@@ -69344,19 +69272,17 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
             ASSERT_TRUE(directServices[direct].Valid());
             ASSERT_NE(0u, directOwners[direct]);
             ASSERT_NE(0u, directOwnerEpochs[direct]);
-            const auto* oldAttempt = std::find_if(
-                engine->immediateEntryAttempts.data(),
-                engine->immediateEntryAttempts.data() +
-                    engine->immediateEntryAttempts.size(),
+            const auto oldAttempt = std::find_if(
+                engine->immediateEntryAttempts.begin(),
+                engine->immediateEntryAttempts.end(),
                 [&](const auto& candidate) {
                     return candidate.active &&
                         candidate.root == laneFirings[direct + 1u] &&
                         candidate.generation == laneGenerations[direct + 1u];
                 });
-            ASSERT_NE(engine->immediateEntryAttempts.data() +
-                engine->immediateEntryAttempts.size(), oldAttempt);
+            ASSERT_NE(engine->immediateEntryAttempts.end(), oldAttempt);
             oldAttemptSlots[direct] = static_cast<std::uint32_t>(
-                oldAttempt - engine->immediateEntryAttempts.data());
+                (oldAttempt - engine->immediateEntryAttempts.begin()));
             ASSERT_EQ(laneHandles[direct + 1u].slot, oldAttempt->lane.slot);
             ASSERT_EQ(laneHandles[direct + 1u].generation,
                 oldAttempt->lane.generation);
@@ -69450,24 +69376,22 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
         const auto captureRetryAttempts = [&] {
             for (std::size_t direct = 0; direct < 2; ++direct) {
                 const auto firing = laneFirings[direct + 1u];
-                const auto* attempt = std::find_if(
-                    engine->immediateEntryAttempts.data(),
-                    engine->immediateEntryAttempts.data() +
-                        engine->immediateEntryAttempts.size(),
+                const auto attempt = std::find_if(
+                    engine->immediateEntryAttempts.begin(),
+                    engine->immediateEntryAttempts.end(),
                     [&](const auto& candidate) {
                         return candidate.active && candidate.root == firing &&
                             candidate.generation != laneGenerations[direct + 1u] &&
                             candidate.lane.Valid() && candidate.entryQuantum != 0;
                     });
-                if (attempt == engine->immediateEntryAttempts.data() +
-                        engine->immediateEntryAttempts.size()) continue;
+                if (attempt == engine->immediateEntryAttempts.end()) continue;
                 EXPECT_EQ(newer + 8u, attempt->entryQuantum);
                 EXPECT_TRUE(laneHandles[direct + 1u].slot !=
                         attempt->lane.slot ||
                     laneHandles[direct + 1u].generation !=
                         attempt->lane.generation);
                 retryAttemptSlots[direct] = static_cast<std::uint32_t>(
-                    attempt - engine->immediateEntryAttempts.data());
+                    (attempt - engine->immediateEntryAttempts.begin()));
                 retryLanes[direct] = attempt->lane;
                 retryGenerations[direct] = attempt->generation;
             }
@@ -71347,8 +71271,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
         ASSERT_TRUE(observation.independentReader.Valid());
         const auto completedWhileHeld = engine.mixer.BlocksRendered();
         auto retainedAttempt = [&]() -> harken::EngineImmediateEntryAttempt* {
-            for (auto& candidate : std::span(engine.immediateEntryAttempts.data(),
-                    engine.immediateEntryAttempts.size()))
+            for (auto& candidate : engine.immediateEntryAttempts)
                 if (candidate.active && candidate.root == firing &&
                     candidate.generation == observation.originalAttemptGeneration)
                     return &candidate;
@@ -71547,8 +71470,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
                 << " failurePhase=" << static_cast<unsigned>(actualQueue.failurePhase)
                 << " failureReason=" << static_cast<unsigned>(actualQueue.failureReason)
                 << " failureFrame=" << actualQueue.failureFrame;
-        for (const auto& actualAttempt : std::span(engine.immediateEntryAttempts.data(),
-                engine.immediateEntryAttempts.size())) {
+        for (const auto& actualAttempt : engine.immediateEntryAttempts) {
             if (!actualAttempt.active || actualAttempt.root != firing) continue;
             diagnostic << "\noriginalAttempt=" << actualAttempt.generation
                 << " lane=" << actualAttempt.lane.slot << ":" << actualAttempt.lane.generation
@@ -71740,11 +71662,11 @@ static void CheckNativeQueueOriginalHoldersAcrossTrueAckAndOldProgress(bool term
             EXPECT_EQ(0u, original.memberIndex);
         }
     }
-    auto* attempt = std::find_if(engine->immediateEntryAttempts.data(),
-        engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(),
+    auto attempt = std::find_if(engine->immediateEntryAttempts.begin(),
+        engine->immediateEntryAttempts.end(),
         [firing](const auto& actual) { return actual.active && actual.root == firing; });
-    ASSERT_NE(engine->immediateEntryAttempts.data() + engine->immediateEntryAttempts.size(), attempt);
-    const auto savedAttemptSlot = static_cast<std::size_t>(attempt - engine->immediateEntryAttempts.data());
+    ASSERT_NE(engine->immediateEntryAttempts.end(), attempt);
+    const auto savedAttemptSlot = static_cast<std::size_t>((attempt - engine->immediateEntryAttempts.begin()));
     const auto savedAttemptGeneration = attempt->generation;
     const auto savedLane = attempt->lane;
     const auto savedC0Coordinator = attempt->QueueCoordinators().initialQueueCoordinator;
@@ -72325,11 +72247,11 @@ static void CheckNativeQueueOriginalLoansDuringRealPrivatePublicationRefusal(std
         ASSERT_TRUE(observed.foreignReader.Valid());
         const auto sequenceWhileHeld = engine.mixer.BlocksRendered();
         const auto assertActualOriginalRetained = [&]() {
-            const auto* attempt = std::find_if(engine.immediateEntryAttempts.data(),
-                engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+            const auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+                engine.immediateEntryAttempts.end(),
                 [&](const auto& actual) { return actual.active && actual.root == firing &&
                     actual.generation == observed.attemptGeneration; });
-            ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+            ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
             EXPECT_EQ(observed.lane.slot, attempt->lane.slot);
             EXPECT_EQ(observed.lane.generation, attempt->lane.generation);
             EXPECT_EQ(harken::InitialQueuePrivateCleanupPhase::RootReaders, attempt->privateCleanupPhase);
@@ -73200,10 +73122,10 @@ static void CheckOriginalSingleActualProducer(bool holdForeign, bool joinedTerm)
     ASSERT_TRUE(engine.timelineArms.Observe(arm, &installed));
     EXPECT_GT(installed.armedCompletionSequence, beforeAudio);
     EXPECT_EQ(0u, installed.startedBlockSequence);
-    auto attempt = std::find_if(engine.immediateEntryAttempts.data(),
-        engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+    auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+        engine.immediateEntryAttempts.end(),
         [firing](const auto& original) { return original.active && original.root == firing; });
-    ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
     const auto initial = attempt->QueueCoordinators().initialQueueDescriptor;
     const auto entryQuantum = attempt->entryQuantum;
     ASSERT_TRUE(initial.Valid());
@@ -73478,10 +73400,10 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
     engine.nullBackend.Pump(1);
     ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
     ASSERT_EQ(VN_OK, Vn_Update());
-    auto attempt = std::find_if(engine.immediateEntryAttempts.data(),
-        engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(),
+    auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
+        engine.immediateEntryAttempts.end(),
         [firing](const auto& original) { return original.active && original.root == firing; });
-    ASSERT_NE(engine.immediateEntryAttempts.data() + engine.immediateEntryAttempts.size(), attempt);
+    ASSERT_NE(engine.immediateEntryAttempts.end(), attempt);
     const auto entryQuantum = attempt->entryQuantum;
     ASSERT_LE(engine.mixer.BlocksRendered(), entryQuantum);
     while (engine.mixer.BlocksRendered() < entryQuantum) {

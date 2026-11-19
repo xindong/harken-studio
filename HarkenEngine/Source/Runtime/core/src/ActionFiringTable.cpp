@@ -158,12 +158,11 @@ std::uint64_t ActionFiringTable::GenerationOf(
     return handle >> kActionFiringSlotBits;
 }
 
-bool ActionFiringTable::Reset(std::uint32_t capacity) {
-    if (memguard::IsAudioTagged() || capacity == 0) {
+bool ActionFiringTable::Reset() {
+    if (memguard::IsAudioTagged()) {
         return false;
     }
-    StableRowStorage<Row> rows;
-    if (!rows.Reserve(capacity)) return false;
+    GrowingRowStorage<Row> rows;
     rows_.Swap(rows);
     liveCount_ = 0;
     highWater_ = 0;
@@ -171,6 +170,26 @@ bool ActionFiringTable::Reset(std::uint32_t capacity) {
     refusalCount_ = 0;
     failResultAllocationForTests_ = false;
     return true;
+}
+
+ActionFiringTable::Row* ActionFiringTable::AcquireFreeRow(std::uint32_t& slot) noexcept {
+    const auto count = rows_.ConstructedCount();
+    for (slot = 0; slot < UINT32_MAX; ++slot) {
+        if (slot == count && !rows_.ConstructThrough(slot + 1u)) {
+            detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            break;
+        }
+        auto& row = rows_[slot];
+        if (row.state != SlotState::Free) continue;
+        if (row.generation != 0) return &row;
+        row.generation = NextActionFiringGeneration();
+        if (row.generation != 0) return &row;
+        row.state = SlotState::Quarantined;
+        ++quarantinedCount_;
+        if (slot == count) break;
+    }
+    ++refusalCount_;
+    return nullptr;
 }
 
 bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
@@ -290,55 +309,39 @@ bool ActionFiringTable::PrepareRoot(
         return false;
     }
     *out = {};
-    for (std::uint32_t slot = 0; slot < rows_.Capacity(); ++slot) {
-        if (!rows_.ConstructThrough(slot + 1)) {
-            ++refusalCount_;
-            return false;
-        }
-        Row& row = rows_[slot];
-        if (row.state != SlotState::Free) {
-            continue;
-        }
-        if (row.generation == 0) {
-            row.generation = NextActionFiringGeneration();
-            if (row.generation == 0) {
-                row.state = SlotState::Quarantined;
-                ++quarantinedCount_;
-                continue;
-            }
-        }
-        if (!PrepareResults(row, directStepCount)) return false;
-        row.state = SlotState::Prepared;
-        row.playbackRequest = request;
-        row.emitterOrigin = emitterOrigin;
-        row.controlCause = {};
-        row.actionId = actionId;
-        row.owner = owner;
-        row.worldGeneration =
-            owner.kind == ActionFiringOwnerKind::DirectWorld
-                ? owner.worldGeneration
-                : owner.pack.compositeGeneration;
-        row.cancellationEpoch = 1;
-        row.rootCancellationEpoch = 1;
-        row.acceptedLogicSequence = 0;
-        row.outcome = ActionFiringOutcome::Pending;
-        row.terminalReason = ActionTerminalReason::None;
-        row.terminalResult = 0;
-        row.parent = 0;
-        row.root = MakeHandle(slot, row.generation);
-        row.firstChild = 0;
-        row.nextSibling = 0;
-        row.directStepCount = directStepCount;
-        row.directStepTerminalCount = 0;
-        row.childFiringCount = 0;
-        row.livePlayableCount = 0;
-        out->owner_ = this;
-        out->handle_ = MakeHandle(slot, row.generation);
-        out->prepared_ = true;
-        return true;
-    }
-    ++refusalCount_;
-    return false;
+    std::uint32_t slot;
+    auto* free = AcquireFreeRow(slot);
+    if (free == nullptr) return false;
+    auto& row = *free;
+    if (!PrepareResults(row, directStepCount)) return false;
+    row.state = SlotState::Prepared;
+    row.playbackRequest = request;
+    row.emitterOrigin = emitterOrigin;
+    row.controlCause = {};
+    row.actionId = actionId;
+    row.owner = owner;
+    row.worldGeneration =
+        owner.kind == ActionFiringOwnerKind::DirectWorld
+            ? owner.worldGeneration
+            : owner.pack.compositeGeneration;
+    row.cancellationEpoch = 1;
+    row.rootCancellationEpoch = 1;
+    row.acceptedLogicSequence = 0;
+    row.outcome = ActionFiringOutcome::Pending;
+    row.terminalReason = ActionTerminalReason::None;
+    row.terminalResult = 0;
+    row.parent = 0;
+    row.root = MakeHandle(slot, row.generation);
+    row.firstChild = 0;
+    row.nextSibling = 0;
+    row.directStepCount = directStepCount;
+    row.directStepTerminalCount = 0;
+    row.childFiringCount = 0;
+    row.livePlayableCount = 0;
+    out->owner_ = this;
+    out->handle_ = MakeHandle(slot, row.generation);
+    out->prepared_ = true;
+    return true;
 }
 
 bool ActionFiringTable::PrepareChild(
@@ -361,58 +364,42 @@ bool ActionFiringTable::PrepareChild(
         return false;
     }
     *out = {};
-    for (std::uint32_t slot = 0; slot < rows_.Capacity(); ++slot) {
-        if (!rows_.ConstructThrough(slot + 1)) {
-            ++refusalCount_;
-            return false;
-        }
-        Row& row = rows_[slot];
-        if (row.state != SlotState::Free) {
-            continue;
-        }
-        if (row.generation == 0) {
-            row.generation = NextActionFiringGeneration();
-            if (row.generation == 0) {
-                row.state = SlotState::Quarantined;
-                ++quarantinedCount_;
-                continue;
-            }
-        }
-        const ActionFiringHandle handle = MakeHandle(slot, row.generation);
-        if (!PrepareResults(row, directStepCount)) return false;
-        row.state = SlotState::Prepared;
-        row.playbackRequest = parentRow->playbackRequest;
-        row.emitterOrigin = parentRow->emitterOrigin;
-        row.controlCause = {};
-        row.actionId = actionId;
-        row.owner = owner;
-        row.worldGeneration =
-            owner.kind == ActionFiringOwnerKind::DirectWorld
-                ? owner.worldGeneration
-                : owner.pack.compositeGeneration;
-        row.cancellationEpoch = 1;
-        row.rootCancellationEpoch = parentRow->rootCancellationEpoch;
-        row.acceptedLogicSequence = 0;
-        row.outcome = ActionFiringOutcome::Pending;
-        row.terminalReason = ActionTerminalReason::None;
-        row.terminalResult = 0;
-        row.parent = parent.handle_;
-        row.root = parentRow->root;
-        row.firstChild = 0;
-        row.nextSibling = parentRow->firstChild;
-        row.directStepCount = directStepCount;
-        row.directStepTerminalCount = 0;
-        row.childFiringCount = 0;
-        row.livePlayableCount = 0;
-        parentRow->firstChild = handle;
-        ++parentRow->childFiringCount;
-        out->owner_ = this;
-        out->handle_ = handle;
-        out->prepared_ = true;
-        return true;
-    }
-    ++refusalCount_;
-    return false;
+    std::uint32_t slot;
+    auto* free = AcquireFreeRow(slot);
+    if (free == nullptr) return false;
+    auto& row = *free;
+    const ActionFiringHandle handle = MakeHandle(slot, row.generation);
+    if (!PrepareResults(row, directStepCount)) return false;
+    row.state = SlotState::Prepared;
+    row.playbackRequest = parentRow->playbackRequest;
+    row.emitterOrigin = parentRow->emitterOrigin;
+    row.controlCause = {};
+    row.actionId = actionId;
+    row.owner = owner;
+    row.worldGeneration =
+        owner.kind == ActionFiringOwnerKind::DirectWorld
+            ? owner.worldGeneration
+            : owner.pack.compositeGeneration;
+    row.cancellationEpoch = 1;
+    row.rootCancellationEpoch = parentRow->rootCancellationEpoch;
+    row.acceptedLogicSequence = 0;
+    row.outcome = ActionFiringOutcome::Pending;
+    row.terminalReason = ActionTerminalReason::None;
+    row.terminalResult = 0;
+    row.parent = parent.handle_;
+    row.root = parentRow->root;
+    row.firstChild = 0;
+    row.nextSibling = parentRow->firstChild;
+    row.directStepCount = directStepCount;
+    row.directStepTerminalCount = 0;
+    row.childFiringCount = 0;
+    row.livePlayableCount = 0;
+    parentRow->firstChild = handle;
+    ++parentRow->childFiringCount;
+    out->owner_ = this;
+    out->handle_ = handle;
+    out->prepared_ = true;
+    return true;
 }
 
 bool ActionFiringTable::PrepareChild(
@@ -430,58 +417,42 @@ bool ActionFiringTable::PrepareChild(
         return false;
     }
     *out = {};
-    for (std::uint32_t slot = 0; slot < rows_.Capacity(); ++slot) {
-        if (!rows_.ConstructThrough(slot + 1)) {
-            ++refusalCount_;
-            return false;
-        }
-        Row& row = rows_[slot];
-        if (row.state != SlotState::Free) {
-            continue;
-        }
-        if (row.generation == 0) {
-            row.generation = NextActionFiringGeneration();
-            if (row.generation == 0) {
-                row.state = SlotState::Quarantined;
-                ++quarantinedCount_;
-                continue;
-            }
-        }
-        const ActionFiringHandle handle = MakeHandle(slot, row.generation);
-        if (!PrepareResults(row, directStepCount)) return false;
-        row.state = SlotState::Prepared;
-        row.playbackRequest = parentRow->playbackRequest;
-        row.emitterOrigin = parentRow->emitterOrigin;
-        row.controlCause = {};
-        row.actionId = actionId;
-        row.owner = owner;
-        row.worldGeneration =
-            owner.kind == ActionFiringOwnerKind::DirectWorld
-                ? owner.worldGeneration
-                : owner.pack.compositeGeneration;
-        row.cancellationEpoch = parentRow->cancellationEpoch;
-        row.rootCancellationEpoch = rootRow->cancellationEpoch;
-        row.acceptedLogicSequence = parentRow->acceptedLogicSequence;
-        row.outcome = ActionFiringOutcome::Pending;
-        row.terminalReason = ActionTerminalReason::None;
-        row.terminalResult = 0;
-        row.parent = parent;
-        row.root = parentRow->root;
-        row.firstChild = 0;
-        row.nextSibling = parentRow->firstChild;
-        row.directStepCount = directStepCount;
-        row.directStepTerminalCount = 0;
-        row.childFiringCount = 0;
-        row.livePlayableCount = 0;
-        parentRow->firstChild = handle;
-        ++parentRow->childFiringCount;
-        out->owner_ = this;
-        out->handle_ = handle;
-        out->prepared_ = true;
-        return true;
-    }
-    ++refusalCount_;
-    return false;
+    std::uint32_t slot;
+    auto* free = AcquireFreeRow(slot);
+    if (free == nullptr) return false;
+    auto& row = *free;
+    const ActionFiringHandle handle = MakeHandle(slot, row.generation);
+    if (!PrepareResults(row, directStepCount)) return false;
+    row.state = SlotState::Prepared;
+    row.playbackRequest = parentRow->playbackRequest;
+    row.emitterOrigin = parentRow->emitterOrigin;
+    row.controlCause = {};
+    row.actionId = actionId;
+    row.owner = owner;
+    row.worldGeneration =
+        owner.kind == ActionFiringOwnerKind::DirectWorld
+            ? owner.worldGeneration
+            : owner.pack.compositeGeneration;
+    row.cancellationEpoch = parentRow->cancellationEpoch;
+    row.rootCancellationEpoch = rootRow->cancellationEpoch;
+    row.acceptedLogicSequence = parentRow->acceptedLogicSequence;
+    row.outcome = ActionFiringOutcome::Pending;
+    row.terminalReason = ActionTerminalReason::None;
+    row.terminalResult = 0;
+    row.parent = parent;
+    row.root = parentRow->root;
+    row.firstChild = 0;
+    row.nextSibling = parentRow->firstChild;
+    row.directStepCount = directStepCount;
+    row.directStepTerminalCount = 0;
+    row.childFiringCount = 0;
+    row.livePlayableCount = 0;
+    parentRow->firstChild = handle;
+    ++parentRow->childFiringCount;
+    out->owner_ = this;
+    out->handle_ = handle;
+    out->prepared_ = true;
+    return true;
 }
 
 bool ActionFiringTable::CommitPreparedChild(
@@ -824,7 +795,7 @@ bool ActionFiringTable::PropagateTerminal(Row& row) noexcept {
     if (parent == nullptr) {
         return false;
     }
-    const ActionFiringHandle handle = MakeHandle(rows_.IndexOf(row), row.generation);
+    const ActionFiringHandle handle = MakeHandle(rows_.IndexOf(&row), row.generation);
     ActionFiringStepResult* post = nullptr;
     for (std::uint32_t index = 0; index < parent->directStepCount; ++index) {
         ActionFiringStepResult& candidate = parent->results[index];
@@ -1014,7 +985,7 @@ void ActionFiringTable::ObserveStepExecution(ActionFiringHandle handle, std::uin
 void ActionFiringTable::ObserveActionTerminal(Row& row) noexcept {
     if (row.monitorTerminalPublished) return;
     row.monitorTerminalPublished = true;
-    const auto handle = MakeHandle(rows_.IndexOf(row), row.generation);
+    const auto handle = MakeHandle(rows_.IndexOf(&row), row.generation);
     auto facts = CaptureMonitorFacts(row);
     facts.actionOutcome = static_cast<std::uint8_t>(row.outcome);
     facts.terminalResult = row.terminalResult;
@@ -1613,7 +1584,7 @@ bool ActionFiringTable::CaptureStep(
 }
 
 std::uint32_t ActionFiringTable::FreeCount() const noexcept {
-    auto free = rows_.Capacity() - rows_.ConstructedCount();
+    std::uint32_t free = 0;
     for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot)
         if (rows_[slot].state == SlotState::Free) ++free;
     return free;
@@ -1621,7 +1592,7 @@ std::uint32_t ActionFiringTable::FreeCount() const noexcept {
 
 bool ActionFiringTable::SetFreeGenerationForTests(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    if (slot >= rows_.Capacity() || generation == 0 ||
+    if (slot == UINT32_MAX || generation == 0 ||
         generation > kMaxActionFiringGeneration ||
         !rows_.ConstructThrough(slot + 1) ||
         rows_[slot].state != SlotState::Free) {

@@ -7921,7 +7921,7 @@ TEST(VariableCurrentSlice, DeferredPrivateSourcesRejectForeignTableAndCancelledO
     auto& e = *session.Engine();
     InstallVariable(&e);
     harken::ActionFiringTable foreign;
-    ASSERT_TRUE(foreign.Reset(2));
+    ASSERT_TRUE(foreign.Reset());
     harken::PreparedActionFiring root, child, foreignRoot, foreignChild;
     const auto owner = harken::ActionFiringOwnerStamp::DirectWorld(e.variables.CurrentWorldGeneration());
     ASSERT_TRUE(e.actionFirings.PrepareRoot(harkentest::ObjectId(31), owner, 1, &root));
