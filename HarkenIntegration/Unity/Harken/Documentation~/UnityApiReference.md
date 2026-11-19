@@ -162,7 +162,7 @@ Android packaging contract. `HarkenProjectSettings.Load()` returns the project
 asset when present; its relevant read-only properties are `PackDirectory`,
 `PlayerExports`, `PlatformId`, `PlatformName`, `Language`, `InitPack`,
 `SuppressUnityAudio`, `MaxVoices`, `MaxPacks`,
-`MaxActionFirings`, and `MaxEmitters`.
+and `MaxActionFirings`.
 Emitter Variable storage grows on demand. The old serialized
 `emitterVariableSlots` setting is ignored and requires no asset migration.
 `HarkenProjectSettings` also exposes the default capacity constants. Its

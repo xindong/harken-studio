@@ -548,6 +548,7 @@ struct ProcessOwner {
     std::vector<float> interleaveScratch{};
     bool captureResourcesReady = false;
     bool failCaptureResourcesForTests = false;
+    std::uint64_t processBudgetForTests = VN_MONITOR_HARD_PROCESS_QUEUE_BYTES;
     bool drainPausedForTests = false;
     AtomicDropAccum producerDrop{};
     std::array<std::unique_ptr<ConsumerQueue>, kInternalConsumerCount> internals{};
@@ -768,8 +769,8 @@ struct ProcessOwner {
         std::uint64_t bytes = 0;
         for (const Session& session : sessions) {
             if (session.live.load(std::memory_order_acquire)) {
-                bytes += session.consumerQueueBytes + session.identity.rows.size() * sizeof(MonitorExecutionFact) +
-                    session.identity.symbols.size() * sizeof(MonitorHostSymbolValue);
+                bytes += session.consumerQueueBytes + session.identity.rows.capacity() * sizeof(MonitorExecutionFact) +
+                    session.identity.symbols.capacity() * sizeof(MonitorHostSymbolValue);
             }
         }
         return bytes;
@@ -794,7 +795,7 @@ struct ProcessOwner {
         const std::uint64_t bytes =
             LiveQueueBytesLocked() + RetiredQueueBytesLocked() + identityStorageBytes + symbolStorageBytes + extraBytes;
         return slots > VN_MONITOR_HARD_PROCESS_SESSION_SLOTS ||
-               bytes > VN_MONITOR_HARD_PROCESS_QUEUE_BYTES;
+               bytes > processBudgetForTests;
     }
 
     bool InitWouldExceedLocked() {
@@ -3793,6 +3794,25 @@ bool CaptureSymbolSlot(const ProcessOwner& owner, std::size_t slot, MonitorHostS
         value.origin, value.description);
 }
 
+// Both the old and new allocation are live while reserve copies the rows.
+template<class T>
+bool GrowDiagnosticRows(ProcessOwner& owner, std::vector<T>& rows,
+                        std::size_t count, std::uint64_t* sharedBytes = nullptr) {
+    if (count <= rows.size()) return true;
+    if (count > rows.max_size()) return false;
+    if (count > rows.capacity()) {
+        const auto before = rows.capacity();
+        auto next = std::max(count, before + before / 2u);
+        if (next > rows.max_size() || owner.WouldExceedLocked(0, next * sizeof(T))) next = count;
+        if (owner.WouldExceedLocked(0, next * sizeof(T))) return false;
+        try { rows.reserve(next); }
+        catch (const std::bad_alloc&) { return false; }
+        if (sharedBytes) *sharedBytes += (rows.capacity() - before) * sizeof(T);
+    }
+    rows.resize(count);
+    return true;
+}
+
 // Called with owner.mutex held, after a complete logical-boundary refresh.
 VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t hint) {
     auto& stage = session.identity;
@@ -3802,6 +3822,10 @@ VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t 
         if (!session.queue->deferredSymbols.empty()) return VN_BACKPRESSURE;
     }
     if (owner.nextIdentitySequence == 0) return VN_MONITOR_UNSUPPORTED;
+    const auto identities = owner.identityMirror.Capacity();
+    const auto symbols = WantsSymbols(session) ? owner.symbolMirror.Capacity() : 0u;
+    const bool storageComplete = identities + UINT64_C(3) * symbols <= UINT32_MAX - 2 &&
+        GrowDiagnosticRows(owner, stage.rows, identities) && GrowDiagnosticRows(owner, stage.symbols, symbols);
     const auto domain = stage.rows.size() + UINT64_C(3) * stage.symbols.size();
     const auto capacity = hint == 0 ? domain : std::min<std::uint64_t>(hint, domain);
     stage.begin = {};
@@ -3815,7 +3839,7 @@ VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t 
         std::span<MonitorExecutionFact>(stage.rows.data(), std::min<std::uint64_t>(capacity, stage.rows.size())),
         stage.identityCount, stage.begin.namespaceTrueCount);
     stage.count = stage.identityCount;
-    stage.sourceComplete &= owner.identityProducer.Unavailable() == 0;
+    stage.sourceComplete &= storageComplete && owner.identityProducer.Unavailable() == 0;
     if (WantsSymbols(session)) {
         stage.begin.symbolProducerId = kHostSymbolProducer;
         stage.begin.symbolSourceSequence = owner.symbolProducer.Published();
@@ -3972,6 +3996,18 @@ void RefreshIdentityBoundary() noexcept {
     }
     if ((owner.identityObservers == 0 && owner.symbolObservers == 0 && owner.pendingIdentitySeals == 0) ||
         !IdentitySafeBoundary(owner)) return;
+    const auto identitySize = IdentitySlotCapacity(*owner.engine);
+    const auto symbolSize = owner.engine->monitorEmitters.Capacity();
+    if ((owner.identityObservers && identitySize > owner.identityMirror.Capacity()) ||
+        (owner.symbolObservers && symbolSize > owner.symbolMirror.Capacity())) {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        if (owner.identityObservers && !owner.identityMirror.Grow(IdentityDomainCounts(*owner.engine),
+            [&](auto& rows, auto count) { return GrowDiagnosticRows(owner, rows, count, &owner.identityStorageBytes); }))
+            owner.identityMirror.NoteUnavailable();
+        if (owner.symbolObservers && !owner.symbolMirror.Grow(symbolSize,
+            [&](auto& rows, auto count) { return GrowDiagnosticRows(owner, rows, count, &owner.symbolStorageBytes); }))
+            owner.symbolMirror.NoteUnavailable();
+    }
     const auto beforeIdentity = owner.identityMirror.Revision();
     const auto beforeSymbols = owner.symbolMirror.Revision();
     const bool canAdvance = owner.observationRevision != UINT64_MAX;
@@ -3979,7 +4015,7 @@ void RefreshIdentityBoundary() noexcept {
     if (owner.identityObservers != 0) {
         ++owner.identityRefreshes;
         owner.identityMirror.Refresh(
-        [&](std::size_t slot, MonitorExecutionFact& fact) { return CaptureIdentitySlot(*owner.engine, slot, fact); },
+        [&](std::size_t domain, std::size_t slot, MonitorExecutionFact& fact) { return CaptureIdentitySlot(*owner.engine, domain, slot, fact); },
         [&](const MonitorExecutionFact& fact, std::uint64_t) {
             MonitorIdentityDelta delta{};
             delta.engine = fact.engine;
@@ -4166,7 +4202,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
         if (identityRequested) {
             slot->identity.rows.assign(identityCapacity, {});
             if (!owner.identityResourcesReady.load(std::memory_order_acquire)) {
-                owner.identityMirror.Reset(identityCapacity);
+                owner.identityMirror.Reset(IdentityDomainCounts(*owner.engine));
                 owner.identityRing.Init(identitySlots, sizeof(MonitorIdentityDelta));
                 owner.identityStorageBytes = identityStagingBytes + identitySlots * identitySlotBytes;
                 owner.identityResourcesReady.store(true, std::memory_order_release);
@@ -5872,6 +5908,12 @@ VnMonitorSessionHandle RecordingReceiverForTests() {
     auto& owner = Owner();
     std::lock_guard<std::mutex> lock(owner.recorder.mutex);
     return owner.recorder.receiver;
+}
+
+void SetMonitorProcessBudgetForTests(std::uint64_t bytes) {
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    owner.processBudgetForTests = bytes;
 }
 
 void SetRecordingQueueBudgetForTests(std::uint64_t bytes) {

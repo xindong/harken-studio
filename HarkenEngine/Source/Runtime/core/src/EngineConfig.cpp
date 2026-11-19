@@ -90,7 +90,6 @@ constexpr std::uint32_t kMaxContainersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxContainerChildrenCeiling = 1 << 20;
 constexpr std::uint32_t kMaxContainerCursorCeiling = 1 << 20;
 constexpr std::uint32_t kMaxPendingActionCeiling = 1 << 20;
-constexpr std::uint32_t kMaxEmittersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxInitialEmitterVariableSlots = 1 << 12;
 constexpr std::uint32_t kMaxParkedVoicesCeiling = 1 << 14;
 constexpr std::uint32_t kMaxTopologyPlanPoolCeiling = 1 << 12;
@@ -354,8 +353,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.containerCursorCapacity = config->containerCursorCapacity;
         if (config->pendingActionCapacity != 0)
             resolved.pendingActionCapacity = config->pendingActionCapacity;
-        if (config->maxEmitters != 0)
-            resolved.maxEmitters = config->maxEmitters;
         if (config->emitterVariableSlots != 0)
             resolved.emitterVariableSlots = config->emitterVariableSlots;
         if (config->maxParkedVoices != 0)
@@ -590,7 +587,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxContainerChildren > kMaxContainerChildrenCeiling ||
         resolved.containerCursorCapacity > kMaxContainerCursorCeiling ||
         resolved.pendingActionCapacity > kMaxPendingActionCeiling ||
-        resolved.maxEmitters > kMaxEmittersCeiling ||
         resolved.emitterVariableSlots > kMaxInitialEmitterVariableSlots ||
         resolved.voiceCapacity.Virtual() > kMaxParkedVoicesCeiling ||
         resolved.voiceStealPolicy > kMaxStealPolicy ||
@@ -609,15 +605,11 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     // These limits bound startup reservations, not live emitter Variable counts.
     std::uint64_t overrideBytesPerEmitter = 0;
     std::uint64_t bytesPerEmitter = 0;
-    std::uint64_t emitterVariableBankBytes = 0;
     if (!CheckedMul(resolved.emitterVariableSlots,
                     kEmitterOverrideBudgetBytes,
                     &overrideBytesPerEmitter) ||
         !CheckedAdd(kEmitterBankBudgetBytes, overrideBytesPerEmitter,
-                    &bytesPerEmitter) ||
-        !CheckedMul(resolved.maxEmitters, bytesPerEmitter,
-                    &emitterVariableBankBytes) ||
-        emitterVariableBankBytes > kMaxEmitterVariableBankBytes) {
+                    &bytesPerEmitter)) {
         return VN_INVALID_CONFIG;
     }
 

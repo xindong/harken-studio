@@ -1035,7 +1035,7 @@ std::uint64_t StorageBytes(const std::vector<T>& storage) {
 // accepting at the ceiling is what makes the refusal above it attributable to
 // this field, rather than to a derived budget that happened to overflow at a
 // large block size.
-TEST(CapacityContract, EmitterVariableBankUsesCheckedByteBudget) {
+TEST(CapacityContract, LegacyEmitterCountIsIgnoredAndInitialLocalShapeIsValidated) {
     harken::EngineConfig resolved;
     VnConfig config = MakeNullConfig();
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
@@ -1045,14 +1045,13 @@ TEST(CapacityContract, EmitterVariableBankUsesCheckedByteBudget) {
     config.maxEmitters = 129;
     config.emitterVariableSlots = 17;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(129u, resolved.maxEmitters);
+    EXPECT_EQ(128u, resolved.maxEmitters);
     EXPECT_EQ(17u, resolved.emitterVariableSlots);
 
-    config.maxEmitters = 65536;
-    config.emitterVariableSlots = 8;
-    EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-
+    config.maxEmitters = UINT32_MAX;
     config.emitterVariableSlots = 4096;
+    EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
+    config.emitterVariableSlots = 4097;
     EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
 }
 

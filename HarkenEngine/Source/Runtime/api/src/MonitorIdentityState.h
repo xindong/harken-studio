@@ -36,31 +36,44 @@ inline bool SameIdentityValue(const MonitorExecutionFact& left, const MonitorExe
 }
 
 // Logic-owned diagnostic cache. It neither retains nor changes native owners.
-// Reset allocates at resource setup; Refresh and Copy perform bounded copies.
+// The logic owner grows each domain at a complete mutation boundary.
 class MonitorIdentityMirror {
 public:
-    void Reset(std::size_t capacity) {
-        rows_.assign(capacity, {});
+    using Domains = std::array<std::size_t, 5>;
+    void Reset(const Domains& counts) {
+        for (std::size_t i = 0; i < counts.size(); ++i) rows_[i].assign(counts[i], {});
         revision_ = 1;
         unavailable_ = 0;
     }
     void Clear() noexcept {
-        std::vector<MonitorExecutionFact>().swap(rows_);
+        for (auto& domain : rows_) std::vector<MonitorExecutionFact>().swap(domain);
         revision_ = 1;
         unavailable_ = 0;
     }
-    std::size_t Capacity() const noexcept { return rows_.size(); }
-    std::uint64_t StorageBytes() const noexcept { return rows_.size() * sizeof(MonitorExecutionFact); }
+    std::size_t Capacity() const noexcept {
+        std::size_t count = 0;
+        for (const auto& domain : rows_) count += domain.size();
+        return count;
+    }
+    template<class GrowRows>
+    bool Grow(const Domains& counts, GrowRows&& growRows) {
+        for (std::size_t i = 0; i < counts.size(); ++i)
+            if (!growRows(rows_[i], counts[i])) return false;
+        return true;
+    }
+    void NoteUnavailable() noexcept { if (unavailable_ != UINT64_MAX) ++unavailable_; }
+    std::uint64_t StorageBytes() const noexcept { return Capacity() * sizeof(MonitorExecutionFact); }
     std::uint64_t Revision() const noexcept { return revision_; }
     std::uint64_t Unavailable() const noexcept { return unavailable_; }
 
     template<class Capture, class Publish>
     bool Refresh(Capture&& capture, Publish&& publish, bool allowChange = true) noexcept {
         bool changed = false;
-        for (std::size_t slot = 0; slot != rows_.size(); ++slot) {
+        for (std::size_t domain = 0; domain != rows_.size(); ++domain)
+        for (std::size_t slot = 0; slot != rows_[domain].size(); ++slot) {
             MonitorExecutionFact current{};
-            if (!capture(slot, current)) current = {};
-            auto& previous = rows_[slot];
+            if (!capture(domain, slot, current)) current = {};
+            auto& previous = rows_[domain][slot];
             if (SameIdentityValue(previous, current)) continue;
             if (!changed) {
                 if (!allowChange || revision_ == UINT64_MAX) {
@@ -90,7 +103,8 @@ public:
         copied = 0;
         std::fill(std::begin(counts), std::end(counts), 0);
         bool complete = unavailable_ == 0;
-        for (const auto& row : rows_) {
+        for (const auto& domain : rows_)
+        for (const auto& row : domain) {
             if (row.engine == 0) continue;
             if (!IdentityNamespace(row.subjectNamespace)) { complete = false; continue; }
             ++counts[row.subjectNamespace];
@@ -102,7 +116,7 @@ public:
     }
 
 private:
-    std::vector<MonitorExecutionFact> rows_;
+    std::array<std::vector<MonitorExecutionFact>, 5> rows_;
     std::uint64_t revision_ = 1;
     std::uint64_t unavailable_ = 0;
 };

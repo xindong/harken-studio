@@ -324,8 +324,8 @@ private:
         bool active = false;
         ConsumedCurrentSlice consumed{};
     };
-    StableRowStorage<PendingSliceConsumption> m_pendingSliceConsumptions;
-    StableRowStorage<std::uint32_t> m_pendingSliceOrder;
+    GrowingRowStorage<PendingSliceConsumption> m_pendingSliceConsumptions;
+    GrowingRowStorage<std::uint32_t> m_pendingSliceOrder;
     ScheduledTransactionPool::CurrentSliceStorageRegistration m_currentSliceStorageRegistration;
     bool PrepareCurrentSliceStorage(std::size_t required) noexcept;
     std::size_t m_pendingSliceCount = 0;

@@ -29,7 +29,6 @@ namespace Harken.Unity
         [SerializeField] private uint maxVoices = DefaultMaxVoices;
         [SerializeField] private uint maxPacks = DefaultMaxPacks;
         [SerializeField] private uint maxActionFirings = DefaultMaxActionFirings;
-        [SerializeField] private uint maxEmitters;
         [SerializeField] private string language = string.Empty;
         [SerializeField] private string packPlatformId = string.Empty;
         [SerializeField] private string packPlatform = string.Empty;
@@ -44,7 +43,6 @@ namespace Harken.Unity
         public uint MaxVoices => NonZero(maxVoices, DefaultMaxVoices);
         public uint MaxPacks => NonZero(maxPacks, DefaultMaxPacks);
         public uint MaxActionFirings => maxActionFirings != 0 ? maxActionFirings : UnlimitedActionFirings;
-        public uint MaxEmitters => maxEmitters;
         public string Language => language ?? string.Empty;
         public string PlatformId => packPlatformId ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
@@ -104,7 +102,6 @@ namespace Harken.Unity
             }
             config.maxPacks = settings.MaxPacks;
             config.maxActionFirings = settings.MaxActionFirings;
-            config.maxEmitters = settings.maxEmitters;
         }
 
         internal static bool TryResolvePackDirectory(out string fullPath, out string error)

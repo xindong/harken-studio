@@ -94,22 +94,23 @@ TEST(VariableCapacity, SaturatedRevisionsAllowNetZeroReplacementAndPreserveFaile
                   session.Engine(), definitions.data(),
                   static_cast<std::uint32_t>(definitions.size()))
                   .status);
-    const auto capacity = engine->variables.PendingCapacity();
     auto observation = harken::ObserveVariableCallAt(engine->variables.CurrentWorldGeneration(),
         engine->variables.CurrentTransportEpoch(), 256, 0, 0);
-    for (std::uint32_t i = 0; i < capacity; ++i) {
+    for (std::uint32_t i = 0; i < 64 || i < engine->variables.RevisionStorageCapacity(); ++i) {
         observation.requestedEffectiveFrame = static_cast<std::uint64_t>(i + 1) * 256;
         ASSERT_EQ(VN_OK, engine->variables.AcceptGlobal(harkentest::ObjectId(1), 0.5f,
             observation, engine->params, engine->bindings, engine->busTargets).result);
     }
+    const auto capacity = engine->variables.PendingCount();
+    engine->variables.SetRevisionCommitPageLimitForTests(0);
     const auto issued = engine->logicCommits.IssuedCount();
     auto extra = observation;
     extra.requestedEffectiveFrame += 256;
-    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, engine->variables.AcceptGlobal(
+    EXPECT_EQ(VN_OUT_OF_MEMORY, engine->variables.AcceptGlobal(
         harkentest::ObjectId(1), 0.25f, extra, engine->params, engine->bindings, engine->busTargets).result);
     EXPECT_EQ(issued, engine->logicCommits.IssuedCount());
     harken::PreparedVariableWriteToken privateWrite;
-    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, engine->variables.PrepareGlobalWrite(
+    EXPECT_EQ(VN_OUT_OF_MEMORY, engine->variables.PrepareGlobalWrite(
         harkentest::ObjectId(1), 0.25f, observation, 0, &privateWrite).result);
     const VnVariableWriteV1 invalid[] = {
         {harkentest::ObjectId(1), 0.25f, 0},
@@ -121,6 +122,7 @@ TEST(VariableCapacity, SaturatedRevisionsAllowNetZeroReplacementAndPreserveFaile
     EXPECT_EQ(issued, engine->logicCommits.IssuedCount());
     EXPECT_EQ(capacity, engine->variables.PendingCount());
     EXPECT_EQ(0u, engine->variables.SupersededCount());
+    engine->variables.SetRevisionCommitPageLimitForTests(SIZE_MAX);
     const auto replacement = engine->variables.AcceptGlobal(harkentest::ObjectId(1), 0.75f,
         observation, engine->params, engine->bindings, engine->busTargets);
     ASSERT_EQ(VN_OK, replacement.result);
@@ -135,9 +137,11 @@ TEST(VariableCapacity, SaturatedRevisionsAllowNetZeroReplacementAndPreserveFaile
     float observedValue = 0.0f;
     ASSERT_TRUE(engine->variables.ReadCutValue(cut, harkentest::ObjectId(1), &observedValue));
     EXPECT_FLOAT_EQ(0.75f, observedValue);
-    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, engine->variables.AcceptGlobal(
+    ASSERT_EQ(VN_OK, engine->variables.AcceptGlobal(
         harkentest::ObjectId(1), 0.5f, observation, engine->params, engine->bindings, engine->busTargets).result);
-    EXPECT_EQ(issued + 1, engine->logicCommits.IssuedCount());
+    EXPECT_EQ(issued + 2, engine->logicCommits.IssuedCount());
+    ASSERT_TRUE(engine->variables.ReadCutValue(cut, harkentest::ObjectId(1), &observedValue));
+    EXPECT_FLOAT_EQ(0.75f, observedValue);
     EXPECT_TRUE(engine->variables.ReleaseReadCut(cut));
 }
 
@@ -149,7 +153,7 @@ TEST(VariableCapacity, SaturatedEightMemberReplacementUsesNetCreditsAtomically) 
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
         InstallDefinitionsWorld(engine, definitions.data(),
             static_cast<std::uint32_t>(definitions.size())).status);
-    const auto capacity = engine->variables.PendingCapacity();
+    constexpr std::uint32_t capacity = 256;
     auto observation = harken::ObserveVariableCallAt(engine->variables.CurrentWorldGeneration(),
         engine->variables.CurrentTransportEpoch(), 256, 0, 0);
     for (std::uint32_t i = 0; i < capacity - 8; ++i) {
@@ -204,7 +208,7 @@ TEST(VariableCapacity, SaturatedValidBatchRefusalPreservesTheObservedWholeBatchT
         engine->params, engine->bindings, engine->busTargets);
     ASSERT_EQ(VN_OK, original.result);
     auto filler = observation;
-    const auto capacity = engine->variables.PendingCapacity();
+    const auto capacity = engine->variables.RevisionStorageCapacity();
     for (std::uint32_t i = 0; i < capacity - writes.size(); ++i) {
         filler.requestedEffectiveFrame = static_cast<std::uint64_t>(128u + i) * 256;
         ASSERT_EQ(VN_OK, engine->variables.AcceptGlobal(harkentest::ObjectId(9), 0.5f,
@@ -220,10 +224,12 @@ TEST(VariableCapacity, SaturatedValidBatchRefusalPreservesTheObservedWholeBatchT
     const auto issued = engine->logicCommits.IssuedCount();
     harkentest::VariableOutcomeCapture outcomes(*engine);
     for (auto& write : writes) write.value = 0.75f;
+    engine->variables.SetRevisionCommitPageLimitForTests(0);
     const auto refused = engine->variables.AcceptGlobalBatch(writes.data(),
         static_cast<std::uint32_t>(writes.size()), observation,
         engine->params, engine->bindings, engine->busTargets);
-    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, refused.result);
+    EXPECT_EQ(VN_OUT_OF_MEMORY, refused.result);
+    engine->variables.SetRevisionCommitPageLimitForTests(SIZE_MAX);
     EXPECT_EQ(0u, refused.ticket.sequence);
     EXPECT_EQ(issued, engine->logicCommits.IssuedCount());
     EXPECT_EQ(capacity, engine->variables.PendingCount());

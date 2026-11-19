@@ -11,6 +11,7 @@
 // file, never a silently different render. A real-device config that used
 // native rate or layout defaults lacks those resolved values in VTRC v2, so
 // replay reports device-format identity as not provable.
+#include <deque>
 #include "TraceReplay.h"
 
 #include <harken/Harken.h>
@@ -43,29 +44,21 @@ namespace {
 
 class VariableOutcomeQueue {
 public:
-    explicit VariableOutcomeQueue(std::size_t capacity) : records_(capacity) {}
     static void Capture(void* context, const harken::VariableOutcomeRecord& record) noexcept {
         auto& queue = *static_cast<VariableOutcomeQueue*>(context);
-        if (queue.count_ == queue.records_.size()) {
-            queue.overflowed_ = true;
-            return;
-        }
-        queue.records_[(queue.begin_ + queue.count_) % queue.records_.size()] = record;
-        ++queue.count_;
+        try { queue.records_.push_back(record); }
+        catch (const std::bad_alloc&) { queue.overflowed_ = true; }
     }
     bool Pop(harken::VariableOutcomeRecord* record) noexcept {
-        if (count_ == 0) return false;
-        *record = records_[begin_];
-        begin_ = (begin_ + 1u) % records_.size();
-        --count_;
+        if (records_.empty()) return false;
+        *record = records_.front();
+        records_.pop_front();
         return true;
     }
-    bool Empty() const noexcept { return count_ == 0; }
+    bool Empty() const noexcept { return records_.empty(); }
     bool Overflowed() const noexcept { return overflowed_; }
 private:
-    std::vector<harken::VariableOutcomeRecord> records_;
-    std::size_t begin_ = 0;
-    std::size_t count_ = 0;
+    std::deque<harken::VariableOutcomeRecord> records_;
     bool overflowed_ = false;
 };
 
@@ -3673,7 +3666,7 @@ int RunTraceReplay(int argc, char** argv) {
     };
     RecordedPreparedTopology recordedPreparedTopology;
     LogicTicketMap logicTickets;
-    VariableOutcomeQueue variableOutcomes(engine->variables.RevisionStorageCapacity());
+    VariableOutcomeQueue variableOutcomes;
     engine->variableOutcomeSinkContext = &variableOutcomes;
     engine->variableOutcomeSink = &VariableOutcomeQueue::Capture;
     bool cleanEnd = false;

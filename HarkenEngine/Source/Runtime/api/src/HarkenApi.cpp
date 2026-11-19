@@ -73635,7 +73635,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                   record.executionOrdinal, engine.emitters, &prepared,
                   VariableWriterIdentityV1::Action);
     }
-    if (accepted.result == VN_BACKPRESSURE ||
+    if (accepted.result == VN_OUT_OF_MEMORY || accepted.result == VN_BACKPRESSURE ||
         accepted.result == VN_NO_VARIABLE ||
         accepted.result == VN_VARIABLE_TRANSACTION_EXHAUSTED) {
         const std::uint64_t retryQuantum =
@@ -86194,8 +86194,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
     }
     if (plan->deferredParentFiring == 0) {
-        const auto limit = std::max(engine.variables.RevisionStorageCapacity(),
-            engine.variables.HistoryCapacity());
+        constexpr auto limit = UINT32_MAX;
         std::uint32_t futureWrites = 0;
         bool futurePlay = false;
         for (std::uint32_t index = 0;
@@ -121035,17 +121034,17 @@ static VnResult CreateEmitterObserved(VnEmitterHandle* outHandle, uint32_t flags
         return VN_INVALID_ARG;
     }
     VnEmitterHandle handle = 0;
-    if (!engine->emitters.Create(&handle, (flags & VN_EMITTER_CREATE_STATE_ONLY) != 0)) {
-        ++engine->noEmitterCount;
+    const auto result = engine->emitters.PrepareCreate(handle);
+    if (result != VN_OK) {
+        if (result == VN_NO_EMITTER) ++engine->noEmitterCount;
         trace.U64(0);
-        return VN_NO_EMITTER;
+        return result;
     }
-    if (!engine->variables.NoteEmitterCreated(handle)) {
-        (void)engine->emitters.Destroy(handle);
-        ++engine->noEmitterCount;
+    if (!engine->monitorEmitters.PrepareSlot(handle) || !engine->variables.NoteEmitterCreated(handle)) {
         trace.U64(0);
-        return VN_NO_EMITTER;
+        return VN_OUT_OF_MEMORY;
     }
+    engine->emitters.PublishCreate(handle, (flags & VN_EMITTER_CREATE_STATE_ONLY) != 0);
     engine->monitorEmitters.NoteCreated(handle);
     *outHandle = handle;
     if (engine->trace != nullptr && engine->trace->Active()) {

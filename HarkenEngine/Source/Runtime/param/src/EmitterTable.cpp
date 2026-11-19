@@ -3,26 +3,23 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace harken {
 
 EmitterTable::EmitterTable(const EngineConfig& config, std::uint32_t generationFloor)
-    : m_emitters(static_cast<std::size_t>(config.maxEmitters) + 1u) {
+    : m_initialGeneration(generationFloor + 1u), m_initialLocalSlots(config.emitterVariableSlots) {
     if (generationFloor >= UINT32_MAX - 1u)
         throw std::invalid_argument("emitter handle generation exhausted");
-    for (Emitter& emitter : m_emitters) {
-        emitter.generation = generationFloor + 1;
-        emitter.locals.assign(config.emitterVariableSlots, LocalVar{});
-        emitter.projectionLocals.resize(config.emitterVariableSlots);
-    }
-    m_emitters.back().generation = 1;
-    m_emitters.back().live = true;
-    m_emitters.back().stateOnly = true;
+    m_default.live = true;
+    m_default.stateOnly = true;
+    m_default.locals.resize(m_initialLocalSlots);
+    m_default.projectionLocals.resize(m_initialLocalSlots);
 }
 
 std::uint32_t EmitterTable::GenerationHighWater() const noexcept {
-    std::uint32_t maximum = 0;
-    for (std::size_t i = 0; i + 1 < m_emitters.size(); ++i)
+    std::uint32_t maximum = m_initialGeneration;
+    for (std::size_t i = 0; i < m_emitters.size(); ++i)
         maximum = std::max(maximum, m_emitters[i].generation);
     return maximum;
 }
@@ -33,16 +30,16 @@ bool EmitterTable::BeginVariableProjection() noexcept {
         const auto& locals = m_emitters[i].locals;
         std::copy(locals.begin(), locals.end(), m_emitters[i].projectionLocals.begin());
     }
+    std::copy(m_default.locals.begin(), m_default.locals.end(), m_default.projectionLocals.begin());
     m_projectionActive = true;
     return true;
 }
 
 void EmitterTable::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
-    for (std::size_t i = 0; i < m_emitters.size(); ++i) {
-        auto& locals = m_emitters[i].locals;
-        const auto begin = m_emitters[i].projectionLocals.begin();
-        const auto handle = MakeHandle(static_cast<std::uint32_t>(i), m_emitters[i].generation);
+    const auto restore = [this](Emitter& emitter, VnEmitterHandle handle) {
+        auto& locals = emitter.locals;
+        const auto begin = emitter.projectionLocals.begin();
         for (std::size_t slot = 0; slot < locals.size(); ++slot) {
             const auto previous = locals[slot];
             const auto restored = begin[slot];
@@ -54,37 +51,63 @@ void EmitterTable::RestoreVariableProjection() noexcept {
             if (restored.inUse && !sameVariable)
                 NotifyVariableChange(handle, restored.variableId);
         }
-    }
+    };
+    for (std::uint32_t i = 0; i < m_emitters.size(); ++i)
+        restore(m_emitters[i], MakeHandle(PublicSlot(i), m_emitters[i].generation));
+    restore(m_default, DefaultState());
     m_projectionActive = false;
 }
 
 std::uint64_t EmitterTable::VariableProjectionStorageBytes() const noexcept {
-    std::uint64_t bytes = 0;
+    std::uint64_t bytes = m_default.projectionLocals.capacity() * sizeof(LocalVar);
     for (const auto& emitter : m_emitters)
         bytes += emitter.projectionLocals.capacity() * sizeof(LocalVar);
     return bytes;
 }
 
-bool EmitterTable::Create(VnEmitterHandle* outHandle, bool stateOnly) {
-    for (std::uint32_t slot = 0; slot + 1u < m_emitters.size(); ++slot) {
-        Emitter& emitter = m_emitters[slot];
-        if (emitter.live || emitter.generation == UINT32_MAX) {
-            continue;
+VnResult EmitterTable::PrepareCreate(VnEmitterHandle& candidate) noexcept {
+    candidate = 0;
+    auto index = m_firstFree;
+    while (index < m_emitters.size() &&
+           (m_emitters[index].live || m_emitters[index].generation == UINT32_MAX)) ++index;
+    if (index >= UINT32_MAX - 1u) return VN_NO_EMITTER;
+    const bool fresh = index == m_emitters.size();
+    if (!m_emitters.ConstructThrough(index + 1u)) return VN_OUT_OF_MEMORY;
+    auto& emitter = m_emitters[index];
+    if (fresh) emitter.generation = m_initialGeneration;
+    try {
+        if (emitter.generation != m_initialGeneration) {
+            candidate = MakeHandle(PublicSlot(index), emitter.generation);
+            return VN_OK;
         }
-        emitter.live = true;
-        emitter.stateOnly = stateOnly;
-        emitter.spatial = SpatialSourceState{};
-        for (LocalVar& local : emitter.locals) {
-            local = LocalVar{};
-        }
-        *outHandle = MakeHandle(slot, emitter.generation);
-        ++m_activeCount;
-        if (m_activeCount > m_highWater) {
-            m_highWater = m_activeCount;
-        }
-        return true;
+        emitter.locals.reserve(m_initialLocalSlots);
+        emitter.projectionLocals.reserve(m_initialLocalSlots);
+        emitter.locals.resize(m_initialLocalSlots);
+        emitter.projectionLocals.resize(m_initialLocalSlots);
+    } catch (const std::bad_alloc&) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableValueStorage);
+        return VN_OUT_OF_MEMORY;
     }
-    return false; // every slot live: the caller maps this to VN_NO_EMITTER
+    candidate = MakeHandle(PublicSlot(index), emitter.generation);
+    return VN_OK;
+}
+
+void EmitterTable::PublishCreate(VnEmitterHandle candidate, bool stateOnly) noexcept {
+    const auto index = StorageIndex(SlotOf(candidate));
+    auto& emitter = m_emitters[index];
+    assert(!emitter.live && emitter.generation == candidate >> 32);
+    emitter.stateOnly = stateOnly;
+    emitter.spatial = {};
+    emitter.live = true;
+    m_firstFree = index + 1u;
+    ++m_activeCount;
+    m_highWater = std::max<std::uint64_t>(m_highWater, m_activeCount);
+}
+
+bool EmitterTable::Create(VnEmitterHandle* outHandle, bool stateOnly) {
+    if (PrepareCreate(*outHandle) != VN_OK) return false;
+    PublishCreate(*outHandle, stateOnly);
+    return true;
 }
 
 bool EmitterTable::Destroy(VnEmitterHandle handle) {
@@ -106,6 +129,7 @@ bool EmitterTable::Destroy(VnEmitterHandle handle) {
     }
     std::vector<LocalVar>().swap(emitter->locals);
     std::vector<LocalVar>().swap(emitter->projectionLocals);
+    m_firstFree = std::min(m_firstFree, StorageIndex(SlotOf(handle)));
     --m_activeCount;
     return true;
 }
@@ -119,7 +143,7 @@ bool EmitterTable::IsPublicLive(VnEmitterHandle handle) const noexcept {
 }
 
 VnEmitterHandle EmitterTable::DefaultState() const noexcept {
-    return MakeHandle(static_cast<std::uint32_t>(m_emitters.size() - 1u), 1);
+    return MakeHandle(kDefaultSlot, 1);
 }
 
 PlaybackExecutionContext EmitterTable::Context(VnEmitterHandle state) const noexcept {
@@ -282,23 +306,16 @@ void EmitterTable::NotifyVariableChange(VnEmitterHandle handle, VnVariableId var
 }
 
 EmitterTable::Emitter* EmitterTable::Live(VnEmitterHandle handle) noexcept {
-    const std::uint32_t slot = SlotOf(handle);
-    if (handle == 0 || slot >= m_emitters.size() || !m_emitters[slot].live ||
-        m_emitters[slot].generation !=
-            static_cast<std::uint32_t>(handle >> 32)) {
-        return nullptr;
-    }
-    return &m_emitters[slot];
+    return const_cast<Emitter*>(std::as_const(*this).Live(handle));
 }
 
 const EmitterTable::Emitter* EmitterTable::Live(VnEmitterHandle handle) const noexcept {
-    const std::uint32_t slot = SlotOf(handle);
-    if (handle == 0 || slot >= m_emitters.size() || !m_emitters[slot].live ||
-        m_emitters[slot].generation !=
-            static_cast<std::uint32_t>(handle >> 32)) {
-        return nullptr;
-    }
-    return &m_emitters[slot];
+    if (handle == DefaultState()) return &m_default;
+    const auto slot = SlotOf(handle);
+    if (handle == 0 || slot == kDefaultSlot) return nullptr;
+    const auto* emitter = m_emitters.TryAt(StorageIndex(slot));
+    return emitter != nullptr && emitter->live && emitter->generation == handle >> 32
+        ? emitter : nullptr;
 }
 
 } // namespace harken

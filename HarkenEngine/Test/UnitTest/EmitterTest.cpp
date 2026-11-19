@@ -5,7 +5,7 @@
 // emitter-scoped precision of dirty tracking, emitter-driven distance and the
 // move-once-update-all fan-out, and the contract gates: VN_EMITTER_ATTACHED on
 // attached per-voice spatial writes, destroy-detaches-with-frozen-state, stale
-// emitter ops, Vn_StopEmitter, capacity exhaustion VN_NO_EMITTER, and a play
+// emitter ops, Vn_StopEmitter, growth and allocation failure, and a play
 // naming a dead emitter.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
@@ -33,7 +33,10 @@ TEST(Emitter, GenerationFloorPreservesPrivateDefaultAndRefusesExhaustion) {
     EXPECT_EQ(UINT32_MAX - 1u, first >> 32);
     EXPECT_EQ(UINT32_MAX - 1u, second >> 32);
     ASSERT_TRUE(table.Destroy(first));
-    EXPECT_FALSE(table.Create(&first));
+    const auto retired = first;
+    ASSERT_TRUE(table.Create(&first));
+    EXPECT_NE(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(retired));
+    EXPECT_FALSE(table.IsPublicLive(retired));
     EXPECT_EQ(UINT32_MAX, table.GenerationHighWater());
     EXPECT_THROW((harken::EmitterTable(config, UINT32_MAX - 1u)), std::invalid_argument);
 }
@@ -43,7 +46,7 @@ TEST(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse)
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     auto& registry = engine.monitorEmitters;
-    EXPECT_EQ(engine.config.maxEmitters, registry.Capacity());
+    EXPECT_EQ(0u, registry.Capacity());
     const auto hostSession = registry.BeginSession();
     ASSERT_NE(0u, hostSession);
     VnEmitterHandle emitter = 0;
@@ -193,7 +196,7 @@ TEST(MonitorEmitterIdentity, OptionalAbiRejectsMalformedAndStaleRegistrationWith
     EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorBeginHostSession(&info));
     info.structSize = sizeof(info);
     ASSERT_EQ(VN_OK, Vn_MonitorBeginHostSession(&info));
-    EXPECT_EQ(engine.config.maxEmitters, info.emitterCapacity);
+    EXPECT_EQ(engine.monitorEmitters.Capacity(), info.emitterCapacity);
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
     VnMonitorHostRegistrationV1 desc{sizeof(desc), VN_MONITOR_HOST_UNITY_EMITTER,
@@ -291,7 +294,7 @@ TEST(Emitter, VariableProjectionRestoresPresenceAndReleasesSpeculativeLocalSlot)
 }
 
 TEST(Emitter, LocalVariableValuesIsolatePerEmitter) {
-    EngineSession session(EmitterConfig());
+    EngineSession session(EmitterConfig(4, 1));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     InstallEmitterVariables(engine);
@@ -302,7 +305,9 @@ TEST(Emitter, LocalVariableValuesIsolatePerEmitter) {
     VnEmitterHandle emitterA = 0;
     VnEmitterHandle emitterB = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitterA));
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitterB));
+    for (unsigned i = 1; i < 150; ++i)
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitterB));
+    ASSERT_GT(static_cast<std::uint32_t>(emitterB), harken::EmitterTable::kDefaultSlot);
     EXPECT_NE(emitterA, emitterB);
 
     VnPlayDesc playA = AttachedPlay(harkentest::ObjectId(1), emitterA);
@@ -716,25 +721,35 @@ TEST(Emitter, StopEmitterStopsOnlyItsVoices) {
     EXPECT_EQ(VN_OK, Vn_SetEmitterPosition(emitter, Vec3(1.0f, 0.0f, 0.0f)));
 }
 
-TEST(Emitter, CapacityExhaustionRefusesWithNoEmitterAndCounts) {
-    EngineSession session(EmitterConfig(/*maxVoices=*/8, /*maxEmitters=*/2));
+TEST(Emitter, GrowthAcrossPagesPreservesPositionAndRetriesAfterAllocationFailure) {
+    EngineSession session(EmitterConfig(4, 1));
     ASSERT_EQ(VN_OK, session.InitResult());
-
-    VnEmitterHandle a = 0;
-    VnEmitterHandle b = 0;
-    VnEmitterHandle overflow = 0;
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&a));
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&b));
-    EXPECT_EQ(VN_NO_EMITTER, Vn_CreateEmitter(&overflow));
-    EXPECT_EQ(1u, Snap().noEmitterCount);
-    EXPECT_EQ(2u, Snap().emitterHighWater);
-
-    // Destroying one frees a slot; the next create reuses it with a distinct
-    // (generationally advanced) handle.
-    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(a));
-    VnEmitterHandle reused = 0;
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&reused));
-    EXPECT_NE(reused, a);
+    auto& table = session.Engine()->emitters;
+    VnEmitterHandle handle = 0;
+    for (unsigned i = 0; i < 317; ++i) {
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&handle));
+        EXPECT_EQ(i < 128 ? i : i + 1, static_cast<std::uint32_t>(handle));
+    }
+    const auto retained = handle;
+    ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(retained, Vec3(1, 2, 3)));
+    table.SetCommitPageLimitForTests(0);
+    VnResult result = VN_OK;
+    for (unsigned i = 0; i < 8192 && result == VN_OK; ++i)
+        result = Vn_CreateEmitter(&handle);
+    ASSERT_EQ(VN_OUT_OF_MEMORY, result);
+    EXPECT_EQ(0u, handle);
+    const auto live = table.ActiveCount();
+    harken::SpatialSourceState pose{};
+    ASSERT_TRUE(table.Pose(retained, &pose));
+    EXPECT_FLOAT_EQ(3.0f, pose.posZ);
+    table.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&handle));
+    EXPECT_EQ(live + 1, table.ActiveCount());
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(retained));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&handle));
+    EXPECT_NE(retained, handle);
+    EXPECT_EQ(static_cast<std::uint32_t>(retained), static_cast<std::uint32_t>(handle));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_SetEmitterPosition(retained, Vec3(4, 5, 6)));
 }
 
 // --- dirty-tracking edge cases ---
@@ -1513,7 +1528,7 @@ TEST(Emitter, DefaultStateIsPrivateAndDoesNotConsumePublicCapacity) {
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     const auto privateState = engine->emitters.DefaultState();
-    EXPECT_EQ(2u, static_cast<std::uint32_t>(privateState));
+    EXPECT_EQ(128u, static_cast<std::uint32_t>(privateState));
     EXPECT_EQ(0u, engine->emitters.ActiveCount());
     EXPECT_EQ(VN_STALE_HANDLE, Vn_DestroyEmitter(privateState));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_StopEmitter(privateState, 0));
@@ -1524,10 +1539,9 @@ TEST(Emitter, DefaultStateIsPrivateAndDoesNotConsumePublicCapacity) {
     EXPECT_EQ(0u, static_cast<std::uint32_t>(ordinary));
     const auto state = CreateStateOnly();
     EXPECT_EQ(1u, static_cast<std::uint32_t>(state));
-    VnEmitterHandle refused = 99;
-    EXPECT_EQ(VN_NO_EMITTER, Vn_CreateEmitter(&refused));
-    EXPECT_EQ(0u, refused);
-    EXPECT_EQ(2u, engine->emitters.ActiveCount());
+    VnEmitterHandle third = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&third));
+    EXPECT_EQ(3u, engine->emitters.ActiveCount());
     EXPECT_TRUE(engine->emitters.IsLive(privateState));
     const auto samples = MakeDC(kBlock, 0.25f);
     const auto pcm = MonoDesc(samples, kRate);

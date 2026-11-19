@@ -1,6 +1,7 @@
 #ifndef HARKEN_PARAM_VARIABLE_SERVICE_H
 #define HARKEN_PARAM_VARIABLE_SERVICE_H
 
+#include "harken/core/GrowingRowStorage.h"
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
 
@@ -733,7 +734,7 @@ public:
     std::size_t ReadCutStorageBytes() const noexcept;
     std::size_t StorageBytes() const noexcept;
     void ReleaseUnusedReadCutBacking() noexcept;
-    std::uint32_t RevisionCapacity() const noexcept { return revisionCapacity_; }
+    void SetRevisionCommitPageLimitForTests(std::size_t pages) noexcept { history_.SetCommitPageLimitForTests(pages); }
     std::uint32_t RevisionStorageCapacity() const noexcept { return history_.Capacity(); }
     std::uint32_t ConstructedRevisionCount() const noexcept { return history_.ConstructedCount(); }
     std::uint32_t CompletionCapacity() const noexcept { return completionCapacity_; }
@@ -834,9 +835,6 @@ public:
     std::uint64_t RefusalCount() const noexcept { return refusalCount_; }
     std::uint32_t HistoryCapacity() const noexcept {
         return queryHistoryCapacity_;
-    }
-    std::uint32_t PendingCapacity() const noexcept {
-        return revisionCapacity_;
     }
     std::uint64_t ExecutionCatalogFingerprint() const noexcept;
     VnResult ResolveLabel(VnVariableId variable, VnObjectId label, float* value) const noexcept;
@@ -1388,6 +1386,7 @@ private:
 
     DefinitionRow* FindDefinition(VnVariableId id) noexcept;
     const DefinitionRow* FindDefinition(VnVariableId id) const noexcept;
+    static std::uint32_t BankIndex(std::uint32_t slot) noexcept;
     EmitterBank* FindEmitterBank(const VariableScopeKey& scope) noexcept;
     const EmitterBank* FindEmitterBank(const VariableScopeKey& scope) const noexcept;
     EmitterBank* EnsureEmitterBank(const VariableScopeKey& scope) noexcept;
@@ -1493,7 +1492,6 @@ private:
         const HistoricalContainerWorldViewV1& install,
         std::uint32_t replayVintage);
 
-    std::uint32_t maxEmitters_ = 0;
     std::uint32_t overridesPerEmitter_ = 0;
     std::vector<GatheredTarget> censusScratch_;
     bool hasWorld_ = false;
@@ -1529,21 +1527,21 @@ private:
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
     // History reuse requires outcome delivery, zero observers and an audio fence.
-    StableRowStorage<WriteRow> history_;
-    StableRowStorage<HeldCurrentSliceToken> preparedWritePlacements_;
+    GrowingRowStorage<WriteRow> history_;
+    std::uint32_t nextHistorySlot_ = 0;
+    GrowingRowStorage<HeldCurrentSliceToken> preparedWritePlacements_;
     std::vector<std::uint32_t> historyGenerations_;
     std::vector<std::uint32_t> freeSlots_;
-    StableRowStorage<std::uint32_t> scheduledGroups_;
+    std::vector<std::uint32_t> scheduledGroups_;
     std::uint32_t scheduledGroupCount_ = 0;
     std::size_t workCandidateCount_ = 0;
     HistoryRef ordinaryDebt_{};
-    std::uint32_t revisionCapacity_ = 0;
     std::uint32_t queryHistoryCapacity_ = 0;
     std::uint32_t completionCapacity_ = 0;
     std::uint32_t applyPayloadCapacity_ = 0;
     std::uint32_t occupiedRevisions_ = 0;
-    StableRowStorage<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
-    StableRowStorage<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
+    std::vector<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
+    std::vector<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
     std::uint64_t candidateEpoch_ = 0;
     mutable std::vector<VariableSliceRef> dependencyVisited_;
     std::uint32_t readCutCapacity_ = 0;
@@ -1552,7 +1550,7 @@ private:
     std::uint32_t timelineReadUseCapacity_ = 0;
     StableRowStorage<TimelineReadUseRow> timelineReadUses_;
     // Terminal records are delivered after each completed logic operation.
-    StableRowStorage<VariableOutcomeRecord> outcomes_;
+    GrowingRowStorage<VariableOutcomeRecord> outcomes_;
     std::size_t outcomeCount_ = 0;
     StableRowStorage<TicketQueryRecord> ticketQueryRecords_;
     std::uint32_t ticketQueryBegin_ = 0;

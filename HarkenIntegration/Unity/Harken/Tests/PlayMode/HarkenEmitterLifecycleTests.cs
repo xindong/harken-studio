@@ -52,7 +52,6 @@ namespace Harken.Unity.Tests
         {
             using (var f = new Fixture())
             {
-                JsonUtility.FromJsonOverwrite("{\"maxEmitters\":1}", HarkenProjectSettings.ActiveForStartup());
                 if (timing == "during") f.Runtime.BecameReady += _ => f.Emitter.enabled = false;
                 if (timing == "destroy") f.Runtime.BecameReady += _ => Object.DestroyImmediate(f.Emitter);
                 f.Actor.SetActive(true);
@@ -67,8 +66,9 @@ namespace Harken.Unity.Tests
                     Assert.That(f.Emitter.enabled, Is.False);
                     Assert.That(f.Emitter.IsCreated, Is.False);
                 }
-                // The only native slot must still be available, even if the component is gone.
+                // A disabled component must not retain the first public slot.
                 Assert.That(Emitter.Create(out Emitter probe), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(unchecked((uint)probe.Handle), Is.Zero);
                 Assert.That(probe.Destroy(), Is.EqualTo(VnResult.VN_OK));
             }
         }
@@ -392,7 +392,6 @@ namespace Harken.Unity.Tests
             {
                 using (var f = new Fixture())
                 {
-                    if (mode == "reused") JsonUtility.FromJsonOverwrite("{\"maxEmitters\":2}", HarkenProjectSettings.ActiveForStartup());
                     f.Start();
                     f.Actor.SetActive(true);
                     f.Camera.SetActive(true);

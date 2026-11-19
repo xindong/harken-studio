@@ -1099,7 +1099,7 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     const auto payloadCapacity = engine.variableSlices.PayloadCapacity();
     const auto targetCapacity = engine.variableSlices.TargetPoolCapacity();
     EXPECT_EQ(engine.variables.RevisionStorageCapacity() + engine.variableSlices.TargetPoolCapacity(), proofCapacity);
-    EXPECT_EQ(engine.variables.PendingCapacity() + engine.variableSlices.TargetPoolCapacity(), payloadCapacity);
+    EXPECT_EQ(engine.variableSlices.TargetPoolCapacity(), payloadCapacity);
     ASSERT_EQ(proofCapacity, engine.variableSlices.FreeRowCount());
     ASSERT_EQ(payloadCapacity, engine.variableSlices.FreePayloadCount());
     ASSERT_TRUE(engine.variableSlices.Reset(proofCapacity, 1, targetCapacity, payloadCapacity));
@@ -1146,8 +1146,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
         ASSERT_TRUE(first[p].Valid());
         ASSERT_EQ(1u, engine.variableSlices.TargetCount(first[p]));
     }
-    ASSERT_EQ(proofCapacity - 2, engine.variableSlices.FreeRowCount());
-    ASSERT_EQ(payloadCapacity - 2, engine.variableSlices.FreePayloadCount());
+    ASSERT_EQ(2u, engine.variableSlices.UsedRowCount());
+    ASSERT_EQ(2u, engine.variableSlices.UsedPayloadCount());
     const auto firstPublicationEnd = engine.timelinePool.PublishCutoffFrame();
     auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
         engine.variables.CurrentTransportEpoch(), config.blockFrames, 0, 0);
@@ -1161,8 +1161,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     ASSERT_TRUE(variableSlice.Valid());
     ASSERT_EQ(harken::VariableSliceState::PageCommitted, engine.variableSlices.State(variableSlice));
     ASSERT_EQ(0u, engine.variableSlices.TargetCount(variableSlice));
-    ASSERT_EQ(proofCapacity - 3, engine.variableSlices.FreeRowCount());
-    ASSERT_EQ(payloadCapacity - 3, engine.variableSlices.FreePayloadCount());
+    ASSERT_EQ(3u, engine.variableSlices.UsedRowCount());
+    ASSERT_EQ(3u, engine.variableSlices.UsedPayloadCount());
     engine.mixer.SetCurrentSliceScratchLimitForTest(0);
     for (unsigned step = 0; step < 32 &&
         engine.mixer.BlocksRendered() * config.blockFrames < firstPublicationEnd; ++step)
@@ -1179,7 +1179,7 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     ASSERT_EQ(VN_OK, Vn_Update());
     for (std::size_t p = 0; p < probes.size(); ++p)
         ASSERT_FALSE(engine.meterProbes.WithdrawalSliceForTests(engine, probes[p], generations[p]).Valid());
-    ASSERT_EQ(payloadCapacity - 3, engine.variableSlices.FreePayloadCount());
+    ASSERT_EQ(3u, engine.variableSlices.UsedPayloadCount());
     ASSERT_EQ(VN_OK, Vn_Update());
     std::array<harken::VariableSliceRef, 2> second{};
     for (std::size_t p = 0; p < probes.size(); ++p) {
@@ -1194,8 +1194,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     }
     EXPECT_NE(second[0].slot, second[1].slot);
     EXPECT_EQ(appliedBlock, engine.mixer.BlocksRendered());
-    EXPECT_EQ(proofCapacity - 5, engine.variableSlices.FreeRowCount());
-    EXPECT_EQ(payloadCapacity - 5, engine.variableSlices.FreePayloadCount());
+    EXPECT_EQ(5u, engine.variableSlices.UsedRowCount());
+    EXPECT_EQ(5u, engine.variableSlices.UsedPayloadCount());
     EXPECT_EQ(targetCapacity - 4, engine.variableSlices.FreeTargetCapacity());
     EXPECT_EQ(1u, engine.variables.PendingCount());
     EXPECT_EQ(0u, outcomes.Count());
@@ -1227,8 +1227,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     float value = 0;
     ASSERT_TRUE(engine.variables.CurrentValue(variable, &value));
     EXPECT_FLOAT_EQ(0.75f, value);
-    EXPECT_EQ(proofCapacity, engine.variableSlices.FreeRowCount());
-    EXPECT_EQ(payloadCapacity, engine.variableSlices.FreePayloadCount());
+    EXPECT_EQ(0u, engine.variableSlices.UsedRowCount());
+    EXPECT_EQ(0u, engine.variableSlices.UsedPayloadCount());
     EXPECT_EQ(targetCapacity, engine.variableSlices.FreeTargetCapacity());
     EXPECT_FALSE(outcomes.Overflowed());
 }

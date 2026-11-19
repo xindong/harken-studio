@@ -250,7 +250,7 @@ typedef struct VnConfig {
     uint32_t pendingActionCapacity; /* current struct: required-zero legacy
                                      * tombstone; legacy prefix vintages:
                                      * delayed-Step queue depth; 0 = 256 */
-    uint32_t maxEmitters;           /* emitter handle capacity; 0 = 128 */
+    uint32_t maxEmitters;           /* reserved; ignored */
     uint32_t emitterVariableSlots;  /* initial per-emitter Variable reservation, grows on demand; 0 = 8 */
     uint32_t maxParkedVoices;       /* parked Virtual Voice capacity; 0 = 256.
                                      * Pending starts are Logical Voices but
@@ -2657,8 +2657,8 @@ VnResult Vn_UnregisterStreamFile(VnSoundId soundId);
  * engine mints a generational handle into *outHandle (never 0). A voice
  * attaches by naming the handle in VnPlayDesc.emitterHandle; thereafter the
  * voice takes the emitter's pose each update and resolves its Variable reads
- * at emitter scope. Refusals: a null pointer is VN_INVALID_ARG; an exhausted
- * emitter table (maxEmitters) is VN_NO_EMITTER. Logic thread only. */
+ * at emitter scope. Refusals: a null pointer is VN_INVALID_ARG; storage allocation
+ * failure is VN_OUT_OF_MEMORY. Logic thread only. */
 VnResult Vn_CreateEmitter(VnEmitterHandle* outHandle);
 
 #define VN_EMITTER_CREATE_STATE_ONLY 1u
@@ -2672,7 +2672,7 @@ typedef struct VnEmitterCreateDescV1 {
 /* Creates a spatial emitter (flags=0) or a StateOnly emitter, which owns
  * selection/variable state without a pose. StateOnly voices retain their own
  * authored spatial behavior and accept voice pose setters. Emitter pose setters
- * return VN_CAPABILITY_UNAVAILABLE. Both kinds use the public maxEmitters quota.
+ * return VN_CAPABILITY_UNAVAILABLE. Both kinds grow on demand.
  * Unknown flags, a nonzero reserved field, or an invalid size are VN_INVALID_ARG.
  * On failure a non-null outHandle is zero. Logic thread only. */
 VnResult Vn_CreateEmitterEx(const VnEmitterCreateDescV1* desc,
