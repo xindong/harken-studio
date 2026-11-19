@@ -215,7 +215,7 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxPacks = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxVoices = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint UnlimitedActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:bd1fb045452c4e463fc4405459e0809f711f966f75f886c3f809217799b1f1fd]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:d7a1b8b75361784e582dd8db8f09a6ce2e466dc62f266ec69160fe256a97e459]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public static HarkenProjectSettings Load ( )",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string InitPack",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string Language",
@@ -290,7 +290,7 @@
         "native:Vn_StopActionFiring",
         "native:Vn_StopAll",
         "native:Vn_StopEmitter",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:50489d8f10c066b2174f6eb3e1e1e555a4a443ff4d3d68ebfd9117431a909afa]"
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:64732992ccce1e5aad32f388a4b7f37217cbe8a2fd458da595078bca722d7b17]"
       ]
     },
     "host": {
