@@ -12,17 +12,13 @@ QString lowQualityName()
 
 ConversionConfig lowQuality()
 {
-    ConversionConfig config;
-    config.format = ConversionFormat::Vorbis;
-    config.tiers = {{std::uint64_t(1) << 20, 0}, {std::nullopt, 32000}};
-    return config;
+    return {{{std::uint64_t(1) << 20, 0, ConversionFormat::Vorbis, kDefaultVorbisQuality},
+             {std::nullopt, 32000, ConversionFormat::Vorbis, kDefaultVorbisQuality}}};
 }
 
 ConversionConfig newPreset()
 {
-    ConversionConfig config;
-    config.format = ConversionFormat::Vorbis;
-    return config;
+    return {{{std::nullopt, 0, ConversionFormat::Vorbis, kDefaultVorbisQuality}}};
 }
 
 bool usesLowQuality(BasePlatform platform)

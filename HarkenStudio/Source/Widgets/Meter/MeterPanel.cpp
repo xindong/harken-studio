@@ -878,8 +878,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
                 continue;
             QPainterPath value;
             const float db = mode_ == Mode::Loudness ? loudnessDb() : heldPeakDb(channel);
-            value.addText(0, 0, valueFont,
-                std::isinf(db) ? QStringLiteral("-\u221e") : formatAxisValue(db, 1));
+            value.addText(0, 0, valueFont, formatAxisValue(db, 1));
             const QRectF valueBounds = value.boundingRect();
             if (valueBounds.width() > bar.bounds.width())
                 continue;

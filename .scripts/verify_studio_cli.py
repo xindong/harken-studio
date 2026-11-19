@@ -401,7 +401,11 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         assert pcm["sources"][0]["converted"]["sample_rate"] == 24000, pcm
         assert authored_contents() == before_convert
         execute("set_conversion_fields", {"conversion": conversion}, exit_code=2)
-        execute("set_conversion_fields", {"conversion": conversion, "format": "Vorbis", "quality": 57}, save=True)
+        execute("set_conversion_fields", {"conversion": conversion, "rules": [
+            {"max_bytes": 1, "sample_rate": 0, "format": "PCM"},
+            {"max_bytes": None, "sample_rate": 24000, "format": "Vorbis", "quality": 6}]}, save=True)
+        effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
+        assert (effective["format"], effective["quality"], effective["sample_rate"]) == ("Vorbis", 6, 24000), effective
         encoded = execute("convert", conversion_args)["result"]
         encoded_file = encoded["sources"][0]["converted"]
         assert encoded_file["format"] == "Vorbis" and encoded_file["bytes"] > 0, encoded

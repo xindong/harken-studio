@@ -2738,30 +2738,10 @@
       "additionalProperties": false,
       "properties": {
         "maxBytes": {
-          "oneOf": [
-            {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9223372036854775807
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/conversionSizeLimit"
         },
         "sampleRate": {
-          "type": "integer",
-          "enum": [
-            0,
-            8000,
-            11025,
-            16000,
-            22050,
-            24000,
-            32000,
-            44100,
-            48000
-          ]
+          "$ref": "#/$defs/conversionSampleRate"
         }
       },
       "required": [
@@ -2771,33 +2751,141 @@
       "type": "object"
     },
     "conversionComponent": {
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "enum": [
-            "PCM",
-            "Vorbis"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/conversionRule"
+              }
+            }
+          },
+          "required": [
+            "rules"
           ]
         },
-        "vorbisQuality": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "sampleRateTiers": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/conversionSampleRateTier"
-          }
+        {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "enum": [
+                "PCM",
+                "Vorbis"
+              ]
+            },
+            "vorbisQuality": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "sampleRateTiers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/conversionSampleRateTier"
+              }
+            }
+          },
+          "required": [
+            "format",
+            "vorbisQuality",
+            "sampleRateTiers"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "format",
-        "vorbisQuality",
-        "sampleRateTiers"
-      ],
-      "type": "object"
+      ]
+    },
+    "conversionSizeLimit": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "conversionSampleRate": {
+      "type": "integer",
+      "enum": [
+        0,
+        8000,
+        11025,
+        16000,
+        22050,
+        24000,
+        32000,
+        44100,
+        48000
+      ]
+    },
+    "conversionRule": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            },
+            "format": {
+              "const": "PCM"
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            },
+            "format": {
+              "const": "Vorbis"
+            },
+            "quality": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "vorbisQuality": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ],
+          "oneOf": [
+            {
+              "required": ["quality"]
+            },
+            {
+              "required": ["vorbisQuality"]
+            }
+          ]
+        }
+      ]
     }
   },
   "$id": "harken://schema/Editor/current",

@@ -1,6 +1,8 @@
 add_library(harken_editor_conversion_editor STATIC
     ConversionEditorPanel.cpp
     ConversionEditorPanel.h
+    ConversionSizeSplits.cpp
+    ConversionSizeSplits.h
 )
 
 set_target_properties(harken_editor_conversion_editor PROPERTIES

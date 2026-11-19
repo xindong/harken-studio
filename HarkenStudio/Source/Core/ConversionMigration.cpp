@@ -174,11 +174,17 @@ bool prepareConversionMigration(const QString& sourceDirectory,
         if (document.key().startsWith(QStringLiteral("Conversions/")))
             names.insert(document.value().value(QStringLiteral("content")).toObject()
                              .value(QStringLiteral("name")).toString().toCaseFolded());
+    bool migrationValid = true;
     QMap<QByteArray, QString> presets;
     const auto addPreset = [&](const QJsonObject& config) {
         const auto key = QJsonDocument(config).toJson(QJsonDocument::Compact);
         const auto found = presets.constFind(key);
         if (found != presets.cend()) return found.value();
+        const auto normalized = ConversionConfig::fromJson(config, error);
+        if (!normalized) {
+            migrationValid = false;
+            return QString{};
+        }
         const QString name = NameValidator::makeUniqueName(QStringLiteral("Conversion"), [&](const QString& candidate) {
             return !names.contains(candidate.toCaseFolded());
         });
@@ -190,17 +196,17 @@ bool prepareConversionMigration(const QString& sourceDirectory,
         const QJsonObject content{{QStringLiteral("type"), QStringLiteral("Conversion")},
             {QStringLiteral("guid"), id}, {QStringLiteral("name"), name},
             {QStringLiteral("parentRef"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("root")}}},
-            {QStringLiteral("components"), QJsonObject{{QStringLiteral("conversion"), config}}}};
+            {QStringLiteral("components"), QJsonObject{{QStringLiteral("conversion"), normalized->toJson()}}}};
         documents.insert(path, ProjectDocument::create(QStringLiteral("project.conversion"), id, projectId, content));
         presets.insert(key, id);
         return id;
     };
     QStringList defaultIds;
     for (const auto& config : defaults) defaultIds.append(config.isEmpty() ? QString{} : addPreset(config));
+    if (!migrationValid) return false;
     QJsonArray differences;
     QMap<QString, QJsonObject> metadataBySource;
     AssetImporter importer;
-    bool metadataValid = true;
     std::function<void(QJsonObject&, bool)> migrateNode;
     migrateNode = [&](QJsonObject& node, bool rootNode) {
         QMap<QString, QJsonObject> platformGroups;
@@ -223,7 +229,7 @@ bool prepareConversionMigration(const QString& sourceDirectory,
                         const auto path = sourcePaths.value(source.sourceId).toString(
                             source.asset.value(QStringLiteral("relativePath")).toString());
                         if (!path.isEmpty() && !ProjectDataPolicy::isSafeRelativePath(path)) {
-                            metadataValid = false;
+                            migrationValid = false;
                             if (error) *error = QStringLiteral("Invalid source path during conversion migration: %1").arg(path);
                             return;
                         }
@@ -233,14 +239,14 @@ bool prepareConversionMigration(const QString& sourceDirectory,
                             QFile sourceFile(absolute);
                             QCryptographicHash fingerprint(QCryptographicHash::Sha256);
                             if (!sourceFile.open(QIODevice::ReadOnly) || !fingerprint.addData(&sourceFile)) {
-                                metadataValid = false;
+                                migrationValid = false;
                                 if (error) *error = QStringLiteral("Cannot read source during conversion migration: %1").arg(path);
                                 return;
                             }
                             inputFingerprints.insert(relative, fingerprint.result());
                             metadata = importer.readMetadata(absolute).toJson();
                             if (metadata.value(QStringLiteral("sampleRate")).toInteger() == 0) {
-                                metadataValid = false;
+                                migrationValid = false;
                                 if (error) *error = QStringLiteral("Cannot read source metadata during conversion migration: %1").arg(path);
                                 return;
                             }
@@ -253,7 +259,7 @@ bool prepareConversionMigration(const QString& sourceDirectory,
                         });
                         if (requiresMetadata && (metadata.value(QStringLiteral("sampleRate")).toInteger() <= 0
                             || metadata.value(QStringLiteral("fileSize")).toInteger() <= 0)) {
-                            metadataValid = false;
+                            migrationValid = false;
                             if (error) *error = QStringLiteral("Cannot resolve legacy conversion for source %1 without readable audio or cached metadata").arg(source.sourceId);
                             return;
                         }
@@ -268,7 +274,7 @@ bool prepareConversionMigration(const QString& sourceDirectory,
             const auto localized = sourceSets.value(QStringLiteral("localized")).toObject();
             for (auto language = localized.begin(); language != localized.end(); ++language)
                 appendSet(language.value().toObject(), language.key());
-            if (!metadataValid) return;
+            if (!migrationValid) return;
             for (qsizetype index = 0; index < platforms.size() && !sources.isEmpty(); ++index) {
                 const auto platform = platforms[index].toObject();
                 const QString platformId = platform.value(QStringLiteral("id")).toString();
@@ -389,7 +395,7 @@ bool prepareConversionMigration(const QString& sourceDirectory,
         const auto parentKind = content.value(QStringLiteral("parentRef")).toObject()
             .value(QStringLiteral("kind")).toString();
         migrateNode(content, parentKind == QStringLiteral("root"));
-        if (!metadataValid) return false;
+        if (!migrationValid) return false;
         document.insert(QStringLiteral("content"), content);
         documents.insert(path, document);
     }

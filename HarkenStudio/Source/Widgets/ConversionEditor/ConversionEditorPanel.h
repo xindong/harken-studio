@@ -7,14 +7,15 @@
 #include <QVariantMap>
 #include <QWidget>
 
-class QAction;
-class QComboBox;
-class QSpinBox;
-class QTreeWidgetItem;
+class QModelIndex;
+class QPushButton;
+class QShortcut;
 
 namespace VNX {
 
 struct ProjectItem;
+class ConversionSizeSplits;
+class PaneSectionStack;
 class ProportionalTreeWidget;
 class TableWidget;
 
@@ -48,12 +49,16 @@ protected:
 private:
     void installFocusFilter(QObject* object);
     void refreshPreset();
-    void refreshConfig();
-    void refreshTiers();
+    void updateConversionState();
+    void refreshRules();
     void refreshResults();
-    void commitConfig(const ConversionConfig& config);
-    void addTier();
-    void removeTier();
+    QModelIndex selectedRule() const;
+    void selectRange(int index);
+    void updateRuleSelection();
+    void previewBoundary(int index, quint64 bytes);
+    void editSplit(int index, quint64 bytes, bool insert);
+    bool commitConfig(const ConversionConfig& config);
+    void removeRule();
     void startConversion();
     void cancelConversion();
 
@@ -62,13 +67,13 @@ private:
     bool refreshing_ = false;
     QUuid itemGuid_;
     std::optional<ConversionConfig> displayed_;
-    QWidget* fields_ = nullptr;
-    QComboBox* format_ = nullptr;
-    QSpinBox* quality_ = nullptr;
-    TableWidget* tiersTable_ = nullptr;
-    ProportionalTreeWidget* tiers_ = nullptr;
+    PaneSectionStack* sections_ = nullptr;
+    ConversionSizeSplits* splits_ = nullptr;
+    TableWidget* rulesTable_ = nullptr;
+    ProportionalTreeWidget* rules_ = nullptr;
     ProportionalTreeWidget* results_ = nullptr;
-    QAction* convert_ = nullptr;
+    QPushButton* convert_ = nullptr;
+    QShortcut* cancelShortcut_ = nullptr;
     QTimer resultsRefresh_;
     std::shared_ptr<ConversionResults::Batch> batch_;
 };

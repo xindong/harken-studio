@@ -128,8 +128,8 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 | 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
 | 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
 | 强调底上的文字 | `accent.text` | 高亮菜单和选择背景上的文字，不能直接用普通字段文字替代 |
-| 基础表面 | `background.primary/secondary/tertiary` | 保留既有表面层级，节点普通主体使用 tertiary |
-| 交互表面 | `background.hover/selected` | 悬停与选中；节点选中主体沿用 hover 的既有视觉 |
+| 基础表面 | `background.primary/secondary/tertiary` | 节点主体在选中前后均使用 tertiary |
+| 交互表面 | `background.hover/selected` | 控件悬停与选中时的背景 |
 | 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Sources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
 | 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
@@ -389,10 +389,12 @@ VU 已退出产品入口。按用户要求删除遗留 `VUMeterRenderer`、专�
 | 节点绘制位置 | Studio Default 来源 |
 |---|---|
 | `nodeGraph.node.bodyNormal` | `background.tertiary` |
-| `nodeGraph.node.bodySelected` | `background.hover` |
+| 节点选中外框 | `accent.primary` |
 | `nodeGraph.node.contentLabel`、`nodeGraph.node.contentValue` | `text.primary` |
 | `nodeGraph.node.titleText` | `text.primary` |
 | `blueprint.edgeLabelText` | `text.secondary` |
+
+旧主题包仍可使用 `nodeGraph.node.bodySelected` 键。节点绘制统一读取 `nodeGraph.node.bodyNormal` 作为主体底色。
 
 ## 对象颜色职责
 

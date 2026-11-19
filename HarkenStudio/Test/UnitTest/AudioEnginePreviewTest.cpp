@@ -743,7 +743,7 @@ VNX::ProjectItem* bindRootConversion(VNX::ProjectManager& projects, VNX::Project
         if (VNX::PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(ancestor->type)) root = ancestor;
     auto* preset = projects.createItem(nullptr, name, VNX::ProjectItem::Type::Conversion);
     if (!preset) return nullptr;
-    preset->comp<VNX::VConversion>()->config = {VNX::ConversionFormat::Vorbis, 0.4f, {{std::nullopt, 22050}}};
+    preset->comp<VNX::VConversion>()->config.rules = {{std::nullopt, 22050, VNX::ConversionFormat::Vorbis, 4}};
     QString error;
     if (!VNX::ConversionEditing::setObject(projects, root->guid, false, preset->guid, platform, nullptr, &error)) {
         ADD_FAILURE() << error.toStdString();
@@ -828,7 +828,7 @@ TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAn
     ASSERT_TRUE(preparedMedia);
     EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
 
-    otherPreset->comp<VNX::VConversion>()->config.vorbisQuality = 0.8f;
+    otherPreset->comp<VNX::VConversion>()->config.rules.back().vorbisQuality = 8;
     projects.itemPropertyChanged(otherPreset, QStringLiteral("conversion"));
     ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
     ASSERT_EQ(preparation.sounds.size(), 1u);
@@ -836,7 +836,7 @@ TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAn
     EXPECT_EQ(encodedFiles(), originalFiles);
     EXPECT_EQ(audition.getAudition(playing).stopState, HarkenEditor::AuditionStopState::None);
 
-    preset->comp<VNX::VConversion>()->config.vorbisQuality = 0.8f;
+    preset->comp<VNX::VConversion>()->config.rules.back().vorbisQuality = 8;
     projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
     ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
     EXPECT_TRUE(preparation.sounds.empty());
@@ -874,7 +874,7 @@ TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPr
     ASSERT_NE(playing, 0u);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     EXPECT_GT(pump(64), 0.0f);
-    preset->comp<VNX::VConversion>()->config.tiers = {{std::nullopt, 16000}};
+    preset->comp<VNX::VConversion>()->config.rules.back().sampleRate = 16000;
     projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
     HarkenEditor::Bridge::CurrentWorldSoundPreparation preparation;
     QString error;

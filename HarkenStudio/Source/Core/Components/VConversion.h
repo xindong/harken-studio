@@ -10,24 +10,44 @@
 namespace VNX {
 
 enum class ConversionFormat : std::uint8_t { PCM, Vorbis };
+inline constexpr int kMaxVorbisQuality = 10;
+inline constexpr int kDefaultVorbisQuality = 4;
+
+constexpr bool validVorbisQuality(int level)
+{
+    return level >= 0 && level <= kMaxVorbisQuality;
+}
+
+constexpr std::optional<int> defaultConversionQuality(ConversionFormat format)
+{
+    if (format == ConversionFormat::Vorbis) return kDefaultVorbisQuality;
+    return std::nullopt;
+}
 
 inline constexpr std::array<std::uint32_t, 9> kConversionSampleRates{
     0, 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000
 };
 
-struct SampleRateTier
+struct ConversionRule
 {
     std::optional<std::uint64_t> maxBytes;
     std::uint32_t sampleRate = 0;
+    ConversionFormat format = ConversionFormat::PCM;
+    std::optional<int> vorbisQuality = defaultConversionQuality(format);
 
-    bool operator==(const SampleRateTier&) const = default;
+    void setFormat(ConversionFormat selected)
+    {
+        if (format == selected) return;
+        format = selected;
+        vorbisQuality = defaultConversionQuality(format);
+    }
+
+    bool operator==(const ConversionRule&) const = default;
 };
 
 struct ConversionConfig
 {
-    ConversionFormat format = ConversionFormat::PCM;
-    float vorbisQuality = 0.4f;
-    std::vector<SampleRateTier> tiers{{}};
+    std::vector<ConversionRule> rules{{}};
 
     QJsonObject toJson() const;
     static std::optional<ConversionConfig> fromJson(const QJsonObject& json,
@@ -35,8 +55,6 @@ struct ConversionConfig
     bool operator==(const ConversionConfig&) const = default;
 };
 
-bool validateSampleRateTiers(const std::vector<SampleRateTier>& tiers,
-                            QString* error = nullptr);
 bool validateConversionConfig(const ConversionConfig& config,
                               QString* error = nullptr);
 

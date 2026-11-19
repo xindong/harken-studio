@@ -358,7 +358,7 @@ protected:
     {
         auto* item = manager().createItem(nullptr, QStringLiteral("Rate%1").arg(rate), ProjectItem::Type::Conversion);
         ASSERT_NE(item, nullptr);
-        item->comp<VConversion>()->config = {ConversionFormat::PCM, 0.4f, {{std::nullopt, rate}}};
+        item->comp<VConversion>()->config.rules = {{std::nullopt, rate}};
         item->markDirty();
         ASSERT_TRUE(manager().setDefaultConversion(id, item->guid));
     }

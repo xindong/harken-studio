@@ -1,13 +1,77 @@
 #include "AxisCrosshair.h"
 
 #include "Core/FontManager.h"
+#include "Core/ThemeManager.h"
 
 #include <QPainter>
 #include <QPen>
+#include <QRegion>
 
 #include <algorithm>
 
 namespace VNX {
+namespace {
+
+void drawIndicatorSurface(QPainter& painter, const QColor& background, const QRectF& bounds,
+                          qreal radius, const QPen& border)
+{
+    painter.setPen(border);
+    painter.setBrush(background);
+    painter.drawRoundedRect(bounds, radius, radius);
+}
+
+}
+
+AxisIndicatorButton::AxisIndicatorButton(const QString& iconId, QWidget* parent) : QAbstractButton(parent)
+{
+    setAttribute(Qt::WA_Hover);
+    setFocusPolicy(Qt::NoFocus);
+    setCursor(Qt::PointingHandCursor);
+    const auto refreshIcon = [this, iconId] {
+        auto& theme = ThemeManager::instance();
+        setIcon(theme.resolveIcon(iconId, {.tint = theme.snapshot()->domains.curve.colors.readoutText}).icon);
+    };
+    refreshIcon();
+    connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, refreshIcon);
+}
+
+void AxisIndicatorButton::paintEvent(QPaintEvent*)
+{
+    const auto theme = ThemeManager::instance().snapshot();
+    const auto& colors = theme->ui.colors;
+    const int borderWidth = theme->ui.metrics.borderWidth;
+    const qreal inset = borderWidth / 2.0;
+    const auto circle = QRectF(rect()).adjusted(inset, inset, -inset, -inset);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const auto& background = underMouse() ? colors.bgHover : theme->domains.curve.colors.readoutBackground;
+    drawIndicatorSurface(painter, background, circle, circle.width() / 2, QPen(colors.borderSecondary, borderWidth));
+    const int extent = theme->ui.metrics.iconExtent;
+    icon().paint(&painter, (width() - extent) / 2, (height() - extent) / 2, extent, extent);
+}
+
+void AxisIndicatorButton::resizeEvent(QResizeEvent* event)
+{
+    QAbstractButton::resizeEvent(event);
+    setMask(QRegion(rect().adjusted(-1, -1, 1, 1), QRegion::Ellipse).intersected(rect()));
+}
+
+bool AxisIndicatorButton::hitButton(const QPoint& position) const
+{
+    return mask().contains(position);
+}
+
+void drawAxisReadout(QPainter& painter, const CurveStyle& style,
+                     const QRectF& bounds, const QString& label)
+{
+    painter.save();
+    drawIndicatorSurface(painter, style.colors.readoutBackground, bounds, style.metrics.readoutRadius, Qt::NoPen);
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
+    painter.setPen(style.colors.readoutText);
+    const int available = static_cast<int>(std::max(0.0, bounds.width() - style.metrics.readoutHorizontalPadding));
+    painter.drawText(bounds, Qt::AlignCenter, painter.fontMetrics().elidedText(label, Qt::ElideRight, available));
+    painter.restore();
+}
 
 void drawAxisCrosshairLines(QPainter& painter, const CurveStyle& style,
                            const QRectF& bounds, const QPointF& position,
@@ -62,14 +126,7 @@ void drawAxisCrosshair(QPainter& painter, const CurveStyle& style,
         corner.setY(crosshair.position.y() + style.metrics.readoutBelowOffset);
     corner.setX(std::clamp(corner.x(), bounds.left(), bounds.right() - bubbleSize.width()));
     corner.setY(std::clamp(corner.y(), bounds.top(), bounds.bottom() - bubbleSize.height()));
-    const QRectF bubble(corner, bubbleSize);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(style.colors.readoutBackground);
-    painter.drawRoundedRect(bubble, style.metrics.readoutRadius, style.metrics.readoutRadius);
-    painter.setPen(style.colors.readoutText);
-    painter.drawText(bubble, Qt::AlignCenter,
-        painter.fontMetrics().elidedText(crosshair.label, Qt::ElideRight,
-            static_cast<int>(std::max(0.0, bubble.width() - style.metrics.readoutHorizontalPadding))));
+    drawAxisReadout(painter, style, QRectF(corner, bubbleSize), crosshair.label);
     painter.restore();
 }
 

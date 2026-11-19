@@ -15,7 +15,7 @@ struct ResolutionScope;
 struct ResolvedConversion
 {
     ConversionFormat format = ConversionFormat::PCM;
-    float vorbisQuality = 0.4f;
+    std::optional<int> vorbisQuality = defaultConversionQuality(format);
     std::uint32_t sampleRate = 0;
     QUuid presetGuid;
 
