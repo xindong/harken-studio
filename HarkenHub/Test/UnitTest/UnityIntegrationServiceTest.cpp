@@ -255,6 +255,10 @@ TEST_F(UnityIntegrationTest, BackupKeepsEveryFileAndIncompleteBackupsAreNotOffer
     ASSERT_TRUE(QFile::remove(installed + "/package.json"));
     writeFile(installed + "/.git/HEAD", "ref: refs/heads/main");
     writeFile(installed + "/Unreal/Notes.txt", "notes");
+#ifndef Q_OS_WIN
+    writeFile(installed + "/notes?.txt", "valid outside Windows");
+    writeFile(installed + "/aux.txt", "valid outside Windows");
+#endif
     const auto original = tree(installed);
     {
         QFile held(installed + "/Runtime/API/Values.cs");

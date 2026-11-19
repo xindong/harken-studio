@@ -224,7 +224,9 @@ QStringList backupFiles(const QString& backupRoot)
     QStringList files;
     for (const QJsonValue& value : record.value(QStringLiteral("files")).toArray()) {
         const QString relative = value.toString();
-        if (!UnityInstallation::safeRelativePath(relative) || !QFileInfo(QDir(packageCopy).filePath(relative)).isFile())
+        const QString path = QDir::cleanPath(QDir(packageCopy).filePath(relative));
+        if (relative.isEmpty() || QDir::isAbsolutePath(relative) || UnityInstallation::samePath(path, packageCopy)
+            || !UnityInstallation::containsPath(packageCopy, path) || !QFileInfo(path).isFile())
             return {};
         files << relative;
     }
@@ -305,8 +307,14 @@ bool createBackup(const QString& project, const QString& target, const QString& 
         {QStringLiteral("version"), packageVersion(target)},
         {QStringLiteral("files"), QJsonArray::fromStringList(files)},
         {QStringLiteral("created_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}};
-    return VNH::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
-                                     QJsonDocument(record).toJson(QJsonDocument::Indented), error);
+    if (VNH::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
+                                  QJsonDocument(record).toJson(QJsonDocument::Indented), error)
+        && (files.isEmpty() || backupReady(backupRoot)))
+        return true;
+    if (error->isEmpty()) *error = QStringLiteral("Backup verification failed for %1").arg(backupRoot);
+    QString cleanup;
+    removeBackup(backupRoot, &cleanup);
+    return false;
 }
 
 class StepRunner
