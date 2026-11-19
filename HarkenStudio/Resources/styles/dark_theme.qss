@@ -32,6 +32,7 @@ VNX--RangeField {
     background: transparent;
 }
 
+VNX--ConversionSizeSplits,
 VNX--TimelineCanvas,
 VNX--TimelineRuler,
 VNX--TimelineMarkerRuler,

@@ -30,6 +30,11 @@ constexpr quint32 kArtifactVersion = 3;
 constexpr qint64 kHeaderBytes = 40;
 constexpr qint64 kDigestBytes = 32;
 
+float encoderQuality(int level)
+{
+    return static_cast<float>(level) / kMaxVorbisQuality;
+}
+
 void fail(QString* error, const QString& message)
 {
     if (error) *error = message;
@@ -60,8 +65,7 @@ QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& sou
         return {};
     const auto format = conversion ? conversion->format : ConversionFormat::PCM;
     if (format != ConversionFormat::PCM && format != ConversionFormat::Vorbis) return {};
-    if (format == ConversionFormat::Vorbis && (!std::isfinite(conversion->vorbisQuality)
-        || conversion->vorbisQuality < 0.0f || conversion->vorbisQuality > 1.0f)) return {};
+    if (format == ConversionFormat::Vorbis && (!conversion->vorbisQuality || !validVorbisQuality(*conversion->vorbisQuality))) return {};
     const auto range = mapFrameRange(source, metadata.totalSamples);
     const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
     const auto outputRate = targetSampleRateHz != 0 ? targetSampleRateHz : metadata.sampleRate;
@@ -78,7 +82,7 @@ QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& sou
            << static_cast<quint8>(format)
            << static_cast<quint32>(outputRate == metadata.sampleRate ? 0 : outputRate);
     if (format == ConversionFormat::Vorbis)
-        stream << conversion->vorbisQuality << QString::fromUtf8(vorbis_version_string())
+        stream << encoderQuality(*conversion->vorbisQuality) << QString::fromUtf8(vorbis_version_string())
                << static_cast<quint32>(kVorbisSeekGrainFrames)
                << static_cast<quint32>(VorbisEncoder::kFormatVersion);
     const auto canonicalSource = SoundSourceSemantics::canonicalized(source, metadata.totalSamples);
@@ -468,7 +472,7 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         artifact.loopable = media->loopEndFrame != 0;
         if (format == ConversionFormat::Vorbis) {
             auto encoded = VorbisEncoder::encode(media->samples, media->sampleRate, media->channels,
-                conversion->vorbisQuality, media->loopStartFrame, media->loopEndFrame, creationError);
+                encoderQuality(*conversion->vorbisQuality), media->loopStartFrame, media->loopEndFrame, creationError);
             if (!encoded) return std::nullopt;
             artifact.revision = key.left(16).toULongLong(nullptr, 16);
             artifact.cacheImage = encodeVorbisCacheArtifact(*encoded, artifact.revision,

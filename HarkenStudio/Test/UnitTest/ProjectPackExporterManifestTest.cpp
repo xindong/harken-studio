@@ -3783,7 +3783,7 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     addChild(context.project.actions.front().rootItem, secondAction);
     const auto addPreset = [&](const QString& name, uint32_t id, uint32_t rate) {
         auto item = makeItem(name, ProjectItem::Type::Conversion, id);
-        item->comp<VConversion>()->config.tiers = {{std::nullopt, rate}};
+        item->comp<VConversion>()->config.rules = {{std::nullopt, rate}};
         context.project.conversionItems.push_back({item});
         return item;
     };
@@ -3866,8 +3866,8 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     ASSERT_NO_FATAL_FAILURE(expectPcmReport(initialReport));
     const auto secondBytes = readFileBytes(context.live.filePath(QStringLiteral("Two.bytes")));
     auto* firstConfig = &firstPreset->comp<VConversion>()->config;
-    androidPreset->comp<VConversion>()->config.format = ConversionFormat::Vorbis;
-    unusedPreset->comp<VConversion>()->config.format = ConversionFormat::Vorbis;
+    androidPreset->comp<VConversion>()->config.rules.front().setFormat(ConversionFormat::Vorbis);
+    unusedPreset->comp<VConversion>()->config.rules.front().setFormat(ConversionFormat::Vorbis);
     const auto unrelated = build();
     ASSERT_TRUE(unrelated.allPlatformsSucceeded) << unrelated.preflightError.toStdString();
     ASSERT_TRUE(unrelated.finalizationResult.success) << unrelated.finalizationResult.error.toStdString();
@@ -3876,7 +3876,7 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     QString error;
     const auto captured = ProjectBuildSnapshot::capture(context.project, &error);
     ASSERT_TRUE(captured) << error.toStdString();
-    firstConfig->tiers.front().sampleRate = 22050;
+    firstConfig->rules.front().sampleRate = 22050;
     const auto& source = firstSound->comp<VSound>()->sources.plain.entries.front();
     const auto retained = captured->media.inspectRequest(firstSound->guid, source.sourceId,
         QUuid(context.platform), &error);
@@ -3923,7 +3923,7 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     EXPECT_FALSE(compiled);
     EXPECT_EQ(mediaRate(QStringLiteral("One")), 16000u);
     firstSound->fieldGroups.conversion.shared.mode = FieldGroupMode::Inherit;
-    firstConfig->tiers.front().sampleRate = 32000;
+    firstConfig->rules.front().sampleRate = 32000;
     const auto inherited = build();
     ASSERT_TRUE(inherited.allPlatformsSucceeded) << inherited.preflightError.toStdString();
     ASSERT_TRUE(inherited.finalizationResult.success) << inherited.finalizationResult.error.toStdString();
@@ -3933,7 +3933,7 @@ TEST(EditorProjectPackExporterManifest, EffectiveMediaChangesRebuildOnlyTheirCon
     ASSERT_NO_FATAL_FAILURE(expectPcmReport(publishedReport));
     const auto published = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
     const auto publishedCompanion = readFileBytes(context.live.filePath(QStringLiteral("One.json")));
-    firstConfig->format = ConversionFormat::Vorbis;
+    firstConfig->rules.front().setFormat(ConversionFormat::Vorbis);
     const auto refused = build();
     EXPECT_FALSE(refused.allPlatformsSucceeded);
     QString diagnostic = refused.preflightError;

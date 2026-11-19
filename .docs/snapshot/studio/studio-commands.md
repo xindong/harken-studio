@@ -105,7 +105,7 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | 播放与重置就绪 | AudioEngine 对对象试听、Action 播放和容器重置统一检查当前创作版本；GUI 试听在同步期间排队，完成后校验项目、运行时与目标身份。`post_action/post_action_3d/audition_play/audition_reset` 在共享分发器复用检查，未就绪返回 `RUNTIME_SYNC_PENDING` 且不提交操作；三种 CLI 会话等待，工程改变时拒绝继续原请求。GUI 重置未就绪时明确拒绝；已有实例的停止、定位与原始音频试听不受该等待限制 |
 | 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
 | 试听停止 | `audition_stop` 停止指定实例，省略 ID 时停止所有非 RawFile 试听。返回 `state: stopping/stopped/stop_failed`，请求被接受不代表淡出完成；`audition_get_state` 逐实例返回 `stop_state: none/pending/stopping/failed` 和 `stop_result`，真正结束后移除实例。同名 Action 的实例分别列出。背压会有限重试，失败保留实例供再次停止；重复请求不重启淡出 |
-| 音频转换 | Conversion 预设统一配置各平台格式、质量和采样率分档；`convert` 同步生成其引用 Source 的转换缓存，`get_conversion_results` 只读现有结果 |
+| 音频转换 | Conversion 预设按源文件大小匹配一行采样率、格式和质量。`convert` 同步生成其引用 Source 的转换缓存，`get_conversion_results` 只读现有结果 |
 | 保存与打包 | `save_project`、`export_pack`；与桌面使用相同工程格式、校验和 `ProjectPackBuildService` |
 | 文件比较 | `compare_files(reference_path, candidate_path)` 按字节比较，不解码音频；返回 `identical`、`compared_bytes`、`different_bytes`、`length_match` |
 | 执行错误 | `get_exec_errors` 只读；清空使用 `clear_exec_errors`，可指定 domain |
@@ -121,8 +121,8 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 
 | 命令 | 参数与结果 | 撤销 |
 |---|---|---|
-| `create_conversion` | 必填 `name`；可选 `folder` 指向 Conversions 桶中已有目录。新预设为 Vorbis 40%、Original；返回预设 GUID、名称、路径与配置 | 是 |
-| `set_conversion_fields` | `conversion`，修改 `format`、`quality`、`sample_rate_tiers` 中至少一项；未提供的字段保留 | 是 |
+| `create_conversion` | 必填 `name`；可选 `folder` 指向 Conversions 桶中已有目录。新预设为 Vorbis 质量 4、Original；返回预设 GUID、名称、路径与配置 | 是 |
+| `set_conversion_fields` | `conversion` 和完整的 `rules` 数组 | 是 |
 | `set_object_conversion` | `object`、`inherit`，可选 `settings` 指定预设或 `null`，可选 `platform_id` 改写该平台覆写（缺省为 Shared，写入 Shared 引用同时清除各平台覆写）；省略 `settings` 沿用字段组的本地历史，`inherit:true` 不接受 `settings` | 是 |
 | `set_default_conversion` | `platform_id` 与 `conversion`：指定该平台的默认预设，`null` 清空 | 是 |
 | `get_effective_conversion` | `object`，可选 `platform_id`；返回生效预设、来源对象、平台，以及 Sound 当前语言 Source 的最终采样率 | 只读 |
@@ -131,7 +131,7 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 
 对象和预设选择器接受 GUID、无歧义工程路径或名称。查询与转换命令的可选 `platform_id` 缺省为当前主平台。预设只保存一份配置；平台差异由对象的 Conversion 字段组平台覆写承担，与其他字段组一致。
 
-`format` 仅接受 `PCM`、`Vorbis`，`quality` 为 0–100。`sample_rate_tiers` 是完整分档数组，元素形如 `{"max_bytes":null,"sample_rate":24000}`；按原始文件字节数匹配首个上限，有限上限严格递增且仅末档必须为 `null`（Infinite）。采样率可选 `0/8000/11025/16000/22050/24000/32000/44100/48000`；`0` 保留原始采样率，目标不低于原始采样率时也保持原样，不升采样。
+`rules` 按源文件字节数匹配第一条包含该大小的规则。每行包含 `max_bytes`、`sample_rate` 和 `format`，Vorbis 行还需要 0–10 的整数 `quality`，PCM 行省略该字段。有限上限严格递增，末行使用 `null`（`Inf`）。采样率可选 `0/8000/11025/16000/22050/24000/32000/44100/48000`；`0` 保留原始采样率，目标不低于原始采样率时也保持原样，不升采样。
 
 `get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversion` 返回默认预设 GUID 或 `null`。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
 

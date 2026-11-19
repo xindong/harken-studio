@@ -762,7 +762,7 @@ TEST(SoundSourceSemanticsTest, CacheIdentityTracksEffectiveMediaParameters)
     ASSERT_FALSE(original.isEmpty());
     EXPECT_EQ(key(pcm), original);
     pcm.presetGuid = QUuid::createUuid();
-    pcm.vorbisQuality = 0.9f;
+    pcm.vorbisQuality = 9;
     EXPECT_EQ(key(pcm), original);
     pcm.sampleRate = 24000;
     const auto resampled = key(pcm);
@@ -775,23 +775,31 @@ TEST(SoundSourceSemanticsTest, CacheIdentityTracksEffectiveMediaParameters)
     EXPECT_NE(encoded, key(pcm));
     vorbis.presetGuid = QUuid::createUuid();
     EXPECT_EQ(key(vorbis), encoded);
-    vorbis.vorbisQuality = 0.4f;
+    vorbis.vorbisQuality = 4;
     EXPECT_NE(key(vorbis), encoded);
     vorbis.sampleRate = 0;
     EXPECT_NE(key(vorbis), key(ResolvedConversion{
-        .format = ConversionFormat::Vorbis, .vorbisQuality = 0.4f, .sampleRate = 22050}));
+        .format = ConversionFormat::Vorbis, .vorbisQuality = 4, .sampleRate = 22050}));
     AssetInfo asset;
     asset.metadata = metadata;
     asset.metadata.fileSize = 100;
     ConversionPresetSnapshot preset;
     preset.presetGuid = QUuid::createUuid();
-    preset.config.tiers = {{100, 24000}, {std::nullopt, 16000}};
+    preset.config.rules = {{100, 24000}, {200, 22050, ConversionFormat::Vorbis, 9},
+                           {std::nullopt, 22050, ConversionFormat::Vorbis, 4}};
     QString resolutionError;
     const auto selected = resolveConversion(preset, asset, &resolutionError);
     ASSERT_TRUE(selected) << resolutionError.toStdString();
     EXPECT_EQ(key(selected), resampled);
+    asset.metadata.fileSize = 101;
+    EXPECT_EQ(key(resolveConversion(preset, asset)), encoded);
+    asset.metadata.fileSize = 200;
+    EXPECT_EQ(key(resolveConversion(preset, asset)), encoded);
+    asset.metadata.fileSize = 201;
+    EXPECT_EQ(key(resolveConversion(preset, asset)), key(ResolvedConversion{
+        .format = ConversionFormat::Vorbis, .vorbisQuality = 4, .sampleRate = 22050}));
     preset.presetGuid = QUuid::createUuid();
-    preset.config.tiers = {{std::nullopt, 24000}};
+    preset.config.rules = {{std::nullopt, 24000}};
     EXPECT_EQ(key(resolveConversion(preset, asset)), resampled);
     asset.metadata.sampleRate = 16000;
     const auto originalRate = resolveConversion(preset, asset, &resolutionError);
@@ -962,7 +970,7 @@ TEST(SoundSourceSemanticsTest, EncodedDerivativeCacheRoundTripsAndRepairsCorrupt
     definition.fadeOut.durationFrames = 509;
     const auto platform = QUuid::createUuid();
     const ResolvedConversion conversion{
-        .format = ConversionFormat::Vorbis, .vorbisQuality = 0.6f, .sampleRate = 32000};
+        .format = ConversionFormat::Vorbis, .vorbisQuality = 6, .sampleRate = 32000};
     SoundSourceDerivative::MaterializationCache cache;
     QString error;
     const auto initial = SoundSourceDerivative::materialize(inputPath, definition, 0.001,

@@ -13,6 +13,7 @@ class PaneSection : public QWidget
 public:
     PaneSection(const QString& title, const QString& settingsId, QWidget* parent = nullptr);
     QWidget* content() const { return content_; }
+    void setContentWidget(QWidget* widget);
     QWidget* header() const { return header_; }
     QString settingsId() const { return settingsId_; }
     bool isExpanded() const;

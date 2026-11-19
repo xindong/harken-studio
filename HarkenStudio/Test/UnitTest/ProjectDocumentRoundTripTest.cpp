@@ -769,13 +769,13 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         for (auto sound = expectedRates.cbegin(); sound != expectedRates.cend(); ++sound) {
             const auto effective = snapshot.definitions.find(toFieldGroupGuid(QUuid(sound.key())));
             ASSERT_NE(effective, snapshot.definitions.end());
-            std::vector<SampleRateTier> tiers;
+            std::vector<ConversionRule> tiers;
             if (!harkenprojectschema::IsNull(effective->second.conversion.settingsRef)) {
                 const auto preset = snapshot.objects.find(effective->second.conversion.settingsRef);
                 ASSERT_NE(preset, snapshot.objects.end());
                 const auto* conversion = preset->second->comp<VConversion>();
                 ASSERT_NE(conversion, nullptr);
-                tiers = conversion->config.tiers;
+                tiers = conversion->config.rules;
             }
             for (auto source = sound->cbegin(); source != sound->cend(); ++source) {
                 const auto metadata = sourceMetadata.value(source.key());

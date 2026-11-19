@@ -162,7 +162,8 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | 操作／条件 | 业务结果 |
 |---|---|
 | Conversion 归属 | Sound、Container、Layer、Track、Segment 在 Limitation > Conversion 设置 Inherit／Settings；与其他字段组一样支持 Shared 与平台覆写，预设本身只有一份配置；同一 Sound 全部 Source 共用当前平台的有效预设 |
-| 默认引用 | 项目设置按平台指定 Default Conversion，只在新根对象创建时写成对应平台覆写；Shared 始终为空（不转换）；不改已有对象。默认工程只有 Low Quality（Vorbis 40%，≤1 MB Original，>1 MB 32000 Hz），仅 Android／iOS 默认使用；新增平台沿用同基础平台已有平台的默认值，否则为空 |
+| 文件大小规则 | 每个 Source 按原始文件字节数匹配第一条包含该大小的规则，同时取得采样率、格式和 Vorbis 质量。PCM 行的 Quality 单元格留空。末行 `Inf` 承接其余文件。 |
+| 默认引用 | 项目设置按平台指定 Default Conversion，只在新根对象创建时写成对应平台覆写；Shared 始终为空（不转换）；不改已有对象。默认工程只有 Low Quality（Vorbis 质量 4，≤1 MB Original，>1 MB 32000 Hz），仅 Android／iOS 默认使用；新增平台沿用同基础平台已有平台的默认值，否则为空 |
 | Original／Converted | Toolbar 与语言、平台同区切换，本机按工程记忆；只作用于进入混音管线的内容：Toolbar 播放 Sound 时按模式与当前主平台选择处理后的原件或转换产物，External Editor 的 Sources 行文件属性随模式切换；File Viewer 不受影响，始终显示和播放源文件 |
 | 空 Settings | 不转换：以原始采样率输出 PCM，裁剪、淡入淡出等 Source 处理照常生效 |
 | Converted 首次播放 | 没有产物时按需转换后播放，不做后台预转换；PCM 注册处理后的样本，Vorbis 经独立过渡模块解为 PCM 后注册 |

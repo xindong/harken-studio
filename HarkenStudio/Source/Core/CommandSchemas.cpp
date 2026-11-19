@@ -1,4 +1,5 @@
 #include "CommandSchemas.h"
+#include "Components/VConversion.h"
 #include "EffectChainSemantics.h"
 #include "ItemPropertySchema.h"
 #include "ProjectPlatformCommandSchema.h"
@@ -228,12 +229,24 @@ const QMap<QString, Contract>& contracts()
         const auto tier = object({{"max_bytes", QJsonObject{{"anyOf", QJsonArray{tierLimit, QJsonObject{{"type", "null"}}}}}},
             {"sample_rate", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000}}}}},
             {"max_bytes", "sample_rate"});
-        put({"set_conversion_fields"}, requireAny(object({{"conversion", conversionSelector},
-            {"format", choice({"PCM", "Vorbis"})},
-            {"quality", QJsonObject{{"type", "number"}, {"minimum", 0}, {"maximum", 100}}},
-            {"sample_rate_tiers", described(array(tier, 1),
-                "Complete ordered tiers. Limits must increase; only the final max_bytes is null (Infinite). sample_rate 0 preserves the original rate.")}}, {"conversion"}),
-            {"format", "quality", "sample_rate_tiers"}));
+        const auto quality = integer(0, kMaxVorbisQuality);
+        const auto ruleSchema = [&](bool vorbis) {
+            auto properties = tier.value("properties").toObject();
+            properties.insert("format", choice({vorbis ? "Vorbis" : "PCM"}));
+            QJsonArray required{"max_bytes", "sample_rate", "format"};
+            if (vorbis) {
+                properties.insert("quality", quality);
+                required.append("quality");
+            }
+            return object(properties, required);
+        };
+        const QJsonObject rule{{"oneOf", QJsonArray{ruleSchema(false), ruleSchema(true)}}};
+        auto conversionFields = object({{"conversion", conversionSelector},
+            {"rules", described(array(rule, 1), "Complete size-ordered encoding rules. The last max_bytes is null. Vorbis requires an integer quality from 0 to 10.")},
+            {"format", choice({"PCM", "Vorbis"})}, {"quality", quality}, {"sample_rate_tiers", array(tier, 1)}}, {"conversion"});
+        conversionFields.insert("oneOf", QJsonArray{QJsonObject{{"required", QJsonArray{"rules"}}},
+            alternatives({"format", "quality", "sample_rate_tiers"})});
+        put({"set_conversion_fields"}, conversionFields);
         put({"set_object_conversion"}, object({{"object", text()}, {"inherit", boolean()},
             {"settings", described(nullableConversion, "Local preset reference, or null for no conversion. Omit to retain local history; unavailable when inherit is true.")},
             {"platform_id", described(projectPlatformIdSchema(), "Platform override to edit. Omit to edit Shared.")}},

@@ -174,6 +174,8 @@ const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/attenuation.svg")},
         {QString::fromLatin1(ProjectItemEffect), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/effect.svg")},
+        {QString::fromLatin1(ProjectItemConversion), ThemeAssetKind::Image,
+         ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/conversion.svg")},
         {QString::fromLatin1(MeterPeakCap), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::TransparentPixel, QString()}
     };

@@ -115,8 +115,8 @@ TEST_F(ProjectPlatformCommand, ConversionCommandsValidateAtomicallyAndReplayWith
     const auto initial = preset->comp<VConversion>()->config;
     const auto platform = Platforms::idString(project().platforms.front().id);
     const QJsonObject edit{{"conversion", guid.toString(QUuid::WithoutBraces)},
-        {"format", "Vorbis"}, {"quality", 57},
-        {"sample_rate_tiers", QJsonArray{QJsonObject{{"max_bytes", QJsonValue(QJsonValue::Null)}, {"sample_rate", 24000}}}}};
+        {"rules", QJsonArray{QJsonObject{{"max_bytes", 1024}, {"sample_rate", 0}, {"format", "PCM"}},
+                             QJsonObject{{"max_bytes", QJsonValue::Null}, {"sample_rate", 24000}, {"format", "Vorbis"}, {"quality", 6}}}}};
     undo().clear();
     const auto changed = actions.execute("set_conversion_fields", edit, ActionSource::IPC);
     ASSERT_TRUE(changed.success) << changed.errorMessage.toStdString();
@@ -127,7 +127,7 @@ TEST_F(ProjectPlatformCommand, ConversionCommandsValidateAtomicallyAndReplayWith
     invalid.insert("platform_ids", QJsonArray{platform});
     EXPECT_FALSE(actions.execute("set_conversion_fields", invalid, ActionSource::IPC).success);
     invalid = edit;
-    invalid.insert("sample_rate_tiers", QJsonArray{QJsonObject{{"max_bytes", 1024}, {"sample_rate", 24000}}});
+    invalid.insert("rules", QJsonArray{QJsonObject{{"max_bytes", 1024}, {"sample_rate", 24000}, {"format", "PCM"}}});
     EXPECT_FALSE(actions.execute("set_conversion_fields", invalid, ActionSource::IPC).success);
     EXPECT_EQ(preset->comp<VConversion>()->config, updated);
     EXPECT_EQ(undo().undoStack()->count(), 1);
@@ -135,7 +135,7 @@ TEST_F(ProjectPlatformCommand, ConversionCommandsValidateAtomicallyAndReplayWith
     EXPECT_EQ(preset->comp<VConversion>()->config, initial);
     ASSERT_TRUE(undo().redo());
     EXPECT_EQ(preset->comp<VConversion>()->config, updated);
-    preset->comp<VConversion>()->config.vorbisQuality = 0.9f;
+    preset->comp<VConversion>()->config.rules.back().vorbisQuality = 9;
     const auto externallyChanged = preset->comp<VConversion>()->config;
     EXPECT_FALSE(undo().undo());
     EXPECT_EQ(preset->comp<VConversion>()->config, externallyChanged);
@@ -259,7 +259,7 @@ TEST_F(ProjectPlatformCommand, PlatformMembershipEditsRoundTripAllAuthoredOwners
     ASSERT_NE(layer, nullptr);
     auto* conversion = preset->comp<VConversion>();
     ASSERT_NE(conversion, nullptr);
-    conversion->config.tiers = {{1024, 32000}, {std::nullopt, 22050}};
+    conversion->config.rules = {{1024, 32000}, {std::nullopt, 22050}};
     layer->fieldGroups.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(preset->guid)};
     layer->fieldGroups.output.platforms[toFieldGroupGuid(project().platforms.front().id)] = {
         FieldGroupMode::Local, OutputFieldGroup{toFieldGroupGuid(manager().getMasterBusItem()->guid), -6.0f}};

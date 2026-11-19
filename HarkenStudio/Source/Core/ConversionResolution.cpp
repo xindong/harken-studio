@@ -40,11 +40,11 @@ std::optional<ResolvedConversion> resolveConversion(
         if (error) *error = QStringLiteral("Conversion resolution requires source sample rate and file size");
         return std::nullopt;
     }
-    const auto& tiers = preset.config.tiers;
-    const auto tier = std::find_if(tiers.begin(), tiers.end(),
+    const auto& rules = preset.config.rules;
+    const auto rule = std::find_if(rules.begin(), rules.end(),
         [&](const auto& value) { return !value.maxBytes || source.metadata.fileSize <= *value.maxBytes; });
-    const auto sampleRate = tier->sampleRate < source.metadata.sampleRate ? tier->sampleRate : 0u;
-    return ResolvedConversion{preset.config.format, preset.config.vorbisQuality, sampleRate, preset.presetGuid};
+    const auto sampleRate = rule->sampleRate < source.metadata.sampleRate ? rule->sampleRate : 0u;
+    return ResolvedConversion{rule->format, rule->vorbisQuality, sampleRate, preset.presetGuid};
 }
 
 std::optional<ResolvedConversion> resolveConversion(

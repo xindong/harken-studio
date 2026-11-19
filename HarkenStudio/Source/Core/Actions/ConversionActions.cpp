@@ -15,7 +15,7 @@
 #include "ActionSelectors.h"
 
 #include <QDir>
-#include <cmath>
+#include <algorithm>
 
 namespace VNX {
 namespace {
@@ -42,19 +42,37 @@ ActionResult invalid(const QString& message)
     return failure(QStringLiteral("INVALID_ARGUMENTS"), message);
 }
 
+QJsonObject describeConfig(const ConversionConfig& config)
+{
+    QJsonArray rules;
+    QJsonArray limits;
+    for (const auto& rule : config.rules) {
+        QJsonObject row{{"max_bytes", rule.maxBytes ? QJsonValue(static_cast<qint64>(*rule.maxBytes)) : QJsonValue::Null},
+                        {"sample_rate", static_cast<qint64>(rule.sampleRate)}};
+        limits.append(row);
+        row.insert("format", rule.format == ConversionFormat::Vorbis ? "Vorbis" : "PCM");
+        if (rule.vorbisQuality) row.insert("quality", *rule.vorbisQuality);
+        rules.append(row);
+    }
+    QJsonObject result{{"rules", rules}};
+    const auto& first = config.rules.front();
+    if (std::all_of(config.rules.begin(), config.rules.end(), [&](const ConversionRule& rule) {
+            return rule.format == first.format && rule.vorbisQuality == first.vorbisQuality;
+        })) {
+        result.insert("sample_rate_tiers", limits);
+        result.insert("format", rules.first().toObject().value("format"));
+        if (first.vorbisQuality) result.insert("quality", *first.vorbisQuality);
+    }
+    return result;
+}
+
 QJsonObject describePreset(const ProjectData& project, const ProjectItem& item)
 {
-    const auto& config = item.comp<VConversion>()->config;
-    QJsonArray tiers;
-    for (const auto& tier : config.tiers)
-        tiers.append(QJsonObject{{"max_bytes", tier.maxBytes
-            ? QJsonValue(static_cast<qint64>(*tier.maxBytes)) : QJsonValue(QJsonValue::Null)},
-            {"sample_rate", static_cast<qint64>(tier.sampleRate)}});
-    return {{"guid", item.guid.toString(QUuid::WithoutBraces)}, {"name", item.name},
-        {"path", project.itemPath(&item)},
-        {"format", config.format == ConversionFormat::Vorbis ? "Vorbis" : "PCM"},
-        {"quality", std::round(static_cast<double>(config.vorbisQuality) * 1000000.0) / 10000.0},
-        {"sample_rate_tiers", tiers}};
+    auto result = describeConfig(item.comp<VConversion>()->config);
+    result.insert("guid", item.guid.toString(QUuid::WithoutBraces));
+    result.insert("name", item.name);
+    result.insert("path", project.itemPath(&item));
+    return result;
 }
 
 std::optional<ProjectPlatformId> platformFor(const ProjectData& project, const QJsonObject& args)
@@ -143,20 +161,27 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
     }
     if (name == QStringLiteral("set_conversion_fields")) {
         const auto before = item->comp<VConversion>()->config;
-        auto json = before.toJson();
-        if (args.contains(QStringLiteral("format"))) json.insert(QStringLiteral("format"), args.value(QStringLiteral("format")));
-        if (args.contains(QStringLiteral("quality")))
-            json.insert(QStringLiteral("vorbisQuality"), args.value(QStringLiteral("quality")).toDouble() / 100.0);
-        if (args.contains(QStringLiteral("sample_rate_tiers"))) {
-            QJsonArray tiers;
-            for (const auto& value : args.value(QStringLiteral("sample_rate_tiers")).toArray()) {
-                const auto tier = value.toObject();
-                tiers.append(QJsonObject{{"maxBytes", tier.value(QStringLiteral("max_bytes"))},
-                    {"sampleRate", tier.value(QStringLiteral("sample_rate"))}});
+        auto requested = args.value("rules").toArray();
+        if (!args.contains("rules")) {
+            const auto previous = describeConfig(before);
+            if (!previous.contains("format")) return invalid(QStringLiteral("Specify rules to edit a mixed-format or mixed-quality preset"));
+            const auto format = (args.contains("format") ? args : previous).value("format").toString();
+            const auto quality = args.value("quality").toInt(before.rules.front().vorbisQuality.value_or(kDefaultVorbisQuality));
+            for (const auto& value : (args.contains("sample_rate_tiers") ? args : previous).value("sample_rate_tiers").toArray()) {
+                auto row = value.toObject();
+                row.insert("format", format);
+                if (format == QLatin1String("Vorbis")) row.insert("quality", quality);
+                requested.append(row);
             }
-            json.insert(QStringLiteral("sampleRateTiers"), tiers);
         }
-        const auto parsed = ConversionConfig::fromJson(json, &error);
+        QJsonArray rules;
+        for (const auto& entry : requested) {
+            auto rule = entry.toObject();
+            rule.insert("maxBytes", rule.take("max_bytes"));
+            rule.insert("sampleRate", rule.take("sample_rate"));
+            rules.append(rule);
+        }
+        const auto parsed = ConversionConfig::fromJson({{"rules", rules}}, &error);
         if (!parsed) return invalid(error);
         if (!ConversionEditing::setConfig(manager, item->guid, *parsed, before, originator, &error))
             return invalid(error);
@@ -184,6 +209,9 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
                 if (!error.isEmpty()) return invalid(error);
                 result.insert(QStringLiteral("sample_rate"), static_cast<qint64>(
                     conversion && conversion->sampleRate != 0 ? conversion->sampleRate : asset->metadata.sampleRate));
+                result.insert(QStringLiteral("format"), conversion && conversion->format == ConversionFormat::Vorbis ? "Vorbis" : "PCM");
+                if (conversion && conversion->vorbisQuality)
+                    result.insert(QStringLiteral("quality"), *conversion->vorbisQuality);
                 result.insert(QStringLiteral("source_id"), static_cast<qint64>(source->sourceId));
                 result.insert(QStringLiteral("source_entry_id"), source->entryId.toString(QUuid::WithoutBraces));
             }

@@ -11,6 +11,14 @@
 
 namespace VNX {
 
+inline const QString kPositiveInfinityText = QStringLiteral("Inf");
+inline const QString kNegativeInfinityText = QStringLiteral("-Inf");
+
+inline QString infinityText(double value)
+{
+    return value < 0.0 ? kNegativeInfinityText : kPositiveInfinityText;
+}
+
 inline int axisDecimalsForStep(double step, int maximumDecimals = 9)
 {
     if (step <= 0.0 || !std::isfinite(step))
@@ -55,7 +63,7 @@ inline QStringList formatAxisValues(const QVector<double>& values, int maximumDe
     QStringList labels;
     labels.reserve(values.size());
     for (double value : values)
-        labels.append(QString::number(value, 'f', maximumDecimals));
+        labels.append(std::isinf(value) ? infinityText(value) : QString::number(value, 'f', maximumDecimals));
     return compactAxisLabels(std::move(labels));
 }
 
@@ -67,6 +75,7 @@ inline QString formatAxisValue(double value, int maximumDecimals)
 inline QString formatDecimal(double value, int decimals,
                              const QLocale& locale = QLocale::c())
 {
+    if (std::isinf(value)) return infinityText(value);
     QString text = locale.toString(value, 'f', decimals);
     if (decimals <= 1) return text;
     const QString point = locale.decimalPoint();

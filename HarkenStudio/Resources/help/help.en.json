@@ -78,7 +78,7 @@
     },
     "audio.loopCount": {
       "title": "Loop",
-      "body": "Total playback passes: 1 plays once; Infinite repeats until stopped. Set this on the object that should repeat.",
+      "body": "Total playback passes: 1 plays once. Inf repeats until stopped. Set this on the object that should repeat.",
       "byType": {
         "Container": "For a Random or Sequence Queue, each pass is one complete round."
       }

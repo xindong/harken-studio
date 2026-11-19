@@ -118,7 +118,7 @@ constexpr TypeFacts kTypeFacts[] = {
       false, false, false, false, false, false, true,  true  },
 
     { T::Conversion,  "Conversion",  "Conversion",
-      { "navigation.settings" },
+      { "projectItem.conversion" },
       Bucket::Conversions, true,  NameNamespace::Conversion,
       nullptr, 0,
       false, false, false, false, false, false, false, true  },

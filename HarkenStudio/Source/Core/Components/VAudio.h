@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../Component.h"
+#include "../NumericFormat.h"
 #include "../PropertyDescriptor.h"
 #include "../ProjectTypes.h"
 #include <harken_pack/PackProperties.h>
@@ -65,7 +66,7 @@ inline const PropertySchema& VAudio::schema()
           .segments={
               { .value=1, .numeric=true, .numericMin=1,
                 .numericMax=std::numeric_limits<int>::max() },
-              { .text="Infinite", .value=0 },
+              { .text=kPositiveInfinityText, .value=0 },
           },
           .aliases={"loopcount"},
           .get=[](const VNX::IComponent* c) { return QVariant::fromValue(

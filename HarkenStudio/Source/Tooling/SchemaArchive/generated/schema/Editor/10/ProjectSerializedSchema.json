@@ -399,62 +399,142 @@
       "type": "object"
     },
     "conversionComponent": {
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "enum": [
-            "PCM",
-            "Vorbis"
-          ]
-        },
-        "sampleRateTiers": {
-          "items": {
-            "$ref": "#/$defs/conversionSampleRateTier"
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/conversionRule"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
           },
-          "minItems": 1,
-          "type": "array"
+          "required": [
+            "rules"
+          ],
+          "type": "object"
         },
-        "vorbisQuality": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "enum": [
+                "PCM",
+                "Vorbis"
+              ]
+            },
+            "sampleRateTiers": {
+              "items": {
+                "$ref": "#/$defs/conversionSampleRateTier"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "vorbisQuality": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "format",
+            "vorbisQuality",
+            "sampleRateTiers"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "format",
-        "vorbisQuality",
-        "sampleRateTiers"
+      ]
+    },
+    "conversionRule": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "const": "PCM"
+            },
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "quality"
+              ]
+            },
+            {
+              "required": [
+                "vorbisQuality"
+              ]
+            }
+          ],
+          "properties": {
+            "format": {
+              "const": "Vorbis"
+            },
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "quality": {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            },
+            "vorbisQuality": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "conversionSampleRate": {
+      "enum": [
+        0,
+        8000,
+        11025,
+        16000,
+        22050,
+        24000,
+        32000,
+        44100,
+        48000
       ],
-      "type": "object"
+      "type": "integer"
     },
     "conversionSampleRateTier": {
       "additionalProperties": false,
       "properties": {
         "maxBytes": {
-          "oneOf": [
-            {
-              "maximum": 9223372036854775807,
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/conversionSizeLimit"
         },
         "sampleRate": {
-          "enum": [
-            0,
-            8000,
-            11025,
-            16000,
-            22050,
-            24000,
-            32000,
-            44100,
-            48000
-          ],
-          "type": "integer"
+          "$ref": "#/$defs/conversionSampleRate"
         }
       },
       "required": [
@@ -462,6 +542,18 @@
         "sampleRate"
       ],
       "type": "object"
+    },
+    "conversionSizeLimit": {
+      "oneOf": [
+        {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "definitionAudioComponent": {
       "additionalProperties": false,
