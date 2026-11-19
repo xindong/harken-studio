@@ -435,74 +435,36 @@ TEST_F(HubCliTest, NetworkDownloadsRequireBothSignedIdentityAndValidArchiveConte
     EXPECT_FALSE(QFileInfo::exists(directory.filePath("machine/install-index.json")));
 }
 
-TEST_F(HubCliTest, IntegrationLifecycleKeepsReviewBoundToBytesAndPreservesUserFiles)
+TEST_F(HubCliTest, IntegrationLifecycleReplacesTheInstallationDirectory)
 {
     const auto game = directory.filePath("Game");
     const auto source = directory.filePath("Source");
     for (const auto* folder : {"Assets", "Packages", "ProjectSettings"}) ASSERT_TRUE(QDir().mkpath(game + '/' + folder));
-    const QJsonObject manifest{{"schema_version", 3}, {"package_name", "com.harken.core"}, {"supports_custom_install_path", true},
-        {"expected_platforms_by_editor_host", QJsonObject{{"Windows", QJsonArray{"Windows"}},
-            {"macOS", QJsonArray{"macOS"}}, {"Linux", QJsonArray{"Linux"}}}},
-        {"required_files", QJsonArray{"package.json", "Runtime/Generated/HarkenAbi.g.cs"}},
-        {"native_plugins", QJsonArray{
-            QJsonObject{{"platform", "Windows"}, {"alternatives", QJsonArray{"Runtime/Plugins/Harken.dll"}}},
-            QJsonObject{{"platform", "macOS"}, {"alternatives", QJsonArray{"Runtime/Plugins/libHarken.dylib"}}},
-            QJsonObject{{"platform", "Linux"}, {"alternatives", QJsonArray{"Runtime/Plugins/libHarken.so"}}}}}};
-    const auto manifestBytes = QJsonDocument(manifest).toJson();
-    for (const auto& file : manifest["required_files"].toArray()) write(source + '/' + file.toString(), "fixture content");
-    for (const auto& plugin : manifest["native_plugins"].toArray())
-        write(source + '/' + plugin.toObject()["alternatives"].toArray()[0].toString(), "fixture runtime");
-    write(source + "/harken-integration.json", manifestBytes);
-    write(source + "/Documentation~/Reference.md", "original reference");
-    write(source + "/Samples~/Demo/Sample.cs", "original sample");
     write(source + "/package.json", R"({"name":"com.harken.core","version":"0.2.0-test"})");
+    write(source + "/Runtime/Generated/HarkenAbi.g.cs", "fixture content");
     const auto project = directory.filePath("Audio.hsp");
     write(project, R"({"harkenDocument":{"type":"project.root"}})");
     approve({"integrations", "link", "--path", game, "--project", project, "--source", "./Source"});
     const QStringList install{"integrations", "install", "--path", game, "--source", "./Source"};
-    const auto plan = run(install, 4);
     const auto installed = game + "/Packages/com.harken.core";
-    EXPECT_FALSE(QFileInfo::exists(installed));
-    write(source + "/Runtime/Generated/HarkenAbi.g.cs", "changed after review");
-    run(install + QStringList{"--confirm", plan["confirmation"].toString()}, 4);
+    run(install, 4);
     EXPECT_FALSE(QFileInfo::exists(installed));
     approve(install);
-    write(installed + "/Documentation~/ProjectNotes.txt", "my own notes");
-    write(installed + "/Samples~/Demo/Sample.cs", "my sample edits");
-    run({"integrations", "verify", "--path", game}, 3);
-    for (const auto* relative : {"harken-integration.json", "Documentation~/Reference.md", "Samples~/Demo/Sample.cs"})
-        ASSERT_TRUE(QFile::remove(source + '/' + relative));
-    write(source + "/package.json", R"({"name":"com.harken.core","version":"0.3.0-test"})");
-    write(source + "/Runtime/Generated/HarkenAbi.g.cs", "next version core");
-    const auto upgrade = run(install, 4);
-    const auto changes = upgrade["plan"].toObject()["files"].toArray();
-    for (const auto* relative : {"harken-integration.json", "Documentation~/Reference.md", "Samples~/Demo/Sample.cs"})
-        EXPECT_TRUE(changes.contains(QJsonObject{{"action", "remove"}, {"path", relative}}));
-    EXPECT_EQ(read(installed + "/Samples~/Demo/Sample.cs"), "my sample edits");
-    write(installed + "/Samples~/Demo/Sample.cs", "edited after review");
-    run(install + QStringList{"--confirm", upgrade["confirmation"].toString()}, 4);
-    EXPECT_EQ(read(installed + "/Samples~/Demo/Sample.cs"), "edited after review");
-    approve(install);
-    for (const auto* relative : {"harken-integration.json", "Documentation~/Reference.md", "Samples~/Demo/Sample.cs"})
-        EXPECT_FALSE(QFileInfo::exists(installed + '/' + relative));
-    EXPECT_EQ(read(installed + "/Documentation~/ProjectNotes.txt"), "my own notes");
-    ASSERT_TRUE(QFile::remove(installed + "/Runtime/Generated/HarkenAbi.g.cs"));
-    run({"integrations", "verify", "--path", game}, 3);
-    approve(install);
-    EXPECT_EQ(read(installed + "/Runtime/Generated/HarkenAbi.g.cs"), "next version core");
-    EXPECT_EQ(run({"integrations", "list"})["data"].toObject()["associations"].toArray()[0].toObject()["source"].toString(), source);
-    run({"integrations", "verify", "--path", game});
+    EXPECT_EQ(read(installed + "/Runtime/Generated/HarkenAbi.g.cs"), "fixture content");
     write(installed + "/ProjectOnly.txt", "my own content");
-    EXPECT_FALSE(run({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")}, 4)["plan"].toObject()["files"].toArray().isEmpty());
-    approve({"integrations", "move", "--path", game, "--destination", "Assets/HarkenSDK", "--backup", directory.filePath("MoveBackup")});
-    run({"integrations", "verify", "--path", game, "--location", "Assets/Wrong"}, 3);
+    write(source + "/package.json", R"({"name":"com.harken.core","version":"0.3.0-test"})");
+    const auto upgrade = run(install, 4)["plan"].toObject();
+    EXPECT_EQ(upgrade["installedVersion"].toString(), "0.2.0-test");
+    EXPECT_EQ(upgrade["sourceVersion"].toString(), "0.3.0-test");
+    approve(install);
+    EXPECT_FALSE(QFileInfo::exists(installed + "/ProjectOnly.txt"));
+    EXPECT_EQ(run({"integrations", "list"})["data"].toObject()["associations"].toArray()[0].toObject()["source"].toString(), source);
+    EXPECT_EQ(run({"integrations", "locate", "--path", game})["data"].toObject()["installedVersion"].toString(), "0.3.0-test");
     run({"integrations", "locate", "--path", game, "--location", "Assets/Wrong"}, 3);
-    run({"integrations", "verify", "--path", game});
-    EXPECT_EQ(read(directory.filePath("MoveBackup/SDK/Documentation~/ProjectNotes.txt")), "my own notes");
-    const auto removal = run({"integrations", "remove", "--path", game, "--backup", directory.filePath("RemoveBackup")}, 4);
-    EXPECT_FALSE(removal["plan"].toObject()["files"].toArray().isEmpty());
-    approve({"integrations", "remove", "--path", game, "--backup", directory.filePath("RemoveBackup")});
-    EXPECT_EQ(read(game + "/Assets/HarkenSDK/ProjectOnly.txt"), "my own content");
+    run({"integrations", "restore", "--path", game}, 3);
+    run({"integrations", "remove", "--path", game}, 4);
+    approve({"integrations", "remove", "--path", game});
+    EXPECT_FALSE(QFileInfo::exists(installed));
 }
 
 }

@@ -1,34 +1,29 @@
 #include "Integrations/HubUnityIntegrationService.h"
-#include "Integrations/IntegrationProgress.h"
 
 #include "Integrations/Unity/UnityIntegrationService.h"
 #include "Integrations/Unity/UnityInstallation.h"
-#include "Integrations/Unity/UnityProjectAccess.h"
 
 #include <QCoreApplication>
-#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
-#include <QSet>
 
 namespace VNH {
 namespace {
 
-VNX::UnityIntegrationService::Result verifyInstalled(
-    const UnityIntegrationRequest& request)
+using Service = VNX::UnityIntegrationService;
+
+Service::Result inspectInstalled(const UnityIntegrationRequest& request)
 {
-    using Service = VNX::UnityIntegrationService;
     using StepStatus = Service::StepStatus;
     Service::Result result;
     result.unityProjectPath = request.unityProjectPath.trimmed().isEmpty()
         ? QString() : QDir::cleanPath(QFileInfo(request.unityProjectPath).absoluteFilePath());
     for (const auto& spec : {qMakePair("unity_preflight", "Validate Unity project"),
-                             qMakePair("inspect_installed_sdk", "Inspect installed Unity Integration Package"),
-                             qMakePair("verify", "Verify installed Integration Package")}) {
+                             qMakePair("inspect_installed_sdk", "Inspect installed Unity Integration Package")}) {
         Service::StepResult step;
         step.id = QString::fromLatin1(spec.first);
         step.title = QString::fromLatin1(spec.second);
@@ -58,24 +53,19 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     projectStep.artifacts << result.unityProjectPath;
     auto& inspection = result.steps[1];
     inspection.status = StepStatus::Failed;
-    if (VNX::UnityInstallation::hasPendingRestore(result.unityProjectPath)) {
-        inspection.summary = QStringLiteral("An unfinished Integration Package restoration must be recovered before continuing.");
-        return finish();
-    }
-    if (VNX::UnityInstallation::hasPendingRemoval(result.unityProjectPath)) {
-        inspection.summary = QStringLiteral("An unfinished Integration Package removal must be completed before continuing. Use Uninstall Integration Package to retry.");
-        return finish();
-    }
-    if (VNX::UnityInstallation::hasPendingMigration(result.unityProjectPath)) {
-        inspection.summary = QStringLiteral("An unfinished Integration Package migration must be recovered before continuing.");
-        return finish();
-    }
+    result.backupPath = Service::previousVersionBackup(result.unityProjectPath);
+    result.previousVersionAvailable = !result.backupPath.isEmpty();
     const auto discovery = VNX::UnityInstallation::discover(result.unityProjectPath);
     for (const auto& installation : discovery.installations) inspection.artifacts << installation.path;
-    result.integrationFound = !discovery.installations.isEmpty();
-    result.targetInstalled = result.integrationFound;
-    if (discovery.installations.size() == 1)
-        result.integrationInstallPath = project.relativeFilePath(discovery.installations.front().path);
+    result.targetInstalled = discovery.installations.size() == 1;
+    if (discovery.installations.size() == 1) {
+        const QString path = discovery.installations.front().path;
+        result.integrationInstallPath = project.relativeFilePath(path);
+        QFile package(QDir(path).filePath(QStringLiteral("package.json")));
+        if (package.open(QIODevice::ReadOnly))
+            result.installedVersion = QJsonDocument::fromJson(package.readAll()).object()
+                .value(QStringLiteral("version")).toString();
+    }
     if (!discovery.errors.isEmpty() || discovery.installations.size() > 1) {
         inspection.summary = discovery.installations.size() > 1
             ? QStringLiteral("Multiple Integration Package installations were found:")
@@ -84,438 +74,109 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     if (discovery.installations.isEmpty()) {
-        if (!discovery.preservedInstallations.isEmpty() && discovery.integrationReferences.isEmpty()) {
-            inspection.status = StepStatus::Succeeded;
-            inspection.summary = QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation.");
-            for (const auto& retained : discovery.preservedInstallations) inspection.artifacts << retained.path;
-            result.steps[2].status = StepStatus::Succeeded;
-            result.steps[2].summary = QStringLiteral("No installed Unity Integration Package exists to verify.");
-            return finish();
-        }
         inspection.summary = discovery.integrationReferences.isEmpty()
             ? QStringLiteral("No Harken Unity Integration Package is installed in this project.")
             : QStringLiteral("Integration Package references could not be verified.");
         inspection.details = discovery.integrationReferences;
         return finish();
     }
-    const auto& installation = discovery.installations.front();
-    QString error;
-    if (!VNX::UnityInstallation::validateTree(installation.path, &error)) {
-        inspection.summary = QStringLiteral("The installed Integration Package could not be inspected.");
-        inspection.cause = error;
-        return finish();
-    }
-    QFile stateFile(QDir(installation.path).filePath(QStringLiteral(".harken-integration-state.json")));
-    const QJsonObject state = stateFile.open(QIODevice::ReadOnly)
-        ? QJsonDocument::fromJson(stateFile.readAll()).object() : QJsonObject();
-    bool validOwnership = state.value(QStringLiteral("schema_version")).toInt(-1) == 1
-        && state.value(QStringLiteral("package_name")).toString() == QStringLiteral("com.harken.core")
-        && state.value(QStringLiteral("managed_files")).isArray();
-    QSet<QString> managedFiles;
-    for (const auto& entry : state.value(QStringLiteral("managed_files")).toArray()) {
-        validOwnership &= entry.isString() && VNX::UnityInstallation::safeRelativePath(entry.toString());
-        managedFiles.insert(entry.toString());
-    }
-    if (!validOwnership || managedFiles.isEmpty()) {
-        inspection.summary = QStringLiteral("The Integration Package ownership record is missing, invalid or unreadable. Restore it from backup before updating or removing the Integration Package.");
-        return finish();
-    }
-    const QJsonObject hashes = state.value(QStringLiteral("sha256")).toObject();
-    const QJsonObject textHashes = state.value(QStringLiteral("text_lf_sha256")).toObject();
-    const QRegularExpression hashFormat(QStringLiteral("\\A[0-9a-fA-F]{64}\\z"));
-    for (const QString& relative : managedFiles) {
-        if (!hashFormat.match(hashes.value(relative).toString()).hasMatch()
-            || (!textHashes.value(relative).isUndefined()
-                && !hashFormat.match(textHashes.value(relative).toString()).hasMatch())) {
-            inspection.summary = QStringLiteral("The installed Integration Package has incomplete or invalid verification data.");
-            inspection.details << relative;
-            inspection.remediation = QStringLiteral("Restore the installation record from a trusted backup before verifying again.");
-            return finish();
-        }
-    }
-    if (!managedFiles.contains(QStringLiteral("package.json"))) {
-        inspection.summary = QStringLiteral("The installed Integration Package has incomplete or invalid verification data.");
-        return finish();
-    }
     inspection.status = StepStatus::Succeeded;
-    inspection.summary = QStringLiteral("The installation record is complete. File contents are checked in the next step.");
-    auto& verification = result.steps[2];
-    verification.artifacts << installation.path;
-    verification.details << QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
-    auto& missing = result.missingFiles;
-    auto& modified = result.modifiedFiles;
-    auto& unreadable = result.unreadableFiles;
-    QStringList files = managedFiles.values();
-    files.sort();
-    for (const QString& relative : files) {
-        IntegrationProgress::inspectedEntry();
-        const QString path = QDir(installation.path).filePath(relative);
-        const QFileInfo info(path);
-        QFile file(path);
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (!info.exists()) {
-            if (VNX::UnityInstallation::isDocumentationOrSample(relative))
-                result.missingOptionalFiles << relative;
-            else
-                missing << relative;
-        }
-        else if (!info.isFile() || !file.open(QIODevice::ReadOnly) || !IntegrationProgress::addFileData(file, hash))
-            unreadable << relative;
-        else if (hash.result().toHex() != hashes.value(relative).toString().toLatin1().toLower()) {
-            if (VNX::UnityInstallation::matchesTextHashIgnoringLineEndings(
-                    path, hashes.value(relative).toString().toLatin1(),
-                    textHashes.value(relative).toString().toLatin1()))
-                result.lineEndingFiles << relative;
-            else if (VNX::UnityInstallation::matchesTextHashIgnoringEncoding(
-                         path, hashes.value(relative).toString().toLatin1(),
-                         textHashes.value(relative).toString().toLatin1()))
-                result.encodingFiles << relative;
-            else
-                modified << relative;
-        }
-    }
-    if (!result.lineEndingFiles.isEmpty())
-        verification.details << QStringLiteral("%1 Integration Package text file(s) differ only in LF/CRLF line endings; contents are unchanged.")
-                                    .arg(result.lineEndingFiles.size())
-                             << result.lineEndingFiles.join(QLatin1Char('\n'));
-    if (!result.encodingFiles.isEmpty())
-        verification.details << QStringLiteral("Review recommended: %1 Integration Package text file(s) use a different encoding; text contents match after normalizing encoding and line endings. Integration Package updates can continue.")
-                                    .arg(result.encodingFiles.size())
-                             << result.encodingFiles.join(QLatin1Char('\n'));
-    if (!result.missingOptionalFiles.isEmpty()) {
-        verification.details << QStringLiteral("Missing documentation/sample files (does not block Integration Package updates):")
-                             << result.missingOptionalFiles.join(QLatin1Char('\n'));
-    }
-    result.changesDetected = !missing.isEmpty() || !modified.isEmpty();
-    if (result.changesDetected || !unreadable.isEmpty()) {
-        verification.status = StepStatus::Failed;
-        QStringList issues;
-        QStringList guidance;
-        if (!modified.isEmpty()) {
-            issues << QStringLiteral("%1 Integration Package file(s) differ from their contents at installation.").arg(modified.size());
-            guidance << QStringLiteral("Review the listed content differences to confirm whether they were intentional. To restore the original Integration Package files, use Change Integration Package and select the complete package for the installed version.");
-            verification.details << QStringLiteral("Integration Package files with contents different from installation:") << modified.join(QLatin1Char('\n'));
-        }
-        if (!missing.isEmpty()) {
-            issues << QStringLiteral("%1 Integration Package file(s) recorded at installation are missing.").arg(missing.size());
-            guidance << QStringLiteral("Restore the listed missing files from a matching backup, or use Change Integration Package and select the complete package for the installed version.");
-            verification.details << QStringLiteral("Missing Integration Package files:") << missing.join(QLatin1Char('\n'));
-        }
-        if (!unreadable.isEmpty()) {
-            issues << QStringLiteral("%1 Integration Package file(s) could not be read, so verification could not finish.").arg(unreadable.size());
-            guidance << QStringLiteral("Check read permissions and whether another program is preventing access to the listed files, then check the Integration Package status again.");
-            verification.details << QStringLiteral("Unreadable Integration Package files:") << unreadable.join(QLatin1Char('\n'));
-        }
-        verification.summary = issues.join(QLatin1Char('\n'));
-        verification.remediation = guidance.join(QStringLiteral("\n\n"));
-        return finish();
-    }
-    verification.status = result.encodingFiles.isEmpty() ? StepStatus::Succeeded : StepStatus::Warning;
-    verification.summary = QStringLiteral("Verified the content integrity of %1 Harken-managed Integration Package file(s).")
-                               .arg(files.size() - result.missingOptionalFiles.size());
-    if (!result.missingOptionalFiles.isEmpty())
-        verification.summary += QLatin1Char('\n') + QStringLiteral("%1 documentation/sample file(s) are missing; Integration Package updates can continue.")
-            .arg(result.missingOptionalFiles.size());
+    inspection.summary = QStringLiteral("Integration Package %1 is installed at %2.")
+                             .arg(result.installedVersion, result.integrationInstallPath);
     return finish();
 }
 
-QString localizeCountSummary(const QString& text)
+struct Template
 {
-    static const QRegularExpression expression(QStringLiteral(
-        R"(^(\d+) missing Integration Package file\(s\) will be added; (\d+) existing Integration Package file\(s\) need updating; (\d+) obsolete Harken-managed file\(s\) will be removed; (\d+) project-specific file\(s\) will be kept unchanged; (\d+) Unity-generated metadata file\(s\) and (\d+) optional target runtime file\(s\) will be kept automatically$)"));
-    const QRegularExpressionMatch match = expression.match(text);
-    if (!match.hasMatch())
-        return text;
-    return QCoreApplication::translate(
-               "HarkenHub",
-               "%1 missing Integration Package file(s) will be added; %2 existing Integration Package file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically")
-        .arg(match.captured(1), match.captured(2), match.captured(3),
-             match.captured(4), match.captured(5), match.captured(6));
+    QRegularExpression expression;
+    const char* source;
+};
+
+Template makeTemplate(const char* source)
+{
+    QString pattern = QRegularExpression::escape(QString::fromUtf8(source));
+    pattern.replace(QRegularExpression(QStringLiteral(R"(\\?%\d)")), QStringLiteral("(.*)"));
+    return {QRegularExpression(QStringLiteral("\\A") + pattern + QStringLiteral("\\z"),
+                               QRegularExpression::DotMatchesEverythingOption), source};
+}
+
+const QVector<Template>& templates()
+{
+    static const QVector<Template> list = [] {
+        QVector<Template> result;
+        for (const char* source : {
+                 QT_TRANSLATE_NOOP("HarkenHub", "Not run because %1 failed."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "The selected path cannot be found: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Missing required directories: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "The selected folder is not a valid com.harken.core Integration Package source: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Validated Integration Package %1: %2 file(s)."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "No Harken Integration Package is installed; version %1 will be installed at %2."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Version %1 is already installed at %2; installing again replaces the whole directory with the selected package."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Installed version %1 at %2 will be replaced by version %3."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Installed Integration Package %1 at %2: %3 file(s)."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Verified %1 installed Integration Package file(s)."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Integration Package %1 is installed at %2 and will be removed."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Integration Package %1 is installed at %2."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Removed Integration Package %1 from %2."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Version %1 can be restored at %2."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Restored Integration Package %1 at %2."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot remove %1. Close Unity and any program using it, then retry."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Backup verification failed for %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Check write permission for the Hub report directory: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot move directory from %1 to %2 (system error %3: %4)."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing Integration Package was not changed."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot determine the Integration Package identity: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Integration Package discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "External package discovery exceeded its safety limits at %1. Point file: dependencies at individual package directories and remove unrelated content before retrying."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "External package path has no package.json: %1. Point the file: dependency at the package directory."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "A local package path includes the Unity project: %1. Reference a package directory instead."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "An Integration Package is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Integration Package files without an identifiable installation root: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere."),
+                 QT_TRANSLATE_NOOP("HarkenHub", "The installation directory contains unrelated files: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Choose a safe directory inside the Unity project: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "The installation location is not a directory: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Symbolic links and directory junctions are not supported: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Linked paths cannot be inspected safely: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Unsupported filesystem entry: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot inspect directory: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot enumerate directory %1: %2"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Invalid JSON object: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot create directory for %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot create directory: %1"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Copy failed from %1 to %2"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot commit %1: %2"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot write %1: %2"),
+                 QT_TRANSLATE_NOOP("HarkenHub", "Cannot read %1: %2"),
+             })
+            result.push_back(makeTemplate(source));
+        return result;
+    }();
+    return list;
 }
 
 QString localizeUnityText(const QString& text)
 {
-    if (text.isEmpty())
-        return {};
-    const QByteArray sourceUtf8 = text.toUtf8();
-    const QString translatedText =
-        QCoreApplication::translate("HarkenHub", sourceUtf8.constData());
-    if (translatedText != text)
-        return translatedText;
-
-    if (text == QStringLiteral("Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity."))
-        return QCoreApplication::translate("HarkenHub", "Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.");
-    if (text == QStringLiteral("Validate Unity project"))
-        return QCoreApplication::translate("HarkenHub", "Validate Unity project");
-    if (text == QStringLiteral("Validate Harken Unity Integration Package source"))
-        return QCoreApplication::translate("HarkenHub", "Validate Harken Unity Integration Package source");
-    if (text == QStringLiteral("Compare installed Unity Integration Package"))
-        return QCoreApplication::translate("HarkenHub", "Compare installed Unity Integration Package");
-    if (text == QStringLiteral("Install or update Unity Integration Package"))
-        return QCoreApplication::translate("HarkenHub", "Install or update Unity Integration Package");
-    if (text == QStringLiteral("Verify installed Integration Package"))
-        return QCoreApplication::translate("HarkenHub", "Verify installed Integration Package");
-    if (text == QStringLiteral("Write integration report"))
-        return QCoreApplication::translate("HarkenHub", "Write integration report");
-
-    if (text == QStringLiteral("Unity project layout and write access are valid."))
-        return QCoreApplication::translate(
-            "HarkenHub", "Unity project layout and write access are valid.");
-    if (text == QStringLiteral(
-            "Installed Integration Package verification is represented by the differences reported above."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Installed Integration Package verification is represented by the differences reported above.");
-    if (text == QStringLiteral(
-            "Wrote machine-readable and human-readable Integration Package installation reports."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Wrote machine-readable and human-readable Integration Package installation reports.");
-    if (text == QStringLiteral(
-            "Check-only mode requested; no Integration Package files were changed."))
-        return QCoreApplication::translate(
-            "HarkenHub", "Check-only mode requested; no Integration Package files were changed.");
-    if (text == QStringLiteral(
-            "The installed Integration Package could not be compared because its ownership record is unreadable."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "The installed Integration Package could not be compared because its ownership record is unreadable.");
-    if (text == QStringLiteral(
-            "Unity includes this runtime in Windows games and uses it for Windows Editor play mode."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Unity includes this runtime in Windows games and uses it for Windows Editor play mode.");
-    if (text == QStringLiteral(
-            "Unity includes this runtime in Linux games built from the project."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Unity includes this runtime in Linux games built from the project.");
-    if (text == QStringLiteral(
-            "Unity packages this runtime into Android APK or AAB builds so Harken audio can run on Android devices."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Unity packages this runtime into Android APK or AAB builds so Harken audio can run on Android devices.");
-    if (text == QStringLiteral(
-            "Unity includes this runtime in macOS games and uses it for macOS Editor play mode."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Unity includes this runtime in macOS games and uses it for macOS Editor play mode.");
-    if (text == QStringLiteral(
-            "Unity adds this static runtime to the generated Xcode project for the final iOS application."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Unity adds this static runtime to the generated Xcode project for the final iOS application.");
-    if (text == QStringLiteral(
-            "Unity includes this runtime when it builds games for this target platform."))
-        return QCoreApplication::translate(
-            "HarkenHub",
-            "Unity includes this runtime when it builds games for this target platform.");
-
-    const auto translateMatch = [&text](const QRegularExpression& expression,
-                                         const char* source) {
-        const QRegularExpressionMatch match = expression.match(text);
-        if (!match.hasMatch())
-            return QString();
-        QString translated = QCoreApplication::translate("HarkenHub", source);
-        for (int index = 1; index <= match.lastCapturedIndex(); ++index)
-            translated = translated.arg(match.captured(index));
-        return translated;
-    };
-
-    static const struct {
-        QRegularExpression expression;
-        const char* source;
-    } installationMessages[] = {
-        {QRegularExpression(QStringLiteral(R"(^The selected folder is not a valid com\.harken\.core Integration Package source: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "The selected folder is not a valid com.harken.core Integration Package source: %1")},
-        {QRegularExpression(QStringLiteral(R"(^(.*) exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated.")},
-        {QRegularExpression(QStringLiteral(R"(^(.*) installed Integration Package file\(s\) could not be read, so the comparison is incomplete\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 installed Integration Package file(s) could not be read, so the comparison is incomplete.")},
-        {QRegularExpression(QStringLiteral(R"(^The Harken integration cannot distinguish managed Integration Package files from project\-specific files inside (.*)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "The Harken integration cannot distinguish managed Integration Package files from project-specific files inside %1.")},
-        {QRegularExpression(QStringLiteral(R"(^These files exist inside (.*) but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source\. Nothing was compared or changed\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source. Nothing was compared or changed.")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot check whether this Unity project is open: (.*) \(system error ([0-9]+)\)\. Check project permissions and try again\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.")},
-        {QRegularExpression(QStringLiteral(R"(^(\d+) Integration Package file\(s\) differ from their contents at installation\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 Integration Package file(s) differ from their contents at installation.")},
-        {QRegularExpression(QStringLiteral(R"(^(\d+) Integration Package file\(s\) recorded at installation are missing\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 Integration Package file(s) recorded at installation are missing.")},
-        {QRegularExpression(QStringLiteral(R"(^(\d+) Integration Package file\(s\) could not be read, so verification could not finish\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 Integration Package file(s) could not be read, so verification could not finish.")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot move directory from (.*) to (.*) \(system error ([0-9]+): (.*)\)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot move directory from %1 to %2 (system error %3: %4).")},
-        {QRegularExpression(QStringLiteral(R"(^Check file write protection, directory permissions and processes holding files open at (.*)\. If checkout or unlocking is required, do that first, then retry\. The existing Integration Package was not changed\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing Integration Package was not changed.")},
-        {QRegularExpression(QStringLiteral(R"(^Check-only mode did not change (.*)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Check-only mode did not change %1.")},
-        {QRegularExpression(QStringLiteral(R"(^Ready to remove (\d+) Harken Integration Package/runtime file\(s\) and preserve (\d+) project-specific file\(s\)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Ready to remove %1 Harken Integration Package/runtime file(s) and preserve %2 project-specific file(s).")},
-        {QRegularExpression(QStringLiteral(R"(^Installed package: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Installed package: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Safety backup: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Safety backup: %1")},
-        {QRegularExpression(QStringLiteral(R"(^To integrate again later, select or drop this Integration Package source: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "To integrate again later, select or drop this Integration Package source: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Backed up and removed the Harken Integration Package and native runtimes; preserved (\d+) project-specific file\(s\)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Backed up and removed the Harken Integration Package and native runtimes; preserved %1 project-specific file(s).")},
-        {QRegularExpression(QStringLiteral(R"(^Installed Integration Package (.*) from a verified staging directory; copied (\d+) managed file\(s\) and preserved (\d+) target-only file\(s\)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Installed Integration Package %1 from a verified staging directory; copied %2 managed file(s) and preserved %3 target-only file(s).")},
-        {QRegularExpression(QStringLiteral(R"(^Verified the content integrity of (\d+) Harken-managed Integration Package file\(s\)\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Verified the content integrity of %1 Harken-managed Integration Package file(s).")},
-        {QRegularExpression(QStringLiteral(R"(^(\d+) documentation/sample file\(s\) are missing; Integration Package updates can continue\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 documentation/sample file(s) are missing; Integration Package updates can continue.")},
-        {QRegularExpression(QStringLiteral(R"(^(\d+) Integration Package text file\(s\) differ only in LF/CRLF line endings; contents are unchanged\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 Integration Package text file(s) differ only in LF/CRLF line endings; contents are unchanged.")},
-        {QRegularExpression(QStringLiteral(R"(^Review recommended: (\d+) Integration Package text file\(s\) use a different encoding; text contents match after normalizing encoding and line endings\. Integration Package updates can continue\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Review recommended: %1 Integration Package text file(s) use a different encoding; text contents match after normalizing encoding and line endings. Integration Package updates can continue.")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot read Integration Package file for migration: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot read Integration Package file for migration: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot read Integration Package file: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot read Integration Package file: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot write (.*): (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot write %1: %2")},
-        {QRegularExpression(QStringLiteral(R"(^Check write permission for the Hub report directory: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Check write permission for the Hub report directory: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot create directory for (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot create directory for %1")},
-        {QRegularExpression(QStringLiteral(R"(^Copy failed from (.*) to (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Copy failed from %1 to %2")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot commit (.*): (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot commit %1: %2")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot read (.*): (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot read %1: %2")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot enumerate directory (.*): (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot enumerate directory %1: %2")},
-        {QRegularExpression(QStringLiteral(R"(^Invalid JSON object: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Invalid JSON object: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot determine the Integration Package identity: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot determine the Integration Package identity: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Integration Package discovery exceeded its safety limits at (.*)\. Check local package references and reduce the scanned content\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Integration Package discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content.")},
-        {QRegularExpression(QStringLiteral(R"(^External package discovery exceeded its safety limits at (.*)\. Point file: dependencies at individual package directories and remove unrelated content before retrying\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "External package discovery exceeded its safety limits at %1. Point file: dependencies at individual package directories and remove unrelated content before retrying.")},
-        {QRegularExpression(QStringLiteral(R"(^External package path has no package\.json: (.*)\. Point the file: dependency at the package directory\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "External package path has no package.json: %1. Point the file: dependency at the package directory.")},
-        {QRegularExpression(QStringLiteral(R"(^A local package path includes the Unity project: (.*)\. Reference a package directory instead\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "A local package path includes the Unity project: %1. Reference a package directory instead.")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot inspect directory: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot inspect directory: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Cannot create directory: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Cannot create directory: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Linked paths cannot be inspected safely: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Linked paths cannot be inspected safely: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Unsupported filesystem entry: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Unsupported filesystem entry: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Symbolic links and directory junctions are not supported: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Symbolic links and directory junctions are not supported: %1")},
-        {QRegularExpression(QStringLiteral(R"(^Choose a safe directory inside the Unity project: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Choose a safe directory inside the Unity project: %1")},
-        {QRegularExpression(QStringLiteral(R"(^The installation location is not a directory: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "The installation location is not a directory: %1")},
-        {QRegularExpression(QStringLiteral(R"(^An Integration Package is referenced by Unity Package Manager: (.*)\. Resolve this dependency before using Hub installation\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "An Integration Package is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation.")},
-        {QRegularExpression(QStringLiteral(R"(^Integration Package files without an identifiable installation root: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "Integration Package files without an identifiable installation root: %1")},
-        {QRegularExpression(QStringLiteral(R"(^An Integration Package is already installed at (.*)\. Use that location or remove it before installing elsewhere\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere.")},
-        {QRegularExpression(QStringLiteral(R"(^The installation directory contains unrelated files: (.*)$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "The installation directory contains unrelated files: %1")},
-        {QRegularExpression(QStringLiteral(R"(^(.*) could not establish which files belong to Harken\. Nothing was compared or changed\.$)")),
-         QT_TRANSLATE_NOOP("HarkenHub", "%1 could not establish which files belong to Harken. Nothing was compared or changed.")},
-    };
-    for (const auto& message : installationMessages) {
-        const auto match = message.expression.match(text);
+    if (text.isEmpty()) return {};
+    const QString exact = QCoreApplication::translate("HarkenHub", text.toUtf8().constData());
+    if (exact != text) return exact;
+    for (const Template& item : templates()) {
+        const QRegularExpressionMatch match = item.expression.match(text);
         if (!match.hasMatch()) continue;
-        const QString translated = QCoreApplication::translate("HarkenHub", message.source);
-        return match.lastCapturedIndex() == 4
-            ? translated.arg(match.captured(1), match.captured(2), match.captured(3), match.captured(4))
-            : match.lastCapturedIndex() == 3
-            ? translated.arg(match.captured(1), match.captured(2), match.captured(3))
-            : match.lastCapturedIndex() == 2
-            ? translated.arg(match.captured(1), match.captured(2))
-            : translated.arg(match.captured(1));
-    }
-
-    const QString validatedIntegration = translateMatch(
-        QRegularExpression(QStringLiteral(R"(^Validated Integration Package (.*): ([0-9]+) file\(s\)\.$)")),
-        "Validated Integration Package %1: %2 file(s).");
-    if (!validatedIntegration.isEmpty())
-        return validatedIntegration;
-
-    const QRegularExpressionMatch integrationDifferences = QRegularExpression(
-        QStringLiteral(R"(^Check found Integration Package differences: (.*)\.$)"))
-        .match(text);
-    if (integrationDifferences.hasMatch())
-        return QCoreApplication::translate(
-                   "HarkenHub", "Check found Integration Package differences: %1.")
-            .arg(localizeCountSummary(integrationDifferences.captured(1)));
-
-    const QString readyToInstall = translateMatch(
-        QRegularExpression(
-            QStringLiteral(R"(^No embedded Harken Integration Package is installed; ([0-9]+) file\(s\) are ready to install\.$)")),
-        "No embedded Harken Integration Package is installed; %1 file(s) are ready to install.");
-    if (!readyToInstall.isEmpty())
-        return readyToInstall;
-
-    const QRegularExpressionMatch approvedUpdate = QRegularExpression(
-        QStringLiteral(R"(^Approved Integration Package update: (.*)\.$)"))
-        .match(text);
-    if (approvedUpdate.hasMatch())
-        return QCoreApplication::translate(
-                   "HarkenHub", "Approved Integration Package update: %1.")
-            .arg(localizeCountSummary(approvedUpdate.captured(1)));
-
-    const QString exactIntegration = translateMatch(
-        QRegularExpression(
-            QStringLiteral(R"(^The installed Integration Package exactly matches selected Integration Package source (.*)\.$)")),
-        "The installed Integration Package exactly matches selected Integration Package source %1.");
-    if (!exactIntegration.isEmpty())
-        return exactIntegration;
-
-    const QString managedCurrent = translateMatch(
-        QRegularExpression(QStringLiteral(R"(^All Harken-managed files match Integration Package (.*); (\d+) Unity metadata file\(s\) and (\d+) optional target runtime file\(s\) are retained as expected\.$)")),
-        "All Harken-managed files match Integration Package %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.");
-    if (!managedCurrent.isEmpty())
-        return managedCurrent;
-
-    const QString projectFilesNeedReview = translateMatch(
-        QRegularExpression(QStringLiteral(R"(^All Harken-managed files match Integration Package (.*); (\d+) project-specific file\(s\) need review, while (\d+) Unity metadata and (\d+) optional runtime file\(s\) are retained normally\.$)")),
-        "All Harken-managed files match Integration Package %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.");
-    if (!projectFilesNeedReview.isEmpty())
-        return projectFilesNeedReview;
-
-    if (text == QStringLiteral("The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed."))
-        return QCoreApplication::translate("HarkenHub", "The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed.");
-    if (text == QStringLiteral("Review only the project-specific files listed below. Unity-generated metadata requires no action."))
-        return QCoreApplication::translate("HarkenHub", "Review only the project-specific files listed below. Unity-generated metadata requires no action.");
-
-    const QRegularExpressionMatch managedDiffers = QRegularExpression(
-        QStringLiteral(
-            R"(^The existing Integration Package differs from selected Integration Package source (.*): (.*)\.$)"))
-        .match(text);
-    if (managedDiffers.hasMatch())
-        return QCoreApplication::translate(
-                   "HarkenHub",
-                   "The existing Integration Package differs from selected Integration Package source %1: %2.")
-            .arg(managedDiffers.captured(1),
-                 localizeCountSummary(managedDiffers.captured(2)));
-
-    if (text.contains(QLatin1Char('\n'))) {
-        const QStringList lines = text.split(QLatin1Char('\n'));
-        QStringList localizedLines;
-        localizedLines.reserve(lines.size());
-        bool changed = false;
-        for (const QString& line : lines) {
-            const QString localized = localizeUnityText(line);
-            changed |= localized != line;
-            localizedLines.push_back(localized);
+        const QString translated = QCoreApplication::translate("HarkenHub", item.source);
+        switch (match.lastCapturedIndex()) {
+        case 1: return translated.arg(match.captured(1));
+        case 2: return translated.arg(match.captured(1), match.captured(2));
+        case 3: return translated.arg(match.captured(1), match.captured(2), match.captured(3));
+        default: return translated.arg(match.captured(1), match.captured(2), match.captured(3), match.captured(4));
         }
-        if (changed)
-            return localizedLines.join(QLatin1Char('\n'));
     }
-
+    if (text.contains(QLatin1Char('\n'))) {
+        QStringList lines = text.split(QLatin1Char('\n'));
+        for (QString& line : lines) line = localizeUnityText(line);
+        return lines.join(QLatin1Char('\n'));
+    }
     return text;
 }
 
@@ -523,116 +184,54 @@ QStringList localizeUnityTexts(const QStringList& texts)
 {
     QStringList localized;
     localized.reserve(texts.size());
-    for (const QString& text : texts)
-        localized << localizeUnityText(text);
+    for (const QString& text : texts) localized << localizeUnityText(text);
     return localized;
 }
 
-UnityIntegrationStepStatus convertStatus(
-    VNX::UnityIntegrationService::StepStatus status)
+UnityIntegrationStepStatus convertStatus(Service::StepStatus status)
 {
-    using Source = VNX::UnityIntegrationService::StepStatus;
     switch (status) {
-        case Source::Pending:
-            return UnityIntegrationStepStatus::Pending;
-        case Source::Running:
-            return UnityIntegrationStepStatus::Running;
-        case Source::Succeeded:
-            return UnityIntegrationStepStatus::Succeeded;
-        case Source::Warning:
-            return UnityIntegrationStepStatus::Warning;
-        case Source::Failed:
-            return UnityIntegrationStepStatus::Failed;
-        case Source::Skipped:
-            return UnityIntegrationStepStatus::Skipped;
+    case Service::StepStatus::Pending:   return UnityIntegrationStepStatus::Pending;
+    case Service::StepStatus::Running:   return UnityIntegrationStepStatus::Running;
+    case Service::StepStatus::Succeeded: return UnityIntegrationStepStatus::Succeeded;
+    case Service::StepStatus::Warning:   return UnityIntegrationStepStatus::Warning;
+    case Service::StepStatus::Failed:    return UnityIntegrationStepStatus::Failed;
+    case Service::StepStatus::Skipped:   return UnityIntegrationStepStatus::Skipped;
     }
     return UnityIntegrationStepStatus::Failed;
 }
 
 }
 
-UnityIntegrationResult HubUnityIntegrationService::run(
-    const UnityIntegrationRequest& request)
+UnityIntegrationResult HubUnityIntegrationService::run(const UnityIntegrationRequest& request)
 {
-    QString accessError;
-    if (!request.verifyInstalledOnly && !request.unityProjectPath.trimmed().isEmpty()
-        && !VNX::checkUnityProjectClosed(request.unityProjectPath, &accessError)) {
-        UnityIntegrationResult result;
-        result.unityProjectPath = QDir::cleanPath(QFileInfo(request.unityProjectPath).absoluteFilePath());
-        UnityIntegrationStep step;
-        step.id = QStringLiteral("unity_preflight");
-        step.title = localizeUnityText(QStringLiteral("Validate Unity project"));
-        step.status = UnityIntegrationStepStatus::Failed;
-        step.summary = localizeUnityText(accessError);
-        result.steps.push_back(step);
-        return result;
-    }
-    VNX::UnityIntegrationService::Request studioRequest;
-    studioRequest.unityProjectPath = request.unityProjectPath;
-    studioRequest.integrationSourcePath = request.integrationSourcePath;
-    studioRequest.integrationInstallPath = request.integrationInstallPath;
-    studioRequest.installToAssets = request.installToAssets;
-    studioRequest.checkOnly = request.checkOnly;
-    studioRequest.confirmTargetChanges = request.confirmTargetChanges;
-    studioRequest.approvedPlanHash = request.approvedPlanHash;
-    studioRequest.preserveUnownedTarget = request.preserveUnownedTarget;
-    studioRequest.restoreIntegration = request.restoreIntegration;
-    studioRequest.confirmUnownedConflicts = request.confirmUnownedConflicts;
-    studioRequest.recoverRestore = request.recoverRestore;
-    studioRequest.officialRelease = request.officialRelease;
-    studioRequest.officialFileHashes = request.officialFileHashes;
-    studioRequest.restorationBackupPath = request.restorationBackupPath;
-    studioRequest.removeIntegration = request.removeIntegration;
-    studioRequest.confirmRemoval = request.confirmRemoval;
-    studioRequest.removalBackupPath = request.removalBackupPath;
-    studioRequest.migrateIntegration = request.migrateIntegration;
-    studioRequest.recoverMigration = request.recoverMigration;
-    studioRequest.confirmMigration = request.confirmMigration;
-    studioRequest.migrationTargetPath = request.migrationTargetPath;
-    studioRequest.migrationBackupPath = request.migrationBackupPath;
-    studioRequest.migrationPlanHash = request.migrationPlanHash;
-    VNX::UnityIntegrationService service;
-    const auto source = request.verifyInstalledOnly ? verifyInstalled(request) : service.run(studioRequest);
+    Service::Request serviceRequest;
+    serviceRequest.unityProjectPath = request.unityProjectPath;
+    serviceRequest.integrationSourcePath = request.integrationSourcePath;
+    serviceRequest.integrationInstallPath = request.integrationInstallPath;
+    serviceRequest.checkOnly = request.checkOnly;
+    serviceRequest.removeIntegration = request.removeIntegration;
+    serviceRequest.restorePrevious = request.restorePrevious;
+    Service service;
+    const auto source = request.inspectOnly ? inspectInstalled(request) : service.run(serviceRequest);
     UnityIntegrationResult result;
     result.success = source.success;
     result.hasWarnings = source.hasWarnings;
-    result.requiresConfirmation = source.requiresConfirmation;
-    result.targetAlreadyCurrent = source.targetAlreadyCurrent;
-    result.targetCurrent = source.targetCurrent;
     result.targetInstalled = source.targetInstalled;
-    result.integrationFound = source.integrationFound;
+    result.targetCurrent = source.targetCurrent;
+    result.integrationFound = source.targetInstalled;
     result.integrationRemoved = source.integrationRemoved;
-    result.removalBackupCreated = source.removalBackupCreated;
-    result.changesDetected = source.changesDetected;
-    result.planHash = source.planHash;
-    result.modifiedFiles = source.modifiedFiles;
-    result.conflictingFiles = source.conflictingFiles;
-    result.lineEndingFiles = source.lineEndingFiles;
-    result.encodingFiles = source.encodingFiles;
-    result.missingFiles = source.missingFiles;
-    result.missingOptionalFiles = source.missingOptionalFiles;
-    result.unreadableFiles = source.unreadableFiles;
-    result.integrationMigrated = source.integrationMigrated;
-    result.migrationRecovered = source.migrationRecovered;
-    result.migrationBackupPath = source.migrationBackupPath;
-    result.migrationTargetPath = source.migrationTargetPath;
-    result.migrationPlanHash = source.migrationPlanHash;
+    result.previousRestored = source.previousRestored;
+    result.previousVersionAvailable = source.previousVersionAvailable;
     result.unityProjectPath = source.unityProjectPath;
     result.integrationSourcePath = source.integrationSourcePath;
     result.integrationInstallPath = source.integrationInstallPath;
-    result.removalBackupPath = source.removalBackupPath;
-    result.restorationBackupPath = source.restorationBackupPath;
+    result.installedVersion = source.installedVersion;
+    result.sourceVersion = source.sourceVersion;
+    result.backupPath = source.backupPath;
     result.jsonReportPath = source.jsonReportPath;
     result.textReportPath = source.textReportPath;
     result.integrationFilesCopied = source.integrationFilesCopied;
-    result.filesAdded = source.filesAdded;
-    result.filesChanged = source.filesChanged;
-    result.staleFilesToRemove = source.staleFilesToRemove;
-    result.targetOnlyFilesPreserved = source.targetOnlyFilesPreserved;
-    result.filesRemoved = source.filesRemoved;
-    result.fileChanges.reserve(source.fileChanges.size());
-    for (const auto& change : source.fileChanges)
-        result.fileChanges.push_back({change.action, change.relative});
     result.steps.reserve(source.steps.size());
     for (const auto& step : source.steps) {
         result.steps.push_back({

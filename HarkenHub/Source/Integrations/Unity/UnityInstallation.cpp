@@ -2,212 +2,20 @@
 #include "Integrations/IntegrationProgress.h"
 
 #include <QDir>
-#include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
-#include <QStringDecoder>
-#include <QStringEncoder>
 #include <QUrl>
 
 #include <algorithm>
 #include <functional>
 #include <filesystem>
-#include <optional>
-
-#if defined(Q_OS_WIN)
-#include <qt_windows.h>
-#elif defined(Q_OS_MACOS)
-#include <CoreFoundation/CoreFoundation.h>
-#endif
 
 namespace VNX::UnityInstallation {
 namespace {
-
-struct TextEncoding
-{
-    QStringConverter::Encoding unicode;
-    unsigned int codePage = 0;
-    QByteArray bom;
-};
-
-const QList<TextEncoding>& textEncodings()
-{
-    static const QList<TextEncoding> encodings = {
-        {QStringConverter::Utf8, 0, QByteArray::fromHex("efbbbf")},
-        {QStringConverter::Utf32LE, 0, QByteArray::fromHex("fffe0000")},
-        {QStringConverter::Utf32BE, 0, QByteArray::fromHex("0000feff")},
-        {QStringConverter::Utf16LE, 0, QByteArray::fromHex("fffe")},
-        {QStringConverter::Utf16BE, 0, QByteArray::fromHex("feff")},
-        {QStringConverter::Utf8, 54936, {}},
-        {QStringConverter::Utf8, 936, {}},
-        {QStringConverter::Utf8, 950, {}},
-        {QStringConverter::Utf8, 932, {}},
-        {QStringConverter::Utf8, 949, {}},
-        {QStringConverter::Utf8, 1252, {}},
-        {QStringConverter::Latin1, 0, {}}};
-    return encodings;
-}
-
-bool textFileExtension(const QString& path)
-{
-    static const QSet<QString> extensions = {
-        QStringLiteral("cs"), QStringLiteral("asmdef"), QStringLiteral("asmref"),
-        QStringLiteral("json"), QStringLiteral("meta"), QStringLiteral("md"),
-        QStringLiteral("txt"), QStringLiteral("xml"), QStringLiteral("yaml"),
-        QStringLiteral("yml"), QStringLiteral("prefab"), QStringLiteral("unity")};
-    return extensions.contains(QFileInfo(path).suffix().toLower());
-}
-
-std::optional<QByteArray> readEncodedText(const QString& path)
-{
-    if (!textFileExtension(path)) return std::nullopt;
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
-    constexpr qsizetype limit = 32 * 1024 * 1024;
-    if (file.size() > limit) return std::nullopt;
-    QByteArray bytes;
-    while (!file.atEnd()) {
-        VNH::IntegrationProgress::checkpoint();
-        bytes += file.read(1024 * 1024);
-        if (file.error() != QFileDevice::NoError || bytes.size() > limit) return std::nullopt;
-    }
-    return bytes;
-}
-
-std::optional<QByteArray> encodeText(const QString& text, const TextEncoding& encoding)
-{
-    if (!encoding.codePage) {
-        QStringEncoder encoder(encoding.unicode, QStringConverter::Flag::Stateless);
-        QByteArray bytes = encoder(text);
-        if (encoder.hasError()) return std::nullopt;
-        return bytes;
-    }
-    if (text.isEmpty()) return QByteArray();
-#if defined(Q_OS_WIN)
-    const DWORD flags = encoding.codePage == 54936 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
-    BOOL substituted = FALSE;
-    BOOL* usedDefault = encoding.codePage == 54936 ? nullptr : &substituted;
-    const auto* data = reinterpret_cast<const wchar_t*>(text.utf16());
-    const int size = WideCharToMultiByte(encoding.codePage, flags, data, int(text.size()),
-                                       nullptr, 0, nullptr, usedDefault);
-    if (!size || substituted) return std::nullopt;
-    QByteArray bytes(size, Qt::Uninitialized);
-    if (WideCharToMultiByte(encoding.codePage, flags, data, int(text.size()),
-                            bytes.data(), size, nullptr, usedDefault) != size || substituted)
-        return std::nullopt;
-    return bytes;
-#elif defined(Q_OS_MACOS)
-    const CFStringEncoding codec = CFStringConvertWindowsCodepageToEncoding(encoding.codePage);
-    if (codec == kCFStringEncodingInvalidId) return std::nullopt;
-    const CFStringRef string = CFStringCreateWithCharacters(kCFAllocatorDefault,
-        reinterpret_cast<const UniChar*>(text.utf16()), text.size());
-    if (!string) return std::nullopt;
-    CFIndex size = 0;
-    const CFIndex converted = CFStringGetBytes(string, CFRangeMake(0, text.size()),
-        codec, 0, false, nullptr, 0, &size);
-    QByteArray bytes(size, Qt::Uninitialized);
-    const CFIndex written = CFStringGetBytes(string, CFRangeMake(0, text.size()),
-        codec, 0, false, reinterpret_cast<UInt8*>(bytes.data()), size, nullptr);
-    CFRelease(string);
-    if (converted != text.size() || written != text.size()) return std::nullopt;
-    return bytes;
-#endif
-}
-
-std::optional<QString> decodeText(const QByteArray& bytes, const TextEncoding& encoding)
-{
-    QString text;
-    if (!encoding.codePage) {
-        QStringDecoder decoder(encoding.unicode,
-            QStringConverter::Flag::Stateless | QStringConverter::Flag::ConvertInitialBom);
-        text = decoder(bytes);
-        if (decoder.hasError()) return std::nullopt;
-    } else if (!bytes.isEmpty()) {
-#if defined(Q_OS_WIN)
-        const int size = MultiByteToWideChar(encoding.codePage, MB_ERR_INVALID_CHARS,
-            bytes.constData(), int(bytes.size()), nullptr, 0);
-        if (!size) return std::nullopt;
-        text.resize(size);
-        if (MultiByteToWideChar(encoding.codePage, MB_ERR_INVALID_CHARS, bytes.constData(),
-            int(bytes.size()), reinterpret_cast<wchar_t*>(text.data()), size) != size)
-            return std::nullopt;
-#elif defined(Q_OS_MACOS)
-        const CFStringEncoding codec = CFStringConvertWindowsCodepageToEncoding(encoding.codePage);
-        if (codec == kCFStringEncodingInvalidId) return std::nullopt;
-        const CFStringRef string = CFStringCreateWithBytes(kCFAllocatorDefault,
-            reinterpret_cast<const UInt8*>(bytes.constData()), bytes.size(), codec, false);
-        if (!string) return std::nullopt;
-        text.resize(CFStringGetLength(string));
-        CFStringGetCharacters(string, CFRangeMake(0, text.size()),
-                              reinterpret_cast<UniChar*>(text.data()));
-        CFRelease(string);
-#endif
-    }
-    for (const QChar character : text) {
-        if (character.category() == QChar::Other_Control
-            && character != QLatin1Char('\t') && character != QLatin1Char('\r')
-            && character != QLatin1Char('\n')) return std::nullopt;
-    }
-    const auto roundTrip = encodeText(text, encoding);
-    if (!roundTrip || *roundTrip != bytes) return std::nullopt;
-    return text;
-}
-
-QList<TextEncoding> possibleEncodings(const QByteArray& bytes)
-{
-    for (const auto& encoding : textEncodings()) {
-        if (!encoding.bom.isEmpty() && bytes.startsWith(encoding.bom)) return {encoding};
-    }
-    if (decodeText(bytes, textEncodings().front())) return {textEncodings().front()};
-    if (bytes.contains('\0')) {
-        std::optional<TextEncoding> best;
-        qsizetype mostAscii = 0;
-        for (const auto& encoding : textEncodings()) {
-            if (encoding.bom.isEmpty() || encoding.unicode == QStringConverter::Utf8) continue;
-            const auto text = decodeText(bytes, encoding);
-            if (!text) continue;
-            const qsizetype ascii = std::count_if(text->cbegin(), text->cend(),
-                [](QChar character) { return character.unicode() < 128; });
-            if (ascii > mostAscii) {
-                best = encoding;
-                mostAscii = ascii;
-            }
-        }
-        if (best) return {*best};
-        return textEncodings();
-    }
-    QList<TextEncoding> legacy;
-    for (const auto& encoding : textEncodings()) {
-        if (encoding.codePage || encoding.unicode == QStringConverter::Latin1) legacy << encoding;
-    }
-    return legacy;
-}
-
-QByteArray encodedLineEndingHash(const QByteArray& bytes, QByteArray* crlfHash)
-{
-    for (const auto& encoding : possibleEncodings(bytes)) {
-        const bool hasBom = !encoding.bom.isEmpty() && bytes.startsWith(encoding.bom);
-        auto text = decodeText(hasBom ? bytes.mid(encoding.bom.size()) : bytes, encoding);
-        if (!text) continue;
-        text->replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-        const QByteArray prefix = hasBom ? encoding.bom : QByteArray();
-        const auto lf = encodeText(*text, encoding);
-        if (!lf) return {};
-        if (crlfHash) {
-            text->replace(QStringLiteral("\n"), QStringLiteral("\r\n"));
-            const auto crlf = encodeText(*text, encoding);
-            if (!crlf) return {};
-            *crlfHash = QCryptographicHash::hash(prefix + *crlf, QCryptographicHash::Sha256).toHex();
-        }
-        return QCryptographicHash::hash(prefix + *lf, QCryptographicHash::Sha256).toHex();
-    }
-    return {};
-}
 
 QString pathKey(const QString& path)
 {
@@ -353,156 +161,14 @@ bool walk(const QString& root, bool importedOnly,
 
 }
 
-bool isDocumentationOrSample(const QString& relative)
-{
-    return relative.startsWith(QStringLiteral("Documentation~/"))
-        || relative.startsWith(QStringLiteral("Samples~/"))
-        || relative == QStringLiteral("Documentation~.meta")
-        || relative == QStringLiteral("Samples~.meta")
-        || relative == QStringLiteral("README.md")
-        || relative == QStringLiteral("CHANGELOG.md");
-}
-
-static QByteArray utf8LineEndingHash(const QString& path, QByteArray* crlfHash)
-{
-    if (!textFileExtension(path)) return {};
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return {};
-    QCryptographicHash lf(QCryptographicHash::Sha256);
-    QCryptographicHash crlf(QCryptographicHash::Sha256);
-    QStringDecoder decoder(QStringDecoder::Utf8);
-    bool pendingCr = false;
-    while (!file.atEnd()) {
-        VNH::IntegrationProgress::checkpoint();
-        QByteArray block = file.read(1024 * 1024);
-        if (file.error() != QFileDevice::NoError || block.contains('\0')) return {};
-        (void)static_cast<QString>(decoder(block));
-        if (decoder.hasError()) return {};
-        if (pendingCr) block.prepend('\r');
-        pendingCr = block.endsWith('\r');
-        if (pendingCr) block.chop(1);
-        block.replace("\r\n", "\n");
-        lf.addData(block);
-        if (crlfHash) {
-            block.replace("\n", "\r\n");
-            crlf.addData(block);
-        }
-    }
-    (void)static_cast<QString>(decoder(QByteArrayView("\0", 1)));
-    if (decoder.hasError()) return {};
-    if (pendingCr) {
-        lf.addData(QByteArrayView("\r", 1));
-        crlf.addData(QByteArrayView("\r", 1));
-    }
-    if (crlfHash) *crlfHash = crlf.result().toHex();
-    return lf.result().toHex();
-}
-
-QByteArray normalizedTextHash(const QString& path, QByteArray* crlfHash)
-{
-    const QByteArray utf8 = utf8LineEndingHash(path, crlfHash);
-    if (!utf8.isEmpty()) return utf8;
-    const auto bytes = readEncodedText(path);
-    return bytes ? encodedLineEndingHash(*bytes, crlfHash) : QByteArray();
-}
-
-bool matchesTextHashIgnoringLineEndings(const QString& path, const QByteArray& expected,
-                                       const QByteArray& normalizedExpected)
-{
-    QByteArray crlf;
-    const QByteArray lf = normalizedTextHash(path, normalizedExpected.isEmpty() ? &crlf : nullptr);
-    if (lf.isEmpty()) return false;
-    if (!normalizedExpected.isEmpty()) return lf == normalizedExpected.toLower();
-    return lf == expected.toLower() || crlf == expected.toLower();
-}
-
-bool matchesTextHashIgnoringEncoding(const QString& path, const QByteArray& expected,
-                                    const QByteArray& normalizedExpected)
-{
-    const auto bytes = readEncodedText(path);
-    if (!bytes) return false;
-    const QByteArray baseline = (normalizedExpected.isEmpty() ? expected : normalizedExpected).toLower();
-    QSet<QString> decoded;
-    for (const auto& inputEncoding : possibleEncodings(*bytes)) {
-        VNH::IntegrationProgress::checkpoint();
-        const bool hasBom = !inputEncoding.bom.isEmpty() && bytes->startsWith(inputEncoding.bom);
-        const auto text = decodeText(hasBom ? bytes->mid(inputEncoding.bom.size()) : *bytes, inputEncoding);
-        if (!text || decoded.contains(*text)) continue;
-        decoded.insert(*text);
-        QString lf = *text;
-        lf.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-        QStringList endings{lf};
-        if (normalizedExpected.isEmpty()) {
-            QString crlf = lf;
-            crlf.replace(QStringLiteral("\n"), QStringLiteral("\r\n"));
-            endings << *text << crlf;
-            endings.removeDuplicates();
-        }
-        for (const auto& outputEncoding : textEncodings()) {
-            VNH::IntegrationProgress::checkpoint();
-            for (const auto& ending : endings) {
-                const auto encoded = encodeText(ending, outputEncoding);
-                if (!encoded) continue;
-                QList<QByteArray> representations{*encoded};
-                if (!outputEncoding.bom.isEmpty()) representations << outputEncoding.bom + *encoded;
-                for (const auto& representation : representations) {
-                    if (QCryptographicHash::hash(representation, QCryptographicHash::Sha256).toHex() != baseline)
-                        continue;
-                    for (const auto& baselineEncoding : possibleEncodings(representation)) {
-                        const bool baselineBom = !baselineEncoding.bom.isEmpty()
-                            && representation.startsWith(baselineEncoding.bom);
-                        const auto baselineText = decodeText(baselineBom
-                            ? representation.mid(baselineEncoding.bom.size()) : representation, baselineEncoding);
-                        if (baselineText && *baselineText == ending) return true;
-                    }
-                }
-            }
-        }
-    }
-    return false;
-}
-
 QString defaultRelativePath()
 {
     return QStringLiteral("Packages/com.harken.core");
 }
 
-QString migrationJournalPath(const QString& projectRoot)
-{
-    return QDir(projectRoot).filePath(QStringLiteral("Library/HarkenIntegration/pending-migration.json"));
-}
-
-bool hasPendingMigration(const QString& projectRoot)
-{
-    const QFileInfo journal(migrationJournalPath(projectRoot));
-    return journal.exists() || journal.isSymLink() || journal.isJunction();
-}
-
-QString removalJournalPath(const QString& projectRoot)
-{
-    return QDir(projectRoot).filePath(QStringLiteral("Library/HarkenIntegration/pending-removal.json"));
-}
-
-bool hasPendingRemoval(const QString& projectRoot)
-{
-    const QFileInfo journal(removalJournalPath(projectRoot));
-    return journal.exists() || journal.isSymLink() || journal.isJunction();
-}
-
 bool samePath(const QString& left, const QString& right)
 {
     return pathKey(left) == pathKey(right);
-}
-
-QString restoreJournalPath(const QString& projectRoot)
-{
-    return QDir(projectRoot).filePath(QStringLiteral("Library/HarkenIntegration/pending-restore.json"));
-}
-
-bool hasPendingRestore(const QString& projectRoot)
-{
-    const QFileInfo journal(restoreJournalPath(projectRoot));
-    return journal.exists() || journal.isSymLink() || journal.isJunction();
 }
 
 bool containsPath(const QString& parent, const QString& child)
@@ -609,7 +275,7 @@ Discovery discover(const QString& projectRoot)
             if (!budget.consume(path)) return;
             if (samePath(existing.path, path)) return;
         }
-        result.installations.push_back({QDir::cleanPath(path), false});
+        result.installations.push_back({QDir::cleanPath(path)});
     };
     const auto dependencies = [&](const QJsonObject& object, const QString& base, bool lockFile = false) {
         const QJsonObject values = object.value(QStringLiteral("dependencies")).toObject();
@@ -652,8 +318,6 @@ Discovery discover(const QString& projectRoot)
                     embeddedPackages.insert(identity);
             }
             dependencies(package, info.absolutePath());
-        } else if (name == QStringLiteral(".harken-integration-state.json")) {
-            add(info.absolutePath());
         } else if (name.endsWith(QStringLiteral(".asmdef"))) {
             if (name == QStringLiteral("Harken.Core.asmdef") || name == QStringLiteral("Harken.Unity.asmdef"))
                 footprints << path;
@@ -732,7 +396,7 @@ Discovery discover(const QString& projectRoot)
             budget.external = false;
         }
     }
-    for (const QString& relative : {defaultRelativePath(), QStringLiteral("Assets/HarkenSDK")}) {
+    for (const QString& relative : {defaultRelativePath(), QStringLiteral("Assets/Plugins/Harken"), QStringLiteral("Assets/HarkenSDK")}) {
         const QString root = QDir(projectRoot).filePath(relative);
         const QString path = QDir(root).filePath(QStringLiteral("package.json"));
         if (!QFileInfo::exists(path)
@@ -753,34 +417,6 @@ Discovery discover(const QString& projectRoot)
                          }))
             result.errors << QStringLiteral("Integration Package files without an identifiable installation root: %1").arg(footprint);
     }
-    for (Installation& item : result.installations) {
-        if (!budget.consume(item.path)) break;
-        const QString statePath = QDir(item.path).filePath(QStringLiteral(".harken-integration-state.json"));
-        if (!QFileInfo::exists(statePath)) continue;
-        QJsonObject state;
-        QString error;
-        if (!readObject(statePath, &state, &error, budget)) continue;
-        item.managed = state.value(QStringLiteral("schema_version")).toInt() == 1
-            && state.value(QStringLiteral("package_name")).toString() == QStringLiteral("com.harken.core")
-            && !state.value(QStringLiteral("managed_files")).toArray().isEmpty();
-        for (const QJsonValue& value : state.value(QStringLiteral("managed_files")).toArray())
-            item.managed &= value.isString() && safeRelativePath(value.toString());
-        item.removed = state.value(QStringLiteral("schema_version")).toInt() == 1
-            && state.value(QStringLiteral("package_name")).toString() == QStringLiteral("com.harken.core")
-            && state.value(QStringLiteral("installation_state")).toString() == QStringLiteral("removed")
-            && state.value(QStringLiteral("managed_files")).isArray()
-            && state.value(QStringLiteral("managed_files")).toArray().isEmpty();
-        if (item.removed) {
-            item.removed = !QFileInfo::exists(QDir(item.path).filePath(QStringLiteral("package.json")))
-                && std::none_of(footprints.cbegin(), footprints.cend(), [&](const QString& file) {
-                    return containsPath(item.path, file);
-                });
-        }
-    }
-    for (qsizetype i = result.installations.size(); i > 0; --i) {
-        if (!result.installations[i - 1].removed) continue;
-        result.preservedInstallations.prepend(result.installations.takeAt(i - 1));
-    }
     if (!budget.error.isEmpty()) result.errors << budget.error;
     result.errors.removeDuplicates();
     result.integrationReferences.removeDuplicates();
@@ -789,25 +425,9 @@ Discovery discover(const QString& projectRoot)
 }
 
 bool validateTarget(const QString& projectRoot, const QString& target,
-                    QString* error, bool removing, bool preserveUnowned, bool restoring)
+                    QString* error, bool removing)
 {
-    if (!restoring && hasPendingRestore(projectRoot)) {
-        *error = QStringLiteral("An unfinished Integration Package restoration must be recovered before continuing.");
-        return false;
-    }
-    if (!removing && hasPendingRemoval(projectRoot)) {
-        *error = QStringLiteral("An unfinished Integration Package removal must be completed before continuing. Use Uninstall Integration Package to retry.");
-        return false;
-    }
-    if (hasPendingMigration(projectRoot)) {
-        *error = QStringLiteral("An unfinished Integration Package migration must be recovered before continuing.");
-        return false;
-    }
     const Discovery discovery = discover(projectRoot);
-    const bool retained = std::any_of(discovery.preservedInstallations.cbegin(), discovery.preservedInstallations.cend(),
-        [&](const Installation& item) { return samePath(item.path, target); });
-    const bool preserveFiles = retained || (preserveUnowned
-        && (removing || !QFileInfo::exists(QDir(target).filePath(QStringLiteral("package.json")))));
     if (!discovery.errors.isEmpty()) {
         *error = discovery.errors.join(QLatin1Char('\n'));
         return false;
@@ -830,7 +450,7 @@ bool validateTarget(const QString& projectRoot, const QString& target,
             *error = QStringLiteral("An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere.").arg(item.path);
             return false;
         }
-    } else if (!preserveFiles && QDir(target).exists()
+    } else if (QDir(target).exists()
                && !QDir(target).entryList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot).isEmpty()) {
         *error = QStringLiteral("The installation directory contains unrelated files: %1").arg(target);
         return false;
