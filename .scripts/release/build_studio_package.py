@@ -21,6 +21,7 @@ from release import collect_legal_texts, integration_layout, release_evidence
 
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
 PACKAGE_MANIFEST_NAME = "package-manifest.json"
+RETIRED_CAPABILITIES_NAME = "capabilities.json"
 SCHEMA_SOURCE = (
     Path(__file__).resolve().parents[2]
     / "HarkenStudio"
@@ -175,8 +176,9 @@ def collect_payload(input_dir: Path) -> list[Path]:
             "error: input directory does not contain a Studio binary "
             f"({' or '.join(STUDIO_BINARIES)})"
         )
-    if PACKAGE_MANIFEST_NAME in rel_names:
-        raise SystemExit(f"error: input directory already contains {PACKAGE_MANIFEST_NAME}")
+    for name in (PACKAGE_MANIFEST_NAME, RETIRED_CAPABILITIES_NAME):
+        if name in rel_names:
+            raise SystemExit(f"error: input directory already contains {name}")
     return files
 
 

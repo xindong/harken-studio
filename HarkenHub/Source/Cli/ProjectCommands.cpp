@@ -7,6 +7,7 @@
 #include "Maintenance/BuildPinRegistry.h"
 #include "Transactions/InstallIndex.h"
 #include "Versions/IntegrityChecker.h"
+#include "Versions/LocalBuildRegistry.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectProbe.h"
 #include "Projects/ProjectIntakeConsumer.h"
@@ -32,6 +33,23 @@ InstalledVersion selectedVersion(const QString& build)
     return *selected;
 }
 
+void requireUnchangedStudio(const InstalledVersion& version)
+{
+    if (version.isLocalBuild()) {
+        require(!version.executableFingerprint.isEmpty()
+                && LocalBuildRegistry::fileFingerprint(version.executablePath) == version.executableFingerprint,
+            "This local build changed and must be checked again.", "VersionUnavailable");
+        return;
+    }
+    const auto index = InstallIndex::snapshot();
+    require(index.ok, index.error);
+    const auto record = std::find_if(index.records.begin(), index.records.end(),
+        [&](const auto& item) { return item.buildId == version.buildId; });
+    require(record != index.records.end(), "The selected version has no trusted installation record");
+    const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash);
+    require(integrity.ok, integrity.error, "VersionNeedsRepair");
+}
+
 QJsonObject projectJson(const ProjectRecord& project)
 {
     const auto probe = ProjectProbe::probe(project.canonicalPath);
@@ -47,6 +65,7 @@ Reply projects(const Arguments& args)
 {
     if (args.operation == "templates") {
         const auto version = selectedVersion(args.required("build"));
+        requireUnchangedStudio(version);
         QString error;
         const auto templates = StudioInterface::listTemplates(version, &error);
         require(templates.has_value(), error);
@@ -59,15 +78,7 @@ Reply projects(const Arguments& args)
         requireConsent("studio");
         ProjectCreateRequest request;
         request.version = selectedVersion(args.required("build"));
-        if (!request.version.isLocalBuild()) {
-            const auto index = InstallIndex::snapshot();
-            require(index.ok, index.error);
-            const auto record = std::find_if(index.records.begin(), index.records.end(),
-                [&](const auto& item) { return item.buildId == request.version.buildId; });
-            require(record != index.records.end(), "The selected version has no trusted installation record");
-            const auto integrity = IntegrityChecker::check(record->installPath, record->packageManifestHash);
-            require(integrity.ok, integrity.error, "VersionNeedsRepair");
-        }
+        requireUnchangedStudio(request.version);
         request.name = args.required("name").trimmed();
         request.location = QFileInfo(args.required("location")).absoluteFilePath();
         require(QFileInfo(request.location).isDir(), "The project location must be an existing directory", "InvalidArguments");
