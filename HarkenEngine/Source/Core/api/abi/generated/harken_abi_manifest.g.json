@@ -9406,7 +9406,7 @@
             },
             {
               "alignment": 4,
-              "name": "streamRingBytes",
+              "name": "streamRingFrames",
               "offset": 88,
               "shape": {
                 "kind": "scalar",
@@ -9993,9 +9993,39 @@
                 "type": "u32"
               },
               "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "reserved13",
+              "offset": 352,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "streamRingBytes",
+              "offset": 360,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved14",
+              "offset": 364,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
             }
           ],
-          "size": 352
+          "size": 368
         },
         "VnCurrentWorldLoadDesc": {
           "alignment": 8,
@@ -25537,7 +25567,8 @@
               288,
               344,
               352,
-              360
+              360,
+              368
             ],
             "boundaries": [
               {
@@ -25553,7 +25584,7 @@
                 "size": 80
               },
               {
-                "field": "streamRingBytes",
+                "field": "streamRingFrames",
                 "size": 88
               },
               {
@@ -25599,13 +25630,21 @@
               {
                 "field": "maxActionCooldownRows",
                 "size": 344
+              },
+              {
+                "field": "reserved13",
+                "size": 352
+              },
+              {
+                "field": "streamRingBytes",
+                "size": 360
               }
             ],
             "boundaryFields": [
               "onNotification",
               "logCallback",
               "delayEffectPoolCapacity",
-              "streamRingBytes",
+              "streamRingFrames",
               "maxActions",
               "maxTriggerDepth",
               "mixChannelLayout",
@@ -25616,14 +25655,13 @@
               "maxBusTopologyOwners",
               "maxActionFirings",
               "maxCatalogEntries",
-              "maxActionCooldownRows"
+              "maxActionCooldownRows",
+              "reserved13",
+              "streamRingBytes"
             ],
-            "currentSize": 352,
+            "currentSize": 368,
             "missingFields": "engine-defaults",
             "mode": "exact-discrete-prefix",
-            "retiredTailBytes": [
-              8
-            ],
             "source": "explicit",
             "unknownSize": "reject"
           },
@@ -26625,7 +26663,7 @@
       }
     }
   },
-  "contractSha256": "8607c8c35ce65eaec7210fa9d9134e99469eb717ba2fb1d2e945bf6782566b16",
+  "contractSha256": "adc9578dc6d0d1144aebcf818694fc374db96d17bcffac27baea78cac45337ff",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

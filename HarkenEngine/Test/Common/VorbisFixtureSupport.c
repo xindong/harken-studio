@@ -1,4 +1,4 @@
-#include "../../../HarkenStudio/ThirdParty/libvorbis/lib/codec_internal.h"
+#include "harken_reference/codec_internal.h"
 
 /* Keep the reference library's C-only internal declarations out of C++ tests. */
 int harken_test_vorbis_floor_supported(const vorbis_info* info) {

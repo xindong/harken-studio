@@ -276,6 +276,7 @@ class RuntimeAbiManifestTest(unittest.TestCase):
                 344,
                 352,
                 360,
+                368,
             ],
             policies["VnConfig"]["acceptedSizes"],
         )

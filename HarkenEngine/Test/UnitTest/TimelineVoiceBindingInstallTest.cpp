@@ -1014,12 +1014,17 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
 }
 
 TEST(TimelineVoiceInstall, OneFrameStreamRingRejectsMissingNeighborButAcceptsNaturalSingleFrameAndEmptyCrop) {
-    for (const auto workers : {0u, 2u}) for (const auto sourceFrames : {1u, 8u}) {
-        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " frames=" << sourceFrames);
+    for (bool legacy : {false, true}) for (const auto workers : {0u, 2u}) for (const auto sourceFrames : {1u, 8u}) {
+        SCOPED_TRACE(::testing::Message() << "legacy=" << legacy << " workers=" << workers << " frames=" << sourceFrames);
         auto config = TimelineInstallConfig(2, kBlock, kRate);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingBytes = sizeof(float);
+        if (legacy) {
+            config.structSize = 352;
+            config.streamRingFrames = 1;
+        } else {
+            config.streamRingBytes = sizeof(float);
+        }
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();

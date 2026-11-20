@@ -172,7 +172,7 @@ namespace Harken
             Off(f, "VnRemoteClientBus", "id", Marshal.OffsetOf<VnRemoteClientBus>("id"), 0);
             Off(f, "VnRemoteClientBus", "generation", Marshal.OffsetOf<VnRemoteClientBus>("generation"), 16);
             Off(f, "VnRemoteClientBus", "peak", Marshal.OffsetOf<VnRemoteClientBus>("peak"), 20);
-            Size(f, "VnConfig", Marshal.SizeOf<VnConfig>(), 352);
+            Size(f, "VnConfig", Marshal.SizeOf<VnConfig>(), 368);
             Off(f, "VnConfig", "structSize", Marshal.OffsetOf<VnConfig>("structSize"), 0);
             Off(f, "VnConfig", "sampleRate", Marshal.OffsetOf<VnConfig>("sampleRate"), 4);
             Off(f, "VnConfig", "blockFrames", Marshal.OffsetOf<VnConfig>("blockFrames"), 8);
@@ -191,7 +191,7 @@ namespace Harken
             Off(f, "VnConfig", "logUserData", Marshal.OffsetOf<VnConfig>("logUserData"), 72);
             Off(f, "VnConfig", "delayEffectPoolCapacity", Marshal.OffsetOf<VnConfig>("delayEffectPoolCapacity"), 80);
             Off(f, "VnConfig", "toneEffectPoolCapacity", Marshal.OffsetOf<VnConfig>("toneEffectPoolCapacity"), 84);
-            Off(f, "VnConfig", "streamRingBytes", Marshal.OffsetOf<VnConfig>("streamRingBytes"), 88);
+            Off(f, "VnConfig", "streamRingFrames", Marshal.OffsetOf<VnConfig>("streamRingFrames"), 88);
             Off(f, "VnConfig", "maxStreams", Marshal.OffsetOf<VnConfig>("maxStreams"), 92);
             Off(f, "VnConfig", "prebufferMs", Marshal.OffsetOf<VnConfig>("prebufferMs"), 96);
             Off(f, "VnConfig", "starvationCooldownBlocks", Marshal.OffsetOf<VnConfig>("starvationCooldownBlocks"), 100);
@@ -250,6 +250,9 @@ namespace Harken
             Off(f, "VnConfig", "maxPackReplacementPeakBytes", Marshal.OffsetOf<VnConfig>("maxPackReplacementPeakBytes"), 336);
             Off(f, "VnConfig", "maxActionCooldownRows", Marshal.OffsetOf<VnConfig>("maxActionCooldownRows"), 344);
             Off(f, "VnConfig", "reserved12", Marshal.OffsetOf<VnConfig>("reserved12"), 348);
+            Off(f, "VnConfig", "reserved13", Marshal.OffsetOf<VnConfig>("reserved13"), 352);
+            Off(f, "VnConfig", "streamRingBytes", Marshal.OffsetOf<VnConfig>("streamRingBytes"), 360);
+            Off(f, "VnConfig", "reserved14", Marshal.OffsetOf<VnConfig>("reserved14"), 364);
             Size(f, "VnPCMDesc", Marshal.SizeOf<VnPCMDesc>(), 48);
             Off(f, "VnPCMDesc", "structSize", Marshal.OffsetOf<VnPCMDesc>("structSize"), 0);
             Off(f, "VnPCMDesc", "sampleRate", Marshal.OffsetOf<VnPCMDesc>("sampleRate"), 4);

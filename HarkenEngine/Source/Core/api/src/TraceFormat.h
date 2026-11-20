@@ -50,11 +50,14 @@ inline constexpr std::uint32_t kTraceFormatVersion = 8;
 //   u64      cpuTicksPerSecond    recorder QPC rate; analysis aid only
 inline constexpr std::uint32_t kTraceFixedHeaderBytes = 4 + 4 + 4 + 4 + 8 + 8;
 inline constexpr std::uint32_t kTraceConfigSchemaVersion = 1;
-inline constexpr std::uint32_t kTraceConfigVintageCount = 18;
+inline constexpr std::uint32_t kTraceConfigVintageCount = 19;
 // Vintage 14 appends one 32-bit firing-capacity field to the unchanged
 // vintage-13 image. Vintage 15 appends the Pack catalog/resident budgets.
 // Vintage 16 appends the Action cooldown capacity.
-// Vintage 17 appends the compressed decoder budget; vintage 18 removes it.
+// Through vintage 16 the stream capacity prefix is in PCM frames per channel.
+// Vintages 17 and 18 use bytes there; only 17 has a trailing decoder budget.
+// Vintage 19 restores frame units in the prefix and appends byte capacity.
+// Only one of these two capacities may be nonzero.
 // Reserved native fields are never serialized.
 inline constexpr std::uint32_t kTraceConfigWireBytesV13 =
     4 + 4 + 2 * 4 + 49 * 4 + 8;
@@ -66,7 +69,8 @@ inline constexpr std::uint32_t kTraceConfigWireBytesV16 =
     kTraceConfigWireBytesV15 + 4;
 inline constexpr std::uint32_t kTraceConfigWireBytesV17 =
     kTraceConfigWireBytesV16 + 8;
-inline constexpr std::uint32_t kTraceConfigWireBytes = kTraceConfigWireBytesV16;
+inline constexpr std::uint32_t kTraceConfigWireBytesV18 = kTraceConfigWireBytesV16;
+inline constexpr std::uint32_t kTraceConfigWireBytes = kTraceConfigWireBytesV18 + 4;
 // Repository history emitted VTRC v2 before and after the append-only
 // Bus-topology VnConfig tail. These are the only full config-image sizes a v2
 // reader may accept. A future VnConfig append requires VTRC v3.

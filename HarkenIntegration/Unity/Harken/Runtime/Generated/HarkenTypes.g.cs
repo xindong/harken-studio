@@ -1038,7 +1038,7 @@ namespace Harken
     public IntPtr logUserData;
     public uint delayEffectPoolCapacity;
     public uint toneEffectPoolCapacity;
-    public uint streamRingBytes;
+    public uint streamRingFrames;
     public uint maxStreams;
     public uint prebufferMs;
     public uint starvationCooldownBlocks;
@@ -1097,6 +1097,9 @@ namespace Harken
     public ulong maxPackReplacementPeakBytes;
     public uint maxActionCooldownRows;
     public uint reserved12;
+    public ulong reserved13;
+    public uint streamRingBytes;
+    public uint reserved14;
     }
 
     [StructLayout(LayoutKind.Sequential)]

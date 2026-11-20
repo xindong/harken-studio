@@ -1416,6 +1416,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved10",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved11",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved12",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved14",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved2",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved3",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved4",
@@ -1436,6 +1437,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxCompositeIndexBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxPackDecodeStagingBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxPackReplacementPeakBytes",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong reserved13",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxPackResourceBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxResidentDefinitionBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxTopologyPlanBytes",
@@ -1734,8 +1736,9 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 0u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_BUFFER_TOO_SMALL = - 1301",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_NO_EVENT = - 1300",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnConfig [ordered-members:f047b5509e2840aeed34b27ed627323004d0c45c2b878d5854bf14db33e49660]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnConfig [ordered-members:914b1b05b9681f2ec7a09fae66916703ec05084bccb94f63cdf78322b44ec7be]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint streamRingBytes",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint streamRingFrames",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:c3de02c25293616f787bfa9bc0747fd7a73d52f6516343455f2fa2279a18b020]"
       ]
     },

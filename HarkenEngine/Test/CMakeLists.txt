@@ -1,17 +1,11 @@
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
 
-# Only test code links the upstream decoder used as an independent reference.
-if(NOT HARKEN_BUILD_EDITOR AND NOT TARGET ogg)
-    add_subdirectory(${CMAKE_SOURCE_DIR}/HarkenStudio/ThirdParty/libogg ${CMAKE_CURRENT_BINARY_DIR}/reference-ogg)
-endif()
-if(NOT HARKEN_BUILD_EDITOR AND NOT TARGET vorbisfile)
-    add_subdirectory(${CMAKE_SOURCE_DIR}/HarkenStudio/ThirdParty/libvorbis ${CMAKE_CURRENT_BINARY_DIR}/reference-vorbis)
-endif()
+add_subdirectory(ReferenceVorbis)
 
 # Reuse the decoder cases for Debug CRT qualification without rebuilding the
 # unrelated full-engine tests. This target is explicitly invoked when needed.
 add_executable(harken_vorbis_qualification_tests EXCLUDE_FROM_ALL
-    Common/VorbisFixture.cpp Common/VorbisFixtureSupport.c
+    Common/VorbisFixture.cpp
     UnitTest/VorbisDecoderTest.cpp UnitTest/AllocationProbe.cpp
     ${HARKEN_CORE_DIR}/media/src/VorbisMedia.cpp
     ${HARKEN_CORE_DIR}/media/src/VorbisDecoder.cpp
@@ -23,7 +17,7 @@ target_include_directories(harken_vorbis_qualification_tests PRIVATE
     ${HARKEN_CORE_DIR}/core/contract/include
     ${HARKEN_CORE_DIR}/media/include)
 target_link_libraries(harken_vorbis_qualification_tests PRIVATE
-    harken_pack_format harken_vorbis_decoder vorbisfile harken_buildinfo GTest::gtest_main)
+    harken_pack_format harken_vorbis_decoder harken_test_vorbis_reference harken_buildinfo GTest::gtest_main)
 
 add_subdirectory(UnitTest/ProgramRegistration ProgramRegistration)
 
@@ -121,7 +115,6 @@ gtest_discover_tests(harken_pack_storage_tests PROPERTIES TIMEOUT 120)
 
 add_executable(harken_runtime_tests
     Common/VorbisFixture.cpp
-    Common/VorbisFixtureSupport.c
     UnitTest/VorbisMediaTest.cpp
     UnitTest/VorbisPlaybackTest.cpp
     UnitTest/VorbisDecoderTest.cpp
@@ -346,7 +339,7 @@ add_executable(harken_runtime_tests
     E2E/TraceReplayTest.cpp
     E2E/PackLogicRoundtripTest.cpp
 )
-target_link_libraries(harken_runtime_tests PRIVATE harken_vorbis_decoder vorbisfile harken_core harken_buildinfo harken_host_control
+target_link_libraries(harken_runtime_tests PRIVATE harken_vorbis_decoder harken_test_vorbis_reference harken_core harken_buildinfo harken_host_control
                       harken_program_registration
                       harken_preview GTest::gtest_main)
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)

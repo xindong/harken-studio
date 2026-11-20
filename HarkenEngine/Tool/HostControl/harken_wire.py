@@ -112,7 +112,7 @@ TABLE_JSON = r'''
           "onNotification",
           "logCallback",
           "delayEffectPoolCapacity",
-          "streamRingBytes",
+          "streamRingFrames",
           "maxActions",
           "maxTriggerDepth",
           "mixChannelLayout",
@@ -123,13 +123,12 @@ TABLE_JSON = r'''
           "maxBusTopologyOwners",
           "maxActionFirings",
           "maxCatalogEntries",
-          "maxActionCooldownRows"
+          "maxActionCooldownRows",
+          "reserved13",
+          "streamRingBytes"
         ],
         "missingFields": "engine-defaults",
-        "unknownSize": "reject",
-        "retiredTailBytes": [
-          8
-        ]
+        "unknownSize": "reject"
       },
       "VnSnapshot": {
         "mode": "exact-discrete-prefix",
@@ -973,7 +972,7 @@ TABLE_JSON = r'''
           "u32"
         ],
         [
-          "streamRingBytes",
+          "streamRingFrames",
           "u32"
         ],
         [
@@ -1206,6 +1205,18 @@ TABLE_JSON = r'''
         ],
         [
           "reserved12",
+          "u32"
+        ],
+        [
+          "reserved13",
+          "u64"
+        ],
+        [
+          "streamRingBytes",
+          "u32"
+        ],
+        [
+          "reserved14",
           "u32"
         ]
       ]

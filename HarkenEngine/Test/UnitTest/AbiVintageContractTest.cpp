@@ -12,9 +12,9 @@ namespace {
 
 using harkentest::MakeNullConfig;
 
-constexpr std::array<std::uint32_t, 17> kConfigVintages = {
+constexpr std::array<std::uint32_t, 18> kConfigVintages = {
     32, 64, 80, 88, 112, 184, 192, 208, 224, 232, 240, 264, 280, 288, 344,
-    352, 360,
+    352, 360, 368,
 };
 constexpr std::array<std::uint32_t, 18> kSnapshotVintages = {
     1832, 2560, 2568, 2656, 2680, 2752,
@@ -25,7 +25,7 @@ constexpr std::array<std::uint32_t, 18> kSnapshotVintages = {
 static_assert(offsetof(VnConfig, onNotification) == 32);
 static_assert(offsetof(VnConfig, logCallback) == 64);
 static_assert(offsetof(VnConfig, delayEffectPoolCapacity) == 80);
-static_assert(offsetof(VnConfig, streamRingBytes) == 88);
+static_assert(offsetof(VnConfig, streamRingFrames) == 88);
 static_assert(offsetof(VnConfig, maxActions) == 112);
 static_assert(offsetof(VnConfig, maxTriggerDepth) == 184);
 static_assert(offsetof(VnConfig, mixChannelLayout) == 192);
@@ -46,7 +46,8 @@ static_assert(offsetof(VnConfig, maxPackResourceBytes) == 328);
 static_assert(offsetof(VnConfig, maxPackReplacementPeakBytes) == 336);
 static_assert(offsetof(VnConfig, maxActionCooldownRows) == 344);
 static_assert(offsetof(VnConfig, reserved12) == 348);
-static_assert(sizeof(VnConfig) == 352);
+static_assert(offsetof(VnConfig, streamRingBytes) == 360);
+static_assert(sizeof(VnConfig) == 368);
 static_assert(sizeof(VnPackLoadDesc) == 56);
 static_assert(offsetof(VnPackLoadDesc, structSize) == 0);
 static_assert(offsetof(VnPackLoadDesc, flags) == 4);

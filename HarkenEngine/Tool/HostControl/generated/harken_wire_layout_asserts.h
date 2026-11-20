@@ -327,7 +327,7 @@ static_assert(offsetof(VnRemoteClientBus, generation) == 16,
 static_assert(offsetof(VnRemoteClientBus, peak) == 20,
               "wire table offset drift: VnRemoteClientBus.peak");
 
-static_assert(sizeof(VnConfig) == 352,
+static_assert(sizeof(VnConfig) == 368,
               "wire table size drift: VnConfig");
 static_assert(offsetof(VnConfig, structSize) == 0,
               "wire table offset drift: VnConfig.structSize");
@@ -365,8 +365,8 @@ static_assert(offsetof(VnConfig, delayEffectPoolCapacity) == 80,
               "wire table offset drift: VnConfig.delayEffectPoolCapacity");
 static_assert(offsetof(VnConfig, toneEffectPoolCapacity) == 84,
               "wire table offset drift: VnConfig.toneEffectPoolCapacity");
-static_assert(offsetof(VnConfig, streamRingBytes) == 88,
-              "wire table offset drift: VnConfig.streamRingBytes");
+static_assert(offsetof(VnConfig, streamRingFrames) == 88,
+              "wire table offset drift: VnConfig.streamRingFrames");
 static_assert(offsetof(VnConfig, maxStreams) == 92,
               "wire table offset drift: VnConfig.maxStreams");
 static_assert(offsetof(VnConfig, prebufferMs) == 96,
@@ -483,6 +483,12 @@ static_assert(offsetof(VnConfig, maxActionCooldownRows) == 344,
               "wire table offset drift: VnConfig.maxActionCooldownRows");
 static_assert(offsetof(VnConfig, reserved12) == 348,
               "wire table offset drift: VnConfig.reserved12");
+static_assert(offsetof(VnConfig, reserved13) == 352,
+              "wire table offset drift: VnConfig.reserved13");
+static_assert(offsetof(VnConfig, streamRingBytes) == 360,
+              "wire table offset drift: VnConfig.streamRingBytes");
+static_assert(offsetof(VnConfig, reserved14) == 364,
+              "wire table offset drift: VnConfig.reserved14");
 
 static_assert(sizeof(VnPCMDesc) == 48,
               "wire table size drift: VnPCMDesc");
