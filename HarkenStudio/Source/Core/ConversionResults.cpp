@@ -103,6 +103,13 @@ QVector<SelectedSource> selectedSources(const ProjectData& project, const QUuid&
 
 }
 
+FileProperties FileProperties::fromSource(const AssetInfo& asset)
+{
+    const auto& metadata = asset.metadata;
+    return {asset.absolutePath, metadata.codec, metadata.sampleRate, metadata.channels,
+        metadata.totalSamples, metadata.fileSize};
+}
+
 QJsonObject FileProperties::toJson() const
 {
     return {{QStringLiteral("path"), path}, {QStringLiteral("format"), format},
@@ -145,8 +152,7 @@ std::optional<SourceResult> inspectSource(const ProjectData& project,
     result.soundName = sound.name;
     result.sourcePath = asset.relativePath;
     result.language = language;
-    result.original = {asset.absolutePath, asset.metadata.originalFormat, asset.metadata.sampleRate,
-        asset.metadata.channels, asset.metadata.totalSamples, asset.metadata.fileSize};
+    result.original = FileProperties::fromSource(asset);
     if (!conversion) return result;
     result.presetGuid = conversion->presetGuid;
     const auto key = SoundSourceDerivative::cacheKey(asset.contentHash,

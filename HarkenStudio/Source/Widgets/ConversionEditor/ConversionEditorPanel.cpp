@@ -127,7 +127,7 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     rulesTable_ = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, body);
     configLayout->addWidget(rulesTable_, 1);
     rules_ = rulesTable_->createItemView(QStringLiteral("conversionRules"),
-        {QStringLiteral("#"), tr("Size range"), tr("Sample rate"), tr("Format"), tr("Quality")}, {0, 360, 240, 200, 200});
+        {QStringLiteral("#"), tr("Size range"), tr("Sample rate"), tr("Format"), tr("Quality")}, {0, 1, 1, 1, 1});
     rulesTable_->setRowNumberColumn(RuleNumber);
     rules_->headerItem()->setToolTip(RuleNumber, tr("Rule numbers match the size ranges above."));
     rules_->setRootIsDecorated(false);
@@ -164,8 +164,8 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     result->setContentWidget(resultsTable);
     results_ = resultsTable->createItemView(QStringLiteral("conversionResults"),
         {tr("Sound"), tr("Source"), tr("Language"), tr("Original format"), tr("Original rate"),
-         tr("Original channels"), tr("Original size"), tr("Converted format"), tr("Converted rate"),
-         tr("Converted size"), tr("Ratio")}, {170, 195, 70, 100, 85, 110, 85, 110, 95, 95, 55});
+         tr("Original size"), tr("Converted format"), tr("Converted rate"), tr("Converted size"),
+         tr("Ratio")}, {170, 195, 70, 100, 85, 85, 110, 95, 95, 55});
     auto* header = results_->headerItem();
     for (int column = 0; column < results_->columnCount(); ++column)
         header->setToolTip(column, header->text(column));
@@ -487,7 +487,7 @@ void ConversionEditorPanel::refreshResults()
     if (!error.isEmpty()) { qWarning().noquote() << error; return; }
     for (const auto& row : rows) {
         auto* item = new QTreeWidgetItem(results_, {QString(), row.sourcePath, row.language,
-            row.original.format, tr("%1 Hz").arg(row.original.sampleRate), QString::number(row.original.channels),
+            row.original.format, tr("%1 Hz").arg(row.original.sampleRate),
             sizeText(row.original.bytes), row.converted ? row.converted->format : QString(),
             row.converted ? tr("%1 Hz").arg(row.converted->sampleRate) : QString(),
             row.converted ? sizeText(row.converted->bytes) : QString(),

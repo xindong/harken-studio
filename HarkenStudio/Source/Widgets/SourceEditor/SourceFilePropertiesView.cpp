@@ -1,6 +1,7 @@
 #include "SourceFilePropertiesView.h"
 
 #include "Core/AssetPipeline/AssetRegistry.h"
+#include "Core/AssetPipeline/PathUtils.h"
 #include "Core/Components/VSound.h"
 #include "Core/ConversionResults.h"
 #include "Core/PlatformContextService.h"
@@ -10,8 +11,10 @@
 #include "Core/SoundSourceSemantics.h"
 #include "Core/ThemeLayout.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
-#include "Widgets/Common/DialogFormLayout.h"
+#include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/TableWidget.h"
 
+#include <QDir>
 #include <QLabel>
 #include <QLocale>
 #include <QVBoxLayout>
@@ -28,23 +31,28 @@ SourceFilePropertiesView::SourceFilePropertiesView(QWidget* parent) : QWidget(pa
     title->setObjectName(QStringLiteral("sourceFilePropertiesTitle"));
     QtControlSkin::setSemanticProperty(title, "textRole", QStringLiteral("title"));
     layout->addWidget(title);
-    auto* form = new DialogFormLayout;
-    const std::array<QString, 6> titles{
-        tr("File Path"), tr("Channels"), tr("Sample Rate"), tr("Duration"), tr("Size"), tr("Format")};
-    const std::array<const char*, 6> names{
-        "sourceFilePath", "sourceFileChannels", "sourceFileSampleRate",
-        "sourceFileDuration", "sourceFileSize", "sourceFileFormat"};
+    auto* table = new TableWidget(TableOptions::display(), this);
+    table->setColumnsMovable(false);
+    auto* view = table->createItemView(QStringLiteral("sourceFilePropertiesTable"),
+        {tr("Property"), tr("Value")}, {1, 5});
+    view->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
+    view->setSelectionMode(QAbstractItemView::NoSelection);
+    view->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    layout->addWidget(table, 1);
+    const std::array<QString, PropertyCount> titles{tr("Relative Path"), tr("Absolute Path"),
+        tr("Channels"), tr("Sample Rate"), tr("Duration"), tr("Size"), tr("Format")};
+    const std::array<const char*, PropertyCount> names{"sourceFileRelativePath", "sourceFileAbsolutePath",
+        "sourceFileChannels", "sourceFileSampleRate", "sourceFileDuration", "sourceFileSize", "sourceFileFormat"};
     for (size_t index = 0; index < titles.size(); ++index) {
-        auto* value = new QLabel(this);
+        auto* row = new QTreeWidgetItem(view, {titles[index]});
+        auto* value = new QLabel(view);
         value->setObjectName(QString::fromLatin1(names[index]));
         value->setTextFormat(Qt::PlainText);
         value->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        value->setWordWrap(true);
-        form->addRow(titles[index], value);
+        value->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        view->setItemWidget(row, 1, value);
         values_[index] = value;
     }
-    layout->addLayout(form);
-    layout->addStretch();
     auto& manager = ProjectManager::instance();
     connect(&manager, &ProjectManager::itemPropertyChanged, this, &SourceFilePropertiesView::refresh, Qt::QueuedConnection);
     connect(&manager, &ProjectManager::defaultConversionChanged, this, &SourceFilePropertiesView::refresh);
@@ -70,14 +78,15 @@ void SourceFilePropertiesView::setSource(const QUuid& soundGuid, const QUuid& en
 
 void SourceFilePropertiesView::refresh()
 {
-    for (auto* value : values_)
+    for (auto* value : values_) {
         value->clear();
-    const auto* asset = AssetRegistry::instance().getAsset(sourceId_);
+        value->setToolTip({});
+    }
+    auto& registry = AssetRegistry::instance();
+    const auto* asset = registry.getAsset(sourceId_);
     if (!asset)
         return;
-    ConversionResults::FileProperties properties{
-        asset->absolutePath, asset->metadata.originalFormat, asset->metadata.sampleRate,
-        asset->metadata.channels, asset->metadata.totalSamples, asset->metadata.fileSize};
+    auto properties = ConversionResults::FileProperties::fromSource(*asset);
     if (!soundGuid_.isNull()) {
         auto& manager = ProjectManager::instance();
         const auto* project = manager.currentProject();
@@ -88,7 +97,7 @@ void SourceFilePropertiesView::refresh()
             return;
         if (PreviewMediaModeService::instance().mode() == PreviewMediaMode::Converted) {
             const auto result = ConversionResults::inspectSource(*project, *item, *source, *asset,
-                PlatformContextService::instance().context().primary);
+                PlatformContextService::instance().context().primary, {}, sound->scheduleOffsetSec);
             if (!result)
                 return;
             if (!result->presetGuid.isNull()) {
@@ -98,14 +107,20 @@ void SourceFilePropertiesView::refresh()
             }
         }
     }
-    values_[0]->setText(properties.path);
-    values_[1]->setText(QString::number(properties.channels));
-    values_[2]->setText(tr("%1 Hz").arg(properties.sampleRate));
+    const auto displayPath = [](QLabel* label, const QString& path) {
+        const auto nativePath = QDir::toNativeSeparators(path);
+        label->setText(nativePath);
+        label->setToolTip(nativePath);
+    };
+    displayPath(values_[RelativePath], PathUtils::toRelativePath(properties.path, registry.projectRoot()));
+    displayPath(values_[AbsolutePath], properties.path);
+    values_[Channels]->setText(QString::number(properties.channels));
+    values_[SampleRate]->setText(tr("%1 Hz").arg(properties.sampleRate));
     if (properties.sampleRate != 0)
-        values_[3]->setText(tr("%1 s").arg(
+        values_[Duration]->setText(tr("%1 s").arg(
             static_cast<double>(properties.frames) / properties.sampleRate, 0, 'f', 3));
-    values_[4]->setText(QLocale().formattedDataSize(static_cast<qint64>(properties.bytes)));
-    values_[5]->setText(properties.format);
+    values_[Size]->setText(QLocale().formattedDataSize(static_cast<qint64>(properties.bytes)));
+    values_[Format]->setText(properties.format);
 }
 
 }
