@@ -123,26 +123,6 @@ namespace Harken
             ids = found.ToArray();
             return VnResult.VN_OK;
         }
-
-        public static VnResult Parse(string inventoryJson, string selectedJson, string language,
-            out GameplayPublication publication, out string error)
-        {
-            publication = null;
-            error = "Legacy Pack manifests are unsupported. Re-export with the current Studio and use PackBootstrap.StartDirectory or PackSource.";
-            return VnResult.VN_PACK_INCOMPATIBLE;
-        }
-
-        public static VnResult Read(string platformDirectory, string language,
-            out GameplayPublication publication, out string error)
-        {
-            return Parse(null, null, language, out publication, out error);
-        }
-
-        public VnResult ValidateInit(byte[] bytes, out string error)
-        {
-            error = "Legacy gameplay publications are unsupported. Re-export with the current Studio.";
-            return VnResult.VN_PACK_INCOMPATIBLE;
-        }
     }
 
 }

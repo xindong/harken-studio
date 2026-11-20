@@ -10,17 +10,15 @@ namespace Harken.Unity.Editor
         public readonly string Directory;
         public readonly string CompanionGuid;
         public readonly string Language;
-        public readonly string PlatformId;
         public readonly string PlatformName;
 
         public HarkenEditorPublicationBinding(string sourceGuid, string directory, string companionGuid,
-            string language, string platformId, string platformName)
+            string language, string platformName)
         {
             SourceGuid = sourceGuid ?? string.Empty;
             Directory = directory ?? string.Empty;
             CompanionGuid = companionGuid ?? string.Empty;
             Language = language ?? string.Empty;
-            PlatformId = platformId ?? string.Empty;
             PlatformName = platformName ?? string.Empty;
         }
 
@@ -33,7 +31,7 @@ namespace Harken.Unity.Editor
             var parsed = JsonUtility.FromJson<Serialized>(json);
             if (parsed == null) return false;
             binding = new HarkenEditorPublicationBinding(parsed.sourceGuid, parsed.directory, parsed.companionGuid,
-                parsed.language, parsed.platformId, parsed.platformName);
+                parsed.language, parsed.platformName);
             return true;
         }
 
@@ -46,7 +44,6 @@ namespace Harken.Unity.Editor
                 directory = binding.Directory,
                 companionGuid = binding.CompanionGuid,
                 language = binding.Language,
-                platformId = binding.PlatformId,
                 platformName = binding.PlatformName
             };
             EditorPrefs.SetString(Key(projectId), JsonUtility.ToJson(parsed));
@@ -77,7 +74,6 @@ namespace Harken.Unity.Editor
             public string directory;
             public string companionGuid;
             public string language;
-            public string platformId;
             public string platformName;
         }
     }

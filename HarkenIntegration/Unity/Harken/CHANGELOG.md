@@ -19,6 +19,11 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remote communication, snapshot and Monitor APIs are available only with the Development edition (`HARKEN_ENGINE_DEV`). Release builds compile without them.
 - The package declares its Unity built-in module dependencies (Audio, JSONSerialize, UnityWebRequest), so they cannot be disabled while the package is installed.
 - New settings assets are created at `Assets/Resources/HarkenProjectSettings.asset` and `Assets/Editor/HarkenEditorProjectSettings.asset`. Existing settings assets keep working wherever they are.
+- `HarkenAudioSystem.ConfigurePlatformBeforeStartup` takes only the platform name, and `HarkenEditorCatalog.RefreshPlatform` no longer takes a platform ID.
+
+### Deprecated
+
+- `StreamSources`, `StreamByteSource`, `StreamReadCancellation` and `StreamSourceRequest`. Studio does not export streaming resources; these types will be removed in the next version.
 
 ### Removed
 
@@ -26,6 +31,8 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The project-specific `HarkenActions.g.cs` and `HarkenVariables.g.cs` symbol files are no longer shipped with the package.
 - The `harken-integration.json` manifest. The package is identified by `package.json` only.
 - Generated Variable symbols: `HarkenVariableId`, the `HarkenVariableReference` asset, `Values.RegisterGeneratedCatalog`, the `HarkenVariableId` overloads of `Values.SetValue` and `QueryVariable` and of `Emitter.QueryVariable`, and the Variable ID picker. `HarkenVariable` now identifies its Variable by name and project only; use Variable names or `VnObjectId` in code.
+- Entry points of the retired Pack manifest workflow, which only returned an unsupported result: `GameplayPublication.Parse`, `Read` and `ValidateInit`; `Packs.ReplacePack`; `PackBootstrapSession.Publication`; `HarkenPackSource.Capture`; `HarkenPreparedPacks.Capture`, `Create`, `SupplyPack`, `SetDemandProvider` and `SelectedManifestPath`; `HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup`, `ConfigurePreparedBytesBeforeStartup`, `StartRuntime(HarkenPreparedPacks)` and `StartRuntime(string, Func<string, byte[]>, string)`; `HarkenEditorPreview.Prepare(HarkenPackSource, ulong[], bool)`; `HarkenEditorCatalog.Refresh(string, Func<string, byte[]>, string)`; and `HarkenWaveformPublication`.
+- The Platform Id project setting, `HarkenProjectSettings.PlatformId`, and the hidden Pack source and platform ID fields of `HarkenAudioSystem`. Select a platform directory by name.
 
 ### Fixed
 

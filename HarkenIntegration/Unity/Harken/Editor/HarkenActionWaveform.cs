@@ -176,29 +176,4 @@ namespace Harken.Unity.Editor
         public string SourceUnavailableReason { get; }
         public string DurationUnavailableReason { get; }
     }
-
-    public sealed class HarkenWaveformPublication
-    {
-        private HarkenWaveformPublication() { }
-
-        public bool TryFindPreview(string name, out HarkenActionPreview preview)
-        {
-            preview = null;
-            return false;
-        }
-
-        public bool TryFindAction(string name, out HarkenActionWaveform waveform)
-        {
-            waveform = null;
-            return false;
-        }
-
-        public static VnResult Parse(byte[] companionBytes, byte[] manifestBytes, GameplayPublication publication,
-            out HarkenWaveformPublication waveforms, out string diagnostic)
-        {
-            waveforms = null;
-            diagnostic = "Legacy Editor waveform publications are unsupported. Editor publication tools remain unavailable.";
-            return VnResult.VN_CAPABILITY_UNAVAILABLE;
-        }
-    }
 }

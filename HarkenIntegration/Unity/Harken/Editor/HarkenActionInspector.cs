@@ -13,32 +13,26 @@ namespace Harken.Unity.Editor
         private HarkenPackSource source;
         private TextAsset companion;
         private string directory = string.Empty;
-        private string platformId;
         private string platformName;
         private string language = string.Empty;
         private string commandDiagnostic = string.Empty;
 
         private void OnEnable()
         {
-            // Temporarily avoid automatic manifest capture until publication tooling supports current Pack companions.
-            if (!HarkenEditorPublicationSupport.CompanionAvailable) return;
             var action = (HarkenAction)target;
             var runtime = serializedObject.FindProperty("runtime").objectReferenceValue as HarkenAudioSystem;
             if (runtime != null)
             {
                 var runtimeProperties = new SerializedObject(runtime);
-                source = runtimeProperties.FindProperty("preparedPackSource").objectReferenceValue as HarkenPackSource;
                 language = runtimeProperties.FindProperty("language").stringValue;
-                platformId = runtimeProperties.FindProperty("packPlatformId").stringValue;
                 platformName = runtimeProperties.FindProperty("packPlatform").stringValue;
             }
-            if (source == null && HarkenEditorPublicationBinding.TryLoad(action.ProjectId, out var binding))
+            if (HarkenEditorPublicationBinding.TryLoad(action.ProjectId, out var binding))
             {
                 source = binding.LoadSource();
                 companion = binding.LoadCompanion();
                 if (source == null) directory = binding.Directory;
                 if (!string.IsNullOrEmpty(binding.Language)) language = binding.Language;
-                if (!string.IsNullOrEmpty(binding.PlatformId)) platformId = binding.PlatformId;
                 if (!string.IsNullOrEmpty(binding.PlatformName)) platformName = binding.PlatformName;
             }
             Refresh(false);
@@ -51,16 +45,9 @@ namespace Harken.Unity.Editor
             serializedObject.Update();
             DrawPropertiesExcluding(serializedObject, "m_Script", "actionName", "projectId");
             EditorGUILayout.PropertyField(serializedObject.FindProperty("actionName"));
-            using (new EditorGUI.DisabledScope(HarkenEditorPublicationSupport.CompanionAvailable))
+            using (new EditorGUI.DisabledScope(true))
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("projectId"));
             serializedObject.ApplyModifiedProperties();
-
-            // Keep manual runtime configuration available while catalog binding and Editor preview are suspended.
-            if (!HarkenEditorPublicationSupport.CompanionAvailable)
-            {
-                EditorGUILayout.HelpBox(HarkenEditorPublicationSupport.Diagnostic, MessageType.Info);
-                return;
-            }
 
             EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
@@ -126,7 +113,7 @@ namespace Harken.Unity.Editor
             preview.Shutdown();
             if (source != null) catalog.Refresh(source, language, companion);
             else if (!string.IsNullOrEmpty(directory))
-                catalog.RefreshPlatform(directory, platformId, platformName,
+                catalog.RefreshPlatform(directory, platformName,
                     HarkenAudioSystem.CurrentPackBasePlatform(), language);
             else if (userRequested)
                 catalog.Refresh(string.Empty, language);
@@ -142,7 +129,7 @@ namespace Harken.Unity.Editor
             string companionGuid = companion != null
                 ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(companion)) : string.Empty;
             if (!HarkenEditorPublicationBinding.Save(projectId, new HarkenEditorPublicationBinding(
-                sourceGuid, directory, companionGuid, language, platformId, platformName)))
+                sourceGuid, directory, companionGuid, language, platformName)))
             {
                 commandDiagnostic = "Publication binding was not saved because no paired gameplay publication is selected.";
                 return;
@@ -156,8 +143,7 @@ namespace Harken.Unity.Editor
             if (result != VnResult.VN_OK) return;
             result = catalog.GetPreparationOrder(action.ActionName, out ulong[] ids, out commandDiagnostic);
             if (result != VnResult.VN_OK) return;
-            if (catalog.PreparedPacks != null) preview.Prepare(catalog.PreparedPacks, ids);
-            else preview.Prepare(catalog.DirectoryPath, catalog.Publication.Language, ids);
+            preview.Prepare(catalog.PreparedPacks, ids);
             commandDiagnostic = preview.Diagnostic;
         }
 

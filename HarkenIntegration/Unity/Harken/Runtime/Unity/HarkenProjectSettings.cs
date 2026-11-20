@@ -35,7 +35,6 @@ namespace Harken.Unity
         [SerializeField] private uint maxEmitters;
         [SerializeField] private uint emitterVariableSlots;
         [SerializeField] private string language = string.Empty;
-        [SerializeField] private string packPlatformId = string.Empty;
         [SerializeField] private string packPlatform = string.Empty;
         [SerializeField] private string initPack = "Init.bytes";
         [SerializeField] private bool suppressUnityAudio;
@@ -52,7 +51,6 @@ namespace Harken.Unity
         public uint MaxEmitters => maxEmitters;
         public uint EmitterVariableSlots => emitterVariableSlots;
         public string Language => language ?? string.Empty;
-        public string PlatformId => packPlatformId ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
         public string InitPack => string.IsNullOrEmpty(initPack) ? "Init.bytes" : initPack;
         public string PackDirectory => packDirectory ?? string.Empty;
@@ -91,12 +89,6 @@ namespace Harken.Unity
         internal void SetLanguage(string value) => language = value ?? string.Empty;
         internal void SetInitPack(string value) => initPack = value ?? string.Empty;
         internal void SetPlayerExports(string[] value) => playerExports = value ?? Array.Empty<string>();
-
-        internal void SetPlatform(string id, string name)
-        {
-            packPlatformId = id ?? string.Empty;
-            packPlatform = name ?? string.Empty;
-        }
 
         internal static void ApplyStartupCapacity(ref VnConfig config)
         {

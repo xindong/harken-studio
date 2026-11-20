@@ -156,7 +156,6 @@ namespace Harken
         public bool IsActive => active;
         public string ContainmentRoot { get; }
         public string Language { get; }
-        public GameplayPublication Publication => null;
         /// <summary>The actual project identified by the session's validated Init Pack.</summary>
         public string ProjectId { get; private set; }
         public VnResult StartupResult { get; private set; } = VnResult.VN_NOT_INITIALIZED;

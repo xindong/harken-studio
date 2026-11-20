@@ -40,11 +40,8 @@ namespace Harken.Unity
         [SerializeField, HideInInspector] private string packRoot = "Audio/GeneratedPacks";
         [SerializeField, HideInInspector] private string initPack = "Init.bytes";
         [SerializeField, HideInInspector] private string packPlatform = string.Empty;
-        [SerializeField, HideInInspector] private string packPlatformId = string.Empty;
         [SerializeField, HideInInspector] private string language = string.Empty;
         [SerializeField, HideInInspector] private ulong[] startupPackStableIds = Array.Empty<ulong>();
-        [SerializeField, HideInInspector] private HarkenPackSource preparedPackSource;
-        private HarkenPreparedPacks preparedPacks;
         private bool lifecycleConfigured;
         private bool languageConfigured;
         private bool platformConfigured;
@@ -445,13 +442,11 @@ namespace Harken.Unity
                 "HarkenAudioSystem.ConfigureBeforeStartup", VnResult.VN_OK);
         }
 
-        public VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)
+        public VnResult ConfigurePlatformBeforeStartup(string platformName)
         {
             if (session != null || State == HarkenRuntimeState.Starting || State == HarkenRuntimeState.Ready ||
-                !string.IsNullOrEmpty(platformId) ||
                 (!string.IsNullOrEmpty(platformName) && !PackPaths.IsPlatformName(platformName)))
                 return ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_INVALID_ARG);
-            packPlatformId = platformId ?? string.Empty;
             packPlatform = platformName ?? string.Empty;
             platformConfigured = true;
             return ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_OK);
@@ -468,68 +463,23 @@ namespace Harken.Unity
             return ObserveResult("HarkenAudioSystem.ConfigureLanguageBeforeStartup", VnResult.VN_OK);
         }
 
-        public VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)
-        {
-            return ObserveResult("HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup", VnResult.VN_PACK_INCOMPATIBLE);
-        }
-
-        public VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)
-        {
-            return ObserveResult("HarkenAudioSystem.ConfigurePreparedBytesBeforeStartup", VnResult.VN_PACK_INCOMPATIBLE);
-        }
-
         public VnResult StartRuntime(string containmentRoot)
-        {
-            if (!TryBeginStartup(out VnResult rejection)) return rejection;
-            try { return StartRuntimeCore(containmentRoot); }
-            finally { starting = false; }
-        }
-
-        private VnResult StartRuntimeCore(string containmentRoot)
-        {
-            if (preparedPackSource != null || preparedPacks != null)
-            {
-                LastStartupError = HarkenPreparedPacks.Diagnostic;
-                return CompleteSessionStartup(VnResult.VN_PACK_INCOMPATIBLE, string.Empty);
-            }
-            if (string.IsNullOrEmpty(containmentRoot) || !IsSafeRelativePath(initPack))
-            {
-                LastStartupError = "A Pack root and Init.bytes are required.";
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            return StartResolvedDirectory(containmentRoot);
-        }
-
-        public VnResult StartRuntime(HarkenPreparedPacks source)
-        {
-            if (!TryBeginStartup(out VnResult rejection)) return rejection;
-            try { return StartRuntimeCore(source); }
-            finally { starting = false; }
-        }
-
-        /// <summary>Starts a named publication using the component's device and lifecycle settings.</summary>
-        public VnResult StartRuntime(string manifestPath, Func<string, byte[]> readBytes, string selectedLanguage = null)
         {
             if (!TryBeginStartup(out VnResult rejection)) return rejection;
             try
             {
-                VnResult result = HarkenPreparedPacks.Capture(manifestPath, readBytes,
-                    out HarkenPreparedPacks source, out _, out string error, selectedLanguage ?? language);
-                LastStartupError = error ?? string.Empty;
-                if (result != VnResult.VN_OK) return CompleteSessionStartup(result, string.Empty);
-                return StartRuntimeCore(source);
+                if (string.IsNullOrEmpty(containmentRoot) || !IsSafeRelativePath(initPack))
+                {
+                    LastStartupError = "A Pack root and Init.bytes are required.";
+                    return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
+                }
+                return StartResolvedDirectory(containmentRoot);
             }
             finally { starting = false; }
         }
 
         private bool MatchesConfiguredInit(string selectedPath)
             => initPack == selectedPath;
-
-        private VnResult StartRuntimeCore(HarkenPreparedPacks source)
-        {
-            LastStartupError = HarkenPreparedPacks.Diagnostic;
-            return CompleteSessionStartup(VnResult.VN_PACK_INCOMPATIBLE, string.Empty);
-        }
 
         private bool TryBeginStartup(out VnResult rejection)
         {
@@ -560,10 +510,7 @@ namespace Harken.Unity
             if (!languageConfigured)
                 language = settings.Language;
             if (!platformConfigured)
-            {
-                packPlatformId = settings.PlatformId;
                 packPlatform = settings.PlatformName;
-            }
             if (!initPackConfigured)
                 initPack = settings.InitPack;
         }
@@ -750,11 +697,6 @@ namespace Harken.Unity
                 StartConfiguredCompanion();
                 return;
             }
-            if (preparedPackSource != null || preparedPacks != null)
-            {
-                StartRuntime((string)null);
-                return;
-            }
 #if UNITY_ANDROID && !UNITY_EDITOR
             // Restore Android directory auto-start after it consumes current-schema companions without a legacy inventory.
             if (!TryBeginStartup(out _)) return;
@@ -789,11 +731,6 @@ namespace Harken.Unity
 
         private string SelectCompanionDirectory(string directory)
         {
-            if (!string.IsNullOrEmpty(packPlatformId))
-            {
-                LastStartupError = "A companion directory has no platform ID inventory. Clear the legacy platform ID and select its directory by name.";
-                return null;
-            }
             if (!string.IsNullOrEmpty(packPlatform) && (!PackPaths.IsPlatformName(packPlatform) ||
                 !string.Equals(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar,
                     Path.AltDirectorySeparatorChar)), packPlatform, StringComparison.Ordinal)))

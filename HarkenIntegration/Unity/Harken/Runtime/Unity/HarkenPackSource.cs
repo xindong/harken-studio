@@ -69,55 +69,17 @@ namespace Harken.Unity
             error = null;
             return VnResult.VN_OK;
         }
-
-        public VnResult Capture(out HarkenPreparedPacks prepared, out string error, string selectedLanguage = null)
-            => Capture(out prepared, out _, out error, selectedLanguage);
-
-        public VnResult Capture(out HarkenPreparedPacks prepared, out byte[] manifestBytes,
-            out string error, string selectedLanguage = null)
-        {
-            prepared = null;
-            manifestBytes = null;
-            error = HarkenPreparedPacks.Diagnostic;
-            return VnResult.VN_PACK_INCOMPATIBLE;
-        }
     }
 
     public sealed class HarkenPreparedPacks
     {
-        internal const string Diagnostic = "Legacy Pack manifests are unsupported. Re-export with the current Studio and use CaptureCompanion or PackSource.";
-        private HarkenPreparedPacks() { }
         internal HarkenPreparedPacks(PackCatalogSnapshot snapshot) { Snapshot = snapshot; }
         internal PackCatalogSnapshot Snapshot { get; }
         internal uint PresentationRevision { get; set; }
-        public GameplayPublication Publication => Snapshot?.Publication;
-        public string SelectedManifestPath => null;
-
-        public static VnResult Capture(string manifestPath, Func<string, byte[]> readBytes,
-            out HarkenPreparedPacks prepared, out byte[] manifestBytes, out string error,
-            string language = null)
-        {
-            prepared = null;
-            manifestBytes = null;
-            error = Diagnostic;
-            return VnResult.VN_PACK_INCOMPATIBLE;
-        }
-
-        public static VnResult Create(GameplayPublication publication, byte[] init,
-            out HarkenPreparedPacks prepared, out string error)
-        {
-            prepared = null;
-            error = Diagnostic;
-            return VnResult.VN_PACK_INCOMPATIBLE;
-        }
-
-        public VnResult SupplyPack(ulong id, byte[] bytes) => VnResult.VN_PACK_INCOMPATIBLE;
-        public VnResult SetDemandProvider(PackByteProvider.Handler provider, object state = null)
-            => VnResult.VN_PACK_INCOMPATIBLE;
+        public GameplayPublication Publication => Snapshot.Publication;
         public VnResult Start(ulong[] startupIds, ref VnConfig config, out PackBootstrapSession session)
         {
             session = null;
-            if (Snapshot == null) return VnResult.VN_PACK_INCOMPATIBLE;
             if (startupIds == null) return VnResult.VN_INVALID_ARG;
             var unique = new HashSet<ulong>();
             foreach (ulong id in startupIds)

@@ -24,8 +24,7 @@ namespace Harken.Unity
         public Pack Handle => IsLoaded ? pack : default;
         public bool IsLoaded => pack.IsValid && owningSession != null && owningSession.IsActive;
         // Companion sessions discover cold Pack IDs through PrepareActions by name before an explicit Load can lease them.
-        public bool LoadOnReady => loadOnReady &&
-            (runtime == null || runtime.Session == null || runtime.Session.Publication != null);
+        public bool LoadOnReady => loadOnReady && (runtime == null || runtime.Session == null);
         public VnResult LastResult { get; private set; } = VnResult.VN_OK;
 
         private void OnEnable()

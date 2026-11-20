@@ -262,17 +262,6 @@ namespace Harken
                 0, utf8Path, utf8ContainmentRoot, out pack);
         }
 
-        public static VnResult ReplacePack(
-            Pack pack, string utf8Path, string utf8ContainmentRoot)
-        {
-            if (!pack.IsValid || string.IsNullOrEmpty(utf8Path) ||
-                string.IsNullOrEmpty(utf8ContainmentRoot))
-            {
-                return VnResult.VN_INVALID_ARG;
-            }
-            return VnResult.VN_PACK_INIT_LIFECYCLE;
-        }
-
         private static unsafe VnResult LoadCanonicalPack(
             ulong packStableId, string utf8Path,
             string utf8ContainmentRoot, out Pack pack)

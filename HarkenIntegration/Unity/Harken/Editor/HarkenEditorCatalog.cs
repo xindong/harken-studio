@@ -7,13 +7,6 @@ using UnityEngine;
 
 namespace Harken.Unity.Editor
 {
-    internal static class HarkenEditorPublicationSupport
-    {
-        internal static bool IsAvailable => false;
-        internal static bool CompanionAvailable => true;
-        internal const string Diagnostic = "Legacy publication and symbol tools are unavailable. Use current Pack companions.";
-    }
-
     public sealed class HarkenEditorPack
     {
         internal HarkenEditorPack(PackCatalogSnapshot.Entry row)
@@ -76,7 +69,7 @@ namespace Harken.Unity.Editor
         public VnResult WaveformResult { get; private set; } = VnResult.VN_CAPABILITY_UNAVAILABLE;
         public string WaveformDiagnostic { get; private set; } = "No waveform is selected.";
 
-        public VnResult RefreshPlatform(string root, string platformId, string platformName,
+        public VnResult RefreshPlatform(string root, string platformName,
             string basePlatform, string language = null)
             => Refresh(Path.Combine(root ?? "", string.IsNullOrEmpty(platformName) ? basePlatform ?? "" : platformName), language);
 
@@ -130,8 +123,6 @@ namespace Harken.Unity.Editor
             VnResult result = source.CaptureCompanion(companion, out PackSource captured, out string error, language);
             return result == VnResult.VN_OK ? RefreshCore(captured, source.CandidateNames(language), source, null, resources) : Fail(result, error);
         }
-        public VnResult Refresh(string manifestPath, Func<string, byte[]> readBytes, string language = null)
-            => Fail(VnResult.VN_PACK_INCOMPATIBLE, "Use Refresh(PackSource, actionNames) for current companion readers.");
 
         private VnResult RefreshCore(PackSource source, IEnumerable<string> names, object identity, string directory,
             HarkenEditorResources resources = null)

@@ -396,37 +396,6 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
-        public void ClearingLegacyPlatformIdPersistsNameSelectionAndUnblocksCompanionDirectory()
-        {
-            string root = Path.Combine(Application.temporaryCachePath, "HarkenPlatform_" + Guid.NewGuid().ToString("N"));
-            string platform = Path.Combine(root, "Windows");
-            Directory.CreateDirectory(platform);
-            File.WriteAllText(Path.Combine(platform, "Init.json"), "{}");
-            var owner = new GameObject("Platform selection");
-            owner.SetActive(false);
-            try
-            {
-                settings.SetPlatform("11111111-1111-1111-1111-111111111111", "Windows");
-                var runtime = owner.AddComponent<HarkenAudioSystem>();
-                MethodInfo apply = typeof(HarkenAudioSystem).GetMethod("ApplyProjectStartupPolicy", BindingFlags.Instance | BindingFlags.NonPublic);
-                MethodInfo resolve = typeof(HarkenAudioSystem).GetMethod("ResolvePlatformRoot", BindingFlags.Instance | BindingFlags.NonPublic);
-                apply.Invoke(runtime, null);
-                Assert.That(resolve.Invoke(runtime, new object[] { platform }), Is.Null);
-                var serialized = new SerializedObject(settings);
-                serialized.FindProperty("packPlatformId").stringValue = string.Empty;
-                Assert.That(serialized.ApplyModifiedProperties(), Is.True);
-                AssetDatabase.SaveAssetIfDirty(settings);
-                AssetDatabase.ImportAsset(settingsPath, ImportAssetOptions.ForceSynchronousImport);
-                settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(settingsPath);
-                Assert.That(settings.PlatformId, Is.Empty);
-                Assert.That(settings.PlatformName, Is.EqualTo("Windows"));
-                apply.Invoke(runtime, null);
-                Assert.That(resolve.Invoke(runtime, new object[] { platform }), Is.EqualTo(platform));
-            }
-            finally { UnityEngine.Object.DestroyImmediate(owner); Directory.Delete(root, true); }
-        }
-
-        [Test]
         public void StartupCapacityIgnoresSceneLimits()
         {
             settings.SetMaxVoices(HarkenProjectSettings.DefaultMaxVoices);

@@ -3,7 +3,6 @@
 #endif
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -108,8 +107,6 @@ namespace Harken.Unity.Editor
 
             public VnResult Prepare(HarkenPreparedPacks source, string[] actionNames)
             {
-                if (!HarkenEditorPublicationSupport.CompanionAvailable)
-                    return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
                 if (disposed) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 if (preview.shutdownRequested) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 if (preview.ticking || preview.scopeBusy) return Observe(VnResult.VN_IN_USE, "<prepare>");
@@ -310,29 +307,12 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(string directory, string language, ulong[] startupIds, bool nullDevice = false)
         {
-            if (!HarkenEditorPublicationSupport.CompanionAvailable)
-                return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             var catalog = new HarkenEditorCatalog();
             VnResult result = catalog.Refresh(directory, language);
-            if (result != VnResult.VN_OK) return Observe(result, "<prepare>", catalog.Diagnostic);
-            if (catalog.PreparedPacks != null) return Prepare(catalog.PreparedPacks, startupIds, nullDevice);
-            VnConfig config = CreateConfig(nullDevice);
-            result = PackBootstrap.Start(Path.Combine(directory, catalog.Publication.InitPack.Path), directory,
-                startupIds, language, ref config, out session);
-            return Adopt(result);
-        }
-
-        public VnResult Prepare(HarkenPackSource source, ulong[] startupIds, bool nullDevice = false)
-        {
-            if (!HarkenEditorPublicationSupport.CompanionAvailable)
-                return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
-            VnResult allowed = CanPrepare();
-            if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
-            if (source == null) return Observe(VnResult.VN_CONTENT_NOT_LOADED, "<prepare>");
-            VnResult result = source.Capture(out HarkenPreparedPacks prepared, out string error);
-            return result == VnResult.VN_OK ? Prepare(prepared, startupIds, nullDevice) : Observe(result, "<prepare>", error);
+            return result == VnResult.VN_OK ? Prepare(catalog.PreparedPacks, startupIds, nullDevice)
+                : Observe(result, "<prepare>", catalog.Diagnostic);
         }
 
         public VnResult Prepare(HarkenPackSource source, TextAsset initJson, ulong[] startupIds, bool nullDevice = false)
@@ -347,8 +327,6 @@ namespace Harken.Unity.Editor
 
         public VnResult Prepare(HarkenPreparedPacks source, ulong[] startupIds, bool nullDevice = false)
         {
-            if (!HarkenEditorPublicationSupport.CompanionAvailable)
-                return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>", HarkenEditorPublicationSupport.Diagnostic);
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             if (source == null) return Observe(VnResult.VN_CONTENT_NOT_LOADED, "<prepare>");
