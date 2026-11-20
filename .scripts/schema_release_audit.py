@@ -683,13 +683,13 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
         raise ValueError("Reader validation requires the compiled native Pack gate and its companion fixture")
     current_binary = current_binary.resolve()
     pack_reader, pack_root = pack_reader.resolve(), pack_root.resolve()
-    if not current_binary.is_file() or not pack_reader.is_file() or pack_reader.name != "HarkenAbiFidelity.dll":
-        raise ValueError("Reader validation requires the Studio binary and HarkenAbiFidelity.dll")
+    if not current_binary.is_file() or not pack_reader.is_file() or pack_reader.name != "HarkenContractTest.dll":
+        raise ValueError("Reader validation requires the Studio binary and HarkenContractTest.dll")
     pack_files = sorted(path for path in pack_root.rglob("*")
                         if path.is_file() and path.suffix in (".bytes", ".json"))
     if not all((pack_root / name).is_file() for name in ("Init.bytes", "Init.json")) \
             or not any(path.suffix == ".bytes" and path.stem != "Init" for path in pack_files):
-        raise ValueError("Native Pack fixture must contain Init and Action companion pairs")
+        raise ValueError("Native Pack fixture must contain Init and Action Pack pairs")
     for path in pack_files:
         companion = path.with_suffix(".json" if path.suffix == ".bytes" else ".bytes")
         if not companion.is_file():
@@ -763,12 +763,12 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
     if not (native_directory / native_name).is_file():
         raise ValueError("Studio package does not contain the native library required by the Pack gate")
     environment = dict(os.environ, HARKEN_NATIVE_DIR=str(native_directory))
-    pack_result = subprocess.run(["dotnet", str(pack_reader), "--require-native", "--companion-root", str(pack_root)],
+    pack_result = subprocess.run(["dotnet", str(pack_reader), "--require-native", "--export-root", str(pack_root)],
                                  cwd=REPO_ROOT, env=environment, capture_output=True, text=True,
                                  encoding="utf-8", timeout=180, check=False)
     pack_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
-    if pack_result.returncode != 0 or "[PackCompanion] native publication PASS." not in pack_result.stdout.splitlines() \
-            or f"[PackCompanion] packMetadataVersion {pack_version}" not in pack_result.stdout.splitlines():
+    if pack_result.returncode != 0 or "[PackMetadata] native export PASS." not in pack_result.stdout.splitlines() \
+            or f"[PackMetadata] packMetadataVersion {pack_version}" not in pack_result.stdout.splitlines():
         raise ValueError(f"Native Pack gate failed: {pack_result.stdout} {pack_result.stderr}")
     result["pack"] = {"status": "passed", "packMetadataVersion": pack_version,
                       "readerSha256": digest(pack_reader.read_bytes()),

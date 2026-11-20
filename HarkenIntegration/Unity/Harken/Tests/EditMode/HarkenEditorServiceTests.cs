@@ -19,9 +19,9 @@ namespace Harken.Unity.Tests
                 var action = owner.AddComponent<HarkenAction>();
                 inspector = UnityEditor.Editor.CreateEditor(action, typeof(HarkenActionInspector));
                 var catalog = Get<HarkenEditorCatalog>(inspector, "catalog");
-                Assert.That(catalog.Publication, Is.Null);
+                Assert.That(catalog.Catalog, Is.Null);
                 Assert.That(Get<string>(inspector, "directory"), Is.Null.Or.Empty);
-                Assert.That(catalog.CheckReference("Play_U4_A", catalog.Publication?.ProjectId, out string diagnostic),
+                Assert.That(catalog.CheckReference("Play_U4_A", catalog.Catalog?.ProjectId, out string diagnostic),
                     Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
             }
             finally

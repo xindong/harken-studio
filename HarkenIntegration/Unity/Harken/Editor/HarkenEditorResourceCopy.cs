@@ -49,14 +49,14 @@ namespace Harken.Unity.Editor
                     written.Add(relative);
                     copied.Add(relative);
                 };
-                VnResult captured = snapshot.Source.Capture(null, default, null, out CompanionInput init);
+                VnResult captured = snapshot.Source.Capture(null, default, null, out PackMetadataInput init);
                 if (captured != VnResult.VN_OK) { diagnostic = "Init: " + captured; return captured; }
                 write(resources.Resolve("Init.json", "Init.bytes"), init.Bytes);
                 write(resources.Resolve("Init.json", "Init.json"), snapshot.Init.Json);
                 foreach (string name in names)
                 {
                     var entry = snapshot.Actions[name];
-                    captured = snapshot.Source.Capture(name, init.Facts.projectId, init.Bytes, out CompanionInput input);
+                    captured = snapshot.Source.Capture(name, init.Facts.projectId, init.Bytes, out PackMetadataInput input);
                     if (captured != VnResult.VN_OK) { diagnostic = name + ": " + captured; return captured; }
                     write(resources.Resolve(entry.Path + ".json", Path.GetFileName(entry.Path) + ".bytes"), input.Bytes);
                     write(resources.Resolve(entry.Path + ".json", Path.GetFileName(entry.Path) + ".json"), entry.Input.Json);

@@ -51,7 +51,7 @@ namespace Harken
         {
             if (!VariableGameplay.IsGameThread || string.IsNullOrEmpty(name) || name.IndexOf('\0') >= 0 ||
                 (emitter.HasValue && !emitter.Value.IsValid)) return VnResult.VN_INVALID_ARG;
-            VnResult found = GameplayNames.FindLabel(variableId, name, out VnObjectId labelId);
+            VnResult found = NameTable.FindLabel(variableId, name, out VnObjectId labelId);
             return found == VnResult.VN_OK ? SetValue(variableId, labelId, emitter) : found;
         }
 
@@ -110,16 +110,6 @@ namespace Harken
             return HarkenNative.Vn_SetValue(variableId, value);
         }
 
-        [Obsolete("Use SetValue(variable, value, optional emitter).")]
-        internal static VnResult SetValues(VnVariableWriteV1[] writes, int count,
-            out VnVariableTicketV1 ticket)
-            => DispatchRaw(0, false, writes, count, out ticket);
-
-        [Obsolete("Use SetValue with the Variable default value.")]
-        internal static VnResult ResetValues(VnVariableWriteV1[] writes, int count,
-            out VnVariableTicketV1 ticket)
-            => DispatchRaw(0, true, writes, count, out ticket);
-
         public static VnResult QueryVariable(in VnVariableQueryDescV1 desc,
             ref VnVariableQueryResultV1 result)
             => HarkenNative.Vn_QueryVariable(in desc, ref result);
@@ -127,26 +117,6 @@ namespace Harken
         public static VnResult QueryVariableTicket(in VnVariableTicketQueryDescV1 desc,
             ref VnVariableTicketQueryResultV1 result)
             => HarkenNative.Vn_QueryVariableTicket(in desc, ref result);
-
-        internal static unsafe VnResult DispatchRaw(ulong emitter, bool reset,
-            VnVariableWriteV1[] writes, int count, out VnVariableTicketV1 ticket)
-        {
-            ticket = default;
-            if (writes == null || count <= 0 || count > 8 || count > writes.Length ||
-                (reset && emitter != 0))
-                return VnResult.VN_INVALID_ARG;
-            VnVariableBatchDescV1 desc = default;
-            desc.structSize = (uint)sizeof(VnVariableBatchDescV1);
-            desc.writeCount = (uint)count;
-            fixed (VnVariableWriteV1* pointer = writes)
-            {
-                desc.writes = (IntPtr)pointer;
-                if (reset) return HarkenNative.Vn_ResetValues(in desc, ref ticket);
-                return emitter == 0
-                    ? HarkenNative.Vn_SetValues(in desc, ref ticket)
-                    : HarkenNative.Vn_SetEmitterValues(emitter, in desc, ref ticket);
-            }
-        }
 
         static bool AcceptsName(string name)
             => !string.IsNullOrEmpty(name) && name.IndexOf((char)0) < 0;
@@ -163,7 +133,7 @@ namespace Harken
             if (variableName.Length > 128) return VnResult.VN_INVALID_ARG;
             foreach (char c in variableName)
                 if (c == 0 || c > 127) return VnResult.VN_INVALID_ARG;
-            return GameplayNames.FindVariable(variableName,
+            return NameTable.FindVariable(variableName,
                 project == Guid.Empty ? default : VnObjectId.FromGuid(project), out id);
         }
 

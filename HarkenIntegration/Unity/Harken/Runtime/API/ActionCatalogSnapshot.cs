@@ -6,11 +6,11 @@ using System.Security.Cryptography;
 namespace Harken
 {
     // Browsing facts do not install names or retain every Action's media payload.
-    internal sealed class PackCatalogSnapshot
+    internal sealed class ActionCatalogSnapshot
     {
         internal sealed class Entry
         {
-            internal CompanionInput Input;
+            internal PackMetadataInput Input;
             internal byte[] Digest;
             internal long ByteCount;
             internal VnPackOccurrenceFactV1[] Occurrences;
@@ -20,32 +20,32 @@ namespace Harken
 
         internal readonly Dictionary<string, Entry> Actions = new Dictionary<string, Entry>(StringComparer.Ordinal);
         internal readonly Dictionary<ulong, string> Names = new Dictionary<ulong, string>();
-        internal CompanionInput Init;
+        internal PackMetadataInput Init;
         internal PackSource Source;
-        internal GameplayPublication Publication;
+        internal ActionCatalog Catalog;
         private PackSource origin;
         private byte[] initDigest;
 
         internal static VnResult Capture(PackSource source, IEnumerable<string> candidates,
-            out PackCatalogSnapshot snapshot, out string diagnostic)
+            out ActionCatalogSnapshot snapshot, out string diagnostic)
         {
             snapshot = null;
             diagnostic = "A synchronous Pack source and Action candidates are required.";
             if (source == null || candidates == null || source.IsAsync) return VnResult.VN_INVALID_ARG;
             try
             {
-                var next = new PackCatalogSnapshot { origin = source };
+                var next = new ActionCatalogSnapshot { origin = source };
                 VnResult result = source.Capture(null, default, null, out next.Init);
                 if (result != VnResult.VN_OK) { diagnostic = "Init: " + result; return result; }
                 next.initDigest = Hash(next.Init.Bytes);
                 var roots = new HashSet<VnObjectId>();
                 foreach (string name in candidates.Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal))
                 {
-                    if (!PackCompanion.IsName(name) || name == "Init")
+                    if (!PackMetadata.IsName(name) || name == "Init")
                     { diagnostic = "Invalid Action candidate: " + name; return VnResult.VN_INVALID_ARG; }
-                    result = source.Capture(name, next.Init.Facts.projectId, next.Init.Bytes, out CompanionInput input);
+                    result = source.Capture(name, next.Init.Facts.projectId, next.Init.Bytes, out PackMetadataInput input);
                     if (result != VnResult.VN_OK) { diagnostic = name + ": " + result; return result; }
-                    result = CompanionNative.Inspect(input.Bytes, next.Init.Bytes, input.Names,
+                    result = PackMetadataNative.Inspect(input.Bytes, next.Init.Bytes, input.Names,
                         out input.Facts, out var occurrences, out var media);
                     if (result != VnResult.VN_OK) { diagnostic = name + ": " + result; return result; }
                     if (input.Facts.packStableId == next.Init.Facts.packStableId ||
@@ -57,23 +57,9 @@ namespace Harken
                     next.Actions.Add(name, entry);
                     next.Names.Add(input.Facts.packStableId, name);
                 }
-                var packs = new List<PackManifestEntry>
-                {
-                    new PackManifestEntry("Init", next.Init.Facts.packStableId, "Init.bytes", "",
-                        next.Init.Facts.contentHash, Array.Empty<string>())
-                };
-                var actions = new List<GameplayAction>();
-                foreach (var row in next.Actions)
-                {
-                    var input = row.Value.Input;
-                    packs.Add(new PackManifestEntry(row.Key, input.Facts.packStableId, row.Value.Path + ".bytes", "",
-                        input.Facts.contentHash, Array.Empty<string>()));
-                    // Runtime binding/closure revisions are unavailable until installation.
-                    actions.Add(new GameplayAction(row.Key, input.Names.RootId, 0, 0, input.Facts.packStableId, 0));
-                }
-                next.Publication = new GameplayPublication(default, source.Language, packs.ToArray(),
-                    next.Init.Facts.projectId.ToString(), next.Init.Facts.packStableId,
-                    next.Init.Facts.contentRevision, 0, actions.ToArray(), Array.Empty<RetiredGameplayAction>());
+                next.Catalog = new ActionCatalog(next.Init.Facts.projectId.ToString(), source.Language,
+                    next.Init.Facts.packStableId, next.Actions.Select(row => new ActionCatalogEntry(
+                        row.Key, row.Value.Input.Names.RootId, row.Value.Input.Facts.packStableId)).ToArray());
                 next.Source = PackSource.FromSnapshot(source.Language, next.Read, input => next.origin.Validate(input));
                 snapshot = next;
                 diagnostic = string.Empty;
@@ -83,28 +69,28 @@ namespace Harken
             catch (Exception ex) { diagnostic = ex.Message; return VnResult.VN_PACK_PROVIDER_FAILED; }
         }
 
-        private CompanionCapture Read(string name, VnObjectId project, byte[] init)
+        private PackMetadataCapture Read(string name, VnObjectId project, byte[] init)
         {
             if (name == null)
             {
-                VnResult initResult = origin.Capture(null, default, null, out CompanionInput fresh);
-                if (initResult != VnResult.VN_OK) return new CompanionCapture(initResult);
+                VnResult initResult = origin.Capture(null, default, null, out PackMetadataInput fresh);
+                if (initResult != VnResult.VN_OK) return new PackMetadataCapture(initResult);
                 return Equal(initDigest, Hash(fresh.Bytes)) && SameNames(Init.Names, fresh.Names)
-                    ? new CompanionCapture(VnResult.VN_OK, fresh)
-                    : new CompanionCapture(VnResult.VN_PACK_STALE_REVISION);
+                    ? new PackMetadataCapture(VnResult.VN_OK, fresh)
+                    : new PackMetadataCapture(VnResult.VN_PACK_STALE_REVISION);
             }
-            if (!Actions.TryGetValue(name, out Entry expected)) return new CompanionCapture(VnResult.VN_UNKNOWN_ID);
-            VnResult result = origin.Capture(name, project, init, out CompanionInput input);
-            if (result != VnResult.VN_OK) return new CompanionCapture(result);
+            if (!Actions.TryGetValue(name, out Entry expected)) return new PackMetadataCapture(VnResult.VN_UNKNOWN_ID);
+            VnResult result = origin.Capture(name, project, init, out PackMetadataInput input);
+            if (result != VnResult.VN_OK) return new PackMetadataCapture(result);
             if (!Equal(expected.Digest, Hash(input.Bytes)) || !SameNames(expected.Input.Names, input.Names))
-                return new CompanionCapture(VnResult.VN_PACK_STALE_REVISION);
-            return new CompanionCapture(VnResult.VN_OK, input);
+                return new PackMetadataCapture(VnResult.VN_PACK_STALE_REVISION);
+            return new PackMetadataCapture(VnResult.VN_OK, input);
         }
 
         // Existing sessions retain this snapshot and consult the refreshed equivalent reader.
-        internal void RefreshOrigin(PackCatalogSnapshot equivalent) => origin = equivalent.origin;
+        internal void RefreshOrigin(ActionCatalogSnapshot equivalent) => origin = equivalent.origin;
 
-        internal bool SameExecution(PackCatalogSnapshot other)
+        internal bool SameExecution(ActionCatalogSnapshot other)
         {
             if (other == null || Source.Language != other.Source.Language || !Equal(initDigest, other.initDigest) ||
                 !SameNames(Init.Names, other.Init.Names) || Actions.Count != other.Actions.Count) return false;
@@ -114,7 +100,7 @@ namespace Harken
             return true;
         }
 
-        private static bool SameNames(PackCompanion a, PackCompanion b)
+        private static bool SameNames(PackMetadata a, PackMetadata b)
         {
             if (a.ProjectId != b.ProjectId || a.RootId != b.RootId || a.Name != b.Name || a.Language != b.Language ||
                 a.Variables.Length != b.Variables.Length || a.Labels.Length != b.Labels.Length) return false;

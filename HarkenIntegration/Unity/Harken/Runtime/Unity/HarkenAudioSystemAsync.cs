@@ -13,13 +13,13 @@ namespace Harken.Unity
 
     public partial class HarkenAudioSystem
     {
-        private PackSource configuredCompanionSource;
-        private CancellationTokenSource companionStartup;
+        private PackSource configuredPackSource;
+        private CancellationTokenSource packSourceStartup;
 
-        public VnResult ConfigureCompanionSourceBeforeStartup(PackSource source)
+        public VnResult ConfigurePackSourceBeforeStartup(PackSource source)
         {
             if (source == null || starting || shuttingDown || (session != null && session.IsActive)) return VnResult.VN_INVALID_ARG;
-            configuredCompanionSource = source;
+            configuredPackSource = source;
             return VnResult.VN_OK;
         }
 
@@ -28,7 +28,7 @@ namespace Harken.Unity
             if (!TryBeginStartup(out VnResult rejection)) return rejection;
             try
             {
-                VnResult result = CompanionStartupConfig(source, out VnConfig config);
+                VnResult result = PackSourceStartupConfig(source, out VnConfig config);
                 if (result == VnResult.VN_OK) result = PackBootstrap.Start(source, ref config, out session);
                 return CompleteSessionStartup(result, source?.Root ?? string.Empty);
             }
@@ -41,16 +41,16 @@ namespace Harken.Unity
             cancellation.ThrowIfCancellationRequested();
             if (!TryBeginStartup(out VnResult rejection)) return rejection;
             var request = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            companionStartup = request;
+            packSourceStartup = request;
             try
             {
-                VnResult result = CompanionStartupConfig(source, out VnConfig config);
+                VnResult result = PackSourceStartupConfig(source, out VnConfig config);
                 if (result != VnResult.VN_OK) return CompleteSessionStartup(result, string.Empty);
                 if (source.IsAsync && !PackSource.HasControlContext)
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-                CompanionCapture captured = await source.CaptureAsync(null, default, null, request.Token);
+                PackMetadataCapture captured = await source.CaptureAsync(null, default, null, request.Token);
                 request.Token.ThrowIfCancellationRequested();
-                if (!this || !isActiveAndEnabled || !ReferenceEquals(companionStartup, request) ||
+                if (!this || !isActiveAndEnabled || !ReferenceEquals(packSourceStartup, request) ||
                     Environment.CurrentManagedThreadId != gameThreadId) return VnResult.VN_NOT_INITIALIZED;
                 result = captured.Result;
                 // Attach the session in the same control-thread step that initializes Native.
@@ -60,26 +60,26 @@ namespace Harken.Unity
             }
             catch (OperationCanceledException)
             {
-                if (this && ReferenceEquals(companionStartup, request)) State = HarkenRuntimeState.Stopped;
+                if (this && ReferenceEquals(packSourceStartup, request)) State = HarkenRuntimeState.Stopped;
                 throw;
             }
             finally
             {
-                if (ReferenceEquals(companionStartup, request))
+                if (ReferenceEquals(packSourceStartup, request))
                 {
                     if (session == null || !session.IsActive)
                     {
                         managedFirings = Array.Empty<ManagedFiring>();
                         DisposeCallbackRegistrations();
                     }
-                    companionStartup = null;
+                    packSourceStartup = null;
                     starting = false;
                 }
                 request.Dispose();
             }
         }
 
-        private VnResult CompanionStartupConfig(PackSource source, out VnConfig config)
+        private VnResult PackSourceStartupConfig(PackSource source, out VnConfig config)
         {
             config = default;
             if (source == null) return VnResult.VN_INVALID_ARG;
@@ -89,17 +89,17 @@ namespace Harken.Unity
             return CreateStartupConfig(out config);
         }
 
-        private async void StartConfiguredCompanion()
+        private async void StartConfiguredPackSource()
         {
-            try { await StartRuntimeAsync(configuredCompanionSource); }
+            try { await StartRuntimeAsync(configuredPackSource); }
             catch (OperationCanceledException) { }
         }
 
-        private void CancelCompanionStartup()
+        private void CancelPackSourceStartup()
         {
-            CancellationTokenSource pending = companionStartup;
+            CancellationTokenSource pending = packSourceStartup;
             if (pending == null) return;
-            companionStartup = null;
+            packSourceStartup = null;
             starting = false;
             try { pending.Cancel(); } catch { }
         }

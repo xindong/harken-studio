@@ -530,7 +530,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenStudio" / "Schema")))
 
     def test_integration_source_changes_are_not_a_generation_hash_lock(self) -> None:
-        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs"
+        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackMetadata.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("old reader", encoding="utf-8")
         self.publish_tag("sdk-baseline")
@@ -552,7 +552,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         MODULE.run_git(["reset", "--hard", "first"])
         original["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
         path.write_text(json.dumps(original), encoding="utf-8")
-        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs"
+        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackMetadata.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("new development", encoding="utf-8")
         self.commit()
@@ -627,7 +627,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
                         "HarkenStudio/Source/Core/ProjectMigration.cpp",
                         "HarkenStudio/Source/Core/ProjectMigration.h",
                         "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectLoader.cpp"]
-        pack_paths = ["HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs",
+        pack_paths = ["HarkenIntegration/Unity/Harken/Runtime/API/PackMetadata.cs",
                       "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.cpp",
                       "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectPackExporter.cpp"]
         with patch.object(MODULE, "changed_files", return_value=editor_paths + pack_paths):
@@ -717,7 +717,7 @@ class ReaderGateTest(unittest.TestCase):
         self.pack_schema_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
         self.binary = self.root / "current/HarkenStudio.exe"
         self.old_binary = self.root / "baseline/HarkenStudio.exe"
-        self.pack_reader = self.root / "HarkenAbiFidelity.dll"
+        self.pack_reader = self.root / "HarkenContractTest.dll"
         self.pack_root = self.root / "pack"
         self.pack_root.mkdir()
         native_name = "HarkenEngine.dll" if MODULE.os.name == "nt" else "libHarkenEngine.dylib" \
@@ -759,7 +759,7 @@ class ReaderGateTest(unittest.TestCase):
         baselines = {"baseline": self.old_binary.parent} if old_version is not None else {}
         package = {"_schemaManifest": expected, "buildId": "released"}
         if native_output is None:
-            native_output = f"[PackCompanion] native publication PASS.\n[PackCompanion] packMetadataVersion {integration_version}\n"
+            native_output = f"[PackMetadata] native export PASS.\n[PackMetadata] packMetadataVersion {integration_version}\n"
         native = SimpleNamespace(returncode=native_returncode, stdout=native_output, stderr="")
         with patch.object(MODULE, "required_baselines", return_value={tag: {} for tag in baselines}), \
                 patch.object(MODULE, "release_schema_errors", return_value=[]), \
@@ -774,7 +774,7 @@ class ReaderGateTest(unittest.TestCase):
         report, calls = self.verify(old_version=MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"])
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].args[0], ["dotnet", str(self.pack_reader), "--require-native",
-                                          "--companion-root", str(self.pack_root)])
+                                          "--export-root", str(self.pack_root)])
         self.assertIn((self.old_binary, "edit"), self.calls)
         self.assertEqual(set(report["pack"]["fixtureSha256"]), {
             "Init.bytes", "Init.json", "Play.bytes", "Play.json", "English/Play.bytes", "English/Play.json"})
@@ -801,7 +801,7 @@ class ReaderGateTest(unittest.TestCase):
         report, _ = self.verify()
         self.assertEqual(report["errors"], [])
         with self.assertRaisesRegex(ValueError, "Native Pack gate failed"):
-            self.verify(native_output=f"[PackCompanion] packMetadataVersion {self.pack_schema_version}\n")
+            self.verify(native_output=f"[PackMetadata] packMetadataVersion {self.pack_schema_version}\n")
         previous_calls = len(self.calls)
         with self.assertRaises(ValueError):
             self.verify(native_returncode=1)
@@ -822,7 +822,7 @@ class ReleaseCommandTest(unittest.TestCase):
     def run_command(self, *arguments: str) -> tuple[int, str]:
         output = io.StringIO()
         with patch.object(MODULE.sys, "argv", ["audit", "--verify-readers", "--reader", "studio",
-                "--pack-reader", "HarkenAbiFidelity.dll", "--pack-root", "packs", *arguments]), \
+                "--pack-reader", "HarkenContractTest.dll", "--pack-root", "packs", *arguments]), \
                 redirect_stdout(output):
             result = MODULE.main()
         return result, output.getvalue()

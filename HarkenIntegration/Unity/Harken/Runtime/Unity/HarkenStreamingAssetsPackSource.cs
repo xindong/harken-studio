@@ -7,7 +7,7 @@ using UnityEngine.Networking;
 namespace Harken.Unity
 {
     /// <summary>Reads an explicitly selected, immutable packaged platform directory, including Android jar URIs.</summary>
-    public static class HarkenStreamingPackSource
+    public static class HarkenStreamingAssetsPackSource
     {
         public static PackSource Create(string platformRoot, string language = null)
         {

@@ -37,11 +37,11 @@ namespace Harken.Unity.Editor
         private void ResetWaveforms(HarkenEditorResources next)
         { resources = next; vkdCache.Clear(); verifiedPaths.Clear(); previewCache.Clear(); collectionCache.Clear(); cacheBytes = 0; }
 
-        private Dictionary<VnObjectId, WaveReference> References(PackCatalogSnapshot.Entry entry)
+        private Dictionary<VnObjectId, WaveReference> References(ActionCatalogSnapshot.Entry entry)
         {
             var result = new Dictionary<VnObjectId, WaveReference>();
             var parser = new JsonParser(new UTF8Encoding(false, true).GetString(entry.Input.Json));
-            if (!(parser.Read(0) is Dictionary<string, object> root) || !parser.End) throw new InvalidDataException("Invalid companion JSON.");
+            if (!(parser.Read(0) is Dictionary<string, object> root) || !parser.End) throw new InvalidDataException("Invalid Pack metadata JSON.");
             if (!root.TryGetValue("waveforms", out object value)) return result;
             if (!(value is List<object> rows)) throw new InvalidDataException("Invalid optional waveforms array.");
             foreach (object item in rows)
@@ -61,7 +61,7 @@ namespace Harken.Unity.Editor
             frame = value is ulong unsigned ? unsigned : value is long signed && signed >= 0 ? (ulong)signed : ulong.MaxValue;
             return frame <= 9007199254740991ul;
         }
-        private HarkenSourceEnvelope Envelope(PackCatalogSnapshot.Entry entry, WaveReference reference,
+        private HarkenSourceEnvelope Envelope(ActionCatalogSnapshot.Entry entry, WaveReference reference,
             float gain, ulong occurrence)
         {
             if (resources == null) throw new FileNotFoundException("No presentation resource reader was supplied.");
@@ -170,7 +170,7 @@ namespace Harken.Unity.Editor
                         { NativeOccurrence = occurrence });
                 }
                 GetDuration(name, out HarkenActionDuration duration, out _);
-                Publication.TryFindAction(name, out GameplayAction action);
+                Catalog.TryFindAction(name, out ActionCatalogEntry action);
                 var kind = entry.Input.Facts.previewKind == VnConstants.VN_PACK_PREVIEW_SOUND
                     ? HarkenActionPreviewKind.DirectSound : HarkenActionPreviewKind.RandomCandidates;
                 preview = new HarkenActionPreview(action, kind, candidates.ToArray(), duration.Kind,

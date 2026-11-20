@@ -5,7 +5,7 @@ using Harken;
 
 namespace Harken.Test
 {
-    internal static class RepositoryPublicationContract
+    internal static class ExportedPackContract
     {
         public static bool Run(string root)
         {
@@ -47,14 +47,14 @@ namespace Harken.Test
                     }
                     finally { session?.Dispose(); }
                 }
-                if (count == 0) throw new InvalidOperationException("Publication has no Action companion pairs.");
-                Console.WriteLine("[PackCompanion] packMetadataVersion " + PackCompanion.SupportedPackMetadataVersion);
-                Console.WriteLine("[PackCompanion] native publication PASS.");
+                if (count == 0) throw new InvalidOperationException("Export has no Action Pack pairs.");
+                Console.WriteLine("[PackMetadata] packMetadataVersion " + PackMetadata.SupportedPackMetadataVersion);
+                Console.WriteLine("[PackMetadata] native export PASS.");
                 return true;
             }
             catch (Exception error)
             {
-                Console.WriteLine("[PackCompanion] FAIL: " + error);
+                Console.WriteLine("[PackMetadata] FAIL: " + error);
                 return false;
             }
         }

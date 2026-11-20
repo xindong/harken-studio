@@ -11,7 +11,7 @@ Integration-owned marshalling.json, and emits:
   <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenMonitor.g.cs
 
 Development-edition entry points are emitted under #if HARKEN_ENGINE_DEV.
-Managed projection and visibility come from api_surface.json.
+Managed projection and visibility come from managed_policy.json.
 
     py -3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest <harken_abi_manifest.json>
     py -3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest <harken_abi_manifest.json> --check
@@ -25,7 +25,7 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
-API_POLICY_PATH = os.path.join(SCRIPT_DIR, "api_surface.json")
+API_POLICY_PATH = os.path.join(SCRIPT_DIR, "managed_policy.json")
 MARSHALLING_PATH = os.path.join(SCRIPT_DIR, "marshalling.json")
 
 CS_GEN_DIR = os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated")

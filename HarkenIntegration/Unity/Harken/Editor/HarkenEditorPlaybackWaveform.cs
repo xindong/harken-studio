@@ -172,7 +172,7 @@ namespace Harken.Unity.Editor
             {
                 waveform = null;
                 diagnostic = "No unambiguous started source is available for this firing.";
-                if (disposed || !IsPrepared || catalog == null || !ReferenceEquals(catalog.PreparedPacks, source) ||
+                if (disposed || !IsPrepared || catalog == null || !ReferenceEquals(catalog.PreviewContent, source) ||
                     !ReferenceEquals(preview.session, capturedSession) || preview.observationFailed ||
                     !preview.firings.TryGetValue(firing.Handle, out FiringOwner owner) || !ReferenceEquals(owner.Owner, this) ||
                     owner.StopRequested || owner.SelectionInvalid || owner.Sounds.Count != 1 ||
@@ -181,7 +181,7 @@ namespace Harken.Unity.Editor
                 if (result != VnResult.VN_OK) return result;
                 SelectedSound selected = null;
                 foreach (var sound in owner.Sounds.Values) selected = sound;
-                if (selected.Fact.fact.projectId != VnObjectId.Parse(catalog.Publication.ProjectId)) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+                if (selected.Fact.fact.projectId != VnObjectId.Parse(catalog.Catalog.ProjectId)) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
                 var actual = selected.Fact.playable;
                 HarkenActionPreviewCandidate match = null;
                 foreach (var candidate in candidates.Candidates)

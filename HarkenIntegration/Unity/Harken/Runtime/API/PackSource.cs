@@ -17,8 +17,8 @@ namespace Harken
         private readonly Func<string, CancellationToken, Task<byte[]>> asyncReader;
         private readonly Func<ulong> revision;
         private readonly PackDirectorySource directory;
-        private readonly Func<string, VnObjectId, byte[], CompanionCapture> snapshot;
-        private readonly Func<CompanionInput, VnResult> snapshotValidation;
+        private readonly Func<string, VnObjectId, byte[], PackMetadataCapture> snapshot;
+        private readonly Func<PackMetadataInput, VnResult> snapshotValidation;
         public string Language { get; }
         public bool IsAsync => asyncReader != null;
         internal string Root => directory?.Root ?? string.Empty;
@@ -26,8 +26,8 @@ namespace Harken
         private PackSource(string language, Func<string, byte[]> reader = null,
             Func<string, CancellationToken, Task<byte[]>> asyncReader = null,
             Func<ulong> revision = null, PackDirectorySource directory = null,
-            Func<string, VnObjectId, byte[], CompanionCapture> snapshot = null,
-            Func<CompanionInput, VnResult> snapshotValidation = null)
+            Func<string, VnObjectId, byte[], PackMetadataCapture> snapshot = null,
+            Func<PackMetadataInput, VnResult> snapshotValidation = null)
         {
             if (!PackDirectorySource.ValidLanguage(language)) throw new ArgumentException("Invalid Pack language.", nameof(language));
             Language = language ?? string.Empty;
@@ -40,7 +40,7 @@ namespace Harken
         }
 
         internal static PackSource FromSnapshot(string language,
-            Func<string, VnObjectId, byte[], CompanionCapture> capture, Func<CompanionInput, VnResult> validate)
+            Func<string, VnObjectId, byte[], PackMetadataCapture> capture, Func<PackMetadataInput, VnResult> validate)
             => new PackSource(language, snapshot: capture, snapshotValidation: validate);
 
         public static PackSource FromDirectory(string platformDirectory, string language = null)
@@ -58,13 +58,13 @@ namespace Harken
         internal static bool HasControlContext => SynchronizationContext.Current != null &&
             SynchronizationContext.Current.GetType() != typeof(SynchronizationContext);
 
-        internal VnResult Capture(string name, VnObjectId project, byte[] init, out CompanionInput input)
+        internal VnResult Capture(string name, VnObjectId project, byte[] init, out PackMetadataInput input)
         {
             input = null;
             if (IsAsync) return VnResult.VN_CAPABILITY_UNAVAILABLE;
             if (snapshot != null)
             {
-                CompanionCapture frozen = snapshot(name, project, init);
+                PackMetadataCapture frozen = snapshot(name, project, init);
                 input = frozen.Input;
                 return frozen.Result;
             }
@@ -75,7 +75,7 @@ namespace Harken
             return captured.Result;
         }
 
-        internal VnResult Validate(CompanionInput input)
+        internal VnResult Validate(PackMetadataInput input)
         {
             if (snapshotValidation != null) return snapshotValidation(input);
             try
@@ -132,19 +132,19 @@ namespace Harken
             try { await pending.ConfigureAwait(false); } catch { }
         }
 
-        internal async Task<CompanionCapture> CaptureAsync(string name, VnObjectId project,
+        internal async Task<PackMetadataCapture> CaptureAsync(string name, VnObjectId project,
             byte[] init, CancellationToken cancellation, Action<bool> readPhase = null)
         {
-            if (name != null && (!PackCompanion.IsName(name) || name == "Init"))
-                return new CompanionCapture(VnResult.VN_INVALID_ARG);
+            if (name != null && (!PackMetadata.IsName(name) || name == "Init"))
+                return new PackMetadataCapture(VnResult.VN_INVALID_ARG);
             try
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (snapshot != null) return snapshot(name, project, init);
                 if (directory != null)
                 {
-                    VnResult result = directory.Capture(name, project, init, out CompanionInput file);
-                    return new CompanionCapture(result, file);
+                    VnResult result = directory.Capture(name, project, init, out PackMetadataInput file);
+                    return new PackMetadataCapture(result, file);
                 }
                 ulong version = ReadRevision(readPhase);
                 string scope = name == null ? string.Empty : Language;
@@ -159,29 +159,29 @@ namespace Harken
                     json = await Read(basename + ".json", cancellation, readPhase);
                 }
                 if (revision != null && ReadRevision(readPhase) != version)
-                    return new CompanionCapture(VnResult.VN_PACK_STALE_REVISION);
-                if (bytes == null && json == null) return new CompanionCapture(VnResult.VN_CONTENT_NOT_LOADED);
-                if (bytes == null || json == null) return new CompanionCapture(VnResult.VN_BAD_PACK);
-                VnResult parsed = PackCompanion.Parse(json, bytes, name, scope, project, out PackCompanion names);
-                if (parsed != VnResult.VN_OK) return new CompanionCapture(parsed);
-                parsed = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
-                if (parsed != VnResult.VN_OK) return new CompanionCapture(parsed);
+                    return new PackMetadataCapture(VnResult.VN_PACK_STALE_REVISION);
+                if (bytes == null && json == null) return new PackMetadataCapture(VnResult.VN_CONTENT_NOT_LOADED);
+                if (bytes == null || json == null) return new PackMetadataCapture(VnResult.VN_BAD_PACK);
+                VnResult parsed = PackMetadata.Parse(json, bytes, name, scope, project, out PackMetadata names);
+                if (parsed != VnResult.VN_OK) return new PackMetadataCapture(parsed);
+                parsed = PackMetadataNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
+                if (parsed != VnResult.VN_OK) return new PackMetadataCapture(parsed);
                 names.ProjectId = facts.projectId;
-                return new CompanionCapture(VnResult.VN_OK, new CompanionInput
+                return new PackMetadataCapture(VnResult.VN_OK, new PackMetadataInput
                 {
                     Bytes = bytes, Json = json, Names = names, Facts = facts, SourceRevision = version
                 });
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
-            catch (OutOfMemoryException) { return new CompanionCapture(VnResult.VN_DEVICE_ERROR); }
-            catch { return new CompanionCapture(VnResult.VN_PACK_PROVIDER_FAILED); }
+            catch (OutOfMemoryException) { return new PackMetadataCapture(VnResult.VN_DEVICE_ERROR); }
+            catch { return new PackMetadataCapture(VnResult.VN_PACK_PROVIDER_FAILED); }
         }
     }
 
-    internal readonly struct CompanionCapture
+    internal readonly struct PackMetadataCapture
     {
         internal readonly VnResult Result;
-        internal readonly CompanionInput Input;
-        internal CompanionCapture(VnResult result, CompanionInput input = null) { Result = result; Input = input; }
+        internal readonly PackMetadataInput Input;
+        internal PackMetadataCapture(VnResult result, PackMetadataInput input = null) { Result = result; Input = input; }
     }
 }
