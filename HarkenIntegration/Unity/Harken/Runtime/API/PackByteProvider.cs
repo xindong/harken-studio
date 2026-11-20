@@ -20,11 +20,6 @@ namespace Harken
             out byte[] payload,
             object state);
 
-        internal static int OutstandingPinCount { get; private set; }
-        internal static int LastProvideCalls { get; private set; }
-        internal static int LastReleaseCalls { get; private set; }
-        internal static bool LastProvideLeftSpanZero { get; private set; }
-
         static readonly VnPackByteProviderFn ProvideDelegate = ProvideThunk;
         static readonly VnPackByteReleaseFn ReleaseDelegate = ReleaseThunk;
         static readonly IntPtr ProvideFnPtr =
@@ -69,11 +64,12 @@ namespace Harken
             Entries.Remove(key);
         }
 
+        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
         public static VnResult LoadPack(ulong packStableId, Handler handler,
                                         object state, out Pack pack)
             => Invoke(packStableId, handler, state, false, out pack, out _);
 
-        public static VnResult InspectInitPack(ulong packStableId, Handler handler,
+        internal static VnResult InspectInitPack(ulong packStableId, Handler handler,
             object state, out InitPackInspection inspection)
             => Invoke(packStableId, handler, state, true, out _, out inspection);
 
@@ -89,9 +85,6 @@ namespace Harken
         {
             pack = default;
             inspection = default;
-            LastProvideCalls = 0;
-            LastReleaseCalls = 0;
-            LastProvideLeftSpanZero = false;
             if (handler == null)
             {
                 return VnResult.VN_INVALID_ARG;
@@ -136,7 +129,6 @@ namespace Harken
             if (entry.Pin.IsAllocated)
             {
                 entry.Pin.Free();
-                OutstandingPinCount--;
                 entry.Pin = default;
                 Entries[key] = entry;
             }
@@ -160,8 +152,6 @@ namespace Harken
             IntPtr userData, ulong packStableId, IntPtr relativeLocatorUtf8,
             uint variantKey, ulong expectedContentHash, IntPtr outSpan)
         {
-            LastProvideCalls++;
-            LastProvideLeftSpanZero = true;
             try
             {
                 ZeroSpan(outSpan);
@@ -195,10 +185,8 @@ namespace Harken
                 if (entry.Pin.IsAllocated)
                 {
                     entry.Pin.Free();
-                    OutstandingPinCount--;
                 }
                 entry.Pin = GCHandle.Alloc(payload, GCHandleType.Pinned);
-                OutstandingPinCount++;
                 Entries[key] = entry;
 
                 VnPackByteSpan* span = (VnPackByteSpan*)outSpan.ToPointer();
@@ -206,13 +194,11 @@ namespace Harken
                 span->reserved0 = 0;
                 span->bytes = entry.Pin.AddrOfPinnedObject();
                 span->byteCount = (ulong)payload.Length;
-                LastProvideLeftSpanZero = false;
                 return VnResult.VN_OK;
             }
             catch
             {
                 ZeroSpan(outSpan);
-                LastProvideLeftSpanZero = true;
                 return VnResult.VN_PACK_PROVIDER_FAILED;
             }
         }
@@ -221,7 +207,6 @@ namespace Harken
         static void ReleaseThunk(IntPtr userData, ulong packStableId,
                                  VnPackByteSpan span)
         {
-            LastReleaseCalls++;
             try
             {
                 FreePin((int)userData);

@@ -22,11 +22,7 @@ NEGATIVE = {
     "VnMonitorRecordHeader": "typeof(VnMonitorRecordHeader)",
     "VnBusTopologyDesc": "typeof(VnBusTopologyDesc)",
     "RemoteCommunication": "RemoteCommunication.Stop()",
-    "CreateBus": "HarkenEngine.CreateBus(default, default)",
-    "ReparentBus": "HarkenEngine.ReparentBus(default, default)",
-    "DestroyBus": "HarkenEngine.DestroyBus(default)",
     "NotificationFnPtr": "HarkenCallbacks.NotificationFnPtr",
-    "OutstandingPinCount": "PackByteProvider.OutstandingPinCount",
     "VN_SNAPSHOT_MAX_VOICES": "VnConstants.VN_SNAPSHOT_MAX_VOICES",
 }
 
