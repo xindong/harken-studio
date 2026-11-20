@@ -2218,7 +2218,7 @@ bool WriteV3Config(std::vector<std::uint8_t>* bytes,
     std::copy(wire.begin(), wire.end(),
               bytes->begin() + harken::kTraceFixedHeaderBytes);
     const std::uint32_t vintage =
-        harken::ConfigVintageFromNativeSize(config.structSize);
+        harken::kTraceConfigVintageCount;
     std::memcpy(bytes->data() + 12, &vintage, sizeof vintage);
     return true;
 }
@@ -3776,12 +3776,89 @@ TEST(TraceReplayE2E, VersionOneTraceIsExplicitlyRejected) {
     EXPECT_FALSE(std::filesystem::exists(outPath));
 }
 
+TEST(TraceReplayE2E, HistoricalConfigVintagesReplayWithIgnoredDecoderBudget) {
+    const auto tracePath = TempPath("config_vintage_source.vtrc");
+    ASSERT_TRUE(RecordFormatFixture(tracePath));
+    const auto source = ReadFileBytes(tracePath);
+    const auto configEnd = harken::kTraceFixedHeaderBytes + harken::kTraceConfigWireBytes;
+    ASSERT_GT(source.size(), configEnd);
+    EXPECT_EQ(19u, source[12]);
+    EXPECT_EQ(19u, source[harken::kTraceFixedHeaderBytes + 4]);
+    for (std::uint32_t vintage : {16u, 17u, 18u}) {
+        auto bytes = source;
+        bytes[4] = harken::kTraceFormatVersionV8;
+        bytes.erase(bytes.begin() + configEnd - 4, bytes.begin() + configEnd);
+        const auto oldEnd = configEnd - 4;
+        const std::uint32_t oldHeader = static_cast<std::uint32_t>(oldEnd);
+        std::memcpy(bytes.data() + 8, &oldHeader, sizeof(oldHeader));
+        bytes[12] = static_cast<std::uint8_t>(vintage);
+        bytes[harken::kTraceFixedHeaderBytes + 4] = static_cast<std::uint8_t>(vintage);
+        constexpr auto ringOffset = harken::kTraceFixedHeaderBytes + 16 + 11 * 4;
+        bytes[ringOffset] = 4;
+        if (vintage == 17) {
+            bytes.insert(bytes.begin() + oldEnd, 8, 0xff);
+            const std::uint32_t headerBytes = oldEnd + 8;
+            std::memcpy(bytes.data() + 8, &headerBytes, sizeof(headerBytes));
+        }
+        const auto run = RunMutatedTrace(bytes, "config_vintage_" + std::to_string(vintage) + ".vtrc");
+        EXPECT_EQ(0, run.exitCode) << run.output;
+    }
+}
+
+TEST(TraceReplayE2E, V8StandaloneStreamCallsAreRefusedBeforeCapture) {
+    const auto tracePath = TempPath("v8_stream.vtrc");
+    const auto capturePath = TempPath("v8_stream.f32");
+    ASSERT_TRUE(RecordFormatFixture(tracePath));
+    auto source = ReadFileBytes(tracePath);
+    const auto configEnd = harken::kTraceFixedHeaderBytes + harken::kTraceConfigWireBytes;
+    ASSERT_GT(source.size(), configEnd);
+    source.erase(source.begin() + configEnd - 4, source.begin() + configEnd);
+    source[4] = 8;
+    source[12] = source[harken::kTraceFixedHeaderBytes + 4] = 16;
+    const std::uint32_t oldHeader = configEnd - 4;
+    std::memcpy(source.data() + 8, &oldHeader, sizeof oldHeader);
+    RecordLocation end;
+    ASSERT_TRUE(FindRecord(source, harken::kTraceRecordEnd, 0, &end));
+    // Append a standalone call after a completed update. A late rejection
+    // during execution would already have erased the existing capture.
+    source.resize(end.recordAt);
+    const std::vector<std::uint8_t> sentinel{0xa1, 0xb2, 0xc3};
+    ASSERT_NO_FATAL_FAILURE(WriteFileBytes(capturePath, sentinel));
+    struct LegacyCall { std::uint8_t id; const char* name; };
+    for (const LegacyCall call : {LegacyCall{22, "RegisterStreamFile"},
+                                  LegacyCall{23, "UnregisterStreamFile"},
+                                  LegacyCall{50, "ReplaceStreamFile"}}) {
+        SCOPED_TRACE(call.name);
+        auto bytes = source;
+        // u16 id, u16 reserved, 16-byte sound ID; register and replace
+        // additionally store a length-prefixed path, hash and known flag.
+        std::vector<std::uint8_t> body(20, 0);
+        body[0] = call.id;
+        body[4] = 1;
+        if (call.id != 23) {
+            body.insert(body.end(), {1, 0, 0, 0, 'a'});
+            body.resize(body.size() + 9, 0);
+        }
+        bytes.resize(end.recordAt + harken::kTraceRecordHeaderBytes, 0);
+        bytes[end.recordAt] = static_cast<std::uint8_t>(body.size());
+        bytes[end.recordAt + 4] = harken::kTraceRecordApiCall;
+        std::memcpy(bytes.data() + end.recordAt + 8, &end.ordinal, sizeof end.ordinal);
+        bytes.insert(bytes.end(), body.begin(), body.end());
+        ASSERT_NO_FATAL_FAILURE(WriteFileBytes(tracePath, bytes));
+        const auto run = RunHost("trace-replay " + tracePath + " --capture " + capturePath);
+        EXPECT_EQ(1, run.exitCode) << run.output;
+        EXPECT_NE(run.output.find(call.name), std::string::npos) << run.output;
+        EXPECT_NE(run.output.find("original V8 Host"), std::string::npos) << run.output;
+        EXPECT_EQ(sentinel, ReadFileBytes(capturePath));
+    }
+}
+
 TEST(TraceReplayE2E, RetiredTraceVersionsAreRejectedBeforeRecords) {
     const auto tracePath = TempPath("retired_versions_source.vtrc");
     ASSERT_TRUE(RecordFormatFixture(tracePath));
     const auto source = ReadFileBytes(tracePath);
     ASSERT_GE(source.size(), 8u);
-    for (std::uint32_t version = 1; version < harken::kTraceFormatVersion; ++version) {
+    for (std::uint32_t version = 1; version < harken::kTraceFormatVersionV8; ++version) {
         auto bytes = source;
         std::memcpy(bytes.data() + 4, &version, sizeof(version));
         const auto run = RunMutatedTrace(

@@ -1,199 +1,239 @@
 {
   "functions": {
-    "Vn_ActivateCanonicalPackSetV2": [
+    "VnPreview_CancelProject": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_CapturePlaybackPaths": [
+      {
+        "wire": "outrows",
+        "type": "VnPreviewPlaybackPathV1",
+        "capacityParam": "capacity",
+        "countParam": "requiredCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "VnPreview_CommitProject": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_DrainProjectAcks": [],
+    "VnPreview_EnableChannelPeakMetering": [],
+    "VnPreview_HasAction": [
+      {
+        "wire": "objectid"
+      }
+    ],
+    "VnPreview_HasEffectChainConsumers": [],
+    "VnPreview_HasPlayableConsumers": [],
+    "VnPreview_HasWorldGeneration": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_PlayPlayable": [
       {
         "wire": "desc",
-        "type": "VnCanonicalPackSetActivationDescV2"
+        "type": "VnPreviewPlayPlayableDescV2"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PlayVoiceRaw": [
+      {
+        "wire": "desc",
+        "type": "VnPlayDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PrepareProject": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV1"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PrepareProjectV2": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV2"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PrepareProjectV3": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV3"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PrepareProjectV4": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV4"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_ProjectIsOpen": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_PumpNullMixer": [
+      {
+        "wire": "u32"
+      }
+    ],
+    "VnPreview_QueryOwnerRevision": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_QueryPlayable": [
+      {
+        "wire": "u64"
       },
       {
         "wire": "outstruct",
-        "type": "VnCanonicalPackSetActivationReportV1"
+        "type": "VnPreviewPlayableStateV2"
       }
     ],
-    "Vn_InspectCanonicalPackV1": [
+    "VnPreview_QueryVoiceWorldGeneration": [
       {
-        "wire": "desc",
-        "type": "VnPackInspectDescV1"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnPackInspectReportV1"
+        "wire": "u64"
       }
     ],
-    "Vn_Init": [
+    "VnPreview_RefreshVoiceBindings": [
       {
-        "wire": "desc",
-        "type": "VnConfig"
+        "wire": "u64"
       }
     ],
-    "Vn_Term": [],
-    "Vn_RegisterPCM": [
+    "VnPreview_RegisterPcm": [
       {
         "wire": "objectid"
       },
       {
         "wire": "desc",
         "type": "VnPCMDesc"
-      }
-    ],
-    "Vn_UnregisterPCM": [
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_Stop": [
+      },
       {
         "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_ResetPlayable": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewResetPlayableDescV2"
+      }
+    ],
+    "VnPreview_SetBusEffect": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "f32array"
+      },
+      {
+        "wire": "u32"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_CreateBus": [
+    "VnPreview_SetVoiceEffect": [
+      {
+        "wire": "u64"
+      },
       {
         "wire": "objectid"
       },
       {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_SetBusVolume": [
-      {
-        "wire": "objectid"
+        "wire": "u32"
       },
       {
-        "wire": "f32"
+        "wire": "f32array"
+      },
+      {
+        "wire": "u32"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_Update": [],
-    "Vn_SetVoiceVolume": [
+    "VnPreview_SetVoiceEffectChain": [
       {
         "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetVoicePitch": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_SetVoicePosition": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "vec3"
-      }
-    ],
-    "Vn_SetListenerDistanceReference": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_SetEmitterDistanceScale": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_SetVoiceDistanceScale": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_SetVoiceSpatializationMix": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_SetVoicePan": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_SetVoiceWidth": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_CommitVoiceStart": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_SetValue": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_CaptureSnapshot": [
-      {
-        "wire": "structref",
-        "type": "VnSnapshot"
-      }
-    ],
-    "Vn_SetListener": [
-      {
-        "wire": "vec3"
-      },
-      {
-        "wire": "vec3"
-      },
-      {
-        "wire": "vec3"
-      }
-    ],
-    "Vn_RegisterAttenuation": [
-      {
-        "wire": "objectid"
       },
       {
         "wire": "desc",
-        "type": "VnAttenuationDesc"
+        "type": "VnPreviewVoiceEffectChainV1"
       }
     ],
-    "Vn_BindVoiceAttenuation": [
+    "VnPreview_SetVoiceProperty": [
       {
         "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "f32"
       },
       {
         "wire": "objectid"
       }
     ],
-    "Vn_SetVoiceOrientation": [
+    "VnPreview_StopPlayable": [
       {
         "wire": "u64"
       },
       {
-        "wire": "vec3"
+        "wire": "u32"
+      }
+    ],
+    "VnPreview_TakeChannelPeaks": [
+      {
+        "wire": "outstruct",
+        "type": "VnPreviewChannelPeaksV1"
       }
     ],
     "Vn_ActivateCanonicalPackSetV1": [
@@ -206,343 +246,38 @@
         "type": "VnCanonicalPackSetActivationReportV1"
       }
     ],
-    "Vn_UnloadCanonicalPackSetV1": [
+    "Vn_ActivateCanonicalPackSetV2": [
       {
         "wire": "desc",
-        "type": "VnCanonicalPackSetUnloadDescV1"
-      }
-    ],
-    "Vn_InspectInitPack": [
-      {
-        "wire": "desc",
-        "type": "VnPackLoadDesc"
+        "type": "VnCanonicalPackSetActivationDescV2"
       },
       {
         "wire": "outstruct",
-        "type": "VnInitPackInspectReport"
+        "type": "VnCanonicalPackSetActivationReportV1"
       }
     ],
-    "Vn_LoadPack": [
+    "Vn_ActivateCanonicalPackSetV3": [
       {
         "wire": "desc",
-        "type": "VnPackDesc"
+        "type": "VnCanonicalPackSetActivationDescV3"
       },
       {
-        "wire": "out"
+        "wire": "outstruct",
+        "type": "VnCanonicalPackSetActivationReportV1"
       }
     ],
-    "Vn_UnloadPack": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_SetVoiceEffectBypass": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetVoiceEffect": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "polydesc"
-      }
-    ],
-    "Vn_ClearVoiceEffect": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetVoiceEffectParam": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_RegisterStreamFile": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "string"
-      }
-    ],
-    "Vn_UnregisterStreamFile": [
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_CreateEmitter": [
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_DestroyEmitter": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_SetEmitterPosition": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "vec3"
-      }
-    ],
-    "Vn_SetEmitterOrientation": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "vec3"
-      }
-    ],
-    "Vn_StopEmitter": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetEmitterValue": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_ConnectBusSend": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_DisconnectBusSend": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_SetBusSendLevel": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "f32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetVoiceSend": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_ClearVoiceSend": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetVoiceSendLevel": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "f32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetBusEffect": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "polydesc"
-      }
-    ],
-    "Vn_ClearBusEffect": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetBusEffectParam": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "f32"
-      }
-    ],
-    "Vn_SetBusEffectBypass": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetBusFaderPoint": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_ReplacePCM": [
-      {
-        "wire": "objectid"
-      },
+    "Vn_ApplyBusTopology": [
       {
         "wire": "desc",
-        "type": "VnPCMDesc"
+        "type": "VnBusTopologyDesc"
       }
     ],
-    "Vn_ReplaceStreamFile": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "string"
-      }
-    ],
-    "Vn_ReplacePack": [
+    "Vn_ApplyVoiceBinding": [
       {
         "wire": "u64"
       },
       {
-        "wire": "desc",
-        "type": "VnPackDesc"
-      }
-    ],
-    "Vn_ReplaceAttenuation": [
-      {
         "wire": "objectid"
-      },
-      {
-        "wire": "desc",
-        "type": "VnAttenuationDesc"
-      }
-    ],
-    "Vn_SetBusOutputLayout": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetBusDownmixMatrix": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "desc",
-        "type": "VnDownmixMatrixDesc"
-      }
-    ],
-    "Vn_ResetBusDownmixMatrix": [
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_RegisterBinding": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "desc",
-        "type": "VnBindingDesc"
-      }
-    ],
-    "Vn_UnregisterBinding": [
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_ReplaceBinding": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "desc",
-        "type": "VnBindingDesc"
       }
     ],
     "Vn_AttachBinding": [
@@ -554,16 +289,7 @@
         "type": "VnBindingAttachDesc"
       }
     ],
-    "Vn_DetachBinding": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "desc",
-        "type": "VnBindingAttachDesc"
-      }
-    ],
-    "Vn_ApplyVoiceBinding": [
+    "Vn_BindVoiceAttenuation": [
       {
         "wire": "u64"
       },
@@ -571,18 +297,10 @@
         "wire": "objectid"
       }
     ],
-    "Vn_ClearVoiceBinding": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_CapturePropertyTargets": [
+    "Vn_CaptureCompressorRuntimeInfo": [
       {
         "wire": "outrows",
-        "type": "VnPropertyTargetInfo",
+        "type": "VnCompressorRuntimeInfo",
         "capacityParam": "capacity",
         "countParam": "requiredCount"
       },
@@ -593,57 +311,6 @@
         "wire": "outu32"
       }
     ],
-    "Vn_CapturePropertyBindings": [
-      {
-        "wire": "outrows",
-        "type": "VnPropertyBindingInfo",
-        "capacityParam": "capacity",
-        "countParam": "requiredCount"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "outu32"
-      }
-    ],
-    "Vn_SetBusMute": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_SetBusSolo": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_ReparentBus": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_DestroyBus": [
-      {
-        "wire": "objectid"
-      }
-    ],
-    "Vn_Suspend": [],
-    "Vn_Resume": [],
     "Vn_CaptureEffectCapabilities": [
       {
         "wire": "outrows",
@@ -656,71 +323,6 @@
       },
       {
         "wire": "outu32"
-      }
-    ],
-    "Vn_CaptureEffectParameterCapabilities": [
-      {
-        "wire": "outrows",
-        "type": "VnEffectParameterCapability",
-        "capacityParam": "capacity",
-        "countParam": "requiredCount"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "outu32"
-      }
-    ],
-    "Vn_SetBusEffectDynamicRoute": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "desc",
-        "type": "VnEffectDynamicRouteDesc"
-      }
-    ],
-    "Vn_ClearBusEffectDynamicRoute": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_ResetVoiceEffect": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
-      }
-    ],
-    "Vn_ResetBusEffect": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
       }
     ],
     "Vn_CaptureEffectDynamicCapabilities": [
@@ -765,10 +367,10 @@
         "wire": "outu32"
       }
     ],
-    "Vn_CaptureCompressorRuntimeInfo": [
+    "Vn_CaptureEffectParameterCapabilities": [
       {
         "wire": "outrows",
-        "type": "VnCompressorRuntimeInfo",
+        "type": "VnEffectParameterCapability",
         "capacityParam": "capacity",
         "countParam": "requiredCount"
       },
@@ -779,15 +381,175 @@
         "wire": "outu32"
       }
     ],
-    "Vn_StopAll": [
+    "Vn_CapturePropertyBindings": [
+      {
+        "wire": "outrows",
+        "type": "VnPropertyBindingInfo",
+        "capacityParam": "capacity",
+        "countParam": "requiredCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "Vn_CapturePropertyTargets": [
+      {
+        "wire": "outrows",
+        "type": "VnPropertyTargetInfo",
+        "capacityParam": "capacity",
+        "countParam": "requiredCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "Vn_CaptureSnapshot": [
+      {
+        "wire": "structref",
+        "type": "VnSnapshot"
+      }
+    ],
+    "Vn_ClearBusEffect": [
+      {
+        "wire": "objectid"
+      },
       {
         "wire": "u32"
       }
     ],
-    "Vn_ApplyBusTopology": [
+    "Vn_ClearBusEffectDynamicRoute": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_ClearVoiceBinding": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_ClearVoiceEffect": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_ClearVoiceSend": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_CommitVoiceStart": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_ConnectBusSend": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "f32"
+      }
+    ],
+    "Vn_CreateBus": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_CreateEmitter": [
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_CreateEmitterEx": [
       {
         "wire": "desc",
-        "type": "VnBusTopologyDesc"
+        "type": "VnEmitterCreateDescV1"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_DestroyBus": [
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_DestroyEmitter": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_DetachBinding": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnBindingAttachDesc"
+      }
+    ],
+    "Vn_DisconnectBusSend": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_Init": [
+      {
+        "wire": "desc",
+        "type": "VnConfig"
+      }
+    ],
+    "Vn_InspectCanonicalPackV1": [
+      {
+        "wire": "desc",
+        "type": "VnPackInspectDescV1"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnPackInspectReportV1"
+      }
+    ],
+    "Vn_InspectInitPack": [
+      {
+        "wire": "desc",
+        "type": "VnPackLoadDesc"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnInitPackInspectReport"
       }
     ],
     "Vn_LoadCurrentWorld": [
@@ -800,6 +562,247 @@
         "type": "VnCurrentWorldLoadReport"
       }
     ],
+    "Vn_LoadPack": [
+      {
+        "wire": "desc",
+        "type": "VnPackDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_MonitorAcquireCaptureControl": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorCaptureControlStatus"
+      }
+    ],
+    "Vn_MonitorApplyCapturePlan": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnMonitorCapturePlan"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorEffectiveCapturePlan"
+      }
+    ],
+    "Vn_MonitorBeginHostSession": [
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorHostSessionV1"
+      }
+    ],
+    "Vn_MonitorCaptureRegistry": [
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outbuf",
+        "capacityParam": "capacityBytes"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_MonitorCloseSession": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_MonitorEndHostSession": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_MonitorGetCapabilities": [
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorCapabilities"
+      }
+    ],
+    "Vn_MonitorGetCaptureControlStatus": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorCaptureControlStatus"
+      }
+    ],
+    "Vn_MonitorGetConsumerStatus": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outrows",
+        "type": "VnMonitorDropSummary",
+        "capacityParam": "capacity",
+        "countParam": "requiredCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "Vn_MonitorGetEffectiveCapturePlan": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorEffectiveCapturePlan"
+      }
+    ],
+    "Vn_MonitorGetEventSessionStatus": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorEventSessionStatus"
+      }
+    ],
+    "Vn_MonitorGetStateCutStatus": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorStateCutStatus"
+      }
+    ],
+    "Vn_MonitorGetSubscriptionStatus": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorSubscriptionStatus"
+      }
+    ],
+    "Vn_MonitorOpenEventSession": [
+      {
+        "wire": "desc",
+        "type": "VnMonitorSessionDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_MonitorOpenSession": [
+      {
+        "wire": "desc",
+        "type": "VnMonitorSessionDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_MonitorPoll": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnMonitorPollDesc"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorPollResult"
+      }
+    ],
+    "Vn_MonitorRegisterHost": [
+      {
+        "wire": "desc",
+        "type": "VnMonitorHostRegistrationV1"
+      }
+    ],
+    "Vn_MonitorRegisterHostV2": [
+      {
+        "wire": "desc",
+        "type": "VnMonitorHostRegistrationV2"
+      }
+    ],
+    "Vn_MonitorReleaseCaptureControl": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_MonitorRequestStateCut": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnMonitorStateCutDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_MonitorSealEventSession": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_MonitorStopCapture": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorEffectiveCapturePlan"
+      }
+    ],
+    "Vn_MonitorValidateCapturePlan": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnMonitorCapturePlan"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnMonitorEffectiveCapturePlan"
+      }
+    ],
     "Vn_PostAction": [
       {
         "wire": "postactiondesc",
@@ -809,12 +812,10 @@
         "wire": "out"
       }
     ],
-    "Vn_StopActionFiring": [
+    "Vn_QueryAbiVersion": [
       {
-        "wire": "u64"
-      },
-      {
-        "wire": "u32"
+        "wire": "outstruct",
+        "type": "VnAbiVersionInfo"
       }
     ],
     "Vn_QueryActionFiring": [
@@ -824,6 +825,32 @@
       {
         "wire": "outstruct",
         "type": "VnActionFiringInfo"
+      }
+    ],
+    "Vn_QueryActionPlaybackReadiness": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnActionPlaybackReadinessV1"
+      },
+      {
+        "wire": "outrows",
+        "type": "VnPlaybackReadinessMemberV1",
+        "capacityParam": "capacity"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_QueryActionSeek": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnActionSeekInfoV1"
       }
     ],
     "Vn_QueryActionStep": [
@@ -838,12 +865,106 @@
         "type": "VnActionStepResult"
       }
     ],
+    "Vn_QueryPackFormatVersion": [
+      {
+        "wire": "outstruct",
+        "type": "VnPackFormatVersionInfo"
+      }
+    ],
+    "Vn_QueryVariable": [
+      {
+        "wire": "desc",
+        "type": "VnVariableQueryDescV1"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnVariableQueryResultV1"
+      }
+    ],
+    "Vn_QueryVariableCatalog": [
+      {
+        "wire": "outstruct",
+        "type": "VnVariableCatalogInfoV1"
+      }
+    ],
+    "Vn_QueryVariableTicket": [
+      {
+        "wire": "desc",
+        "type": "VnVariableTicketQueryDescV1"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnVariableTicketQueryResultV1"
+      }
+    ],
+    "Vn_RegisterAttenuation": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnAttenuationDesc"
+      }
+    ],
+    "Vn_RegisterBinding": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnBindingDesc"
+      }
+    ],
+    "Vn_RegisterPCM": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnPCMDesc"
+      }
+    ],
     "Vn_ReleaseActionFiring": [
       {
         "wire": "u64"
       }
     ],
-    "Vn_UnloadPackEx": [
+    "Vn_ReleaseActionSeek": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_RemoteClientConnect": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "string"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_RemoteClientCreate": [
+      {
+        "wire": "desc",
+        "type": "VnRemoteClientDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_RemoteClientDestroy": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_RemoteClientDisconnect": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_RemoteClientDiscover": [
       {
         "wire": "u64"
       },
@@ -851,43 +972,204 @@
         "wire": "u32"
       }
     ],
-    "Vn_SetBusOutputVolume": [
+    "Vn_RemoteClientPoll": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnRemoteClientEvent"
+      },
+      {
+        "wire": "outbuf",
+        "capacityParam": "bufferBytes"
+      },
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_RemoteClientRequest": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnRemoteClientRequest"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "Vn_RemoteGetStatus": [
+      {
+        "wire": "outstruct",
+        "type": "VnRemoteStatus"
+      }
+    ],
+    "Vn_RemoteStart": [
+      {
+        "wire": "desc",
+        "type": "VnRemoteConfig"
+      }
+    ],
+    "Vn_RemoteStop": [],
+    "Vn_ReparentBus": [
       {
         "wire": "objectid"
       },
       {
-        "wire": "f32"
+        "wire": "objectid"
+      }
+    ],
+    "Vn_ReplaceAttenuation": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnAttenuationDesc"
+      }
+    ],
+    "Vn_ReplaceBinding": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnBindingDesc"
+      }
+    ],
+    "Vn_ReplacePCM": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnPCMDesc"
+      }
+    ],
+    "Vn_ReplacePack": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "desc",
+        "type": "VnPackDesc"
+      }
+    ],
+    "Vn_ResetBusDownmixMatrix": [
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_ResetBusEffect": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_SetVoiceOutputVolume": [
+    "Vn_ResetValues": [
+      {
+        "wire": "desc",
+        "type": "VnVariableBatchDescV1"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnVariableTicketV1"
+      }
+    ],
+    "Vn_ResetVoiceEffect": [
       {
         "wire": "u64"
       },
       {
-        "wire": "f32"
+        "wire": "u32"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_SetVoiceFilter": [
+    "Vn_Resume": [],
+    "Vn_SeekActionFiring": [
       {
-        "wire": "u64"
+        "wire": "desc",
+        "type": "VnActionSeekDescV1"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_SetBusDownmixMatrix": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnDownmixMatrixDesc"
+      }
+    ],
+    "Vn_SetBusEffect": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "polydesc"
+      }
+    ],
+    "Vn_SetBusEffectBypass": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_SetBusEffectDynamicRoute": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "desc",
+        "type": "VnEffectDynamicRouteDesc"
+      }
+    ],
+    "Vn_SetBusEffectParam": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "u32"
       },
       {
         "wire": "u32"
       },
       {
         "wire": "f32"
-      },
+      }
+    ],
+    "Vn_SetBusFaderPoint": [
       {
-        "wire": "f32"
-      },
-      {
-        "wire": "u32"
+        "wire": "objectid"
       },
       {
         "wire": "u32"
@@ -905,6 +1187,17 @@
       },
       {
         "wire": "f32"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_SetBusMute": [
+      {
+        "wire": "objectid"
       },
       {
         "wire": "u32"
@@ -933,328 +1226,94 @@
         "wire": "u32"
       }
     ],
-    "Vn_SeekActionFiring": [
+    "Vn_SetBusOutputLayout": [
       {
-        "wire": "desc",
-        "type": "VnActionSeekDescV1"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_QueryActionSeek": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnActionSeekInfoV1"
-      }
-    ],
-    "Vn_ReleaseActionSeek": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_TraceStart": [
-      {
-        "wire": "string"
-      }
-    ],
-    "Vn_TraceStop": [],
-    "Vn_RemoteStart": [
-      {
-        "wire": "desc",
-        "type": "VnRemoteConfig"
-      }
-    ],
-    "Vn_RemoteStop": [],
-    "Vn_RemoteGetStatus": [
-      {
-        "wire": "outstruct",
-        "type": "VnRemoteStatus"
-      }
-    ],
-    "Vn_RemoteClientCreate": [
-      {
-        "wire": "desc",
-        "type": "VnRemoteClientDesc"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_RemoteClientDestroy": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_RemoteClientDiscover": [
-      {
-        "wire": "u64"
+        "wire": "objectid"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_RemoteClientConnect": [
+    "Vn_SetBusOutputVolume": [
       {
-        "wire": "u64"
+        "wire": "objectid"
       },
       {
-        "wire": "string"
+        "wire": "f32"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_SetBusSendLevel": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "f32"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_RemoteClientDisconnect": [
+    "Vn_SetBusSolo": [
       {
-        "wire": "u64"
-      }
-    ],
-    "Vn_RemoteClientRequest": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "desc",
-        "type": "VnRemoteClientRequest"
-      },
-      {
-        "wire": "outu32"
-      }
-    ],
-    "Vn_RemoteClientPoll": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnRemoteClientEvent"
-      },
-      {
-        "wire": "outbuf",
-        "capacityParam": "bufferBytes"
-      },
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_MonitorGetCapabilities": [
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorCapabilities"
-      }
-    ],
-    "Vn_MonitorOpenSession": [
-      {
-        "wire": "desc",
-        "type": "VnMonitorSessionDesc"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_MonitorOpenEventSession": [
-      {
-        "wire": "desc",
-        "type": "VnMonitorSessionDesc"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_MonitorSealEventSession": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_MonitorGetEventSessionStatus": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorEventSessionStatus"
-      }
-    ],
-    "Vn_MonitorCloseSession": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_MonitorGetSubscriptionStatus": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorSubscriptionStatus"
-      }
-    ],
-    "Vn_MonitorCaptureRegistry": [
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "outbuf",
-        "capacityParam": "capacityBytes"
+        "wire": "objectid"
       },
       {
         "wire": "u32"
       },
       {
-        "wire": "outu32"
-      },
-      {
-        "wire": "out"
+        "wire": "u32"
       }
     ],
-    "Vn_MonitorRequestStateCut": [
+    "Vn_SetBusVolume": [
       {
-        "wire": "u64"
+        "wire": "objectid"
       },
       {
-        "wire": "desc",
-        "type": "VnMonitorStateCutDesc"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_MonitorGetStateCutStatus": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorStateCutStatus"
-      }
-    ],
-    "Vn_MonitorAcquireCaptureControl": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorCaptureControlStatus"
-      }
-    ],
-    "Vn_MonitorReleaseCaptureControl": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_MonitorGetCaptureControlStatus": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorCaptureControlStatus"
-      }
-    ],
-    "Vn_MonitorValidateCapturePlan": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "desc",
-        "type": "VnMonitorCapturePlan"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorEffectiveCapturePlan"
-      }
-    ],
-    "Vn_MonitorApplyCapturePlan": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "desc",
-        "type": "VnMonitorCapturePlan"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorEffectiveCapturePlan"
-      }
-    ],
-    "Vn_MonitorStopCapture": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorEffectiveCapturePlan"
-      }
-    ],
-    "Vn_MonitorGetEffectiveCapturePlan": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorEffectiveCapturePlan"
-      }
-    ],
-    "Vn_MonitorPoll": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "desc",
-        "type": "VnMonitorPollDesc"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorPollResult"
-      }
-    ],
-    "Vn_MonitorGetConsumerStatus": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outrows",
-        "type": "VnMonitorDropSummary",
-        "capacityParam": "capacity",
-        "countParam": "requiredCount"
+        "wire": "f32"
       },
       {
         "wire": "u32"
-      },
-      {
-        "wire": "outu32"
       }
     ],
-    "Vn_SetValues": [
+    "Vn_SetEmitterDistanceScale": [
       {
-        "wire": "desc",
-        "type": "VnVariableBatchDescV1"
+        "wire": "u64"
       },
       {
-        "wire": "outstruct",
-        "type": "VnVariableTicketV1"
+        "wire": "f32"
+      }
+    ],
+    "Vn_SetEmitterOrientation": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "vec3"
+      }
+    ],
+    "Vn_SetEmitterPosition": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "vec3"
+      }
+    ],
+    "Vn_SetEmitterValue": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "f32"
       }
     ],
     "Vn_SetEmitterValues": [
@@ -1270,34 +1329,36 @@
         "type": "VnVariableTicketV1"
       }
     ],
-    "Vn_ResetValues": [
+    "Vn_SetHostOutputMute": [
       {
-        "wire": "desc",
-        "type": "VnVariableBatchDescV1"
+        "wire": "u32"
       },
       {
-        "wire": "outstruct",
-        "type": "VnVariableTicketV1"
+        "wire": "u32"
       }
     ],
-    "Vn_QueryVariableTicket": [
+    "Vn_SetListener": [
       {
-        "wire": "desc",
-        "type": "VnVariableTicketQueryDescV1"
+        "wire": "vec3"
       },
       {
-        "wire": "outstruct",
-        "type": "VnVariableTicketQueryResultV1"
+        "wire": "vec3"
+      },
+      {
+        "wire": "vec3"
       }
     ],
-    "Vn_QueryVariable": [
+    "Vn_SetListenerDistanceReference": [
       {
-        "wire": "desc",
-        "type": "VnVariableQueryDescV1"
+        "wire": "u64"
+      }
+    ],
+    "Vn_SetValue": [
+      {
+        "wire": "objectid"
       },
       {
-        "wire": "outstruct",
-        "type": "VnVariableQueryResultV1"
+        "wire": "f32"
       }
     ],
     "Vn_SetValueByLabelId": [
@@ -1311,304 +1372,64 @@
         "wire": "u64"
       }
     ],
-    "Vn_QueryAbiVersion": [
-      {
-        "wire": "outstruct",
-        "type": "VnAbiVersionInfo"
-      }
-    ],
-    "Vn_QueryPackFormatVersion": [
-      {
-        "wire": "outstruct",
-        "type": "VnPackFormatVersionInfo"
-      }
-    ],
-    "Vn_QueryVariableCatalog": [
-      {
-        "wire": "outstruct",
-        "type": "VnVariableCatalogInfoV1"
-      }
-    ],
-    "Vn_CreateEmitterEx": [
+    "Vn_SetValues": [
       {
         "wire": "desc",
-        "type": "VnEmitterCreateDescV1"
+        "type": "VnVariableBatchDescV1"
       },
       {
-        "wire": "out"
-      }
-    ],
-    "Vn_MonitorBeginHostSession": [
-      {
         "wire": "outstruct",
-        "type": "VnMonitorHostSessionV1"
+        "type": "VnVariableTicketV1"
       }
     ],
-    "Vn_MonitorEndHostSession": [
+    "Vn_SetVoiceDistanceScale": [
       {
         "wire": "u64"
       },
       {
+        "wire": "f32"
+      }
+    ],
+    "Vn_SetVoiceEffect": [
+      {
         "wire": "u64"
-      }
-    ],
-    "Vn_MonitorRegisterHost": [
-      {
-        "wire": "desc",
-        "type": "VnMonitorHostRegistrationV1"
-      }
-    ],
-    "Vn_MonitorRegisterHostV2": [
-      {
-        "wire": "desc",
-        "type": "VnMonitorHostRegistrationV2"
-      }
-    ],
-    "Vn_BeginStreamSource": [
-      {
-        "wire": "objectid"
       },
       {
         "wire": "u32"
       },
       {
-        "wire": "desc",
-        "type": "VnByteSourceDescV1"
+        "wire": "u32"
       },
       {
-        "wire": "out"
+        "wire": "polydesc"
       }
     ],
-    "Vn_BeginStreamFile": [
+    "Vn_SetVoiceEffectBypass": [
       {
-        "wire": "objectid"
+        "wire": "u64"
       },
       {
         "wire": "u32"
       },
       {
-        "wire": "string"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "Vn_QueryStreamSource": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnStreamSourceInfoV1"
-      }
-    ],
-    "Vn_CancelStreamSource": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_CommitStreamSource": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_QueryActionPlaybackReadiness": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnActionPlaybackReadinessV1"
-      },
-      {
-        "wire": "outrows",
-        "type": "VnPlaybackReadinessMemberV1",
-        "capacityParam": "capacity"
-      },
-      {
         "wire": "u32"
       }
     ],
-    "VnPreview_PlayPlayable": [
-      {
-        "wire": "desc",
-        "type": "VnPreviewPlayPlayableDescV2"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_ResetPlayable": [
-      {
-        "wire": "desc",
-        "type": "VnPreviewResetPlayableDescV2"
-      }
-    ],
-    "VnPreview_StopPlayable": [
+    "Vn_SetVoiceEffectParam": [
       {
         "wire": "u64"
       },
       {
         "wire": "u32"
-      }
-    ],
-    "VnPreview_QueryPlayable": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnPreviewPlayableStateV2"
-      }
-    ],
-    "VnPreview_CapturePlaybackPaths": [
-      {
-        "wire": "outrows",
-        "type": "VnPreviewPlaybackPathV1",
-        "capacityParam": "capacity",
-        "countParam": "requiredCount"
       },
       {
         "wire": "u32"
       },
       {
-        "wire": "outu32"
+        "wire": "f32"
       }
     ],
-    "VnPreview_PrepareProject": [
-      {
-        "wire": "desc",
-        "type": "VnPreviewProjectDescV1"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_PrepareProjectV2": [
-      {
-        "wire": "desc",
-        "type": "VnPreviewProjectDescV2"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_PrepareProjectV3": [
-      {
-        "wire": "desc",
-        "type": "VnPreviewProjectDescV3"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_PrepareProjectV4": [
-      {
-        "wire": "desc",
-        "type": "VnPreviewProjectDescV4"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_CommitProject": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_CancelProject": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "VnPreview_DrainProjectAcks": [],
-    "VnPreview_ProjectIsOpen": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "VnPreview_QueryOwnerRevision": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_HasPlayableConsumers": [],
-    "VnPreview_HasEffectChainConsumers": [],
-    "VnPreview_QueryVoiceWorldGeneration": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "VnPreview_HasWorldGeneration": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "VnPreview_HasAction": [
-      {
-        "wire": "objectid"
-      }
-    ],
-    "VnPreview_PumpNullMixer": [
-      {
-        "wire": "u32"
-      }
-    ],
-    "VnPreview_EnableChannelPeakMetering": [],
-    "VnPreview_TakeChannelPeaks": [
-      {
-        "wire": "outstruct",
-        "type": "VnPreviewChannelPeaksV1"
-      }
-    ],
-    "VnPreview_RegisterPcm": [
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "desc",
-        "type": "VnPCMDesc"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_PlayVoiceRaw": [
-      {
-        "wire": "desc",
-        "type": "VnPlayDesc"
-      },
-      {
-        "wire": "out"
-      }
-    ],
-    "VnPreview_SetVoiceEffectChain": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "desc",
-        "type": "VnPreviewVoiceEffectChainV1"
-      }
-    ],
-    "VnPreview_RefreshVoiceBindings": [
-      {
-        "wire": "u64"
-      }
-    ],
-    "VnPreview_SetVoiceProperty": [
+    "Vn_SetVoiceFilter": [
       {
         "wire": "u64"
       },
@@ -1619,60 +1440,180 @@
         "wire": "f32"
       },
       {
-        "wire": "objectid"
+        "wire": "f32"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "u32"
       }
     ],
-    "VnPreview_SetVoiceEffect": [
+    "Vn_SetVoiceOrientation": [
       {
         "wire": "u64"
       },
       {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "f32array"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "u32"
+        "wire": "vec3"
       }
     ],
-    "VnPreview_SetBusEffect": [
+    "Vn_SetVoiceOutputVolume": [
       {
         "wire": "u64"
       },
       {
-        "wire": "objectid"
-      },
-      {
-        "wire": "objectid"
-      },
-      {
-        "wire": "u32"
-      },
-      {
-        "wire": "f32array"
-      },
-      {
-        "wire": "u32"
+        "wire": "f32"
       },
       {
         "wire": "u32"
       }
     ],
-    "Vn_SetHostOutputMute": [
+    "Vn_SetVoicePan": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "f32"
+      }
+    ],
+    "Vn_SetVoicePitch": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "f32"
+      }
+    ],
+    "Vn_SetVoicePosition": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "vec3"
+      }
+    ],
+    "Vn_SetVoiceSend": [
+      {
+        "wire": "u64"
+      },
       {
         "wire": "u32"
       },
       {
+        "wire": "objectid"
+      },
+      {
+        "wire": "f32"
+      }
+    ],
+    "Vn_SetVoiceSendLevel": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "f32"
+      },
+      {
         "wire": "u32"
       }
-    ]
+    ],
+    "Vn_SetVoiceSpatializationMix": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "f32"
+      }
+    ],
+    "Vn_SetVoiceVolume": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "f32"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_SetVoiceWidth": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "f32"
+      }
+    ],
+    "Vn_Stop": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_StopActionFiring": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_StopAll": [
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_StopEmitter": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_Suspend": [],
+    "Vn_Term": [],
+    "Vn_TraceStart": [
+      {
+        "wire": "string"
+      }
+    ],
+    "Vn_TraceStop": [],
+    "Vn_UnloadCanonicalPackSetV1": [
+      {
+        "wire": "desc",
+        "type": "VnCanonicalPackSetUnloadDescV1"
+      }
+    ],
+    "Vn_UnloadPack": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_UnloadPackEx": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "Vn_UnregisterBinding": [
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_UnregisterPCM": [
+      {
+        "wire": "objectid"
+      }
+    ],
+    "Vn_Update": []
   },
   "bindingOverloads": [
     {

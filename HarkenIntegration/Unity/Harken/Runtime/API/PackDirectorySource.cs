@@ -13,6 +13,7 @@ namespace Harken
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
         internal ulong SourceRevision;
+        internal PackStreamBinding Streams;
     }
 
     // Only this source knows about filesystem publication. Sessions consume owned snapshots.
@@ -59,7 +60,8 @@ namespace Harken
                 result = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
                 if (result != VnResult.VN_OK) return result;
                 names.ProjectId = facts.projectId;
-                input = new CompanionInput { Bytes = bytes, Json = json, Names = names, Facts = facts };
+                input = new CompanionInput { Bytes = bytes, Json = json, Names = names, Facts = facts,
+                    Streams = new PackStreamBinding(this, scope, 0, Root, null) };
                 return VnResult.VN_OK;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }

@@ -294,26 +294,6 @@ static void RunMediaProviderProbe(MediaProviderProbeOperation operation) {
     EXPECT_EQ(0u, engine.bindings.DefinitionCount());
 }
 
-TEST(Pack, PendingStreamSourceReservesMediaNamespaceUntilCancel) {
-    EngineSession session(MakeNullConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    const auto id = harkentest::ObjectId(17336);
-    harkentest::StreamSpec spec;
-    spec.soundId = id;
-    const auto streamPath = TempPath("pack_pending_stream.stream");
-    WriteFileBytes(streamPath, harkentest::BuildStreamBytes(spec, std::vector<float>(64, 0.25f)));
-    const auto packPath = TempPath("pack_pending_stream.pack");
-    WriteFileBytes(packPath, BuildPackBytes({MakeSineEntry(id, 64)}));
-    VnStreamSourceRequest request = 0;
-    ASSERT_EQ(VN_OK, Vn_BeginStreamFile(id, VN_STREAM_SOURCE_REGISTER, streamPath.c_str(), &request));
-    VnPackHandle handle = 0;
-    EXPECT_EQ(VN_IN_USE, LoadPack(packPath, &handle));
-    EXPECT_EQ(0u, handle);
-    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(request));
-    EXPECT_EQ(VN_OK, LoadPack(packPath, &handle));
-    EXPECT_EQ(VN_OK, Vn_UnloadPack(handle));
-}
-
 TEST(Pack, TocOffsetsStayWideAcrossFourGiB) {
     // Independent byte offsets for the fixed 76-byte serialized layout.
     EXPECT_EQ(0ull, harken::PackTocByteOffset(0));
