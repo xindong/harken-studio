@@ -153,6 +153,20 @@ TEST(CascadeProtocol, VorbisStreamDrainsZeroCoveragePrerollBeforeMoreSupply) {
     EXPECT_EQ(0u, codec.states.ActiveBytes());
 }
 
+TEST(CascadeProtocol, ResidentDecoderRefusalEndsAsIntegrityAbort) {
+    struct RefusingDecoder final : harken::MediaDecoder {
+        bool Read(std::uint64_t, std::uint32_t, std::uint32_t, PCMView&) noexcept override {
+            return false;
+        }
+        void Retire() noexcept override {}
+    } decoder;
+    const std::vector<float> samples(kBlock, 1.0f);
+    CascadeHarness harness(samples);
+    harness.ctx.mediaDecoder = &decoder;
+    EXPECT_EQ(0u, harness.RenderBlock().framesProduced);
+    EXPECT_EQ(harken::SourceTerminalKind::IntegrityAbort, harness.ctx.stagedSourceTerminal);
+}
+
 TEST(CascadeProtocol, VorbisStreamFailureOverridesProducerNaturalEnd) {
     const auto fixture = harken::test::MakeVorbisFixture(1, true);
     harken::VorbisMedia media;

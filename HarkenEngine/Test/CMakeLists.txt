@@ -23,7 +23,7 @@ target_include_directories(harken_vorbis_qualification_tests PRIVATE
     ${HARKEN_CORE_DIR}/core/contract/include
     ${HARKEN_CORE_DIR}/media/include)
 target_link_libraries(harken_vorbis_qualification_tests PRIVATE
-    harken_vorbis_decoder vorbisfile harken_buildinfo GTest::gtest_main)
+    harken_pack_format harken_vorbis_decoder vorbisfile harken_buildinfo GTest::gtest_main)
 
 add_subdirectory(UnitTest/ProgramRegistration ProgramRegistration)
 
