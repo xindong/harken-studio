@@ -423,6 +423,36 @@ bool isAiffPath(const QString& path)
            suffix.compare(QStringLiteral("aif"), Qt::CaseInsensitive) == 0;
 }
 
+QString wavCodec(drwav_uint16 formatTag)
+{
+    switch (formatTag) {
+        case DR_WAVE_FORMAT_PCM:
+        case DR_WAVE_FORMAT_IEEE_FLOAT: return QStringLiteral("PCM");
+        case DR_WAVE_FORMAT_ADPCM: return QStringLiteral("MS ADPCM");
+        case DR_WAVE_FORMAT_DVI_ADPCM: return QStringLiteral("IMA ADPCM");
+        case DR_WAVE_FORMAT_ALAW: return QStringLiteral("A-law");
+        case DR_WAVE_FORMAT_MULAW: return QStringLiteral("Mu-law");
+        default: return QStringLiteral("Unknown");
+    }
+}
+
+AudioFileInfoData wavFileInfo(const QString& path)
+{
+    AudioFileInfoData out;
+    VNX::AudioFileReader file(path);
+    drwav wav;
+    if (!file.initWav(wav)) return out;
+    out.valid = true;
+    out.codec = wavCodec(wav.translatedFormatTag);
+    out.channels = static_cast<int>(wav.channels);
+    out.sampleRate = static_cast<int>(wav.sampleRate);
+    out.bitDepth = wav.bitsPerSample;
+    out.frameCount = static_cast<int64_t>(wav.totalPCMFrameCount);
+    out.durationSeconds = static_cast<double>(wav.totalPCMFrameCount) / wav.sampleRate;
+    drwav_uninit(&wav);
+    return out;
+}
+
 AudioFileInfoData aiffFileInfo(const QString& path)
 {
     AudioFileInfoData out;
@@ -434,6 +464,7 @@ AudioFileInfoData aiffFileInfo(const QString& path)
         return out;
 
     out.valid = true;
+    out.codec = QStringLiteral("PCM");
     out.channels = static_cast<int>(descriptor.channels);
     out.sampleRate = static_cast<int>(descriptor.sampleRate);
     out.bitDepth = static_cast<int>(descriptor.bitDepth);
@@ -465,6 +496,7 @@ AudioFileInfoData oggFileInfo(const QString& path)
     if (valid)
     {
         out.valid = true;
+        out.codec = QStringLiteral("Vorbis");
         out.channels = first->channels;
         out.sampleRate = first->rate;
         out.bitDepth = 32;
@@ -476,9 +508,10 @@ AudioFileInfoData oggFileInfo(const QString& path)
     return out;
 }
 
-bool initAudioDecoder(VNX::AudioFileReader& file, ma_decoder& decoder)
+bool initAudioDecoder(VNX::AudioFileReader& file, ma_decoder& decoder,
+                      ma_encoding_format encoding = ma_encoding_format_unknown)
 {
-    if (!file.openReadOnly())
+    if (file.isOpen() ? !file.seek(0) : !file.openReadOnly())
         return false;
     const auto read = [](ma_decoder* decoder, void* output, size_t bytes, size_t* bytesRead) -> ma_result {
         auto* file = static_cast<VNX::AudioFileReader*>(decoder->pUserData);
@@ -493,7 +526,8 @@ bool initAudioDecoder(VNX::AudioFileReader& file, ma_decoder& decoder)
             : (origin == ma_seek_origin_current ? SEEK_CUR : SEEK_END);
         return seekAudioFile(file, offset, whence) == 0 ? MA_SUCCESS : MA_BAD_SEEK;
     };
-    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    config.encodingFormat = encoding;
     return ma_decoder_init(read, seek, &file, &config, &decoder) == MA_SUCCESS;
 }
 
@@ -647,10 +681,14 @@ AudioFileInfoData audioFileInfo(const QString& path)
     if (isAiffPath(path))
         return aiffFileInfo(path);
 
-    AudioFileInfoData out;
+    auto out = wavFileInfo(path);
+    if (out.valid || QFileInfo(path).suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0)
+        return out;
+
     ma_decoder decoder{};
     VNX::AudioFileReader file(path);
-    if (!initAudioDecoder(file, decoder))
+    const bool flac = initAudioDecoder(file, decoder, ma_encoding_format_flac);
+    if (!flac && !initAudioDecoder(file, decoder, ma_encoding_format_mp3))
         return out;
     ma_uint64 frameCount = 0;
     if (ma_decoder_get_length_in_pcm_frames(&decoder, &frameCount) != MA_SUCCESS)
@@ -660,6 +698,7 @@ AudioFileInfoData audioFileInfo(const QString& path)
         frameCount <= static_cast<ma_uint64>(std::numeric_limits<int64_t>::max()))
     {
         out.valid = true;
+        out.codec = flac ? QStringLiteral("FLAC") : QStringLiteral("MP3");
         out.channels = static_cast<int>(decoder.outputChannels);
         out.sampleRate = static_cast<int>(decoder.outputSampleRate);
         out.bitDepth = 32;

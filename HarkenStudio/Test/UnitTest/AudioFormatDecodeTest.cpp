@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -230,17 +231,17 @@ TEST(AudioFormatDecodeTest, DecodesAndBuildsWaveformsForAllSupportedExtensions)
     ASSERT_TRUE(writeBytes(dir.filePath(QStringLiteral("tone.aiff")), makeAiff()));
     ASSERT_TRUE(writeBytes(dir.filePath(QStringLiteral("tone.aif")), makeAiff()));
 
-    const std::array<QString, 6> cases{{
-        QStringLiteral("tone.wav"),
-        QStringLiteral("tone.mp3"),
-        QStringLiteral("tone.flac"),
-        QStringLiteral("tone.ogg"),
-        QStringLiteral("tone.aiff"),
-        QStringLiteral("tone.aif"),
+    const std::array<std::pair<QString, QString>, 6> cases{{
+        {QStringLiteral("tone.wav"), QStringLiteral("PCM")},
+        {QStringLiteral("tone.mp3"), QStringLiteral("MP3")},
+        {QStringLiteral("tone.flac"), QStringLiteral("FLAC")},
+        {QStringLiteral("tone.ogg"), QStringLiteral("Vorbis")},
+        {QStringLiteral("tone.aiff"), QStringLiteral("PCM")},
+        {QStringLiteral("tone.aif"), QStringLiteral("PCM")},
     }};
 
     VNX::AssetImporter importer;
-    for (const QString& fileName : cases)
+    for (const auto& [fileName, codec] : cases)
     {
         SCOPED_TRACE(fileName.toStdString());
         const QString path = dir.filePath(fileName);
@@ -262,6 +263,7 @@ TEST(AudioFormatDecodeTest, DecodesAndBuildsWaveformsForAllSupportedExtensions)
         EXPECT_FALSE(samples.empty());
 
         const VNX::AudioMetadata metadata = importer.analyzeFile(path);
+        EXPECT_EQ(metadata.codec, codec);
         EXPECT_EQ(metadata.channels, 1);
         EXPECT_EQ(metadata.sampleRate, 8000u);
         EXPECT_GT(metadata.totalSamples, 0u);

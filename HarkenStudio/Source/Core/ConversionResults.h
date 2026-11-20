@@ -21,6 +21,7 @@ struct FileProperties
     uint64_t frames = 0;
     uint64_t bytes = 0;
 
+    static FileProperties fromSource(const AssetInfo& asset);
     QJsonObject toJson() const;
 };
 

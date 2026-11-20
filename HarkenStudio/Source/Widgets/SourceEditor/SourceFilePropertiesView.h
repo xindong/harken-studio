@@ -19,12 +19,13 @@ public:
     void setSource(const QUuid& soundGuid, const QUuid& entryId, uint32_t sourceId);
 
 private:
+    enum Property { RelativePath, AbsolutePath, Channels, SampleRate, Duration, Size, Format, PropertyCount };
     void refresh();
 
     QUuid soundGuid_;
     QUuid entryId_;
     uint32_t sourceId_ = 0;
-    std::array<QLabel*, 6> values_{};
+    std::array<QLabel*, PropertyCount> values_{};
 };
 
 }

@@ -169,7 +169,7 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | Converted 首次播放 | 没有产物时按需转换后播放，不做后台预转换；PCM 注册处理后的样本，Vorbis 经独立过渡模块解为 PCM 后注册 |
 | 转换入口 | 预设双击或 Settings 双击打开下方独立 Conversion Editor；Convert 处理当前主平台、有效引用该预设的各语言 Active Source，按文件并行、共享缓存且可取消 |
 | 显示边界 | 转换过程不显示进度、状态或失败文字，错误只进日志；结果表只读，未转换的产物字段留空 |
-| External Editor File Properties | Sound → Sources 引用行打开的 External Editor 中，波形下方以可拖动分隔条隔开，显示路径、声道、采样率、时长、大小、格式；Original 显示原文件，Converted 显示已有产物；有预设但未转换时留空，无有效预设则仍显示原文件 |
+| External Editor File Properties | Sound → Sources 引用行打开的 External Editor 在波形下方用表格显示工程相对路径、绝对路径、声道、采样率、时长、大小与音频编码。Original 显示原文件，Converted 显示已有产物。有预设但未转换时留空，无有效预设则显示原文件 |
 | 刷新与失效 | 转换完成、预设／引用修改、平台或模式变化刷新结果及文件属性；相关试听停止，下次播放按新输入重建 |
 | 层级树状态 | Missing／Orphaned／Error 保持原语义；可用 Sound 按当前平台的有效预设和缓存 key 显示 Converted／Not Converted；无预设显示 Available，不再有 Outdated 警告色 |
 | Pack 边界 | PCM 可导出；Vorbis Pack 写入尚未接入并明确失败。Engine 解码试听、Vorbis Pack 和 Integration 接入留在 Part B |

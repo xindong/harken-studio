@@ -610,6 +610,10 @@ bool AssetRegistry::reconcileSnapshot(const QString& projectRoot,
         AssetInfo info;
         if (found != cached.cend() && found->relativePath == it.value()) {
             info = *found;
+            if (info.metadata.codec.isEmpty() && QFileInfo(info.absolutePath).isFile()) {
+                info.metadata.codec = importer.readMetadata(info.absolutePath).codec;
+                if (!info.metadata.codec.isEmpty()) rebuilt = true;
+            }
         } else {
             rebuilt = true;
             info.sourceID = it.key();

@@ -132,6 +132,7 @@ struct AudioMetadata {
     ValidationFlags validation;
 
     QString originalFormat;
+    QString codec;
 
     QJsonObject toJson() const {
         QJsonObject obj;
@@ -145,6 +146,7 @@ struct AudioMetadata {
 
         obj["validation"] = validation.toJson();
         obj["originalFormat"] = originalFormat;
+        obj["codec"] = codec;
         return obj;
     }
 
@@ -160,6 +162,7 @@ struct AudioMetadata {
 
         meta.validation = ValidationFlags::fromJson(obj["validation"].toObject());
         meta.originalFormat = obj["originalFormat"].toString();
+        meta.codec = obj["codec"].toString();
         return meta;
     }
 };

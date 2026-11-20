@@ -75,6 +75,7 @@ bool decodeAudioFileInterleaved(const QString& filePath,
 struct AudioFileInfoData
 {
     bool valid = false;
+    QString codec;
     int channels = 0;
     int sampleRate = 0;
     int bitDepth = 0;

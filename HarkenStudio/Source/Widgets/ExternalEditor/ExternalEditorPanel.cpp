@@ -52,8 +52,8 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     sourceView_->addWidget(source_);
     sourceProperties_ = new SourceFilePropertiesView(sourceView_);
     sourceView_->addWidget(sourceProperties_);
-    sourceView_->setStretchFactor(0, 3);
-    sourceView_->setStretchFactor(1, 1);
+    sourceView_->setStretchFactor(0, 1);
+    sourceView_->setStretchFactor(1, 0);
     layout->addWidget(sourceView_, 1);
     filter_ = new FilterEditorWidget(this);
     layout->addWidget(filter_, 1);
