@@ -51,7 +51,7 @@ namespace Harken
         {
             if (!VariableGameplay.IsGameThread || string.IsNullOrEmpty(name) || name.IndexOf('\0') >= 0 ||
                 (emitter.HasValue && !emitter.Value.IsValid)) return VnResult.VN_INVALID_ARG;
-            VnResult found = GameplayNames.FindLabel(variableId, name, out VnObjectId labelId);
+            VnResult found = NameTable.FindLabel(variableId, name, out VnObjectId labelId);
             return found == VnResult.VN_OK ? SetValue(variableId, labelId, emitter) : found;
         }
 
@@ -133,7 +133,7 @@ namespace Harken
             if (variableName.Length > 128) return VnResult.VN_INVALID_ARG;
             foreach (char c in variableName)
                 if (c == 0 || c > 127) return VnResult.VN_INVALID_ARG;
-            return GameplayNames.FindVariable(variableName,
+            return NameTable.FindVariable(variableName,
                 project == Guid.Empty ? default : VnObjectId.FromGuid(project), out id);
         }
 

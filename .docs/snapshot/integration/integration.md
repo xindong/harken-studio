@@ -49,7 +49,7 @@ Harken 当前没有 SDK 产品。Unity Integration 是引擎集成产品，其�
 
 | 用途 | 当前命名或保留理由 |
 |---|---|
-| 当前源码与工具 | 手写托管 API 位于 `Runtime/API`，生成代码位于 `Runtime/Generated`，Unity 适配位于 `Runtime/Unity`；生成符号的可见性与托管投影策略位于 `Binding/api_surface.json` |
+| 当前源码与工具 | 手写托管 API 位于 `Runtime/API`，生成代码位于 `Runtime/Generated`，Unity 适配位于 `Runtime/Unity`；生成符号的可见性与托管投影策略位于 `Binding/managed_policy.json` |
 | Hub 当前模型 | 代码成员、方法、类型和 UI 对象使用 Integration；SQL 列 `sdkSourcePath`、`sdkInstallPath` 保持既有拼写，代码正名不触发数据库迁移 |
 | 旧版本发现与维护 | 保留 `HarkenSDK` 分发兼容副本、旧环境变量、`Assets/HarkenSDK`、旧备份目录、迁移日志和操作锁名称；旧 `Runtime/Sdk` 仅用于识别旧安装内容 |
 | 公开接口与数据合同 | 保留公开字段 `sdkCatalogFingerprint`、`sdkSession`，以及既有 JSON 字段、操作步骤 ID 和报告字段；改名会涉及源码或数据消费者，不属于本次产品正名 |

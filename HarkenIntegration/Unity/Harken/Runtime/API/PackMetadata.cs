@@ -6,7 +6,7 @@ using System.Text;
 
 namespace Harken
 {
-    internal sealed class PackCompanion
+    internal sealed class PackMetadata
     {
         internal const uint SupportedPackMetadataVersion = 4;
 
@@ -43,9 +43,9 @@ namespace Harken
         private static bool Letter(char c) => c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z';
 
         internal static VnResult Parse(byte[] json, byte[] pack, string name, string language,
-            VnObjectId project, out PackCompanion companion)
+            VnObjectId project, out PackMetadata metadata)
         {
-            companion = null;
+            metadata = null;
             if (json == null || json.Length == 0 || pack == null || pack.Length < 8 ||
                 pack[0] != 'V' || pack[1] != 'S' || pack[2] != 'P' || pack[3] != 'K')
                 return VnResult.VN_BAD_PACK;
@@ -56,7 +56,7 @@ namespace Harken
                     !root.TryGetValue("packMetadataVersion", out object version) ||
                     !(version is JsonParser.NumberToken token) || !MatchesVersion(token.Text, SupportedPackMetadataVersion))
                     return VnResult.VN_BAD_PACK;
-                var candidate = new PackCompanion { ProjectId = project, Language = language ?? string.Empty };
+                var candidate = new PackMetadata { ProjectId = project, Language = language ?? string.Empty };
                 if (name != null)
                 {
                     if (!IsName(name) || Text(root, "name") != name || !Id(root, out candidate.RootId))
@@ -87,7 +87,7 @@ namespace Harken
                     candidate.Labels = labels.ToArray();
                 }
                 // Optional display metadata has no bearing on names or playback admission.
-                companion = candidate;
+                metadata = candidate;
                 return VnResult.VN_OK;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
@@ -128,25 +128,25 @@ namespace Harken
         }
     }
 
-    internal readonly struct CompanionMember
+    internal readonly struct PackMetadataMember
     {
         internal readonly ulong Id;
         internal readonly uint Kind, Operation;
         internal readonly Pack Expected;
         internal readonly byte[] Bytes;
-        internal readonly PackCompanion Names;
-        internal CompanionMember(ulong id, uint kind, Pack expected, uint operation = VnConstants.VN_PACK_MEMBER_KEEP,
-            byte[] bytes = null, PackCompanion names = null)
+        internal readonly PackMetadata Names;
+        internal PackMetadataMember(ulong id, uint kind, Pack expected, uint operation = VnConstants.VN_PACK_MEMBER_KEEP,
+            byte[] bytes = null, PackMetadata names = null)
         { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; Names = names; }
     }
 
-    internal static class CompanionNative
+    internal static class PackMetadataNative
     {
-        internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackCompanion names,
+        internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackMetadata names,
             out VnPackInspectReportV1 report)
             => Inspect(bytes, init, names, out report, out _, out _, false);
 
-        internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackCompanion names,
+        internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackMetadata names,
             out VnPackInspectReportV1 report, out VnPackOccurrenceFactV1[] occurrences,
             out VnPackMediaFactV1[] media, bool details = true)
         {
@@ -197,7 +197,7 @@ namespace Harken
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
         }
 
-        internal static unsafe VnResult Activate(CompanionMember[] members, Pack init, ulong revision,
+        internal static unsafe VnResult Activate(PackMetadataMember[] members, Pack init, ulong revision,
             out VnCanonicalPackSetActivationReportV1 report, out VnCanonicalPackSetMemberResultV1[] results)
         {
             report = default;
@@ -210,7 +210,7 @@ namespace Harken
                 providers = new int[members.Length];
                 for (int i = 0; i < members.Length; ++i)
                 {
-                    CompanionMember source = members[i];
+                    PackMetadataMember source = members[i];
                     ref VnCanonicalPackSetMemberV2 member = ref native[i];
                     member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV2);
                     member.operation = source.Operation;

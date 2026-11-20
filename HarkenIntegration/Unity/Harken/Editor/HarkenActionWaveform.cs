@@ -86,7 +86,7 @@ namespace Harken.Unity.Editor
     public sealed class HarkenActionPreview
     {
         private HarkenCandidateOverview overview;
-        internal HarkenActionPreview(GameplayAction action, HarkenActionPreviewKind kind,
+        internal HarkenActionPreview(ActionCatalogEntry action, HarkenActionPreviewKind kind,
             HarkenActionPreviewCandidate[] candidates, HarkenActionDurationKind duration,
             double? minimum, double? maximum, string sourceReason, string durationReason)
         {
@@ -94,7 +94,7 @@ namespace Harken.Unity.Editor
             DurationKind = duration; MinimumDurationSeconds = minimum; MaximumDurationSeconds = maximum;
             SourceUnavailableReason = sourceReason; DurationUnavailableReason = durationReason;
         }
-        public GameplayAction Action { get; }
+        public ActionCatalogEntry Action { get; }
         public HarkenActionPreviewKind Kind { get; }
         public IReadOnlyList<HarkenActionPreviewCandidate> Candidates { get; }
         public HarkenActionDurationKind DurationKind { get; }
@@ -158,7 +158,7 @@ namespace Harken.Unity.Editor
 
     public sealed class HarkenActionWaveform
     {
-        internal HarkenActionWaveform(GameplayAction action, HarkenSourceEnvelope source,
+        internal HarkenActionWaveform(ActionCatalogEntry action, HarkenSourceEnvelope source,
             bool oneShotKnown, string sourceReason, string durationReason, double? executionDuration = null)
         {
             Action = action;
@@ -169,7 +169,7 @@ namespace Harken.Unity.Editor
             OneShotDurationSeconds = executionDuration;
         }
 
-        public GameplayAction Action { get; }
+        public ActionCatalogEntry Action { get; }
         public HarkenSourceEnvelope Source { get; }
         public bool OneShotDurationKnown { get; }
         public double? OneShotDurationSeconds { get; }

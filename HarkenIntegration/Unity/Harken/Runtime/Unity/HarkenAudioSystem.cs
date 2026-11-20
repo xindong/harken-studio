@@ -545,19 +545,19 @@ namespace Harken.Unity
             string platformRoot = ResolvePlatformRoot(directory);
             if (string.IsNullOrEmpty(platformRoot))
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            return StartCompanionDirectory(platformRoot);
+            return StartPackDirectory(platformRoot);
         }
 
-        private VnResult StartCompanionDirectory(string platformRoot)
+        private VnResult StartPackDirectory(string platformRoot)
         {
             if (!MatchesConfiguredInit("Init.bytes"))
             {
-                LastStartupError = "A companion directory uses Init.bytes. Update the explicitly configured Init path.";
+                LastStartupError = "A Pack directory uses Init.bytes. Update the explicitly configured Init path.";
                 return CompleteSessionStartup(VnResult.VN_PACK_STALE_REVISION, string.Empty);
             }
             if (startupPackStableIds != null && startupPackStableIds.Length != 0)
             {
-                LastStartupError = "A companion directory starts with Init only. Preload Actions by name with Session.PrepareActions.";
+                LastStartupError = "A Pack directory starts with Init only. Preload Actions by name with Session.PrepareActions.";
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
             }
             VnResult result = CreateStartupConfig(out VnConfig config);
@@ -566,7 +566,7 @@ namespace Harken.Unity
             if (result == VnResult.VN_CONTENT_NOT_LOADED && session == null)
                 LastStartupError = "The selected directory requires the current Init.bytes and Init.json pair. Re-export Packs with the current Studio.";
             else if (result == VnResult.VN_BAD_PACK || result == VnResult.VN_PACK_INCOMPATIBLE)
-                LastStartupError = "Invalid or unsupported Pack publication. Re-export with the current Studio and provide the paired .bytes and .json files.";
+                LastStartupError = "Invalid or unsupported Pack export. Re-export with the current Studio and provide the paired .bytes and .json files.";
             return CompleteSessionStartup(result, platformRoot);
         }
 
@@ -692,18 +692,18 @@ namespace Harken.Unity
                 DontDestroyOnLoad(gameObject);
             }
             if (!autoInitialize) return;
-            if (configuredCompanionSource != null)
+            if (configuredPackSource != null)
             {
-                StartConfiguredCompanion();
+                StartConfiguredPackSource();
                 return;
             }
 #if UNITY_ANDROID && !UNITY_EDITOR
-            // Restore Android directory auto-start after it consumes current-schema companions without a legacy inventory.
+            // Restore Android directory auto-start after it consumes current Pack metadata without a legacy inventory.
             if (!TryBeginStartup(out _)) return;
             try
             {
                 LastStartupError = "Android directory auto-start is temporarily unavailable. " +
-                    "Use HarkenStreamingPackSource with StartRuntimeAsync or configure a companion source before startup.";
+                    "Use HarkenStreamingAssetsPackSource with StartRuntimeAsync or configure a Pack source before startup.";
                 CompleteSessionStartup(VnResult.VN_CAPABILITY_UNAVAILABLE, string.Empty);
             }
             finally { starting = false; }
@@ -720,22 +720,22 @@ namespace Harken.Unity
         private string ResolvePlatformRoot(string exportRoot)
         {
             if (string.IsNullOrEmpty(exportRoot)) return null;
-            if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return SelectCompanionDirectory(exportRoot);
+            if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return SelectPlatformDirectory(exportRoot);
             if (!string.IsNullOrEmpty(packPlatform) && PackPaths.IsPlatformName(packPlatform))
             {
                 string selected = Path.Combine(exportRoot, packPlatform);
-                if (Directory.Exists(selected)) return SelectCompanionDirectory(selected);
+                if (Directory.Exists(selected)) return SelectPlatformDirectory(selected);
             }
-            return SelectCompanionDirectory(exportRoot);
+            return SelectPlatformDirectory(exportRoot);
         }
 
-        private string SelectCompanionDirectory(string directory)
+        private string SelectPlatformDirectory(string directory)
         {
             if (!string.IsNullOrEmpty(packPlatform) && (!PackPaths.IsPlatformName(packPlatform) ||
                 !string.Equals(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar,
                     Path.AltDirectorySeparatorChar)), packPlatform, StringComparison.Ordinal)))
             {
-                LastStartupError = "The companion directory does not match the explicitly selected platform name.";
+                LastStartupError = "The Pack directory does not match the explicitly selected platform name.";
                 return null;
             }
             return directory;
@@ -1130,7 +1130,7 @@ namespace Harken.Unity
             VnResult result;
             try
             {
-                CancelCompanionStartup();
+                CancelPackSourceStartup();
                 if (startupCoroutine != null)
                 {
                     StopCoroutine(startupCoroutine);
@@ -1261,7 +1261,7 @@ namespace Harken.Unity
             {
                 // GameObject deactivation stops coroutines without guaranteeing iterator cleanup.
                 // Disabling only this component leaves its coroutine running in Unity.
-                if (companionStartup != null || (shutdownWhenDisabled && session != null && session.IsActive) ||
+                if (packSourceStartup != null || (shutdownWhenDisabled && session != null && session.IsActive) ||
                     (!gameObject.activeInHierarchy && startupCoroutine != null))
                     ShutdownRuntime();
             }

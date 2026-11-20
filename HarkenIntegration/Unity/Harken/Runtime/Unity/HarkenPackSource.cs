@@ -34,13 +34,13 @@ namespace Harken.Unity
                 if (file.EndsWith(".json", StringComparison.Ordinal) || file.EndsWith(".bytes", StringComparison.Ordinal))
                 {
                     string name = file.Substring(0, file.LastIndexOf('.'));
-                    if (name != "Init" && PackCompanion.IsName(name)) yield return name;
+                    if (name != "Init" && PackMetadata.IsName(name)) yield return name;
                 }
             }
         }
 
-        /// <summary>Captures immutable TextAsset references for a companion source; content bytes remain on demand.</summary>
-        public VnResult CaptureCompanion(TextAsset initJson, out PackSource source, out string error,
+        /// <summary>Captures immutable TextAsset references for a Pack source; content bytes remain on demand.</summary>
+        public VnResult CapturePackSource(TextAsset initJson, out PackSource source, out string error,
             string selectedLanguage = null)
         {
             source = null;
@@ -55,7 +55,7 @@ namespace Harken.Unity
             foreach (ContentAsset item in content ?? Array.Empty<ContentAsset>())
             {
                 if (!PackPaths.IsSafeRelativePath(item.relativePath) || assets.ContainsKey(item.relativePath))
-                { error = "Invalid or duplicate companion asset path."; return VnResult.VN_INVALID_ARG; }
+                { error = "Invalid or duplicate Pack asset path."; return VnResult.VN_INVALID_ARG; }
                 assets.Add(item.relativePath, item.asset);
             }
             int thread = mainThread;
@@ -71,12 +71,12 @@ namespace Harken.Unity
         }
     }
 
-    public sealed class HarkenPreparedPacks
+    public sealed class HarkenPreviewContent
     {
-        internal HarkenPreparedPacks(PackCatalogSnapshot snapshot) { Snapshot = snapshot; }
-        internal PackCatalogSnapshot Snapshot { get; }
+        internal HarkenPreviewContent(ActionCatalogSnapshot snapshot) { Snapshot = snapshot; }
+        internal ActionCatalogSnapshot Snapshot { get; }
         internal uint PresentationRevision { get; set; }
-        public GameplayPublication Publication => Snapshot.Publication;
+        public ActionCatalog Catalog => Snapshot.Catalog;
         public VnResult Start(ulong[] startupIds, ref VnConfig config, out PackBootstrapSession session)
         {
             session = null;
@@ -84,7 +84,7 @@ namespace Harken.Unity
             var unique = new HashSet<ulong>();
             foreach (ulong id in startupIds)
                 if (!Snapshot.Names.ContainsKey(id) || !unique.Add(id)) return VnResult.VN_UNKNOWN_ID;
-            VnResult result = Snapshot.Source.Capture(null, default, null, out CompanionInput init);
+            VnResult result = Snapshot.Source.Capture(null, default, null, out PackMetadataInput init);
             if (result != VnResult.VN_OK) return result;
             result = PackBootstrap.StartCaptured(Snapshot.Source, init, ref config, out session,
                 startupIds: startupIds, locators: Snapshot.Names);

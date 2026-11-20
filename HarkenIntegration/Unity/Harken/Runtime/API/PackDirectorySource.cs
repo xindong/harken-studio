@@ -3,11 +3,11 @@ using System.IO;
 
 namespace Harken
 {
-    internal sealed class CompanionInput
+    internal sealed class PackMetadataInput
     {
         internal byte[] Bytes;
         internal byte[] Json;
-        internal PackCompanion Names;
+        internal PackMetadata Names;
         internal VnPackInspectReportV1 Facts;
         internal ulong SourceRevision;
     }
@@ -33,10 +33,10 @@ namespace Harken
             return true;
         }
 
-        internal VnResult Capture(string name, VnObjectId project, byte[] init, out CompanionInput input)
+        internal VnResult Capture(string name, VnObjectId project, byte[] init, out PackMetadataInput input)
         {
             input = null;
-            if ((name != null && (!PackCompanion.IsName(name) || name == "Init")) || !ValidLanguage(Language))
+            if ((name != null && (!PackMetadata.IsName(name) || name == "Init")) || !ValidLanguage(Language))
                 return VnResult.VN_INVALID_ARG;
             try
             {
@@ -51,12 +51,12 @@ namespace Harken
                     if (!PairStillMissing(name, Language)) return VnResult.VN_PACK_STALE_REVISION;
                 }
                 if (result != VnResult.VN_OK) return result;
-                result = PackCompanion.Parse(json, bytes, name, scope, project, out PackCompanion names);
+                result = PackMetadata.Parse(json, bytes, name, scope, project, out PackMetadata names);
                 if (result != VnResult.VN_OK) return result;
-                result = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
+                result = PackMetadataNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
                 if (result != VnResult.VN_OK) return result;
                 names.ProjectId = facts.projectId;
-                input = new CompanionInput { Bytes = bytes, Json = json, Names = names, Facts = facts };
+                input = new PackMetadataInput { Bytes = bytes, Json = json, Names = names, Facts = facts };
                 return VnResult.VN_OK;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }

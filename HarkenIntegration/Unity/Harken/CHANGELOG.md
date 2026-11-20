@@ -20,6 +20,13 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The package declares its Unity built-in module dependencies (Audio, JSONSerialize, UnityWebRequest), so they cannot be disabled while the package is installed.
 - New settings assets are created at `Assets/Resources/HarkenProjectSettings.asset` and `Assets/Editor/HarkenEditorProjectSettings.asset`. Existing settings assets keep working wherever they are.
 - `HarkenAudioSystem.ConfigurePlatformBeforeStartup` takes only the platform name, and `HarkenEditorCatalog.RefreshPlatform` no longer takes a platform ID.
+- Renamed to match the current Pack metadata terms, without forwarding aliases:
+  - `HarkenAudioSystem.ConfigureCompanionSourceBeforeStartup` is now `ConfigurePackSourceBeforeStartup`, and `HarkenPackSource.CaptureCompanion` is now `CapturePackSource`.
+  - `HarkenStreamingPackSource` is now `HarkenStreamingAssetsPackSource`.
+  - `ActionResolved.PublicationGeneration` is now `NameTableGeneration`.
+  - `HarkenPreparedPacks` is now `HarkenPreviewContent`, and `HarkenEditorCatalog.PreparedPacks` is now `PreviewContent`.
+- The Editor catalog is rebuilt from the Pack metadata. `GameplayPublication` is replaced by `ActionCatalog` (`ProjectId`, `Language`, `InitPackStableId`, `Actions`, `TryFindAction`, `GetPreparationOrder`), and `GameplayAction` by `ActionCatalogEntry` (`Name`, `ActionId`, `PackStableId`). The `Publication` properties of `HarkenEditorCatalog` and `HarkenPreviewContent` are now `Catalog`. `PackManifestEntry`, `PackIndexEntry`, `RetiredGameplayAction` and the catalog fields that never carried data are removed.
+- The Action inspector says Pack directory, Refresh, Save binding and Action instead of publication terms. Bindings saved by earlier versions are not read; save them again.
 - Reading a Pack directory relies on the Studio publishing marker only. It no longer compares file identities through platform system calls or rejects file names that differ only in letter case.
 
 ### Deprecated

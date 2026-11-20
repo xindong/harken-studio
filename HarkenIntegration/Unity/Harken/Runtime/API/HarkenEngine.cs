@@ -104,7 +104,7 @@ namespace Harken
             VnResult result = HarkenNative.Vn_Term();
             if (result == VnResult.VN_OK)
             {
-                GameplayNames.Clear();
+                NameTable.Clear();
                 VariableGameplay.NotifySessionChanged();
             }
             return result;

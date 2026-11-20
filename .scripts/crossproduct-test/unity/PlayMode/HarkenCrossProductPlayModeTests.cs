@@ -140,7 +140,7 @@ namespace HarkenCrossProduct
         private IEnumerator StartFrom(PackSource source, string language = null)
         {
             CreateRuntime(language);
-            Assert.That(runtime.ConfigureCompanionSourceBeforeStartup(source), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(runtime.ConfigurePackSourceBeforeStartup(source), Is.EqualTo(VnResult.VN_OK));
             owner.SetActive(true);
             yield return WaitForStartup();
         }

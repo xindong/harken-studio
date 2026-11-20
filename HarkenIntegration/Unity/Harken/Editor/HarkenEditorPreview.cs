@@ -15,7 +15,7 @@ namespace Harken.Unity.Editor
         private readonly Dictionary<ulong, FiringOwner> firings = new Dictionary<ulong, FiringOwner>();
         private readonly List<Scope> scopes = new List<Scope>();
         private PackBootstrapSession session;
-        private HarkenPreparedPacks scopedSource;
+        private HarkenPreviewContent scopedSource;
         private bool closeWhenIdle;
         private bool stoppingAll;
         private bool ticking;
@@ -58,11 +58,11 @@ namespace Harken.Unity.Editor
         {
             internal readonly HarkenEditorPreview preview;
             internal PackBootstrapSession capturedSession;
-            internal HarkenPreparedPacks source;
+            internal HarkenPreviewContent source;
             internal string[] preparedNames;
             internal ActionPreparation preparation;
             internal string[] pendingNames;
-            internal HarkenPreparedPacks pendingSource;
+            internal HarkenPreviewContent pendingSource;
             internal Emitter stateEmitter;
             internal bool disposed;
             internal bool transitioning;
@@ -105,7 +105,7 @@ namespace Harken.Unity.Editor
                 return Observe(spatialSources.Create(this, capturedSession, target, out spatialSource), "<source>");
             }
 
-            public VnResult Prepare(HarkenPreparedPacks source, string[] actionNames)
+            public VnResult Prepare(HarkenPreviewContent source, string[] actionNames)
             {
                 if (disposed) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 if (preview.shutdownRequested) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
@@ -115,13 +115,12 @@ namespace Harken.Unity.Editor
                 finally { preview.scopeBusy = false; }
             }
 
-            private VnResult PrepareGuarded(HarkenPreparedPacks source, string[] actionNames)
+            private VnResult PrepareGuarded(HarkenPreviewContent source, string[] actionNames)
             {
                 if (disposed || preview.shutdownRequested) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
                 VnResult copied = CopyNames(actionNames, out string[] names);
                 if (copied != VnResult.VN_OK) return Observe(copied, "<prepare>");
                 if (source == null) return Observe(VnResult.VN_CONTENT_NOT_LOADED, "<prepare>");
-                if (source.Publication == null) return Observe(VnResult.VN_CAPABILITY_UNAVAILABLE, "<prepare>");
                 VnResult valid = ValidateNames(source, names);
                 if (valid != VnResult.VN_OK)
                 {
@@ -196,7 +195,7 @@ namespace Harken.Unity.Editor
                         result = UnitySpatial.SetListener(listener);
                         if (result != VnResult.VN_OK) return Observe(result, name);
                     }
-                    result = Actions.Resolve(name, source.Publication.ProjectId, out ActionResolved resolved);
+                    result = Actions.Resolve(name, source.Catalog.ProjectId, out ActionResolved resolved);
                     bool retained = false;
                     Emitter emitter = stateEmitter;
                     if (result == VnResult.VN_OK && spatialSource != null)
@@ -311,7 +310,7 @@ namespace Harken.Unity.Editor
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             var catalog = new HarkenEditorCatalog();
             VnResult result = catalog.Refresh(directory, language);
-            return result == VnResult.VN_OK ? Prepare(catalog.PreparedPacks, startupIds, nullDevice)
+            return result == VnResult.VN_OK ? Prepare(catalog.PreviewContent, startupIds, nullDevice)
                 : Observe(result, "<prepare>", catalog.Diagnostic);
         }
 
@@ -321,11 +320,11 @@ namespace Harken.Unity.Editor
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
             var catalog = new HarkenEditorCatalog();
             VnResult result = catalog.Refresh(source, null, initJson);
-            return result == VnResult.VN_OK ? Prepare(catalog.PreparedPacks, startupIds, nullDevice)
+            return result == VnResult.VN_OK ? Prepare(catalog.PreviewContent, startupIds, nullDevice)
                 : Observe(result, "<prepare>", catalog.Diagnostic);
         }
 
-        public VnResult Prepare(HarkenPreparedPacks source, ulong[] startupIds, bool nullDevice = false)
+        public VnResult Prepare(HarkenPreviewContent source, ulong[] startupIds, bool nullDevice = false)
         {
             VnResult allowed = CanPrepare();
             if (allowed != VnResult.VN_OK) return Observe(allowed, "<prepare>");
@@ -596,7 +595,7 @@ namespace Harken.Unity.Editor
                 scope.failedResidual = false;
                 return scope.Observe(VnResult.VN_OK, "<prepare>");
             }
-            VnResult result = session.PrepareActions(names, scope.source.Publication.ProjectId,
+            VnResult result = session.PrepareActions(names, scope.source.Catalog.ProjectId,
                 out ActionPreparation preparation);
             if (preparation != null) scope.preparation = preparation;
             if (scope.disposed || shutdownRequested || !ReferenceEquals(session, scope.capturedSession) ||
@@ -828,10 +827,10 @@ namespace Harken.Unity.Editor
             return VnResult.VN_OK;
         }
 
-        private static VnResult ValidateNames(HarkenPreparedPacks source, string[] names)
+        private static VnResult ValidateNames(HarkenPreviewContent source, string[] names)
         {
             if (names.Length == 0) return VnResult.VN_OK;
-            return source.Publication.GetActionPreparationOrder(names, source.Publication.ProjectId, out _);
+            return source.Catalog.GetPreparationOrder(names, source.Catalog.ProjectId, out _);
         }
 
         private static bool SameNames(string[] left, string[] right)

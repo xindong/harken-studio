@@ -39,7 +39,7 @@ namespace Harken
             preparing = true;
             try
             {
-                VnResult result = owner.AcquireCompanions(names, owners, refresh);
+                VnResult result = owner.AcquireActionPacks(names, owners, refresh);
                 if (result == VnResult.VN_OK)
                 {
                     count = owners.Length;
@@ -66,7 +66,7 @@ namespace Harken
             preparing = true;
             try
             {
-                VnResult result = await owner.AcquireCompanionsAsync(names, owners, refresh, cancellation);
+                VnResult result = await owner.AcquireActionPacksAsync(names, owners, refresh, cancellation);
                 if (result == VnResult.VN_OK)
                 {
                     count = owners.Length;
@@ -100,7 +100,7 @@ namespace Harken
             while (count > 0)
             {
                 int index = count - 1;
-                VnResult result = owner.ReleaseCompanion(owners[index]);
+                VnResult result = owner.ReleaseActionPack(owners[index]);
                 // Keep dependencies alive while their dependent Pack still belongs to this scope.
                 if (result != VnResult.VN_OK) return LastReleaseResult = result;
                 owners[index] = null;
@@ -126,7 +126,7 @@ namespace Harken
             internal ulong StableId;
             internal ulong ContentHash;
             internal int ByteCount;
-            internal PackCompanion Names;
+            internal PackMetadata Names;
             internal ulong NameRevision;
             internal ulong CallableFingerprint;
             public Pack Handle;
@@ -180,23 +180,23 @@ namespace Harken
 
         public VnResult AcquirePack(ulong packStableId, out Pack pack)
         {
-            return AcquireCompanionPack(packStableId, out pack);
+            return AcquireRawPack(packStableId, out pack);
         }
 
         /// <summary>On failure, a non-null scope still owns any references whose rollback could not finish.</summary>
         public VnResult PrepareActions(string[] names, string projectId, out ActionPreparation preparation)
         {
-            return PrepareCompanions(names, projectId, false, out preparation);
+            return PrepareActionPacks(names, projectId, false, out preparation);
         }
 
         public VnResult ReleasePack(ulong packStableId, Pack pack)
         {
-            return ReleaseCompanionPack(packStableId, pack);
+            return ReleaseRawPack(packStableId, pack);
         }
 
         public VnResult ReplacePack(ulong packStableId, Pack pack)
         {
-            return ReplaceCompanionPack(packStableId, pack);
+            return ReplaceRawPack(packStableId, pack);
         }
 
         public VnResult PrepareStartupPacks()
@@ -255,17 +255,17 @@ namespace Harken
                 {
                     active = false;
                     packs.Clear();
-                    companionNames.Clear();
-                    rawCompanionLeases.Clear();
-                    CancelCompanionReads();
+                    metadataNames.Clear();
+                    rawPackLeases.Clear();
+                    CancelPackReads();
                     // Pending captures own their inputs until their real completion.
                     // An inactive session only retains its public diagnostic state.
                     initBytes = null;
-                    companionSource = null;
-                    companionLocators = null;
-                    companionOwners = Array.Empty<SharedPack>();
-                    companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
-                    companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
+                    packSource = null;
+                    packLocators = null;
+                    packOwners = Array.Empty<SharedPack>();
+                    packKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
+                    packKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
                     Array.Clear(startupPacks, 0, startupPacks.Length);
                 }
                 return term;

@@ -22,15 +22,15 @@ namespace Harken
 
     public sealed partial class PackBootstrapSession
     {
-        private readonly Dictionary<string, PendingCapture> companionReads = new Dictionary<string, PendingCapture>(StringComparer.Ordinal);
-        private readonly AsyncLocal<bool> inCompanionReadCallback = new AsyncLocal<bool>();
+        private readonly Dictionary<string, PendingCapture> packReads = new Dictionary<string, PendingCapture>(StringComparer.Ordinal);
+        private readonly AsyncLocal<bool> inPackReadCallback = new AsyncLocal<bool>();
 
         private sealed class PendingCapture
         {
             internal readonly CancellationTokenSource Cancellation = new CancellationTokenSource();
-            internal readonly TaskCompletionSource<CompanionCapture> Completion =
-                new TaskCompletionSource<CompanionCapture>(TaskCreationOptions.RunContinuationsAsynchronously);
-            internal Task<CompanionCapture> Task => Completion.Task;
+            internal readonly TaskCompletionSource<PackMetadataCapture> Completion =
+                new TaskCompletionSource<PackMetadataCapture>(TaskCreationOptions.RunContinuationsAsynchronously);
+            internal Task<PackMetadataCapture> Task => Completion.Task;
             internal int Waiters;
             internal bool Cancelled;
         }
@@ -47,7 +47,7 @@ namespace Harken
             bool refresh, CancellationToken cancellation)
         {
             cancellation.ThrowIfCancellationRequested();
-            VnResult allowed = CompanionMutationAllowed();
+            VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return new ActionPreparationResult(allowed);
             if (names == null || !Guid.TryParseExact(projectId, "D", out Guid project) || project == Guid.Empty)
                 return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
@@ -56,7 +56,7 @@ namespace Harken
             var requested = new List<string>(names.Length);
             foreach (string name in names)
             {
-                if (!PackCompanion.IsName(name) || name == "Init") return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
+                if (!PackMetadata.IsName(name) || name == "Init") return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
                 if (unique.Add(name)) requested.Add(name);
             }
             var preparation = new ActionPreparation(this, requested.ToArray(), refresh);
@@ -64,37 +64,37 @@ namespace Harken
             return new ActionPreparationResult(result, preparation);
         }
 
-        internal async Task<VnResult> AcquireCompanionsAsync(string[] names, SharedPack[] acquired,
+        internal async Task<VnResult> AcquireActionPacksAsync(string[] names, SharedPack[] acquired,
             bool refresh, CancellationToken cancellation)
         {
-            VnResult allowed = CompanionMutationAllowed();
+            VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             cancellation.ThrowIfCancellationRequested();
-            if (!companionSource.IsAsync) return AcquireCompanions(names, acquired, refresh, 0, null, cancellation);
+            if (!packSource.IsAsync) return AcquireActionPacks(names, acquired, refresh, 0, null, cancellation);
             bool warm = !refresh;
             foreach (string name in names)
-                warm &= companionNames.TryGetValue(name, out SharedPack owner) && owner.Handle.IsValid;
-            if (warm) return AcquireCompanions(names, acquired, false);
+                warm &= metadataNames.TryGetValue(name, out SharedPack owner) && owner.Handle.IsValid;
+            if (warm) return AcquireActionPacks(names, acquired, false);
             if (!PackSource.HasControlContext) return VnResult.VN_INVALID_ARG;
 
-            var before = new Dictionary<SharedPack, (ulong Handle, PackCompanion Names)>();
+            var before = new Dictionary<SharedPack, (ulong Handle, PackMetadata Names)>();
             foreach (SharedPack owner in packs.Values) before[owner] = (owner.Handle.Handle, owner.Names);
-            var captured = new Dictionary<string, CompanionInput>(StringComparer.Ordinal);
+            var captured = new Dictionary<string, PackMetadataInput>(StringComparer.Ordinal);
             var subscriptions = new List<(string Name, PendingCapture Read)>();
             try
             {
                 foreach (string name in names)
                 {
-                    if (!refresh && companionNames.TryGetValue(name, out SharedPack owner) && owner.Handle.IsValid) continue;
-                    if (!companionReads.TryGetValue(name, out PendingCapture pending))
+                    if (!refresh && metadataNames.TryGetValue(name, out SharedPack owner) && owner.Handle.IsValid) continue;
+                    if (!packReads.TryGetValue(name, out PendingCapture pending))
                     {
                         pending = new PendingCapture();
-                        companionReads.Add(name, pending);
+                        packReads.Add(name, pending);
                         _ = CompleteCapture(pending, name);
                     }
                     ++pending.Waiters;
                     subscriptions.Add((name, pending));
-                    CompanionCapture result = await AwaitCapture(pending.Task, cancellation);
+                    PackMetadataCapture result = await AwaitCapture(pending.Task, cancellation);
                     if (RequireOwnerThread() != VnResult.VN_OK) return VnResult.VN_INVALID_ARG;
                     if (!active) return VnResult.VN_NOT_INITIALIZED;
                     if (result.Result != VnResult.VN_OK) return result.Result;
@@ -104,7 +104,7 @@ namespace Harken
                 if (!active) return VnResult.VN_NOT_INITIALIZED;
                 foreach (var pair in captured)
                 {
-                    CompanionInput input = pair.Value;
+                    PackMetadataInput input = pair.Value;
                     foreach (SharedPack owner in packs.Values)
                     {
                         if (owner.Names.RootId != input.Names.RootId) continue;
@@ -118,7 +118,7 @@ namespace Harken
                     }
                 }
                 // No await or cancellation check after native commit: a successful caller owns its lease.
-                return AcquireCompanions(names, acquired, refresh, 0, captured, cancellation);
+                return AcquireActionPacks(names, acquired, refresh, 0, captured, cancellation);
             }
             finally
             {
@@ -129,8 +129,8 @@ namespace Harken
                 {
                     PendingCapture pending = subscription.Read;
                     if (--pending.Waiters != 0) continue;
-                    if (companionReads.TryGetValue(subscription.Name, out PendingCapture current) && ReferenceEquals(current, pending))
-                        companionReads.Remove(subscription.Name);
+                    if (packReads.TryGetValue(subscription.Name, out PendingCapture current) && ReferenceEquals(current, pending))
+                        packReads.Remove(subscription.Name);
                     CancelRead(pending);
                 }
             }
@@ -140,7 +140,7 @@ namespace Harken
         {
             try
             {
-                pending.Completion.TrySetResult(await companionSource.CaptureAsync(name,
+                pending.Completion.TrySetResult(await packSource.CaptureAsync(name,
                     VnObjectId.Parse(ProjectId), initBytes, pending.Cancellation.Token, SetReadCallbackPhase));
             }
             catch (OperationCanceledException) { pending.Completion.TrySetCanceled(); }
@@ -152,11 +152,11 @@ namespace Harken
             if (RequireOwnerThread() != VnResult.VN_OK)
                 throw new InvalidOperationException("The source must resume on the session control thread.");
             // Flow into the reader's own continuations without blocking independent subscribers.
-            inCompanionReadCallback.Value = reading;
+            inPackReadCallback.Value = reading;
             mutationPhase = reading ? MutationPhase.ReadingContent : MutationPhase.Idle;
         }
 
-        private static async Task<CompanionCapture> AwaitCapture(Task<CompanionCapture> task, CancellationToken cancellation)
+        private static async Task<PackMetadataCapture> AwaitCapture(Task<PackMetadataCapture> task, CancellationToken cancellation)
         {
             if (!cancellation.CanBeCanceled) return await task;
             var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -183,10 +183,10 @@ namespace Harken
             finally { pending.Cancellation.Dispose(); }
         }
 
-        private void CancelCompanionReads()
+        private void CancelPackReads()
         {
-            foreach (PendingCapture pending in companionReads.Values) CancelRead(pending);
-            companionReads.Clear();
+            foreach (PendingCapture pending in packReads.Values) CancelRead(pending);
+            packReads.Clear();
         }
     }
 }

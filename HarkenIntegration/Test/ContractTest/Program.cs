@@ -34,7 +34,7 @@ namespace Harken.Test
                 return RunAbiFidelity() && RunAttenuationAbi() ? 0 : 1;
             }
             bool requireNative = false;
-            string companionRoot = null;
+            string exportRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -43,18 +43,18 @@ namespace Harken.Test
                     requireNative = true;
                     continue;
                 }
-                if (arg == "--companion-root" && i + 1 < args.Length)
+                if (arg == "--export-root" && i + 1 < args.Length)
                 {
-                    companionRoot = args[++i];
+                    exportRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--companion-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
-            if (companionRoot != null) return RepositoryPublicationContract.Run(companionRoot) ? 0 : 1;
+            if (exportRoot != null) return ExportedPackContract.Run(exportRoot) ? 0 : 1;
 
             Console.WriteLine("== Harken C# binding gates ==");
             Console.WriteLine("Native mode : " + (requireNative ? "REQUIRED" : "OPTIONAL"));
@@ -65,7 +65,7 @@ namespace Harken.Test
             int namePost = RunNamePostAndProvider();
             int zeroGc = RunZeroGc();   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
-            bool companionVersionOk = CompanionVersionContract.Run();
+            bool metadataVersionOk = PackMetadataVersionContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -73,7 +73,7 @@ namespace Harken.Test
             Console.WriteLine("Pack bootstrap: " + (bootstrapOk ? "PASS" : "FAIL"));
             Console.WriteLine("Name post     : " +
                 (namePost == 0 ? "PASS" : namePost == 2 ? "SKIP" : "FAIL"));
-            Console.WriteLine("Metadata version: " + (companionVersionOk ? "PASS" : "FAIL"));
+            Console.WriteLine("Metadata version: " + (metadataVersionOk ? "PASS" : "FAIL"));
             Console.WriteLine("Zero-GC hot  : " + (zeroGc == 0 ? "PASS" : zeroGc == 2 ? "SKIP" : "FAIL"));
             Console.WriteLine("Remote native: " + (remoteNative == 0 ? "PASS" : remoteNative == 2 ? "SKIP" : "FAIL"));
             if (requireNative)
@@ -86,7 +86,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
+            bool ok = metadataVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&
                 (zeroGc == 0 || (!requireNative && zeroGc == 2)) &&
                 (remoteNative == 0 || (!requireNative && remoteNative == 2));

@@ -3,7 +3,7 @@
 The .NET 9 runner compiles the generated and hand-written managed API sources
 shipped in the Unity Integration Package with C# 9 and no NuGet dependencies. It checks ABI layout, coordinate conversion,
 Variable symbol rules, bootstrap capacity recommendations, byte providers,
-zero-allocation calls, Remote communication and companion lifecycle behavior.
+zero-allocation calls, Remote communication and Pack metadata lifecycle behavior.
 
 ```powershell
 dotnet run --project HarkenIntegration/Test/ContractTest
@@ -24,7 +24,7 @@ To validate a real exported selected-platform directory independently:
 
 ```powershell
 dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- `
-  --require-native --companion-root "path/to/Windows"
+  --require-native --export-root "path/to/Windows"
 ```
 
 This focused mode requires `Init.bytes` with `Init.json` and Action pairs,
