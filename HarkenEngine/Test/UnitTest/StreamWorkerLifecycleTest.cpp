@@ -1,6 +1,3 @@
-#include "Common/ExternalPcmFixture.h"
-#include "Engine.h"
-#include "HarkenApiInternal.h"
 // Streaming-thread lifecycle: the startup handshake, and what happens to
 // everyone waiting on the streaming thread when it dies.
 //
@@ -20,7 +17,7 @@
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <atomic>
@@ -130,33 +127,6 @@ std::string WriteStream(const std::string& name, VnSoundId soundId) {
     return path;
 }
 
-// These worker-liveness cases begin with metadata already validated. Only the
-// header/index prefix is resident; audio bytes still come from the I/O provider.
-std::shared_ptr<const harken::PackMediaRange> FixtureRange(const std::string& path) {
-    std::ifstream input(path, std::ios::binary);
-    const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), {}};
-    return harkentest::PreparedExternalPcmFixtureRange(bytes,
-        [path](auto) { return harken::OpenStreamByteSource(path.c_str()); });
-}
-
-VnResult StartFixtureVoice(harken::Engine& engine, const harken::StreamManager::StreamFacts& facts,
-    VnVoiceHandle* voice) {
-    std::uint32_t slot = 0;
-    if (!engine.streams.PeekFreeSlot(&slot) ||
-        !engine.streams.PrepareSlotWorkingSet(slot, facts.channelCount)) return VN_NO_STREAM;
-    std::uint64_t token = 0;
-    const auto result = engine.streams.ActivateSlot(slot, facts.fileIndex, 0, 0, facts.frameCount, 1, &token);
-    if (result != VN_OK) return result;
-    auto* ring = engine.streams.RingOf(slot);
-    const auto played = engine.voices.PlayStream(ring, facts.channelCount, facts.sampleRate,
-        0, 0, 1, 0, false, 0, 0, 0, harken::ResolvePanGains(engine.config.mixChannelLayout, 0),
-        0, facts.frameCount, 0, facts.frameCount, 1, harken::ResampleProfile::LegacyCompatibility, voice);
-    if (played != VN_OK) { engine.streams.RetirePreparedSlot(ring, token); return played; }
-    engine.voices.BindStreamRingToken(*voice, ring, token);
-    engine.voices.ApplyPlay(*voice, *voice, 0, 0);
-    return VN_OK;
-}
-
 // The handshake succeeds: a healthy streaming thread reports Ready and
 // serves a registration.
 TEST(StreamWorkerLifecycle, HandshakePublishesReadyAndServesRequests) {
@@ -166,14 +136,8 @@ TEST(StreamWorkerLifecycle, HandshakePublishesReadyAndServesRequests) {
               session.Engine()->streams.WorkerState());
 
     const std::string path = WriteStream("swl_ready.stream", harkentest::ObjectId(9101));
-    auto range = FixtureRange(path);
-    harken::StreamManager::StreamFacts facts;
-    ASSERT_EQ(VN_OK, session.Engine()->streams.ResolvePackSource(range, &facts));
-    BoundedCall service;
-    service.Start([&session] { session.Engine()->streams.SyncServe(); return VN_OK; });
-    VnResult result = VN_DEVICE_ERROR;
-    ASSERT_TRUE(service.Wait(&result));
-    EXPECT_EQ(VN_OK, result);
+    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9101), path.c_str()));
+    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(9101)));
 }
 
 // The streaming thread cannot start: initialization must fail outright
@@ -207,6 +171,7 @@ TEST(StreamWorkerLifecycle, StartupFailureFailsInitInsteadOfStranding) {
 TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
+    const std::string path = WriteStream("swl_death.stream", harkentest::ObjectId(9102));
 
     StreamRequestFaultGuard fault(harken::StreamRequestFault::WorkerLoop);
 
@@ -214,14 +179,14 @@ TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
     // call may legitimately still be served before the thread dies. What must
     // never happen is that it does not come back at all.
     BoundedCall first;
-    first.Start([&session] {
-        session.Engine()->streams.SyncServe();
-        return session.Engine()->streams.WorkerState() == harken::StreamWorkerState::Failed ? VN_DEVICE_ERROR : VN_OK;
+    const std::string firstPath = path;
+    first.Start([firstPath] {
+        return Vn_RegisterStreamFile(harkentest::ObjectId(9102), firstPath.c_str());
     });
 
     VnResult firstResult = VN_OK;
     ASSERT_TRUE(first.Wait(&firstResult))
-        << "the in-flight supply request never returned: the streaming thread "
+        << "the in-flight registration never returned: the streaming thread "
            "died and left the caller waiting on a completion nobody will post";
     EXPECT_TRUE(firstResult == VN_OK || firstResult == VN_DEVICE_ERROR)
         << "served or refused are both fine; blocked is not. got " << firstResult;
@@ -231,9 +196,8 @@ TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
     ASSERT_TRUE(WaitForWorkerFailure(session.Engine()->streams))
         << "the streaming thread never published Failed within the budget";
     BoundedCall later;
-    later.Start([&session] {
-        session.Engine()->streams.SyncServe();
-        return session.Engine()->streams.WorkerState() == harken::StreamWorkerState::Failed ? VN_DEVICE_ERROR : VN_OK;
+    later.Start([firstPath] {
+        return Vn_RegisterStreamFile(harkentest::ObjectId(9103), firstPath.c_str());
     });
     VnResult laterResult = VN_OK;
     ASSERT_TRUE(later.Wait(&laterResult))
@@ -260,14 +224,12 @@ TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
 TEST(StreamWorkerLifecycle, PlayAfterWorkerDeathIsRefusedAndClaimsNoSlot) {
     VnConfig config = MakeNullConfig(4, 256, 48000);
     config.maxStreams = 1;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = WriteStream("swl_play_after_death.stream", harkentest::ObjectId(9107));
-    auto range = FixtureRange(path);
-    harken::StreamManager::StreamFacts facts;
-    ASSERT_EQ(VN_OK, session.Engine()->streams.ResolvePackSource(range, &facts));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9107), path.c_str()));
 
     const std::uint32_t freeSlotsBefore =
         session.Engine()->streams.FreeSlotCount();
@@ -287,14 +249,13 @@ TEST(StreamWorkerLifecycle, PlayAfterWorkerDeathIsRefusedAndClaimsNoSlot) {
         ASSERT_EQ(harken::StreamWorkerState::Failed,
                   session.Engine()->streams.WorkerState());
 
-        harken::StreamManager::ReplacementRequest request;
-        request.fileIndex = facts.fileIndex;
-        request.sourceGeneration = facts.sourceGeneration;
-        request.contentRevision = facts.contentRevision;
-        request.loopEndFrame = facts.frameCount;
-        harken::StreamManager::PreparedToken token;
-        EXPECT_EQ(VN_DEVICE_ERROR, session.Engine()->streams.BeginReplacement(request, &token));
-        EXPECT_EQ(0u, token.generation);
+        // The id is still registered, so resolution succeeds; only liveness
+        // refuses it.
+        const VnPlayDesc desc = harkentest::MakePlayDesc(harkentest::ObjectId(9107));
+        VnVoiceHandle handle = 0;
+        EXPECT_EQ(VN_DEVICE_ERROR, harkentest::PlayRaw(&desc, &handle))
+            << "a streamed play was admitted after the streaming thread died; "
+               "nothing will ever feed or end that voice";
 
         EXPECT_EQ(freeSlotsBefore, session.Engine()->streams.FreeSlotCount())
             << "the refused play still consumed a stream slot";
@@ -315,16 +276,19 @@ TEST(StreamWorkerLifecycle, PlayAfterWorkerDeathIsRefusedAndClaimsNoSlot) {
 TEST(StreamWorkerLifecycle, WorkerDeathEndsActiveStreamVoices) {
     VnConfig config = MakeNullConfig(4, 256, 48000);
     config.maxStreams = 1;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = WriteStream("swl_active.stream", harkentest::ObjectId(9104));
-    auto range = FixtureRange(path);
-    harken::StreamManager::StreamFacts facts;
-    ASSERT_EQ(VN_OK, session.Engine()->streams.ResolvePackSource(range, &facts));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9104), path.c_str()));
+    harken::StreamManager::StreamFacts probe;
+    ASSERT_TRUE(session.Engine()->streams.FindFile(harkentest::ObjectId(9104), &probe))
+        << "registration reported success but the id does not resolve";
+
+    const VnPlayDesc desc = harkentest::MakePlayDesc(harkentest::ObjectId(9104));
     VnVoiceHandle handle = 0;
-    ASSERT_EQ(VN_OK, StartFixtureVoice(*session.Engine(), facts, &handle));
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&desc, &handle));
     ASSERT_EQ(VN_OK, Vn_Update());
 
     const std::uint32_t freeBefore = session.Engine()->streams.FreeSlotCount();
@@ -372,8 +336,9 @@ TEST(StreamWorkerLifecycle, WorkerDeathEndsActiveStreamVoices) {
 TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
 
+    const std::string path = WriteStream("swl_shutdown.stream", harkentest::ObjectId(9105));
 
     harken::SetStreamWorkerStallReleaseForTests(false);
     const std::uint32_t stallsBefore = harken::StreamWorkerStallEntriesForTests();
@@ -389,7 +354,8 @@ TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
         // queue unlocked.
         harken::StreamManager* raw = streams.get();
         BoundedCall stalling;
-        stalling.Start([raw] { raw->SyncServe(); return VN_OK; });
+        const std::string p = path;
+        stalling.Start([raw, p] { return raw->RegisterFile(harkentest::ObjectId(9105), p.c_str()); });
 
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -401,7 +367,7 @@ TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
             << "the streaming thread never reached the stall window";
 
         // Second request queues behind the stalled pass and is not claimed.
-        queued.Start([raw] { raw->SyncServe(); return VN_OK; });
+        queued.Start([raw, p] { return raw->RegisterFile(harkentest::ObjectId(9106), p.c_str()); });
         const auto queuedBy =
             std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (raw->PendingRequestCountForTest() == 0 &&
@@ -426,7 +392,7 @@ TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
     ASSERT_TRUE(queued.Wait(&queuedResult))
         << "a request queued when shutdown began never returned: it was dropped "
            "un-completed and its caller waits for a completion nobody will post";
-    EXPECT_EQ(VN_OK, queuedResult); // SyncServe has no status; returning is the shutdown contract.
+    EXPECT_EQ(VN_DEVICE_ERROR, queuedResult);
 }
 
 // Defence in depth behind the liveness pre-check: a play that passed the check
@@ -441,15 +407,15 @@ TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
 TEST(StreamWorkerLifecycle, ReclamationClosesASlotActivatedAfterTheFailure) {
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
 
     const std::string path = WriteStream("swl_race_slot.stream", harkentest::ObjectId(9108));
 
     harken::StreamManager streams(config);
     ASSERT_EQ(harken::StreamWorkerState::Ready, streams.WorkerState());
-    auto range = FixtureRange(path);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(harkentest::ObjectId(9108), path.c_str()));
     harken::StreamManager::StreamFacts facts;
-    ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+    ASSERT_TRUE(streams.FindFile(harkentest::ObjectId(9108), &facts));
     ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, facts.channelCount));
 
     {
@@ -488,19 +454,22 @@ TEST(StreamWorkerLifecycle, ReclamationClosesASlotActivatedAfterTheFailure) {
 TEST(StreamWorkerLifecycle, WorkerDeathStillClosesDrainedRetiringFiles) {
     VnConfig config = MakeNullConfig(4, 256, 48000);
     config.maxStreams = 2;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string first = WriteStream("swl_retire_a.stream", harkentest::ObjectId(9109));
-    auto range = FixtureRange(first);
-    harken::StreamManager::StreamFacts facts, observed;
-    ASSERT_EQ(VN_OK, session.Engine()->streams.ResolvePackSource(range, &facts));
+    const std::string second = WriteStream("swl_retire_b.stream", harkentest::ObjectId(9109));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9109), first.c_str()));
+
+    // Play, then replace while it plays: the old generation retires with a
+    // consumer still on it.
+    const VnPlayDesc desc = harkentest::MakePlayDesc(harkentest::ObjectId(9109));
     VnVoiceHandle handle = 0;
-    ASSERT_EQ(VN_OK, StartFixtureVoice(*session.Engine(), facts, &handle));
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&desc, &handle));
     ASSERT_EQ(VN_OK, Vn_Update());
-    range.reset();
-    ASSERT_TRUE(session.Engine()->streams.FactsForFileIndex(facts.fileIndex, &observed));
+    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(harkentest::ObjectId(9109), second.c_str()));
+    ASSERT_EQ(1u, session.Engine()->streams.RetiringFileCount());
 
     {
         StreamRequestFaultGuard fault(harken::StreamRequestFault::WorkerLoop);
@@ -522,20 +491,22 @@ TEST(StreamWorkerLifecycle, WorkerDeathStillClosesDrainedRetiringFiles) {
         }
     }
 
-    EXPECT_FALSE(session.Engine()->streams.FactsForFileIndex(facts.fileIndex, &observed));
+    EXPECT_EQ(0u, session.Engine()->streams.RetiringFileCount())
+        << "the retiring generation was never closed, so its handle leaks and "
+           "the retiring count stays permanently high";
 }
 
 TEST(StreamWorkerLifecycle, ReplacementControlDoesNotWaitForStalledWorker) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
     Manager streams(config);
     const auto id = harkentest::ObjectId(9110);
     const auto path = WriteStream("swl_prepare_stall.stream", id);
-    auto range = FixtureRange(path);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
     Manager::StreamFacts facts;
-    ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+    ASSERT_TRUE(streams.FindFile(id, &facts));
     Manager::ReplacementRequest request;
     request.fileIndex = facts.fileIndex;
     request.sourceGeneration = facts.sourceGeneration;
@@ -574,7 +545,7 @@ TEST(StreamWorkerLifecycle, ReplacementControlDoesNotWaitForStalledWorker) {
     EXPECT_EQ(VN_OK, result);
     streams.SyncServe();
     EXPECT_EQ(1u, streams.FreeSlotCount());
-
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
     harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
     harken::SetStreamWorkerStallReleaseForTests(false);
 }
@@ -583,13 +554,13 @@ TEST(StreamWorkerLifecycle, FailedReplacementCancellationDrainsRetiringSource) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingBytes = (1024) * sizeof(float);
+    config.streamRingFrames = 1024;
     Manager streams(config);
     const auto id = harkentest::ObjectId(9111);
     const auto path = WriteStream("swl_prepare_failure.stream", id);
-    auto range = FixtureRange(path);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
     Manager::StreamFacts facts;
-    ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+    ASSERT_TRUE(streams.FindFile(id, &facts));
     Manager::ReplacementRequest request;
     request.fileIndex = facts.fileIndex;
     request.sourceGeneration = facts.sourceGeneration;
@@ -602,9 +573,8 @@ TEST(StreamWorkerLifecycle, FailedReplacementCancellationDrainsRetiringSource) {
            std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     ASSERT_EQ(Manager::PreparationState::Ready, streams.QueryReplacement(token));
-    range.reset();
-    Manager::StreamFacts observed;
-    ASSERT_TRUE(streams.FactsForFileIndex(facts.fileIndex, &observed));
+    ASSERT_EQ(VN_OK, streams.ReplaceFile(id, path.c_str()));
+    ASSERT_EQ(1u, streams.RetiringFileCount());
     StreamRequestFaultGuard fault(harken::StreamRequestFault::WorkerLoop);
     BoundedCall service;
     service.Start([&streams] { streams.SyncServe(); return VN_OK; });
@@ -618,7 +588,7 @@ TEST(StreamWorkerLifecycle, FailedReplacementCancellationDrainsRetiringSource) {
     EXPECT_TRUE(streams.CancelReplacement(token));
     streams.ReclaimAfterWorkerFailure();
     EXPECT_EQ(1u, streams.FreeSlotCount());
-    EXPECT_FALSE(streams.FactsForFileIndex(facts.fileIndex, &observed));
+    EXPECT_EQ(0u, streams.RetiringFileCount());
     EXPECT_EQ(Manager::PreparationState::Cancelled, streams.QueryReplacement(token));
     EXPECT_EQ(VN_DEVICE_ERROR, streams.BeginReplacement(request, &token));
 }

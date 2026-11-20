@@ -5,7 +5,7 @@
 #include <harken/core/CurrentWorldCodec.h>
 #include <harken/param/VariableService.h>
 #include <harken/media/PackFormatV2.h>
-#include <harken/media/StreamFormat.h>
+#include "harken/media/PackFormatV2.h"
 #include "Protocol.h"
 #include <harken_host_control/WireFormat.h>
 
@@ -193,7 +193,7 @@ TEST(ObjectId, StreamTocPreservesUuidAndFollowingFields)
     entry.chunkCount = 10;
     entry.loopStartFrame = 3;
     entry.loopEndFrame = 999;
-    std::array<uint8_t, harken::kStreamTocEntryBytes + 2> bytes{};
+    std::array<uint8_t, HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES + 2> bytes{};
     bytes.front() = bytes.back() = 0xa5;
     harken::SerializeStreamTocEntry(entry, bytes.data() + 1);
     const auto decoded = harken::ParseStreamTocEntry(bytes.data() + 1);

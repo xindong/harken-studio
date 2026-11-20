@@ -2,6 +2,6 @@
 
 namespace VNX::SchemaBuild {
 
-inline constexpr char kSnapshotHash[] = "095a895c971a3ed5873bb539d7fc489b18c5fb3b63b55137fe59286f0b836593";
+inline constexpr char kSnapshotHash[] = "975a9f0d790be4f00879733f35daaec9e798c0d2a2307bfc1d0423d59bbb741b";
 
 }

@@ -28,7 +28,7 @@ protected:
     bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-    int syncContentMetrics() override;
+    int syncContentMetrics(const ThemeMetrics& metrics) override;
     void updateContentGeometry() override;
 
 private:

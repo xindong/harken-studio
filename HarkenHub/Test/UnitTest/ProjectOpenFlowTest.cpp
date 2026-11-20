@@ -102,7 +102,6 @@ TEST_F(ProjectOpenFlowTest, DispatchDoesNotClaimProjectSuccessOrOwnTheStudioLife
     const auto after = store.listProjects().front();
     EXPECT_EQ(after.lastKnownGoodStudioBuildId, before.lastKnownGoodStudioBuildId);
     EXPECT_EQ(after.lastOpenedAt, before.lastOpenedAt);
-    EXPECT_EQ(after.detectedSchema, before.detectedSchema);
     EXPECT_EQ(after.preferredStudioBuildId, before.preferredStudioBuildId);
 }
 
@@ -185,7 +184,6 @@ TEST_F(ProjectOpenFlowTest, BackgroundRecheckExposesTheSelfTestFailure)
     ASSERT_TRUE(binary.open(QIODevice::WriteOnly));
     binary.write("not an executable");
     binary.close();
-    old.capabilitiesVersion = 1;
     QString error;
     ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(old, &error));
     VNH::LocalBuildRefreshCoordinator refresh;

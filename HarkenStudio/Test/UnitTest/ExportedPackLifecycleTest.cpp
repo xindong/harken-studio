@@ -944,7 +944,6 @@ void exportProjectPack(const VNX::ProjectData& project, const QString& outputDir
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
-    opts.debugStrings = false;
     const auto result = exporter.ExportAllPacks(project, outputDir, opts);
     ASSERT_TRUE(result.success) << result.error.toStdString();
     ASSERT_TRUE(QFileInfo::exists(QDir(outputDir).filePath(QStringLiteral("Init.bytes"))));

@@ -126,7 +126,6 @@ TEST(VersionScanner, KeepsLegacyInstalledVersionsAvailable)
     const auto versions = VersionScanner::scan(dir.path());
     ASSERT_EQ(versions.size(), 1u);
     EXPECT_TRUE(versions.front().available);
-    EXPECT_EQ(versions.front().capabilitiesVersion, 0);
 }
 
 TEST(VersionScanner, SkipsDirectoryWithoutManifest)
@@ -140,7 +139,7 @@ TEST(VersionScanner, SkipsDirectoryWithoutManifest)
     EXPECT_TRUE(VersionScanner::scan(dir.path()).empty());
 }
 
-TEST(VersionScanner, SkipsDirectoryWithoutCapabilities)
+TEST(VersionScanner, AcceptsDirectoryWithoutTheRetiredCapabilitiesFile)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -148,7 +147,7 @@ TEST(VersionScanner, SkipsDirectoryWithoutCapabilities)
                                QStringLiteral("run12.abcd1234"),
                                QStringLiteral("1.4.0"), true, false));
 
-    EXPECT_TRUE(VersionScanner::scan(dir.path()).empty());
+    EXPECT_EQ(VersionScanner::scan(dir.path()).size(), 1u);
 }
 
 TEST(VersionScanner, SkipsDirectoryWithoutBinary)
@@ -260,7 +259,6 @@ TEST(VersionScanner, KeepsDistinctMissingLocalBuildsVisibleAndRemovable)
     first.executablePath = dir.filePath("first/HarkenStudio.exe");
     first.reportedBuildId = "first-build";
     first.semanticVersion = "1.4.0";
-    first.capabilitiesVersion = 2;
     auto second = first;
     second.executablePath = dir.filePath("second/HarkenStudio.exe");
     second.reportedBuildId = "second-build";

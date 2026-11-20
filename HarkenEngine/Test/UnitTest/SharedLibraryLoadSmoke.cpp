@@ -43,7 +43,7 @@ int wmain(int argc, wchar_t* argv[]) {
         "Vn_QueryActionStep",
         "Vn_ReleaseActionFiring",
         "Vn_Update",
-        "Vn_ActivateCanonicalPackSetV3",
+        "Vn_RegisterStreamFile",
         "Vn_ReplacePack",
         "Vn_SetBusOutputLayout",
         "Vn_RegisterBinding",

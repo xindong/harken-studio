@@ -19,6 +19,7 @@ namespace VNX {
 struct ControlVisual
 {
     QColor background;
+    QColor backgroundOverlay;
     QColor foreground;
     QColor alternateBackground;
     QColor selectionBackground;

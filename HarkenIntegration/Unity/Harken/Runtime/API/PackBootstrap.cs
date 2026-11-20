@@ -127,7 +127,6 @@ namespace Harken
             internal ulong ContentHash;
             internal int ByteCount;
             internal PackCompanion Names;
-            internal PackStreamBinding Streams;
             internal ulong NameRevision;
             internal ulong CallableFingerprint;
             public Pack Handle;
@@ -256,7 +255,6 @@ namespace Harken
                 if (term == VnResult.VN_OK)
                 {
                     active = false;
-                    foreach (SharedPack pack in packs.Values) pack.Streams = null;
                     packs.Clear();
                     companionNames.Clear();
                     rawCompanionLeases.Clear();

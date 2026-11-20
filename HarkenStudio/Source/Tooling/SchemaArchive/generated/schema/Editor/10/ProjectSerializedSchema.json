@@ -3040,7 +3040,7 @@
               }
             },
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             },
             "required": [
               "type",
@@ -3092,7 +3092,7 @@
               }
             },
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             },
             "required": [
               "type",
@@ -3144,7 +3144,7 @@
               }
             },
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             },
             "required": [
               "type",
@@ -3284,7 +3284,7 @@
               }
             },
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             },
             "required": [
               "type",
@@ -3336,7 +3336,7 @@
               }
             },
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             },
             "required": [
               "type",
@@ -3425,10 +3425,6 @@
                 "format": "uuid",
                 "type": "string"
               },
-              "packSchemaVersion": {
-                "minimum": 1,
-                "type": "integer"
-              },
               "projectId": {
                 "format": "uuid",
                 "type": "string"
@@ -3454,8 +3450,7 @@
               "id",
               "projectId",
               "schemaVersion",
-              "studioVersion",
-              "packSchemaVersion"
+              "studioVersion"
             ],
             "type": "object"
           }
@@ -3501,7 +3496,7 @@
               }
             },
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             },
             "required": [
               "type",

@@ -58,8 +58,13 @@ QUrl ServerEndpoints::githubLatestUrl(const QString& product)
     if (product != QStringLiteral("hub") &&
         product != QStringLiteral("harken"))
         return QUrl();
+    QUrl base(QStringLiteral("https://github.com/xindong/harken-studio"));
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+    const auto override = qEnvironmentVariable("HARKEN_HUB_GITHUB_BASE_URL");
+    if (!override.isEmpty()) base = QUrl(override);
+#endif
     return withClientPath(
-        QUrl(QStringLiteral("https://github.com/xindong/harken-studio")),
+        base,
         QStringLiteral("/releases/latest/download/%1-manifest.json")
             .arg(product));
 }

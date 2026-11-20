@@ -102,7 +102,6 @@ public:
             return entry_ != nullptr ? entry_->range : nullptr;
         }
         std::uint64_t Cookie() const noexcept { return entry_ != nullptr ? entry_->cookie : 0; }
-        bool SharesEntry(const PackReference& other) const noexcept { return entry_ == other.entry_; }
 
     private:
         friend class PCMRegistry;
@@ -201,8 +200,6 @@ public:
         VnPCMDesc desc{};
         PcmLoopRegion loop{};
         PreparedPackSamples* samples = nullptr;
-        // Reuse semantic identity without conflating per-Pack byte sources.
-        PackReference identity;
     };
 
     class PreparedPackMutation {
@@ -217,8 +214,6 @@ public:
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
         std::uint64_t CookieOf(VnSoundId soundId) const noexcept;
         PackReference ReferenceOf(VnSoundId soundId) const noexcept;
-        static PackReference AdoptExternalAlias(PreparedPackSamples& samples,
-            const PackReference& identity) noexcept;
 
     private:
         friend class PCMRegistry;

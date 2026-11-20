@@ -1,4 +1,3 @@
-#include "harken/media/VorbisDecoder.h"
 #include "harken/media/StreamManager.h"
 
 #include "harken/core/MediaContentRevision.h"
@@ -24,6 +23,9 @@
 #endif
 #include <windows.h>
 // Keep the WinSDK alias from rewriting the StreamManager method definition.
+#ifdef ReplaceFile
+#undef ReplaceFile
+#endif
 #endif
 
 namespace harken {
@@ -44,24 +46,6 @@ constexpr std::chrono::milliseconds kServiceInterval{2};
 // math (prebuffer spans, resample ratios) inside 64-bit headroom.
 constexpr std::uint32_t kMaxSaneSampleRate = 1'000'000;
 
-class PcmPrefixSource final : public StreamByteSource {
-public:
-    PcmPrefixSource(const std::vector<std::uint8_t>& bytes, std::uint64_t length)
-        : bytes_(bytes), length_(length) {}
-    std::uint64_t ByteCount() const noexcept override { return length_; }
-    StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
-        StreamReadCancellation cancel) const override {
-        if (cancel.IsCancelled()) return {StreamReadStatus::Cancelled, 0};
-        if (offset > bytes_.size() || count > bytes_.size() - offset)
-            return {StreamReadStatus::IoError, 0};
-        std::memcpy(destination, bytes_.data() + offset, count);
-        return {StreamReadStatus::Ok, count};
-    }
-private:
-    const std::vector<std::uint8_t>& bytes_;
-    const std::uint64_t length_;
-};
-
 
 std::uint64_t RoundUpPow2(std::uint64_t v) {
     std::uint64_t p = 1;
@@ -76,10 +60,10 @@ std::uint64_t RoundUpPow2(std::uint64_t v) {
 bool ValidateStreamEntry(const StreamHeader& header,
                             const StreamTocEntry& e,
                             std::uint64_t fileBytes) {
-    if (e.sampleFormat != kStreamSampleFormatF32Planar) {
+    if (e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
         return false;
     }
-    if ((e.flags & ~kStreamKnownFlagsMask) != 0) {
+    if ((e.flags & ~HK_PACK_STREAM_FILE_KNOWN_FLAGS) != 0) {
         return false;
     }
     if (e.sampleRate == 0 || e.sampleRate > kMaxSaneSampleRate ||
@@ -94,22 +78,22 @@ bool ValidateStreamEntry(const StreamHeader& header,
         return false; // chunk index space exceeded
     }
     if (e.chunkCount == 0 ||
-        e.chunkCount != StreamChunkCount(e.frameCount,
+        e.chunkCount != hkPackStreamFileChunkCount(e.frameCount,
                                             header.chunkFrames)) {
         return false;
     }
     const std::uint64_t checksumBytes =
         static_cast<std::uint64_t>(e.chunkCount) *
-        kStreamChunkChecksumBytes;
+        HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     const std::uint64_t tocEnd =
         static_cast<std::uint64_t>(header.tocOffset) +
-        kStreamTocEntryBytes;
+        HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES;
     if (e.chunkChecksumOffset < tocEnd ||
         e.chunkChecksumOffset > fileBytes ||
         checksumBytes > fileBytes - e.chunkChecksumOffset) {
         return false;
     }
-    if (e.payloadOffset % kStreamPayloadAlign != 0) {
+    if (e.payloadOffset % HK_PACK_STREAM_FILE_PAYLOAD_ALIGN != 0) {
         return false;
     }
     if (e.payloadOffset < e.chunkChecksumOffset + checksumBytes) {
@@ -118,7 +102,7 @@ bool ValidateStreamEntry(const StreamHeader& header,
     // Fixed-size framing: the payload is exactly chunkCount full chunks,
     // the last one zero-padded.
     const std::uint64_t chunkBytes =
-        StreamChunkBytes(header.chunkFrames, e.channelCount);
+        hkPackStreamFileChunkBytes(header.chunkFrames, e.channelCount);
     if (chunkBytes == 0 ||
         e.chunkCount > UINT64_MAX / chunkBytes) {
         return false;
@@ -131,7 +115,7 @@ bool ValidateStreamEntry(const StreamHeader& header,
         e.payloadBytes > fileBytes - e.payloadOffset) {
         return false;
     }
-    if ((e.flags & kStreamFlagLoopable) != 0) {
+    if ((e.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0) {
         const std::uint64_t loopEnd =
             e.loopEndFrame == 0 ? e.frameCount : e.loopEndFrame;
         if (loopEnd > e.frameCount || e.loopStartFrame >= loopEnd) {
@@ -170,16 +154,24 @@ std::size_t StreamManager::PendingRequestCountForTest() const {
 }
 
 StreamManager::StreamManager(const EngineConfig& config)
-    : m_ringBytes(static_cast<std::uint32_t>(
-          RoundUpPow2(config.streamRingBytes))),
+    : m_ringFrames(static_cast<std::uint32_t>(
+          RoundUpPow2(config.streamRingFrames))),
       m_prebufferMs(config.prebufferMs),
       m_slots(config.maxStreams) {
-    const auto storageBytes = static_cast<std::uint64_t>(config.maxStreams) * m_ringBytes;
-    if (storageBytes > UINT32_MAX || !m_ringStorage.Reserve(static_cast<std::uint32_t>(storageBytes)))
-        throw std::bad_alloc();
-    for (std::uint32_t slot = 0; slot < config.maxStreams; ++slot)
-        m_slots[slot].ring.Wire(m_ringStorage.data() + static_cast<std::size_t>(slot) * m_ringBytes,
-                              m_ringBytes, config.legacyStreamFrameLimit);
+    const auto channelSamples = static_cast<std::uint64_t>(config.maxStreams) * m_ringFrames;
+    if (channelSamples > UINT32_MAX) throw std::bad_alloc();
+    for (auto& column : m_ringStorage) {
+        if (!column.Reserve(static_cast<std::uint32_t>(channelSamples)))
+            throw std::bad_alloc();
+    }
+    for (std::uint32_t s = 0; s < config.maxStreams; ++s) {
+        float* planes[kMaxChannels];
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+            planes[ch] = m_ringStorage[ch].data() +
+                static_cast<std::size_t>(s) * m_ringFrames;
+        }
+        m_slots[s].ring.Wire(planes, m_ringFrames);
+    }
     try {
         // Source validation/cleanup cannot occupy slot prebuffer execution,
         // and neither preparation domain borrows a steady refill worker.
@@ -222,8 +214,6 @@ StreamManager::~StreamManager() {
     m_wake.notify_all();
     m_thread.join();
     StopIo();
-    for (auto& slot : m_slots)
-        if (auto* decoder = slot.ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel)) decoder->Retire();
     // The streaming thread is gone for good, so nothing can serve a request
     // that raced the shutdown in. Releasing them here keeps the destructor from
     // leaving a caller blocked on a completion that can never be posted.
@@ -253,8 +243,6 @@ void StreamManager::EndActiveStreamsOnFailure() noexcept {
     for (StreamSlot& slot : m_slots) {
         if (slot.ring.state.load(std::memory_order_acquire) ==
             StreamSlotState::Active) {
-            if (slot.metadataWaiting)
-                slot.ring.preparationResult.store(VN_DEVICE_ERROR, std::memory_order_release);
             // Terminal publication goes through the ring's own arbitration, so a
             // park the audio thread already claimed still wins and the reason is
             // recorded as producer failure rather than a content outcome.
@@ -290,7 +278,7 @@ void StreamManager::ReclaimAfterWorkerFailure() {
     EndActiveStreamsOnFailure();
     SettleIo();
     DetachRetiredSlots();
-    CloseUnreferencedFiles();
+    CloseDrainedRetiringFiles();
     DispatchIo(); // Failed permits cleanup only.
 }
 
@@ -306,23 +294,51 @@ bool StreamManager::ConsumeWorkerFailureForLog() noexcept {
     return true;
 }
 
+VnResult StreamManager::RegisterFile(VnSoundId soundId, const char* utf8Path) {
+    return RegisterSourceAndWait(soundId, utf8Path, false);
+}
+VnResult StreamManager::UnregisterFile(VnSoundId soundId) {
+    Request request;
+    request.kind = Request::Kind::Unregister;
+    request.soundId = soundId;
+    return PostAndWait(request);
+}
+VnResult StreamManager::ReplaceFile(VnSoundId soundId, const char* utf8Path) {
+    return RegisterSourceAndWait(soundId, utf8Path, true);
+}
+
+bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (std::size_t i = 0; i < m_files.size(); ++i) {
+        const StreamFile* file = m_files[i].get();
+        if (file == nullptr || file->retiring || file->packPrivate ||
+            file->soundId != soundId) {
+            continue;
+        }
+        out->fileIndex = static_cast<std::uint32_t>(i);
+        out->sampleRate = file->toc.sampleRate;
+        out->channelCount = file->toc.channelCount;
+        out->frameCount = file->toc.frameCount;
+        out->contentRevision = file->contentRevision;
+        out->sourceGeneration = file->sourceGeneration;
+        out->flags = file->toc.flags;
+        out->loopStartFrame = file->toc.loopStartFrame;
+        out->loopEndFrame = file->toc.loopEndFrame;
+        return true;
+    }
+    return false;
+}
+
 VnResult StreamManager::ResolvePackSource(
     const std::shared_ptr<const PackMediaRange>& range, StreamFacts* out) {
-    if (out == nullptr || range == nullptr || !ValidPackMediaRange(*range))
+    if (out == nullptr || range == nullptr || range->source == nullptr ||
+        range->channelCount == 0 || range->channelCount > kMaxChannels ||
+        range->chunkFrames == 0 || range->chunkFrames > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES ||
+        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
         return VN_INVALID_ARG;
-    if (range->vorbis) {
-        const auto& media = range->vorbis->Media();
-        for (std::size_t i = 0; i < media.seek.size(); ++i) {
-            const auto end = i + 1 < media.seek.size() ? media.seek[i + 1].packetOffset : media.packetBytes;
-            if (end - media.seek[i].packetOffset >
-                std::uint64_t(kMaxStreamChunkFrames) * media.channels * sizeof(float)) return VN_BACKPRESSURE;
-        }
-    }
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
     const auto fill = [&](std::size_t index, const StreamFile& file) {
-        out->encoded = file.vorbis.get();
-        out->encodedPending = file.PacketEncoded() && !file.vorbis;
         out->fileIndex = static_cast<std::uint32_t>(index);
         out->sampleRate = file.toc.sampleRate;
         out->channelCount = file.toc.channelCount;
@@ -335,7 +351,7 @@ VnResult StreamManager::ResolvePackSource(
     };
     for (std::size_t i = 0; i < m_files.size(); ++i) {
         const StreamFile* file = m_files[i].get();
-        if (file != nullptr && !file->packRange.expired() &&
+        if (file != nullptr && file->packPrivate && !file->packRange.expired() &&
             !file->packRange.owner_before(range) && !range.owner_before(file->packRange)) {
             fill(i, *file);
             return VN_OK;
@@ -344,26 +360,21 @@ VnResult StreamManager::ResolvePackSource(
     if (m_lastSourceGeneration == UINT64_MAX) return VN_BACKPRESSURE;
     try {
         auto record = std::make_unique<StreamFile>();
-        record->vorbis = range->vorbis;
+        record->packPrivate = true;
         record->packRange = range;
-        record->external = range->external;
         record->packBlobOffset = range->blobOffset;
         record->source = range->source;
         record->toc.sampleRate = range->sampleRate;
         record->toc.channelCount = static_cast<std::uint16_t>(range->channelCount);
-        record->toc.sampleFormat = kStreamSampleFormatF32Planar;
+        record->toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
         record->toc.frameCount = range->frameCount;
         record->toc.chunkCount = static_cast<std::uint32_t>(range->chunkChecksums.size());
-        record->toc.flags = range->packFlags & kStreamKnownFlagsMask;
+        record->toc.flags = range->packFlags & HK_PACK_STREAM_FILE_KNOWN_FLAGS;
         record->toc.loopStartFrame = range->loop.startFrame;
         record->toc.loopEndFrame = range->loop.endFrame;
         record->chunkFrames = range->chunkFrames;
-        record->chunkChecksums = range->vorbis ? range->vorbis->Media().segmentChecksums : range->chunkChecksums;
+        record->chunkChecksums = range->chunkChecksums;
         record->contentRevision = range->contentRevision;
-        if (record->external && !record->external->pcmPrefix.empty()) {
-            const auto result = PreparePcmPrefix(*record);
-            if (result != VN_OK) return result;
-        }
         auto empty = std::find_if(m_files.begin(), m_files.end(), [](const auto& file) { return !file; });
         if (empty == m_files.end()) {
             if (m_files.size() == UINT32_MAX) return VN_BACKPRESSURE;
@@ -387,8 +398,6 @@ bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
         return false;
     }
     const StreamFile* file = m_files[fileIndex].get();
-    out->encoded = file->vorbis.get();
-    out->encodedPending = file->PacketEncoded() && !file->vorbis;
     out->fileIndex = fileIndex;
     out->sampleRate = file->toc.sampleRate;
     out->channelCount = file->toc.channelCount;
@@ -401,15 +410,39 @@ bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
     return true;
 }
 
+std::uint32_t StreamManager::RetiringFileCount() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::uint32_t count = 0;
+    for (const std::unique_ptr<StreamFile>& file : m_files) {
+        if (file != nullptr && file->retiring) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool StreamManager::HasRetiringFor(VnSoundId soundId) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const std::unique_ptr<StreamFile>& file : m_files) {
+        if (file != nullptr && file->retiring &&
+            file->retiredFromId == soundId) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool StreamManager::AcquirePendingRef(std::uint32_t fileIndex) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (fileIndex >= m_files.size() || m_files[fileIndex] == nullptr) {
         return false;
     }
     const auto channels = m_files[fileIndex]->toc.channelCount;
-    if (m_pendingRingSlots == UINT32_MAX) return false;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        if (m_pendingRingSlots[ch] == UINT32_MAX) return false;
+    }
     if (!PrepareRingStorage(OccupiedSlotPrefix(), channels, true)) return false;
-    ++m_pendingRingSlots;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) ++m_pendingRingSlots[ch];
     m_files[fileIndex]->pendingRefs.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -420,11 +453,11 @@ void StreamManager::ReleasePendingRef(std::uint32_t fileIndex) {
         return;
     }
     assert(m_files[fileIndex]->pendingRefs.load(std::memory_order_relaxed) != 0);
-    assert(m_pendingRingSlots != 0);
-    --m_pendingRingSlots;
-    auto& file = *m_files[fileIndex];
-    if (file.pendingRefs.fetch_sub(1, std::memory_order_relaxed) == 1 &&
-        file.activeStreams.load(std::memory_order_relaxed) == 0) file.metadataResult = VN_OK;
+    for (std::uint32_t ch = 0; ch < m_files[fileIndex]->toc.channelCount; ++ch) {
+        assert(m_pendingRingSlots[ch] != 0);
+        --m_pendingRingSlots[ch];
+    }
+    m_files[fileIndex]->pendingRefs.fetch_sub(1, std::memory_order_relaxed);
 }
 
 bool StreamManager::PeekFreeSlot(std::uint32_t* outSlot) const {
@@ -496,7 +529,6 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
             return VN_DEVICE_ERROR;
         }
         StreamFile& file = *m_files[fileIndex];
-        if (!file.MetadataReady()) return VN_BACKPRESSURE;
         file.activeStreams.fetch_add(1, std::memory_order_relaxed);
         const auto token = InitializeSlot(slot, fileIndex, file, startFrame,
                                          loopStartFrame, loopEndFrame, loopCount);
@@ -550,13 +582,10 @@ std::uint64_t StreamManager::InitializeSlot(
     assert((loopCount == 1) || loopStartFrame < loopEndFrame);
     s.stagedChunk = kNoChunk;
     s.feedStopped = false;
-    s.metadataWaiting = !file.MetadataReady();
-    s.ring.ResetForUse(file.toc.channelCount, file.PacketEncoded());
-    s.packetCapacityLimited = false;
-    if (file.vorbis) ResetPacketCursor(s, file);
+    s.ring.ResetForUse(file.toc.channelCount);
     s.ring.sourceGeneration = file.sourceGeneration;
     s.ring.contentRevision = file.contentRevision;
-    s.prebufferTargetFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(s.ring.FrameCapacity(),
+    s.prebufferTargetFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(s.ring.capacity,
         std::max<std::uint64_t>(1, (static_cast<std::uint64_t>(m_prebufferMs) * file.toc.sampleRate + 999) / 1000)));
 #if HARKEN_ENGINE_DEV
     s.observation = {};
@@ -575,18 +604,6 @@ std::uint64_t StreamManager::InitializeSlot(
         m_activeSlots.fetch_add(1, std::memory_order_relaxed) + 1;
     if (nowActive > m_streamHighWater) {
         m_streamHighWater = nowActive;
-    }
-    s.prefetchedStart = false;
-    if (file.external && ((file.vorbis && !file.vorbis->Prefetch().empty()) ||
-            (file.pcmHeader && !file.external->pcmPrefix.empty()))) {
-        auto cursor = BeginSlotService(s);
-        ChunkJob continuation;
-        (void)AdvanceSlot(cursor, &continuation);
-        const auto supplied = s.ring.BufferedFrames();
-        if (supplied != 0) {
-            s.ring.filledFrameLimit.store(supplied, std::memory_order_release);
-            s.prefetchedStart = true;
-        }
     }
     s.ring.state.store(StreamSlotState::Active, std::memory_order_release);
     return RingToken(slot, ringGeneration);
@@ -632,7 +649,7 @@ VnResult StreamManager::BeginReplacement(
         prepared.preparationOwner = StreamSlot::PreparationOwner::Prepared;
         prepared.preparedRingToken = ringToken;
         prepared.prebufferTargetFrames = std::min(
-            std::max(1u, request.prebufferTargetFrames), prepared.ring.FrameCapacity());
+            std::max(1u, request.prebufferTargetFrames), prepared.ring.capacity);
         *out = {slot, prepared.preparationGeneration};
         m_serviceRequested = true;
     }
@@ -654,13 +671,12 @@ StreamManager::PreparationState StreamManager::QueryReplacement(
         slot.ring.generation.load(std::memory_order_relaxed) !=
             static_cast<std::uint32_t>(slot.preparedRingToken >> 32u))
         return PreparationState::Invalid;
-    if (WorkerState() != StreamWorkerState::Ready ||
-        slot.ring.preparationResult.load(std::memory_order_acquire) != VN_OK) return PreparationState::Failed;
+    if (WorkerState() != StreamWorkerState::Ready) return PreparationState::Failed;
     const auto terminal = slot.ring.TerminalReason();
     if (terminal == StreamTerminalReason::IntegrityAbort ||
         terminal == StreamTerminalReason::ProducerFailure) return PreparationState::Failed;
     if (terminal == StreamTerminalReason::NaturalEnd ||
-        slot.ring.BufferedFrames() >= slot.ring.PrebufferTarget(slot.prebufferTargetFrames))
+        slot.ring.ReadAvailable() >= slot.prebufferTargetFrames)
         return PreparationState::Ready;
     return PreparationState::Preparing;
 }
@@ -699,16 +715,12 @@ bool StreamManager::CapturePlayback(std::uint64_t token, PlaybackObservation* ou
     }
     // With the manager excluded, the write cursor is fixed and the audio
     // consumer can only reduce occupancy. This read is one real sample.
-    const auto read = slot.ring.readFrames.load(std::memory_order_acquire);
-    const auto written = slot.ring.writeFrames.load(std::memory_order_acquire);
+    const auto read = slot.ring.readIndex.load(std::memory_order_acquire);
+    const auto written = slot.ring.writeIndex.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(written - read);
-    value.prebufferTargetFrames = slot.ring.PrebufferTarget(slot.prebufferTargetFrames);
+    value.prebufferTargetFrames = slot.prebufferTargetFrames;
     value.terminal = slot.ring.TerminalReason();
-    const auto preparationResult = slot.ring.preparationResult.load(std::memory_order_acquire);
-    if (preparationResult != VN_OK) {
-        value.state = PreparationState::Failed;
-        value.result = preparationResult;
-    } else if (value.terminal == StreamTerminalReason::IntegrityAbort ||
+    if (value.terminal == StreamTerminalReason::IntegrityAbort ||
         value.terminal == StreamTerminalReason::ProducerFailure || WorkerState() == StreamWorkerState::Failed) {
         value.state = PreparationState::Failed;
         value.result = value.terminal == StreamTerminalReason::IntegrityAbort ? VN_BAD_STREAM_FILE : VN_DEVICE_ERROR;
@@ -751,7 +763,6 @@ VnResult StreamManager::TransferReplacement(
     assert(!slot.promotionPending);
     slot.promotionPending = true;
     ++m_pendingPromotionCount;
-    if (slot.prefetchedStart) (void)PromoteTransferredStream(*out);
     return VN_OK;
 }
 
@@ -766,13 +777,12 @@ StreamManager::PreparationState StreamManager::PromoteTransferredStream(
         slot.ring.generation.load(std::memory_order_acquire) !=
             static_cast<std::uint32_t>(stream.ringToken >> 32u))
         return PreparationState::Invalid;
-    if (WorkerState() != StreamWorkerState::Ready ||
-        slot.ring.preparationResult.load(std::memory_order_acquire) != VN_OK) return PreparationState::Failed;
+    if (WorkerState() != StreamWorkerState::Ready) return PreparationState::Failed;
     const auto terminal = slot.ring.TerminalReason();
     if (terminal == StreamTerminalReason::IntegrityAbort ||
         terminal == StreamTerminalReason::ProducerFailure) return PreparationState::Failed;
     if (terminal != StreamTerminalReason::NaturalEnd &&
-        slot.ring.BufferedFrames() < slot.ring.PrebufferTarget(slot.prebufferTargetFrames))
+        slot.ring.ReadAvailable() < slot.prebufferTargetFrames)
         return PreparationState::Preparing;
     slot.ring.startPromoted.store(true, std::memory_order_release);
     if (slot.promotionPending) {
@@ -832,11 +842,11 @@ VnResult StreamManager::PrepareSeekSlot(
 
     StreamRing* ring = RingOf(slot);
     const std::uint32_t required =
-        ring->PrebufferTarget(std::min(prebufferTargetFrames, ring->FrameCapacity()));
+        std::min(prebufferTargetFrames, ring->capacity);
     const StreamTerminalReason terminal = ring->TerminalReason();
     if ((terminal == StreamTerminalReason::IntegrityAbort ||
          terminal == StreamTerminalReason::ProducerFailure) ||
-        (ring->BufferedFrames() < required &&
+        (ring->ReadAvailable() < required &&
          terminal == StreamTerminalReason::None)) {
         ring->state.store(StreamSlotState::Retired,
                           std::memory_order_release);
@@ -949,7 +959,7 @@ void StreamManager::ThreadMain() {
             try {
                 SettleIo();
                 DetachRetiredSlots();
-                CloseUnreferencedFiles();
+                CloseDrainedRetiringFiles();
                 while (!m_requests.empty()) {
                     m_batch.push_back(m_requests.front());
                     m_requests.pop_front();
@@ -979,55 +989,61 @@ bool StreamManager::PrepareRingStorage(
     std::uint32_t slotPrefix, std::uint32_t channels, bool pending) noexcept {
     if (memguard::IsAudioTagged() || slotPrefix > m_slots.size() ||
         channels == 0 || channels > kMaxChannels) return false;
-    if (m_ringBytes < channels * sizeof(float)) return false;
-    const auto required = std::min<std::uint64_t>(m_slots.size(),
-        static_cast<std::uint64_t>(slotPrefix) + m_pendingRingSlots + (pending ? 1u : 0u));
-    return m_ringStorage.ConstructThrough(static_cast<std::uint32_t>(required * m_ringBytes));
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+        if (ch >= channels && m_pendingRingSlots[ch] == 0) continue;
+        const auto required = std::min<std::uint64_t>(m_slots.size(),
+            static_cast<std::uint64_t>(slotPrefix) + m_pendingRingSlots[ch] +
+                (pending && ch < channels ? 1u : 0u));
+        if (!m_ringStorage[ch].ConstructThrough(
+                static_cast<std::uint32_t>(required * m_ringFrames))) return false;
+    }
+    return true;
 }
 
-bool StreamManager::RingStorageReady(std::uint32_t slot, std::uint32_t channels) const noexcept {
-    if (slot >= m_slots.size() || channels == 0 || channels > kMaxChannels ||
-        m_ringBytes < channels * sizeof(float)) return false;
-    return m_ringStorage.ConstructedCount() >= (static_cast<std::uint64_t>(slot) + 1u) * m_ringBytes;
+bool StreamManager::RingStorageReady(
+    std::uint32_t slot, std::uint32_t channels) const noexcept {
+    if (slot >= m_slots.size() || channels == 0 || channels > kMaxChannels) return false;
+    const auto samples = (static_cast<std::uint64_t>(slot) + 1u) * m_ringFrames;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        if (m_ringStorage[ch].ConstructedCount() < samples) return false;
+    }
+    return true;
 }
 
-void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
+void StreamManager::ValidateSourceSlice(SourceRequest& request) {
     auto& record = *request.candidate;
     const StreamReadCancellation cancel{&request.cancelled};
     if (cancel.IsCancelled()) return;
     if (request.phase == 0) {
+        if (!record.source) record.source = OpenStreamByteSource(request.path.c_str());
         if (!record.source) { request.result = VN_BAD_STREAM_FILE; return; }
-        std::array<std::uint8_t, kStreamHeaderBytes> bytes{};
+        std::array<std::uint8_t, HK_PACK_STREAM_FILE_HEADER_BYTES> bytes{};
         if (ReadStreamBytes(*record.source, 0, bytes.data(), bytes.size(), cancel) != StreamReadStatus::Ok ||
             !ParseStreamHeader(bytes.data(), &request.header)) {
             request.result = VN_BAD_STREAM_FILE; return;
         }
         const auto& header = request.header;
         const auto length = record.source->ByteCount();
-        if (header.formatVersion != kStreamFormatVersion || header.headerBytes != kStreamHeaderBytes ||
-            header.fileBytes != length || header.entryCount != kStreamEntryCount ||
-            header.chunkFrames == 0 || header.chunkFrames > kMaxStreamChunkFrames ||
+        if (header.formatVersion != HK_PACK_STREAM_FILE_FORMAT_VERSION || header.headerBytes != HK_PACK_STREAM_FILE_HEADER_BYTES ||
+            header.fileBytes != length || header.entryCount != HK_PACK_STREAM_FILE_ENTRY_COUNT ||
+            header.chunkFrames == 0 || header.chunkFrames > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES ||
             header.tocOffset < header.headerBytes || header.tocOffset > length ||
-            kStreamTocEntryBytes > length - header.tocOffset) {
+            HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES > length - header.tocOffset) {
             request.result = VN_BAD_STREAM_FILE; return;
         }
         request.phase = 1;
         return;
     }
     if (request.phase == 1) {
-        std::array<std::uint8_t, kStreamTocEntryBytes> bytes{};
+        std::array<std::uint8_t, HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES> bytes{};
         if (ReadStreamBytes(*record.source, request.header.tocOffset, bytes.data(), bytes.size(), cancel)
             != StreamReadStatus::Ok) { request.result = VN_BAD_STREAM_FILE; return; }
         record.toc = ParseStreamTocEntry(bytes.data());
         const auto& entry = record.toc;
         const std::uint64_t checksumBytes = static_cast<std::uint64_t>(entry.chunkCount) * sizeof(std::uint64_t);
         if (!ValidateStreamEntry(request.header, entry, record.source->ByteCount()) ||
-            checksumBytes > SIZE_MAX) {
+            entry.soundId != request.soundId || checksumBytes > SIZE_MAX) {
             request.result = VN_BAD_STREAM_FILE; return;
-        }
-        if (request.metadataFile && (request.metadataBudget < sizeof(StreamFile) ||
-                checksumBytes > request.metadataBudget - sizeof(StreamFile))) {
-            request.result = VN_BACKPRESSURE; return;
         }
         record.chunkFrames = request.header.chunkFrames;
         record.chunkChecksums.resize(entry.chunkCount);
@@ -1037,8 +1053,8 @@ void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
         request.checksum = Fnv1a64(bytes.data(), bytes.size());
         request.semantic = {entry.sampleRate, entry.channelCount, entry.frameCount, entry.sampleFormat,
             request.header.formatVersion, record.chunkFrames, entry.chunkCount,
-            (entry.flags & kStreamFlagLoopable) != 0 ? entry.loopStartFrame : 0,
-            (entry.flags & kStreamFlagLoopable) != 0
+            (entry.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0 ? entry.loopStartFrame : 0,
+            (entry.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0
                 ? (entry.loopEndFrame == 0 ? entry.frameCount : entry.loopEndFrame) : 0};
         request.revision = BeginMediaStreamContentRevisionV1(request.semantic);
         request.phase = 2;
@@ -1046,18 +1062,18 @@ void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
     }
     // Only scratch is bounded by the work quantum; the final table is charged
     // to the actual source metadata and may contain any validated chunk count.
-    std::array<std::uint8_t, ReadWindow::kCapacityBytes> bytes{};
+    std::array<std::uint8_t, 64 * 1024> bytes{};
     const auto count = std::min<std::uint32_t>(record.toc.chunkCount - request.checksumsRead,
-        static_cast<std::uint32_t>(bytes.size() / kStreamChunkChecksumBytes));
-    const auto size = static_cast<std::size_t>(count) * kStreamChunkChecksumBytes;
+        static_cast<std::uint32_t>(bytes.size() / HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES));
+    const auto size = static_cast<std::size_t>(count) * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     const auto offset = record.toc.chunkChecksumOffset +
-        static_cast<std::uint64_t>(request.checksumsRead) * kStreamChunkChecksumBytes;
+        static_cast<std::uint64_t>(request.checksumsRead) * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     if (ReadStreamBytes(*record.source, offset, bytes.data(), size, cancel) != StreamReadStatus::Ok) {
         request.result = VN_BAD_STREAM_FILE; return;
     }
     request.checksum = Fnv1a64(bytes.data(), size, request.checksum);
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto checksum = LoadLE64(bytes.data() + i * kStreamChunkChecksumBytes);
+        const auto checksum = LoadLE64(bytes.data() + i * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES);
         record.chunkChecksums[request.checksumsRead + i] = checksum;
         request.revision->AddU64(checksum);
     }
@@ -1069,67 +1085,32 @@ void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
     }
 }
 
-bool StreamManager::AdoptPcmMetadata(StreamFile& file, SourceRequest& request) {
-    const auto& candidate = *request.candidate;
-    const auto& facts = candidate.toc;
-    const auto loopEnd = (facts.flags & kStreamFlagLoopable) != 0
-        ? (facts.loopEndFrame ? facts.loopEndFrame : facts.frameCount) : 0;
-    const auto expectedLoopEnd = (file.toc.flags & kStreamFlagLoopable) != 0
-        ? (file.toc.loopEndFrame ? file.toc.loopEndFrame : file.toc.frameCount) : 0;
-    if (facts.sampleRate != file.toc.sampleRate || facts.channelCount != file.toc.channelCount ||
-        facts.frameCount != file.toc.frameCount || candidate.contentRevision != file.contentRevision ||
-        facts.loopStartFrame != file.toc.loopStartFrame || loopEnd != expectedLoopEnd ||
-        facts.flags != file.toc.flags) return false;
-    file.chunkChecksums = std::move(request.candidate->chunkChecksums);
-    file.toc = facts;
-    file.chunkFrames = candidate.chunkFrames;
-    file.pcmHeader = request.header;
-    return true;
-}
-
-VnResult StreamManager::PreparePcmPrefix(StreamFile& file) {
-    const auto& prefix = file.external->pcmPrefix;
-    if (prefix.size() > SIZE_MAX - sizeof(StreamFile)) return VN_BACKPRESSURE;
-    SourceRequest request;
-    request.metadataFile = &file;
-    // The retained prefix already bounds the table bytes available to parse.
-    request.metadataBudget = prefix.size() + sizeof(StreamFile);
-    request.candidate = std::make_unique<StreamFile>();
-    request.candidate->source = std::make_shared<PcmPrefixSource>(prefix,
-        file.external->fileBytes - file.packBlobOffset);
-    while (request.phase != 3 && request.result == VN_OK) ValidatePcmSourceSlice(request);
-    if (request.result != VN_OK) return request.result;
-    if (!AdoptPcmMetadata(file, request)) return VN_BAD_STREAM_FILE;
-    const auto chunkBytes = StreamChunkBytes(file.chunkFrames, file.toc.channelCount);
-    std::vector<float> staging;
-    for (std::uint32_t chunk = 0; chunk < file.toc.chunkCount; ++chunk) {
-        const auto offset = StreamChunkFileOffset(file.toc.payloadOffset, chunk, chunkBytes);
-        if (offset > prefix.size() || chunkBytes > prefix.size() - offset) break;
-        staging.resize(static_cast<std::size_t>(chunkBytes / sizeof(float)));
-        std::memcpy(staging.data(), prefix.data() + offset, static_cast<std::size_t>(chunkBytes));
-        const ChunkJob job{&file, chunk, file.chunkFrames, file.toc.channelCount, chunkBytes};
-        if (!ValidateChunk(job, staging, Fnv1a64(prefix.data() + offset, static_cast<std::size_t>(chunkBytes))))
-            return VN_BAD_STREAM_FILE;
-    }
-    return VN_OK;
-}
-
-void StreamManager::CloseUnreferencedFiles() {
+void StreamManager::CloseDrainedRetiringFiles() {
     for (std::unique_ptr<StreamFile>& file : m_files) {
-        if (!file || file->activeStreams.load(std::memory_order_relaxed) != 0 ||
-            file->pendingRefs.load(std::memory_order_relaxed) != 0) continue;
-        file->metadataResult = VN_OK;
-        if (file->packRange.expired()) {
+        if (file != nullptr && (file->retiring || (file->packPrivate && file->packRange.expired())) &&
+            file->activeStreams.load(std::memory_order_relaxed) == 0 &&
+            file->pendingRefs.load(std::memory_order_relaxed) == 0) {
             QueueCleanup(std::move(file));
-        } else if (file->external && file->source) {
-            // DetachRetiredSlots waits for physical I/O completion before
-            // releasing the last active reference. Keep the locator and index,
-            // but destroy the opened handle on the existing cleanup executor.
-            auto cleanup = std::make_unique<StreamFile>();
-            cleanup->source = std::move(file->source);
-            QueueCleanup(std::move(cleanup));
         }
     }
+}
+
+void StreamManager::HandleUnregister(Request& request) {
+    for (std::unique_ptr<StreamFile>& file : m_files) {
+        if (file == nullptr || file->retiring || file->packPrivate ||
+            file->soundId != request.soundId) {
+            continue;
+        }
+        if (file->activeStreams.load(std::memory_order_relaxed) != 0 ||
+            file->pendingRefs.load(std::memory_order_relaxed) != 0) {
+            request.result = VN_IN_USE;
+            return;
+        }
+        QueueCleanup(std::move(file));
+        request.result = VN_OK;
+        return;
+    }
+    request.result = VN_UNKNOWN_ID;
 }
 
 void StreamManager::DetachRetiredSlots() {
@@ -1144,11 +1125,8 @@ void StreamManager::DetachRetiredSlots() {
             else slot.io.cancelled.store(true, std::memory_order_release);
             continue;
         }
-        auto& file = *m_files[slot.fileIndex];
-        if (file.activeStreams.fetch_sub(1, std::memory_order_relaxed) == 1 &&
-            file.pendingRefs.load(std::memory_order_relaxed) == 0) file.metadataResult = VN_OK;
-        if (auto* decoder = slot.ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel)) decoder->Retire();
-        slot.metadataWaiting = false;
+        m_files[slot.fileIndex]->activeStreams.fetch_sub(
+            1, std::memory_order_relaxed);
         slot.window.validBytes = 0;
         std::vector<std::uint8_t>().swap(slot.window.bytes);
         slot.window.capacityBytes.store(0, std::memory_order_release);
@@ -1204,114 +1182,17 @@ private:
 };
 } // namespace
 
-#endif
-
-std::shared_ptr<const StreamByteSource> StreamManager::AcquireReadSource(
-    const ChunkJob& job
-#if HARKEN_ENGINE_DEV
-    , VnMonitorStreamFactV1& facts
-#endif
-) {
-    auto& file = *job.file;
-    if (!file.external) return file.source;
-    std::lock_guard<std::mutex> lock(file.openMutex);
-    if (job.cancellation.IsCancelled()) return {};
-    if (file.source) return file.source;
-    auto source = file.external->locator->Open(job.cancellation);
-    if (!source || job.cancellation.IsCancelled() || source->ByteCount() != file.external->fileBytes)
-        return {};
-#if HARKEN_ENGINE_DEV
-    ObservedStreamRead observed(*source, facts);
-#else
-    const auto& observed = *source;
-#endif
-    std::array<std::uint8_t, ReadWindow::kCapacityBytes> scratch{};
-    if (ReadStreamBytes(observed, 0, scratch.data(), vorbis_test_wire::kStreamHeaderBytes, job.cancellation)
-            != StreamReadStatus::Ok) return {};
-    if (!ValidateTestStreamHeader(scratch.data(), vorbis_test_wire::kStreamHeaderBytes,
-            file.external->fileBytes, file.PacketEncoded() ? 1 : 0)) {
-#if HARKEN_ENGINE_DEV
-        facts.readStatus = 3;
-#endif
-        return {};
-    }
-    if (file.pcmHeader) {
-        source = StreamByteRange(std::move(source), file.packBlobOffset,
-            file.external->fileBytes - file.packBlobOffset);
-#if HARKEN_ENGINE_DEV
-        ObservedStreamRead mediaSource(*source, facts);
-#else
-        const auto& mediaSource = *source;
-#endif
-        std::array<std::uint8_t, kStreamTocEntryBytes> expected{};
-        const auto matches = [&](std::uint64_t offset, std::size_t count) {
-            if (ReadStreamBytes(mediaSource, offset, scratch.data(), count, job.cancellation)
-                    != StreamReadStatus::Ok) return false;
-            if (std::memcmp(scratch.data(), expected.data(), count) == 0) return true;
-#if HARKEN_ENGINE_DEV
-            facts.readStatus = 3;
-#endif
-            return false;
-        };
-        SerializeStreamHeader(*file.pcmHeader, expected.data());
-        if (!matches(0, kStreamHeaderBytes)) return {};
-        SerializeStreamTocEntry(file.toc, expected.data());
-        if (!matches(file.pcmHeader->tocOffset, kStreamTocEntryBytes)) return {};
-        for (std::size_t at = 0; at < file.chunkChecksums.size();) {
-            const auto count = std::min(scratch.size() / sizeof(std::uint64_t), file.chunkChecksums.size() - at);
-            if (ReadStreamBytes(mediaSource, file.toc.chunkChecksumOffset + at * sizeof(std::uint64_t),
-                    scratch.data(), count * sizeof(std::uint64_t), job.cancellation) != StreamReadStatus::Ok) return {};
-            for (std::size_t i = 0; i < count; ++i) {
-                if (LoadLE64(scratch.data() + i * sizeof(std::uint64_t)) != file.chunkChecksums[at + i]) {
-#if HARKEN_ENGINE_DEV
-                    facts.readStatus = 3;
-#endif
-                    return {};
-                }
-            }
-            at += count;
-        }
-        if (job.cancellation.IsCancelled()) return {};
-        file.source = std::move(source);
-        return file.source;
-    }
-    const auto expected = file.vorbis->Prefix().first(static_cast<std::size_t>(file.vorbis->Media().packetDataOffset));
-    for (std::size_t at = 0; at < expected.size();) {
-        const auto count = std::min(scratch.size(), expected.size() - at);
-        if (ReadStreamBytes(observed, file.packBlobOffset + at, scratch.data(), count, job.cancellation)
-                != StreamReadStatus::Ok) return {};
-        if (std::memcmp(scratch.data(), expected.data() + at, count) != 0) {
-#if HARKEN_ENGINE_DEV
-            facts.readStatus = 3;
-#endif
-            return {};
-        }
-        at += count;
-    }
-    if (job.cancellation.IsCancelled()) return {};
-    file.source = std::move(source);
-    return file.source;
-}
-
-#if HARKEN_ENGINE_DEV
 bool StreamManager::RunChunkJob(const ChunkJob& job, std::vector<float>& staging,
     ReadWindow& window, VnMonitorStreamFactV1& facts) {
     facts = {};
-    const auto opened = AcquireReadSource(job, facts);
-    if (!opened) {
-        if (job.cancellation.IsCancelled()) facts.readStatus = 5;
-        else if (facts.readStatus == 0) facts.readStatus = 2;
-        return false;
-    }
-    ObservedStreamRead source(*opened, facts);
+    ObservedStreamRead source(*job.file->source, facts);
     if (!ReadChunk(job, staging, window, source)) {
         if (job.cancellation.IsCancelled()) facts.readStatus = 5;
         else if (facts.readStatus == 0 || facts.readStatus == 1) facts.readStatus = 2;
         return false;
     }
     const bool valid = ValidateChunk(job, staging,
-        Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes),
-            job.file->vorbis ? job.file->vorbis->Media().segmentChecksumSeed : kFnv1a64OffsetBasis));
+        Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
     if (!valid) facts.readStatus = 3;
     return valid;
 }
@@ -1343,19 +1224,17 @@ void StreamManager::PublishPlaybackObservation(StreamSlot& slot) {
     const auto state = slot.ring.state.load(std::memory_order_acquire);
     value.preparationGeneration = slot.preparationGeneration;
     value.renderActivation = slot.ring.observationRender.load(std::memory_order_acquire);
-    value.ringReadIndex = slot.ring.readFrames.load(std::memory_order_acquire);
-    value.ringWriteIndex = slot.ring.writeFrames.load(std::memory_order_acquire);
+    value.ringReadIndex = slot.ring.readIndex.load(std::memory_order_acquire);
+    value.ringWriteIndex = slot.ring.writeIndex.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
-    value.prebufferTargetFrames = slot.ring.PrebufferTarget(slot.prebufferTargetFrames);
+    value.prebufferTargetFrames = slot.prebufferTargetFrames;
     value.terminalReason = static_cast<std::uint32_t>(slot.ring.TerminalReason());
-    const auto preparationResult = slot.ring.preparationResult.load(std::memory_order_acquire);
-    const bool failed = preparationResult != VN_OK ||
-        value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::IntegrityAbort) ||
+    const bool failed = value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::IntegrityAbort) ||
         value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::ProducerFailure);
     value.state = failed ? VN_PLAYBACK_READINESS_FAILED : state != StreamSlotState::Active ? VN_PLAYBACK_READINESS_TERMINAL :
         value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::NaturalEnd) ||
         value.bufferedFrames >= value.prebufferTargetFrames ? VN_PLAYBACK_READINESS_READY : VN_PLAYBACK_READINESS_PREPARING;
-    value.result = preparationResult != VN_OK ? preparationResult : !failed ? VN_OK : value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::IntegrityAbort)
+    value.result = !failed ? VN_OK : value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::IntegrityAbort)
         ? VN_BAD_STREAM_FILE : VN_DEVICE_ERROR;
     ObserveMonitorStream(value);
     // A Free slot has settled its I/O and returned source ownership. Do not
@@ -1371,10 +1250,8 @@ void StreamManager::PublishPlaybackObservations() {
 #else
 bool StreamManager::RunChunkJob(const ChunkJob& job, std::vector<float>& staging,
     ReadWindow& window) {
-    const auto source = AcquireReadSource(job);
-    return source && ReadChunk(job, staging, window, *source) &&
-        ValidateChunk(job, staging, Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes),
-            job.file->vorbis ? job.file->vorbis->Media().segmentChecksumSeed : kFnv1a64OffsetBasis));
+    return ReadChunk(job, staging, window, *job.file->source) &&
+        ValidateChunk(job, staging, Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
 }
 #endif
 
@@ -1387,9 +1264,9 @@ std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
 
 bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                       const ReadWindow& window) noexcept {
-    if (!job.file->external || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
+    if (job.file->packPrivate || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
         window.validBytes > window.bytes.size()) return false;
-    const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
+    const auto offset = hkPackStreamFileChunkOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     if (offset < window.offset || offset - window.offset > window.validBytes ||
         job.chunkBytes > window.validBytes - (offset - window.offset)) return false;
     std::memcpy(staging.data(), window.bytes.data() + static_cast<std::size_t>(offset - window.offset),
@@ -1399,44 +1276,16 @@ bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& s
 
 bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
                               ReadWindow& window, const StreamByteSource& source) {
-    if (job.file->vorbis) {
-        const auto& media = job.file->vorbis->Media();
-        staging.resize(static_cast<std::size_t>((job.chunkBytes + sizeof(float) - 1) / sizeof(float)));
-        const auto segment = media.seek[job.chunkIndex].packetOffset;
-        const auto prefix = job.file->external ? job.file->vorbis->Prefetch() : std::span<const std::uint8_t>{};
-        const auto copied = segment < prefix.size() ? std::min<std::uint64_t>(job.chunkBytes, prefix.size() - segment) : 0;
-        if (copied) std::memcpy(staging.data(), prefix.data() + segment, static_cast<std::size_t>(copied));
-        const auto begin = job.file->packBlobOffset + media.packetDataOffset + segment;
-        for (std::uint64_t at = copied; at < job.chunkBytes;) {
-            const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(ReadWindow::kCapacityBytes, job.chunkBytes - at));
-            if (ReadStreamBytes(source, begin + at, reinterpret_cast<std::uint8_t*>(staging.data()) + at,
-                    count, job.cancellation) != StreamReadStatus::Ok) return false;
-            at += count;
-        }
-        return true;
-    }
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
-    if (!job.file->external) {
+    if (job.file->packPrivate) {
         // Pack blobs are whole-media planar; each channel is a separate range.
         return ReadPlanarMediaChunk(source, job.file->packBlobOffset, job.file->toc.frameCount,
                    job.channels, job.chunkFrames, job.chunkIndex, staging.data(),
                    job.cancellation) == StreamReadStatus::Ok &&
                !job.cancellation.IsCancelled();
     }
-    const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
+    const auto offset = hkPackStreamFileChunkOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     const auto required = static_cast<std::size_t>(job.chunkBytes);
-    if (job.file->external && offset < job.file->external->pcmPrefix.size()) {
-        const auto& prefix = job.file->external->pcmPrefix;
-        const auto copied = std::min<std::size_t>(required, prefix.size() - static_cast<std::size_t>(offset));
-        std::memcpy(staging.data(), prefix.data() + offset, copied);
-        for (std::size_t at = copied; at < required;) {
-            const auto count = std::min(ReadWindow::kCapacityBytes, required - at);
-            if (ReadStreamBytes(source, offset + at, reinterpret_cast<std::uint8_t*>(staging.data()) + at,
-                    count, job.cancellation) != StreamReadStatus::Ok) return false;
-            at += count;
-        }
-        return !job.cancellation.IsCancelled();
-    }
     const auto direct = [&] {
         return ReadStreamBytes(source, offset, staging.data(), required, job.cancellation) == StreamReadStatus::Ok;
     };
@@ -1477,21 +1326,10 @@ bool StreamManager::ValidateChunk(const ChunkJob& job,
     if (checksum != file.chunkChecksums[job.chunkIndex]) {
         return false;
     }
-    if (file.vorbis) {
-        const auto* data = reinterpret_cast<const std::uint8_t*>(staging.data());
-        for (std::uint64_t at = 0; at < job.chunkBytes;) {
-            if (job.chunkBytes - at < 2) return false;
-            const auto bytes = std::uint32_t(data[at]) | (std::uint32_t(data[at + 1]) << 8);
-            if (!bytes || bytes > job.chunkBytes - at - 2 ||
-                file.vorbis->Settings().PacketBlock(data + at + 2, bytes) <= 0) return false;
-            at += bytes + 2;
-        }
-        return true;
-    }
     // A valid checksum does not make NaN/Infinity safe for persistent DSP.
     // Check every real sample before publishing any of this chunk; unused
     // final-chunk padding is checksummed above but is never sent to the ring.
-    const std::uint32_t validFrames = StreamChunkValidFrames(
+    const std::uint32_t validFrames = hkPackStreamFileChunkValidFrames(
         job.chunkIndex, job.chunkFrames, file.toc.frameCount);
     for (std::uint32_t ch = 0; ch < job.channels; ++ch) {
         const float* samples = staging.data() +
@@ -1509,9 +1347,7 @@ bool StreamManager::ValidateChunk(const ChunkJob& job,
 
 StreamManager::ServiceCursor StreamManager::BeginSlotService(StreamSlot& slot) const {
     const auto limit = m_maxServeFramesForTest.load(std::memory_order_relaxed);
-    const auto available = slot.ring.packetEncoded
-        ? slot.ring.FrameCapacity() - std::min(slot.ring.FrameCapacity(), slot.ring.BufferedFrames())
-        : slot.ring.WriteAvailableBytes() / slot.ring.bytesPerFrame;
+    const auto available = slot.ring.WriteAvailable();
     return {&slot, limit == 0 ? available : std::min(available, limit), 0, false};
 }
 
@@ -1526,110 +1362,7 @@ void StreamManager::CompleteChunk(StreamSlot& slot, const ChunkJob& job,
     }
 }
 
-void StreamManager::ResetPacketCursor(StreamSlot& slot, const StreamFile& file) {
-    const auto& media = file.vorbis->Media();
-    slot.packetPreviousBlock = 0;
-    slot.packetOffset = media.packetBytes;
-    slot.packetDiscard = 0;
-    if (const auto* seek = media.Seek(slot.nextFrame)) {
-        slot.packetOffset = seek->packetOffset;
-        slot.packetDiscard = slot.nextFrame - seek->frame + seek->discardFrames;
-        if (slot.nextFrame == media.loopStart && media.loopEnd) {
-            slot.packetOffset = media.loopStartPacket;
-            slot.packetDiscard = media.loopDiscard;
-        }
-    }
-}
-
-bool StreamManager::AdvancePacketSlot(ServiceCursor& cursor, ChunkJob* job) {
-    auto& slot = *cursor.slot;
-    auto& ring = slot.ring;
-    auto& file = *m_files[slot.fileIndex];
-    const auto& media = file.vorbis->Media();
-    slot.packetCapacityLimited = false;
-    const auto fail = [&](VnResult result) {
-        if (result == VN_NO_STREAM) ring.preparationResult.store(result, std::memory_order_release);
-        else ring.MarkEndOfData(StreamTerminalReason::IntegrityAbort);
-        slot.feedStopped = true;
-        return false;
-    };
-    while (!slot.feedStopped) {
-        const bool wrap = slot.loopInfinite || slot.loopPassesRemaining > 1;
-        const auto limit = wrap ? slot.loopEndFrame : media.frames;
-        if (slot.nextFrame >= limit) {
-            if (wrap) {
-                slot.nextFrame = slot.loopStartFrame;
-                if (!slot.loopInfinite) --slot.loopPassesRemaining;
-                ResetPacketCursor(slot, file);
-                continue;
-            }
-            ring.MarkEndOfData(StreamTerminalReason::NaturalEnd);
-            slot.feedStopped = true;
-            return false;
-        }
-        if (cursor.framesServed >= cursor.maxServeFrames) return false;
-        if (slot.packetOffset >= media.packetBytes) return fail(VN_BAD_STREAM_FILE);
-        const auto point = std::upper_bound(media.seek.begin(), media.seek.end(), slot.packetOffset,
-            [](std::uint64_t offset, const VorbisSeekPoint& entry) { return offset < entry.packetOffset; });
-        if (point == media.seek.begin()) return fail(VN_BAD_STREAM_FILE);
-        const auto index = static_cast<std::uint32_t>(point - media.seek.begin() - 1);
-        const auto begin = media.seek[index].packetOffset;
-        const auto end = point == media.seek.end() ? media.packetBytes : point->packetOffset;
-        const auto prefix = file.external ? file.vorbis->Prefetch() : std::span<const std::uint8_t>{};
-        const bool prefetched = slot.packetOffset < prefix.size();
-        if (!prefetched && slot.stagedChunk != index) {
-            *job = {&file, index, media.seekGranularity, media.channels, end - begin};
-            return true;
-        }
-        const auto offset = prefetched ? slot.packetOffset : slot.packetOffset - begin;
-        const auto* data = prefetched ? prefix.data() : reinterpret_cast<const std::uint8_t*>(slot.staging.data());
-        const auto available = prefetched ? std::min<std::uint64_t>(end - slot.packetOffset, prefix.size() - slot.packetOffset)
-                                         : end - slot.packetOffset;
-        if (available < 2) return fail(VN_BAD_STREAM_FILE);
-        const auto bytes = std::uint32_t(data[offset]) | (std::uint32_t(data[offset + 1]) << 8);
-        if (!bytes || bytes > available - 2) return fail(VN_BAD_STREAM_FILE);
-        const auto block = file.vorbis->Settings().PacketBlock(data + offset + 2, bytes);
-        if (block <= 0) return fail(VN_BAD_STREAM_FILE);
-        const auto decoded = slot.packetPreviousBlock ? (slot.packetPreviousBlock + block) / 4 : 0;
-        const auto discard = std::min<std::uint64_t>(slot.packetDiscard, decoded);
-        const auto frames = static_cast<std::uint32_t>(std::min<std::uint64_t>(decoded - discard, limit - slot.nextFrame));
-        const auto recordBytes = static_cast<std::uint32_t>(sizeof(StreamPacketHeader)) + bytes;
-        const auto buffered = ring.BufferedFrames();
-        const auto frameSpace = ring.FrameCapacity() - std::min(ring.FrameCapacity(), buffered);
-        if (recordBytes > ring.WriteAvailableBytes() || frames > frameSpace) {
-            if (!buffered) {
-                if (ring.startPromoted.load(std::memory_order_acquire) &&
-                    recordBytes <= ring.capacity && frames <= ring.FrameCapacity()) {
-                    slot.packetCapacityLimited = true;
-                    return false;
-                }
-                return fail(VN_NO_STREAM);
-            }
-            ring.filledFrameLimit.store(buffered, std::memory_order_release);
-            slot.packetCapacityLimited = true;
-            return false;
-        }
-        const StreamPacketHeader header{bytes, frames, static_cast<std::uint32_t>(discard),
-            slot.packetPreviousBlock ? 0u : 1u};
-        const auto at = ring.writeIndex.load(std::memory_order_relaxed);
-        ring.CopyIn(at, &header, sizeof(header));
-        ring.CopyIn(at + sizeof(header), data + offset + 2, bytes);
-        ring.PublishBytes(recordBytes, frames);
-        slot.packetPreviousBlock = static_cast<std::uint32_t>(block);
-        slot.packetDiscard -= discard;
-        slot.packetOffset += bytes + 2;
-        slot.nextFrame += frames;
-        cursor.framesServed += frames;
-        const auto occupancy = ring.BufferedFrames();
-        auto seen = m_ringHighWaterFrames.load(std::memory_order_relaxed);
-        while (occupancy > seen && !m_ringHighWaterFrames.compare_exchange_weak(
-            seen, occupancy, std::memory_order_relaxed)) {}
-    }
-    return false;
-}
-
 bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
-    if (m_files[cursor.slot->fileIndex]->vorbis) return AdvancePacketSlot(cursor, job);
     StreamSlot& slot = *cursor.slot;
     if (slot.feedStopped) {
         return false;
@@ -1640,7 +1373,7 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
     const std::uint32_t channels = ring.channelCount;
     const std::uint64_t frameCount = file.toc.frameCount;
     const std::uint64_t chunkBytes =
-        StreamChunkBytes(chunkFrames, file.toc.channelCount);
+        hkPackStreamFileChunkBytes(chunkFrames, file.toc.channelCount);
 
     for (;;) {
         const bool wrapAtLimit =
@@ -1666,44 +1399,43 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
             return false;
         }
         if (cursor.framesServed >= cursor.maxServeFrames) return false;
-        const StreamSeek seek =
-            StreamSeekToFrame(slot.nextFrame, chunkFrames);
-        const auto offset = StreamChunkFileOffset(file.toc.payloadOffset, seek.chunkIndex, chunkBytes);
-        const auto* prefix = file.external ? &file.external->pcmPrefix : nullptr;
-        const bool prefetched = prefix && offset <= prefix->size() && chunkBytes <= prefix->size() - offset;
-        if (!prefetched && slot.stagedChunk != seek.chunkIndex) {
+        const HkPackStreamFileSeek seek =
+            hkPackStreamFileSeekToFrame(slot.nextFrame, chunkFrames);
+        if (slot.stagedChunk != seek.chunkIndex) {
             // Stage and verify the whole chunk before any of it becomes
             // eligible for the ring: frames the audio thread can see have
             // always passed their checksum and finite-sample validation.
             *job = {&file, seek.chunkIndex, chunkFrames, channels, chunkBytes};
             return true;
         }
-        const std::uint32_t valid = StreamChunkValidFrames(
+        const std::uint32_t valid = hkPackStreamFileChunkValidFrames(
             seek.chunkIndex, chunkFrames, frameCount);
         const std::uint32_t remainInChunk = valid - seek.frameInChunk;
         const std::uint32_t remainToLimit = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(limit - slot.nextFrame, remainInChunk));
-        const auto span = ring.WriteAvailableBytes() / ring.bytesPerFrame;
-        if (span == 0) return false;
-        const auto n = std::min({span, cursor.maxServeFrames - cursor.framesServed,
-                                 remainInChunk, remainToLimit});
-        const auto at = ring.writeIndex.load(std::memory_order_relaxed);
-        const auto* data = prefetched ? prefix->data() + offset
-            : reinterpret_cast<const std::uint8_t*>(slot.staging.data());
-        // Adapt legacy planar source layout by copying sample words verbatim.
-        // The ring carries interleaved bytes; sample conversion runs on render.
-        for (std::uint32_t frame = 0; frame < n; ++frame)
-            for (std::uint32_t ch = 0; ch < channels; ++ch)
-                ring.CopyIn(at + (static_cast<std::uint64_t>(frame) * channels + ch) * sizeof(float),
-                    data + (static_cast<std::size_t>(ch) * chunkFrames + seek.frameInChunk + frame) * sizeof(float),
-                    sizeof(float));
-        ring.PublishBytes(n * ring.bytesPerFrame, n);
+        float* dst[kMaxChannels];
+        const std::uint32_t span = ring.ContiguousWrite(dst);
+        if (span == 0) {
+            return false; // ring full; the next pass resumes here
+        }
+        const std::uint32_t serveBudget =
+            std::min(span, cursor.maxServeFrames - cursor.framesServed);
+        const std::uint32_t n =
+            std::min({serveBudget, remainInChunk, remainToLimit});
+        for (std::uint32_t ch = 0; ch < channels; ++ch) {
+            std::memcpy(dst[ch],
+                        slot.staging.data() +
+                            static_cast<std::size_t>(ch) * chunkFrames +
+                            seek.frameInChunk,
+                        static_cast<std::size_t>(n) * sizeof(float));
+        }
+        ring.PublishWrite(n);
         slot.nextFrame += n;
         cursor.framesServed += n;
 
         const std::uint64_t occupancy =
-            ring.writeFrames.load(std::memory_order_relaxed) -
-            ring.readFrames.load(std::memory_order_relaxed);
+            ring.writeIndex.load(std::memory_order_relaxed) -
+            ring.readIndex.load(std::memory_order_relaxed);
         std::uint64_t seen =
             m_ringHighWaterFrames.load(std::memory_order_relaxed);
         while (occupancy > seen &&

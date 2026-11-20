@@ -34,18 +34,16 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.input_dir = self.root / "deployed"
         self.output_dir = self.root / "out"
-        self.self_test_channel = "stable"
+        self.reported_channel = "stable"
         self.verify_release_candidate = self.module.verify_release_candidate
-        self.module.verify_release_candidate = lambda args, self_test: None
-        def self_test(binary):
+        self.module.verify_release_candidate = lambda args, version_report: None
+        def version_report(binary):
             schema = self.module.verify_schema_directory(binary.parent / "schema")
             return {
-                "ok": True,
                 "product": "HarkenStudio",
                 "version": "1.4.0",
                 "buildId": "run12.abcd1234",
-                "channel": self.self_test_channel,
-                "capabilitiesVersion": 2,
+                "channel": self.reported_channel,
                 "editorSchemaVersion": schema["trees"]["Editor"]["currentVersion"],
                 "schemaArchiveOk": True,
                 "schemaSnapshotHash": schema["snapshotHash"],
@@ -53,7 +51,7 @@ class BuildStudioPackageTest(unittest.TestCase):
                 "gitCommit": "b" * 40,
                 "gitDirty": False,
             }
-        self.module.run_studio_self_test = self_test
+        self.module.run_studio_version_report = version_report
         self.run_studio_cli_smoke_test = self.module.run_studio_cli_smoke_test
         self.cli_smoke_test = mock.patch.object(self.module, "run_studio_cli_smoke_test").start()
 
@@ -148,7 +146,7 @@ class BuildStudioPackageTest(unittest.TestCase):
             self.assertEqual(archive.read("HarkenStudioCLI.exe"), b"stub-cli")
             self.assertIn("data/asset.bin", names)
             self.assertIn("package-manifest.json", names)
-            self.assertIn("capabilities.json", names)
+            self.assertNotIn("capabilities.json", names)
             archived_schema_files = {name for name in names if name.startswith("schema/")}
             self.assertEqual(archived_schema_files, schema_files)
             for relative in schema_files:
@@ -185,17 +183,9 @@ class BuildStudioPackageTest(unittest.TestCase):
                 },
             }])
 
-            capabilities = json.loads(archive.read("capabilities.json"))
-            self.assertEqual(capabilities, {
-                "studioVersion": "1.4.0",
-                "buildId": "run12.abcd1234",
-                "capabilitiesVersion": 2,
-            })
-
-            for name in ("package-manifest.json", "capabilities.json"):
-                info = archive.getinfo(name)
-                self.assertEqual(info.create_system, 3)
-                self.assertEqual((info.external_attr >> 16) & 0o7777, 0o644)
+            info = archive.getinfo("package-manifest.json")
+            self.assertEqual(info.create_system, 3)
+            self.assertEqual((info.external_attr >> 16) & 0o7777, 0o644)
 
     def test_manifest_hashes_match_payload(self):
         self.make_input()
@@ -417,7 +407,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_build()
         self.publish_schema(self.input_dir / "schema")
-        self.self_test_channel = "dev"
+        self.reported_channel = "dev"
         summary = self.run_build(["--channel", "dev"])
         self.assertEqual(numbered.read_bytes(), numbered_before)
         with zipfile.ZipFile(summary["package"]) as archive:
@@ -480,17 +470,17 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.make_input()
         self.module.verify_release_candidate = self.verify_release_candidate
         audit = self.module.schema_release_audit
-        self_test = self.module.run_studio_self_test
+        version_report = self.module.run_studio_version_report
         with (
             mock.patch.object(audit, "verify_current_release", return_value={"errors": []}),
             mock.patch.object(audit, "run_git", return_value=mock.Mock(stdout="b" * 40, returncode=0)),
         ):
             for channel in ("stable", "beta"):
-                self.self_test_channel = channel
+                self.reported_channel = channel
                 for field, value in (("gitDirty", True), ("gitCommit", "a" * 40)):
                     with self.subTest(channel=channel, field=field):
-                        self.module.run_studio_self_test = lambda binary: {
-                            **self_test(binary), field: value,
+                        self.module.run_studio_version_report = lambda binary: {
+                            **version_report(binary), field: value,
                         }
                         with self.assertRaises(SystemExit):
                             self.run_build(["--channel", channel])
@@ -518,7 +508,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         ):
             for channel in ("dev", "nightly"):
                 with self.subTest(channel=channel):
-                    self.self_test_channel = channel
+                    self.reported_channel = channel
                     self.output_dir = self.root / channel
                     summary = self.run_build(["--channel", channel])
                     self.assertTrue(Path(summary["package"]).is_file())
@@ -535,7 +525,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         ):
             for channel in ("stable", "beta"):
                 with self.subTest(channel=channel):
-                    self.self_test_channel = channel
+                    self.reported_channel = channel
                     self.output_dir = self.root / channel
                     summary = self.run_build(["--channel", channel])
                     with zipfile.ZipFile(summary["package"]) as archive:
@@ -546,7 +536,7 @@ class BuildStudioPackageTest(unittest.TestCase):
 
     def test_beta_channel_is_recorded(self):
         self.make_input()
-        self.self_test_channel = "beta"
+        self.reported_channel = "beta"
         summary = self.run_build(["--channel", "beta"])
         with zipfile.ZipFile(summary["package"]) as archive:
             manifest = json.loads(archive.read("package-manifest.json"))
@@ -556,34 +546,29 @@ class BuildStudioPackageTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_build(["--channel", "preview"])
 
-    def test_old_self_test_protocol_is_rejected(self):
+    def test_old_version_report_is_rejected(self):
         self.make_input()
-        report = self.module.run_studio_self_test(self.input_dir / "HarkenStudio.exe")
+        report = self.module.run_studio_version_report(self.input_dir / "HarkenStudio.exe")
         current = report.pop("editorSchemaVersion")
-        report["capabilitiesVersion"] = 1
         report["projectSchema"] = {
             "current": current,
             "openableAsIs": [current],
             "upgradableFrom": [1],
         }
-        self.module.run_studio_self_test = lambda binary: report
+        self.module.run_studio_version_report = lambda binary: report
         with self.assertRaises(SystemExit):
             self.run_build()
         self.assertFalse(self.output_dir.exists())
 
     def test_binary_archive_report_must_match_packaged_contract(self):
         self.make_input()
-        self_test = self.module.run_studio_self_test
-        report = self_test(self.input_dir / "HarkenStudio.exe")
+        version_report = self.module.run_studio_version_report
+        report = version_report(self.input_dir / "HarkenStudio.exe")
         editor_generation = report["editorSchemaVersion"]
         pack_generation = report["packSchemaVersion"]
         for field, value in (
             ("product", "HarkenHub"),
             ("product", None),
-            ("capabilitiesVersion", 1),
-            ("capabilitiesVersion", 2.0),
-            ("capabilitiesVersion", "2"),
-            ("capabilitiesVersion", None),
             ("editorSchemaVersion", editor_generation + 1),
             ("editorSchemaVersion", 3.0),
             ("editorSchemaVersion", "3"),
@@ -594,8 +579,8 @@ class BuildStudioPackageTest(unittest.TestCase):
             ("schemaArchiveOk", False),
         ):
             with self.subTest(field=field, value=value):
-                self.module.run_studio_self_test = lambda binary: {
-                    **self_test(binary), field: value,
+                self.module.run_studio_version_report = lambda binary: {
+                    **version_report(binary), field: value,
                 }
                 with self.assertRaises(SystemExit):
                     self.run_build()

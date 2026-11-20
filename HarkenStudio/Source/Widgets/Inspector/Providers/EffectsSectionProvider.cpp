@@ -457,7 +457,7 @@ private:
                 const bool custom = effect.mode == EffectMode::Custom;
                 auto* target = custom ? nullptr : ProjectManager::instance().findItemByGuid(effect.effectGuid);
                 if (target && target->type != ProjectItem::Type::Effect) target = nullptr;
-                const QString name = custom ? EffectChainSemantics::displayName(effect.custom.type)
+                const QString name = custom ? tr("%1 (Local)").arg(EffectChainSemantics::displayName(effect.custom.type))
                     : target ? target->name : tr("Missing");
                 auto* row = new QWidget(table_->rowsWidget());
                 row->setObjectName(QStringLiteral("effectRow"));

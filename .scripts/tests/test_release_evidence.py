@@ -102,6 +102,8 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.payload.mkdir()
         self.output = self.root / "output"
         self.build = self.root / "build"
+        (self.build / "HarkenHub/generated").mkdir(parents=True)
+        (self.build / "HarkenHub/generated/HubVersion.txt").write_text("1.0.0\n", encoding="utf-8")
         self.dependency = self.repo / "ThirdParty" / "example"
         self.dependency.mkdir(parents=True)
         self.write_notice()
@@ -118,7 +120,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
         self.head = self.run_git("rev-parse", "HEAD")
         (self.payload / "app.exe").write_bytes(b"MZfixture")
         self.identity = {"gitCommit": self.head, "gitDirty": False, "version": "1.0.0",
-                         "hubVersion": "1.0.0", "buildId": "test-build", "platform": "test-x64", "channel": "dev"}
+                         "buildId": "test-build", "platform": "test-x64", "channel": "dev"}
         self.model = {"identity": self.identity, "paths": {self.dependency / "example.c"},
                       "targets": ["harken_hub"], "artifacts": [{"target": "harken_hub", "type": "EXECUTABLE",
                        "name": "app.exe", "sha256": evidence.sha256(self.payload / "app.exe")}],

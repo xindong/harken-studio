@@ -15,11 +15,10 @@ Optional mode reports unavailable native checks as skipped. `--require-native`
 fails if a required check cannot run. An explicit `HARKEN_NATIVE_DIR` is
 authoritative and disables native-library search fallbacks.
 
-The native suite uses current companion fixtures under `UnityFixture/Data`.
-It covers Init-only startup, atomic Action preparation, language selection,
-failed refresh preservation, renaming, shared leases, asynchronous reads,
-cancellation, retries and restart isolation. Suspended PlayableDemo and retired
-manifest/index publications are not validation inputs.
+Pack metadata version rules are checked with hand-written JSON. Behavior that
+needs real Studio exports (startup, preparation, language and platform selection,
+renaming, ownership, audible playback) is covered by the cross-product
+verification, which builds and exports its projects on every run.
 
 To validate a real exported selected-platform directory independently:
 
@@ -55,28 +54,6 @@ retries with a shortened descriptor. `HarkenAbi.CheckLayout()` alone is a
 managed-layout check, not a native capability probe; old gameplay calls can
 still work with the old library.
 
-The separate native foundation fixture remains available through `--pack-root`:
-
-```powershell
-dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- `
-  --require-native --pack-root ".temp/f3-resident-window"
-```
-
-`PackFoundationQualification.ExplicitMembersDefineResidentWindow` produces its raw
-`Init.pack` and `Content.pack` binaries. This low-level contract inspects Init,
-applies capacity recommendations, activates the canonical set through byte
-providers, posts loaded content, rejects unknown content and unloads the set.
-It does not discover or interpret legacy publication files.
-
-For the focused Variable write-scope check, generate the native fixture and run:
-
-```powershell
-ctest --test-dir build-nc -C RelWithDebInfo -R '^PackComposition.VariableApiSetValuePreservesWriteScopeAndPublishesInitFixture$' --output-on-failure
-$env:HARKEN_VARIABLE_INIT = (Resolve-Path ".temp/variable-sdk-init.pack").Path
-dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- --variables-only
-```
-
-`--current-world <path>` adds the existing current-world input check.
 `--state-only-unavailable` verifies capability refusal against an older native
 library. Unity compilation, IL2CPP, device behavior and audible output require
 their corresponding environments; this runner covers managed/native contracts.

@@ -24,11 +24,9 @@
 #include "Update/HubSelfUpdate.h"
 #include "Update/ServerEndpoints.h"
 #include "Update/UpdateStateStore.h"
-#include "Versions/LaunchDiagnostics.h"
 #include "Versions/LocalBuildRegistry.h"
-#include "Versions/SelfTestRunner.h"
 #include "Versions/StudioLaunchTarget.h"
-#include "Versions/StudioCapabilities.h"
+#include "Versions/StudioInterface.h"
 
 #include <QCoreApplication>
 #include <QComboBox>
@@ -189,7 +187,7 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
     repairBanner_ = new QFrame(this);
     repairBanner_->setObjectName(QStringLiteral("installationIssueBanner"));
     repairBanner_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #2A1420; border: 1px solid #FF0055; "
+        "QFrame { background-color: palette(alternate-base); border: 1px solid #FF0055; "
         "border-radius: 0; }"));
     auto* bannerLayout = new QHBoxLayout(repairBanner_);
     bannerLayout->setContentsMargins(14, 8, 14, 8);
@@ -205,7 +203,7 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
     repairLabel_->setMinimumWidth(0);
     repairLabel_->setTextFormat(Qt::PlainText);
     repairLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     bannerLayout->addWidget(repairLabel_, 1);
     repairButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Repair"), repairBanner_);
     repairButton_->setObjectName(QStringLiteral("installationRepairButton"));
@@ -228,13 +226,13 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
 
     hubUpdateBanner_ = new QFrame(this);
     hubUpdateBanner_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #0F2A30; border: 1px solid #00F0FF; "
+        "QFrame { background-color: palette(alternate-base); border: 1px solid palette(highlight); "
         "border-radius: 0; }"));
     auto* updateBannerLayout = new QHBoxLayout(hubUpdateBanner_);
     updateBannerLayout->setContentsMargins(14, 8, 14, 8);
     hubUpdateLabel_ = new QLabel(hubUpdateBanner_);
     hubUpdateLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     updateBannerLayout->addWidget(hubUpdateLabel_, 1);
     hubUpdateButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Install and Restart"), hubUpdateBanner_);
@@ -245,13 +243,13 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
 
     studioUpdateBanner_ = new QFrame(this);
     studioUpdateBanner_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #0F2A30; border: 1px solid #00F0FF; "
+        "QFrame { background-color: palette(alternate-base); border: 1px solid palette(highlight); "
         "border-radius: 0; }"));
     auto* studioBannerLayout = new QHBoxLayout(studioUpdateBanner_);
     studioBannerLayout->setContentsMargins(14, 8, 14, 8);
     studioUpdateLabel_ = new QLabel(studioUpdateBanner_);
     studioUpdateLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     studioBannerLayout->addWidget(studioUpdateLabel_, 1);
     studioUpdateButton_ =
         new QPushButton(QCoreApplication::translate("HarkenHub", "Install"), studioUpdateBanner_);
@@ -262,13 +260,13 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
 
     autoProgressFrame_ = new QFrame(this);
     autoProgressFrame_->setStyleSheet(QStringLiteral(
-        "QFrame { background-color: #0D111A; border: 1px solid #313848; "
+        "QFrame { background-color: palette(window); border: 1px solid palette(mid); "
         "border-radius: 0; }"));
     auto* progressLayout = new QHBoxLayout(autoProgressFrame_);
     progressLayout->setContentsMargins(14, 8, 14, 8);
     autoProgressLabel_ = new QLabel(autoProgressFrame_);
     autoProgressLabel_->setStyleSheet(
-        QStringLiteral("background: transparent; border: none; color: #E0E0E0;"));
+        QStringLiteral("background: transparent; border: none; color: palette(window-text);"));
     progressLayout->addWidget(autoProgressLabel_, 1);
     autoProgressBar_ = new QProgressBar(autoProgressFrame_);
     autoProgressBar_->setFixedSize(180, 10);
@@ -355,8 +353,8 @@ VersionsPage::VersionsPage(ProjectStore* store, QWidget* parent)
         this);
     launchHint->setWordWrap(true);
     launchHint->setStyleSheet(QStringLiteral(
-        "background-color: #111722; border: 1px solid #3D4554; "
-        "border-radius: 0; color: #AAB3C2; padding: 8px 11px;"));
+        "background-color: palette(window); border: 1px solid palette(mid); "
+        "border-radius: 0; color: palette(placeholder-text); padding: 8px 11px;"));
     layout->addWidget(launchHint);
     layout->addWidget(hubUpdateBanner_);
     layout->addWidget(studioUpdateBanner_);
@@ -615,7 +613,7 @@ void VersionsPage::addVersionRow(int row, const InstalledVersion& version,
     if (version.isLocalBuild())
         displayName += version.available ? QCoreApplication::translate("HarkenHub", " (Standalone)")
                                          : QCoreApplication::translate("HarkenHub", " (Standalone, Unavailable)");
-    if (version.available && version.capabilitiesVersion < kStudioCapabilitiesVersion)
+    if (version.available && !StudioInterface::canCreateProjects(version.semanticVersion))
         displayName += QCoreApplication::translate("HarkenHub", " (Legacy)");
     auto* versionItem = new QTableWidgetItem(displayName);
     versionItem->setData(kVersionBuildIdRole, version.buildId);
@@ -627,11 +625,9 @@ void VersionsPage::addVersionRow(int row, const InstalledVersion& version,
             ? QCoreApplication::translate("HarkenHub", "Build: %1\nChannel: %2")
                   .arg(version.launchBuildId(), version.channel)
             : version.availabilityError);
-    if (version.available && version.capabilitiesVersion != kStudioCapabilitiesVersion)
+    if (version.available && !StudioInterface::canCreateProjects(version.semanticVersion))
         versionItem->setToolTip(versionItem->toolTip() + QLatin1Char('\n')
-            + (version.capabilitiesVersion > kStudioCapabilitiesVersion
-                ? QCoreApplication::translate("HarkenHub", "This Studio uses a newer protocol than Hub supports. Hub can request project opening but cannot report its result or preview upgrades.")
-                : QCoreApplication::translate("HarkenHub", "Projects open in this Studio version. Hub upgrade previews are unavailable.")));
+            + QCoreApplication::translate("HarkenHub", "Projects open in this Studio version. Creating projects from Hub is unavailable."));
     table_->setItem(row, kColumnVersion, versionItem);
 
     const QString installPath = QDir::toNativeSeparators(
@@ -1041,8 +1037,8 @@ void VersionsPage::showAddVersionMenu()
         button->setStyleSheet(QStringLiteral(
             "QPushButton { background: transparent; border: none; "
             "border-radius: 0; padding: 8px 14px; text-align: left; }"
-            "QPushButton:hover { background: #333B4D; }"
-            "QPushButton:pressed { background: #252C3A; }"));
+            "QPushButton:hover { background: palette(light); }"
+            "QPushButton:pressed { background: palette(midlight); }"));
 
         auto* layout = new QVBoxLayout(button);
         layout->setContentsMargins(14, 7, 14, 7);
@@ -1050,13 +1046,13 @@ void VersionsPage::showAddVersionMenu()
         auto* titleLabel = new QLabel(title, button);
         titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
         titleLabel->setStyleSheet(QStringLiteral(
-            "background: transparent; border: none; color: #F2F4F8; "
+            "background: transparent; border: none; color: palette(window-text); "
             "font-weight: 600;"));
         layout->addWidget(titleLabel);
         auto* descriptionLabel = new QLabel(description, button);
         descriptionLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
         descriptionLabel->setStyleSheet(QStringLiteral(
-            "background: transparent; border: none; color: #9AA6BD;"));
+            "background: transparent; border: none; color: palette(placeholder-text);"));
         layout->addWidget(descriptionLabel);
 
         action->setDefaultWidget(button);
@@ -1446,7 +1442,6 @@ void VersionsPage::onElevatedPoll()
                 pendingUpdate.buildId == activeBuildId_)
                 UpdateStateStore::clear(pendingUpdate);
             finishElevatedFlow(QCoreApplication::translate("HarkenHub", "Install finished"));
-            runSelfTest(activeBuildId_);
             break;
         }
         case ElevatedMode::Uninstall:
@@ -1486,46 +1481,6 @@ void VersionsPage::onElevatedPoll()
     }
     activeBuildId_.clear();
     emit launchTargetChanged();
-}
-
-void VersionsPage::runSelfTest(const QString& buildId)
-{
-    if (buildId.isEmpty())
-        return;
-    QString installPath;
-    for (const auto& version : VersionScanner::scanInstalled()) {
-        if (version.buildId == buildId) {
-            if (version.capabilitiesVersion != kStudioCapabilitiesVersion)
-                return;
-            installPath = version.installPath;
-            break;
-        }
-    }
-    if (installPath.isEmpty())
-        return;
-
-    LaunchDiagnostics::record(buildId, QStringLiteral("SelfTesting"),
-                              QString(), QDateTime::currentDateTimeUtc());
-    const QPointer<VersionsPage> self(this);
-    QThreadPool::globalInstance()->start([self, buildId, installPath]() {
-        const SelfTestResult result =
-            SelfTestRunner::runForInstall(installPath, buildId);
-        LaunchDiagnostics::record(
-            buildId,
-            result.ok ? QStringLiteral("Ready") : QStringLiteral("LaunchIssue"),
-            result.ok ? QString() : result.error,
-            QDateTime::currentDateTimeUtc());
-        QMetaObject::invokeMethod(
-            QCoreApplication::instance(),
-            [self, result]() {
-                if (self)
-                    self->installStatusLabel_->setText(
-                        result.ok
-                            ? QCoreApplication::translate("HarkenHub", "Install finished · self-test OK")
-                            : QCoreApplication::translate("HarkenHub", "Install finished · self-test issue"));
-            },
-            Qt::QueuedConnection);
-    });
 }
 
 void VersionsPage::finishElevatedFlow(const QString& status)

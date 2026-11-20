@@ -23,8 +23,6 @@ TEST(HubLocalizationTest, CustomIntegrationSafetyMessagesTranslateWithoutChangin
         QStringLiteral("Choose a safe directory inside the Unity project: %1").arg(path),
         QStringLiteral("An Integration Package is already installed at %1. Use that location or remove it before installing elsewhere.").arg(path),
         QStringLiteral("Cannot read %1: Access denied").arg(path),
-        QStringLiteral("Cannot read Integration Package file for migration: %1").arg(path),
-        QStringLiteral("Cannot read Integration Package file: %1").arg(path),
         QStringLiteral("Cannot commit %1: Access denied").arg(path),
         QStringLiteral("Check write permission for the Hub report directory: %1").arg(path),
         QStringLiteral("Cannot determine the Integration Package identity: %1").arg(path),
@@ -34,30 +32,9 @@ TEST(HubLocalizationTest, CustomIntegrationSafetyMessagesTranslateWithoutChangin
         QStringLiteral("A local package path includes the Unity project: %1. Reference a package directory instead.").arg(path),
         QStringLiteral("Multiple Integration Package installations were found. Resolve these conflicts before continuing:\n%1\nD:/Game/Packages/com.harken.core").arg(path),
         QStringLiteral("Resolve Integration Package dependencies before removal; Unity could load the referenced Integration Package after the embedded copy is removed:\ncom.harken.core: file:../LocalSDK"),
-        QStringLiteral("Ready to remove 12 Harken Integration Package/runtime file(s) and preserve 3 project-specific file(s)."),
-        QStringLiteral("Installed package: %1").arg(path),
-        QStringLiteral("To integrate again later, select or drop this Integration Package source: %1").arg(path),
-        QStringLiteral("Backed up and removed the Harken Integration Package and native runtimes; preserved 3 project-specific file(s)."),
-        QStringLiteral("Installed Integration Package 1.2.3 from a verified staging directory; copied 12 managed file(s) and preserved 3 target-only file(s)."),
-        QStringLiteral("Verified the content integrity of 12 Harken-managed Integration Package file(s)."),
-        QStringLiteral("179 Integration Package text file(s) differ only in LF/CRLF line endings; contents are unchanged."),
-        QStringLiteral("Review recommended: 2 Integration Package text file(s) use a different encoding; text contents match after normalizing encoding and line endings. Integration Package updates can continue."),
-        QStringLiteral("42 documentation/sample file(s) are missing; Integration Package updates can continue."),
-        QStringLiteral("Missing documentation/sample files (does not block Integration Package updates):"),
-        QStringLiteral("12 Integration Package file(s) differ from their contents at installation."),
-        QStringLiteral("2 Integration Package file(s) recorded at installation are missing."),
-        QStringLiteral("1 Integration Package file(s) could not be read, so verification could not finish."),
-        QStringLiteral("Check-only mode did not change %1.").arg(path),
-        QStringLiteral("Review the file list before confirming the Integration Package change."),
-        QStringLiteral("All Harken-managed files match Integration Package 1.2.3; 12 Unity metadata file(s) and 2 optional target runtime file(s) are retained as expected."),
-        QStringLiteral("All Harken-managed files match Integration Package 1.2.3; 1 project-specific file(s) need review, while 12 Unity metadata and 2 optional runtime file(s) are retained normally."),
-        QStringLiteral("The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed."),
-        QStringLiteral("Review only the project-specific files listed below. Unity-generated metadata requires no action."),
-        QStringLiteral("Integration Package removal is unfinished. The verified backup and removal record have been kept."),
-        QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation."),
-        QStringLiteral("A file changed after backup and was preserved:\n%1").arg(path),
-        QStringLiteral("Cannot remove file:\n%1").arg(path),
-        QStringLiteral("Files also present in the selected source will become managed Integration Package files. Approval is required, and a permanent backup of the existing files will be created first."),
+        QStringLiteral("Installed version 0.1.0 at %1 will be replaced by version 0.2.0.").arg(path),
+        QStringLiteral("Cannot remove %1. Close Unity and any program using it, then retry.").arg(path),
+        QStringLiteral("Restored Integration Package 0.1.0 at %1.").arg(path),
     };
     for (const QString& message : messages)
         EXPECT_EQ(VNH::HubUnityIntegrationService::localizeText(message), message);
@@ -76,8 +53,7 @@ TEST(HubLocalizationTest, CustomIntegrationSafetyMessagesTranslateWithoutChangin
                               "Integration Package check failed. Review the check log for details.",
                               "Check completed. Review is recommended for the highlighted steps.",
                               "Select Game Project", "Select a Unity project", "Uninstall Integration Package...",
-                              "Resume Integration Package Removal...",
-                              "Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.",
+                                                            "Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.",
                               "The Integration Package cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.",
                               "Multiple Harken plugins were found. Keep one installation under Plugins and move the others outside Plugins before checking again.\n%1",
                               "The Unreal migration record is invalid. Preserve both Integration Package locations and the backup; restore the record from its migration backup before retrying.",
@@ -105,12 +81,7 @@ TEST(HubLocalizationTest, CustomIntegrationSafetyMessagesTranslateWithoutChangin
                               "Inspect installed Unity Integration Package",
                               "Installed Integration Package verification passed. No files were changed.",
                               "Installed Integration Package verification did not pass. Review the results; no files were changed.",
-                              "The installed Integration Package has incomplete or invalid verification data.",
                               "Installed Integration Package files do not match the installation record or could not be read.",
-                              "The installation record is complete. File contents are checked in the next step.",
-                              "Review the listed content differences to confirm whether they were intentional. To restore the original Integration Package files, use Change Integration Package and select the complete package for the installed version.",
-                              "Restore the listed missing files from a matching backup, or use Change Integration Package and select the complete package for the installed version.",
-                              "Check read permissions and whether another program is preventing access to the listed files, then check the Integration Package status again.",
                               "Missing Integration Package files:", "Integration Package files with contents different from installation:", "Unreadable Integration Package files:",
                               "Projects linked. Integration Package files were not changed.",
                               "Migrate...", "Recover...", "Review Integration Package migration",
@@ -248,12 +219,6 @@ TEST(HubLocalizationTest, SimplifiedChineseCatalogIsCompleteAndLoadable)
                   "HarkenHub", "Project file no longer exists: %1")
                   .arg(QStringLiteral("demo.hsp")),
               QStringLiteral("\u5de5\u7a0b\u6587\u4ef6\u5df2\u4e0d\u5b58\u5728\uff1ademo.hsp"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Studio capabilities must use the three-field version 2 report."),
-              QStringLiteral("Studio \u80fd\u529b\u62a5\u544a\u5fc5\u987b\u4f7f\u7528\u4ec5\u542b\u4e09\u4e2a\u5b57\u6bb5\u7684\u7248\u672c 2 \u534f\u8bae\u3002"));
-    EXPECT_EQ(QCoreApplication::translate(
-                  "HarkenHub", "Install finished · self-test issue"),
-              QString::fromUtf8("安装完成 · 自检发现问题"));
     EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(
                   QStringLiteral("[INFO] HarkenHub 0.1.36-dev state -> "
                                  "AwaitingBridge")),

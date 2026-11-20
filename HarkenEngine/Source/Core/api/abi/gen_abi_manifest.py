@@ -981,13 +981,6 @@ def validate_table_metadata(table: dict[str, Any]) -> None:
             "missingFields",
             "unknownSize",
         }
-        retired = policy.get("retiredTailBytes", [])
-        if "retiredTailBytes" in policy:
-            expected_policy_keys.add("retiredTailBytes")
-            if (not isinstance(retired, list) or not retired or
-                    any(type(n) is not int or n <= 0 for n in retired) or
-                    retired != sorted(set(retired))):
-                raise ManifestError("invalid retired tail sizes for %s" % type_name)
         if set(policy) != expected_policy_keys:
             raise ManifestError(
                 "unsupported struct-size policy keys for %s: %s"
@@ -1212,7 +1205,6 @@ def build_vintage_policies(
         accepted = [
             *[item["size"] for item in boundaries],
             layouts[type_name].size,
-            *[layouts[type_name].size + n for n in policy.get("retiredTailBytes", [])],
         ]
         if accepted != sorted(set(accepted)):
             raise ManifestError(

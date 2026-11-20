@@ -37,10 +37,8 @@ bool ProjectOpenFlow::ensureRegistered(ProjectStore* store, const QString& path,
         return true;
 
     ProjectRecord record;
-    record.projectId = probe.projectId;
     record.canonicalPath = probe.canonicalPath;
     record.displayName = probe.displayName;
-    record.detectedSchema = probe.schemaVersion;
     if (!store->addProject(record)) {
         *error = store->lastError();
         return false;

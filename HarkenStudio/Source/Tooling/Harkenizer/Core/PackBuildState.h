@@ -53,7 +53,6 @@ private:
     int objectCount_ = 0;
     int mediaCount_ = 0;
     int actionCount_ = 0;
-    int emptyActionCount_ = 0;
     bool reusable_ = false;
     bool inputsReady_ = false;
     bool legacyCleanup_ = true;

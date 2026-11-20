@@ -10,11 +10,9 @@ namespace harken {
 // Temporary test wire layout. No public Pack codec value accepts this format.
 namespace vorbis_test_wire {
 inline constexpr std::uint32_t kMediaMagic = 0x30425648;
-inline constexpr std::uint32_t kStreamMagic = 0x30545348;
 inline constexpr std::uint16_t kVersion = 0;
 inline constexpr std::size_t kHeaderBytes = 112;
 inline constexpr std::size_t kSeekBytes = 20;
-inline constexpr std::size_t kStreamHeaderBytes = 24;
 }
 
 struct VorbisSeekPoint {
@@ -50,17 +48,7 @@ struct VorbisMedia {
     bool VerifySegment(std::size_t index) const noexcept;
 };
 
-// Failure leaves output unchanged. Full packet integrity is checked for a
-// resident blob; streaming consumers can validate segments as they arrive.
-// Header inspection never reads packet payload. A stream must independently
-// verify each segment before exposing its packets to the renderer.
-std::uint64_t VorbisTestMetadataBytes(const void* header, std::size_t bytes) noexcept;
-bool ValidateTestStreamHeader(const void* header, std::size_t bytes,
-                                   std::uint64_t fileBytes, std::uint16_t expectedCodec = 1) noexcept;
-bool ParseVorbisTestMediaHeaders(const void* prefix, std::size_t prefixBytes,
-                                std::uint64_t mediaBytes, VorbisMedia& output);
 bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& output);
-bool ParseVorbisTestStream(const void* data, std::size_t bytes, VorbisMedia& output);
 
 } // namespace harken
 #endif

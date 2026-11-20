@@ -592,6 +592,21 @@ TEST_F(HubSelfUpdateTest, FailedLaunchRollbackOutlivesTheApprovalRequest)
 }
 #endif
 
+TEST_F(HubSelfUpdateTest, BridgeApprovalRejectsAReleaseDifferentFromTheReviewedState)
+{
+    auto record = readyBridgeRecord("installer");
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow));
+    const auto reviewed = UpdateStateStore::load("HarkenHub");
+    record.buildId = "replacement-build";
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow.addSecs(1)));
+    HubSelfUpdate update;
+    QString error;
+    EXPECT_FALSE(update.approveViaBridge("background", &error, kNow.addSecs(2), &reviewed));
+    EXPECT_TRUE(error.contains("review"));
+    EXPECT_EQ(UpdateStateStore::load("HarkenHub").buildId, "replacement-build");
+    EXPECT_FALSE(UpdateQueue::hasPendingHubUpdate());
+}
+
 TEST_F(HubSelfUpdateTest, ApproveViaBridgeRequiresBridgeAvailability)
 {
     qputenv("HARKEN_HUB_BRIDGE_DISABLE", "1");

@@ -4,6 +4,8 @@
 #include "Transactions/InstallExecutor.h"
 #include "Transactions/InstallIndex.h"
 #include "Transactions/TransactionJournal.h"
+#include "Transactions/RepairExecutor.h"
+#include "Versions/IntegrityChecker.h"
 
 #include <gtest/gtest.h>
 
@@ -108,6 +110,32 @@ TEST_F(UninstallExecutorTest, RemovesDirectoryAndIndexRecord)
     const auto states = VNH::TransactionJournal::lastStateByTransaction();
     ASSERT_EQ(states.size(), 1);
     EXPECT_EQ(states.constBegin().value(), QStringLiteral("Uninstalled"));
+}
+
+TEST_F(UninstallExecutorTest, MaintenanceRejectsFilesChangedAfterReviewAndBeforeCommit)
+{
+    const QString build = QStringLiteral("run1.aaaa1111");
+    const auto path = installVersion(build, QStringLiteral("1.4.0"));
+    const auto reviewed = VNH::IntegrityChecker::snapshot(path);
+    ASSERT_FALSE(reviewed.hash.isEmpty());
+    QFile added(path + QStringLiteral("/user.txt"));
+    ASSERT_TRUE(added.open(QIODevice::WriteOnly));
+    added.write("user content");
+    added.close();
+    const auto idle = [](const QString&) { return QStringList(); };
+    EXPECT_EQ(VNH::RepairExecutor::run(build, kNow, idle, {}, reviewed.hash).failureCode, "ReviewChanged");
+    EXPECT_EQ(UninstallExecutor::run(build, kNow, idle, reviewed.hash).failureCode, "ReviewChanged");
+    EXPECT_TRUE(added.exists());
+    const auto refreshed = VNH::IntegrityChecker::snapshot(path);
+    const auto changedDuringProbe = UninstallExecutor::run(build, kNow, [&](const QString&) {
+        EXPECT_TRUE(added.open(QIODevice::WriteOnly));
+        added.write("changed during operation");
+        added.close();
+        return QStringList();
+    }, refreshed.hash);
+    EXPECT_EQ(changedDuringProbe.failureCode, "ReviewChanged");
+    EXPECT_TRUE(added.exists());
+    EXPECT_TRUE(UninstallExecutor::run(build, kNow, idle, VNH::IntegrityChecker::snapshot(path).hash).ok);
 }
 
 TEST_F(UninstallExecutorTest, RejectsInvalidBuildId)

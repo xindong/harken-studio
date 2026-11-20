@@ -440,7 +440,6 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 PackGenerationRecordStore::instance().updateObservation(runId, observation);
             }, Qt::QueuedConnection);
         };
-        exportOpts.debugStrings = true;
         ProjectPackBuildService::Request buildRequest;
         buildRequest.outputRoot = outputPath;
         buildRequest.platforms = platforms;
@@ -504,7 +503,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                     0u, actionName.isEmpty() ? QStringLiteral("Export") : QStringLiteral("Action"),
                     platform, exportOpts.language, false,
                     result.canceled ? QStringLiteral("Canceled") : QStringLiteral("Failed"),
-                    platformDir, result.warnings.join(QLatin1Char('\n')),
+                    platformDir, result.globalWarnings.join(QLatin1Char('\n')),
                     result.error, result.fileSize, timer.elapsed(), definition.name,
                     definition.basePlatform, definition.toJson(), {}, result.canceled});
             }
@@ -524,7 +523,8 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 {"media_cache_hits", result.mediaCacheHits},
                 {"media_conversions", result.mediaConversions},
                 {"media", result.media},
-                {"warnings", QJsonArray::fromStringList(result.warnings)}
+                {"warnings", QJsonArray::fromStringList(result.warnings)},
+                {"global_warnings", QJsonArray::fromStringList(result.globalWarnings)}
             };
             if (!result.success)
                 entry["error"] = result.error;
@@ -617,6 +617,9 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                     QJsonArray warnings = resultObj.value("warnings").toArray();
                     for (const QString& warning : publicationWarnings) warnings.append(warning);
                     resultObj["warnings"] = warnings;
+                    QJsonArray globalWarnings = resultObj.value("global_warnings").toArray();
+                    for (const QString& warning : publicationWarnings) globalWarnings.append(warning);
+                    resultObj["global_warnings"] = globalWarnings;
                 }
                 packBuildResult_ = QJsonObject{
                     {"status", "ok"},

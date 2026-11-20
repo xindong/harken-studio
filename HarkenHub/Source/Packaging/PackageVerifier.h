@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 
 namespace VNH {
 
@@ -18,7 +19,7 @@ struct PackageVerifyResult
     bool ok = false;
     QString error;
     QString channel;
-    int capabilitiesVersion = 0;
+    QStringList metadataEntries;
     QHash<QString, QString> fileSha256ByPath;
 };
 

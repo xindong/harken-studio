@@ -866,19 +866,31 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
                 Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
             painter->drawRect(QRectF(inset, inset, width_ - inset * 2, height_ - inset * 2));
         }
+        const qreal padding = nodeMetrics().bodyPadding;
+        const QColor titleColor = titleColor_.isValid() ? titleColor_ : ngn.titleText;
+        QFont nameFont = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
+        nameFont.setItalic(titleDirty_);
+        const qreal titleScale = std::min(2.0, (height_ - padding * 2.0)
+            / std::max(qreal(metrics.iconExtent), QFontMetricsF(nameFont).height()));
+        nameFont.setPointSizeF(nameFont.pointSizeF() * titleScale);
+        qreal textX = padding;
         if (itemType_) {
-            const qreal side = std::min<qreal>({metrics.control.largeIconExtent * 2.0,
-                width_ - nodeMetrics().bodyPadding * 2.0, height_ - nodeMetrics().bodyPadding});
-            const QRectF iconRect((width_ - side) * 0.5, (height_ - side) * 0.5, side, side);
-            const QColor color = titleColor_.isValid() ? titleColor_ : ngn.titleText;
+            const qreal side = metrics.iconExtent * titleScale;
+            const QRectF iconRect(padding, (height_ - side) * 0.5, side, side);
             const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
-            const QPixmap icon = iconForItemType(*itemType_, color)
+            const QPixmap icon = iconForItemType(*itemType_, titleColor)
                 .pixmap(iconRect.size().toSize(), scale * dpr);
             const bool smooth = painter->testRenderHint(QPainter::SmoothPixmapTransform);
             painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
             painter->drawPixmap(iconRect, icon, QRectF(icon.rect()));
             painter->setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+            textX += side + metrics.spacingSmall * titleScale;
         }
+        const qreal textWidth = width_ - textX - padding;
+        const QString elidedName = QFontMetricsF(nameFont).elidedText(displayTitle(), Qt::ElideMiddle, textWidth);
+        painter->setFont(nameFont);
+        painter->setPen(titleColor);
+        painter->drawText(QRectF(textX, 0.0, textWidth, height_), Qt::AlignVCenter | Qt::AlignLeft, elidedName);
         painter->setPen(QPen(theme->domains.blueprint.canvasBackground, metrics.accentBorderWidth));
         if (sandboxBypassed_) {
             painter->setBrush(ngn.sandboxBadgeBg);

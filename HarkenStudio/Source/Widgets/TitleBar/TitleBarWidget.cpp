@@ -202,13 +202,13 @@ void TitleBarWidget::layoutVersionLabel() {
     versionLabel_->setVisible(titleWidth > 0);
 }
 
-int TitleBarWidget::syncContentMetrics() {
+int TitleBarWidget::syncContentMetrics(const ThemeMetrics& metrics) {
     const int textHeight = menuBar_ ? menuBar_->fontMetrics().height()
                                     : fontMetrics().height();
-    int itemHeight = textHeight;
+    const int targetHeight = qMax(metrics.chrome.mainWindowMenuBarHeight, textHeight);
+    int itemHeight = targetHeight;
     int contentWidth = 0;
     if (menuBar_) {
-        const int targetHeight = qMax(ThemeManager::instance().metrics().chrome.titleBarHeight, textHeight);
         const int slack = targetHeight - textHeight;
         const QString itemPadding = QStringLiteral(
             "#titleBarMenuBar::item { padding-top: %1px; padding-bottom: %2px; }")
@@ -226,7 +226,7 @@ int TitleBarWidget::syncContentMetrics() {
             menuBar_->setStyleSheet(styleSheet);
         menuBar_->ensurePolished();
         const QSize content = menuBarContentSize(menuBar_);
-        itemHeight = qMax(textHeight, content.height());
+        itemHeight = qMax(targetHeight, content.height());
         contentWidth = content.width();
     }
     if (menuBar_)

@@ -151,13 +151,6 @@ VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming,
     return result;
 }
 
-std::vector<std::uint8_t> WrapVorbisStream(const std::vector<std::uint8_t>& media) {
-    std::vector<std::uint8_t> result;
-    Put(result, vorbis_test_wire::kStreamMagic, 4); Put(result, vorbis_test_wire::kVersion, 2);
-    Put(result, 1, 2); Put(result, vorbis_test_wire::kStreamHeaderBytes, 8); Put(result, media.size(), 8);
-    result.insert(result.end(), media.begin(), media.end()); return result;
-}
-
 void ValidateVorbisFixtureSetup(const std::uint8_t* ident, std::size_t identBytes,
                                const std::uint8_t* setup, std::size_t setupBytes) {
     Headers headers;

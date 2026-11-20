@@ -94,19 +94,38 @@ jobs:
           --group-timeout-seconds 300
           --output-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/editor
 
+      - name: Setup .NET for cross-product verification
+        if: ${{ steps.build.outcome == 'success' && (success() || failure()) }}
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 9.0.x
+
       - name: Run cross-product verification
         id: crossproduct
         if: ${{ steps.build.outcome == 'success' && (success() || failure()) }}
         shell: bash
         run: |
           set -euo pipefail
+          evidence=".temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}"
           cmake --build build-daily --config Release --target harken_engine harken_studio_cli
-          cmake --install build-daily --config Release --prefix .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install
+          cmake --install build-daily --config Release --prefix "$evidence/engine-install"
+          package="$evidence/integration-package"
+          mkdir -p "$package"
+          tar -C HarkenIntegration/Unity/Harken -cf - . | tar -C "$package" -xf -
+          for edition in HarkenEngine HarkenEngineDev; do
+            install -Dm644 "$evidence/engine-install/bin/$edition.dll" "$package/Runtime/Plugins/x86_64/$edition.dll"
+          done
+          unity=()
+          if [ -n "${HARKEN_UNITY_EDITOR:-}" ]; then
+            unity=(--unity "$HARKEN_UNITY_EDITOR" --require unity)
+          fi
           python .scripts/crossproduct-test/run.py \
-            --engine-install .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install \
+            --engine-install "$evidence/engine-install" \
             --studio-cli build-daily/bin/Release/HarkenStudioCLI.exe \
-            --work-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/crossproduct \
-            --require studio-cli --require engine-release --require engine-development
+            --integration-package "$package" \
+            --work-dir "$evidence/crossproduct" \
+            --require studio-cli --require engine-release --require engine-development \
+            --require integration-package --require dotnet "${unity[@]}"
 
       - name: Upload test evidence
         if: always()

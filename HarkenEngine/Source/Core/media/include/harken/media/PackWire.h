@@ -1798,6 +1798,60 @@ inline void ToWire(const PackMediaFileHeader& row, HkPackMediaFileHeader& wire) 
     return true;
 }
 
+inline void ToWire(const StreamHeader& row, HkPackStreamFileHeader& wire) noexcept {
+    std::memcpy(wire.magic, HK_PACK_STREAM_FILE_MAGIC, sizeof wire.magic);
+    wire.formatVersion = static_cast<std::uint32_t>(row.formatVersion);
+    wire.headerBytes = static_cast<std::uint32_t>(row.headerBytes);
+    wire.fileBytes = static_cast<std::uint64_t>(row.fileBytes);
+    wire.entryCount = static_cast<std::uint32_t>(row.entryCount);
+    wire.tocOffset = static_cast<std::uint32_t>(row.tocOffset);
+    wire.chunkFrames = static_cast<std::uint32_t>(row.chunkFrames);
+    wire.tocChecksum = static_cast<std::uint64_t>(row.tocChecksum);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackStreamFileHeader& wire, StreamHeader& out) noexcept {
+    if (std::memcmp(wire.magic, HK_PACK_STREAM_FILE_MAGIC, sizeof wire.magic) != 0) return false;
+    AssignPack(out.formatVersion, wire.formatVersion);
+    AssignPack(out.headerBytes, wire.headerBytes);
+    AssignPack(out.fileBytes, wire.fileBytes);
+    AssignPack(out.entryCount, wire.entryCount);
+    AssignPack(out.tocOffset, wire.tocOffset);
+    AssignPack(out.chunkFrames, wire.chunkFrames);
+    AssignPack(out.tocChecksum, wire.tocChecksum);
+    return true;
+}
+
+inline void ToWire(const StreamTocEntry& row, HkPackStreamFileTocEntry& wire) noexcept {
+    wire.soundId = ToPackId(row.soundId);
+    wire.sampleRate = static_cast<std::uint32_t>(row.sampleRate);
+    wire.channelCount = static_cast<std::uint16_t>(row.channelCount);
+    wire.sampleFormat = static_cast<std::uint16_t>(row.sampleFormat);
+    wire.frameCount = static_cast<std::uint64_t>(row.frameCount);
+    wire.payloadOffset = static_cast<std::uint64_t>(row.payloadOffset);
+    wire.payloadBytes = static_cast<std::uint64_t>(row.payloadBytes);
+    wire.chunkChecksumOffset = static_cast<std::uint64_t>(row.chunkChecksumOffset);
+    wire.chunkCount = static_cast<std::uint32_t>(row.chunkCount);
+    wire.flags = static_cast<std::uint32_t>(row.flags);
+    wire.loopStartFrame = static_cast<std::uint64_t>(row.loopStartFrame);
+    wire.loopEndFrame = static_cast<std::uint64_t>(row.loopEndFrame);
+}
+
+[[nodiscard]] inline bool FromWire(const HkPackStreamFileTocEntry& wire, StreamTocEntry& out) noexcept {
+    AssignPack(out.soundId, FromPackId(wire.soundId));
+    AssignPack(out.sampleRate, wire.sampleRate);
+    AssignPack(out.channelCount, wire.channelCount);
+    AssignPack(out.sampleFormat, wire.sampleFormat);
+    AssignPack(out.frameCount, wire.frameCount);
+    AssignPack(out.payloadOffset, wire.payloadOffset);
+    AssignPack(out.payloadBytes, wire.payloadBytes);
+    AssignPack(out.chunkChecksumOffset, wire.chunkChecksumOffset);
+    AssignPack(out.chunkCount, wire.chunkCount);
+    AssignPack(out.flags, wire.flags);
+    AssignPack(out.loopStartFrame, wire.loopStartFrame);
+    AssignPack(out.loopEndFrame, wire.loopEndFrame);
+    return true;
+}
+
 inline void ToWire(const PackRequirementBlock& row, HkPackRequirementBlock& wire) noexcept {
     wire.schemaVersion = static_cast<std::uint32_t>(row.schemaVersion);
     wire.storageModelVersion = static_cast<std::uint32_t>(row.storageModelVersion);

@@ -3,6 +3,9 @@
 #include "Packaging/PackageReader.h"
 
 #include <QFile>
+#include <QDir>
+#include <QDirIterator>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -10,9 +13,35 @@
 
 namespace VNH {
 
+InstallationSnapshot IntegrityChecker::snapshot(const QString& installPath)
+{
+    InstallationSnapshot result;
+    const QFileInfo root(installPath);
+    QDirIterator iterator(installPath, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        iterator.next();
+        const auto info = iterator.fileInfo();
+        QJsonObject entry;
+        if (info.isSymbolicLink() || info.isJunction()) entry["link"] = info.symLinkTarget();
+        else if (info.isDir()) entry["directory"] = true;
+        else {
+            const auto hash = PackageReader::fileSha256Hex(info.absoluteFilePath());
+            if (hash.isEmpty()) {
+                result.error = QStringLiteral("Cannot read installed file: %1").arg(info.absoluteFilePath());
+                return result;
+            }
+            entry["sha256"] = hash;
+        }
+        result.files[QDir(installPath).relativeFilePath(info.absoluteFilePath())] = entry;
+    }
+    const QJsonObject identity{{"path", root.absoluteFilePath()}, {"exists", root.exists()},
+        {"link", root.symLinkTarget()}, {"files", result.files}};
+    result.hash = QString::fromLatin1(QCryptographicHash::hash(QJsonDocument(identity).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
+    return result;
+}
+
 IntegrityReport IntegrityChecker::check(
-    const QString& installPath, const QString& expectedPackageManifestHash,
-    const QString& expectedCapabilitiesHash)
+    const QString& installPath, const QString& expectedPackageManifestHash)
 {
     IntegrityReport report;
 
@@ -78,15 +107,6 @@ IntegrityReport IntegrityChecker::check(
             PackageReader::fileSha256Hex(absolutePath).toLower() != sha256)
             report.mismatchedFiles.append(relativePath);
     }
-
-    const QString capabilitiesPath =
-        installPath + QStringLiteral("/capabilities.json");
-    if (!QFileInfo::exists(capabilitiesPath))
-        report.missingFiles.append(QStringLiteral("capabilities.json"));
-    else if (!expectedCapabilitiesHash.isEmpty() &&
-             PackageReader::fileSha256Hex(capabilitiesPath).toLower() !=
-                 expectedCapabilitiesHash.toLower())
-        report.mismatchedFiles.append(QStringLiteral("capabilities.json"));
 
     if (!report.missingFiles.isEmpty() || !report.mismatchedFiles.isEmpty()) {
         report.error = QStringLiteral("%1 missing and %2 mismatched files")

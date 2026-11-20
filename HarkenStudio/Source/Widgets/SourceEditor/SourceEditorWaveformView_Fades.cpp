@@ -1,7 +1,6 @@
 #include "SourceEditorWaveformView.h"
 
 #include "Core/ThemeManager.h"
-#include "Widgets/Common/WaveformRenderer.h"
 #include "Widgets/CurveEditor/CurveCanvas.h"
 #include "Widgets/CurveEditor/CurvePresetMenu.h"
 #include "Widgets/CurveEditor/CurveRenderer.h"
@@ -25,13 +24,12 @@ const SoundSourceFadeDef& SourceEditorWaveformView::fade(int index) const
 
 QRectF SourceEditorWaveformView::fadeGraphRect() const
 {
-    const QRect wave = channelWaveformRect();
+    const QRect plot = waveformRect();
+    const QRect viewport = channelViewportRect();
     const auto theme = ThemeManager::instance().snapshot();
-    const auto scale = WaveformRenderer::amplitudeScale(theme->domains.waveform, amplitudeExponent_);
-    const int center = wave.top() + wave.height() / 2;
-    const double amplitude = wave.height() / 2 * scale.dbToPosition(0.0);
-    return QRectF(QPointF(wave.left(), qRound(center - amplitude)),
-                  QPointF(wave.right(), qRound(center + amplitude)));
+    const qreal inset = theme->domains.curve.metrics.pointSelectedRadius + theme->ui.metrics.spacingXSmall;
+    return QRectF(QPointF(plot.left(), viewport.top() + inset),
+                  QPointF(plot.right(), viewport.bottom() - inset));
 }
 
 QPointF SourceEditorWaveformView::fadePointPosition(int index, float x, float value) const
@@ -305,7 +303,6 @@ void SourceEditorWaveformView::showFadeMenu(FadeHit target, const QPoint& positi
     auto* menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("sourceFadeContextMenu"));
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    menu->addSection(index == 0 ? tr("Fade In") : tr("Fade Out"));
     auto* enter = menu->addAction(tr("Enter Duration..."), this,
         [this, index] { editHandleValue(Handle::None, index); });
     enter->setObjectName(QStringLiteral("sourceFadeEnterDuration"));

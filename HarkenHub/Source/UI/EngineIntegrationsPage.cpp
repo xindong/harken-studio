@@ -8,8 +8,6 @@
 #include "Integrations/EngineTargetProbe.h"
 #include "Integrations/EngineTargetStore.h"
 #include "Integrations/HubUnityIntegrationService.h"
-#include "Integrations/OfficialUnitySource.h"
-#include "Security/TrustAnchors.h"
 #include "Integrations/IntegrationStore.h"
 #include "Integrations/ProjectIntegrationExecutor.h"
 #include "Launch/LaunchPreflight.h"
@@ -29,6 +27,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QColor>
+#include "UI/HubTheme.h"
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -145,9 +144,8 @@ private:
 
 bool hasPendingMigration(const EngineTargetRecord& target)
 {
-    return target.engineKind == EngineKind::Unity
-        ? VNX::UnityInstallation::hasPendingMigration(target.canonicalRoot)
-        : ProjectIntegrationExecutor::hasPendingUnrealMigration(target);
+    return target.engineKind == EngineKind::Unreal
+        && ProjectIntegrationExecutor::hasPendingUnrealMigration(target);
 }
 
 QString normalizedPath(const QString& path)
@@ -333,24 +331,6 @@ QString hubTranslate(const QString& source)
     return QCoreApplication::translate("HarkenHub", utf8.constData());
 }
 
-QString localizeCountSummary(const QString& text)
-{
-    static const QRegularExpression pattern(
-        QStringLiteral("^(\\d+) missing Integration Package file\\(s\\) will be added; "
-                       "(\\d+) existing Integration Package file\\(s\\) need updating; "
-                       "(\\d+) obsolete Harken-managed file\\(s\\) will be removed; "
-                       "(\\d+) project-specific file\\(s\\) will be kept unchanged; "
-                       "(\\d+) Unity-generated metadata file\\(s\\) and "
-                       "(\\d+) optional target runtime file\\(s\\) will be kept automatically$"));
-    const QRegularExpressionMatch match = pattern.match(text);
-    if (!match.hasMatch())
-        return hubTranslate(text);
-    return hubTranslate(
-               QStringLiteral("%1 missing Integration Package file(s) will be added; %2 existing Integration Package file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically"))
-        .arg(match.captured(1), match.captured(2), match.captured(3),
-             match.captured(4), match.captured(5), match.captured(6));
-}
-
 QString localizeIntegrationText(const QString& text)
 {
     if (text.isEmpty())
@@ -372,104 +352,6 @@ QString localizeIntegrationText(const QString& text)
         }
         if (changed)
             return localizedLines.join(QLatin1Char('\n'));
-    }
-
-    static const QRegularExpression validatedIntegration(
-        QStringLiteral("^Validated Integration Package (.+): (\\d+) file\\(s\\); the "
-                       "(.+) runtime required for this editor is present\\.(.*)$"));
-    const QRegularExpressionMatch validatedMatch = validatedIntegration.match(text);
-    if (validatedMatch.hasMatch()) {
-        QString result = hubTranslate(
-                             QStringLiteral("Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present."))
-                             .arg(validatedMatch.captured(1),
-                                  validatedMatch.captured(2),
-                                  validatedMatch.captured(3));
-        const QString suffix = validatedMatch.captured(4);
-        static const QRegularExpression expectedPlatforms(
-            QStringLiteral("^ Target runtimes not included: (.+)\\. Available platforms can still be integrated\\.$"));
-        static const QRegularExpression otherHost(
-            QStringLiteral("^ Runtimes that require another editor operating system are not included: (.+)\\.$"));
-        const QRegularExpressionMatch expectedMatch = expectedPlatforms.match(suffix);
-        if (expectedMatch.hasMatch()) {
-            result += hubTranslate(
-                          QStringLiteral(" Target runtimes not included: %1. Available platforms can still be integrated."))
-                          .arg(expectedMatch.captured(1));
-        } else {
-            const QRegularExpressionMatch otherMatch = otherHost.match(suffix);
-            if (otherMatch.hasMatch())
-                result += hubTranslate(
-                              QStringLiteral(" Runtimes that require another editor operating system are not included: %1."))
-                              .arg(otherMatch.captured(1));
-        }
-        return result;
-    }
-
-    static const QRegularExpression countCheck(
-        QStringLiteral("^Check found Integration Package differences: (.+)\\.$"));
-    const QRegularExpressionMatch countMatch = countCheck.match(text);
-    if (countMatch.hasMatch())
-        return hubTranslate(QStringLiteral("Check found Integration Package differences: %1.") )
-            .arg(localizeCountSummary(countMatch.captured(1)));
-
-    static const QRegularExpression existingDiff(
-        QStringLiteral("^The existing Integration Package differs from selected Integration Package source (.+): (.+)\\.$"));
-    const QRegularExpressionMatch existingMatch = existingDiff.match(text);
-    if (existingMatch.hasMatch())
-        return hubTranslate(QStringLiteral("The existing Integration Package differs from selected Integration Package source %1: %2."))
-            .arg(existingMatch.captured(1), localizeCountSummary(existingMatch.captured(2)));
-
-    static const QRegularExpression approvedUpdate(
-        QStringLiteral("^Approved Integration Package update: (.+)\\.$"));
-    const QRegularExpressionMatch approvedMatch = approvedUpdate.match(text);
-    if (approvedMatch.hasMatch())
-        return hubTranslate(QStringLiteral("Approved Integration Package update: %1."))
-            .arg(localizeCountSummary(approvedMatch.captured(1)));
-
-    static const QRegularExpression fileCount(
-        QStringLiteral("^No embedded Harken Integration Package is installed; (\\d+) file\\(s\\) are ready to install\\.$"));
-    const QRegularExpressionMatch fileCountMatch = fileCount.match(text);
-    if (fileCountMatch.hasMatch())
-        return hubTranslate(QStringLiteral("No embedded Harken Integration Package is installed; %1 file(s) are ready to install."))
-            .arg(fileCountMatch.captured(1));
-
-    static const QRegularExpression skippedStep(
-        QStringLiteral("^Not run because (.+) failed\\.$"));
-    const QRegularExpressionMatch skippedMatch = skippedStep.match(text);
-    if (skippedMatch.hasMatch())
-        return hubTranslate(QStringLiteral("Not run because %1 failed."))
-            .arg(skippedMatch.captured(1));
-
-    static const QRegularExpression groupedLocation(
-        QStringLiteral("^Location: (.+) — (\\d+) files \\((.+)\\)$"));
-    const QRegularExpressionMatch locationMatch = groupedLocation.match(text);
-    if (locationMatch.hasMatch())
-        return hubTranslate(QStringLiteral("Location: %1 — %2 files (%3)"))
-            .arg(locationMatch.captured(1), locationMatch.captured(2),
-                 locationMatch.captured(3));
-
-    static const QRegularExpression changeGroup(
-        QStringLiteral("^(Files to add|Files to update|Obsolete files to remove|Files kept unchanged) — (.+) \\((\\d+) files\\)$"));
-    const QRegularExpressionMatch changeGroupMatch = changeGroup.match(text);
-    if (changeGroupMatch.hasMatch())
-        return hubTranslate(QStringLiteral("%1 — %2 (files: %3)"))
-            .arg(hubTranslate(changeGroupMatch.captured(1)),
-                 hubTranslate(changeGroupMatch.captured(2)),
-                 changeGroupMatch.captured(3));
-
-    static const QRegularExpression location(
-        QStringLiteral("^Location: (.+)$"));
-    const QRegularExpressionMatch singleLocation = location.match(text);
-    if (singleLocation.hasMatch())
-        return hubTranslate(QStringLiteral("Location: %1"))
-            .arg(singleLocation.captured(1));
-
-    static const QRegularExpression labeled(
-        QStringLiteral("^(Purpose|Planned change|Impact): (.+)$"));
-    const QRegularExpressionMatch labeledMatch = labeled.match(text);
-    if (labeledMatch.hasMatch()) {
-        return hubTranslate(QStringLiteral("%1: %2"))
-            .arg(hubTranslate(labeledMatch.captured(1)),
-                 hubTranslate(labeledMatch.captured(2)));
     }
 
     static const QRegularExpression projectProbe(
@@ -560,8 +442,10 @@ QString localizeUnityStepTitle(const QString& id, const QString& fallback)
         {QStringLiteral("verify"), QStringLiteral("Verify installed Integration Package")},
         {QStringLiteral("report"), QStringLiteral("Write integration report")},
         {QStringLiteral("inspect_installation"), QStringLiteral("Review installed Harken Integration Package")},
-        {QStringLiteral("remove_integration"), QStringLiteral("Back up and remove Harken Integration Package")},
+        {QStringLiteral("remove_integration"), QStringLiteral("Remove Harken Integration Package")},
         {QStringLiteral("removal_report"), QStringLiteral("Write removal report")},
+        {QStringLiteral("inspect_installed_sdk"), QStringLiteral("Inspect installed Unity Integration Package")},
+        {QStringLiteral("restore_previous"), QStringLiteral("Restore previous Integration Package")},
     };
     const auto found = titles.constFind(id);
     return hubTranslate(found == titles.cend() ? fallback : found.value());
@@ -831,13 +715,13 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     auto* associationLabel = new QLabel(associationHint, formPanel);
     associationLabel->setObjectName(QStringLiteral("projectAssociationHint"));
     associationLabel->setWordWrap(true);
-    associationLabel->setStyleSheet(QStringLiteral("color: #AAB2C0; font-size: 12px;"));
+    associationLabel->setStyleSheet(QStringLiteral("color: palette(placeholder-text); font-size: 12px;"));
     form->addWidget(associationLabel);
     linkProjectsButton_->setToolTip(QCoreApplication::translate("HarkenHub", "Add this project pair to Engine Integrations. No project or Integration Package files are changed."));
     unlinkProjectsButton_->setToolTip(QCoreApplication::translate("HarkenHub", "Remove this project pair from Engine Integrations. Project files and the installed Integration Package are kept."));
 
     form->addSpacing(8);
-    const QString separatorStyle = QStringLiteral("background-color: #313848; border: none;");
+    const QString separatorStyle = QStringLiteral("background-color: palette(mid); border: none;");
     auto* separator = new QFrame(formPanel);
     separator->setObjectName(QStringLiteral("integrationAssociationSeparator"));
     separator->setFrameShape(QFrame::NoFrame);
@@ -866,7 +750,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     checkButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Check Current Integration Package Status"), formPanel);
     checkButton_->setObjectName(QStringLiteral("verifyIntegration"));
     verificationActions->addWidget(checkButton_);
-    restoreIntegrationButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Restore Current Version..."), formPanel);
+    restoreIntegrationButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "Restore Previous Version..."), formPanel);
     restoreIntegrationButton_->setObjectName(QStringLiteral("restoreIntegration"));
     verificationActions->addWidget(restoreIntegrationButton_);
     connect(restoreIntegrationButton_, &QPushButton::clicked, this, &EngineIntegrationsPage::runUnityRestoration);
@@ -884,7 +768,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     integrationIssueLabel_ = new QLabel(integrationIssueRow_);
     integrationIssueLabel_->setObjectName(QStringLiteral("integrationIssueHint"));
     integrationIssueLabel_->setWordWrap(true);
-    integrationIssueLabel_->setStyleSheet(QStringLiteral("color: #F0C36A;"));
+    HubTheme::setTone(integrationIssueLabel_, HubTheme::Tone::Warning);
     issueLayout->addWidget(integrationIssueLabel_, 1);
     integrationResolutionButton_ = new QPushButton(QCoreApplication::translate("HarkenHub", "View Resolution..."), integrationIssueRow_);
     integrationResolutionButton_->setObjectName(QStringLiteral("integrationResolution"));
@@ -1026,7 +910,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     dialogLayout->addWidget(integrationResultsTabs_, 1);
     integrationSafetyHint_ = new DialogTextView(integrationSelectionDialog_);
     integrationSafetyHint_->setObjectName(QStringLiteral("integrationEngineRunningHint"));
-    integrationSafetyHint_->setStyleSheet(QStringLiteral("color: #FF6B6B;"));
+    HubTheme::setTone(integrationSafetyHint_, HubTheme::Tone::Error);
     integrationSafetyHint_->hide();
     engineStatusTimer_ = new QTimer(this);
     engineStatusTimer_->setInterval(1000);
@@ -1178,6 +1062,20 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     highlightTimer_->setInterval(350);
     connect(highlightTimer_, &QTimer::timeout, this,
             &EngineIntegrationsPage::advanceHighlight);
+    HubTheme::observe(this, [this] {
+        const int tab = integrationResultsTabs_->currentIndex();
+        updateIntegrationCheckResults();
+        integrationResultsTabs_->setCurrentIndex(tab);
+        if (!operationRunning_) populateList();
+        for (int row = 0; row < resultSteps_.size(); ++row) {
+            const auto status = resultSteps_[row].status;
+            const auto color = HubTheme::color(status == ResultStatus::Failed ? HubTheme::Tone::Error
+                : status == ResultStatus::Warning ? HubTheme::Tone::Warning
+                : status == ResultStatus::Succeeded ? HubTheme::Tone::Success : HubTheme::Tone::Text);
+            for (int column = 0; column < stepsTable_->columnCount(); ++column)
+                if (auto* item = stepsTable_->item(row, column)) item->setForeground(color);
+        }
+    });
     refresh();
 }
 
@@ -1376,7 +1274,7 @@ void EngineIntegrationsPage::populateList()
             if (observation.integrationContentState != IntegrationContentState::NotChecked
                 && observation.integrationContentState != IntegrationContentState::OptionalFilesMissing
                 && observation.integrationContentState != IntegrationContentState::MatchesInstallation)
-                statusItem->setForeground(QColor(QStringLiteral("#E3B341")));
+                statusItem->setForeground(HubTheme::color(HubTheme::Tone::Warning));
             table_->setItem(row, kIntegrationStatusColumn, statusItem);
             const auto& sources = target->engineKind == EngineKind::Unity ? unitySources : unrealSources;
             QString versionText = observation.integrationVersion;
@@ -1397,7 +1295,7 @@ void EngineIntegrationsPage::populateList()
                 versionText += QLatin1Char('\n') + QCoreApplication::translate(
                     "HarkenHub", "Update available: %1").arg(newestVersion);
             auto* versionItem = new QTableWidgetItem(versionText);
-            if (newer) versionItem->setForeground(QColor(QStringLiteral("#00D9EF")));
+            if (newer) versionItem->setForeground(HubTheme::color(HubTheme::Tone::Accent));
             if (newer)
                 versionItem->setToolTip(QCoreApplication::translate(
                     "HarkenHub", "Latest local Integration Package version: %1").arg(newestVersion));
@@ -1892,10 +1790,11 @@ void EngineIntegrationsPage::browseIntegrationInstallPath()
     });
     if (target == targets.end()) return;
     const bool recover = hasPendingMigration(*target);
-    if (recover || integrationInstallPathEdit_->isReadOnly()) {
+    if (target->engineKind == EngineKind::Unreal && (recover || integrationInstallPathEdit_->isReadOnly())) {
         runIntegrationMigration(recover);
         return;
     }
+    if (integrationInstallPathEdit_->isReadOnly()) return;
     if (!integrationSelection_) return;
     const QString path = QFileDialog::getExistingDirectory(
         integrationSelectionDialog_, QCoreApplication::translate("HarkenHub", "Select %1 Installation Directory").arg(integrationPackageName(target->engineKind)),
@@ -1936,10 +1835,8 @@ bool EngineIntegrationsPage::acceptHarkenProject(
     }
     if (!projects_->contains(probe.canonicalPath)) {
         ProjectRecord record;
-        record.projectId = probe.projectId;
         record.canonicalPath = probe.canonicalPath;
         record.displayName = probe.displayName;
-        record.detectedSchema = probe.schemaVersion;
         if (!projects_->addProject(record)) {
             MessageDialog::warning(
                 this, QCoreApplication::translate("HarkenHub", "Manage Integration"),
@@ -2343,8 +2240,7 @@ void EngineIntegrationsPage::updatePrimaryAction()
     relationshipLabel_->setText(linked
         ? QCoreApplication::translate("HarkenHub", "Projects linked")
         : QCoreApplication::translate("HarkenHub", "Projects not linked"));
-    relationshipLabel_->setStyleSheet(QStringLiteral("font-size: 12px; font-weight: 400; color: %1;")
-        .arg(linked ? QStringLiteral("#69D391") : QStringLiteral("#FF6B6B")));
+    HubTheme::setTone(relationshipLabel_, linked ? HubTheme::Tone::Success : HubTheme::Tone::Error);
     linkProjectsButton_->setVisible(!linked);
     linkProjectsButton_->setEnabled(!operationRunning_ && !selecting && !versionResolutionPending_
         && !selectedHarkenProjectPath_.isEmpty() && !selectedEngineTargetId_.isEmpty());
@@ -2432,9 +2328,7 @@ EngineTargetObservation EngineIntegrationsPage::observeTarget(const EngineTarget
 
 UnityIntegrationResult EngineIntegrationsPage::runUnityTask(const UnityIntegrationRequest& request)
 {
-    const bool readOnly = request.verifyInstalledOnly || request.checkOnly
-        || (request.removeIntegration && !request.confirmRemoval)
-        || (request.migrateIntegration && !request.confirmMigration);
+    const bool readOnly = request.inspectOnly || request.checkOnly;
     const auto result = runIntegrationTask(this, [request]() { return HubUnityIntegrationService::run(request); },
         readOnly, integrationSelection_ ? integrationProgress_ : nullptr);
     if (result) return *result;
@@ -2468,22 +2362,15 @@ void EngineIntegrationsPage::updateRemovalButtonState(bool recoverLocation)
         });
     const bool unity = target != targets.end()
         && target->engineKind == EngineKind::Unity;
-    const bool pendingRestore = unity && VNX::UnityInstallation::hasPendingRestore(target->canonicalRoot);
-    restoreIntegrationButton_->setVisible(unity);
-    restoreIntegrationButton_->setText(pendingRestore
-        ? QCoreApplication::translate("HarkenHub", "Recover Restoration...")
-        : QCoreApplication::translate("HarkenHub", "Restore Current Version..."));
-    restoreIntegrationButton_->setEnabled(unity && !operationRunning_ && !integrationSelection_);
     integrationHeading_->setText(target == targets.end() ? QCoreApplication::translate("HarkenHub", "Integration")
         : QCoreApplication::translate("HarkenHub", "%1 Integration").arg(engineName(target->engineKind)));
     removeInstalledIntegrationButton_->setVisible(true);
-    removeInstalledIntegrationButton_->setText(unity && VNX::UnityInstallation::hasPendingRemoval(target->canonicalRoot)
-        ? QCoreApplication::translate("HarkenHub", "Resume Integration Package Removal...")
-        : QCoreApplication::translate("HarkenHub", "Uninstall Integration Package..."));
-    migrateIntegrationButton_->setVisible(true);
+    migrateIntegrationButton_->setVisible(!unity);
     const EngineTargetObservation observation = target == targets.end()
         ? EngineTargetObservation{} : operationRunning_ ? observeTarget(*target)
                                                        : requestTargetObservation(*target);
+    restoreIntegrationButton_->setVisible(unity && observation.canRestorePrevious);
+    restoreIntegrationButton_->setEnabled(!operationRunning_ && !integrationSelection_);
     if (target != targets.end() && recoverLocation && !targetInspections_[target->targetId].ready)
         targetInspections_[target->targetId].recoverLocation = true;
     integrationInstalled_ = target != targets.end() && observation.validTarget
@@ -2514,8 +2401,8 @@ void EngineIntegrationsPage::updateRemovalButtonState(bool recoverLocation)
         }
     }
     integrationIssueLabel_->setText(issue);
-    integrationIssueLabel_->setStyleSheet(observation.dependencyRestricted
-        ? QStringLiteral("color: #9AA4B5;") : QStringLiteral("color: #F0C36A;"));
+    HubTheme::setTone(integrationIssueLabel_, observation.dependencyRestricted
+        ? HubTheme::Tone::Muted : HubTheme::Tone::Warning);
     integrationResolutionButton_->setText(observation.dependencyRestricted
         ? QCoreApplication::translate("HarkenHub", "View Dependencies...")
         : QCoreApplication::translate("HarkenHub", "View Resolution..."));
@@ -2617,12 +2504,16 @@ void EngineIntegrationsPage::showIntegrationResolution()
         return supported ? QCoreApplication::translate("HarkenHub", "Available after safety checks")
                          : QCoreApplication::translate("HarkenHub", "Resolve the issue above first");
     };
-    sections << QCoreApplication::translate("HarkenHub", "Change Integration Package: %1\nMove Integration Package: %2\nUninstall Integration Package: %3")
-        .arg(availability(observation.canChangeIntegration),
-             hasPendingMigration(*target)
-                    ? QCoreApplication::translate("HarkenHub", "Use Recover Integration Package Migration first")
-                    : availability(observation.canMoveIntegration),
-             availability(observation.canRemoveIntegration));
+    if (target->engineKind == EngineKind::Unity)
+        sections << QCoreApplication::translate("HarkenHub", "Change Integration Package: %1\nUninstall Integration Package: %2")
+            .arg(availability(observation.canChangeIntegration), availability(observation.canRemoveIntegration));
+    else
+        sections << QCoreApplication::translate("HarkenHub", "Change Integration Package: %1\nMove Integration Package: %2\nUninstall Integration Package: %3")
+            .arg(availability(observation.canChangeIntegration),
+                 hasPendingMigration(*target)
+                        ? QCoreApplication::translate("HarkenHub", "Use Recover Integration Package Migration first")
+                        : availability(observation.canMoveIntegration),
+                 availability(observation.canRemoveIntegration));
     auto* details = new QPlainTextEdit(&dialog);
     details->setObjectName(QStringLiteral("integrationResolutionDetails"));
     details->setReadOnly(true);
@@ -2697,9 +2588,8 @@ void EngineIntegrationsPage::setOperationRunning(bool running)
 
 void EngineIntegrationsPage::setSummaryText(const QString& text, bool succeeded)
 {
-    const QString style = succeeded ? QStringLiteral("color: #69D391;") : QString();
-    summaryLabel_->setStyleSheet(style);
-    integrationSelectionSummary_->setStyleSheet(style);
+    HubTheme::setTone(summaryLabel_, succeeded ? HubTheme::Tone::Success : HubTheme::Tone::Text);
+    HubTheme::setTone(integrationSelectionSummary_, succeeded ? HubTheme::Tone::Success : HubTheme::Tone::Text);
     showingIdleSummary_ = text == QCoreApplication::translate(
         "HarkenHub", "No integration check has run.");
     if (showingIdleSummary_)
@@ -2723,8 +2613,7 @@ void EngineIntegrationsPage::updateIdleSummary()
         hints << installedIntegrationLabel_->toolTip();
     EngineTargetRecord target;
     target.canonicalRoot = engineProjectEdit_->text();
-    if (VNX::UnityInstallation::hasPendingMigration(target.canonicalRoot)
-        || ProjectIntegrationExecutor::hasPendingUnrealMigration(target))
+    if (ProjectIntegrationExecutor::hasPendingUnrealMigration(target))
         hints << QCoreApplication::translate("HarkenHub", "The Integration Package migration is unfinished. Choose \"Recover...\" before continuing.");
     summaryLabel_->setText(hints.isEmpty()
         ? QCoreApplication::translate("HarkenHub", "No integration check has run.")
@@ -2736,6 +2625,8 @@ void EngineIntegrationsPage::clearResults()
 {
     summaryLabel_->setStyleSheet(QString());
     integrationSelectionSummary_->setStyleSheet(QString());
+    HubTheme::setTone(summaryLabel_, HubTheme::Tone::Text);
+    HubTheme::setTone(integrationSelectionSummary_, HubTheme::Tone::Text);
     reviewedUnrealPlan_.reset();
     reviewedIntegrationHash_.clear();
     integrationReportPath_.clear();
@@ -2770,105 +2661,26 @@ void EngineIntegrationsPage::runUnityRestoration()
     clearResults();
     UnityIntegrationRequest request;
     request.unityProjectPath = target.canonicalRoot;
-    request.integrationInstallPath = integrationInstallPathEdit_->text().trimmed();
-    request.restoreIntegration = true;
-    request.recoverRestore = VNX::UnityInstallation::hasPendingRestore(target.canonicalRoot);
+    request.restorePrevious = true;
     request.checkOnly = true;
-    OfficialUnitySourceResult source;
-    if (!request.recoverRestore) {
-        QString recordedSource;
-        for (const auto& record : integrations_->list()) {
-            if (record.engineTargetId == target.targetId) {
-                recordedSource = record.integrationSourcePath;
-                break;
-            }
-        }
-        const auto sources = runIntegrationTask(this, [target, recordedSource]() {
-            OfficialUnitySourceResult failed;
-            const auto discovery = VNX::UnityInstallation::discover(target.canonicalRoot);
-            if (!discovery.errors.isEmpty() || discovery.installations.size() != 1) {
-                failed.error = QStringLiteral("A single managed Integration Package installation must be identified before restoration.");
-                return failed;
-            }
-            const QString installed = discovery.installations.front().path;
-            QString pathError;
-            const QString statePath = QDir(installed).filePath(QStringLiteral(".harken-integration-state.json"));
-            QFile file(statePath);
-            if (!VNX::UnityInstallation::validatePath(statePath, &pathError)
-                || !file.open(QIODevice::ReadOnly) || file.size() > PackageInventory::maximumBytes) {
-                failed.error = QStringLiteral("The installation record could not be read safely. Restore the record from backup before continuing.");
-                return failed;
-            }
-            const auto receipt = QJsonDocument::fromJson(file.readAll()).object();
-            OfficialUnitySourceRequest sourceRequest;
-            sourceRequest.buildId = receipt.value(QStringLiteral("source_release")).toObject().value(QStringLiteral("buildId")).toString();
-            sourceRequest.packageVersion = receipt.value(QStringLiteral("package_version")).toString();
-            for (const auto& studio : availableStudioVersions()) {
-                const QString candidate = studioIntegrationPath(studio, EngineKind::Unity);
-                if ((!sourceRequest.buildId.isEmpty() && studio.launchBuildId() == sourceRequest.buildId)
-                    || (sourceRequest.buildId.isEmpty() && !recordedSource.isEmpty() && samePath(candidate, recordedSource))) {
-                    sourceRequest.buildId = studio.launchBuildId();
-                    sourceRequest.localSource = candidate;
-                    break;
-                }
-            }
-            if (sourceRequest.buildId.isEmpty()) {
-                failed.error = QStringLiteral("The original release build could not be identified. Select the original release through Change Integration Package.");
-                return failed;
-            }
-            return OfficialUnitySource::prepare(sourceRequest, TrustAnchors::manifestPublicKey());
-        }, true);
-        if (!sources) { scanStopped(); return; }
-        source = *sources;
-        if (!source.ok) {
-            ResultStep failure;
-            failure.id = QStringLiteral("official_source");
-            failure.title = QCoreApplication::translate("HarkenHub", "Verify official Integration Package source");
-            failure.status = ResultStatus::Failed;
-            failure.cause = HubUnityIntegrationService::localizeText(source.error);
-            showResults({failure}, QCoreApplication::translate("HarkenHub", "The original official package could not be verified. No project files were changed."));
-            return;
-        }
-        request.integrationSourcePath = source.sourcePath;
-        request.officialRelease = QJsonObject{{QStringLiteral("buildId"), source.release.buildId},
-            {QStringLiteral("version"), source.release.version}, {QStringLiteral("channel"), source.release.channel},
-            {QStringLiteral("platform"), source.release.platform}, {QStringLiteral("architecture"), source.release.architecture},
-            {QStringLiteral("packageSha256"), source.release.sha256Hex},
-            {QStringLiteral("packageManifestSha256"), source.inventoryHash}};
-        const QString prefix = source.inventory.unityRoot + QLatin1Char('/');
-        for (auto it = source.inventory.files.cbegin(); it != source.inventory.files.cend(); ++it)
-            if (it.key().startsWith(prefix)) request.officialFileHashes.insert(it.key().mid(prefix.size()), it->sha256.toLatin1());
-    }
     auto result = runUnityTask(request);
     if (result.cancelled) return;
-    showResults(unityResultSteps(result, true), QCoreApplication::translate("HarkenHub", "Review the restoration plan before continuing."), QStringLiteral("restore"));
-    if (!result.success || result.targetAlreadyCurrent) return;
-    request.integrationInstallPath = result.integrationInstallPath;
-    request.restorationBackupPath = result.restorationBackupPath;
-    request.approvedPlanHash = result.planHash;
-    if (!result.conflictingFiles.isEmpty()) {
-        if (!confirmIntegrationAction(this,
-                QCoreApplication::translate("HarkenHub", "Conflicting Project Files"),
-                QCoreApplication::translate("HarkenHub", "These files are outside the installation record but occupy official package paths. Back them up and replace them during this restoration?"),
-                result.conflictingFiles.join(QLatin1Char('\n')),
-                QCoreApplication::translate("HarkenHub", "Back Up and Replace"), QDialogButtonBox::DestructiveRole)) return;
-        request.confirmUnownedConflicts = true;
-    }
-    const QString title = request.recoverRestore
-        ? QCoreApplication::translate("HarkenHub", "Recover Restoration")
-        : QCoreApplication::translate("HarkenHub", "Restore Current Version");
-    const QString summary = request.recoverRestore
-        ? QCoreApplication::translate("HarkenHub", "Reconcile the interrupted restoration using its verified backup. Existing files and backup folders will be preserved.")
-        : QCoreApplication::translate("HarkenHub", "Restore files from the official package for the installed version. Local changes to these files, including managed Unity metadata, will be replaced. Custom files outside these paths will be preserved. Review any conflicting files listed below.\n\nOfficial build: %1\nBackup: %2\n\nClose Unity and complete any required P4 checkout before continuing.")
-            .arg(source.release.buildId, QDir::toNativeSeparators(result.restorationBackupPath));
-    if (!confirmIntegrationAction(this, title, summary, confirmationDetails(), title, QDialogButtonBox::DestructiveRole)) return;
+    showResults(unityResultSteps(result, true), QCoreApplication::translate("HarkenHub", "Review the restoration before continuing."),
+                QStringLiteral("restore_previous"));
+    if (!result.success) return;
+    const QString title = QCoreApplication::translate("HarkenHub", "Restore Previous Version");
+    if (!confirmIntegrationAction(this, title,
+            QCoreApplication::translate("HarkenHub", "The Integration Package directory will be replaced by the version that was installed before the unfinished change.\n\nVersion: %1\nLocation: %2\n\nClose Unity before continuing.")
+                .arg(result.installedVersion, QDir::toNativeSeparators(result.integrationInstallPath)),
+            confirmationDetails(), title, QDialogButtonBox::DestructiveRole)) return;
     request.checkOnly = false;
-    request.confirmTargetChanges = true;
     result = runUnityTask(request);
     if (result.cancelled) return;
     showResults(unityResultSteps(result), result.success
-        ? QCoreApplication::translate("HarkenHub", "Restoration completed. The safety backup has been retained.")
-        : QCoreApplication::translate("HarkenHub", "Restoration did not complete. Review the results and preserve the listed backup folders."), QStringLiteral("restore"), result.success);
+        ? QCoreApplication::translate("HarkenHub", "The previous Integration Package version was restored.")
+        : QCoreApplication::translate("HarkenHub", "The previous Integration Package version could not be restored. Select the first failed step for details."),
+        QStringLiteral("restore_previous"), result.success);
+    updateRemovalButtonState();
     emit integrationStatusChanged(target.targetId);
 }
 
@@ -2889,7 +2701,7 @@ void EngineIntegrationsPage::runCheck()
             if (selected->engineKind == EngineKind::Unity) {
                 UnityIntegrationRequest request;
                 request.unityProjectPath = selected->canonicalRoot;
-                request.verifyInstalledOnly = true;
+                request.inspectOnly = true;
                 const auto result = runUnityTask(request);
                 if (result.cancelled) return;
                 success = result.success;
@@ -2928,10 +2740,13 @@ void EngineIntegrationsPage::runCheck()
                     break;
                 }
             }
+            const bool unity = selected->engineKind == EngineKind::Unity;
             showResults(steps, success
-                ? QCoreApplication::translate("HarkenHub", "Installed Integration Package verification passed. No files were changed.")
-                : QCoreApplication::translate("HarkenHub", "Installed Integration Package verification did not pass. Review the results; no files were changed."),
-                QStringLiteral("verify"), success);
+                ? (unity ? QCoreApplication::translate("HarkenHub", "The installed Integration Package was found. No files were changed.")
+                         : QCoreApplication::translate("HarkenHub", "Installed Integration Package verification passed. No files were changed."))
+                : (unity ? QCoreApplication::translate("HarkenHub", "The installed Integration Package could not be identified. Review the results; no files were changed.")
+                         : QCoreApplication::translate("HarkenHub", "Installed Integration Package verification did not pass. Review the results; no files were changed.")),
+                unity ? QStringLiteral("inspect_installed_sdk") : QStringLiteral("verify"), success);
             return;
         }
         setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
@@ -2952,7 +2767,7 @@ void EngineIntegrationsPage::runCheck()
 void EngineIntegrationsPage::runIntegration()
 {
     if (operationRunning_ || !integrationSelection_) return;
-    if (integrationPhase_ != IntegrationPhase::Reviewing || reviewedIntegrationHash_.isEmpty()) {
+    if (integrationPhase_ != IntegrationPhase::Reviewing) {
         runCheck();
         return;
     }
@@ -2964,11 +2779,13 @@ void EngineIntegrationsPage::runIntegration()
     setOperationRunning(true);
     const auto finish = qScopeGuard([this]() { setOperationRunning(false); });
     if (!runCheckForSelection(target, integrationPath)) return;
-    if (integrationComparison_ == IntegrationComparison::Current) return;
-    if (approved != reviewedIntegrationHash_) {
-        setSummaryText(QCoreApplication::translate("HarkenHub",
-            "Integration Package files changed. Review the refreshed results and confirm again. No Integration Package files were changed."));
-        return;
+    if (target.engineKind == EngineKind::Unreal) {
+        if (integrationComparison_ == IntegrationComparison::Current) return;
+        if (approved != reviewedIntegrationHash_) {
+            setSummaryText(QCoreApplication::translate("HarkenHub",
+                "Integration Package files changed. Review the refreshed results and confirm again. No Integration Package files were changed."));
+            return;
+        }
     }
     const QString conflict = conflictingIntegration(project.canonicalPath, target.targetId);
     if (!conflict.isEmpty()) {
@@ -3002,8 +2819,9 @@ bool EngineIntegrationsPage::runCheckForSelection(
     updatePrimaryAction();
     const bool success = target.engineKind == EngineKind::Unity
         ? runUnity(target, integrationPath, true) : runUnreal(target, integrationPath, true);
-    integrationPhase_ = success && integrationComparison_ == IntegrationComparison::Different && !reviewedIntegrationHash_.isEmpty()
-        ? IntegrationPhase::Reviewing : IntegrationPhase::Choosing;
+    const bool reviewable = target.engineKind == EngineKind::Unity
+        || (integrationComparison_ == IntegrationComparison::Different && !reviewedIntegrationHash_.isEmpty());
+    integrationPhase_ = success && reviewable ? IntegrationPhase::Reviewing : IntegrationPhase::Choosing;
     if (success) {
         integrationPreviousVersion_ = integrationInstalled_ ? installedIntegrationVersion_
             : QCoreApplication::translate("HarkenHub", "Not installed");
@@ -3042,23 +2860,19 @@ EngineIntegrationsPage::unityResultSteps(
                 status = ResultStatus::Skipped;
                 break;
         }
-        const bool preflight = checkOnly || result.requiresConfirmation;
-        if (preflight && status == ResultStatus::Succeeded)
+        if (checkOnly && status == ResultStatus::Succeeded)
             status = ResultStatus::CheckPassed;
-        if (preflight && status == ResultStatus::Skipped)
+        if (checkOnly && status == ResultStatus::Skipped)
             status = ResultStatus::NotRun;
-        if (result.requiresConfirmation
-            && (step.id == QStringLiteral("remove_integration")
-                || step.id == QStringLiteral("migration_review")))
-            status = ResultStatus::AwaitingConfirmation;
-        if (checkOnly && result.success && !result.targetAlreadyCurrent
-            && step.id == QStringLiteral("install_sdk"))
+        if (checkOnly && result.success
+            && (step.id == QStringLiteral("install_sdk") || step.id == QStringLiteral("remove_integration")
+                || step.id == QStringLiteral("restore_previous")))
             status = ResultStatus::AwaitingConfirmation;
         QStringList details;
         details.reserve(step.details.size());
         for (const QString& detail : step.details)
             details.push_back(localizeIntegrationText(detail));
-        const bool checkReport = preflight && (step.id == QStringLiteral("report")
+        const bool checkReport = checkOnly && (step.id == QStringLiteral("report")
             || step.id == QStringLiteral("removal_report"));
         steps.push_back({step.id, checkReport
                             ? QCoreApplication::translate("HarkenHub", "Write check report")
@@ -3069,18 +2883,6 @@ EngineIntegrationsPage::unityResultSteps(
                          localizeIntegrationText(step.cause),
                          localizeIntegrationText(step.remediation), details,
                          step.artifacts, step.elapsedMs});
-        if (step.id == QStringLiteral("compare_sdk")
-            && (step.status == UnityIntegrationStepStatus::Succeeded
-                || step.status == UnityIntegrationStepStatus::Warning)) {
-            auto& comparison = steps.back();
-            comparison.hasFileComparison = true;
-            comparison.modifiedFiles = result.modifiedFiles;
-            comparison.missingFiles = result.missingFiles;
-            comparison.attentionRequired = !result.modifiedFiles.isEmpty() || !result.missingFiles.isEmpty()
-                || (result.targetAlreadyCurrent && step.status == UnityIntegrationStepStatus::Warning);
-            for (const auto& change : result.fileChanges)
-                comparison.fileChanges.push_back({change.path, change.action});
-        }
     }
     return steps;
 }
@@ -3116,15 +2918,12 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
         return target.targetId == selectedEngineTargetId_
             && samePath(targetInputPath(target), engineProjectEdit_->text().trimmed());
     });
-    if (selected == targets.end() || operationRunning_ || integrationSelection_) return;
+    if (selected == targets.end() || selected->engineKind != EngineKind::Unreal || operationRunning_ || integrationSelection_) return;
     const EngineTargetRecord target = *selected;
     setOperationRunning(true);
     const auto finish = qScopeGuard([this]() { setOperationRunning(false); });
-    UnityIntegrationRequest request;
-    request.unityProjectPath = target.canonicalRoot;
-    request.integrationInstallPath = integrationInstallPathEdit_->text().trimmed();
-    request.migrateIntegration = !recover;
-    request.recoverMigration = recover;
+    QString destination;
+    bool confirmed = false;
     struct MigrationResult {
         bool cancelled = false;
         bool requiresConfirmation = false;
@@ -3137,26 +2936,17 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
     IntegrationMigrationPlan unrealPlan;
     const auto execute = [&]() -> MigrationResult {
         clearResults();
-        setSummaryText(request.confirmMigration
+        setSummaryText(confirmed
             ? QCoreApplication::translate("HarkenHub", "The approved Integration Package migration is running...")
             : QCoreApplication::translate("HarkenHub", "Checking Integration Package migration safety..."));
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        if (target.engineKind == EngineKind::Unity) {
-            const auto result = runUnityTask(request);
-            if (!result.cancelled)
-                showResults(unityResultSteps(result, !request.confirmMigration), summaryLabel_->text());
-            return {result.cancelled, result.requiresConfirmation,
-                    result.integrationMigrated || result.migrationRecovered,
-                    result.integrationInstallPath, result.migrationTargetPath,
-                    result.migrationBackupPath, result.migrationPlanHash};
-        }
         ResultStep step;
         step.id = QStringLiteral("migrate_sdk");
         step.title = QCoreApplication::translate("HarkenHub", "Review Integration Package migration");
         MigrationResult result;
-        if (!request.confirmMigration) {
+        if (!confirmed) {
             const auto plan = runIntegrationTask(this, [&]() {
-                return ProjectIntegrationExecutor::planUnrealMigration(target, request.migrationTargetPath, recover);
+                return ProjectIntegrationExecutor::planUnrealMigration(target, destination, recover);
             }, true);
             if (!plan) { scanStopped(); result.cancelled = true; return result; }
             unrealPlan = *plan;
@@ -3187,17 +2977,13 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
     };
     std::optional<MigrationResult> reviewedResult;
     if (!recover) {
-        request.migrationBackupPath = QDir(userDataDir()).filePath(
-            QStringLiteral("UnityIntegration/Backups/migration-%1-%2")
-                .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss")),
-                     QUuid::createUuid().toString(QUuid::WithoutBraces)));
         QDialog dialog(this);
         dialog.setWindowTitle(QCoreApplication::translate("HarkenHub", "Migrate Integration Package"));
         configureDialog(&dialog, QSize(640, 400), QSize(480, 300));
         auto* layout = new QVBoxLayout(&dialog);
         layout->addWidget(new QLabel(QCoreApplication::translate("HarkenHub", "New Integration Package installation location"), &dialog));
         auto* row = new QHBoxLayout();
-        auto* path = new QLineEdit(request.integrationInstallPath, &dialog);
+        auto* path = new QLineEdit(integrationInstallPathEdit_->text().trimmed(), &dialog);
         path->setObjectName(QStringLiteral("integrationMigrationDestination"));
         auto* browse = new QPushButton(QCoreApplication::translate("HarkenHub", "Browse..."), &dialog);
         row->addWidget(path, 1);
@@ -3243,7 +3029,7 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
             buttons->setEnabled(false);
             safetyStatus->setText(QCoreApplication::translate("HarkenHub", "Checking Integration Package migration safety..."));
             safetyDetails->clear();
-            request.migrationTargetPath = path->text().trimmed();
+            destination = path->text().trimmed();
             reviewedResult = execute();
             safetyCheckRun = true;
             const bool passed = reviewedResult->requiresConfirmation
@@ -3274,13 +3060,9 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
     auto result = reviewedResult ? *reviewedResult : execute();
     if (result.cancelled) return;
     if (result.requiresConfirmation) {
-        request.migrationBackupPath = result.backupPath;
-        request.migrationPlanHash = result.planHash;
         const QString description = recover
             ? QCoreApplication::translate("HarkenHub", "Restore the Integration Package to its previous location using the migration record. Project relationships will be kept.\n\nPrevious location:\n%1\n\nMigration destination:\n%2\n\nBackup:\n%3")
-            : target.engineKind == EngineKind::Unity
-                ? QCoreApplication::translate("HarkenHub", "Move the installed Integration Package with all existing files, modifications and Unity metadata. Project relationships will be kept. A verified backup will be created first.\n\nCurrent location:\n%1\n\nNew location:\n%2\n\nBackup:\n%3\n\nClose Unity before continuing. Any paths hard-coded in your project must be updated separately.")
-                : QCoreApplication::translate("HarkenHub", "Move the installed Integration Package with all existing files and modifications. Project relationships will be kept. A verified backup will be created first.\n\nCurrent location:\n%1\n\nNew location:\n%2\n\nBackup:\n%3\n\nClose Unreal Editor before continuing. Any paths hard-coded in your project must be updated separately.");
+            : QCoreApplication::translate("HarkenHub", "Move the installed Integration Package with all existing files and modifications. Project relationships will be kept. A verified backup will be created first.\n\nCurrent location:\n%1\n\nNew location:\n%2\n\nBackup:\n%3\n\nClose Unreal Editor before continuing. Any paths hard-coded in your project must be updated separately.");
         if (!confirmIntegrationAction(this,
                 recover ? QCoreApplication::translate("HarkenHub", "Recover Integration Package Migration")
                         : QCoreApplication::translate("HarkenHub", "Migrate Integration Package"),
@@ -3293,7 +3075,7 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
             cancelPendingOperation();
             return;
         }
-        request.confirmMigration = true;
+        confirmed = true;
         result = execute();
     }
     if (result.completed) {
@@ -3303,9 +3085,7 @@ void EngineIntegrationsPage::runIntegrationMigration(bool recover)
         } else {
             setSummaryText(recover
                 ? QCoreApplication::translate("HarkenHub", "The Integration Package was restored to its previous location. Project relationships were kept.")
-                : target.engineKind == EngineKind::Unity
-                    ? QCoreApplication::translate("HarkenHub", "Integration Package migration completed. All installed files, Unity GUIDs and project relationships were kept.")
-                    : QCoreApplication::translate("HarkenHub", "Integration Package migration completed. All installed files and project relationships were kept."));
+                : QCoreApplication::translate("HarkenHub", "Integration Package migration completed. All installed files and project relationships were kept."));
         }
     } else {
         setSummaryText(hasPendingMigration(target)
@@ -3398,76 +3178,49 @@ void EngineIntegrationsPage::runUnityRemoval()
     request.unityProjectPath = target.canonicalRoot;
     request.integrationInstallPath = integrationInstallPathEdit_->text().trimmed();
     request.removeIntegration = true;
+    request.checkOnly = true;
 
     auto execute = [this, &request]() {
         clearResults();
-        setSummaryText(request.confirmRemoval
-            ? QCoreApplication::translate("HarkenHub", "Removing the approved Unity Integration Package installation...")
-            : QCoreApplication::translate("HarkenHub", "Reviewing the installed Unity Integration Package and safety backup plan..."));
+        setSummaryText(request.checkOnly
+            ? QCoreApplication::translate("HarkenHub", "Reviewing the installed Unity Integration Package...")
+            : QCoreApplication::translate("HarkenHub", "Removing the Unity Integration Package..."));
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        const UnityIntegrationResult result =
-            runUnityTask(request);
+        const UnityIntegrationResult result = runUnityTask(request);
         if (result.cancelled) return result;
-        showResults(unityResultSteps(result, !request.confirmRemoval), summaryLabel_->text(),
-                    request.confirmRemoval ? QStringLiteral("remove_integration")
-                                           : QStringLiteral("inspect_installation"));
+        showResults(unityResultSteps(result, request.checkOnly), summaryLabel_->text(),
+                    request.checkOnly ? QStringLiteral("inspect_installation")
+                                      : QStringLiteral("remove_integration"));
         return result;
     };
 
     UnityIntegrationResult result = execute();
     if (result.cancelled) return;
-    if (result.requiresConfirmation) {
-        request.removalBackupPath = result.removalBackupPath;
-        request.approvedPlanHash = result.planHash;
-        if (confirmIntegrationAction(
+    if (result.success) {
+        if (!confirmIntegrationAction(
                 this,
-                QCoreApplication::translate(
-                    "HarkenHub", "Uninstall Unity Integration Package"),
+                QCoreApplication::translate("HarkenHub", "Uninstall Unity Integration Package"),
                 QCoreApplication::translate(
                     "HarkenHub",
-                    "A verified backup will be created before Harken-managed Unity Integration Package and runtime files are removed. Project-specific files and the project relationship will be kept.\n\nBackup folder:\n%1\n\nClose Unity before continuing.")
-                    .arg(QDir::toNativeSeparators(result.removalBackupPath)),
+                    "The Integration Package directory and everything inside it will be removed:\n%1\n\nIntegration settings outside this directory and the project relationship are kept. Close Unity before continuing.")
+                    .arg(QDir::toNativeSeparators(result.integrationInstallPath)),
                 confirmationDetails(),
-                QCoreApplication::translate(
-                    "HarkenHub", "Uninstall Integration Package"),
+                QCoreApplication::translate("HarkenHub", "Uninstall Integration Package"),
                 QDialogButtonBox::DestructiveRole)) {
-            request.confirmRemoval = true;
-            result = execute();
-        } else {
             cancelPendingOperation();
             return;
         }
+        request.checkOnly = false;
+        result = execute();
     }
 
     if (result.integrationRemoved) {
-        if (!result.success) {
-            setSummaryText(QCoreApplication::translate(
-                "HarkenHub",
-                "The Unity Integration Package was backed up and removed, but the removal report could not be completed. Backup: %1")
-                .arg(QDir::toNativeSeparators(result.removalBackupPath)));
-        } else if (result.hasWarnings) {
-            setSummaryText(QCoreApplication::translate(
-                "HarkenHub",
-                "The Unity Integration Package and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1")
-                .arg(QDir::toNativeSeparators(result.removalBackupPath)));
-        } else {
-            setSummaryText(QCoreApplication::translate(
-                "HarkenHub",
-                "The Unity Integration Package and runtimes were backed up and removed. %1 project-specific file(s) were preserved. Backup: %2")
-                .arg(result.targetOnlyFilesPreserved)
-                .arg(QDir::toNativeSeparators(result.removalBackupPath)));
-        }
-    } else if (result.success && !result.integrationFound) {
-        setSummaryText(QCoreApplication::translate(
-            "HarkenHub", "No Harken Unity Integration Package is installed in this project."));
-    } else if (VNX::UnityInstallation::hasPendingRemoval(target.canonicalRoot)) {
+        setSummaryText(result.hasWarnings
+            ? QCoreApplication::translate("HarkenHub", "The Unity Integration Package was removed. Review is recommended for the highlighted steps.")
+            : QCoreApplication::translate("HarkenHub", "The Unity Integration Package was removed."));
+    } else if (result.previousVersionAvailable) {
         setSummaryText(QCoreApplication::translate("HarkenHub",
-            "Integration Package removal is unfinished. The verified backup and removal record have been kept."));
-    } else if (result.removalBackupCreated) {
-        setSummaryText(QCoreApplication::translate(
-            "HarkenHub",
-            "The safety backup was created, but removal stopped before changing project files. Backup: %1")
-            .arg(QDir::toNativeSeparators(result.removalBackupPath)));
+            "Unity Integration Package removal did not finish. Use Restore Previous Version to put the removed version back."));
     } else {
         setSummaryText(QCoreApplication::translate(
             "HarkenHub",
@@ -3483,7 +3236,6 @@ bool EngineIntegrationsPage::runUnity(
     const EngineTargetRecord& target, const QString& integrationPath, bool checkOnly)
 {
     const bool updating = integrationInstalled_;
-    const QByteArray approved = reviewedIntegrationHash_;
     clearResults();
     setSummaryText(checkOnly
         ? QCoreApplication::translate("HarkenHub", "Checking only. No Integration Package files will be changed...")
@@ -3492,21 +3244,14 @@ bool EngineIntegrationsPage::runUnity(
     UnityIntegrationRequest request;
     request.unityProjectPath = target.canonicalRoot;
     request.integrationSourcePath = integrationPath;
-    request.preserveUnownedTarget = true;
     request.integrationInstallPath = integrationInstallPathEdit_->text().trimmed();
     request.checkOnly = checkOnly;
-    request.confirmTargetChanges = !checkOnly;
-    if (!checkOnly) request.approvedPlanHash = approved;
-    const UnityIntegrationResult result =
-        runUnityTask(request);
+    const UnityIntegrationResult result = runUnityTask(request);
     if (result.cancelled) return false;
-    if (checkOnly && result.success) reviewedIntegrationHash_ = result.planHash;
-    if (!checkOnly) integrationReviewInvalidated_ = result.requiresConfirmation;
     integrationReportPath_ = QFileInfo::exists(result.textReportPath) ? result.textReportPath : QString();
     const QVector<ResultStep> steps = unityResultSteps(result, checkOnly);
     integrationComparison_ = !result.success ? IntegrationComparison::Blocked
-        : (checkOnly ? result.targetAlreadyCurrent : result.targetCurrent)
-            ? IntegrationComparison::Current : IntegrationComparison::Different;
+        : checkOnly ? IntegrationComparison::Different : IntegrationComparison::Current;
 
     QString summary;
     if (checkOnly) {
@@ -3514,16 +3259,14 @@ bool EngineIntegrationsPage::runUnity(
             summary = QCoreApplication::translate("HarkenHub", "Integration Package check failed. Select the first failed step for details.");
         else if (!result.targetInstalled)
             summary = QCoreApplication::translate("HarkenHub", "Check completed. The selected Integration Package is valid and is not installed in this Unity project.");
-        else if (result.changesDetected)
-            summary = QCoreApplication::translate("HarkenHub", "Check completed. Differences were found; no Integration Package files were changed.");
-        else if (result.hasWarnings)
-            summary = QCoreApplication::translate("HarkenHub", "Check completed. Review is recommended for the highlighted steps.");
+        else if (result.targetCurrent)
+            summary = QCoreApplication::translate("HarkenHub", "Check completed. The selected version is already installed; installing again replaces the installation directory.");
         else
-            summary = QCoreApplication::translate("HarkenHub", "Check completed. The installed Unity Integration Package matches the selected source.");
+            summary = QCoreApplication::translate("HarkenHub", "Check completed. The installed version will be replaced; no Integration Package files were changed.");
     } else if (!result.success) {
-        summary = QCoreApplication::translate("HarkenHub", "Integration Package installation failed. Select the first failed step for details.");
-    } else if (result.targetAlreadyCurrent) {
-        summary = QCoreApplication::translate("HarkenHub", "The Unity Integration Package is already current and passed verification.");
+        summary = result.previousVersionAvailable
+            ? QCoreApplication::translate("HarkenHub", "Integration Package installation failed. Retry, or use Restore Previous Version to put the previous version back.")
+            : QCoreApplication::translate("HarkenHub", "Integration Package installation failed. Select the first failed step for details.");
     } else if (result.hasWarnings) {
         summary = QCoreApplication::translate("HarkenHub", "Integration Package installation completed. Review is recommended for the highlighted steps.");
     } else {
@@ -3719,11 +3462,11 @@ void EngineIntegrationsPage::showResults(
         for (int column = 0; column < values.size(); ++column) {
             auto* item = new QTableWidgetItem(values[column]);
             if (step.status == ResultStatus::Failed)
-                item->setForeground(QColor(QStringLiteral("#FF6B6B")));
+                item->setForeground(HubTheme::color(HubTheme::Tone::Error));
             else if (step.status == ResultStatus::Warning)
-                item->setForeground(QColor(QStringLiteral("#F0C36A")));
+                item->setForeground(HubTheme::color(HubTheme::Tone::Warning));
             else if (step.status == ResultStatus::Succeeded)
-                item->setForeground(QColor(QStringLiteral("#69D391")));
+                item->setForeground(HubTheme::color(HubTheme::Tone::Success));
             stepsTable_->setItem(row, column, item);
         }
         if (step.status == ResultStatus::Failed
@@ -3782,7 +3525,7 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
     });
     QString log;
     for (const auto* step : logSteps) log += formatStepHtml(*step);
-    integrationSelectionDetails_->setHtml(log);
+    integrationSelectionDetails_->setHtml(HubTheme::html(log));
     integrationResultsTabs_->setTabText(1, integrationPhase_ == IntegrationPhase::Applying
         ? QCoreApplication::translate("HarkenHub", "Results and Logs")
         : warnings > 0 ? QCoreApplication::translate("HarkenHub", "Check Log (review recommended: %1)").arg(warnings)
@@ -3811,7 +3554,7 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         const QString title = QCoreApplication::translate("HarkenHub", label).arg(affected.size());
         summary << QStringLiteral("<span style='color:#F0C36A'><b>%1</b></span>").arg(title.toHtmlEscaped());
         auto* section = new QTreeWidgetItem(integrationDiffTree_, {title});
-        section->setForeground(0, QColor(QStringLiteral("#F0C36A")));
+        section->setForeground(0, HubTheme::color(HubTheme::Tone::Warning));
         for (const auto& path : affected) new QTreeWidgetItem(section, {path});
         section->setExpanded(true);
     };
@@ -3855,7 +3598,9 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         QFont font = section->font(0);
         font.setBold(true);
         section->setFont(0, font);
-        section->setForeground(0, QColor(QLatin1String(group.color)));
+        section->setForeground(0, HubTheme::color(action == QStringLiteral("add") ? HubTheme::Tone::Success
+            : action == QStringLiteral("replace") ? HubTheme::Tone::Info
+            : action == QStringLiteral("remove") ? HubTheme::Tone::Error : HubTheme::Tone::Muted));
         for (const auto& path : paths) {
             auto* item = new QTreeWidgetItem(section, {path});
             item->setToolTip(0, path);
@@ -3873,7 +3618,7 @@ void EngineIntegrationsPage::updateIntegrationCheckResults()
         summary << QStringLiteral("<a href='log' style='color:#F0C36A'>%1</a>").arg(
             QCoreApplication::translate("HarkenHub", "Review recommended for %1 item(s). View check log.")
                 .arg(warnings).toHtmlEscaped());
-    integrationDiffSummary_->setText(summary.join(QStringLiteral("<br>")));
+    integrationDiffSummary_->setText(HubTheme::html(summary.join(QStringLiteral("<br>"))));
 }
 
 QString EngineIntegrationsPage::formatStepHtml(const ResultStep& step) const

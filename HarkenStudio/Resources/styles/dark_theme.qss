@@ -257,7 +257,7 @@ QToolButton[tableGroupChevron="true"] {
 }
 
 QToolButton:hover {
-    background-color: @bgHover@;
+    background-overlay: @hoverOverlay@;
     border-color: @borderSecondary@;
 }
 
@@ -304,6 +304,17 @@ QToolBar#platformBar QToolButton {
     @bodyFont@
     qproperty-iconSize: @iconExtent@px @iconExtent@px;
 }
+QToolBar#platformBar QToolButton[shellRole="toolBarAction"],
+QToolBar#platformBar QToolButton#platformBarAll,
+QWidget#playbackControls QToolButton,
+QComboBox[fieldRole="toolBar"] {
+    min-height: @toolBarControlHeight@px;
+    max-height: @toolBarControlHeight@px;
+}
+QToolBar#platformBar QToolButton[shellRole="toolBarAction"] {
+    min-width: @toolBarControlHeight@px;
+    max-width: @toolBarControlHeight@px;
+}
 QToolBar#platformBar QToolButton[segmentedControl="true"] {
     background: transparent;
     color: @textPrimary@;
@@ -315,7 +326,7 @@ QToolBar#platformBar QToolButton#platformBarAll {
     padding: 0px @textPadding@px;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:hover:enabled {
-    background: @bgHover@;
+    background-overlay: @hoverOverlay@;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:checked:enabled {
     background: @accent@;
@@ -348,6 +359,23 @@ QToolBar#platformBar QToolButton#platformBarAll:checked:enabled {
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:hover:enabled {
     background: @successHover@;
+}
+QWidget#playbackControls {
+    background-color: @bgTertiary@;
+    border-radius: @radiusMedium@px;
+}
+QWidget#playbackControls QToolButton {
+    border-radius: 0;
+}
+QWidget#playbackControls QToolButton#playBtn[layoutDirection="LeftToRight"],
+QWidget#playbackControls QToolButton#resetBtn[layoutDirection="RightToLeft"] {
+    border-top-left-radius: @radiusMedium@px;
+    border-bottom-left-radius: @radiusMedium@px;
+}
+QWidget#playbackControls QToolButton#resetBtn[layoutDirection="LeftToRight"],
+QWidget#playbackControls QToolButton#playBtn[layoutDirection="RightToLeft"] {
+    border-top-right-radius: @radiusMedium@px;
+    border-bottom-right-radius: @radiusMedium@px;
 }
 QToolBar#platformBar #playbackControls QToolButton#playBtn[playing="true"] {
     background: @successSoft@;
@@ -382,9 +410,10 @@ QAbstractButton[flatIconButton="true"][iconButtonBackground="true"] {
     background-color: @bgTertiary@;
 }
 
+QToolBar#platformBar #playbackControls QToolButton#playBtn[playing="true"]:hover:enabled,
 QAbstractButton[flatIconButton="true"]:hover:enabled,
 QAbstractButton[flatIconButton="true"]:pressed:enabled {
-    background-color: @hoverOverlay@;
+    background-overlay: @hoverOverlay@;
 }
 
 QAbstractButton[flatIconButton="true"]:disabled {
@@ -400,7 +429,7 @@ QAbstractButton[flatIconButton="true"]:disabled {
 }
 *[flatTextButton="true"]:hover,
 *[flatTextButton="true"]:pressed {
-    background-color: @disabledHighlight@;
+    background-overlay: @hoverOverlay@;
 }
 *[flatTextButton="true"]:disabled {
     background: transparent;
@@ -444,7 +473,7 @@ QTabBar::tab:selected {
 }
 
 QTabBar::tab:hover:!selected {
-    background-color: @bgTertiary@;
+    background-overlay: @hoverOverlay@;
     color: @textPrimary@;
 }
 
@@ -477,7 +506,7 @@ QToolButton[paneRole="sectionToggle"] {
 }
 
 QToolButton[paneRole="sectionToggle"]:hover {
-    background-color: @bgTertiary@;
+    background-overlay: @hoverOverlay@;
 }
 
 QToolButton[paneRole="sectionToggle"]:disabled {
@@ -495,9 +524,10 @@ QWidget#Explorer QTreeWidget#ProjectTreeWidget {
    ========================================================================== */
 
 QPushButton,
+QComboBox[fieldRole="toolBar"]:enabled,
 QToolButton[splitButtonPart="dropdown"],
 QToolButton[menuActionButtonPart="dropdown"] {
-    background-color: @bgHover@;
+    background-color: @bgTertiary@;
     color: @textPrimary@;
 }
 
@@ -511,9 +541,12 @@ QPushButton {
 }
 
 QPushButton:hover,
+QComboBox[fieldRole="toolBar"]:hover:enabled,
+QComboBox[fieldRole="toolBar"]:focus-visible:enabled,
+QComboBox[fieldRole="toolBar"]:on:enabled,
 QToolButton[splitButtonPart="dropdown"]:hover:enabled,
 QToolButton[menuActionButtonPart="dropdown"]:hover:enabled {
-    background-color: @bgTertiary@;
+    background-overlay: @hoverOverlay@;
 }
 
 QPushButton:pressed,
@@ -580,7 +613,7 @@ QPushButton[danger="true"]:hover {
 
 #btnQuit:hover {
     color: @textPrimary@;
-    background-color: @bgTertiary@;
+    background-overlay: @hoverOverlay@;
     border-radius: @radiusSmall@px;
 }
 
@@ -726,6 +759,11 @@ QComboBox:disabled {
 
 QComboBox:editable {
     padding-left: @lineEditPaddingX@px;
+}
+
+QComboBox[fieldRole="toolBar"] {
+    border: none;
+    padding-bottom: 0px;
 }
 
 QComboBox::drop-down {
@@ -973,10 +1011,9 @@ QTreeWidget#SelectorTreeWidget::item {
     padding: @rowInset@px @controlGap@px @rowInset@px 0px;
 }
 
-QTreeView::item:hover, QListView::item:hover {
-    background-color: @bgTertiary@;
+QTreeView::item:hover, QListView::item:hover, QTableView::item:hover:!selected {
+    background-overlay: @hoverOverlay@;
 }
-QTableView::item:hover:!selected { background-color: @bgSecondary@; }
 
 /* Selected text color comes from selection-color above so delegates can
    override QPalette::HighlightedText per item; a color here would clobber
@@ -1395,7 +1432,7 @@ QWidget#NodeContentEditor QToolButton[segmentedControl="true"] {
     padding: 0px @textPadding@px;
     border-radius: @radiusSmall@px;
 }
-#BlueprintStatusBar QToolButton:hover { background-color: @bgHover@; color: @textPrimary@; }
+#BlueprintStatusBar QToolButton:hover { background-overlay: @hoverOverlay@; color: @textPrimary@; }
 #BlueprintStatusBar QToolButton::menu-indicator { image: none; width: 0px; }
 
 /* Inspector Embedded Editor */
@@ -1448,7 +1485,7 @@ QWidget#settingsSearchBar {
 }
 
 #settingsCategoryList::item:hover:!selected {
-    background-color: @bgTertiary@;
+    background-overlay: @hoverOverlay@;
     color: @textPrimary@;
 }
 
@@ -1609,7 +1646,7 @@ QPushButton[templateRole="card"] {
 }
 
 QPushButton[templateRole="card"]:hover {
-    background-color: @bgHover@;
+    background-overlay: @hoverOverlay@;
     border-color: @accent@;
 }
 
@@ -1652,7 +1689,7 @@ QPushButton[templateRole="card"]:disabled {
 }
 
 #dropZoneFileList::item:hover {
-    background-color: @bgHover@;
+    background-overlay: @hoverOverlay@;
 }
 
 #dropZoneFileList::item:selected {
@@ -1761,7 +1798,7 @@ QToolButton[listFootBtn="true"] {
     padding: @controlGap@px;
 }
 QToolButton[listFootBtn="true"][tableCompactAction="true"] { padding: 0px; }
-QToolButton[listFootBtn="true"][tableCompactAction="false"]:hover { background-color: @bgHover@; color: @accent@; }
+QToolButton[listFootBtn="true"][tableCompactAction="false"]:hover { background-overlay: @hoverOverlay@; color: @accent@; }
 QToolButton[listFootBtn="true"]:disabled { color: @textDisabled@; }
 QLabel[roValue="true"] { color: @textPrimary@; background: transparent; }
 QLabel:disabled,
@@ -1884,7 +1921,7 @@ QWidget#inspectorTabBar QToolButton[sideBar="true"] {
     border-left: @accentBorderWidth@px solid transparent;
     border-right: @accentBorderWidth@px solid transparent;
 }
-QWidget#inspectorTabBar QToolButton:hover { background-color: @bgHover@; color: @textPrimary@; }
+QWidget#inspectorTabBar QToolButton:hover { background-overlay: @hoverOverlay@; color: @textPrimary@; }
 QWidget#inspectorTabBar QToolButton:pressed { background-color: @bgTertiary@; color: @textPrimary@; }
 QWidget#inspectorTabBar QToolButton:checked {
     background-color: @bgSelected@;
@@ -1992,7 +2029,7 @@ QToolButton#meterSubPanelCloseBtn {
 }
 QToolButton#meterSubPanelGearBtn:hover,
 QToolButton#meterSubPanelSplitHBtn:hover,
-QToolButton#meterSubPanelSplitVBtn:hover { background: @bgHover@; border-radius: @radiusSmall@px; }
+QToolButton#meterSubPanelSplitVBtn:hover { background-overlay: @hoverOverlay@; border-radius: @radiusSmall@px; }
 QToolButton#meterSubPanelCloseBtn:hover { background: @error@; border-radius: @radiusSmall@px; }
 
 QWidget#MeterSettingsPopup {

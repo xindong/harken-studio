@@ -135,9 +135,6 @@ protected:
         write(QDir(record.installPath).filePath(VNH::studioBinaryRelativePath()), "stub");
         write(record.installPath + "/package-manifest.json", QJsonDocument(QJsonObject{
             {"product", "HarkenStudio"}, {"buildId", id}, {"version", record.semanticVersion}}).toJson());
-        auto capabilities = HarkenHubTest::studioCapabilities(id, record.semanticVersion);
-        capabilities["capabilitiesVersion"] = 1;
-        write(record.installPath + "/capabilities.json", QJsonDocument(capabilities).toJson());
         QString error;
         EXPECT_TRUE(VNH::InstallIndex::commitInstallation(record, 1, &error));
         return record;
@@ -152,7 +149,6 @@ TEST_F(VersionsPageIssuesTest, LegacyVersionIsVisibleAndDoesNotNeedRepair)
     VersionsPage page(&store);
     page.refresh();
     ASSERT_EQ(page.installedVersions().size(), 1u);
-    EXPECT_EQ(page.installedVersions().front().capabilitiesVersion, 1);
     EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
 }
 
@@ -202,28 +198,12 @@ TEST_F(VersionsPageIssuesTest, AsyncInstallationOwnsAllCacheInputsAfterViewClose
     EXPECT_TRUE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
 }
 
-TEST_F(VersionsPageIssuesTest, NewerProtocolRemainsInstalledWithSpecificHubLimitations)
-{
-    const auto record = install("newer-protocol");
-    auto capabilities = HarkenHubTest::studioCapabilities(record.buildId, record.semanticVersion);
-    capabilities["capabilitiesVersion"] = 3;
-    write(record.installPath + "/capabilities.json", QJsonDocument(capabilities).toJson());
-    VersionsPage page(&store);
-    page.refresh();
-    ASSERT_EQ(page.installedVersions().size(), 1u);
-    EXPECT_TRUE(page.installedVersions().front().available);
-    EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
-    auto* table = page.findChild<QTableWidget*>();
-    ASSERT_NE(table, nullptr);
-    ASSERT_NE(table->item(0, 0), nullptr);
-}
-
 TEST_F(VersionsPageIssuesTest, MultipleIssuesExposeTheSelectedCauseAndPreserveSelection)
 {
     const auto first = install("missing-executable");
-    const auto second = install("missing-capabilities");
+    const auto second = install("missing-manifest");
     ASSERT_TRUE(QFile::remove(QDir(first.installPath).filePath(VNH::studioBinaryRelativePath())));
-    ASSERT_TRUE(QFile::remove(second.installPath + "/capabilities.json"));
+    ASSERT_TRUE(QFile::remove(second.installPath + "/package-manifest.json"));
     VersionsPage page(&store);
     page.refresh();
     auto* selector = page.findChild<QComboBox*>("installationIssueSelector");
@@ -280,29 +260,6 @@ TEST_F(VersionsPageIssuesTest, IdentityMismatchDisablesFileOperationsEvenWhenThe
     page.refresh();
     EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
     EXPECT_FALSE(page.findChild<QPushButton*>("installationUninstallButton")->isEnabled());
-}
-
-TEST_F(VersionsPageIssuesTest, CapabilityIdentityMismatchPreventsFileOperationsAndUninstall)
-{
-    for (const auto* field : {"buildId", "studioVersion"}) {
-        for (const auto* health : {"Installed", "NeedsRepair"}) {
-            const auto record = install("registered-build", health);
-            auto capabilities = HarkenHubTest::studioCapabilities(record.buildId, record.semanticVersion);
-            capabilities[field] = "other-identity";
-            write(record.installPath + "/capabilities.json", QJsonDocument(capabilities).toJson());
-            ASSERT_TRUE(QFile::remove(QDir(record.installPath).filePath(VNH::studioBinaryRelativePath())));
-            VersionsPage page(&store);
-            page.refresh();
-            EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
-            EXPECT_FALSE(page.findChild<QPushButton*>("installationUninstallButton")->isEnabled());
-            const auto outcome = VNH::UninstallExecutor::run(record.buildId, QDateTime::currentDateTimeUtc(),
-                [](const QString&) { return QStringList(); });
-            EXPECT_FALSE(outcome.ok);
-            EXPECT_EQ(outcome.failureCode, QStringLiteral("IdentityMismatch"));
-            EXPECT_TRUE(QDir(record.installPath).exists());
-            EXPECT_EQ(VNH::InstallIndex::snapshot().records.size(), 1u);
-        }
-    }
 }
 
 TEST_F(VersionsPageIssuesTest, CorruptIndexShowsAnErrorAndNoVersionActions)

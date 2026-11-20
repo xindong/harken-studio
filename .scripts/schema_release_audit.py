@@ -535,8 +535,7 @@ def verify_edit(before: dict[str, tuple[Path, dict[str, Any]]],
         for field in ("studioVersion", "savedStudioVersion"):
             if field in header:
                 header[field] = report["version"]
-        if header["type"] == "project.root" and "packSchemaVersion" in header:
-            header["packSchemaVersion"] = report["packSchemaVersion"]
+        header.pop("packSchemaVersion", None)
         content = document["content"]
         if "objectPath" in content:
             if original_documents[identity]["content"]["objectPath"] != object_path(identity, original_documents, set()):

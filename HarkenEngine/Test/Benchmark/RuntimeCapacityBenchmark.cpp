@@ -1,4 +1,3 @@
-#include "Common/ExternalPcmRenderFixture.h"
 // Release-only NullBackend laboratory characterization for the M11 Runtime
 // capacity matrix. Wall-clock results describe this binary and host only.
 // They are not a supported-voice-count promise or real-device qualification.
@@ -15,7 +14,7 @@
 #include "UnitTest/AllocationProbe.h"
 #include "harken/core/VoiceLedger.h"
 #include "harken/core/CpuClock.h"
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/PackEffectSchema.h"
 
 #include <algorithm>
@@ -382,19 +381,19 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
     constexpr std::uint16_t kChannels = 1;
     const std::uint64_t frameCount = source.size();
     const std::uint64_t chunkBytes =
-        harken::StreamChunkBytes(kChunkFrames, kChannels);
+        hkPackStreamFileChunkBytes(kChunkFrames, kChannels);
     const std::uint32_t chunkCount =
-        harken::StreamChunkCount(frameCount, kChunkFrames);
+        hkPackStreamFileChunkCount(frameCount, kChunkFrames);
     const std::uint64_t checksumOffset =
-        static_cast<std::uint64_t>(harken::kStreamHeaderBytes) +
-        harken::kStreamTocEntryBytes;
+        static_cast<std::uint64_t>(HK_PACK_STREAM_FILE_HEADER_BYTES) +
+        HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES;
     const std::uint64_t checksumBytes =
         static_cast<std::uint64_t>(chunkCount) *
-        harken::kStreamChunkChecksumBytes;
+        HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     const std::uint64_t payloadOffset =
         (checksumOffset + checksumBytes +
-         harken::kStreamPayloadAlign - 1) /
-        harken::kStreamPayloadAlign * harken::kStreamPayloadAlign;
+         HK_PACK_STREAM_FILE_PAYLOAD_ALIGN - 1) /
+        HK_PACK_STREAM_FILE_PAYLOAD_ALIGN * HK_PACK_STREAM_FILE_PAYLOAD_ALIGN;
     const std::uint64_t payloadBytes =
         static_cast<std::uint64_t>(chunkCount) * chunkBytes;
     std::vector<std::uint8_t> bytes(
@@ -403,12 +402,12 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
     for (std::uint32_t chunkIndex = 0; chunkIndex < chunkCount;
          ++chunkIndex) {
         const std::uint32_t validFrames =
-            harken::StreamChunkValidFrames(
+            hkPackStreamFileChunkValidFrames(
                 chunkIndex, kChunkFrames, frameCount);
         std::uint8_t* chunk =
             bytes.data() +
             static_cast<std::size_t>(
-                harken::StreamChunkFileOffset(
+                hkPackStreamFileChunkOffset(
                     payloadOffset, chunkIndex, chunkBytes));
         std::memcpy(
             chunk,
@@ -419,7 +418,7 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
             bytes.data() +
                 static_cast<std::size_t>(checksumOffset) +
                 static_cast<std::size_t>(chunkIndex) *
-                    harken::kStreamChunkChecksumBytes,
+                    HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
             harken::Fnv1a64(
                 chunk, static_cast<std::size_t>(chunkBytes)));
     }
@@ -428,32 +427,32 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
     toc.soundId = soundId;
     toc.sampleRate = sampleRate;
     toc.channelCount = kChannels;
-    toc.sampleFormat = harken::kStreamSampleFormatF32Planar;
+    toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
     toc.frameCount = frameCount;
     toc.payloadOffset = payloadOffset;
     toc.payloadBytes = payloadBytes;
     toc.chunkChecksumOffset = checksumOffset;
     toc.chunkCount = chunkCount;
-    toc.flags = harken::kStreamFlagLoopable;
+    toc.flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
     toc.loopStartFrame = 0;
     toc.loopEndFrame = frameCount;
     harken::SerializeStreamTocEntry(
-        toc, bytes.data() + harken::kStreamHeaderBytes);
+        toc, bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
 
     std::uint64_t tocChecksum =
         harken::Fnv1a64(
-            bytes.data() + harken::kStreamHeaderBytes,
-            harken::kStreamTocEntryBytes);
+            bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES,
+            HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES);
     tocChecksum = harken::Fnv1a64(
         bytes.data() +
             static_cast<std::size_t>(checksumOffset),
         static_cast<std::size_t>(checksumBytes), tocChecksum);
     harken::StreamHeader header;
-    header.formatVersion = harken::kStreamFormatVersion;
-    header.headerBytes = harken::kStreamHeaderBytes;
+    header.formatVersion = HK_PACK_STREAM_FILE_FORMAT_VERSION;
+    header.headerBytes = HK_PACK_STREAM_FILE_HEADER_BYTES;
     header.fileBytes = bytes.size();
-    header.entryCount = harken::kStreamEntryCount;
-    header.tocOffset = harken::kStreamHeaderBytes;
+    header.entryCount = HK_PACK_STREAM_FILE_ENTRY_COUNT;
+    header.tocOffset = HK_PACK_STREAM_FILE_HEADER_BYTES;
     header.chunkFrames = kChunkFrames;
     header.tocChecksum = tocChecksum;
     harken::SerializeStreamHeader(header, bytes.data());
@@ -1079,7 +1078,7 @@ StreamingRunResult RunStreamingOnce(
     config.deviceMode = VN_DEVICE_NULL;
     config.commandQueueDepth = 2048;
     config.notificationQueueDepth = 2048;
-    config.streamRingBytes = (kRingFrames) * sizeof(float);
+    config.streamRingFrames = kRingFrames;
     config.maxStreams = 16;
     config.prebufferMs = 1;
     config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
@@ -1095,9 +1094,9 @@ StreamingRunResult RunStreamingOnce(
         result.error = "active engine missing";
         return result;
     }
-    harkentest::ExternalPcmRenderFixture stream(*engine, streamPath);
-    if (stream.Result() != VN_OK) {
-        result.error = "external stream fixture preparation failed";
+    if (Vn_RegisterStreamFile(kStreamSoundId,
+                              streamPath.c_str()) != VN_OK) {
+        result.error = "Vn_RegisterStreamFile failed";
         return result;
     }
 
@@ -1119,14 +1118,21 @@ StreamingRunResult RunStreamingOnce(
         }
     }
 
-    for (std::uint32_t voice = 0; voice < scenario.streamVoices; ++voice) {
-        VnVoiceHandle render = 0;
-        if (stream.Start(-60.0f, 0, &render) != VN_OK || render == 0) {
-            result.error = "external stream renderer start failed";
+    for (std::uint32_t voice = 0; voice < scenario.streamVoices;
+         ++voice) {
+        VnPlayDesc play{};
+        play.structSize = sizeof(play);
+        play.soundId = kStreamSoundId;
+        play.busId = VN_BUS_MASTER;
+        play.volumeDb = -60.0f;
+        play.pitchRatio = 1.0f;
+        play.loopCount = 0;
+        VnVoiceHandle handle = 0;
+        if (harkentest::PlayRaw(&play, &handle) != VN_OK || handle == 0) {
+            result.error = "stream raw voice start failed";
             return result;
         }
     }
-    engine->streams.SyncServe();
     for (std::uint32_t voice = 0; voice < pcmVoices; ++voice) {
         VnPlayDesc play{};
         play.structSize = sizeof(play);
@@ -1406,7 +1412,7 @@ int RunResourceScenario(const ResourceEntry& scenario) {
     config.deviceMode = VN_DEVICE_NULL;
     config.commandQueueDepth = 2048;
     config.notificationQueueDepth = 2048;
-    config.streamRingBytes = (16384) * sizeof(float);
+    config.streamRingFrames = 16384;
     config.maxStreams = 16;
     config.audibilityParkEnabled = 1;
     config.parkThresholdDb = -70.0f;

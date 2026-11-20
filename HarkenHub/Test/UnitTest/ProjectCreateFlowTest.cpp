@@ -19,7 +19,7 @@ TEST(ProjectCreateFlowTest, DispatchDoesNotWaitForProjectCreation)
     VNH::ProjectCreateRequest request;
     request.version.installPath = QFileInfo(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE)).absolutePath();
     request.version.executablePath = QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE);
-    request.version.capabilitiesVersion = 2;
+    request.version.semanticVersion = QStringLiteral("1.4.0");
     request.name = QStringLiteral("Demo");
     request.location = directory.path();
     QFile scenario(directory.filePath("Demo.scenario.json"));
@@ -52,7 +52,7 @@ TEST(ProjectCreateFlowTest, MissingExecutableReturnsTheDispatchError)
     VNH::ProjectCreateRequest request;
     request.version.installPath = directory.path();
     request.version.executablePath = directory.filePath("MissingStudio.exe");
-    request.version.capabilitiesVersion = 2;
+    request.version.semanticVersion = QStringLiteral("1.4.0");
     QString error;
     EXPECT_FALSE(VNH::ProjectCreateFlow::create(request, &error));
     EXPECT_TRUE(error.contains(request.version.executablePath));

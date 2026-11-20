@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Generate Hub resources and installer text from the root user terms."""
+"""Generate installer text from the root user terms."""
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,18 +26,6 @@ def read_documents(source: Path) -> tuple[str, str]:
             raise ValueError(f"{source}: unexpected additional H1 title")
         documents.append(document)
     return documents[0], documents[1]
-
-
-def write_hub_resources(output_dir: Path, source_root: Path = REPO_ROOT) -> None:
-    documents = {
-        language: read_documents(source_root / name)
-        for language, name in TERMS_FILES.items()
-    }
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for language, texts in documents.items():
-        suffix = ".txt" if language == "en" else ".zh-CN.txt"
-        for name, text in zip(("USER_AGREEMENT", "PRIVACY_POLICY"), texts):
-            (output_dir / (name + suffix)).write_bytes(text.encode("utf-8"))
 
 
 def installer_text(source_root: Path = REPO_ROOT) -> str:
@@ -67,15 +54,3 @@ def render_rtf(text: str) -> str:
                 parts.append(f"\\u{unit}?")
     parts.append("}\n")
     return "".join(parts)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, default=REPO_ROOT)
-    parser.add_argument("--hub-resources", type=Path, required=True)
-    args = parser.parse_args()
-    write_hub_resources(args.hub_resources, args.source_root)
-
-
-if __name__ == "__main__":
-    main()
