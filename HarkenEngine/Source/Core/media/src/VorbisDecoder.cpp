@@ -41,6 +41,7 @@ std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
     result = VorbisPrepareResult::Invalid;
     if (!source->settings_->ValidateResident(source->media_)) return {};
     source->codec_ = &codec;
+    if (codec.nextGeneration) source->generation_ = codec.nextGeneration++;
     result = VorbisPrepareResult::Ok;
     return source;
 }
@@ -85,7 +86,7 @@ bool VorbisStatePool::State::Read(std::uint64_t frame, std::uint32_t requested,
     while (decodedOffset == decodedFrames) {
         const std::uint8_t* packet = nullptr;
         std::uint32_t bytes = 0;
-        if (!media.Packet(packetOffset, packet, bytes) || !Decode(workspace, packet, bytes, planes, decodedFrames))
+        if (!media.Packet(packetOffset, packet, bytes) || !Decode(workspace, packet, bytes, planes, decodedFrames, resident->generation_))
             return false;
         packetOffset += std::uint64_t(media.packetPrefixBytes) + bytes;
         decodedOffset = std::min(discard, decodedFrames);
@@ -187,7 +188,7 @@ std::shared_ptr<const VorbisSettings> VorbisSettingsCache::Prepare(const VorbisM
         if (existing && existing->headers_.size() == headerBytes &&
             std::memcmp(existing->headers_.data(), media.ident, media.identBytes) == 0 &&
             std::memcmp(existing->headers_.data() + media.identBytes, media.setup, media.setupBytes) == 0) {
-            if (existing->Bytes() > budget) { result = VorbisPrepareResult::OutOfMemory; return {}; }
+            if (existing->Bytes() > budget) continue;
             result = VorbisPrepareResult::Ok; return existing;
         }
     }
@@ -229,9 +230,9 @@ void VorbisStatePool::State::Restart() noexcept {
     std::fill(std::begin(planes), std::end(planes), nullptr);
 }
 bool VorbisStatePool::State::Decode(VorbisWorkspace& workspace, const std::uint8_t* packet,
-    std::size_t bytes, const float* (&pcm)[8], unsigned& frames) noexcept {
+    std::size_t bytes, const float* (&pcm)[8], unsigned& frames, std::uint64_t generation) noexcept {
     float** decoded = nullptr;
-    if (hv_decode_packet(decoder, workspace.workspace_, packet, bytes, &decoded, &frames) != HV_OK) return false;
+    if (hv_decode_resident_packet(decoder, workspace.workspace_, packet, bytes, generation, packetOffset, &decoded, &frames) != HV_OK) return false;
     static constexpr unsigned map6[] = {0, 2, 1, 5, 3, 4};
     static constexpr unsigned map8[] = {0, 2, 1, 7, 5, 6, 3, 4};
     const unsigned channels = settings->Channels();

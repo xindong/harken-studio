@@ -14,6 +14,10 @@
 #include "harken/core/RtProbe.h"
 #endif
 
+#if defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -1861,7 +1865,29 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         // stereo device) and stays byte-identical.
         const std::uint32_t mixCh = m_mixChannels;
         const std::uint32_t devCh = m_deviceChannels;
-        if (devCh == mixCh) {
+        const bool stereoOutput = devCh == 2 && mixCh == 2 && channels == 2;
+        if (stereoOutput) {
+            const float* left = m_busPlanes[0];
+            const float* right = m_busPlanes[1];
+            std::uint32_t i = 0;
+#if defined(__x86_64__) || defined(_M_X64)
+            const auto clampFour = [](__m128 x) {
+                const auto finiteOrInfinite = _mm_and_ps(x, _mm_cmpord_ps(x, x));
+                return _mm_max_ps(_mm_set1_ps(-1.0f),
+                    _mm_min_ps(_mm_set1_ps(1.0f), finiteOrInfinite));
+            };
+            for (; frames - i >= 4; i += 4) {
+                const auto l = clampFour(_mm_loadu_ps(left + i));
+                const auto r = clampFour(_mm_loadu_ps(right + i));
+                _mm_storeu_ps(interleavedOut + 2 * i, _mm_unpacklo_ps(l, r));
+                _mm_storeu_ps(interleavedOut + 2 * i + 4, _mm_unpackhi_ps(l, r));
+            }
+#endif
+            for (; i < frames; ++i) {
+                interleavedOut[2 * i] = ClampDeviceSample(left[i]);
+                interleavedOut[2 * i + 1] = ClampDeviceSample(right[i]);
+            }
+        } else if (devCh == mixCh) {
             // Same layout: direct interleave.
             const std::uint32_t outChannels = std::min(channels, mixCh);
             for (std::uint32_t i = 0; i < frames; ++i) {
@@ -1912,8 +1938,10 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         // no later stage may write to interleavedOut.
         const std::size_t outputSamples =
             static_cast<std::size_t>(frames) * channels;
-        for (std::size_t i = 0; i < outputSamples; ++i) {
-            interleavedOut[i] = ClampDeviceSample(interleavedOut[i]);
+        if (!stereoOutput) {
+            for (std::size_t i = 0; i < outputSamples; ++i) {
+                interleavedOut[i] = ClampDeviceSample(interleavedOut[i]);
+            }
         }
 
         ticksBuses = CpuClockTicks();
@@ -2122,8 +2150,12 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
     // but whose swap has not applied is not yet part of the mix, so it is not
     // yet counted here.
     const std::uint32_t busCount = m_buses.AudioBusCount();
+    // Each pinned slot starts zeroed. Only rows visible in its previous
+    // publication can need clearing when the current topology shrinks.
+    const auto previousBusCount = payload.busCount;
     payload.busCount = busCount;
-    for (std::uint32_t i = 0; i < kSnapshotMaxBuses; ++i) {
+    const auto rowCount = std::min(kSnapshotMaxBuses, std::max(previousBusCount, busCount));
+    for (std::uint32_t i = 0; i < rowCount; ++i) {
         // A degraded block never reached MixDown, so its bus meters are
         // honest silence rather than the previous block's peaks.
         payload.busPeaks[i] =

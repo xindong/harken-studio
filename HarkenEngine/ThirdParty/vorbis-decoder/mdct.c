@@ -44,6 +44,10 @@
 #include <math.h>
 #include "vorbis/codec.h"
 #include "mdct.h"
+#if !defined(MDCT_INTEGERIZED) && (defined(__x86_64__) || defined(_M_X64))
+#include <xmmintrin.h>
+#define HV_MDCT_STAGE_VECTOR 1
+#endif
 #include "os.h"
 #include "misc.h"
 
@@ -315,6 +319,34 @@ STIN void mdct_butterfly_generic(DATA_TYPE *T,
   }while(x2>=x);
 }
 
+
+#if defined(HV_MDCT_STAGE_VECTOR)
+static inline __m128 hv_mdct_pair(const float* first,const float* second){
+  __m128 pair=_mm_loadl_pi(_mm_setzero_ps(),(const __m64*)first);
+  return _mm_loadh_pi(pair,(const __m64*)second);
+}
+static inline void hv_mdct_butterfly_stage(float* data,int points,const float* trig,int step){
+  int half=points/2;
+  for(int i=half-8;i>=0;i-=8,trig+=4*step){
+    float* lower=data+i;
+    float* upper=lower+half;
+    __m128 lo0=_mm_loadu_ps(lower),lo1=_mm_loadu_ps(lower+4);
+    __m128 hi0=_mm_loadu_ps(upper),hi1=_mm_loadu_ps(upper+4);
+    __m128 d0=_mm_sub_ps(hi0,lo0),d1=_mm_sub_ps(hi1,lo1);
+    __m128 even=_mm_shuffle_ps(d0,d1,_MM_SHUFFLE(2,0,2,0));
+    __m128 odd=_mm_shuffle_ps(d0,d1,_MM_SHUFFLE(3,1,3,1));
+    __m128 p0=hv_mdct_pair(trig+3*step,trig+2*step),p1=hv_mdct_pair(trig+step,trig);
+    __m128 cosine=_mm_shuffle_ps(p0,p1,_MM_SHUFFLE(2,0,2,0));
+    __m128 sine=_mm_shuffle_ps(p0,p1,_MM_SHUFFLE(3,1,3,1));
+    __m128 real=_mm_add_ps(_mm_mul_ps(odd,sine),_mm_mul_ps(even,cosine));
+    __m128 imag=_mm_sub_ps(_mm_mul_ps(odd,cosine),_mm_mul_ps(even,sine));
+    _mm_storeu_ps(upper,_mm_add_ps(hi0,lo0));
+    _mm_storeu_ps(upper+4,_mm_add_ps(hi1,lo1));
+    _mm_storeu_ps(lower,_mm_unpacklo_ps(real,imag));
+    _mm_storeu_ps(lower+4,_mm_unpackhi_ps(real,imag));
+  }
+}
+#endif
 STIN void mdct_butterflies(mdct_lookup *init,
                              DATA_TYPE *x,
                              int points){
@@ -324,12 +356,20 @@ STIN void mdct_butterflies(mdct_lookup *init,
   int i,j;
 
   if(--stages>0){
+#ifdef HV_MDCT_STAGE_VECTOR
+    hv_mdct_butterfly_stage(x,points,T,4);
+#else
     mdct_butterfly_first(T,x,points);
+#endif
   }
 
   for(i=1;--stages>0;i++){
     for(j=0;j<(1<<i);j++)
+#if defined(HV_MDCT_STAGE_VECTOR)
+      hv_mdct_butterfly_stage(x+(points>>i)*j,points>>i,T,4<<i);
+#else
       mdct_butterfly_generic(T,x+(points>>i)*j,points>>i,4<<i);
+#endif
   }
 
   for(j=0;j<points;j+=32)
@@ -353,6 +393,31 @@ STIN void mdct_bitreverse(mdct_lookup *init,
   DATA_TYPE *w1      = x = w0+(n>>1);
   DATA_TYPE *T       = init->trig+n;
 
+
+#if defined(HV_MDCT_STAGE_VECTOR)
+  const __m128 half=_mm_set1_ps(.5f);
+  do {
+    __m128 p0=hv_mdct_pair(x+bit[0],x+bit[2]),p1=hv_mdct_pair(x+bit[4],x+bit[6]);
+    __m128 q0=hv_mdct_pair(x+bit[1],x+bit[3]),q1=hv_mdct_pair(x+bit[5],x+bit[7]);
+    __m128 ta=_mm_loadu_ps(T),tb=_mm_loadu_ps(T+4);
+    __m128 re0=_mm_shuffle_ps(p0,p1,_MM_SHUFFLE(2,0,2,0)), im0=_mm_shuffle_ps(p0,p1,_MM_SHUFFLE(3,1,3,1));
+    __m128 re1=_mm_shuffle_ps(q0,q1,_MM_SHUFFLE(2,0,2,0)), im1=_mm_shuffle_ps(q0,q1,_MM_SHUFFLE(3,1,3,1));
+    __m128 tc=_mm_shuffle_ps(ta,tb,_MM_SHUFFLE(2,0,2,0)), ts=_mm_shuffle_ps(ta,tb,_MM_SHUFFLE(3,1,3,1));
+    __m128 r0=_mm_sub_ps(im0,im1), r1=_mm_add_ps(re0,re1);
+    __m128 r2=_mm_add_ps(_mm_mul_ps(r1,tc),_mm_mul_ps(r0,ts));
+    __m128 r3=_mm_sub_ps(_mm_mul_ps(r1,ts),_mm_mul_ps(r0,tc));
+    r0=_mm_mul_ps(_mm_add_ps(im0,im1),half);
+    r1=_mm_mul_ps(_mm_sub_ps(re0,re1),half);
+    __m128 a=_mm_add_ps(r0,r2), b=_mm_add_ps(r1,r3);
+    __m128 c=_mm_sub_ps(r0,r2), d=_mm_sub_ps(r3,r1);
+    c=_mm_shuffle_ps(c,c,_MM_SHUFFLE(0,1,2,3));
+    d=_mm_shuffle_ps(d,d,_MM_SHUFFLE(0,1,2,3));
+    w1-=8;
+    _mm_storeu_ps(w0,_mm_unpacklo_ps(a,b)); _mm_storeu_ps(w0+4,_mm_unpackhi_ps(a,b));
+    _mm_storeu_ps(w1,_mm_unpacklo_ps(c,d)); _mm_storeu_ps(w1+4,_mm_unpackhi_ps(c,d));
+    bit+=8;T+=8;w0+=8;
+  }while(w0<w1);
+#else
   do{
     DATA_TYPE *x0    = x+bit[0];
     DATA_TYPE *x1    = x+bit[1];
@@ -393,6 +458,7 @@ STIN void mdct_bitreverse(mdct_lookup *init,
               w0    += 4;
 
   }while(w0<w1);
+#endif
 }
 
 void mdct_backward(mdct_lookup *init, DATA_TYPE *in, DATA_TYPE *out){

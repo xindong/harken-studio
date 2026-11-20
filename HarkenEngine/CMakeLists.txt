@@ -487,6 +487,18 @@ foreach(_edition harken_engine_release harken_engine_dev)
         list(APPEND _harken_installed_editions ${_edition})
     endif()
 endforeach()
+# Keep the decoder and mixer visible to the Windows x64 Release linker.
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64)$"
+        AND CMAKE_C_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+        AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE
+        AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _harken_ipo_available LANGUAGES C CXX)
+    if(_harken_ipo_available)
+        set_property(TARGET harken_vorbis_decoder ${_harken_installed_editions}
+            PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    endif()
+endif()
 add_custom_target(harken_engine)
 add_dependencies(harken_engine ${_harken_installed_editions})
 install(TARGETS ${_harken_installed_editions} harken_pack_format

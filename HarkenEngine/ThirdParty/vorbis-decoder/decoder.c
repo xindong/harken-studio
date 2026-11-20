@@ -39,8 +39,8 @@ struct HvState {
 
 void* hv_allocate(HvAllocator* a, size_t bytes) {
     HvAllocation* h;
-    if (bytes > SIZE_MAX - sizeof(*h) || sizeof(*h) + bytes > a->limit - a->used)
-        longjmp(a->failure, 1);
+    if (bytes > SIZE_MAX - sizeof(*h)) longjmp(a->failure, 1);
+    if (sizeof(*h) + bytes > a->limit - a->used) longjmp(a->failure, 2);
     h = (HvAllocation*)a->memory.allocate(a->memory.user, sizeof(*h) + bytes);
     if (!h) longjmp(a->failure, 1);
     h->record.previous = NULL; h->record.next = a->first; h->record.bytes = bytes;
@@ -81,6 +81,10 @@ void* hv_scratch_allocate(HvWorkspace* w, size_t bytes) {
     void* result;
     if (at > w->capacity || bytes > w->capacity - at) longjmp(w->failure, 1);
     result = w->data + at; w->used = at + bytes;
+    if (w->used > w->cacheLow) {
+        memset(w->packets, 0, sizeof(w->packets));
+        w->writeEnd = w->cacheLow = w->cacheTop;
+    }
     if (w->used > w->peak) w->peak = w->used;
     return result;
 }
@@ -115,8 +119,8 @@ static int hv_header(HvSetup* s, vorbis_comment* comment, const uint8_t* bytes, 
     packet.bytes = (long)count; packet.b_o_s = bos;
     return vorbis_synthesis_headerin(&s->allocator, &s->info, comment, &packet);
 }
-HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
-    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
+static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables* tables,
+    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result, unsigned compact, int* limitHit) {
     HvSetup* s; codec_setup_info* ci; vorbis_comment comment; int i;
     static const uint8_t emptyComment[] = {3,'v','o','r','b','i','s',0,0,0,0,0,0,0,0,1};
     if (!result) return NULL;
@@ -128,7 +132,12 @@ HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
     s = (HvSetup*)memory.allocate(memory.user, sizeof(*s));
     if (!s) return NULL;
     memset(s, 0, sizeof(*s)); s->allocator.memory = memory; s->allocator.limit = budget - sizeof(*s);
-    if (setjmp(s->allocator.failure)) { *result = HV_MEMORY; hv_setup_destroy(s); return NULL; }
+    s->allocator.compactCodebook = compact;
+    switch (setjmp(s->allocator.failure)) {
+      case 0: break;
+      case 2: *limitHit = 1;
+      default: *result = HV_MEMORY; hv_setup_destroy(s); return NULL;
+    }
     vorbis_info_init(&s->allocator, &s->info); vorbis_comment_init(&comment);
     *result = HV_INVALID;
     if (hv_header(s, &comment, ident, identBytes, 1)) goto fail;
@@ -167,6 +176,16 @@ HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
     *result = HV_OK; return s;
 fail:
     hv_setup_destroy(s); return NULL;
+}
+HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
+    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
+    int limitHit = 0;
+    HvSetup* decoded = hv_setup_attempt(memory, budget, tables, ident, identBytes,
+        setup, setupBytes, result, 0, &limitHit);
+    if (!decoded && limitHit)
+        decoded = hv_setup_attempt(memory, budget, tables, ident, identBytes,
+            setup, setupBytes, result, 1, &limitHit);
+    return decoded;
 }
 void hv_setup_destroy(HvSetup* s) {
     HvMemory memory;
@@ -209,21 +228,128 @@ HvWorkspace* hv_workspace_init(void* storage, size_t bytes) {
     uintptr_t start;
     if (!w || bytes < hv_workspace_bytes()) return NULL;
     memset(w, 0, sizeof(*w)); start = ((uintptr_t)(w + 1) + 15u) & ~(uintptr_t)15u;
-    w->data = (unsigned char*)start; w->capacity = bytes - (start - (uintptr_t)storage); return w;
+    w->data = (unsigned char*)start; w->capacity = bytes - (start - (uintptr_t)storage);
+    w->cacheTop = w->capacity & ~(size_t)15;
+    w->writeEnd = w->cacheLow = w->cacheTop;
+    return w;
 }
 size_t hv_workspace_high_water(const HvWorkspace* w) { return w ? w->peak : 0; }
+/* Only enable reuse after observing two state addresses for one resource.
+   A recycled address only affects admission. Packet identity uses generation and offset. */
+static int hv_admit(HvWorkspace* w, HvState* s, uint64_t generation) {
+    HvAdmission* a = &w->admissions[generation % HV_RESOURCE_SLOTS];
+    if (!generation) return 0;
+    if (a->generation != generation) {
+        a->generation = generation; a->lastState = (uintptr_t)s; a->remaining = 0;
+    } else if (a->lastState != (uintptr_t)s) {
+        a->lastState = (uintptr_t)s; a->remaining = 32;
+    } else if (a->remaining) {
+        --a->remaining;
+    }
+    return a->remaining != 0;
+}
+
+/* Four choices per hash bucket. Only the current and previous arena laps
+   can hold live payload. The previous lap is valid below the write cursor. */
+static unsigned hv_bucket(uint64_t generation, uint64_t offset) {
+    uint64_t key = offset ^ (generation * UINT64_C(0x9e3779b97f4a7c15));
+    key ^= key >> 33;
+    key *= UINT64_C(0xff51afd7ed558ccd);
+    return (unsigned)(key >> 48) % HV_PACKET_BUCKETS;
+}
+static int hv_live(const HvWorkspace* w, const HvCachedPacket* e) {
+    return e->generation && (e->lap == w->lap ||
+        (w->lap - e->lap == 1 && e->end <= w->writeEnd));
+}
+static HvCachedPacket* hv_find(HvWorkspace* w, uint64_t generation, uint64_t offset) {
+    HvCachedPacket* first = &w->packets[hv_bucket(generation, offset) * HV_WAYS];
+    unsigned i;
+    for (i = 0; i < HV_WAYS; ++i) {
+        HvCachedPacket* e = first + i;
+        if (e->generation == generation && e->offset == offset && hv_live(w,e)) return e;
+    }
+    return NULL;
+}
+
+static void hv_store(HvWorkspace* w, const vorbis_block* b, uint64_t generation, uint64_t offset) {
+    size_t plane = (size_t)b->pcmend * sizeof(float), bytes = plane * b->vd->vi->channels;
+    size_t end = w->writeEnd, begin;
+    unsigned bucket, i;
+    int ch;
+    HvCachedPacket* first;
+    HvCachedPacket* entry;
+    if (w->used > w->cacheTop || bytes > w->cacheTop - w->used) return;
+    if (end < w->used || bytes > end - w->used) {
+        end = w->cacheTop;
+        if (++w->lap == 0) memset(w->packets, 0, sizeof(w->packets));
+    }
+    begin = end - bytes;
+    bucket = hv_bucket(generation, offset);
+    first = &w->packets[bucket * HV_WAYS];
+    entry = first + (w->victim[bucket] % HV_WAYS);
+    for (i = 0; i < HV_WAYS; ++i) if (!hv_live(w, first + i)) { entry = first + i; break; }
+    w->victim[bucket] = (unsigned char)(entry - first + 1);
+    entry->generation = generation; entry->offset = offset; entry->begin = begin; entry->end = end;
+    entry->lap = w->lap; entry->frames = b->pcmend; entry->window = (int)b->W;
+    for (ch = 0; ch < b->vd->vi->channels; ++ch)
+        memcpy(w->data + begin + ch * plane, b->pcm[ch], plane);
+    w->writeEnd = begin;
+    if (begin < w->cacheLow) w->cacheLow = begin;
+#ifdef HV_REUSE_STATS
+    ++w->copies;
+    {
+        size_t live = 0;
+        for (i = 0; i < HV_PACKET_SLOTS; ++i)
+            if (hv_live(w,&w->packets[i])) live += w->packets[i].end - w->packets[i].begin;
+        if (live > w->maximumPayload) w->maximumPayload = live;
+    }
+#endif
+}
+
 enum HvResult hv_decode_packet(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
-                              float*** pcm, unsigned* frames) {
+                               float*** pcm, unsigned* frames) {
+    return hv_decode_resident_packet(s, w, packet, bytes, 0, 0, pcm, frames);
+}
+
+enum HvResult hv_decode_resident_packet(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
+                              uint64_t generation, uint64_t offset, float*** pcm, unsigned* frames) {
+    float* planes[8];
+    HvCachedPacket* e;
+    int admit;
     ogg_packet p; float** output = NULL; int count, ch, i;
     if (!s || !w || !packet || !bytes || bytes > 65535 || !pcm || !frames) return HV_INVALID;
     *pcm = NULL; *frames = 0; w->used = 0; s->block.internal = w;
     if (setjmp(w->failure)) return HV_MEMORY;
     memset(&p, 0, sizeof(p)); p.packet = (unsigned char*)packet; p.bytes = (long)bytes;
     p.granulepos = -1; p.packetno = s->sequence++;
-    if (vorbis_synthesis(&s->block, &p) || vorbis_synthesis_blockin(&s->dsp, &s->block)) return HV_INVALID;
+    admit = hv_admit(w, s, generation);
+    e = admit ? hv_find(w, generation, offset) : NULL;
+#ifdef HV_REUSE_STATS
+    ++w->tries;
+    if (e) ++w->hits;
+    if (!admit) ++w->bypass;
+#endif
+    if (e) {
+        for (ch = 0; ch < s->dsp.vi->channels; ++ch)
+            planes[ch] = (float*)(w->data + e->begin) + ch * e->frames;
+        s->block.pcm = planes; s->block.W = e->window; s->block.pcmend = e->frames;
+        s->block.sequence = p.packetno; s->block.granulepos = p.granulepos; s->block.eofflag = 0;
+    } else {
+        if (vorbis_synthesis(&s->block, &p)) return HV_INVALID;
+        if (admit) hv_store(w, &s->block, generation, offset);
+    }
+    if (vorbis_synthesis_blockin(&s->dsp, &s->block)) return HV_INVALID;
+    s->block.pcm = NULL;
     count = vorbis_synthesis_pcmout(&s->dsp, &output);
-    for (ch = 0; ch < s->dsp.vi->channels; ++ch)
-        for (i = 0; i < count; ++i) if (!isfinite(output[ch][i])) return HV_INVALID;
+    for (ch = 0; ch < s->dsp.vi->channels; ++ch) {
+        unsigned invalid = 0;
+        for (i = 0; i < count; ++i) {
+            uint32_t bits;
+            memcpy(&bits, output[ch] + i, sizeof(bits));
+            invalid |= (bits & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000);
+        }
+        if (invalid) return HV_INVALID;
+    }
     *pcm = output; *frames = (unsigned)count;
     vorbis_synthesis_read(&s->dsp, count); return HV_OK;
 }

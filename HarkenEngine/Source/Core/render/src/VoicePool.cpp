@@ -1107,6 +1107,7 @@ void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
 
 void VoicePool::ReturnTimelineCallbackStorage() noexcept {
     for (auto& slot : m_slots) {
+        if (slot.state.load(std::memory_order_acquire) != SlotState::TimelineCallbackHeld) continue;
         auto expected = SlotState::TimelineCallbackHeld;
         (void)slot.state.compare_exchange_strong(expected, SlotState::Rendering,
             std::memory_order_acq_rel, std::memory_order_acquire);
@@ -3879,7 +3880,8 @@ void VoicePool::BeginAudioBlock(std::uint64_t blockIndex) {
 }
 
 void VoicePool::EndAudioBlock() noexcept {
-    for (std::size_t index = 0; index < m_originalCallbackStorage.size(); ++index) {
+    const auto constructed = m_slots.ConstructedCount();
+    for (std::size_t index = 0; index < constructed; ++index) {
         auto& lease = m_originalCallbackStorage[index];
         if (!lease.storageHeld) continue;
         auto& slot = m_slots[index];

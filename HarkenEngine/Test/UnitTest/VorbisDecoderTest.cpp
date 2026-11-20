@@ -341,6 +341,38 @@ TEST(VorbisDecoder, PreparationFailureReleasesEveryAllocationAndRejectsUnsupport
     }
 }
 
+TEST(VorbisDecoder, IndependentResidentVoicesRetainTheirOwnSeekAndOverlapHistory) {
+    const auto fixture = harken::test::MakeVorbisFixture(2);
+    harken::VorbisCodec codec(0);
+    harken::VorbisPrepareResult result;
+    auto source = harken::VorbisResident::Prepare(codec, fixture.media, kSetupBudget, result);
+    ASSERT_NE(source, nullptr);
+    auto* first = source->Acquire();
+    auto* second = source->Acquire();
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    const auto check = [&](harken::MediaDecoder* decoder, std::uint64_t frame) {
+        harken::PCMView audio;
+        ASSERT_TRUE(decoder->Read(frame, 256, 0, audio));
+        ASSERT_GT(audio.frames, 0u);
+        ASSERT_EQ(audio.channelCount, 2u);
+        for (unsigned n = 0; n < audio.frames; ++n)
+            for (unsigned ch = 0; ch < 2; ++ch)
+                ASSERT_EQ(static_cast<const float*>(audio.channels[ch])[n], fixture.reference[(frame + n) * 2 + ch]);
+    };
+    for (auto start : {0u, 8065u, 382u, 4112u, 0u}) {
+        for (unsigned i = 0; i < 8; ++i) {
+            check(first, start + i * 256);
+            check(second, start + (i > 2 ? i * 256 : 1741 + i * 256));
+        }
+    }
+    first->Retire();
+    second->Retire();
+    codec.states.Collect();
+    EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+}
+
 TEST(VorbisDecoder, ResidentCodecSeekAndRetirementUseNoAudioThreadAllocation) {
     const auto fixture = harken::test::MakeVorbisFixture(6, false, 257, 1023);
     harken::VorbisCodec codec(0);
