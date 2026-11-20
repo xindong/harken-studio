@@ -47,7 +47,7 @@ recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
 | Name | Version | License | Use | How obtained |
 |---|---|---|---|---|
 | Qt 6 (Widgets, Sql, Network, Svg) | 6.8.3 in release workflows; developer kits ≥ 6.8.3 via `VENUS_QT_DIR` | LGPL-3.0 (dynamically linked; deployed by windeployqt/macdeployqt) | Hub GUI, local project database, update client | Official Qt installer kit; exact release source commits in `HarkenHub/Resources/Legal/Qt6-SOURCES.json` |
-| QWindowKit | 1.5.1-dev (commit c783b89d119a672b0aa4262b520c0783d0612689) | Apache-2.0 | Frameless window chrome (same fetched target as the Studio entry above) | CMake FetchContent, pinned commit |
+| QWindowKit | 1.5.1-dev (commit c783b89d119a672b0aa4262b520c0783d0612689) | Apache-2.0 | Frameless window chrome on Windows (Hub fetches its own copy at the same pinned commit) | CMake FetchContent, pinned commit |
 | minizip-ng | 4.2.2 (commit 7b2387161c542fa9f427352dcdef76097d0d692b) | zlib | Studio package archive reading and safe extraction | CMake FetchContent, pinned commit |
 | ed25519 (orlp) | commit b1f19fab4aebe607805620d25a5e42566ce46a0e | zlib | Release manifest signature verification (and test-side signing) | CMake FetchContent, pinned commit |
 | zlib (or zlib-ng) | System version when found; fallback zlib-ng 2.3.3 (commit 12731092979c6d07f42da27da673a9f6c7b13586) | zlib | Deflate backend for minizip-ng | System library when present; otherwise minizip-ng fetches the commit fixed by `ZLIB_TAG` in `HarkenHub/CMakeLists.txt` |
