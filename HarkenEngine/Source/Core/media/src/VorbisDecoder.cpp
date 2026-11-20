@@ -18,12 +18,21 @@ VorbisCodec::VorbisCodec(unsigned workers) {
 std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
     std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat) {
     result = VorbisPrepareResult::OutOfMemory;
-    if (bytes.size() > budget) return {};
+    if (sizeof(VorbisResident) > budget || bytes.capacity() > budget - sizeof(VorbisResident)) return {};
     auto source = std::make_shared<VorbisResident>();
     source->bytes_ = std::move(bytes);
     result = VorbisPrepareResult::Invalid;
-    const auto parse = packFormat ? ParseResidentVorbis : ParseVorbisTestMedia;
-    if (!parse(source->bytes_.data(), source->bytes_.size(), source->media_)) return {};
+    try {
+        const auto* data = source->bytes_.data();
+        const auto size = source->bytes_.size();
+        const bool valid = packFormat
+            ? ParseResidentVorbis(data, size, source->media_, budget - sizeof(VorbisResident) - source->bytes_.capacity())
+            : ParseVorbisTestMedia(data, size, source->media_);
+        if (!valid) return {};
+    } catch (const std::bad_alloc&) {
+        result = VorbisPrepareResult::OutOfMemory;
+        return {};
+    }
     const auto overhead = source->ResidentBytes();
     result = VorbisPrepareResult::OutOfMemory;
     if (overhead > budget) return {};

@@ -1,7 +1,7 @@
 #include <harken/core/BindingTransition.h>
 #include <harken_pack/PackBus.h>
 #include "harken/media/PackLogicImage.h"
-#include "harken/media/VorbisMedia.h"
+#include "harken/media/VorbisDecoder.h"
 
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/EngineConfig.h"
@@ -1111,6 +1111,7 @@ struct SpanCanonicalSource {
         }
     };
     ArtifactHashState artifact;
+    VorbisSettingsCache settings;
     std::uint32_t pairedMediaEntry = UINT32_MAX;
     std::uint64_t pairedMediaChecksum = 0;
     std::uint64_t ByteCount() const noexcept { return artifact.byteCount; }
@@ -1121,7 +1122,7 @@ struct SpanCanonicalSource {
     }
     bool VerifyMedia(const PackTocEntry& media, std::uint32_t i,
                      const std::uint8_t* dir, const PackFileHeader& header,
-                     std::uint64_t dirEnd) {
+                     std::uint64_t dirEnd, const detail::PackDecodeBudget& budget) {
         const auto* bytes = artifact.bytes;
         const auto fileBytes = ByteCount();
         std::uint64_t checksum = 0;
@@ -1176,11 +1177,20 @@ struct SpanCanonicalSource {
         if (checksum != media.blobChecksum) return false;
         if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
             VorbisMedia parsed;
-            if (!ParseResidentVorbis(bytes + media.blobOffset, static_cast<std::size_t>(media.blobBytes), parsed) ||
+            auto available = budget ? budget->limit - budget->live : SIZE_MAX;
+            if (!settings.Initialize(static_cast<std::size_t>(available)) || settings.TableBytes() > available)
+                throw detail::PackDecodeCapacity{};
+            available -= settings.TableBytes();
+            if (!ParseResidentVorbis(bytes + media.blobOffset, static_cast<std::size_t>(media.blobBytes), parsed, static_cast<std::size_t>(available)) ||
                 parsed.sampleRate != media.sampleRate || parsed.channels != media.channelCount ||
                 parsed.frames != media.frameCount || parsed.loopStart != media.loopStartFrame ||
                 parsed.loopEnd != media.loopEndFrame ||
                 bool(parsed.loopEnd) != bool(media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE)) return false;
+            VorbisPrepareResult result;
+            auto setup = settings.Prepare(parsed, static_cast<std::size_t>(available) -
+                parsed.seek.capacity() * sizeof(VorbisSeekPoint), result);
+            if (!setup && result == VorbisPrepareResult::OutOfMemory) throw detail::PackDecodeCapacity{};
+            return setup && setup->ValidateResident(parsed);
         }
         return true;
     }
@@ -1241,7 +1251,7 @@ struct FileCanonicalSource {
                 StreamReadStatus::Ok ? bytes.data() : nullptr;
     }
     bool VerifyMedia(const PackTocEntry&, std::uint32_t, const std::uint8_t*,
-                     const PackFileHeader&, std::uint64_t) const noexcept {
+                     const PackFileHeader&, std::uint64_t, const detail::PackDecodeBudget&) const noexcept {
         // The common parser must finish all metadata checks before physical
         // bytes are consumed into unpublished sample owners in Finish.
         return true;
@@ -1340,7 +1350,9 @@ struct FileCanonicalSource {
         std::vector<PCMRegistry::PackSampleBuilder> builders;
         detail::DecodeResize(builders, image.media.size(), scanScratch);
         std::vector<std::vector<std::uint8_t>> compressed;
-        detail::DecodeResize(compressed, image.media.size(), scanScratch);
+        if (std::any_of(image.media.begin(), image.media.end(), [](const auto& row) {
+                return row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+            })) detail::DecodeResize(compressed, image.media.size(), scanScratch);
         std::vector<PlanarChunkChecksumBuilder> chunkSums;
         detail::DecodeResize(chunkSums, image.media.size(), scanScratch);
         detail::PackDecodeCharge completedStaging(scratch.Budget());
@@ -1765,7 +1777,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd, true)) {
                 return VN_BAD_PACK;
             }
-            if (!source.VerifyMedia(media, i, dir, header, dirEnd)) return VN_BAD_PACK;
+            if (!source.VerifyMedia(media, i, dir, header, dirEnd, budget)) return VN_BAD_PACK;
             ranges.emplace_back(media.blobOffset, media.blobBytes);
             detail::DecodeAppend(image.media, media, image.staging, requestedSlots[1]);
             break;
