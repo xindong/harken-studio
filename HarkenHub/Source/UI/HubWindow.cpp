@@ -63,7 +63,7 @@
 #include <windows.h>
 #endif
 
-#if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
+#ifdef Q_OS_WIN
 #include <QWKWidgets/widgetwindowagent.h>
 #endif
 
@@ -789,7 +789,7 @@ void HubWindow::beginHubUpdateLanding()
 
 void HubWindow::installChrome()
 {
-#if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
+#ifdef Q_OS_WIN
     titleBar_ = new TitleBar(this);
 
     auto* agent = new QWK::WidgetWindowAgent(this);

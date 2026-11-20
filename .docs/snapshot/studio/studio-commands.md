@@ -204,7 +204,7 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 
 [EditorCommandCatalog.cpp](../../../HarkenStudio/Source/Core/EditorCommandCatalog.cpp) 定义宿主边界与统一描述；[CommandSchemas.cpp](../../../HarkenStudio/Source/Core/CommandSchemas.cpp) 与 [DesktopCommandSchemas.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopCommandSchemas.cpp) 定义参数合同；[CommandArgumentValidator.cpp](../../../HarkenStudio/Source/Core/CommandArgumentValidator.cpp) 递归校验。[IPCServer.cpp](../../../HarkenStudio/Source/Core/IPC/IPCServer.cpp) 统一分派与状态限制。[DesktopWidgetTargets.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopWidgetTargets.cpp) 统一桌面目标身份、交互限制和队列状态。
 
-通用回归覆盖公开目录的完整声明、两宿主合同相等、所有命令拒绝未知参数、嵌套约束与精确身份规则。桌面生命周期回归覆盖重复名称、作用域、失效身份、隐藏/禁用/模态阻塞、入队后目标变化、作业状态及历史容量。CLI 本地流程验证位于 [verify_studio_cli.py](../../../.scripts/verify_studio_cli.py)。
+通用回归覆盖公开目录的完整声明、两宿主合同相等、所有命令拒绝未知参数、嵌套约束与精确身份规则。桌面生命周期回归覆盖重复名称、作用域、失效身份、隐藏/禁用/模态阻塞、入队后目标变化、作业状态及历史容量。CLI 本地流程验证位于 [verify_studio_cli.py](../../../HarkenStudio/Test/E2E/verify_studio_cli.py)。
 
 本轮真实 Windows 桌面会话验证通过：请求外层结构及参数类型拒绝并保留 request_id、完整合同对齐、顶层窗口身份、隐藏控件读取与交互限制、同名候选身份、面板生命周期、队列完成查询、批次参数预检无先行副作用，以及真实未保存确认框阻塞背景交互、取消后原队列操作完成。最终临时报告为 `harken-desktop-contracts-t4kxs3y0/report.json`，仓库本地日志为 `.temp/desktop-contracts-release-smoke.log`。
 

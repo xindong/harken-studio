@@ -349,7 +349,6 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
             header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
             header.remove(QStringLiteral("studioVersion"));
-            header.remove(QStringLiteral("packSchemaVersion"));
         }
         document.insert(QStringLiteral("harkenDocument"), header);
         auto content = HarkenTest::projectContent(document);

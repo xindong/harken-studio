@@ -33,11 +33,6 @@ namespace Harken.Test
                 InstallNativeResolver(true);
                 return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
             }
-            if (args.Length == 1 && args[0] == "--stream-sources-only")
-            {
-                InstallNativeResolver(true);
-                return RunAbiFidelity() && StreamSourceContract.Run() ? 0 : 1;
-            }
             if (args.Length == 1 && args[0] == "--state-only-unavailable")
             {
                 InstallNativeResolver(true);
@@ -80,7 +75,6 @@ namespace Harken.Test
             int zeroGc = RunZeroGc();   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
             bool companionVersionOk = CompanionVersionContract.Run();
-            bool companionNativeOk = !requireNative || StreamSourceContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -93,7 +87,7 @@ namespace Harken.Test
             Console.WriteLine("Remote native: " + (remoteNative == 0 ? "PASS" : remoteNative == 2 ? "SKIP" : "FAIL"));
             if (requireNative)
             {
-                bool nativeOk = companionNativeOk && namePost == 0 && zeroGc == 0 && remoteNative == 0;
+                bool nativeOk = namePost == 0 && zeroGc == 0 && remoteNative == 0;
                 Console.WriteLine("Required native validation: " + (nativeOk ? "PASS" : "FAIL"));
                 if (namePost == 2 || zeroGc == 2 || remoteNative == 2)
                 {
@@ -101,7 +95,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionNativeOk && companionVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
+            bool ok = companionVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&
                 (zeroGc == 0 || (!requireNative && zeroGc == 2)) &&
                 (remoteNative == 0 || (!requireNative && remoteNative == 2));

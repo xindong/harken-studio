@@ -41,8 +41,7 @@ def edited_documents(before: dict, pack_schema_version: int = 2) -> tuple[dict, 
         for field in ("studioVersion", "savedStudioVersion"):
             if field in header:
                 header[field] = "1.1"
-        if identity == "root" and "packSchemaVersion" in header:
-            header["packSchemaVersion"] = pack_schema_version
+        header.pop("packSchemaVersion", None)
         if identity == "master":
             continue
         path = "/content/metadata/name" if identity == "root" else "/content/name"

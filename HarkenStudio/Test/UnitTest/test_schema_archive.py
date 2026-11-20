@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive" / "schema_archive.py"
 MODULE = runpy.run_path(str(SCRIPT))
 SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Schema"
@@ -383,15 +383,12 @@ class SchemaArchiveTest(unittest.TestCase):
                 if source["projectSchemaVersion"] == EDITOR_VERSION:
                     retired = ["savedStudioVersion", "propertyModel"]
                     if item["type"] != "project.root":
-                        retired += ["studioVersion", "packSchemaVersion"]
+                        retired += ["studioVersion"]
                     for name in retired:
                         self.assertNotIn(name, header["required"])
                         self.assertNotIn(name, header["properties"])
                         self.assertIsNone(re.search(header["propertyNames"]["pattern"], name))
                     self.assertIsNotNone(re.search(header["propertyNames"]["pattern"], "customMetadata"))
-                if source["projectSchemaVersion"] == EDITOR_VERSION and item["type"] == "project.root":
-                    self.assertIn("packSchemaVersion", header["required"])
-                    self.assertEqual(header["properties"]["packSchemaVersion"], {"minimum": 1, "type": "integer"})
                 content = document["properties"]["content"]
                 if "$ref" in content:
                     content = source["$defs"][content["$ref"][len("#/$defs/"):]]

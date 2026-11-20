@@ -16,7 +16,7 @@ import pathlib
 import sys
 import unittest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 SCRIPT_PATH = (REPO_ROOT / "HarkenEngine" / "Source" / "Core" / "api" / "abi" /
                "gen_abi_exports.py")
 REAL_HEADER = (REPO_ROOT / "HarkenEngine" / "Source" / "Core" / "api" /

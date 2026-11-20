@@ -47,6 +47,26 @@ FetchContent_Declare(
     GIT_TAG b1f19fab4aebe607805620d25a5e42566ce46a0e
 )
 FetchContent_MakeAvailable(ed25519)
+
+if(WIN32)
+    FetchContent_Declare(
+        QWindowKit
+        GIT_REPOSITORY https://github.com/stdware/qwindowkit.git
+        GIT_TAG        c783b89d119a672b0aa4262b520c0783d0612689
+    )
+    set(QWINDOWKIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(QWINDOWKIT_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(QWindowKit)
+endif()
+
+function(harken_deploy_hub_qwindowkit target)
+    if(WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:QWindowKit::Core>" "$<TARGET_FILE:QWindowKit::Widgets>"
+                "$<TARGET_FILE_DIR:${target}>")
+    endif()
+endfunction()
 add_library(harken_ed25519 STATIC
     ${ed25519_SOURCE_DIR}/src/fe.c
     ${ed25519_SOURCE_DIR}/src/ge.c
@@ -215,9 +235,8 @@ function(harken_configure_hub_library target)
             "-framework Foundation"
             "-framework ServiceManagement")
     endif()
-    if(TARGET QWindowKit::Widgets)
+    if(WIN32)
         target_link_libraries(${target} PUBLIC QWindowKit::Widgets)
-        target_compile_definitions(${target} PUBLIC HARKEN_HAS_QWINDOWKIT)
     endif()
 endfunction()
 
@@ -240,6 +259,7 @@ endif()
 
 target_link_libraries(harken_hub PRIVATE harken_hub_lib)
 harken_add_hub_legal_resources(harken_hub)
+harken_deploy_hub_qwindowkit(harken_hub)
 if(WIN32)
     target_link_libraries(harken_hub PRIVATE user32)
 endif()

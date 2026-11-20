@@ -17,7 +17,7 @@
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <atomic>

@@ -5,6 +5,7 @@ add_executable(harken_hub_cli_fixture
     ../resources.qrc)
 set_target_properties(harken_hub_cli_fixture PROPERTIES AUTORCC ON)
 target_link_libraries(harken_hub_cli_fixture PRIVATE harken_hub_test_lib)
+harken_deploy_hub_qwindowkit(harken_hub_cli_fixture)
 harken_add_hub_legal_resources(harken_hub_cli_fixture)
 add_executable(harken_hub_studio_fixture UnitTest/Support/StudioProcessFixture.cpp)
 target_link_libraries(harken_hub_studio_fixture PRIVATE Qt6::Core Qt6::Network)
@@ -76,16 +77,13 @@ add_executable(harken_hub_tests
 set_target_properties(harken_hub_tests PROPERTIES AUTORCC ON)
 harken_add_hub_legal_resources(harken_hub_tests)
 if(WIN32)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     target_sources(harken_hub_tests PRIVATE
         UnitTest/SetupPayloadTest.cpp
         UnitTest/ShellIconsTest.cpp
         UnitTest/UpdateBridgeDeploymentTest.cpp)
     target_link_libraries(harken_hub_tests PRIVATE bcrypt)
-    target_compile_definitions(harken_hub_tests PRIVATE
-        HARKEN_HUB_TEST_PYTHON="${Python3_EXECUTABLE}"
-        HARKEN_HUB_INSTALLER_SCRIPTS="${CMAKE_SOURCE_DIR}/.scripts/release")
 endif()
+harken_deploy_hub_qwindowkit(harken_hub_tests)
 target_link_libraries(harken_hub_tests PRIVATE
     harken_hub_test_lib
     MINIZIP::minizip
@@ -116,6 +114,7 @@ gtest_discover_tests(harken_hub_tests DISCOVERY_MODE PRE_TEST)
 add_executable(harken_hub_integration_guidance_tests UnitTest/IntegrationGuidanceTest.cpp)
 set_target_properties(harken_hub_integration_guidance_tests PROPERTIES AUTOMOC ON)
 target_link_libraries(harken_hub_integration_guidance_tests PRIVATE harken_hub_test_lib Qt6::Test)
+harken_deploy_hub_qwindowkit(harken_hub_integration_guidance_tests)
 target_compile_definitions(harken_hub_integration_guidance_tests PRIVATE
     HARKEN_HUB_TRANSLATION_FILE="${CMAKE_BINARY_DIR}/HarkenHub/harken_hub_zh_CN.qm")
 add_dependencies(harken_hub_integration_guidance_tests harken_hub_lrelease)

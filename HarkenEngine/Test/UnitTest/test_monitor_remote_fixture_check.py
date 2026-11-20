@@ -7,7 +7,7 @@ from pathlib import Path
 from script_loader import load_script_module
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 REMOTE_SCRIPT = (
     REPO_ROOT
     / "HarkenEngine"
