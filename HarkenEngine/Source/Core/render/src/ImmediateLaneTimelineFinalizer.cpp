@@ -792,6 +792,8 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
     for (std::uint32_t index = 0; index < state.receiptCount; ++index) {
         auto& receipt = state.receipts[index];
         if (receipt.queueDeferred) receipt.sourceWaiting = true;
+        if (receipt.applied && !receipt.cancelledOnly)
+            state.lane->PublishInitialAppliedReceipt(receipt.slot, receipt.bucket, quantum + 1u);
     }
 }
 

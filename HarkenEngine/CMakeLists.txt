@@ -131,6 +131,8 @@ set(HARKEN_CORE_SOURCES
     ${HARKEN_CORE_DIR}/dsp/src/Resampler.cpp
     ${HARKEN_CORE_DIR}/dsp/src/ResamplerAvx2.cpp
     ${HARKEN_CORE_DIR}/media/src/PackMediaRange.cpp
+    ${HARKEN_CORE_DIR}/media/src/VorbisMedia.cpp
+    ${HARKEN_CORE_DIR}/media/src/VorbisDecoder.cpp
     ${HARKEN_CORE_DIR}/media/src/PcmRegistry.cpp
     ${HARKEN_CORE_DIR}/media/src/ResolvedSlotTicket.cpp
     ${HARKEN_CORE_DIR}/media/src/ResourceFacts.cpp
@@ -271,9 +273,11 @@ if(HARKEN_BUILD_TOOLS OR HARKEN_BUILD_RUNTIME_UNIT_TESTS OR
     set(HARKEN_BUILD_INTERNAL_RUNTIME ON)
 endif()
 
+add_subdirectory(ThirdParty/vorbis-decoder)
+
 if(HARKEN_BUILD_INTERNAL_RUNTIME)
 add_library(harken_core STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
-target_link_libraries(harken_core PRIVATE harken_buildinfo)
+target_link_libraries(harken_core PRIVATE harken_buildinfo harken_vorbis_decoder)
 target_compile_definitions(harken_core PUBLIC HARKEN_ENGINE_DEV=1)
 set_target_properties(harken_core PROPERTIES OUTPUT_NAME HarkenCore)
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
@@ -306,7 +310,7 @@ endif()
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     add_library(harken_core_release STATIC ${HARKEN_CORE_SOURCES})
-    target_link_libraries(harken_core_release PRIVATE harken_buildinfo)
+    target_link_libraries(harken_core_release PRIVATE harken_buildinfo harken_vorbis_decoder)
     target_include_directories(harken_core_release
         PUBLIC ${HARKEN_CORE_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
@@ -328,7 +332,7 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     endif()
 
     add_library(harken_core_hub_absent STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
-    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
+    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo harken_vorbis_decoder)
     target_include_directories(harken_core_hub_absent
         PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
@@ -379,6 +383,7 @@ function(harken_add_engine_edition target output_name export_name)
     add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_CORE_SOURCES} ${ARGN})
     add_library(Harken::${export_name} ALIAS ${target})
     target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:harken_buildinfo>)
+    target_sources(${target} PRIVATE $<TARGET_OBJECTS:harken_vorbis_decoder>)
     target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}
         PUBLIC
@@ -526,7 +531,7 @@ if(HARKEN_BUILD_RT_QUALIFICATION)
     endif()
     add_library(harken_core_rt_qualification STATIC
         ${_harken_rt_qualification_sources})
-    target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo)
+    target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo harken_vorbis_decoder)
     target_include_directories(harken_core_rt_qualification
         PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}

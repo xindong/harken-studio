@@ -332,36 +332,6 @@ case 24: { /* Vn_SetVoiceEffectParam */
     EncodeReply(reply, sequence, 24, result, nullptr, 0);
     return;
 }
-case 25: { /* Vn_RegisterStreamFile */
-    VnObjectId p0{};
-    const char* p1 = nullptr;
-    if (!reader.ReadObjectId(&p0) ||
-        !ReadWireString(reader, arena, &p1)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 25);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 25);
-        return;
-    }
-    const VnResult result = Vn_RegisterStreamFile(p0, p1);
-    EncodeReply(reply, sequence, 25, result, nullptr, 0);
-    return;
-}
-case 26: { /* Vn_UnregisterStreamFile */
-    VnObjectId p0{};
-    if (!reader.ReadObjectId(&p0)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 26);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 26);
-        return;
-    }
-    const VnResult result = Vn_UnregisterStreamFile(p0);
-    EncodeReply(reply, sequence, 26, result, nullptr, 0);
-    return;
-}
 case 27: { /* Vn_CreateEmitter */
     std::uint64_t p0 = 0;
     if (!reader.AtEnd()) {
@@ -687,22 +657,6 @@ case 51: { /* ReservedLegacyActionTriggerByName */
 }
 case 52: { /* Vn_ReplacePCM */
     EncodeWireError(reply, sequence, kWireErrRefusedMemoryDesc, 52);
-    return;
-}
-case 53: { /* Vn_ReplaceStreamFile */
-    VnObjectId p0{};
-    const char* p1 = nullptr;
-    if (!reader.ReadObjectId(&p0) ||
-        !ReadWireString(reader, arena, &p1)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 53);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 53);
-        return;
-    }
-    const VnResult result = Vn_ReplaceStreamFile(p0, p1);
-    EncodeReply(reply, sequence, 53, result, nullptr, 0);
     return;
 }
 case 54: { /* Vn_ReplacePack */

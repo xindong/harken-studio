@@ -783,11 +783,6 @@ namespace Harken
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_INIT = 4u;
         internal const uint VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES = 316u;
         internal const uint VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN = 1u;
-        public const uint VN_STREAM_SOURCE_REGISTER = 0u;
-        public const uint VN_STREAM_SOURCE_REPLACE = 1u;
-        public const uint VN_STREAM_SOURCE_PREPARING = 1u;
-        public const uint VN_STREAM_SOURCE_READY = 2u;
-        public const uint VN_STREAM_SOURCE_FAILED = 3u;
         public const int VN_BYTE_READ_OK = 0;
         public const int VN_BYTE_READ_CANCELLED = 1;
         public const int VN_BYTE_READ_IO_ERROR = 2;
@@ -814,6 +809,15 @@ namespace Harken
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void VnByteSourceReleaseFn(IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate VnResult VnPackStreamRetainFn(IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate VnResult VnPackStreamPathFn(IntPtr userData, ulong packStableId, IntPtr relativeLocatorUtf8, ulong expectedContentRevision, ulong expectedByteLength, IntPtr outPathUtf8);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate VnResult VnPackStreamOpenFn(IntPtr userData, ulong packStableId, IntPtr relativeLocatorUtf8, ulong expectedContentRevision, ulong expectedByteLength, IntPtr cancellation, IntPtr outSource);
 
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
@@ -1093,6 +1097,9 @@ namespace Harken
     public ulong maxPackReplacementPeakBytes;
     public uint maxActionCooldownRows;
     public uint reserved12;
+    public ulong reserved13;
+    public uint streamRingBytes;
+    public uint reserved14;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -2413,12 +2420,40 @@ namespace Harken
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct VnStreamSourceInfoV1
+    internal struct VnCanonicalPackSetMemberV3
     {
     public uint structSize;
-    public uint state;
-    public int result;
     public uint reserved0;
+    public VnCanonicalPackSetMemberV2 member;
+    public IntPtr streams;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnCanonicalPackSetActivationDescV3
+    {
+    public uint structSize;
+    public uint flags;
+    public ulong expectedCurrentInitHandle;
+    public ulong baseSetRevision;
+    public ulong setRevision;
+    public uint memberCount;
+    public uint memberStructSize;
+    public IntPtr members;
+    public uint outputMemberCapacity;
+    public uint outputMemberStructSize;
+    public IntPtr outputMembers;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackStreamResolverV1
+    {
+    public uint structSize;
+    public uint flags;
+    public IntPtr userData;
+    public IntPtr retain;
+    public IntPtr release;
+    public IntPtr path;
+    public IntPtr open;
     }
 
 }
