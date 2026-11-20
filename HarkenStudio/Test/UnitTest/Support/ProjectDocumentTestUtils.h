@@ -59,7 +59,6 @@ inline QJsonObject projectDocument(const QString& type,
     if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion
         && type == QStringLiteral("project.root")) {
         header.insert(QStringLiteral("studioVersion"), QStringLiteral("1.0.0"));
-        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION);
     }
     return {
         {QStringLiteral("harkenDocument"), header},

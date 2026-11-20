@@ -133,14 +133,13 @@ QJsonObject ProjectDocument::createHeader(const QString& type,
                   ProjectSchema::kProjectSchemaVersion);
     header.remove(QStringLiteral("propertyModel"));
     header.remove(QStringLiteral("savedStudioVersion"));
+    header.remove(QStringLiteral("packSchemaVersion"));
     if (type == QStringLiteral("project.root")) {
         header.insert(QStringLiteral("studioVersion"), QString::fromUtf8(
             Harken::BuildInfo::Version.data(),
             static_cast<int>(Harken::BuildInfo::Version.size())));
-        header.insert(QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION);
     } else {
         header.remove(QStringLiteral("studioVersion"));
-        header.remove(QStringLiteral("packSchemaVersion"));
     }
     return header;
 }
@@ -206,16 +205,8 @@ bool ProjectDocument::parse(const QJsonObject& document,
         if (header.contains(QStringLiteral("propertyModel"))
             || header.contains(QStringLiteral("savedStudioVersion")))
             return fail(QStringLiteral("Project document header contains retired metadata"));
-        if (projectRoot) {
-            const auto packVersion = header.value(QStringLiteral("packSchemaVersion"));
-            if (!packVersion.isDouble() || !std::isfinite(packVersion.toDouble())
-                || packVersion.toInt() <= 0 || packVersion.toDouble() != packVersion.toInt())
-                return fail(QStringLiteral("Project Pack Schema version is invalid"));
-            parsed.packSchemaVersion = packVersion.toInt();
-        } else if (header.contains(QStringLiteral("studioVersion"))
-                   || header.contains(QStringLiteral("packSchemaVersion"))) {
+        if (!projectRoot && header.contains(QStringLiteral("studioVersion")))
             return fail(QStringLiteral("Object document header contains project version metadata"));
-        }
     }
     parsed.header = header;
     parsed.content = document.value(QStringLiteral("content")).toObject();
