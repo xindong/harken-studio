@@ -38,6 +38,14 @@ struct HvWorkspace {
     unsigned char* data;
     size_t capacity, used, peak;
     jmp_buf failure;
+    /* The reusable spectrum belongs to this workspace. A state address only
+       controls admission; media generation and packet offset identify content. */
+    uintptr_t ownerAddress;
+    uint64_t preparedGeneration, preparedOffset;
+    float** preparedPcm;
+    long preparedEnd, preparedW;
+    unsigned consecutive;
+    int preparing;
 };
 
 void* hv_allocate(HvAllocator* allocator, size_t bytes);

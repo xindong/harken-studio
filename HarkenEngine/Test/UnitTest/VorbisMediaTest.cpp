@@ -80,7 +80,7 @@ TEST(VorbisMedia, ResidentPacketLengthsAndSeekOffsetsAreByteExact) {
         ASSERT_TRUE(ParseResidentVorbis(bytes.data(), bytes.size(), m));
         const std::uint8_t* packet;
         std::uint32_t actual;
-        ASSERT_TRUE(m.Packet(position - m.packetDataOffset, packet, actual));
+        ASSERT_TRUE(m.Packet(position - static_cast<std::size_t>(m.packets - bytes.data()), packet, actual));
         EXPECT_EQ(length, actual);
         EXPECT_FALSE(ParseResidentVorbis(bytes.data(), bytes.size() - 1, m));
     }

@@ -177,6 +177,12 @@ static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables*
 fail:
     hv_setup_destroy(s); return NULL;
 }
+HvSetup* hv_setup_create_compact(HvMemory memory, size_t budget, const HvTables* tables,
+    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
+    int limitHit = 0;
+    return hv_setup_attempt(memory, budget, tables, ident, identBytes, setup, setupBytes,
+                            result, 1, &limitHit);
+}
 HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
     int limitHit = 0;
@@ -306,6 +312,30 @@ static void hv_store(HvWorkspace* w, const vorbis_block* b, uint64_t generation,
 #endif
 }
 
+void hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
+                       uint64_t generation, uint64_t offset) {
+    if (!s || !w || !generation || !packet || !bytes || bytes > 65535 ||
+        w->ownerAddress != (uintptr_t)s || w->consecutive < 2 || w->preparedPcm ||
+        hv_find(w, generation, offset)) return;
+    vorbis_block block = s->block;
+    ogg_packet p = {0};
+    p.packet = (unsigned char*)packet; p.bytes = (long)bytes;
+    p.granulepos = -1; p.packetno = s->sequence;
+    w->used = 0; block.internal = w; w->preparing = 1;
+    if (setjmp(w->failure)) {
+        w->preparing = 0;
+        return;
+    }
+    if (vorbis_synthesis(&block, &p) == 0) {
+        w->preparedGeneration = generation;
+        w->preparedOffset = offset;
+        w->preparedPcm = block.pcm;
+        w->preparedW = block.W;
+        w->preparedEnd = block.pcmend;
+    }
+    w->preparing = 0;
+}
+
 enum HvResult hv_decode_packet(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
                                float*** pcm, unsigned* frames) {
     return hv_decode_resident_packet(s, w, packet, bytes, 0, 0, pcm, frames);
@@ -318,7 +348,20 @@ enum HvResult hv_decode_resident_packet(HvState* s, HvWorkspace* w, const uint8_
     int admit;
     ogg_packet p; float** output = NULL; int count, ch, i;
     if (!s || !w || !packet || !bytes || bytes > 65535 || !pcm || !frames) return HV_INVALID;
-    *pcm = NULL; *frames = 0; w->used = 0; s->block.internal = w;
+    float** pending = NULL;
+    if (w->ownerAddress == (uintptr_t)s) {
+        if (w->consecutive < 2) ++w->consecutive;
+        if (w->preparedGeneration == generation && w->preparedOffset == offset)
+            pending = w->preparedPcm;
+    } else {
+        w->ownerAddress = (uintptr_t)s;
+        w->consecutive = 1;
+    }
+    w->preparedPcm = NULL;
+    *pcm = NULL; *frames = 0;
+    /* Keep the reserved prefix until the transform and the cache copy finish. */
+    if (!pending) w->used = 0;
+    s->block.internal = w;
     if (setjmp(w->failure)) return HV_MEMORY;
     memset(&p, 0, sizeof(p)); p.packet = (unsigned char*)packet; p.bytes = (long)bytes;
     p.granulepos = -1; p.packetno = s->sequence++;
@@ -335,7 +378,16 @@ enum HvResult hv_decode_resident_packet(HvState* s, HvWorkspace* w, const uint8_
         s->block.pcm = planes; s->block.W = e->window; s->block.pcmend = e->frames;
         s->block.sequence = p.packetno; s->block.granulepos = p.granulepos; s->block.eofflag = 0;
     } else {
-        if (vorbis_synthesis(&s->block, &p)) return HV_INVALID;
+        if (pending) {
+            s->block.pcm = pending;
+            s->block.W = w->preparedW;
+            s->block.pcmend = w->preparedEnd;
+            s->block.sequence = p.packetno;
+            s->block.granulepos = p.granulepos;
+            s->block.eofflag = 0;
+            for (ch = 0; ch < s->dsp.vi->channels; ++ch)
+                mdct_backward(s->setup->backend.transform[s->block.W][0], pending[ch], pending[ch]);
+        } else if (vorbis_synthesis(&s->block, &p)) return HV_INVALID;
         if (admit) hv_store(w, &s->block, generation, offset);
     }
     if (vorbis_synthesis_blockin(&s->dsp, &s->block)) return HV_INVALID;

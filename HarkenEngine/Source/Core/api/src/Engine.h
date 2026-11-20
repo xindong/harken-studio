@@ -7066,7 +7066,9 @@ public:
                     const EngineHandleGenerationFloors& handleFloors = {})
         : config(resolved),
           playableStorage(resolved),
-          vorbis(resolved.renderWorkerCount),
+          vorbis(resolved.renderWorkerCount,
+                 resolved.maxPackResourceBytes != 0 ||
+                 resolved.maxPackDecodeStagingBytes < EngineConfig::kDefaultPackDecodeStagingBytes),
           registry(vorbis),
           logicPacks(resolved.maxPacks),
           packComposition(PackIdentityLeaseCapacity(resolved) -

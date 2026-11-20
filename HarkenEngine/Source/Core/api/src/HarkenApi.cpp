@@ -130493,7 +130493,7 @@ void JournalSuccessfulCanonicalPackSetActivation(
 }  // namespace
 
 
-VnResult ActivateCanonicalPackSetImpl(
+VnResult ActivateCanonicalPackSetAttempt(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport,
     const std::vector<std::uint32_t>* operations = nullptr,
@@ -130716,6 +130716,47 @@ VnResult ActivateCanonicalPackSetImpl(
     } catch (const std::invalid_argument&) {
         return VN_INVALID_ARG;
     }
+}
+
+namespace {
+template<class F> VnResult WithPackCodebookFallback(Engine& engine, bool replayable, F&& attempt) {
+    auto& cache = engine.vorbis.settings;
+    if (cache.PrefersCompact()) return attempt();
+    if (!replayable || engine.trace || PackStagingFaultForTests() != PackStagingFault::None) {
+        VorbisSettingsCache::CompactScope compact(cache);
+        return attempt();
+    }
+    const auto before = cache.WideRequests();
+    const auto result = attempt();
+    if (result != VN_PACK_RESIDENT_CAPACITY || cache.WideRequests() == before) return result;
+    // A capacity refusal precedes publication. The first attempt has released its
+    // staging owners. Re-open file inputs and validate the complete transaction.
+    VorbisSettingsCache::CompactScope compact(cache);
+    return attempt();
+}
+} // namespace
+
+VnResult ActivateCanonicalPackSetImpl(
+    Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
+    VnCanonicalPackSetActivationReportV1* outReport,
+    const std::vector<std::uint32_t>* operations = nullptr,
+    std::vector<std::uint64_t>* traceResources = nullptr,
+    bool* traceInputMissing = nullptr) {
+    bool filesOnly = descriptor && descriptor->structSize == sizeof(*descriptor) &&
+        descriptor->members && descriptor->memberStructSize == sizeof(VnCanonicalPackSetMemberV1) &&
+        descriptor->memberCount <= engine.config.maxPacks;
+    if (filesOnly) {
+        for (std::uint32_t i = 0; i < descriptor->memberCount; ++i) {
+            if (descriptor->members[i].flags & VN_CANONICAL_PACK_SET_MEMBER_PROVIDER) {
+                filesOnly = false;
+                break;
+            }
+        }
+    }
+    return WithPackCodebookFallback(engine, filesOnly, [&] {
+        return ActivateCanonicalPackSetAttempt(engine, descriptor, outReport, operations,
+                                              traceResources, traceInputMissing);
+    });
 }
 
 VnResult ActivateCanonicalPackSetV1(
@@ -131165,8 +131206,10 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
 
 VnResult LoadCanonicalPack(Engine& engine, const VnPackLoadDesc* desc,
                            VnPackHandle* outHandle) {
-    return LoadCanonicalPackImpl(engine, desc, outHandle,
-                                 CanonicalLoadMode::Public);
+    const bool file = desc && desc->structSize == sizeof(*desc) && !(desc->flags & VN_PACK_LOAD_FLAG_PROVIDER);
+    return WithPackCodebookFallback(engine, file, [&] {
+        return LoadCanonicalPackImpl(engine, desc, outHandle, CanonicalLoadMode::Public);
+    });
 }
 
 VnResult LoadProvisionalCanonicalContentForTests(
@@ -131314,7 +131357,7 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
 }
 
 
-VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
+static VnResult ReplaceCanonicalPackAttempt(Engine& engine, VnPackHandle handle,
                               const VnPackLoadDesc* desc) try {
     if (desc == nullptr) {
         return VN_INVALID_ARG;
@@ -131510,6 +131553,13 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     return VN_PACK_RESIDENT_CAPACITY;
 }
 
+
+VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle, const VnPackLoadDesc* desc) {
+    const bool file = desc && desc->structSize == sizeof(*desc) && !(desc->flags & VN_PACK_LOAD_FLAG_PROVIDER);
+    return WithPackCodebookFallback(engine, file, [&] {
+        return ReplaceCanonicalPackAttempt(engine, handle, desc);
+    });
+}
 
 } // namespace harken
 

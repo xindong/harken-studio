@@ -227,6 +227,8 @@ static int mapping0_inverse(vorbis_block *vb,vorbis_info_mapping *l){
                floormemo[i],pcm);
   }
 
+  if (((HvWorkspace*)vb->internal)->preparing) return 0;
+
   /* transform the PCM data; takes PCM vector, vb; modifies PCM vector */
   /* only MDCT right now.... */
   for(i=0;i<vi->channels;i++){
