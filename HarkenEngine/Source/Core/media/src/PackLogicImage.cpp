@@ -1111,7 +1111,6 @@ struct SpanCanonicalSource {
         }
     };
     ArtifactHashState artifact;
-    VorbisSettingsCache settings;
     std::uint32_t pairedMediaEntry = UINT32_MAX;
     std::uint64_t pairedMediaChecksum = 0;
     std::uint64_t ByteCount() const noexcept { return artifact.byteCount; }
@@ -1176,6 +1175,7 @@ struct SpanCanonicalSource {
         }
         if (checksum != media.blobChecksum) return false;
         if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+            VorbisSettingsCache settings;
             VorbisMedia parsed;
             auto available = budget ? budget->limit - budget->live : SIZE_MAX;
             if (!settings.Initialize(static_cast<std::size_t>(available)) || settings.TableBytes() > available)
