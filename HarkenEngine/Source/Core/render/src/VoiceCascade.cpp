@@ -252,9 +252,8 @@ bool FeedResampler(VoiceRenderContext& ctx) {
             PCMView decoded;
             if (!ctx.mediaDecoder->Read(ctx.srcCursor, chunk, ctx.mediaRenderThread, decoded) ||
                 decoded.frames == 0 || decoded.frames > chunk) {
-                ctx.srcCursor = ctx.pcm.frames;
-                rs.MarkInputEnd();
-                return true;
+                ctx.mediaDecodeFailed = true;
+                return false;
             }
             chunk = static_cast<std::uint32_t>(decoded.frames);
             rs.PushPCM(decoded, 0, chunk);

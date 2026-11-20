@@ -273,8 +273,9 @@ if(HARKEN_BUILD_TOOLS OR HARKEN_BUILD_RUNTIME_UNIT_TESTS OR
     set(HARKEN_BUILD_INTERNAL_RUNTIME ON)
 endif()
 
-if(HARKEN_BUILD_INTERNAL_RUNTIME)
 add_subdirectory(ThirdParty/vorbis-decoder)
+
+if(HARKEN_BUILD_INTERNAL_RUNTIME)
 add_library(harken_core STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
 target_link_libraries(harken_core PRIVATE harken_buildinfo harken_vorbis_decoder)
 target_compile_definitions(harken_core PUBLIC HARKEN_ENGINE_DEV=1)
