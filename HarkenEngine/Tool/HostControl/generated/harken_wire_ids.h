@@ -74,8 +74,6 @@ enum WireOpcode : std::uint16_t {
     kOpVn_SetVoiceEffect = 22,
     kOpVn_ClearVoiceEffect = 23,
     kOpVn_SetVoiceEffectParam = 24,
-    kOpVn_RegisterStreamFile = 25,
-    kOpVn_UnregisterStreamFile = 26,
     kOpVn_CreateEmitter = 27,
     kOpVn_DestroyEmitter = 28,
     kOpVn_SetEmitterPosition = 29,
@@ -102,7 +100,6 @@ enum WireOpcode : std::uint16_t {
     kOpReservedLegacyActionFindByName = 50,
     kOpReservedLegacyActionTriggerByName = 51,
     kOpVn_ReplacePCM = 52,
-    kOpVn_ReplaceStreamFile = 53,
     kOpVn_ReplacePack = 54,
     kOpVn_ReplaceAttenuation = 55,
     kOpReservedLegacyActionReplace = 56,
@@ -168,7 +165,7 @@ enum WireOpcode : std::uint16_t {
     kOpVn_CreateEmitterEx = 198,
 };
 
-constexpr std::uint16_t kWireOpcodeCount = 116;
+constexpr std::uint16_t kWireOpcodeCount = 113;
 
 } // namespace harkenremote
 
