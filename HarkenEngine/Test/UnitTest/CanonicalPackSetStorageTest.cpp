@@ -1,6 +1,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "harken/media/PackTable.h"
 #include "harken/media/PackFormatV2.h"
+#include "harken/media/VorbisMedia.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cstring>
@@ -392,6 +393,95 @@ TEST(CanonicalPackSetStorage, DistinctHandlesAndTokensShareEqualMedia) {
     EXPECT_EQ(first->front().registrationCookie, second->front().registrationCookie);
     EXPECT_EQ(first->front().registration.View().channels[0],
               second->front().registration.View().channels[0]);
+}
+
+TEST(CanonicalPackSetStorage, ExternalOwnersKeepIndependentSourcesAcrossReplaceAndRemoval) {
+    using namespace harken;
+    struct Locator final : StreamByteLocator {
+        mutable unsigned opens = 0;
+        std::shared_ptr<const StreamByteSource> Open(StreamReadCancellation) const override {
+            ++opens;
+            return {};
+        }
+    };
+    PCMRegistry registry;
+    PackTable packs(2, 4, 8);
+    const auto sound = harkentest::ObjectId(100);
+    SetStorageMember a(21, sound, 0.25f), b(22, sound, 0.25f);
+    auto firstLocator = std::make_shared<Locator>();
+    auto secondLocator = std::make_shared<Locator>();
+    auto nextLocator = std::make_shared<Locator>();
+    const auto prepare = [&](std::shared_ptr<Locator> locator, std::uint64_t revision,
+                             PCMRegistry::PreparedPackSamples* out) {
+        auto range = std::make_shared<PackMediaRange>();
+        auto external = std::make_shared<PackExternalStream>();
+        external->codec = PackExternalStream::Codec::Pcm;
+        external->fileBytes = 1024;
+        external->locator = std::move(locator);
+        range->external = std::move(external);
+        range->blobOffset = vorbis_test_wire::kStreamHeaderBytes;
+        range->sampleRate = 48000; range->channelCount = 1; range->frameCount = 8;
+        range->contentRevision = revision;
+        return registry.PreparePackRangeSamples(sound, std::move(range), out);
+    };
+    std::vector<PCMRegistry::PreparedPackSamples> firstSamples(1), secondSamples(1);
+    ASSERT_EQ(VN_OK, prepare(firstLocator, 7, &firstSamples[0]));
+    ASSERT_EQ(VN_OK, prepare(secondLocator, 7, &secondSamples[0]));
+    auto inputA = a.Input(), inputB = b.Input();
+    inputA.bytes = inputB.bytes = nullptr;
+    inputA.samples = &firstSamples; inputB.samples = &secondSamples;
+    PackTable::PreparedSetMutation initial;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({inputA, inputB}, {}, registry, &initial));
+    packs.CommitPreparedSet(&initial, registry);
+    const auto handleA = initial.HandleAt(0), handleB = initial.HandleAt(1);
+    const auto tokenA = initial.ResourceTokenAt(0), tokenB = initial.ResourceTokenAt(1);
+    PCMRegistry::PackReference refA, refB;
+    ASSERT_EQ(VN_OK, packs.LookupExactReference(tokenA, sound, registry, &refA));
+    ASSERT_EQ(VN_OK, packs.LookupExactReference(tokenB, sound, registry, &refB));
+    EXPECT_EQ(refA.Cookie(), refB.Cookie());
+    EXPECT_FALSE(refA.SharesEntry(refB));
+    EXPECT_NE(refA.View().useCount, refB.View().useCount);
+    EXPECT_EQ(firstLocator, refA.Range()->external->locator);
+    EXPECT_EQ(secondLocator, refB.Range()->external->locator);
+    const PackResourceRevisionToken oldTokens[]{tokenA, tokenB};
+    PackResourceClosureToken oldClosure = 0;
+    ASSERT_EQ(VN_OK, packs.AcquireResourceClosure(oldTokens, 2, &oldClosure));
+    PackTable::CanonicalSetMember keepA{handleA, a.key, nullptr, nullptr, true};
+    inputB.expectedHandle = handleB;
+    std::vector<PCMRegistry::PreparedPackSamples> changed(1);
+    inputB.samples = &changed;
+    ASSERT_EQ(VN_OK, prepare(nextLocator, 8, &changed[0]));
+    PackTable::PreparedSetMutation refused;
+    EXPECT_EQ(VN_IN_USE, packs.PrepareCanonicalSet({keepA, inputB}, {}, registry, &refused));
+    EXPECT_EQ(refA.Cookie(), registry.CookieOf(sound));
+    changed[0] = {};
+    ASSERT_EQ(VN_OK, prepare(nextLocator, 7, &changed[0]));
+    PackTable::PreparedSetMutation replacement;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({keepA, inputB}, {}, registry, &replacement));
+    packs.CommitPreparedSet(&replacement, registry);
+    const auto nextToken = replacement.ResourceTokenAt(1);
+    PCMRegistry::PackReference currentB, retiredB;
+    ASSERT_EQ(VN_OK, packs.LookupExactReference(nextToken, sound, registry, &currentB));
+    ASSERT_EQ(VN_OK, packs.LookupExactReference(tokenB, sound, registry, &retiredB));
+    EXPECT_EQ(nextLocator, currentB.Range()->external->locator);
+    EXPECT_TRUE(refB.SharesEntry(retiredB));
+    // Removing the representative promotes the surviving owner's exact entry.
+    PackTable::CanonicalSetMember keepB{handleB, b.key, nullptr, nullptr, true};
+    PackTable::PreparedSetMutation removal;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({keepB}, {handleA}, registry, &removal));
+    packs.CommitPreparedSet(&removal, registry);
+    EXPECT_TRUE(currentB.SharesEntry(registry.ReferenceOf(sound, registry.CookieOf(sound))));
+    PCMRegistry::PackReference retiredA;
+    ASSERT_EQ(VN_OK, packs.LookupExactReference(tokenA, sound, registry, &retiredA));
+    EXPECT_TRUE(refA.SharesEntry(retiredA));
+    PackTable::PreparedSetMutation empty;
+    ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({}, {handleB}, registry, &empty));
+    packs.CommitPreparedSet(&empty, registry);
+    EXPECT_EQ(0u, registry.Count());
+    ASSERT_EQ(VN_OK, packs.ReleaseResourceClosure(oldClosure));
+    packs.SweepRetiring(+[](void*, PackResourceRevisionToken) { return false; });
+    EXPECT_EQ(0u, packs.RetiringCount());
+    EXPECT_EQ(0u, firstLocator->opens + secondLocator->opens + nextLocator->opens);
 }
 
 TEST(CanonicalPackSetStorage, EqualMediaRevisionsDoNotPinOldRowsForCurrentReaders) {

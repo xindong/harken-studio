@@ -102,7 +102,7 @@ namespace Harken
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult thread = RequireOwnerThread();
             if (thread != VnResult.VN_OK) return thread;
-            return mutationPhase == MutationPhase.Idle && !inCompanionReadCallback.Value
+            return mutationPhase == MutationPhase.Idle && !LanguageSwitchPending && !inCompanionReadCallback.Value
                 ? VnResult.VN_OK : VnResult.VN_IN_USE;
         }
 
@@ -227,10 +227,10 @@ namespace Harken
                 if (changes.TryGetValue(owner, out CompanionInput input))
                 {
                     uint operation = expected.IsValid && owner.ContentHash == input.Facts.contentHash &&
-                        owner.ByteCount == input.Bytes.Length
+                        owner.ByteCount == input.Bytes.Length && PackStreamBinding.Same(owner.Streams, input.Streams)
                         ? VnConstants.VN_PACK_MEMBER_KEEP : VnConstants.VN_PACK_MEMBER_CONTENT;
                     members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT,
-                        expected, operation, input.Bytes, input.Names);
+                        expected, operation, input.Bytes, input.Names, input.Streams);
                 }
                 else members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT, expected);
             }
@@ -255,6 +255,7 @@ namespace Harken
                     owners[i].ContentHash = input.Facts.contentHash;
                     owners[i].ByteCount = input.Bytes.Length;
                     owners[i].Names = input.Names;
+                    owners[i].Streams = input.Streams;
                 }
             }
             foreach (var action in names.Actions.Values)
@@ -298,6 +299,7 @@ namespace Harken
                     packs[row.packStableId].Handle = new Pack(row.handle);
                 }
                 owner.Handle = default;
+                owner.Streams = null;
                 --owner.Requests;
                 InitPack = new Pack(report.initHandle);
                 SetRevision = report.resultSetRevision;
@@ -461,7 +463,7 @@ namespace Harken
                 GameplayNames.Table names = GameplayNames.Prepare(init.Facts.projectId, init.Names,
                     Array.Empty<KeyValuePair<string, GameplayNames.Action>>());
                 var members = new[] { new CompanionMember(init.Facts.packStableId,
-                    VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names) };
+                    VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names, init.Streams) };
                 result = source.Validate(init);
                 if (result != VnResult.VN_OK) return result;
                 cancellation.ThrowIfCancellationRequested();

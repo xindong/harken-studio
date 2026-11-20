@@ -1265,6 +1265,7 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
                 !EnsureAttemptBacking(payloadGrowth_.heldRows, slot))) return false;
         ++attempt.generation;
         attempt.root = root;
+        attempt.appliedReceipt.reset();
         attempt.queueContinuation = nullptr;
         attempt.sourceWaitEntryCount = 0;
         attempt.originalLifetimeMarker = 0;
@@ -5415,6 +5416,31 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
     return true;
 }
 
+bool ImmediateActionLane::PrepareAppliedReceipt(const OriginalImmediateLaneAttemptLifetimePin& original,
+    std::shared_ptr<const ImmediateLaneAppliedReceipt>* out) noexcept {
+    if (out == nullptr || *out != nullptr || !IsOriginalAttemptLifetimePinFor(
+            original, original.handle_, original.root_)) return false;
+    auto* attempt = Resolve(original.handle_);
+    if (attempt == nullptr || attempt->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Reserved)
+        return false;
+    try {
+        if (attempt->appliedReceipt == nullptr)
+            attempt->appliedReceipt = std::shared_ptr<ImmediateLaneAppliedReceipt>(new ImmediateLaneAppliedReceipt);
+        *out = attempt->appliedReceipt;
+        return true;
+    } catch (const std::bad_alloc&) { return false; }
+}
+
+void ImmediateActionLane::PublishInitialAppliedReceipt(std::uint32_t slot,
+    const ImmediateLaneBucket* bucket, std::uint64_t audioSequence) noexcept {
+    if (slot >= attempts_.size() || bucket == nullptr || audioSequence == 0) return;
+    auto& attempt = attempts_[slot];
+    if (attempt.appliedReceipt == nullptr || attempt.generation != bucket->attemptGeneration ||
+        attempt.bucketCount == 0 || bucket != BucketBase(slot) ||
+        bucket->state.load(std::memory_order_acquire) != ImmediateLaneBucketState::AudioClaimed) return;
+    attempt.appliedReceipt->sequence_.store(audioSequence, std::memory_order_release);
+}
+
 bool ImmediateActionLane::EntryApplied(std::uint32_t slot,
     std::uint32_t attemptGeneration) const noexcept {
     if (!valid_ || slot >= attempts_.size() ||
@@ -5530,6 +5556,7 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
         BucketBase(handle.slot)[index].admissionFailure.store(
             ImmediateLaneAdmissionFailure::None, std::memory_order_relaxed);
     attempt->root = 0;
+    attempt->appliedReceipt.reset();
     attempt->queueContinuation = nullptr;
     attempt->eventCredit = 0;
     attempt->eventCount = 0;

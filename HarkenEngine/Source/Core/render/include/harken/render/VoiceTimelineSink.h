@@ -714,6 +714,7 @@ public:
         if (renderSlot < pendingVariableStarts_.size() &&
             (pendingVariableStarts_[renderSlot].count != 0 ||
              publicationRefused ||
+             (hasStart && arms_.HasInitialLaneDependency(armToken)) ||
              (hasStart && voices_.HasTimelineVariableSourceRead(renderSlot, renderGeneration)))) {
             auto& pending = pendingVariableStarts_[renderSlot];
             if (pending.count != 0 && pending.arm.renderGeneration != renderGeneration) return false;
@@ -906,6 +907,7 @@ public:
     }
     void EndQuantum(std::uint64_t quantumIndex) noexcept override {
         immediate_.Apply(quantumIndex);
+        FinishPendingVariableStarts(quantumIndex, UINT32_MAX, true);
         frontier_.Finish();
         RetryRetiringPlainArms();
         // All current voice spans are already copied; only future slices observe cancellation.
@@ -1043,7 +1045,8 @@ private:
         }
     }
 
-    void FinishPendingVariableStarts(std::uint64_t quantumIndex, std::uint32_t onlySlot = UINT32_MAX) noexcept {
+    void FinishPendingVariableStarts(std::uint64_t quantumIndex, std::uint32_t onlySlot = UINT32_MAX,
+        bool afterInitialLane = false) noexcept {
         if (!pendingVariableStartSeen_) return;
         const auto sequence = quantumIndex == UINT64_MAX ? UINT64_MAX : quantumIndex + 1u;
         const auto begin = onlySlot == UINT32_MAX ? 0u : onlySlot;
@@ -1052,6 +1055,8 @@ private:
             auto& pending = pendingVariableStarts_[slot];
             if (pending.count == 0) continue;
             const auto arm = pending.arm;
+            const bool initialDependency = arms_.HasInitialLaneDependency(arm);
+            if (initialDependency != afterInitialLane) continue;
             if (!voices_.TimelineBindingValid(arm.renderSlot, arm.renderGeneration)) {
                 // A released or reused generation has already detached every audio reader.
                 RetirePendingVariableStart(pending);
@@ -1071,8 +1076,10 @@ private:
             TimelineArmObservation observation{};
             const bool observed = arms_.Observe(arm, &observation);
             const auto source = voices_.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
-            const auto status = source.Valid() && source.slot == pending.source.slot &&
-                source.generation == pending.source.generation
+            const auto status = (!initialDependency || arms_.InitialLaneApplied(arm, sequence)) &&
+                ((source.Valid() && source.slot == pending.source.slot &&
+                  source.generation == pending.source.generation) ||
+                 (initialDependency && !source.Valid() && !pending.source.Valid()))
                 ? voices_.TimelineStartSourcesStatus(arms_, arm)
                 : VariableReadCutStatus::Failed;
             const bool canStart = observed && (observation.state == ArmState::Published ||

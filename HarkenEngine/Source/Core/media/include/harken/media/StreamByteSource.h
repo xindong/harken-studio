@@ -32,9 +32,21 @@ public:
         std::size_t bytes, StreamReadCancellation cancellation) const = 0;
 };
 
+// An immutable locator retains host context without opening a media handle.
+// Open and destruction of the returned source run only on I/O executors.
+class StreamByteLocator {
+public:
+    virtual ~StreamByteLocator() = default;
+    virtual std::shared_ptr<const StreamByteSource> Open(StreamReadCancellation cancellation) const = 0;
+};
+
 StreamReadStatus ReadStreamBytes(const StreamByteSource& source,
     std::uint64_t offset, void* destination, std::size_t bytes,
     StreamReadCancellation cancellation);
+
+// Retains the same opened identity with bounded offsets relative to one media.
+std::shared_ptr<const StreamByteSource> StreamByteRange(
+    std::shared_ptr<const StreamByteSource> source, std::uint64_t offset, std::uint64_t bytes);
 
 // Opens once and obtains length from that same handle. Called on an I/O lane.
 std::shared_ptr<const StreamByteSource> OpenStreamByteSource(const char* utf8Path);
