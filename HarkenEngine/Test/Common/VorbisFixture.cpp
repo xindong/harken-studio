@@ -172,7 +172,7 @@ std::vector<float> DecodeReferencePackets(const VorbisMedia& media, std::uint64_
     std::uint64_t at = seek->packetOffset;
     std::vector<float> out;
     while (out.size() / media.channels < count) {
-        const std::uint8_t* bytes = nullptr; std::uint16_t size = 0;
+        const std::uint8_t* bytes = nullptr; std::uint32_t size = 0;
         Require(media.Packet(at, bytes, size));
         ogg_packet p{}; p.packet = const_cast<unsigned char*>(bytes); p.bytes = size; p.granulepos = -1;
         Require(vorbis_synthesis(&decoder.block, &p) == 0);

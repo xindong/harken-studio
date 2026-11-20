@@ -27,6 +27,8 @@ struct VorbisMedia {
     std::uint32_t sampleRate = 0;
     std::uint16_t channels = 0, blockShort = 0, blockLong = 0;
     std::uint64_t frames = 0, revision = 0;
+    std::uint64_t prerollFrames = 0, tailFrames = 0;
+    unsigned packetPrefixBytes = 2;
     std::uint32_t seekGranularity = 0;
     std::uint64_t loopStart = 0, loopEnd = 0;
     std::uint64_t loopStartPacket = 0, loopEndPacket = 0;
@@ -43,11 +45,12 @@ struct VorbisMedia {
     std::vector<std::uint64_t> segmentChecksums;
 
     bool Packet(std::uint64_t offset, const std::uint8_t*& data,
-                std::uint16_t& bytes) const noexcept;
+                std::uint32_t& bytes) const noexcept;
     const VorbisSeekPoint* Seek(std::uint64_t frame) const noexcept;
     bool VerifySegment(std::size_t index) const noexcept;
 };
 
+bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output);
 bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& output);
 
 } // namespace harken
