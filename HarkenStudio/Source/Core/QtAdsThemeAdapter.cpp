@@ -138,7 +138,7 @@ ads--CDockWidgetTab {
 }
 
 ads--CDockWidgetTab:hover {
-    background-color: @BG_TERTIARY@;
+    background-overlay: @HOVER_OVERLAY@;
 }
 
 ads--CDockWidgetTab[focused="true"] {
@@ -258,7 +258,7 @@ ads--CResizeHandle {
     result.replace(QStringLiteral("@BG_PRIMARY@"), colorValue(colors.bgPrimary));
     result.replace(QStringLiteral("@BG_SECONDARY@"), colorValue(colors.bgSecondary));
     result.replace(QStringLiteral("@BORDER_PRIMARY@"), colorValue(colors.borderPrimary));
-    result.replace(QStringLiteral("@BG_TERTIARY@"), colorValue(colors.bgTertiary));
+    result.replace(QStringLiteral("@HOVER_OVERLAY@"), colorValue(colors.hoverOverlay));
     result.replace(QStringLiteral("@ACTIVE_TAB_ACCENT@"), rgba(colors.accent, style.activeTabAccentOpacity));
     result.replace(QStringLiteral("@BG_SELECTED@"), colorValue(colors.bgSelected));
     result.replace(QStringLiteral("@ACCENT@"), colorValue(colors.accent));

@@ -1,6 +1,5 @@
 #include "harken/media/VorbisDecoder.h"
 #include "harken/media/PackFormat.h"
-#include "harken/core/StreamRing.h"
 #include "../../../../ThirdParty/vorbis-decoder/decoder.h"
 #include <algorithm>
 #include <cstring>
@@ -38,51 +37,6 @@ std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
 std::size_t VorbisResident::ResidentBytes() const noexcept {
     return sizeof(*this) + bytes_.capacity() + media_.seek.capacity() * sizeof(VorbisSeekPoint) +
         media_.segmentChecksums.capacity() * sizeof(std::uint64_t) + (settings_ ? settings_->Bytes() : 0);
-}
-std::shared_ptr<VorbisStreamMedia> VorbisStreamMedia::Prepare(VorbisCodec& codec,
-    std::vector<std::uint8_t> prefix, std::uint64_t mediaBytes,
-    std::size_t budget, VorbisPrepareResult& result, bool validatedPackPrefix) {
-    result = VorbisPrepareResult::OutOfMemory;
-    if (prefix.size() > budget) return {};
-    auto source = std::make_shared<VorbisStreamMedia>();
-    source->prefix_ = std::move(prefix);
-    result = VorbisPrepareResult::Invalid;
-    if (!ParseVorbisTestMediaHeaders(source->prefix_.data(), source->prefix_.size(), mediaBytes, source->media_) ||
-        source->media_.segmentChecksums.size() != source->media_.seek.size()) return {};
-    const auto overhead = source->ResidentBytes();
-    result = VorbisPrepareResult::OutOfMemory;
-    if (overhead > budget) return {};
-    source->settings_ = codec.settings.Prepare(source->media_, budget - overhead, result);
-    if (!source->settings_) return {};
-    result = VorbisPrepareResult::Invalid;
-    const auto packets = source->Prefetch();
-    if (!packets.empty() && !validatedPackPrefix) return {};
-    for (std::size_t at = 0; at < packets.size();) {
-        if (packets.size() - at < 2) return {};
-        const auto count = std::uint32_t(packets[at]) | (std::uint32_t(packets[at + 1]) << 8);
-        if (!count || count > packets.size() - at - 2 ||
-            source->settings_->PacketBlock(packets.data() + at + 2, count) <= 0) return {};
-        at += count + 2;
-    }
-    const auto& media = source->media_;
-    for (std::size_t i = 0; i < media.seek.size(); ++i) {
-        if (packets.empty()) break;
-        const auto end = i + 1 < media.seek.size() ? media.seek[i + 1].packetOffset : media.packetBytes;
-        if (end > packets.size()) break;
-        if (Fnv1a64(packets.data() + media.seek[i].packetOffset,
-                static_cast<std::size_t>(end - media.seek[i].packetOffset), media.segmentChecksumSeed) !=
-            media.segmentChecksums[i]) return {};
-    }
-    source->codec_ = &codec;
-    result = VorbisPrepareResult::Ok;
-    return source;
-}
-std::size_t VorbisStreamMedia::ResidentBytes() const noexcept {
-    return sizeof(*this) + prefix_.capacity() + media_.seek.capacity() * sizeof(VorbisSeekPoint) +
-        media_.segmentChecksums.capacity() * sizeof(std::uint64_t) + (settings_ ? settings_->Bytes() : 0);
-}
-MediaDecoder* VorbisStreamMedia::Acquire() const noexcept {
-    return codec_->AcquireStream(settings_);
 }
 PCMView VorbisResident::View() const noexcept {
     PCMView view;
@@ -259,54 +213,6 @@ void VorbisStatePool::State::Restart() noexcept {
     discard = decodedFrames = decodedOffset = 0;
     std::fill(std::begin(planes), std::end(planes), nullptr);
 }
-MediaDecoder* VorbisCodec::AcquireStream(std::shared_ptr<const VorbisSettings> setup) {
-    auto* state = states.Acquire(std::move(setup));
-    if (state) state->codec = this;
-    return state;
-}
-StreamDecodeResult VorbisStatePool::State::ReadStream(StreamRing& ring,
-    std::uint32_t requested, std::uint32_t thread, PCMView& output) noexcept {
-    output = {};
-    if (!codec || thread >= codec->workspaces.size() || !requested ||
-        ring.channelCount != settings->Channels()) return StreamDecodeResult::Invalid;
-    const auto generation = ring.generation.load(std::memory_order_relaxed);
-    if (streamRing != &ring || streamGeneration != generation) {
-        Restart();
-        streamRing = &ring; streamGeneration = generation;
-    }
-    // Positive output needs committed frame coverage. Zero-output preroll can
-    // consume published bytes alone, allowing a small ring to make progress.
-    const auto coverage = ring.BufferedFrames();
-    auto& workspace = *codec->workspaces[thread];
-    while (decodedOffset == decodedFrames) {
-        const auto available = ring.ReadAvailableBytes();
-        if (!available) return coverage ? StreamDecodeResult::Invalid : StreamDecodeResult::Dry;
-        if (available < sizeof(StreamPacketHeader)) return StreamDecodeResult::Invalid;
-        const auto at = ring.readIndex.load(std::memory_order_relaxed);
-        StreamPacketHeader header;
-        ring.CopyOut(at, &header, sizeof(header));
-        if (!header.packetBytes || header.packetBytes > workspace.packet_.size() ||
-            header.restart > 1 || header.packetBytes > available - sizeof(header))
-            return StreamDecodeResult::Invalid;
-        if (header.frames > coverage) return StreamDecodeResult::Dry;
-        if (header.restart) Restart();
-        ring.CopyOut(at + sizeof(header), workspace.packet_.data(), header.packetBytes);
-        unsigned decoded = 0;
-        if (!Decode(workspace, workspace.packet_.data(), header.packetBytes, planes, decoded) ||
-            header.discardFrames > decoded || header.frames > decoded - header.discardFrames)
-            return StreamDecodeResult::Invalid;
-        decodedOffset = header.discardFrames;
-        decodedFrames = decodedOffset + header.frames;
-        ring.ConsumeBytes(static_cast<std::uint32_t>(sizeof(header)) + header.packetBytes);
-    }
-    if (!coverage) return StreamDecodeResult::Dry;
-    const auto count = std::min({requested, coverage, decodedFrames - decodedOffset});
-    output.channelCount = settings->Channels(); output.frames = count;
-    for (unsigned ch = 0; ch < output.channelCount; ++ch)
-        output.channels[ch] = planes[ch] + decodedOffset;
-    decodedOffset += count;
-    return StreamDecodeResult::Ready;
-}
 bool VorbisStatePool::State::Decode(VorbisWorkspace& workspace, const std::uint8_t* packet,
     std::size_t bytes, const float* (&pcm)[8], unsigned& frames) noexcept {
     float** decoded = nullptr;
@@ -364,8 +270,7 @@ VorbisStatePool::State* VorbisStatePool::Acquire(std::shared_ptr<const VorbisSet
     }
     state->settings = std::move(settings); state->available = false;
     state->decoder = hv_state_init(state->storage.get(), state->backingBytes, state->settings->setup_);
-    state->resident = nullptr; state->codec = nullptr;
-    state->streamRing = nullptr; state->streamGeneration = 0;
+    state->resident = nullptr;
     state->Restart();
     activeBytes_ += state->backingBytes + sizeof(State);
     return state;

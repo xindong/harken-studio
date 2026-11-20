@@ -84,6 +84,20 @@ protected:
 
 }
 
+TEST_F(ProjectIntakeConsumerTest, AbandonedCreationCannotPinAProjectCreatedByADifferentBuild)
+{
+    const auto path = writeProjectFile("Reused");
+    QString error;
+    ASSERT_TRUE(ProjectIntakeConsumer::rememberCreationBuild(path, "local-user-old", "old-build", &error));
+    writeIntakeRecord("reused.json", {{"projectPath", path}, {"buildId", "new-build"},
+        {"openedAt", QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs)}});
+    ProjectIntakeConsumer consumer(&store);
+    ASSERT_TRUE(consumer.consumeAll());
+    ASSERT_EQ(store.listProjects().size(), 1);
+    EXPECT_TRUE(store.listProjects().front().preferredStudioBuildId.isEmpty());
+    EXPECT_TRUE(QDir(dir.filePath("project-creation")).entryList({"*.json"}, QDir::Files).isEmpty());
+}
+
 TEST_F(ProjectIntakeConsumerTest, RegistersUnknownProject)
 {
     const QString projectPath = writeProjectFile(QStringLiteral("Alpha"));
@@ -102,7 +116,6 @@ TEST_F(ProjectIntakeConsumerTest, RegistersUnknownProject)
     ASSERT_EQ(records.size(), 1u);
     EXPECT_EQ(records.front().canonicalPath, projectPath);
     EXPECT_EQ(records.front().displayName, QStringLiteral("Alpha"));
-    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run1.aaaa1111"));
     EXPECT_EQ(records.front().lastOpenedAt,
@@ -117,7 +130,6 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     ProjectRecord seed;
     seed.canonicalPath = projectPath;
     seed.displayName = QStringLiteral("Old project name");
-    seed.detectedSchema = 1;
     ASSERT_TRUE(store.addProject(seed));
     ASSERT_TRUE(store.setPreferredBuild(projectPath,
                                         QStringLiteral("run1.pinned")));
@@ -139,7 +151,6 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run2.bbbb2222"));
     EXPECT_EQ(records.front().displayName, QStringLiteral("Beta"));
-    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastOpenedAt,
               QStringLiteral("2026-07-28T04:00:00.000Z"));
 }

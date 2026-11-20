@@ -5,6 +5,7 @@
 #include "Core/AuditionManager.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/LayoutController.h"
+#include "Core/LogService.h"
 #include "Core/PlatformContextService.h"
 #include "Core/PackGenerationRecord.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
@@ -30,6 +31,7 @@
 #include "Widgets/Hierarchy/Hierarchy.h"
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
+#include "Widgets/Publisher/PublisherPanel.h"
 #include "Widgets/Timeline/TimelineCanvas.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Support/AITestSupport.h"
@@ -68,6 +70,7 @@
 #include <QPointer>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <memory>
 #include <cstdio>
 
@@ -206,6 +209,60 @@ protected:
     VNX::LayoutController* controller_ = nullptr;
 };
 
+}
+
+TEST_F(EditorDockLayoutTest, PackWarningsKeepTheirOwnershipAcrossBuildAndReuse)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    for (const auto& name : {QStringLiteral("FirstEmpty"), QStringLiteral("SecondEmpty")})
+        ASSERT_NE(manager.createItem(nullptr, name, VNX::ProjectItem::Type::Action), nullptr);
+    const auto created = VNX::ActionManager::instance().execute(
+        QStringLiteral("create_project_platform"),
+        {{QStringLiteral("name"), QStringLiteral("OtherPlatform")},
+         {QStringLiteral("base_platform"), QStringLiteral("Android")}});
+    ASSERT_TRUE(created.success) << created.errorMessage.toStdString();
+    const auto& platforms = manager.currentProject()->platforms;
+    const QStringList selected{VNX::ProjectPlatformSemantics::idString(platforms.front().id),
+                              VNX::ProjectPlatformSemantics::idString(platforms.back().id)};
+    ASSERT_TRUE(window_->setWorkspaceWindowVisible(QStringLiteral("Publisher"), true));
+    auto* publisher = window_->findChild<VNX::PublisherPanel*>();
+    ASSERT_NE(publisher, nullptr);
+    auto& store = VNX::PackGenerationRecordStore::instance();
+    auto* log = VNX::LogService::globalModel();
+    for (int run = 0; run < 2; ++run) {
+        SCOPED_TRACE(run);
+        store.clear();
+        log->clear();
+        QEventLoop completion;
+        QObject::connect(&store, &VNX::PackGenerationRecordStore::exportActivityChanged,
+            &completion, [&](bool active) { if (!active) completion.quit(); });
+        emit publisher->exportRequested(selected, {}, true, false, false);
+        if (store.isExporting()) {
+            QTimer::singleShot(10000, &completion, &QEventLoop::quit);
+            completion.exec();
+        }
+        ASSERT_FALSE(store.isExporting());
+        drainEvents();
+        const auto entries = log->entries(VNX::LogEntry::Warning, QStringLiteral("Pack"));
+        int warningCount = 0;
+        for (const auto& record : store.records()) {
+            EXPECT_TRUE(record.success) << record.errors.toStdString();
+            for (const auto& warning : record.warnings.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                ++warningCount;
+                EXPECT_EQ(std::count_if(entries.begin(), entries.end(), [&](const auto& entry) {
+                    return entry.message.contains(warning) && entry.message.contains(record.packName)
+                        && entry.message.contains(record.platformName)
+                        && entry.message.contains(record.language);
+                }), 1) << warning.toStdString();
+            }
+        }
+        EXPECT_EQ(warningCount, 4);
+        EXPECT_EQ(entries.size(), static_cast<std::size_t>(warningCount + 1));
+        const auto summary = QCoreApplication::translate("MainWindow", ", %1 warning(s)").arg(warningCount);
+        EXPECT_EQ(std::count_if(entries.begin(), entries.end(), [&](const auto& entry) {
+            return entry.message.endsWith(summary);
+        }), 1);
+    }
 }
 
 TEST_F(EditorDockLayoutTest, ShellKeepsBufferedCommandsWhenClosingIsRejected)

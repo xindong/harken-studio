@@ -133,7 +133,7 @@ TEST(CurveCanvasSelection, ContextMenuTargetsTheClickedAnchorAndItsRightSegment)
                 EXPECT_NE(presets, nullptr);
                 if (presets) {
                     for (auto* action : presets->actions()) {
-                        if (action->data().toInt() == static_cast<int>(VNX::CurvePreset::Convex)) {
+                        if (action->data().toInt() == static_cast<int>(VNX::CurvePreset::QuadraticEaseOut)) {
                             action->trigger();
                             inspected = true;
                             break;

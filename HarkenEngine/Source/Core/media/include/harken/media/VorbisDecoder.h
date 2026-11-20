@@ -54,15 +54,13 @@ private:
 class VorbisWorkspace {
 public:
     bool Initialize();
-    std::size_t Bytes() const noexcept { return count_ * sizeof(std::max_align_t) + packet_.size(); }
+    std::size_t Bytes() const noexcept { return count_ * sizeof(std::max_align_t); }
     std::size_t HighWater() const noexcept;
 private:
     friend class VorbisStatePool;
     std::unique_ptr<std::max_align_t[]> storage_;
     std::size_t count_ = 0;
     HvWorkspace* workspace_ = nullptr;
-    // One wrapped packet per render worker, shared by all voices on that worker.
-    std::array<std::uint8_t, UINT16_MAX> packet_{};
 };
 
 // State ownership moves from logic preparation to one render voice. Render
@@ -72,8 +70,6 @@ public:
     struct State : MediaDecoder {
         bool Read(std::uint64_t frame, std::uint32_t frames,
                   std::uint32_t renderThread, PCMView& output) noexcept override;
-        StreamDecodeResult ReadStream(StreamRing& ring, std::uint32_t frames,
-            std::uint32_t renderThread, PCMView& output) noexcept override;
         void Restart() noexcept;
         bool Decode(VorbisWorkspace& workspace, const std::uint8_t* packet, std::size_t bytes,
                     const float* (&pcm)[8], unsigned& frames) noexcept;
@@ -81,11 +77,7 @@ public:
     private:
         friend class VorbisStatePool;
         friend class VorbisResident;
-        friend class VorbisCodec;
         const VorbisResident* resident = nullptr;
-        VorbisCodec* codec = nullptr;
-        const StreamRing* streamRing = nullptr;
-        std::uint32_t streamGeneration = 0;
         std::uint64_t packetOffset = 0;
         std::uint64_t nextFrame = UINT64_MAX;
         std::uint32_t discard = 0, decodedFrames = 0, decodedOffset = 0;
@@ -123,7 +115,6 @@ private:
 class VorbisCodec {
 public:
     explicit VorbisCodec(unsigned renderWorkers);
-    MediaDecoder* AcquireStream(std::shared_ptr<const VorbisSettings> settings);
     VorbisSettingsCache settings;
     VorbisStatePool states;
     std::vector<std::unique_ptr<VorbisWorkspace>> workspaces;
@@ -145,30 +136,5 @@ private:
     std::shared_ptr<const VorbisSettings> settings_;
 };
 
-// A stream retains only its immutable prefix, index and shared setup. The
-// manager owns external byte supply; the voice owns the acquired decoder.
-class VorbisStreamMedia final : public EncodedMedia {
-public:
-    // Packet bytes are accepted only from a prefix already covered by Pack
-    // integrity validation. Metadata-only I/O never grants that authority.
-    static std::shared_ptr<VorbisStreamMedia> Prepare(VorbisCodec& codec,
-        std::vector<std::uint8_t> prefix, std::uint64_t mediaBytes,
-        std::size_t budget, VorbisPrepareResult& result, bool validatedPackPrefix = false);
-    MediaDecoder* Acquire() const noexcept override;
-    std::size_t ResidentBytes() const noexcept override;
-    // A prefix alone cannot prove complete media content equality.
-    std::span<const std::uint8_t> ContentBytes() const noexcept override { return {}; }
-    const VorbisMedia& Media() const noexcept { return media_; }
-    const VorbisSettings& Settings() const noexcept { return *settings_; }
-    std::span<const std::uint8_t> Prefix() const noexcept { return prefix_; }
-    std::span<const std::uint8_t> Prefetch() const noexcept {
-        return std::span<const std::uint8_t>(prefix_).subspan(static_cast<std::size_t>(media_.packetDataOffset));
-    }
-private:
-    VorbisCodec* codec_ = nullptr;
-    std::vector<std::uint8_t> prefix_;
-    VorbisMedia media_;
-    std::shared_ptr<const VorbisSettings> settings_;
-};
 }
 #endif

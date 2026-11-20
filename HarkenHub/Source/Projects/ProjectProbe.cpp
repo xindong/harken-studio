@@ -6,7 +6,6 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QUuid>
 
 namespace VNH {
 
@@ -44,26 +43,14 @@ ProjectProbeResult ProjectProbe::probe(const QString& inputPath)
     result.displayName = info.completeBaseName();
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
-    const QJsonObject root = document.object();
-    const QJsonObject header = root.value(QStringLiteral("harkenDocument")).toObject();
-    if (parseError.error != QJsonParseError::NoError || !document.isObject()
-        || header.value(QStringLiteral("type")).toString() != QStringLiteral("project.root")) {
+    const QJsonObject header = document.object().value(QStringLiteral("harkenDocument")).toObject();
+    if (parseError.error != QJsonParseError::NoError || header.isEmpty()) {
         result.metadataWarning = QCoreApplication::translate(
             "HarkenHub", "Project details are unavailable. The selected Studio will check the project.");
         return result;
     }
-    const QUuid id(header.value(QStringLiteral("id")).toString());
-    const QUuid projectId(header.value(QStringLiteral("projectId")).toString());
-    if (!id.isNull() && id == projectId)
-        result.projectId = id.toString(QUuid::WithoutBraces);
     result.savedStudioVersion = header.value(QStringLiteral("studioVersion"))
         .toString(header.value(QStringLiteral("savedStudioVersion")).toString()).trimmed();
-    result.schemaVersion = header.value(QStringLiteral("schemaVersion")).toInt(0);
-    const QString name = root.value(QStringLiteral("content")).toObject()
-                             .value(QStringLiteral("metadata")).toObject()
-                             .value(QStringLiteral("name")).toString();
-    if (!name.isEmpty())
-        result.displayName = name;
     return result;
 }
 

@@ -57,18 +57,18 @@ enum class CurveAxisScale : uint8_t
 
 enum class CurvePreset : uint8_t
 {
-    Log3,
-    Convex,
-    SCurve,
+    CubicEaseOut,
+    QuadraticEaseOut,
+    BezierSCurve,
     Linear,
-    InverseSCurve,
-    Concave,
-    Exp3,
+    InverseBezierSCurve,
+    QuadraticEaseIn,
+    CubicEaseIn,
 };
 
 inline constexpr std::array<CurvePreset, 7> kCurvePresets{
-    CurvePreset::SCurve, CurvePreset::Log3, CurvePreset::Convex, CurvePreset::Linear,
-    CurvePreset::Concave, CurvePreset::Exp3, CurvePreset::InverseSCurve,
+    CurvePreset::BezierSCurve, CurvePreset::CubicEaseOut, CurvePreset::QuadraticEaseOut, CurvePreset::Linear,
+    CurvePreset::QuadraticEaseIn, CurvePreset::CubicEaseIn, CurvePreset::InverseBezierSCurve,
 };
 
 CurveHandlePairDef curvePresetHandles(CurvePreset preset,

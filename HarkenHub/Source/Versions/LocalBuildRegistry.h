@@ -11,12 +11,10 @@ struct LocalBuildRecord
     QString reportedBuildId;
     QString semanticVersion;
     QString channel;
-    QString buildType;
     QString lastProbeError;
     QString executableFingerprint;
     qint64 executableSize = -1;
     qint64 executableModifiedMs = 0;
-    int capabilitiesVersion = 0;
     qint64 releaseSequence = 0;
 };
 

@@ -856,12 +856,10 @@ harken_add_python_check_test(monitor_public_api_probe_includes_check
     --check)
 harken_add_python_check_test(public_abi_manifest_unit
     "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_runtime_abi_manifest.py")
-harken_add_python_check_test(public_abi_history_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_runtime_repository_history.py")
 harken_add_python_check_test(monitor_record_fixture_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_monitor_record_fixture_check.py")
+    "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_monitor_record_fixture_check.py")
 harken_add_python_check_test(monitor_remote_fixture_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_monitor_remote_fixture_check.py")
+    "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_monitor_remote_fixture_check.py")
 
 # The export allowlist is checked in two independent steps. The first compares
 # the checked-in .def against the entry points declared in Harken.h, so a new
@@ -877,7 +875,7 @@ harken_add_python_check_test(abi_export_allowlist_check
 # shapes it must refuse. A shape it silently fails to model would omit an entry
 # point from the DLL with every other check still green.
 harken_add_python_check_test(abi_export_parser_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_abi_exports.py")
+    "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_abi_exports.py")
 # The development preview surface's isolation from the gameplay face. The export
 # allowlist and the C# binding are generated from the engine's own declarations
 # and never read the preview header, so a preview symbol cannot reach either --

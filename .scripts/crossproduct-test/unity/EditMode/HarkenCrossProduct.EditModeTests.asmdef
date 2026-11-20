@@ -1,0 +1,16 @@
+{
+  "name": "HarkenCrossProduct.EditModeTests",
+  "references": [
+    "Harken.Core",
+    "Harken.Unity",
+    "Harken.Unity.Editor",
+    "HarkenCrossProduct.PlayModeTests"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "autoReferenced": false
+}

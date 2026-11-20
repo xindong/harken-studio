@@ -2280,8 +2280,6 @@ struct EngineScheduleAggregateState {
     bool parentNotified = false;
     bool cancellationRequested = false;
     bool sourceScopeMayAppend = false;
-    std::shared_ptr<const ImmediateLaneAppliedReceipt> initialLaneApplied;
-    bool initialAnchorRetry = false;
 
     template<class Visitor>
     bool VisitChildren(Visitor&& visitor) {
@@ -2382,7 +2380,6 @@ struct EnginePlayableServiceRow {
     bool pendingImmediateEntry = false;
     bool pendingImmediateRetry = false;
     bool pendingDirectStartBinding = false;
-    bool pendingImmediateScheduleAnchor = false;
     std::vector<std::unique_ptr<EngineSourceStartLane>> sourceStartLanes;
     std::uint64_t pendingDirectEntryFrame = 0;
     bool zeroWorkMarker = false;

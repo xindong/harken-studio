@@ -52,8 +52,8 @@ add_library(harken_editor_common STATIC
     ResizableTableView.h
     MatrixTableWidget.cpp
     MatrixTableWidget.h
-    MenuComboBox.cpp
-    MenuComboBox.h
+    ToolBarComboBox.cpp
+    ToolBarComboBox.h
     MenuActionButton.cpp
     MenuActionButton.h
     MultiSelectComboBox.cpp

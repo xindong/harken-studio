@@ -2964,7 +2964,7 @@
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             }
           }
         },
@@ -3015,7 +3015,7 @@
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             }
           }
         },
@@ -3066,7 +3066,7 @@
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             }
           }
         },
@@ -3204,7 +3204,7 @@
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             }
           }
         },
@@ -3255,7 +3255,7 @@
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             }
           }
         },
@@ -3348,10 +3348,6 @@
                 "const": "project.root",
                 "type": "string"
               },
-              "packSchemaVersion": {
-                "minimum": 1,
-                "type": "integer"
-              },
               "studioVersion": {
                 "minLength": 1,
                 "type": "string"
@@ -3362,8 +3358,7 @@
               "id",
               "projectId",
               "schemaVersion",
-              "studioVersion",
-              "packSchemaVersion"
+              "studioVersion"
             ],
             "type": "object",
             "propertyNames": {
@@ -3418,7 +3413,7 @@
             ],
             "type": "object",
             "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
             }
           }
         },

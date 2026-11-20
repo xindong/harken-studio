@@ -130,7 +130,8 @@ VnResult TraceRecorder::Start(const char* utf8Path) {
         return VN_BAD_TRACE_FILE;
     }
     const std::uint32_t configVintage =
-        kTraceConfigVintageCount;
+        ConfigVintageFromNativeSize(
+            m_engine.traceOrigin.requested.structSize);
 
     // Fixed header fields, serialized individually (container discipline).
     m_buffer.reserve(kFlushThresholdBytes + 4096);

@@ -24,8 +24,6 @@ namespace Harken.Unity
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
 
         [SerializeField] private bool enableCommunicationInBuilds = true;
-        // [SerializeField] private string remoteBindAddress = "0.0.0.0";
-        [SerializeField] private string remoteBindAddress = "127.0.0.1";
         [SerializeField, Min(0)] private int remotePort;
         [SerializeField] private bool enableRemoteDiscovery = true;
         [SerializeField, Min(0)] private int remoteDiscoveryPort;
@@ -281,12 +279,10 @@ namespace Harken.Unity
             string name = settings == null || string.IsNullOrEmpty(settings.remoteApplicationName)
                 ? Application.productName : settings.remoteApplicationName;
             return RemoteCommunication.Start(name,
-                // settings != null ? settings.remoteBindAddress : "0.0.0.0",
-                settings != null ? settings.remoteBindAddress : "127.0.0.1",
-                settings != null ? settings.remotePort : 0,
-                settings == null || settings.enableRemoteDiscovery,
-                settings != null ? settings.remoteDiscoveryPort : 0,
-                projectName);
+                port: settings != null ? settings.remotePort : 0,
+                enableDiscovery: settings == null || settings.enableRemoteDiscovery,
+                discoveryPort: settings != null ? settings.remoteDiscoveryPort : 0,
+                projectName: projectName);
         }
 #endif
 

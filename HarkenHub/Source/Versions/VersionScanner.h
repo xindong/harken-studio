@@ -32,7 +32,6 @@ struct InstalledVersion
     QString channel;
     QString runtimeBuildId;
     QString executableFingerprint;
-    int capabilitiesVersion = 0;
     qint64 releaseSequence = 0;
     VersionSource source = VersionSource::InstalledPackage;
     bool available = true;

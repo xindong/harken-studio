@@ -2550,7 +2550,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     std::vector<PackMeta> packs;
     auto recordUnit = [&](const PackMeta& pack, const ProjectPackExporter::ExportResult& unit) {
-        if (!outRecords || (pack.retained && unit.success)) return;
+        if (pack.retained && unit.success) return;
+        result.warnings.append(unit.warnings);
+        if (!outRecords) return;
         ProjectPackExporter::PackBuildRecord record;
         record.packName = pack.name;
         record.unitKey = pack.unitKey;
@@ -3924,7 +3926,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         completed.insert(pack.packStableId);
         pack.fileSize = unit.fileSize;
         pack.formatVersion = HK_PACK_FORMAT_VERSION;
-        result.warnings.append(unit.warnings);
         if (!pack.retained || pack.packKind == HK_PACK_KIND_INIT) {
             result.fileSize += unit.fileSize;
             result.mediaCount += unit.mediaCount;
@@ -4030,8 +4031,11 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
         }
         QStringList preserved = keep;
         std::vector<std::unique_ptr<QLockFile>> waveformLocks;
-        if (!preserveBusyWaveformOutputs(root, files, &keep, &preserved, &waveformLocks,
-                &result.warnings, &result.error, cancelCheck)) return result;
+        QStringList warnings;
+        const bool waveformOutputsPreserved = preserveBusyWaveformOutputs(
+            root, files, &keep, &preserved, &waveformLocks, &warnings, &result.error, cancelCheck);
+        result.addGlobalWarnings(warnings);
+        if (!waveformOutputsPreserved) return result;
         for (const auto& relative : files) {
             if (exportCanceled(cancelCheck, &result.error)) {
                 result.canceled = true;

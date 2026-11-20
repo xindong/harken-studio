@@ -8,7 +8,6 @@ TEST(StudioLauncherTest, BuildsProjectCreationArguments)
     spec.projectName = QStringLiteral("My Project");
     spec.projectLocation = QStringLiteral("D:/Projects");
     spec.templateId = QStringLiteral("mmorpg");
-    spec.templatePath = QStringLiteral("D:/Studio/mmorpg.json");
 
     EXPECT_EQ(VNH::StudioLauncher::argumentsForCreate(spec),
               (QStringList{
@@ -19,8 +18,6 @@ TEST(StudioLauncherTest, BuildsProjectCreationArguments)
                   QStringLiteral("D:/Projects"),
                   QStringLiteral("--project-template-id"),
                   QStringLiteral("mmorpg"),
-                  QStringLiteral("--project-template-file"),
-                  QStringLiteral("D:/Studio/mmorpg.json"),
               }));
 }
 

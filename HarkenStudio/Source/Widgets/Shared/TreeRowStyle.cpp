@@ -64,13 +64,14 @@ QTreeWidgetItem* makeFolderRow(const QString& text)
     row->setIcon(0, ThemeManager::instance().resolveToggleIcon(
         QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
         QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon);
-    row->setData(0, kBucketRole, true);
     return row;
 }
 
 QTreeWidgetItem* makeBucketRow(const QString& folderKey)
 {
-    return makeFolderRow(ProjectManager::bucketDisplayName(folderKey));
+    auto* row = makeFolderRow(ProjectManager::bucketDisplayName(folderKey));
+    row->setData(0, kBucketRole, true);
+    return row;
 }
 
 void paintDropHighlight(QPainter* p, const QRect& rowRect)
@@ -84,23 +85,23 @@ void paintRowAccent(QPainter* p, const QRect& rowRect)
                 ThemeManager::instance().colors().accent);
 }
 
-void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
-                    const QModelIndex& idx, bool expanded)
+static void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt)
 {
     const QRect r = opt.rect;
-    const bool hover    = opt.state & QStyle::State_MouseOver;
+    const bool hover = opt.state.testFlags(QStyle::State_Enabled | QStyle::State_MouseOver);
     const bool selected = opt.state & QStyle::State_Selected;
+    const bool expanded = opt.state & QStyle::State_Open;
 
     const auto& tc = ThemeManager::instance().colors();
     p->save();
-    p->fillRect(r, hover ? tc.bgHover : tc.headerBackground);
+    p->fillRect(r, tc.headerBackground);
+    if (hover && !selected)
+        p->fillRect(r, tc.hoverOverlay);
     p->setPen(tc.bgPrimary);
     p->drawLine(r.left(), r.bottom(), r.right(), r.bottom());
     if (selected)
         p->fillRect(r, tc.bgSelected);
     p->restore();
-    if (selected)
-        paintRowAccent(p, r);
 
     const int caretW = ThemeManager::instance().metrics().iconExtent;
     const QRect caretBox(r.right() - caretW, r.top(), caretW, r.height());
@@ -119,16 +120,14 @@ void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
 
     paintBucketCaret(p, caretBox, expanded);
 
-    const QIcon icon = qvariant_cast<QIcon>(idx.data(Qt::DecorationRole));
-    if (!icon.isNull())
-        icon.paint(p, iconRect, Qt::AlignCenter, QIcon::Normal,
+    if (!opt.icon.isNull())
+        opt.icon.paint(p, iconRect, Qt::AlignCenter, QIcon::Normal,
                    expanded ? QIcon::On : QIcon::Off);
     p->save();
     p->setFont(opt.font);
     p->setPen(tc.textPrimary);
-    const QString txt = idx.data(Qt::DisplayRole).toString();
     p->drawText(textInner, Qt::AlignVCenter | Qt::AlignLeft,
-                opt.fontMetrics.elidedText(txt, Qt::ElideRight, textInner.width()));
+                opt.fontMetrics.elidedText(opt.text, Qt::ElideRight, textInner.width()));
     p->restore();
 }
 
@@ -137,6 +136,10 @@ void ItemRowDelegate::paint(QPainter* p, const QStyleOptionViewItem& option,
 {
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
+    if (index.data(kBucketRole).toBool()) {
+        paintBucketRow(p, opt);
+        return;
+    }
     QStyle* st = opt.widget ? opt.widget->style() : QApplication::style();
 
     QStyleOptionViewItem bg = opt;

@@ -98,24 +98,24 @@ TEST(CurvePresets, CurvatureStaysOnTheSameSideOfTheChordInBothDirections)
                     {VNX::curvePresetHandles(preset, points[0], points[1])}, x);
             };
             const float chord = descending ? 1.0f - x : x;
-            EXPECT_GT(value(VNX::CurvePreset::Log3), value(VNX::CurvePreset::Convex));
-            EXPECT_GT(value(VNX::CurvePreset::Convex), chord);
+            EXPECT_GT(value(VNX::CurvePreset::CubicEaseOut), value(VNX::CurvePreset::QuadraticEaseOut));
+            EXPECT_GT(value(VNX::CurvePreset::QuadraticEaseOut), chord);
             EXPECT_NEAR(value(VNX::CurvePreset::Linear), chord, 1e-6);
-            EXPECT_LT(value(VNX::CurvePreset::Concave), chord);
-            EXPECT_LT(value(VNX::CurvePreset::Exp3), value(VNX::CurvePreset::Concave));
+            EXPECT_LT(value(VNX::CurvePreset::QuadraticEaseIn), chord);
+            EXPECT_LT(value(VNX::CurvePreset::CubicEaseIn), value(VNX::CurvePreset::QuadraticEaseIn));
         }
     }
 }
 
-TEST(CurvePresets, MirroredSCurveIsTheInverseOfSCurve)
+TEST(CurvePresets, BezierSCurvesAreMutualInverses)
 {
     for (const bool descending : {false, true}) {
         const QVector<CurvePointDef> points{{0.0f, descending ? 1.0f : 0.0f},
                                             {1.0f, descending ? 0.0f : 1.0f}};
         const QVector<CurveHandlePairDef> forward{
-            VNX::curvePresetHandles(VNX::CurvePreset::SCurve, points[0], points[1])};
+            VNX::curvePresetHandles(VNX::CurvePreset::BezierSCurve, points[0], points[1])};
         const QVector<CurveHandlePairDef> inverse{
-            VNX::curvePresetHandles(VNX::CurvePreset::InverseSCurve, points[0], points[1])};
+            VNX::curvePresetHandles(VNX::CurvePreset::InverseBezierSCurve, points[0], points[1])};
         for (int sample = 0; sample <= 128; ++sample) {
             const float x = sample / 128.0f;
             const float y = VNX::curveBezierValueAt(points, forward, x);

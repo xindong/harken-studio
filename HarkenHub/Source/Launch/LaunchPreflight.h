@@ -20,7 +20,6 @@ struct LaunchDecision
     QString blockCode;
     QString reason;
     InstalledVersion version;
-    int projectSchema = 0;
 };
 
 class LaunchPreflight

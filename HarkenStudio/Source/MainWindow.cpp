@@ -92,7 +92,7 @@
 #include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
-#include "Widgets/Common/MenuComboBox.h"
+#include "Widgets/Common/ToolBarComboBox.h"
 #include "Monitor/MonitorAdapter.h"
 #include "Monitor/MonitorCaptureControlHost.h"
 #include "Monitor/MonitorHostContext.h"
@@ -1389,9 +1389,8 @@ void MainWindow::setupMainToolBar()
     connect(playbackControls_, &PlaybackControls::stopClicked, this, &MainWindow::onStopPressed);
     connect(playbackControls_, &PlaybackControls::resetClicked, this, &MainWindow::onResetPressed);
 
-    auto* layoutSelector = new MenuComboBox(toolbar);
+    auto* layoutSelector = new ToolBarMenuComboBox(toolbar);
     layoutSelector->setObjectName(QStringLiteral("layoutSelector"));
-    layoutSelector->setMinimumContentsLength(12);
     layoutSelector->setAccessibleName(tr("Layout"));
     toolbar->addTrailingWidget(layoutSelector);
     auto* layoutsMenu = layoutSelector->menu();
@@ -4589,10 +4588,11 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
         LogPanel::logError(LogCategory::Pack,
             tr("Export failed: %1%2 - %3").arg(row.packName, suffix,
                 row.errors.isEmpty() ? tr("(no detail)") : row.errors));
-    } else if (!row.warnings.isEmpty()) {
+    }
+    if (!row.warnings.isEmpty()) {
         LogPanel::logWarning(LogCategory::Pack,
             tr("%1: %2%3 - %4").arg(row.status, row.packName, suffix, row.warnings));
-    } else {
+    } else if (row.success && !row.canceled) {
         LogPanel::logInfo(LogCategory::Pack,
             tr("%1: %2%3").arg(row.status, row.packName, suffix));
     }
@@ -4673,7 +4673,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         opts.snapshot = snapshot;
         opts.selection = exportSelection;
         opts.includeUnchecked = includeUnchecked;
-        opts.debugStrings = true;
         opts.forceReexport = forceReexport;
         opts.selfCleaning = selfCleaning && packPaths.isEmpty();
         opts.updateSelectedOnly = !packPaths.isEmpty();
@@ -4748,14 +4747,16 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     const auto platformJson = definition.toJson();
                     window->recordPackGenerationResult(tr("All Packs"), 0, result.success,
                         result.outputPath, result.error, result.fileSize, -1, platform,
-                        {}, result.warnings.join(QStringLiteral("\n")),
+                        {}, result.globalWarnings.join(QStringLiteral("\n")),
                         result.canceled ? tr("Canceled") : QString(), {}, &platformJson, {}, result.canceled);
+                } else {
+                    for (const QString& warning : result.globalWarnings)
+                        LogPanel::logWarning(LogCategory::Pack,
+                            tr("%1: %2").arg(definition.name, warning));
                 }
                 if (!result.canceled && !result.success)
                     LogPanel::logError(LogCategory::Pack,
                         result.error.isEmpty() ? tr("Pack export failed") : result.error);
-                for (const QString& warning : result.warnings)
-                    LogPanel::logWarning(LogCategory::Pack, warning);
                 if (result.success)
                     LogPanel::logInfo(LogCategory::Pack,
                         tr("%1: exported %2 pack(s) to %3").arg(definition.name)
@@ -4819,8 +4820,9 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (canceled) {
                 LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
             } else if (failedCount > 0) {
-                LogPanel::logError(LogCategory::Pack,
-                    tr("Export finished — %1 error(s)").arg(failedCount));
+                QString message = tr("Export finished — %1 error(s)").arg(failedCount);
+                if (warningCount > 0) message += tr(", %1 warning(s)").arg(warningCount);
+                LogPanel::logError(LogCategory::Pack, message);
             } else {
                 QString message = tr("Export finished — %1 built, %2 up to date")
                     .arg(builtCount).arg(skippedCount);

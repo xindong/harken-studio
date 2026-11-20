@@ -21,9 +21,9 @@ class UninstallExecutor
 public:
     using ProcessProbe = std::function<QStringList(const QString&)>;
 
-    static UninstallOutcome run(const QString& buildId, const QDateTime& now);
+    static UninstallOutcome run(const QString& buildId, const QDateTime& now, const QString& reviewedSnapshot = {});
     static UninstallOutcome run(const QString& buildId, const QDateTime& now,
-                                const ProcessProbe& probe);
+                                const ProcessProbe& probe, const QString& reviewedSnapshot = {});
 };
 
 }

@@ -2,7 +2,6 @@
 #include "harken/param/VariableService.h"
 
 #include <array>
-#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstring>
@@ -46,10 +45,6 @@ NativeConfigVintages() noexcept {
         static_cast<std::uint32_t>(
             offsetof(VnConfig, reserved12) +
             sizeof(VnConfig::reserved12)),
-        static_cast<std::uint32_t>(
-            offsetof(VnConfig, streamRingBytes)),
-        static_cast<std::uint32_t>(offsetof(VnConfig, reserved13)),
-        static_cast<std::uint32_t>(sizeof(VnConfig)),
     };
 }
 
@@ -229,24 +224,21 @@ std::uint32_t NativeConfigSizeForVintage(
 bool EncodeTraceConfig(const VnConfig& config,
                        std::vector<std::uint8_t>& out) noexcept {
     TraceSessionOrigin origin;
-    std::memcpy(&origin.requested, &config,
-                std::min<std::size_t>(config.structSize, sizeof(VnConfig)));
+    origin.requested = config;
     origin.resolvedSampleRate =
-        origin.requested.sampleRate != 0 ? origin.requested.sampleRate : 48000u;
+        config.sampleRate != 0 ? config.sampleRate : 48000u;
     origin.resolvedDeviceLayout =
-        origin.requested.deviceChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT
-            ? origin.requested.deviceChannelLayout
-            : origin.requested.mixChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT
-                  ? origin.requested.mixChannelLayout
+        config.deviceChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT
+            ? config.deviceChannelLayout
+            : config.mixChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT
+                  ? config.mixChannelLayout
                   : VN_CHANNEL_LAYOUT_STEREO;
     return EncodeTraceConfig(origin, out);
 }
 
 bool EncodeTraceConfig(const TraceSessionOrigin& origin,
                        std::vector<std::uint8_t>& out) noexcept {
-    VnConfig config{};
-    std::memcpy(&config, &origin.requested,
-                std::min<std::size_t>(origin.requested.structSize, sizeof(VnConfig)));
+    const VnConfig& config = origin.requested;
     const std::uint32_t vintage =
         ConfigVintageFromNativeSize(config.structSize);
     if (vintage == 0 || origin.resolvedSampleRate == 0 ||
@@ -254,30 +246,22 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
         (vintage >= 14 &&
          (config.pendingActionCapacity != 0 || config.reserved10 != 0)) ||
         (vintage >= 15 && config.reserved11 != 0) ||
-        (vintage >= 16 && config.reserved12 != 0)) {
-        return false;
-    }
-    if (vintage < 14) config.pendingActionCapacity = 0;
-    if (vintage <= 16) {
-        if (vintage < 5 || !config.streamRingFrames) config.streamRingFrames = 16384;
-        config.streamRingBytes = 0;
-    } else if (vintage == 17) {
-        config.streamRingBytes = config.streamRingFrames;
-        config.streamRingFrames = 0;
-    } else if (config.reserved13 || config.reserved14 ||
-               (config.streamRingFrames && config.streamRingBytes)) {
+        (vintage == 16 && config.reserved12 != 0)) {
         return false;
     }
     try {
         out.clear();
         out.reserve(kTraceConfigWireBytes);
         AppendU32(out, kTraceConfigSchemaVersion);
-        AppendU32(out, kTraceConfigVintageCount);
+        AppendU32(out, vintage);
         AppendU32(out, origin.resolvedSampleRate);
         AppendU32(out, origin.resolvedDeviceLayout);
-        // config is a zero-initialized copy bounded by the caller's native size.
-        // Its stream fields above already express the original capacity units.
-#define HARKEN_ENCODE_CONFIG_FIELD(field) AppendU32(out, static_cast<std::uint32_t>(config.field));
+#define HARKEN_ENCODE_CONFIG_FIELD(field)                                    \
+        AppendU32(out, FieldPresent(config.structSize,                       \
+                                    offsetof(VnConfig, field),               \
+                                    sizeof(VnConfig::field))                 \
+                           ? static_cast<std::uint32_t>(config.field)         \
+                           : 0u);
         HARKEN_TRACE_CONFIG_U32_FIELDS(HARKEN_ENCODE_CONFIG_FIELD)
 #undef HARKEN_ENCODE_CONFIG_FIELD
         std::uint32_t parkBits = 0;
@@ -295,23 +279,27 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
                 ? config.maxTopologyPlanBytes
                 : 0;
         AppendU64(out, topologyBytes);
-#define HARKEN_ENCODE_TAIL_U32(field) \
-        AppendU32(out, FieldPresent(config.structSize, offsetof(VnConfig, field), sizeof(config.field)) ? config.field : 0u)
-#define HARKEN_ENCODE_TAIL_U64(field) \
-        AppendU64(out, FieldPresent(config.structSize, offsetof(VnConfig, field), sizeof(config.field)) ? config.field : 0u)
-        HARKEN_ENCODE_TAIL_U32(maxActionFirings);
-        HARKEN_ENCODE_TAIL_U32(maxCatalogEntries);
-        HARKEN_ENCODE_TAIL_U64(maxCatalogBytes);
-        HARKEN_ENCODE_TAIL_U64(maxResidentDefinitionBytes);
-        HARKEN_ENCODE_TAIL_U64(maxCompositeIndexBytes);
-        HARKEN_ENCODE_TAIL_U64(maxPackDecodeStagingBytes);
-        HARKEN_ENCODE_TAIL_U64(maxPackResourceBytes);
-        HARKEN_ENCODE_TAIL_U64(maxPackReplacementPeakBytes);
-        HARKEN_ENCODE_TAIL_U32(maxActionCooldownRows);
-#undef HARKEN_ENCODE_TAIL_U32
-#undef HARKEN_ENCODE_TAIL_U64
-        AppendU32(out, config.streamRingBytes);
-        return out.size() == kTraceConfigWireBytes;
+        if (vintage >= 14) {
+            AppendU32(out, config.maxActionFirings);
+        }
+        if (vintage >= 15) {
+            AppendU32(out, config.maxCatalogEntries);
+            AppendU64(out, config.maxCatalogBytes);
+            AppendU64(out, config.maxResidentDefinitionBytes);
+            AppendU64(out, config.maxCompositeIndexBytes);
+            AppendU64(out, config.maxPackDecodeStagingBytes);
+            AppendU64(out, config.maxPackResourceBytes);
+            AppendU64(out, config.maxPackReplacementPeakBytes);
+        }
+        if (vintage == 16) {
+            AppendU32(out, config.maxActionCooldownRows);
+        }
+        const std::size_t expectedBytes =
+            vintage == 16   ? kTraceConfigWireBytes
+            : vintage == 15 ? kTraceConfigWireBytesV15
+            : vintage == 14 ? kTraceConfigWireBytesV14
+                            : kTraceConfigWireBytesV13;
+        return out.size() == expectedBytes;
     } catch (...) {
         out.clear();
         return false;
@@ -324,7 +312,10 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
                        std::uint32_t* resolvedSampleRate,
                        std::uint32_t* resolvedDeviceLayout) noexcept {
     if (bytes == nullptr || out == nullptr || semanticVintage == nullptr ||
-        byteCount < 4 * sizeof(std::uint32_t)) {
+        (byteCount != kTraceConfigWireBytesV13 &&
+         byteCount != kTraceConfigWireBytesV14 &&
+         byteCount != kTraceConfigWireBytesV15 &&
+         byteCount != kTraceConfigWireBytes)) {
         return false;
     }
     Reader reader{bytes, byteCount};
@@ -334,15 +325,13 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     const std::uint32_t resolvedLayout = reader.U32();
     if (schema != kTraceConfigSchemaVersion || vintage == 0 ||
         vintage > kTraceConfigVintageCount || resolvedRate == 0 ||
-        resolvedLayout == VN_CHANNEL_LAYOUT_DEFAULT) {
+        resolvedLayout == VN_CHANNEL_LAYOUT_DEFAULT ||
+        byteCount != (vintage == 16   ? kTraceConfigWireBytes
+                      : vintage == 15 ? kTraceConfigWireBytesV15
+                      : vintage == 14 ? kTraceConfigWireBytesV14
+                                      : kTraceConfigWireBytesV13)) {
         return false;
     }
-    constexpr std::uint32_t tailSizes[] = {
-        kTraceConfigWireBytesV14, kTraceConfigWireBytesV15, kTraceConfigWireBytesV16,
-        kTraceConfigWireBytesV17, kTraceConfigWireBytesV18, kTraceConfigWireBytes};
-    static_assert(sizeof(tailSizes) / sizeof(tailSizes[0]) == kTraceConfigVintageCount - 13);
-    const auto expected = vintage <= 13 ? kTraceConfigWireBytesV13 : tailSizes[vintage - 14];
-    if (byteCount != expected) return false;
     VnConfig decoded{};
     decoded.structSize = sizeof(VnConfig);
 #define HARKEN_DECODE_CONFIG_FIELD(field) decoded.field = reader.U32();
@@ -363,20 +352,8 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
         decoded.maxPackResourceBytes = reader.U64();
         decoded.maxPackReplacementPeakBytes = reader.U64();
     }
-    if (vintage >= 16) {
+    if (vintage == 16) {
         decoded.maxActionCooldownRows = reader.U32();
-    }
-    if (vintage == 17) {
-        (void)reader.U64();
-    }
-    if (vintage <= 16) {
-        if (vintage < 5 || !decoded.streamRingFrames) decoded.streamRingFrames = 16384;
-    } else if (vintage <= 18) {
-        decoded.streamRingBytes = decoded.streamRingFrames;
-        decoded.streamRingFrames = 0;
-    } else {
-        decoded.streamRingBytes = reader.U32();
-        if (decoded.streamRingFrames && decoded.streamRingBytes) return false;
     }
     const std::uint32_t historicalPendingCapacity =
         decoded.pendingActionCapacity;

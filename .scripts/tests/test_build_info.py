@@ -17,17 +17,17 @@ class BuildInfoTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="build-info-", dir=temporary_root)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        (self.root / "HarkenHub").mkdir()
+        (self.root / "Product").mkdir()
         (self.root / "VERSION").write_text("0.7.0\n", encoding="utf-8")
-        (self.root / "HarkenHub/VERSION").write_text("0.1.56\n", encoding="utf-8")
+        (self.root / "Product/VERSION").write_text("0.1.56\n", encoding="utf-8")
         (self.root / "CMakeLists.txt").write_text(
             "cmake_minimum_required(VERSION 3.25)\n"
             "project(BuildInfoTest LANGUAGES NONE)\n"
             f'include("{(REPO_ROOT / "cmake/BuildInfo.cmake").as_posix()}")\n'
+            'harken_read_version("${CMAKE_SOURCE_DIR}/Product/VERSION" PRODUCT_VERSION)\n'
             'file(WRITE "${CMAKE_BINARY_DIR}/identity.txt" '
-            '"${HARKEN_VERSION}|${HARKEN_HUB_VERSION}|${HARKEN_BI_BUILD_CHANNEL}|'
-            '${HARKEN_BI_VERSION_QUAD}|${HARKEN_BI_HUB_VERSION_QUAD}|'
-            '${HARKEN_BI_FILEFLAGS}|${HARKEN_BI_HUB_FILEFLAGS}")\n'
+            '"${HARKEN_VERSION}|${PRODUCT_VERSION}|${HARKEN_BI_BUILD_CHANNEL}|'
+            '${HARKEN_BI_VERSION_QUAD}|${HARKEN_BI_FILEFLAGS}")\n'
             'add_custom_target(version_snapshot COMMAND "${CMAKE_COMMAND}" -E true)\n',
             encoding="utf-8",
         )
@@ -49,7 +49,7 @@ class BuildInfoTest(unittest.TestCase):
                 flags = "8L" if channel == "stable" else "10L"
                 self.assertEqual(
                     (self.root / "build/identity.txt").read_text(encoding="utf-8"),
-                    f"0.7.0|0.1.56|{channel}|0.7.0.0|0.1.56.0|{flags}|{flags}",
+                    f"0.7.0|0.1.56|{channel}|0.7.0.0|{flags}",
                 )
 
     def test_studio_version_rejects_channel_suffix(self) -> None:
@@ -57,8 +57,8 @@ class BuildInfoTest(unittest.TestCase):
         result = self.configure("dev")
         self.assertNotEqual(result.returncode, 0)
 
-    def test_hub_version_rejects_channel_suffix(self) -> None:
-        (self.root / "HarkenHub/VERSION").write_text("0.1.56-dev\n", encoding="utf-8")
+    def test_product_version_rejects_channel_suffix(self) -> None:
+        (self.root / "Product/VERSION").write_text("0.1.56-dev\n", encoding="utf-8")
         result = self.configure("dev")
         self.assertNotEqual(result.returncode, 0)
 

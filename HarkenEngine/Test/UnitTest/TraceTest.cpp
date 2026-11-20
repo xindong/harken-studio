@@ -52,8 +52,8 @@ static_assert(VN_TRACE_TOO_LATE == -318,
               "trace gate refusal sits in the -3xx state band");
 static_assert(VN_BAD_TRACE_FILE == -403,
               "trace file refusal sits in the -4xx system band");
-static_assert(harken::kTraceFormatVersion == 9,
-              "VTRC v9 retires standalone stream calls");
+static_assert(harken::kTraceFormatVersion == 8,
+              "the portable semantic trace format is VTRC v6");
 static_assert(harken::kTraceCaptureResultFeature == 0x52504356u &&
                   harken::kTraceCaptureResultVintage == 1u &&
                   harken::kTraceCaptureResultTailBytes == 16u &&
@@ -1065,11 +1065,11 @@ TEST(TraceCodec, ConfigVintageIsSemanticRatherThanByteSized) {
         const std::uint32_t nativeSize =
             harken::NativeConfigSizeForVintage(vintage);
         EXPECT_NE(0u, nativeSize) << "vintage " << vintage;
-        EXPECT_EQ(vintage == 18 ? 16u : vintage, harken::ConfigVintageFromNativeSize(nativeSize));
+        EXPECT_EQ(vintage, harken::ConfigVintageFromNativeSize(nativeSize));
     }
     EXPECT_EQ(0u, harken::ConfigVintageFromNativeSize(1));
     EXPECT_EQ(0u, harken::ConfigVintageFromNativeSize(
-                      static_cast<std::uint32_t>(sizeof(VnConfig) + 16)));
+                      static_cast<std::uint32_t>(sizeof(VnConfig) + 8)));
 }
 
 TEST(TraceCodec, CurrentWorldRoundTripsEveryUnitTwoRowFamily) {
@@ -1881,99 +1881,19 @@ TEST(TraceCodec, VintageFifteenOmitsCooldownCapacity) {
 
     std::vector<std::uint8_t> wire;
     ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
-    EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
+    EXPECT_EQ(harken::kTraceConfigWireBytesV15, wire.size());
     EXPECT_EQ(15u, harken::ConfigVintageFromNativeSize(config.structSize));
 
     VnConfig decoded{};
     std::uint32_t vintage = 0;
     ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(),
                                          &decoded, &vintage));
-    EXPECT_EQ(19u, vintage);
+    EXPECT_EQ(15u, vintage);
     EXPECT_EQ(0u, decoded.maxActionCooldownRows);
     EXPECT_EQ(0u, decoded.reserved12);
 }
 
-TEST(TraceCodec, CurrentConfigRoundTripsExplicitByteCapacity) {
-    VnConfig config = MakeNullConfig(7, kBlockFrames, 44100);
-    config.structSize = sizeof(VnConfig);
-    config.maxActionCooldownRows = 333;
-    config.streamRingBytes = 2048;
-    std::vector<std::uint8_t> wire;
-    ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
-    EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
-    VnConfig decoded{};
-    std::uint32_t vintage = 0;
-    ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
-    EXPECT_EQ(19u, vintage);
-    EXPECT_EQ(333u, decoded.maxActionCooldownRows);
-    EXPECT_EQ(2048u, decoded.streamRingBytes);
-    EXPECT_EQ(0u, decoded.streamRingFrames);
-    EXPECT_FALSE(harken::DecodeTraceConfig(wire.data(), wire.size() - 4, &decoded, &vintage));
-    constexpr std::size_t ringOffset = 16 + 11 * 4;
-    wire[ringOffset] = 4;
-    EXPECT_FALSE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
-    config.reserved12 = 1;
-    EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
-}
-
-TEST(TraceCodec, HistoricalConfigWirePreservesOriginalRingUnits) {
-    // The v16 producer's little-endian config starts with four header words.
-    // Ring capacity is prefix word 11, cooldown count is the last v16 word.
-    // Construct this fixture independently of the current writer.
-    constexpr std::size_t ringOffset = 16 + 11 * 4;
-    for (const std::uint32_t historical : {16u, 17u, 18u}) {
-        for (const std::uint8_t value : {0, 4}) {
-            SCOPED_TRACE(historical);
-            SCOPED_TRACE(static_cast<unsigned>(value));
-            std::vector<std::uint8_t> wire(harken::kTraceConfigWireBytesV16, 0);
-            wire[0] = 1;
-            wire[4] = static_cast<std::uint8_t>(historical);
-            wire[8] = 0x80; wire[9] = 0xbb;  // 48000 Hz
-            wire[12] = VN_CHANNEL_LAYOUT_STEREO;
-            wire[ringOffset] = value;
-            wire[wire.size() - 4] = 77;
-            if (historical == 17) wire.insert(wire.end(), 8, 0xff);
-            VnConfig decoded{};
-            std::uint32_t vintage = 0;
-            ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
-            EXPECT_EQ(historical, vintage);
-            EXPECT_EQ(sizeof(VnConfig), decoded.structSize);
-            EXPECT_EQ(77u, decoded.maxActionCooldownRows);
-            EXPECT_EQ(historical == 16 ? (value ? value : 16384u) : 0u, decoded.streamRingFrames);
-            EXPECT_EQ(historical == 16 ? 0u : value, decoded.streamRingBytes);
-            EXPECT_FALSE(harken::DecodeTraceConfig(wire.data(), wire.size() - 1, &decoded, &vintage));
-            wire.push_back(0);
-            EXPECT_FALSE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
-        }
-    }
-}
-
-TEST(TraceCodec, EveryNativeVintageWritesCurrentWireWithAbsentFieldsDefaulted) {
-    for (std::uint32_t historical = 1; historical <= harken::kTraceConfigVintageCount; ++historical) {
-        auto config = MakeNullConfig(7, kBlockFrames, 44100);
-        config.structSize = harken::NativeConfigSizeForVintage(historical);
-        config.maxActionCooldownRows = 333;
-        config.streamRingFrames = 4;
-        if (historical == 19) {
-            config.streamRingFrames = 0;
-            config.streamRingBytes = 8;
-        }
-        std::vector<std::uint8_t> wire;
-        ASSERT_TRUE(harken::EncodeTraceConfig(config, wire)) << historical;
-        EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
-        VnConfig decoded{};
-        std::uint32_t vintage = 0;
-        ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
-        EXPECT_EQ(19u, vintage);
-        EXPECT_EQ(historical >= 16 ? 333u : 0u, decoded.maxActionCooldownRows);
-        EXPECT_EQ(44100u, decoded.sampleRate);
-        EXPECT_EQ(historical < 5 ? 16384u : historical == 17 || historical == 19 ? 0u : 4u,
-                  decoded.streamRingFrames);
-        EXPECT_EQ(historical == 17 ? 4u : historical == 19 ? 8u : 0u, decoded.streamRingBytes);
-    }
-}
-
-TEST(TraceCodec, CurrentRejectsNonZeroReserved12) {
+TEST(TraceCodec, VintageSixteenRejectsNonZeroReserved12) {
     VnConfig config = MakeNullConfig(7, kBlockFrames, 44100);
     config.reserved12 = 1;
     std::vector<std::uint8_t> wire;
@@ -1987,29 +1907,15 @@ TEST(TraceCodec, HistoricalPendingActionCapacityIsConsumedAndNormalized) {
 
     std::vector<std::uint8_t> wire;
     ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
-    EXPECT_EQ(harken::kTraceConfigWireBytes, wire.size());
+    EXPECT_EQ(harken::kTraceConfigWireBytesV13, wire.size());
 
     VnConfig decoded{};
     std::uint32_t vintage = 0;
     ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(),
                                          &decoded, &vintage));
-    EXPECT_EQ(19u, vintage);
-    EXPECT_EQ(0u, decoded.pendingActionCapacity);
-    EXPECT_EQ(0u, decoded.maxActionFirings);
-}
-
-TEST(TraceCodec, HistoricalPendingCapacityWireIsConsumed) {
-    auto config = MakeNullConfig(7, kBlockFrames, 44100);
-    std::vector<std::uint8_t> wire;
-    ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
-    wire.resize(harken::kTraceConfigWireBytesV13);
-    wire[4] = 13;
-    wire[16 + 20 * 4] = 37;
-    VnConfig decoded{};
-    std::uint32_t vintage = 0;
-    ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
     EXPECT_EQ(13u, vintage);
     EXPECT_EQ(0u, decoded.pendingActionCapacity);
+    EXPECT_EQ(0u, decoded.maxActionFirings);
 }
 
 TEST(TraceCodec, CurrentVintageRejectsNonZeroActionCapacityTombstone) {
@@ -2605,6 +2511,33 @@ TEST(Trace, IllegalUtf8PathRefusedAndEngineStaysHealthy) {
     EXPECT_EQ(0u, snapshot.traceActive);
     EXPECT_EQ(0u, snapshot.traceFailed); // a rejected open is not a write failure
     ASSERT_NO_FATAL_FAILURE(AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(7)));
+}
+
+TEST(Trace, IllegalUtf8StreamPathDuringActiveTraceRefusedAndSurvives) {
+    EngineSession session(MakeNullConfig(4, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+
+    const std::string path = TracePath("trace_illegal_cross.vtrc");
+    ASSERT_EQ(VN_OK, Vn_TraceStart(path.c_str()));
+
+    // With a trace active, the recorder hashes each referenced content file
+    // on the logic thread (the file-reference record). A stream
+    // registration whose path is illegal UTF-8 must refuse with
+    // VN_BAD_STREAM_FILE without the content-hash conversion escaping the
+    // C ABI, on the same logic-thread path that would otherwise throw.
+    EXPECT_EQ(VN_BAD_STREAM_FILE,
+              Vn_RegisterStreamFile(harkentest::ObjectId(1), "\xFF\xFE\x80" "stream"));
+
+    // The trace layer itself did not fail — a content-file hash failure is
+    // not a journal write failure — and the engine keeps rendering.
+    const VnSnapshot snapshot = Capture();
+    EXPECT_EQ(1u, snapshot.traceActive);
+    EXPECT_EQ(0u, snapshot.traceFailed);
+    ASSERT_NO_FATAL_FAILURE(AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(7)));
+
+    // The trace finalizes normally after the refusal.
+    EXPECT_EQ(VN_OK, Vn_TraceStop());
+    EXPECT_EQ(0u, Capture().traceActive);
 }
 
 TEST(Trace, ProjectGenerationInstallAckRecordIsFortyByteLayout) {

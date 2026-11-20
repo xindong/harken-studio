@@ -7,10 +7,8 @@ namespace VNH {
 
 struct ProjectRecord
 {
-    QString projectId;
     QString canonicalPath;
     QString displayName;
-    int detectedSchema = 0;
     QString preferredStudioBuildId;
     QString lastKnownGoodStudioBuildId;
     QString lastOpenedAt;
@@ -42,9 +40,7 @@ public:
     bool setLastKnownGood(const QString& canonicalPath, const QString& buildId,
                           const QString& at);
     bool recordSuccessfulOpen(const QString& canonicalPath,
-                              const QString& projectId,
                               const QString& displayName,
-                              int detectedSchema,
                               const QString& buildId,
                               const QString& at);
     bool setLastOpened(const QString& canonicalPath, const QString& at);

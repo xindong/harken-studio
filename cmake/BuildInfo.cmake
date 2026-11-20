@@ -6,30 +6,23 @@
 #
 # C++ consumers may link `harken_buildinfo` and include
 # `harken_buildinfo.h`. Windows binaries should call
-# `harken_attach_version_resource(<target> <description> <original-filename> [product])`
+# `harken_attach_version_resource(<target> <description> <original-filename> [VERSION <x.y.z>])`
 # after target creation so the same identity is visible in file properties.
 
-set(_bi_version_file "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bi_version_file}")
-if(NOT EXISTS "${_bi_version_file}")
-    message(FATAL_ERROR "[BuildInfo] VERSION file missing at ${_bi_version_file}")
-endif()
-file(READ "${_bi_version_file}" HARKEN_VERSION)
-string(STRIP "${HARKEN_VERSION}" HARKEN_VERSION)
-if(NOT HARKEN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-    message(FATAL_ERROR "[BuildInfo] VERSION must contain MAJOR.MINOR.PATCH without a channel suffix")
-endif()
+function(harken_read_version FILE OUT_VAR)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${FILE}")
+    if(NOT EXISTS "${FILE}")
+        message(FATAL_ERROR "[BuildInfo] VERSION file missing at ${FILE}")
+    endif()
+    file(READ "${FILE}" _version)
+    string(STRIP "${_version}" _version)
+    if(NOT _version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+        message(FATAL_ERROR "[BuildInfo] ${FILE} must contain MAJOR.MINOR.PATCH without a channel suffix")
+    endif()
+    set(${OUT_VAR} "${_version}" PARENT_SCOPE)
+endfunction()
 
-set(_bi_hub_version_file "${CMAKE_CURRENT_SOURCE_DIR}/HarkenHub/VERSION")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bi_hub_version_file}")
-if(NOT EXISTS "${_bi_hub_version_file}")
-    message(FATAL_ERROR "[BuildInfo] VERSION file missing at ${_bi_hub_version_file}")
-endif()
-file(READ "${_bi_hub_version_file}" HARKEN_HUB_VERSION)
-string(STRIP "${HARKEN_HUB_VERSION}" HARKEN_HUB_VERSION)
-if(NOT HARKEN_HUB_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-    message(FATAL_ERROR "[BuildInfo] HarkenHub/VERSION must contain MAJOR.MINOR.PATCH without a channel suffix")
-endif()
+harken_read_version("${CMAKE_CURRENT_SOURCE_DIR}/VERSION" HARKEN_VERSION)
 
 # --- git source identity ---
 set(HARKEN_BI_GIT_COMMIT "unknown")
@@ -196,12 +189,6 @@ else()
 endif()
 set(HARKEN_BI_VERSION_QUAD "${HARKEN_BI_VERSION_MAJOR}.${HARKEN_BI_VERSION_MINOR}.${HARKEN_BI_VERSION_PATCH}.${HARKEN_BI_VERSION_BUILD}")
 
-string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _match "${HARKEN_HUB_VERSION}")
-set(HARKEN_BI_HUB_VERSION_MAJOR "${CMAKE_MATCH_1}")
-set(HARKEN_BI_HUB_VERSION_MINOR "${CMAKE_MATCH_2}")
-set(HARKEN_BI_HUB_VERSION_PATCH "${CMAKE_MATCH_3}")
-set(HARKEN_BI_HUB_VERSION_QUAD "${HARKEN_BI_HUB_VERSION_MAJOR}.${HARKEN_BI_HUB_VERSION_MINOR}.${HARKEN_BI_HUB_VERSION_PATCH}.${HARKEN_BI_VERSION_BUILD}")
-
 set(_bi_fileflags 0)
 if(HARKEN_BI_BUILD_TYPE STREQUAL "local" OR HARKEN_BI_GIT_DIRTY STREQUAL "true")
     math(EXPR _bi_fileflags "${_bi_fileflags} | 0x8") # VS_FF_PRIVATEBUILD
@@ -210,15 +197,6 @@ if(NOT HARKEN_BI_BUILD_CHANNEL STREQUAL "stable")
     math(EXPR _bi_fileflags "${_bi_fileflags} | 0x2") # VS_FF_PRERELEASE
 endif()
 set(HARKEN_BI_FILEFLAGS "${_bi_fileflags}L")
-
-set(_bi_hub_fileflags 0)
-if(HARKEN_BI_BUILD_TYPE STREQUAL "local" OR HARKEN_BI_GIT_DIRTY STREQUAL "true")
-    math(EXPR _bi_hub_fileflags "${_bi_hub_fileflags} | 0x8") # VS_FF_PRIVATEBUILD
-endif()
-if(NOT HARKEN_BI_BUILD_CHANNEL STREQUAL "stable")
-    math(EXPR _bi_hub_fileflags "${_bi_hub_fileflags} | 0x2") # VS_FF_PRERELEASE
-endif()
-set(HARKEN_BI_HUB_FILEFLAGS "${_bi_hub_fileflags}L")
 
 # --- generate BuildInfo.h ---
 set(HARKEN_BI_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/harken_buildinfo")
@@ -239,8 +217,6 @@ endfunction()
 
 _harken_rc_escape(HARKEN_RC_VERSION "${HARKEN_VERSION}")
 _harken_rc_escape(HARKEN_RC_VERSION_QUAD "${HARKEN_BI_VERSION_QUAD}")
-_harken_rc_escape(HARKEN_RC_HUB_VERSION "${HARKEN_HUB_VERSION}")
-_harken_rc_escape(HARKEN_RC_HUB_VERSION_QUAD "${HARKEN_BI_HUB_VERSION_QUAD}")
 _harken_rc_escape(HARKEN_RC_BUILD_ID "${HARKEN_BI_BUILD_ID}")
 _harken_rc_escape(HARKEN_RC_BUILD_TYPE "${HARKEN_BI_BUILD_TYPE}")
 _harken_rc_escape(HARKEN_RC_BUILD_CHANNEL "${HARKEN_BI_BUILD_CHANNEL}")
@@ -280,13 +256,17 @@ function(harken_attach_version_resource TARGET_NAME FILE_DESCRIPTION ORIGINAL_FI
     else()
         set(HARKEN_RC_FILETYPE "0x2L") # VFT_DLL
     endif()
-    if(ARGC GREATER 3 AND "${ARGV3}" STREQUAL "hub")
-        set(HARKEN_BI_VERSION_MAJOR "${HARKEN_BI_HUB_VERSION_MAJOR}")
-        set(HARKEN_BI_VERSION_MINOR "${HARKEN_BI_HUB_VERSION_MINOR}")
-        set(HARKEN_BI_VERSION_PATCH "${HARKEN_BI_HUB_VERSION_PATCH}")
-        set(HARKEN_BI_FILEFLAGS "${HARKEN_BI_HUB_FILEFLAGS}")
-        set(HARKEN_RC_VERSION "${HARKEN_RC_HUB_VERSION}")
-        set(HARKEN_RC_VERSION_QUAD "${HARKEN_RC_HUB_VERSION_QUAD}")
+    cmake_parse_arguments(PARSE_ARGV 3 _harken_resource "" "VERSION" "")
+    if(_harken_resource_VERSION)
+        string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _match "${_harken_resource_VERSION}")
+        if(NOT _match)
+            message(FATAL_ERROR "[BuildInfo] VERSION must be MAJOR.MINOR.PATCH: ${_harken_resource_VERSION}")
+        endif()
+        set(HARKEN_BI_VERSION_MAJOR "${CMAKE_MATCH_1}")
+        set(HARKEN_BI_VERSION_MINOR "${CMAKE_MATCH_2}")
+        set(HARKEN_BI_VERSION_PATCH "${CMAKE_MATCH_3}")
+        _harken_rc_escape(HARKEN_RC_VERSION "${_harken_resource_VERSION}")
+        _harken_rc_escape(HARKEN_RC_VERSION_QUAD "${_harken_resource_VERSION}.${HARKEN_BI_VERSION_BUILD}")
     endif()
     _harken_rc_escape(HARKEN_RC_FILE_DESCRIPTION "${FILE_DESCRIPTION}")
     _harken_rc_escape(HARKEN_RC_INTERNAL_NAME "${TARGET_NAME}")
@@ -301,7 +281,7 @@ function(harken_attach_version_resource TARGET_NAME FILE_DESCRIPTION ORIGINAL_FI
     source_group("Generated" FILES "${_harken_rc_out}")
 endfunction()
 
-message(STATUS "[BuildInfo] version=${HARKEN_VERSION} hub=${HARKEN_HUB_VERSION} build_type=${HARKEN_BI_BUILD_TYPE} build_channel=${HARKEN_BI_BUILD_CHANNEL} platform=${HARKEN_BI_TARGET_PLATFORM}")
+message(STATUS "[BuildInfo] version=${HARKEN_VERSION} build_type=${HARKEN_BI_BUILD_TYPE} build_channel=${HARKEN_BI_BUILD_CHANNEL} platform=${HARKEN_BI_TARGET_PLATFORM}")
 message(STATUS "[BuildInfo] build_id=${HARKEN_BI_BUILD_ID}")
 
 unset(_bi_status_out)
@@ -318,6 +298,3 @@ unset(_bi_os_short)
 unset(_bi_run_component)
 unset(_bi_build_channel_index)
 unset(_bi_fileflags)
-unset(_bi_hub_fileflags)
-unset(_bi_version_file)
-unset(_bi_hub_version_file)

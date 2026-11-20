@@ -8,7 +8,7 @@
   "nonceBytes": 32,
   "spkiBytes": 32,
   "messageCounterStart": 1,
-  "wireOpcodeCount": 113,
+  "wireOpcodeCount": 116,
   "monitorFunctionCount": 20,
   "statuses": {
     "disabled": "VN_OK",

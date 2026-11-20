@@ -28,13 +28,6 @@ TEST(VorbisMedia, FixtureSeeksAndLoopBoundariesMatchIndependentLinearDecode) {
                 ASSERT_FLOAT_EQ(actual[i], fixture.reference[frame * channels + i]) << i;
         }
         for (std::size_t i = 0; i < media.seek.size(); ++i) EXPECT_TRUE(media.VerifySegment(i));
-        const auto stream = test::WrapVorbisStream(fixture.media);
-        VorbisMedia fromStream;
-        ASSERT_TRUE(ParseVorbisTestStream(stream.data(), stream.size(), fromStream));
-        EXPECT_EQ(fromStream.revision, media.revision);
-        EXPECT_EQ(stream.size(), fixture.media.size() + vorbis_test_wire::kStreamHeaderBytes);
-        EXPECT_TRUE(std::equal(fixture.media.begin(), fixture.media.end(),
-                              stream.begin() + vorbis_test_wire::kStreamHeaderBytes));
     }
 }
 
@@ -67,50 +60,5 @@ TEST(VorbisMedia, RejectsMalformedMetadataAndCorruptionWithoutPublishing) {
     const auto table = vorbis_test_wire::kHeaderBytes + published.identBytes + published.setupBytes;
     bytes = fixture.media; Write(bytes, table + vorbis_test_wire::kSeekBytes + 8, 1, 8); reject(bytes);
     bytes = fixture.media; Write(bytes, table + published.seek.size() * vorbis_test_wire::kSeekBytes, 0, 8); reject(bytes);
-    const auto stream = test::WrapVorbisStream(fixture.media);
-    for (const auto offset : {0u, 4u, 6u, 8u, 16u}) {
-        bytes = stream; Write(bytes, offset, 0xffffffffu, 4);
-        EXPECT_FALSE(ParseVorbisTestStream(bytes.data(), bytes.size(), published));
-        EXPECT_EQ(published.packets, originalPackets);
-    }
-}
-
-TEST(VorbisMedia, StreamingMetadataDoesNotRequireOrExposePacketPayload) {
-    const auto fixture = test::MakeVorbisFixture(6, true, 48713, 95019);
-    const auto count = VorbisTestMetadataBytes(fixture.media.data(), fixture.media.size());
-    ASSERT_GT(count, vorbis_test_wire::kHeaderBytes);
-    ASSERT_LT(count, fixture.media.size());
-    std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + count);
-    VorbisMedia media;
-    ASSERT_TRUE(ParseVorbisTestMediaHeaders(prefix.data(), prefix.size(), fixture.media.size(), media));
-    EXPECT_EQ(count, media.packetDataOffset);
-    EXPECT_EQ(nullptr, media.packets);
-    EXPECT_EQ(6u, media.channels);
-    EXPECT_EQ(144137u, media.frames);
-    const std::uint8_t* packet = nullptr;
-    std::uint16_t size = 0;
-    EXPECT_FALSE(media.Packet(0, packet, size));
-    EXPECT_FALSE(media.VerifySegment(0));
-    EXPECT_FALSE(ParseVorbisTestMedia(prefix.data(), prefix.size(), media));
-    EXPECT_FALSE(ParseVorbisTestMediaHeaders(prefix.data(), prefix.size() - 1, fixture.media.size(), media));
-    EXPECT_FALSE(ParseVorbisTestMediaHeaders(prefix.data(), prefix.size(), fixture.media.size() + 1, media));
-    EXPECT_EQ(count, media.packetDataOffset);
-    EXPECT_EQ(144137u, media.frames);
-}
-
-TEST(VorbisMedia, ResidentAndDenseStreamIndexesUseTheSamePackets) {
-    const auto resident = test::MakeVorbisFixture(1);
-    const auto streamed = test::MakeVorbisFixture(1, true, 0, 0, 64);
-    VorbisMedia a, b;
-    ASSERT_TRUE(ParseVorbisTestMedia(resident.media.data(), resident.media.size(), a));
-    ASSERT_TRUE(ParseVorbisTestMedia(streamed.media.data(), streamed.media.size(), b));
-    EXPECT_TRUE(a.segmentChecksums.empty()); EXPECT_EQ(a.revision, b.revision);
-    ASSERT_EQ(a.packetBytes, b.packetBytes);
-    EXPECT_TRUE(std::equal(a.packets, a.packets + a.packetBytes, b.packets));
-    EXPECT_EQ(a.Seek(a.frames), nullptr);
-    for (auto frame : {63ull, 64ull, 65ull, 144136ull}) {
-        const auto actual = test::DecodeReferencePackets(b, frame, 1);
-        ASSERT_EQ(actual.size(), 1u); EXPECT_FLOAT_EQ(actual[0], streamed.reference[frame]);
-    }
 }
 }

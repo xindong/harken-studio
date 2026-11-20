@@ -172,7 +172,7 @@ namespace Harken
             Off(f, "VnRemoteClientBus", "id", Marshal.OffsetOf<VnRemoteClientBus>("id"), 0);
             Off(f, "VnRemoteClientBus", "generation", Marshal.OffsetOf<VnRemoteClientBus>("generation"), 16);
             Off(f, "VnRemoteClientBus", "peak", Marshal.OffsetOf<VnRemoteClientBus>("peak"), 20);
-            Size(f, "VnConfig", Marshal.SizeOf<VnConfig>(), 368);
+            Size(f, "VnConfig", Marshal.SizeOf<VnConfig>(), 352);
             Off(f, "VnConfig", "structSize", Marshal.OffsetOf<VnConfig>("structSize"), 0);
             Off(f, "VnConfig", "sampleRate", Marshal.OffsetOf<VnConfig>("sampleRate"), 4);
             Off(f, "VnConfig", "blockFrames", Marshal.OffsetOf<VnConfig>("blockFrames"), 8);
@@ -250,9 +250,6 @@ namespace Harken
             Off(f, "VnConfig", "maxPackReplacementPeakBytes", Marshal.OffsetOf<VnConfig>("maxPackReplacementPeakBytes"), 336);
             Off(f, "VnConfig", "maxActionCooldownRows", Marshal.OffsetOf<VnConfig>("maxActionCooldownRows"), 344);
             Off(f, "VnConfig", "reserved12", Marshal.OffsetOf<VnConfig>("reserved12"), 348);
-            Off(f, "VnConfig", "reserved13", Marshal.OffsetOf<VnConfig>("reserved13"), 352);
-            Off(f, "VnConfig", "streamRingBytes", Marshal.OffsetOf<VnConfig>("streamRingBytes"), 360);
-            Off(f, "VnConfig", "reserved14", Marshal.OffsetOf<VnConfig>("reserved14"), 364);
             Size(f, "VnPCMDesc", Marshal.SizeOf<VnPCMDesc>(), 48);
             Off(f, "VnPCMDesc", "structSize", Marshal.OffsetOf<VnPCMDesc>("structSize"), 0);
             Off(f, "VnPCMDesc", "sampleRate", Marshal.OffsetOf<VnPCMDesc>("sampleRate"), 4);
@@ -1212,31 +1209,11 @@ namespace Harken
             Off(f, "VnByteSourceDescV1", "userData", Marshal.OffsetOf<VnByteSourceDescV1>("userData"), 16);
             Off(f, "VnByteSourceDescV1", "readAt", Marshal.OffsetOf<VnByteSourceDescV1>("readAt"), 24);
             Off(f, "VnByteSourceDescV1", "release", Marshal.OffsetOf<VnByteSourceDescV1>("release"), 32);
-            Size(f, "VnCanonicalPackSetMemberV3", Marshal.SizeOf<VnCanonicalPackSetMemberV3>(), 96);
-            Off(f, "VnCanonicalPackSetMemberV3", "structSize", Marshal.OffsetOf<VnCanonicalPackSetMemberV3>("structSize"), 0);
-            Off(f, "VnCanonicalPackSetMemberV3", "reserved0", Marshal.OffsetOf<VnCanonicalPackSetMemberV3>("reserved0"), 4);
-            Off(f, "VnCanonicalPackSetMemberV3", "member", Marshal.OffsetOf<VnCanonicalPackSetMemberV3>("member"), 8);
-            Off(f, "VnCanonicalPackSetMemberV3", "streams", Marshal.OffsetOf<VnCanonicalPackSetMemberV3>("streams"), 88);
-            Size(f, "VnCanonicalPackSetActivationDescV3", Marshal.SizeOf<VnCanonicalPackSetActivationDescV3>(), 64);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "structSize", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("structSize"), 0);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "flags", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("flags"), 4);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "expectedCurrentInitHandle", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("expectedCurrentInitHandle"), 8);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "baseSetRevision", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("baseSetRevision"), 16);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "setRevision", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("setRevision"), 24);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "memberCount", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("memberCount"), 32);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "memberStructSize", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("memberStructSize"), 36);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "members", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("members"), 40);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "outputMemberCapacity", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("outputMemberCapacity"), 48);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "outputMemberStructSize", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("outputMemberStructSize"), 52);
-            Off(f, "VnCanonicalPackSetActivationDescV3", "outputMembers", Marshal.OffsetOf<VnCanonicalPackSetActivationDescV3>("outputMembers"), 56);
-            Size(f, "VnPackStreamResolverV1", Marshal.SizeOf<VnPackStreamResolverV1>(), 48);
-            Off(f, "VnPackStreamResolverV1", "structSize", Marshal.OffsetOf<VnPackStreamResolverV1>("structSize"), 0);
-            Off(f, "VnPackStreamResolverV1", "flags", Marshal.OffsetOf<VnPackStreamResolverV1>("flags"), 4);
-            Off(f, "VnPackStreamResolverV1", "userData", Marshal.OffsetOf<VnPackStreamResolverV1>("userData"), 8);
-            Off(f, "VnPackStreamResolverV1", "retain", Marshal.OffsetOf<VnPackStreamResolverV1>("retain"), 16);
-            Off(f, "VnPackStreamResolverV1", "release", Marshal.OffsetOf<VnPackStreamResolverV1>("release"), 24);
-            Off(f, "VnPackStreamResolverV1", "path", Marshal.OffsetOf<VnPackStreamResolverV1>("path"), 32);
-            Off(f, "VnPackStreamResolverV1", "open", Marshal.OffsetOf<VnPackStreamResolverV1>("open"), 40);
+            Size(f, "VnStreamSourceInfoV1", Marshal.SizeOf<VnStreamSourceInfoV1>(), 16);
+            Off(f, "VnStreamSourceInfoV1", "structSize", Marshal.OffsetOf<VnStreamSourceInfoV1>("structSize"), 0);
+            Off(f, "VnStreamSourceInfoV1", "state", Marshal.OffsetOf<VnStreamSourceInfoV1>("state"), 4);
+            Off(f, "VnStreamSourceInfoV1", "result", Marshal.OffsetOf<VnStreamSourceInfoV1>("result"), 8);
+            Off(f, "VnStreamSourceInfoV1", "reserved0", Marshal.OffsetOf<VnStreamSourceInfoV1>("reserved0"), 12);
             return f;
         }
 

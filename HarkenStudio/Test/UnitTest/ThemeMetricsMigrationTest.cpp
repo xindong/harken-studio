@@ -39,6 +39,7 @@
 #include <QIntValidator>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMenuBar>
 #include <QImage>
 #include <QProgressBar>
@@ -835,6 +836,95 @@ TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
     EXPECT_EQ(bar.actionGeometry(action), actionRect);
     EXPECT_EQ(bar.sizeHint(), sizeHint);
     checkStates();
+}
+
+TEST(ThemeMetricsMigration, MenuChecksIconsAndLabelsRemainIndependentAcrossDirectionsAndStates)
+{
+    ensureApp();
+    QTemporaryDir root;
+    auto manager = makeManager(root.path());
+    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    QMenu menu;
+    menu.setStyle(&style);
+    QPixmap glyph(manager->metrics().iconExtent, manager->metrics().iconExtent);
+    glyph.fill(Qt::white);
+    const QIcon icon(glyph);
+    const auto differenceBounds = [](const QImage& a, const QImage& b) {
+        QRect bounds;
+        for (int y = 0; y < a.height(); ++y)
+            for (int x = 0; x < a.width(); ++x)
+                if (a.pixel(x, y) != b.pixel(x, y)) bounds |= QRect(x, y, 1, 1);
+        return bounds;
+    };
+    const QStyle::State states[]{QStyle::State_Enabled,
+                                QStyle::State_Enabled | QStyle::State_Selected,
+                                QStyle::State_None, QStyle::State_Selected};
+    for (const auto direction : {Qt::LeftToRight, Qt::RightToLeft}) {
+        SCOPED_TRACE(direction);
+        QSize expectedSize;
+        QRect expectedIconBounds;
+        QRect expectedCheckBounds;
+        QRect expectedTextBounds;
+        for (const auto state : states) {
+            SCOPED_TRACE(static_cast<int>(state));
+            QStyleOptionMenuItem item;
+            item.initFrom(&menu);
+            item.state = state;
+            item.direction = direction;
+            item.text = QStringLiteral("Action label");
+            item.menuItemType = QStyleOptionMenuItem::Normal;
+            item.menuHasCheckableItems = true;
+            item.checkType = QStyleOptionMenuItem::NonExclusive;
+            item.maxIconWidth = glyph.width();
+            const QSize contents = item.fontMetrics.size(Qt::TextSingleLine, item.text);
+            const QSize size = style.sizeFromContents(QStyle::CT_MenuItem, &item, contents, &menu);
+            item.rect = QRect(QPoint(), size);
+            const auto render = [&](bool checked, bool withIcon, bool withText) {
+                auto option = item;
+                option.checked = checked;
+                option.icon = withIcon ? icon : QIcon();
+                if (!withText) option.text.clear();
+                QImage image(size, QImage::Format_ARGB32_Premultiplied);
+                image.fill(Qt::transparent);
+                QPainter painter(&image);
+                style.drawControl(QStyle::CE_MenuItem, &option, &painter, &menu);
+                return image;
+            };
+            const auto label = render(false, false, true);
+            const auto withIcon = render(false, true, true);
+            const auto withCheck = render(true, false, true);
+            const auto both = render(true, true, true);
+            const QRect iconBounds = differenceBounds(withIcon, label);
+            const QRect checkBounds = differenceBounds(withCheck, label);
+            const QRect textBounds = differenceBounds(label, render(false, false, false));
+            ASSERT_FALSE(iconBounds.isEmpty());
+            ASSERT_FALSE(checkBounds.isEmpty());
+            ASSERT_FALSE(textBounds.isEmpty());
+            EXPECT_FALSE(iconBounds.intersects(checkBounds));
+            EXPECT_FALSE(iconBounds.intersects(textBounds));
+            EXPECT_FALSE(checkBounds.intersects(textBounds));
+            EXPECT_EQ(differenceBounds(both, withIcon), checkBounds);
+            EXPECT_EQ(differenceBounds(both, withCheck), iconBounds);
+            if (direction == Qt::LeftToRight) {
+                EXPECT_LT(checkBounds.right(), iconBounds.left());
+                EXPECT_LT(iconBounds.right(), textBounds.left());
+            } else {
+                EXPECT_GT(checkBounds.left(), iconBounds.right());
+                EXPECT_GT(iconBounds.left(), textBounds.right());
+            }
+            if (expectedSize.isEmpty()) {
+                expectedSize = size;
+                expectedIconBounds = iconBounds;
+                expectedCheckBounds = checkBounds;
+                expectedTextBounds = textBounds;
+            } else {
+                EXPECT_EQ(size, expectedSize);
+                EXPECT_EQ(iconBounds, expectedIconBounds);
+                EXPECT_EQ(checkBounds, expectedCheckBounds);
+                EXPECT_EQ(textBounds, expectedTextBounds);
+            }
+        }
+    }
 }
 
 TEST(ThemeMetricsMigration, ButtonTextAlignmentMatchesNativeStyleWrapping)

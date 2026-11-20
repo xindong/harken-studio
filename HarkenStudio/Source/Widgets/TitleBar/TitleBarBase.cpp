@@ -109,8 +109,7 @@ void TitleBarBase::requestChromeMetricsSync() {
 void TitleBarBase::syncChromeMetrics() {
     metricsSyncQueued_ = false;
     const auto& metrics = ThemeManager::instance().metrics();
-    const int contentHeight = qMax(fontMetrics().height() + metrics.spacingSmall, syncContentMetrics());
-    const int barHeight = qMax(metrics.chrome.titleBarHeight, contentHeight);
+    const int barHeight = qMax(fontMetrics().height() + metrics.spacingSmall, syncContentMetrics(metrics));
     setFixedHeight(barHeight);
     for (auto* button : {btnMin_, btnMax_, btnClose_})
         if (button)
@@ -118,8 +117,8 @@ void TitleBarBase::syncChromeMetrics() {
     updateContentGeometry();
 }
 
-int TitleBarBase::syncContentMetrics() {
-    return 0;
+int TitleBarBase::syncContentMetrics(const ThemeMetrics& metrics) {
+    return metrics.chrome.titleBarHeight;
 }
 
 void TitleBarBase::updateContentGeometry() {

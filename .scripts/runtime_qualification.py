@@ -30,21 +30,18 @@ ENV_ALLOWLIST = (
     "TEMP",
     "TMP",
 )
-COMMAND_ENV_ALLOWLIST = ("HARKEN_NATIVE_DIR",)
+COMMAND_ENV_ALLOWLIST: tuple[str, ...] = ()
 FIXED_CHILD_ENVIRONMENT = {
     "PYTHONDONTWRITEBYTECODE": "1",
 }
 REQUIRED_SOURCE_CONTRACT_PATHS = (
     "CMakeLists.txt",
-    "HarkenIntegration/Unity/Binding/gen_binding.py",
     "HarkenEngine/Tool/HostControl/wire/gen_wire.py",
-    "HarkenIntegration/Test/ContractTest/AbiFidelity.csproj",
 )
 SOURCE_VOLATILE_PREFIXES = (".temp",)
 EXPECTED_TOOL_VERSIONS = {
     "cmake": "cmake version 4.0.4",
     "ctest": "ctest version 4.0.4",
-    "dotnet": "10.0.200",
     "python": "Python 3.13.9",
 }
 REQUIRED_STATIC_ALLOCATION_CATEGORIES = {
@@ -156,42 +153,11 @@ M1_EVIDENCE_POLICY = {
             ],
         },
         {
-            "kind": "generator-binding",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "python",
-            "required_argv_contains": ["gen_binding.py", "--check"],
-        },
-        {
             "kind": "generator-wire",
             "execution_kind": "subprocess",
             "count": 1,
             "executable": "python",
             "required_argv_contains": ["gen_wire.py", "--check"],
-        },
-        {
-            "kind": "sdk-contract-managed",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "dotnet",
-            "required_argv_contains": [
-                "run",
-                "ContractTest",
-                "Release",
-            ],
-        },
-        {
-            "kind": "sdk-contract-native",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "dotnet",
-            "required_environment": ["HARKEN_NATIVE_DIR"],
-            "required_argv_contains": [
-                "run",
-                "ContractTest",
-                "Release",
-                "--require-native",
-            ],
         },
         {
             "kind": "perf-phase1",
@@ -912,7 +878,6 @@ def prepare(args: argparse.Namespace) -> int:
     qualified_tools = {
         "cmake": tool_version(repo_root, ["cmake", "--version"]),
         "ctest": tool_version(repo_root, ["ctest", "--version"]),
-        "dotnet": tool_version(repo_root, ["dotnet", "--version"]),
         "python": tool_version(
             repo_root,
             [sys.executable, "--version"],
@@ -1073,30 +1038,6 @@ def command_environment(
         key, item = value.split("=", 1)
         if key not in COMMAND_ENV_ALLOWLIST:
             raise ValueError(f"command environment key is not allowed: {key}")
-        if key == "HARKEN_NATIVE_DIR":
-            native_dir = require_under(Path(item), run_root)
-            expected_native_dir = (
-                run_root / "build" / "vs" / "bin" / "Release"
-            ).resolve()
-            if native_dir != expected_native_dir:
-                raise ValueError(
-                    "HARKEN_NATIVE_DIR must be the qualified Release "
-                    f"directory: {expected_native_dir}"
-                )
-            native_dll = native_dir / "HarkenEngineDev.dll"
-            if not native_dll.is_file():
-                raise FileNotFoundError(
-                    f"native Runtime DLL is missing: {native_dll}"
-                )
-            item = str(native_dir)
-            inputs.append(
-                {
-                    "role": "native-runtime",
-                    "path": str(native_dll.relative_to(run_root)),
-                    "sha256": sha256_file(native_dll),
-                    "size": native_dll.stat().st_size,
-                }
-            )
         overrides[key] = item
     return overrides, inputs
 
@@ -2140,10 +2081,7 @@ def validate_record_scope(
         "ctest-inventory": "ctest",
         "ctest-debug": "ctest",
         "ctest-release": "ctest",
-        "generator-binding": "python",
         "generator-wire": "python",
-        "sdk-contract-managed": "dotnet",
-        "sdk-contract-native": "dotnet",
         "perf-compressor-matrix": "python",
         "memory-baseline": "python",
     }
@@ -2214,13 +2152,6 @@ def validate_record_scope(
                 )
 
     generator_paths = {
-        "generator-binding": (
-            source_root
-            / "HarkenIntegration"
-            / "Unity"
-            / "Binding"
-            / "gen_binding.py"
-        ),
         "generator-wire": (
             source_root
             / "HarkenEngine"
@@ -2243,49 +2174,6 @@ def validate_record_scope(
                         "actual": argv,
                     }
                 )
-
-    integration_project = (
-        source_root
-        / "HarkenIntegration"
-        / "Test"
-        / "ContractTest"
-        / "AbiFidelity.csproj"
-    ).resolve()
-    integration_artifacts = (run_root / "build" / "sdk").resolve()
-    for kind in ("sdk-contract-managed", "sdk-contract-native"):
-        record = by_kind.get(kind)
-        if record:
-            argv = [str(item) for item in record.get("argv", [])]
-            if not has_exact_path(argv, integration_project):
-                violations.append(
-                    {
-                        "kind": kind,
-                        "rule": "qualified_sdk_project",
-                        "expected": str(integration_project),
-                        "actual": argv,
-                    }
-                )
-    native_record = by_kind.get("sdk-contract-native")
-    if native_record:
-        expected_native_dir = (
-            run_root / "build" / "vs" / "bin" / "Release"
-        ).resolve()
-        actual_native_dir = native_record.get(
-            "environment_overrides",
-            {},
-        ).get("HARKEN_NATIVE_DIR")
-        if (
-            not actual_native_dir
-            or Path(actual_native_dir).resolve() != expected_native_dir
-        ):
-            violations.append(
-                {
-                    "kind": "sdk-contract-native",
-                    "rule": "qualified_native_dir",
-                    "expected": str(expected_native_dir),
-                    "actual": actual_native_dir,
-                }
-            )
 
     benchmark_kinds = {
         "perf-phase1": "harken_benchmarks.exe",
@@ -2454,33 +2342,9 @@ def validate_record_scope(
             "--output-junit",
             str((run_root / "tests" / "release.junit.xml").resolve()),
         ],
-        "generator-binding": [
-            str(generator_paths["generator-binding"].resolve()),
-            "--check",
-        ],
         "generator-wire": [
             str(generator_paths["generator-wire"].resolve()),
             "--check",
-        ],
-        "sdk-contract-managed": [
-            "run",
-            "--project",
-            str(integration_project),
-            "--configuration",
-            "Release",
-            "--artifacts-path",
-            str(integration_artifacts),
-        ],
-        "sdk-contract-native": [
-            "run",
-            "--project",
-            str(integration_project),
-            "--configuration",
-            "Release",
-            "--artifacts-path",
-            str(integration_artifacts),
-            "--",
-            "--require-native",
         ],
         "perf-phase1": ["--filter", "phase1"],
         "perf-compressor-voice-self": [

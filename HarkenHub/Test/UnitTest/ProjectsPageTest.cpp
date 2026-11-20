@@ -190,16 +190,16 @@ TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
     const auto selected = selectedPaths();
     ASSERT_EQ(selected.size(), 2);
     const QString currentPath = table->item(table->currentRow(), 0)->data(Qt::UserRole + 1).toString();
-    ASSERT_TRUE(store.recordSuccessfulOpen(paths[2], {}, QStringLiteral("Aardvark"), 1, {}, {}));
+    ASSERT_TRUE(store.recordSuccessfulOpen(paths[2], QStringLiteral("Aardvark"), {}, {}));
     page->refresh();
-    EXPECT_EQ(table->item(0, 0)->data(Qt::UserRole + 1).toString(), paths[2]);
+    EXPECT_EQ(table->item(0, 0)->data(Qt::UserRole + 1).toString(), paths[0]);
     EXPECT_EQ(selectedPaths(), selected);
     EXPECT_EQ(table->item(table->currentRow(), 0)->data(Qt::UserRole + 1).toString(), currentPath);
     ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(5000));
     QCoreApplication::processEvents();
     EXPECT_EQ(selectedPaths(), selected);
     const std::vector<std::pair<int, QStringList>> orders{
-        {0, {paths[1], paths[0], paths[2]}},
+        {0, {paths[2], paths[1], paths[0]}},
         {1, {paths[0], paths[1], paths[2]}},
         {1, {paths[1], paths[0], paths[2]}},
         {2, {paths[1], paths[0], paths[2]}},
@@ -243,7 +243,7 @@ TEST_F(ProjectsPageSelectionTest, BatchMenuOnlyRemovesSelectedRecordsAndKeepsFil
         EXPECT_EQ(selectedPaths(), selected);
         ASSERT_EQ(menu->actions().size(), 1);
         EXPECT_TRUE(menu->actions().front()->isEnabled());
-        ASSERT_TRUE(store.recordSuccessfulOpen(paths[2], {}, QStringLiteral("Aardvark"), 1, {}, {}));
+        ASSERT_TRUE(store.recordSuccessfulOpen(paths[2], QStringLiteral("Aardvark"), {}, {}));
         page->refresh();
         menu->actions().front()->trigger();
     });
@@ -278,20 +278,6 @@ TEST_F(ProjectsPageSelectionTest, UnselectedRowMenuKeepsProjectIdentityAfterSort
     EXPECT_EQ(store.listProjects().size(), 2u);
     EXPECT_FALSE(store.contains(clickedPath));
     EXPECT_TRUE(QFileInfo::exists(clickedPath));
-}
-
-TEST_F(ProjectsPageSelectionTest, NewProjectTemplateRowIsHidden)
-{
-    VNH::InstalledVersion version;
-    version.buildId = QStringLiteral("test-build");
-    version.semanticVersion = QStringLiteral("1.0.0");
-    version.installPath = dir.path();
-    page->setVersionsProvider([version]() { return std::vector<VNH::InstalledVersion>{version}; });
-    page->showNewProjectPage();
-    auto* templates = page->findChild<QComboBox*>(QStringLiteral("newProjectTemplate"));
-    ASSERT_NE(templates, nullptr);
-    EXPECT_TRUE(templates->parentWidget()->isHidden());
-    EXPECT_FALSE(templates->isVisible());
 }
 
 TEST_F(ProjectsPageSelectionTest, ExplicitCreateVersionSurvivesGuidanceAndRefreshWithoutChangingDefault)

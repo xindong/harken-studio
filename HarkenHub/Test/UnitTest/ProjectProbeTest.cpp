@@ -47,7 +47,7 @@ QString writeProjectFile(const QString& path, int schemaVersion,
 
 }
 
-TEST(ProjectProbe, ReadsSchemaNameAndCanonicalPath)
+TEST(ProjectProbe, ReadsSavedStudioVersionNameAndCanonicalPath)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -58,28 +58,10 @@ TEST(ProjectProbe, ReadsSchemaNameAndCanonicalPath)
 
         const ProjectProbeResult result = ProjectProbe::probe(path);
         EXPECT_TRUE(result.ok);
-        EXPECT_EQ(result.schemaVersion, schemaVersion);
         EXPECT_EQ(result.savedStudioVersion, QStringLiteral("1.4.0"));
-        EXPECT_EQ(result.displayName, QStringLiteral("Demo Project"));
-        EXPECT_FALSE(result.projectId.isEmpty());
+        EXPECT_EQ(result.displayName, QStringLiteral("Demo"));
         EXPECT_FALSE(result.canonicalPath.isEmpty());
     }
-}
-
-TEST(ProjectProbe, ReadsProjectIdWhenPresent)
-{
-    QTemporaryDir dir;
-    ASSERT_TRUE(dir.isValid());
-    const QString path = writeProjectFile(dir.filePath(QStringLiteral("Future.hsp")), 6,
-                                          QStringLiteral("Future"),
-                                          QStringLiteral("11111111-2222-3333-4444-555555555555"));
-    ASSERT_FALSE(path.isEmpty());
-
-    const ProjectProbeResult result = ProjectProbe::probe(path);
-    EXPECT_TRUE(result.ok);
-    EXPECT_EQ(result.schemaVersion, 6);
-    EXPECT_EQ(result.projectId,
-              QStringLiteral("11111111-2222-3333-4444-555555555555"));
 }
 
 TEST(ProjectProbe, ResolvesProjectFileInsideDirectory)
@@ -164,7 +146,6 @@ TEST(ProjectProbe, MissingSavedVersionAndUnknownFieldsDoNotChangeTheFile)
     const auto probe = ProjectProbe::probe(path);
     EXPECT_TRUE(probe.ok);
     EXPECT_TRUE(probe.savedStudioVersion.isEmpty());
-    EXPECT_FALSE(probe.projectId.isEmpty());
     ASSERT_TRUE(file.open(QIODevice::ReadOnly));
     EXPECT_EQ(file.readAll(), bytes);
 }

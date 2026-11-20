@@ -24,6 +24,9 @@ signals:
     void stopClicked();
     void resetClicked();
 
+protected:
+    void paintEvent(QPaintEvent*) override;
+
 private:
     void applyTheme();
     void refreshShortcuts();

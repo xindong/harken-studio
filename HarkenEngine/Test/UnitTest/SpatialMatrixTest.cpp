@@ -1,4 +1,3 @@
-#include "Common/PcmStreamFixture.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "harken/core/FloatMode.h"
@@ -724,7 +723,7 @@ TEST(SpatialMatrix, StreamGateAndFirstStarvationKeepLatestUnrenderedTarget) {
     harken::ResampleTables tables;
     tables.Init();
     harken::BiquadTrigTable trig;
-    harkentest::PcmStreamFixture stream;
+    harken::StreamRing stream;
     std::array<std::array<float, kBlock>, 2> storage{};
     float* streamPlanes[harken::kMaxChannels] = {};
     for (std::uint32_t ch = 0; ch < 2; ++ch)
@@ -766,10 +765,10 @@ TEST(SpatialMatrix, StreamGateAndFirstStarvationKeepLatestUnrenderedTarget) {
     };
     auto feed = [&](std::uint32_t frames) {
         float* writable[harken::kMaxChannels] = {};
-        ASSERT_GE(stream.ContiguousStaging(writable), frames);
+        ASSERT_GE(stream.ContiguousWrite(writable), frames);
         std::fill_n(writable[0], frames, .12f);
         std::fill_n(writable[1], frames, -.08f);
-        stream.PublishFrames(frames);
+        stream.PublishWrite(frames);
     };
     auto reference = [](float pan, float width) {
         const auto columns = ReferenceStereo(VN_CHANNEL_LAYOUT_STEREO, pan, width);

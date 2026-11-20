@@ -43,6 +43,7 @@ struct EngineTargetObservation
     bool canChangeIntegration = false;
     bool canMoveIntegration = false;
     bool canRemoveIntegration = false;
+    bool canRestorePrevious = false;
 };
 
 class EngineTargetProbe

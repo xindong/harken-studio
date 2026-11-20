@@ -57,10 +57,8 @@ ReclaimReport TransactionReclaimer::reclaimAtStartup(const QDateTime& now)
             continue;
         QString error;
         const bool valid = !record.packageManifestHash.isEmpty()
-            && !record.capabilitiesHash.isEmpty()
             && VersionScanner::inspect(record, nullptr, &error) == InstallationIssue::None
-            && IntegrityChecker::check(record.installPath, record.packageManifestHash,
-                                       record.capabilitiesHash).ok
+            && IntegrityChecker::check(record.installPath, record.packageManifestHash).ok
             && (!BinaryTrustPolicy::installedTreeRequired()
                 || BinaryTrustPolicy::verifyInstalledTree(record.installPath, &error));
         if (!InstallIndex::setHealthState(record.buildId,

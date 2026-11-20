@@ -329,19 +329,9 @@ void ProjectTreeWidget::clearExternalDropHighlight()
 void ProjectTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
-    if (index.data(kBucketRole).toBool())
-    {
-        QStyleOptionViewItem opt = option;
-        opt.font = qvariant_cast<QFont>(index.data(Qt::FontRole)).resolve(option.font);
-        opt.fontMetrics = QFontMetrics(opt.font);
-        TreeRowStyle::paintBucketRow(painter, opt, index, isExpanded(index));
-    }
-    else
-    {
-        QTreeWidget::drawRow(painter, option, index);
-        if (selectionModel()->isSelected(index))
-            TreeRowStyle::paintRowAccent(painter, option.rect);
-    }
+    QTreeWidget::drawRow(painter, option, index);
+    if (selectionModel()->isSelected(index))
+        TreeRowStyle::paintRowAccent(painter, option.rect);
 
     if (highlightedItem_ && itemFromIndex(index) == highlightedItem_)
         TreeRowStyle::paintDropHighlight(painter, option.rect);

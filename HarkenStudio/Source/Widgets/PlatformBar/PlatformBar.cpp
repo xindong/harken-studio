@@ -6,9 +6,9 @@
 #include "../../Core/PreviewMediaModeService.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/QtControlSkin.h"
+#include "Common/ToolBarComboBox.h"
 
 #include <QAction>
-#include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
@@ -27,9 +27,7 @@ public:
     explicit ToolBarButton(QWidget* parent)
         : QToolButton(parent)
     {
-        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-            setFixedSize(metrics.controlHeight, metrics.controlHeight);
-        });
+        setProperty("shellRole", QStringLiteral("toolBarAction"));
         setProperty("flatIconButton", true);
     }
 
@@ -69,10 +67,9 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     auto* layout = new QGridLayout(host_);
     ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
     ThemeManager::instance().bindMetrics(host_, [this](const ThemeMetrics& metrics) {
-        const int row = qMax(metrics.layout.rowHeight,
-                             QtControlSkin::current().fieldHeight() + metrics.layout.rowInset * 2);
-        host_->setFixedHeight(row);
-        setFixedHeight(row + metrics.layout.rowInset * 2);
+        const int contentHeight = QtControlSkin::current().toolBarControlHeight() + metrics.layout.tightGap * 2;
+        host_->setFixedHeight(contentHeight);
+        setFixedHeight(qMax(metrics.chrome.mainWindowToolBarHeight, contentHeight));
     });
     ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->setColumnStretch(0, 1);
@@ -90,11 +87,8 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     leading_->hide();
     leadingLayout->addWidget(leading_);
 
-    platformCombo_ = new QComboBox(leading);
+    platformCombo_ = new ToolBarComboBox(leading);
     platformCombo_->setObjectName(QStringLiteral("platformBarSelector"));
-    platformCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    platformCombo_->setMinimumContentsLength(12);
-    platformCombo_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     leadingLayout->addWidget(platformCombo_);
 
     allButton_ = new QToolButton(leading);
@@ -110,11 +104,8 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     allButton_->setFocusPolicy(Qt::NoFocus);
     leadingLayout->addWidget(allButton_);
 
-    languageCombo_ = new QComboBox(leading);
+    languageCombo_ = new ToolBarComboBox(leading);
     languageCombo_->setObjectName(QStringLiteral("platformBarLanguages"));
-    languageCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    languageCombo_->setMinimumContentsLength(12);
-    languageCombo_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     languageCombo_->setAccessibleName(tr("Edit and Audition Language"));
     languageCombo_->setToolTip(tr("Edit and Audition Language"));
     leadingLayout->addWidget(languageCombo_);

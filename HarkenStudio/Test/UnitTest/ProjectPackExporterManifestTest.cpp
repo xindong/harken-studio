@@ -428,27 +428,6 @@ void expectMediaMatchesDefinition(const QByteArray& bytes,
 }
 
 
-void preserveUnityFixture(const QString& sourceRoot)
-{
-    const QByteArray targetUtf8 = qgetenv("HARKEN_UNITY_FIXTURE_OUT");
-    if (targetUtf8.isEmpty())
-        return;
-    const QString targetRoot = QString::fromUtf8(targetUtf8);
-    QDir target(targetRoot);
-    if (target.exists())
-        ASSERT_TRUE(target.removeRecursively());
-    ASSERT_TRUE(QDir().mkpath(targetRoot));
-    QDirIterator files(sourceRoot, QDir::Files, QDirIterator::Subdirectories);
-    while (files.hasNext()) {
-        const QString source = files.next();
-        const QString relative = QDir(sourceRoot).relativeFilePath(source);
-        const QString destination = target.filePath(relative);
-        ASSERT_TRUE(QDir().mkpath(QFileInfo(destination).absolutePath()));
-        ASSERT_TRUE(QFile::copy(source, destination))
-            << destination.toStdString();
-    }
-}
-
 void expectCanonicalPackParsesWithPartition(const QString& path)
 {
     const QByteArray bytes = readFileBytes(path);
@@ -1833,7 +1812,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
     registry.clear();
 }
 
-TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
+TEST(EditorProjectPackExporterManifest, ExportsContainerAndVariableProjectDeterministically)
 {
     qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
     QTemporaryDir sources;
@@ -1963,15 +1942,6 @@ TEST(EditorProjectPackExporterManifest, ExportsPlayableDemoSampleFixtures)
         const QByteArray bytes = readFileBytes(QDir(first.path()).filePath(relative));
         ASSERT_FALSE(bytes.isEmpty()) << relative.toStdString();
         ASSERT_EQ(bytes, readFileBytes(QDir(second.path()).filePath(relative))) << relative.toStdString();
-    }
-    const QString preserved = QString::fromUtf8(qgetenv("HARKEN_UNITY_FIXTURE_OUT"));
-    if (!preserved.isEmpty()) {
-        ASSERT_FALSE(QDir(preserved).exists());
-        for (const QString& relative : relativeFiles) {
-            const QString target = QDir(preserved).filePath(relative);
-            ASSERT_TRUE(QDir().mkpath(QFileInfo(target).absolutePath()));
-            ASSERT_TRUE(QFile::copy(QDir(first.path()).filePath(relative), target));
-        }
     }
 }
 
@@ -3058,6 +3028,7 @@ TEST(EditorProjectPackExporterManifest, BusyWaveformOutputFailsWithoutRetry)
             context.root, context.project, {context.platform}, true, {{context.platform, disabled.outputs}});
         EXPECT_TRUE(cleaned.success) << cleaned.error.toStdString();
         if (location != 0) EXPECT_FALSE(cleaned.warnings.isEmpty());
+        EXPECT_EQ(cleaned.globalWarnings, cleaned.warnings);
         EXPECT_EQ(readFileBytes(otherWaveform), QByteArray("other build waveform"));
         competingBuild.unlock();
         context.project.buildExportWaveforms = true;
@@ -3619,6 +3590,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
     ASSERT_NO_FATAL_FAILURE(context.setup(true));
     auto actions = std::move(context.project.actions.front().rootItem->children);
     actions.push_back(makeItem(QStringLiteral("Empty"), VNX::ProjectItem::Type::Action, 55));
+    actions.push_back(makeItem(QStringLiteral("OtherEmpty"), VNX::ProjectItem::Type::Action, 56));
     context.project.actions.clear();
     for (auto& action : actions) {
         action->parent = nullptr;
@@ -3648,6 +3620,8 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
     ASSERT_EQ(initial.platforms.size(), 1u);
     ASSERT_TRUE(compiled);
     ASSERT_FALSE(initial.platforms.front().result.warnings.isEmpty());
+    EXPECT_EQ(initial.platforms.front().result.warnings.size(), 2);
+    EXPECT_TRUE(initial.platforms.front().result.globalWarnings.isEmpty());
     QMap<QString, QByteArray> expected;
     for (const auto& path : publicationFiles(context.live.path()))
         expected.insert(path, readFileBytes(context.live.filePath(path)));
@@ -3705,6 +3679,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
         EXPECT_EQ(platform.result.mediaCount, previous.result.mediaCount);
         EXPECT_EQ(platform.result.actionCount, previous.result.actionCount);
         EXPECT_EQ(platform.result.warnings, previous.result.warnings);
+        EXPECT_EQ(platform.result.globalWarnings, previous.result.globalWarnings);
     }
     ASSERT_EQ(reused.platforms.front().records.size(), initial.platforms.front().records.size());
     for (const auto& record : reused.platforms.front().records) {
@@ -3714,6 +3689,7 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildReuseRestoresRowsAfterReload
             });
         ASSERT_NE(prior, initial.platforms.front().records.end());
         EXPECT_EQ(record.omitted, prior->omitted);
+        EXPECT_EQ(record.warnings, prior->warnings);
         EXPECT_TRUE(record.success);
         if (record.source == VNX::ProjectPackExporter::PackBuildRecord::Source::Action) {
             const auto action = std::find_if(reloaded.actions.begin(),

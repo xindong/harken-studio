@@ -14,5 +14,6 @@
 #include "PackProperties.h"
 #include "PackSlots.h"
 #include "PackChecksum.h"
+#include "PackStream.h"
 
 #endif

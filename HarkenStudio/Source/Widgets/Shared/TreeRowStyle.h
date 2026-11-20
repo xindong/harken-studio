@@ -24,9 +24,6 @@ void paintRowAccent(QPainter* p, const QRect& rowRect);
 void paintDropHighlight(QPainter* p, const QRect& rowRect);
 void paintItemContents(QPainter* p, const QStyleOptionViewItem& option);
 
-void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
-                    const QModelIndex& idx, bool expanded);
-
 void paintBranches(QPainter* painter, const QRect& rect, const QModelIndex& index,
                    const QAbstractItemModel* model, int indentation, bool expanded,
                    bool rootIsDecorated = false);

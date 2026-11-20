@@ -10,7 +10,6 @@
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QStringList>
-#include <QUuid>
 
 #include <algorithm>
 
@@ -74,12 +73,6 @@ LaunchDecision LaunchPreflight::evaluate(
     const ProjectProbeResult probe = ProjectProbe::probe(project.canonicalPath);
     if (!probe.ok)
         return blocked(QStringLiteral("ProjectUnparsable"), probe.error);
-    if (!project.projectId.isEmpty() && !probe.projectId.isEmpty() &&
-        QUuid(project.projectId) != QUuid(probe.projectId))
-        return blocked(
-            QStringLiteral("IdentityMismatch"),
-            hubText("The project file identity has changed; it may "
-                    "have been replaced by a different project"));
 
     const ProjectVersionSelection selection = ProjectVersionSelection::resolve(
         project, probe, versions, selectedBuildId);
@@ -129,8 +122,7 @@ LaunchDecision LaunchPreflight::evaluate(
             index.ok ? installRecordFor(index, target->buildId) : nullptr;
         const IntegrityReport integrity = IntegrityChecker::check(
             target->installPath,
-            installRecord ? installRecord->packageManifestHash : QString(),
-            installRecord ? installRecord->capabilitiesHash : QString());
+            installRecord ? installRecord->packageManifestHash : QString());
         if (!integrity.ok)
             return blocked(QStringLiteral("VersionNeedsRepair"),
                            hubText("The selected version failed its "
@@ -140,7 +132,6 @@ LaunchDecision LaunchPreflight::evaluate(
 
     LaunchDecision decision;
     decision.version = *target;
-    decision.projectSchema = probe.schemaVersion;
     decision.verdict = LaunchVerdict::Ready;
     return decision;
 }

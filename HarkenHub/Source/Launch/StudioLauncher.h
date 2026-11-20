@@ -18,7 +18,6 @@ struct StudioCreateSpec
     QString projectName;
     QString projectLocation;
     QString templateId;
-    QString templatePath;
 };
 
 class StudioLauncher
