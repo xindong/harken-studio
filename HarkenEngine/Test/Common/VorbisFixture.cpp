@@ -1,6 +1,6 @@
 #include "VorbisFixture.h"
 #include "harken/media/PackFormat.h"
-#include <vorbis/vorbisfile.h>
+#include <harken_reference/vorbisfile.h>
 extern "C" int harken_test_vorbis_floor_supported(const vorbis_info* info);
 #include <algorithm>
 #include <cstring>

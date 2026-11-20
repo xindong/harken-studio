@@ -21,7 +21,7 @@ NativeConfigVintages() noexcept {
         static_cast<std::uint32_t>(offsetof(VnConfig, logCallback)),
         static_cast<std::uint32_t>(
             offsetof(VnConfig, delayEffectPoolCapacity)),
-        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes)),
+        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames)),
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActions)),
         static_cast<std::uint32_t>(offsetof(VnConfig, maxTriggerDepth)),
         static_cast<std::uint32_t>(offsetof(VnConfig, mixChannelLayout)),
@@ -47,7 +47,8 @@ NativeConfigVintages() noexcept {
             offsetof(VnConfig, reserved12) +
             sizeof(VnConfig::reserved12)),
         static_cast<std::uint32_t>(
-            sizeof(VnConfig) + sizeof(std::uint64_t)),
+            offsetof(VnConfig, streamRingBytes)),
+        static_cast<std::uint32_t>(offsetof(VnConfig, reserved13)),
         static_cast<std::uint32_t>(sizeof(VnConfig)),
     };
 }
@@ -166,7 +167,7 @@ struct PrefixDecodeVisitor {
     X(notificationQueueDepth)                                               \
     X(delayEffectPoolCapacity)                                              \
     X(toneEffectPoolCapacity)                                               \
-    X(streamRingBytes)                                                     \
+    X(streamRingFrames)                                                     \
     X(maxStreams)                                                           \
     X(prebufferMs)                                                          \
     X(starvationCooldownBlocks)                                             \
@@ -257,6 +258,16 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
         return false;
     }
     if (vintage < 14) config.pendingActionCapacity = 0;
+    if (vintage <= 16) {
+        if (vintage < 5 || !config.streamRingFrames) config.streamRingFrames = 16384;
+        config.streamRingBytes = 0;
+    } else if (vintage == 17) {
+        config.streamRingBytes = config.streamRingFrames;
+        config.streamRingFrames = 0;
+    } else if (config.reserved13 || config.reserved14 ||
+               (config.streamRingFrames && config.streamRingBytes)) {
+        return false;
+    }
     try {
         out.clear();
         out.reserve(kTraceConfigWireBytes);
@@ -264,12 +275,9 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
         AppendU32(out, kTraceConfigVintageCount);
         AppendU32(out, origin.resolvedSampleRate);
         AppendU32(out, origin.resolvedDeviceLayout);
-#define HARKEN_ENCODE_CONFIG_FIELD(field)                                    \
-        AppendU32(out, FieldPresent(config.structSize,                       \
-                                    offsetof(VnConfig, field),               \
-                                    sizeof(VnConfig::field))                 \
-                           ? static_cast<std::uint32_t>(config.field)         \
-                           : 0u);
+        // config is a zero-initialized copy bounded by the caller's native size.
+        // Its stream fields above already express the original capacity units.
+#define HARKEN_ENCODE_CONFIG_FIELD(field) AppendU32(out, static_cast<std::uint32_t>(config.field));
         HARKEN_TRACE_CONFIG_U32_FIELDS(HARKEN_ENCODE_CONFIG_FIELD)
 #undef HARKEN_ENCODE_CONFIG_FIELD
         std::uint32_t parkBits = 0;
@@ -302,6 +310,7 @@ bool EncodeTraceConfig(const TraceSessionOrigin& origin,
         HARKEN_ENCODE_TAIL_U32(maxActionCooldownRows);
 #undef HARKEN_ENCODE_TAIL_U32
 #undef HARKEN_ENCODE_TAIL_U64
+        AppendU32(out, config.streamRingBytes);
         return out.size() == kTraceConfigWireBytes;
     } catch (...) {
         out.clear();
@@ -315,12 +324,7 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
                        std::uint32_t* resolvedSampleRate,
                        std::uint32_t* resolvedDeviceLayout) noexcept {
     if (bytes == nullptr || out == nullptr || semanticVintage == nullptr ||
-        (byteCount != kTraceConfigWireBytesV13 &&
-         byteCount != kTraceConfigWireBytesV14 &&
-         byteCount != kTraceConfigWireBytesV15 &&
-         byteCount != kTraceConfigWireBytesV16 &&
-         byteCount != kTraceConfigWireBytesV17 &&
-         byteCount != kTraceConfigWireBytes)) {
+        byteCount < 4 * sizeof(std::uint32_t)) {
         return false;
     }
     Reader reader{bytes, byteCount};
@@ -330,15 +334,15 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     const std::uint32_t resolvedLayout = reader.U32();
     if (schema != kTraceConfigSchemaVersion || vintage == 0 ||
         vintage > kTraceConfigVintageCount || resolvedRate == 0 ||
-        resolvedLayout == VN_CHANNEL_LAYOUT_DEFAULT ||
-        byteCount != (vintage == 17 ? kTraceConfigWireBytesV17
-                      : vintage == 18 ? kTraceConfigWireBytes
-            : vintage == 16 ? kTraceConfigWireBytesV16
-                      : vintage == 15 ? kTraceConfigWireBytesV15
-                      : vintage == 14 ? kTraceConfigWireBytesV14
-                                      : kTraceConfigWireBytesV13)) {
+        resolvedLayout == VN_CHANNEL_LAYOUT_DEFAULT) {
         return false;
     }
+    constexpr std::uint32_t tailSizes[] = {
+        kTraceConfigWireBytesV14, kTraceConfigWireBytesV15, kTraceConfigWireBytesV16,
+        kTraceConfigWireBytesV17, kTraceConfigWireBytesV18, kTraceConfigWireBytes};
+    static_assert(sizeof(tailSizes) / sizeof(tailSizes[0]) == kTraceConfigVintageCount - 13);
+    const auto expected = vintage <= 13 ? kTraceConfigWireBytesV13 : tailSizes[vintage - 14];
+    if (byteCount != expected) return false;
     VnConfig decoded{};
     decoded.structSize = sizeof(VnConfig);
 #define HARKEN_DECODE_CONFIG_FIELD(field) decoded.field = reader.U32();
@@ -364,6 +368,15 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     }
     if (vintage == 17) {
         (void)reader.U64();
+    }
+    if (vintage <= 16) {
+        if (vintage < 5 || !decoded.streamRingFrames) decoded.streamRingFrames = 16384;
+    } else if (vintage <= 18) {
+        decoded.streamRingBytes = decoded.streamRingFrames;
+        decoded.streamRingFrames = 0;
+    } else {
+        decoded.streamRingBytes = reader.U32();
+        if (decoded.streamRingFrames && decoded.streamRingBytes) return false;
     }
     const std::uint32_t historicalPendingCapacity =
         decoded.pendingActionCapacity;

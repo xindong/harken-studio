@@ -148,7 +148,7 @@
 
 #else
 
-#  include <ogg/config_types.h>
+#  include "harken_decoder_config_types.h"
 
 #endif
 

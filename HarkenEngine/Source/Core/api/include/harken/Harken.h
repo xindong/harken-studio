@@ -223,8 +223,7 @@ typedef struct VnConfig {
                                        * all voice and bus chains; 0 = grow on demand */
     uint32_t toneEffectPoolCapacity;  /* three-band-tone instances shared across
                                        * all voice and bus chains; 0 = grow on demand */
-    uint32_t streamRingBytes;   /* per-stream ring capacity in bytes;
-                                  * 0 = 262144; rounded up to a power of two */
+    uint32_t streamRingFrames;  /* legacy PCM depth per channel; exclusive with streamRingBytes */
     uint32_t maxStreams;         /* stream slot capacity; 0 = 16. A streamed
                                   * Render Voice also consumes one such slot. */
     uint32_t prebufferMs;        /* ring fill required before a streamed
@@ -432,6 +431,9 @@ typedef struct VnConfig {
     uint32_t maxActionCooldownRows;         /* committed Action cooldown rows;
                                             * 0 = 256 */
     uint32_t reserved12;                    /* must be 0 */
+    uint64_t reserved13;                    /* retired decoder quota slot; zero in new configurations */
+    uint32_t streamRingBytes;               /* byte capacity; zero selects 262144 in a current configuration */
+    uint32_t reserved14;                    /* must be 0 */
 } VnConfig;
 
 /* Create the engine and initialize configured resources. Effect pool capacities

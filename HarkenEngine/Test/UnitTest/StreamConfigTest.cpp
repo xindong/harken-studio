@@ -20,7 +20,7 @@ using harkentest::MakeNullConfig;
 // The stream fields were appended in one segment, so the previous vintage
 // ends exactly where the first of them begins.
 const std::uint32_t kPreStreamVintageSize =
-    static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes));
+    static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames));
 
 TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     VnConfig config = MakeNullConfig();
@@ -28,6 +28,7 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     // Deliberately poison every appended field with values a full-vintage
     // caller would be refused for: if the engine wrongly read past the
     // declared struct end, Init would fail instead of defaulting.
+    config.streamRingFrames = 0xffffffffu;
     config.streamRingBytes = 0xffffffffu;
     config.maxStreams = 0xffffffffu;
     config.prebufferMs = 0xffffffffu;
@@ -37,7 +38,8 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
-    EXPECT_EQ(262144u, resolved.streamRingBytes);
+    for (unsigned channels : {1u, 2u, 8u})
+        EXPECT_EQ(16384u, session.Engine()->streams.RingOf(0)->FrameCapacity(channels));
     EXPECT_EQ(16u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
@@ -63,16 +65,63 @@ TEST(StreamConfig, FullVintageStreamFieldsResolve) {
 }
 
 TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
-    // Full vintage, all stream fields zero: same defaults as the old
-    // vintage — zero means "engine chooses" at every vintage.
+    // The byte-based default gives each slot 256 KiB.
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
     EXPECT_EQ(262144u, resolved.streamRingBytes);
+    for (unsigned channels : {1u, 2u, 8u})
+        EXPECT_EQ(262144u / (channels * sizeof(float)),
+                  session.Engine()->streams.RingOf(0)->FrameCapacity(channels));
     EXPECT_EQ(16u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
     EXPECT_EQ(256u, resolved.maxPacks);
+}
+
+TEST(StreamConfig, PublishedLayoutsKeepTheirStreamCapacityUnits) {
+    // The released PCM ABI stored frames in the prefix; the intermediate
+    // decoder-quota ABI stored bytes in the same slot. Oversized tails in
+    // these local test objects must not affect what those callers supplied.
+    struct Case {
+        std::uint32_t size, prefix, bytes;
+        std::uint32_t monoFrames, stereoFrames, surroundFrames;
+    };
+    const Case cases[] = {
+        {352, 1, UINT32_MAX, 1, 1, 1},
+        {352, 3, UINT32_MAX, 4, 4, 4},
+        {352, 0, UINT32_MAX, 16384, 16384, 16384},
+        {360, 64, UINT32_MAX, 16, 8, 2},
+        {360, 0, UINT32_MAX, 65536, 32768, 8192},
+        {sizeof(VnConfig), 3, 0, 4, 4, 4},
+        {sizeof(VnConfig), 0, 64, 16, 8, 2},
+    };
+    for (const auto& row : cases) {
+        SCOPED_TRACE(::testing::Message() << row.size << "/" << row.prefix << "/" << row.bytes);
+        VnConfig config = MakeNullConfig();
+        config.structSize = row.size;
+        config.streamRingFrames = row.prefix;
+        config.streamRingBytes = row.bytes;
+        if (row.size == 360) config.reserved13 = 2u << 20;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        const auto* ring = session.Engine()->streams.RingOf(0);
+        ASSERT_NE(nullptr, ring);
+        EXPECT_EQ(row.monoFrames, ring->FrameCapacity(1));
+        EXPECT_EQ(row.stereoFrames, ring->FrameCapacity(2));
+        EXPECT_EQ(row.surroundFrames, ring->FrameCapacity(8));
+    }
+}
+
+TEST(StreamConfig, ContradictoryUnitsAndUnrepresentableFrameDepthAreRejected) {
+    VnConfig config = MakeNullConfig();
+    harken::EngineConfig resolved;
+    config.streamRingBytes = 64;
+    config.streamRingFrames = 4;
+    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
+    config.structSize = 352;
+    config.streamRingFrames = UINT32_MAX;
+    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
 }
 
 TEST(StreamConfig, PerFieldCeilingsRefused) {

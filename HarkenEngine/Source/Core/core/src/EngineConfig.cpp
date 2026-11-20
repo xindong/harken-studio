@@ -212,7 +212,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     const std::uint32_t vintage3Size =
         static_cast<std::uint32_t>(offsetof(VnConfig, delayEffectPoolCapacity));
     const std::uint32_t vintage4Size =
-        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes));
+        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames));
     const std::uint32_t vintage5Size =
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActions));
     const std::uint32_t vintage6Size =
@@ -343,9 +343,28 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (config->toneEffectPoolCapacity != 0)
             resolved.toneEffectPoolCapacity = config->toneEffectPoolCapacity;
     }
+    // The PCM ABI used the prefix for frames per channel. The later 360-byte
+    // ABI used those same bits for bytes, and the current ABI has a byte tail.
+    const bool currentSize = config->structSize == sizeof(VnConfig);
+    const auto prefixCapacity = hasStreamFields ? config->streamRingFrames : 0u;
+    if (currentSize && (config->reserved13 != 0 || config->reserved14 != 0 ||
+                        (prefixCapacity != 0 && config->streamRingBytes != 0))) {
+        return VN_INVALID_CONFIG;
+    }
+    const bool frameUnits = config->structSize <= vintage16Size ||
+                            (currentSize && prefixCapacity != 0);
+    if (frameUnits) {
+        constexpr std::uint32_t legacyDefaultFrames = 16384;
+        const auto frames = prefixCapacity != 0 ? prefixCapacity : legacyDefaultFrames;
+        const auto bytes = std::uint64_t(frames) * kMaxChannels * sizeof(float);
+        if (bytes > kMaxStreamRingBytesCeiling) return VN_INVALID_CONFIG;
+        resolved.streamRingBytes = static_cast<std::uint32_t>(bytes);
+        resolved.legacyStreamFrameLimit = static_cast<std::uint32_t>(RoundUpPow2(frames));
+    } else {
+        const auto bytes = currentSize ? config->streamRingBytes : prefixCapacity;
+        if (bytes != 0) resolved.streamRingBytes = bytes;
+    }
     if (hasStreamFields) {
-        if (config->streamRingBytes != 0)
-            resolved.streamRingBytes = config->streamRingBytes;
         if (config->maxStreams != 0) resolved.maxStreams = config->maxStreams;
         if (config->prebufferMs != 0) resolved.prebufferMs = config->prebufferMs;
         if (config->starvationCooldownBlocks != 0)

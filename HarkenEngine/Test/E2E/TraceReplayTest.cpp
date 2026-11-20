@@ -3782,15 +3782,21 @@ TEST(TraceReplayE2E, HistoricalConfigVintagesReplayWithIgnoredDecoderBudget) {
     const auto source = ReadFileBytes(tracePath);
     const auto configEnd = harken::kTraceFixedHeaderBytes + harken::kTraceConfigWireBytes;
     ASSERT_GT(source.size(), configEnd);
-    EXPECT_EQ(18u, source[12]);
-    EXPECT_EQ(18u, source[harken::kTraceFixedHeaderBytes + 4]);
-    for (std::uint32_t vintage : {16u, 17u}) {
+    EXPECT_EQ(19u, source[12]);
+    EXPECT_EQ(19u, source[harken::kTraceFixedHeaderBytes + 4]);
+    for (std::uint32_t vintage : {16u, 17u, 18u}) {
         auto bytes = source;
+        bytes.erase(bytes.begin() + configEnd - 4, bytes.begin() + configEnd);
+        const auto oldEnd = configEnd - 4;
+        const std::uint32_t oldHeader = static_cast<std::uint32_t>(oldEnd);
+        std::memcpy(bytes.data() + 8, &oldHeader, sizeof(oldHeader));
         bytes[12] = static_cast<std::uint8_t>(vintage);
         bytes[harken::kTraceFixedHeaderBytes + 4] = static_cast<std::uint8_t>(vintage);
+        constexpr auto ringOffset = harken::kTraceFixedHeaderBytes + 16 + 11 * 4;
+        bytes[ringOffset] = 4;
         if (vintage == 17) {
-            bytes.insert(bytes.begin() + configEnd, 8, 0xff);
-            const std::uint32_t headerBytes = configEnd + 8;
+            bytes.insert(bytes.begin() + oldEnd, 8, 0xff);
+            const std::uint32_t headerBytes = oldEnd + 8;
             std::memcpy(bytes.data() + 8, &headerBytes, sizeof(headerBytes));
         }
         const auto run = RunMutatedTrace(bytes, "config_vintage_" + std::to_string(vintage) + ".vtrc");
