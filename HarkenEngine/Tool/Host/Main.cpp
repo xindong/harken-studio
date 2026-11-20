@@ -29,7 +29,7 @@
 #include "TraceReplay.h"
 #include "StreamImage.h"
 #include "harken/core/AllocGuard.h"
-#include "harken/media/PackFormatV2.h"
+#include "harken/media/StreamFormat.h"
 #include "Engine.h" // internal: --null mode drives blocks via the pump
 #include "HarkenApiInternal.h"
 #include "WavLoader.h" // the host's wav loading path (miniaudio decode)
@@ -191,11 +191,11 @@ bool ParseChunkFrames(const char* text, std::uint32_t* out) {
     char* end = nullptr;
     const unsigned long value = std::strtoul(text, &end, 10);
     if (end == text || *end != '\0' || value == 0 ||
-        value > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES) {
+        value > harken::kMaxStreamChunkFrames) {
         std::fprintf(stderr,
                      "error: --chunk-frames must be an integer in "
                      "[1, %u]\n",
-                     HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES);
+                     harken::kMaxStreamChunkFrames);
         return false;
     }
     *out = static_cast<std::uint32_t>(value);

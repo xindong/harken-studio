@@ -14,7 +14,7 @@
 #include "UnitTest/AllocationProbe.h"
 #include "harken/core/VoiceLedger.h"
 #include "harken/core/CpuClock.h"
-#include "harken/media/PackFormatV2.h"
+#include "harken/media/StreamFormat.h"
 #include "harken/media/PackEffectSchema.h"
 
 #include <algorithm>
@@ -381,19 +381,19 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
     constexpr std::uint16_t kChannels = 1;
     const std::uint64_t frameCount = source.size();
     const std::uint64_t chunkBytes =
-        hkPackStreamFileChunkBytes(kChunkFrames, kChannels);
+        harken::StreamChunkBytes(kChunkFrames, kChannels);
     const std::uint32_t chunkCount =
-        hkPackStreamFileChunkCount(frameCount, kChunkFrames);
+        harken::StreamChunkCount(frameCount, kChunkFrames);
     const std::uint64_t checksumOffset =
-        static_cast<std::uint64_t>(HK_PACK_STREAM_FILE_HEADER_BYTES) +
-        HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES;
+        static_cast<std::uint64_t>(harken::kStreamHeaderBytes) +
+        harken::kStreamTocEntryBytes;
     const std::uint64_t checksumBytes =
         static_cast<std::uint64_t>(chunkCount) *
-        HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
+        harken::kStreamChunkChecksumBytes;
     const std::uint64_t payloadOffset =
         (checksumOffset + checksumBytes +
-         HK_PACK_STREAM_FILE_PAYLOAD_ALIGN - 1) /
-        HK_PACK_STREAM_FILE_PAYLOAD_ALIGN * HK_PACK_STREAM_FILE_PAYLOAD_ALIGN;
+         harken::kStreamPayloadAlign - 1) /
+        harken::kStreamPayloadAlign * harken::kStreamPayloadAlign;
     const std::uint64_t payloadBytes =
         static_cast<std::uint64_t>(chunkCount) * chunkBytes;
     std::vector<std::uint8_t> bytes(
@@ -402,12 +402,12 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
     for (std::uint32_t chunkIndex = 0; chunkIndex < chunkCount;
          ++chunkIndex) {
         const std::uint32_t validFrames =
-            hkPackStreamFileChunkValidFrames(
+            harken::StreamChunkValidFrames(
                 chunkIndex, kChunkFrames, frameCount);
         std::uint8_t* chunk =
             bytes.data() +
             static_cast<std::size_t>(
-                hkPackStreamFileChunkOffset(
+                harken::StreamChunkFileOffset(
                     payloadOffset, chunkIndex, chunkBytes));
         std::memcpy(
             chunk,
@@ -418,7 +418,7 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
             bytes.data() +
                 static_cast<std::size_t>(checksumOffset) +
                 static_cast<std::size_t>(chunkIndex) *
-                    HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
+                    harken::kStreamChunkChecksumBytes,
             harken::Fnv1a64(
                 chunk, static_cast<std::size_t>(chunkBytes)));
     }
@@ -427,32 +427,32 @@ std::vector<std::uint8_t> BuildMonoLoopStream(
     toc.soundId = soundId;
     toc.sampleRate = sampleRate;
     toc.channelCount = kChannels;
-    toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
+    toc.sampleFormat = harken::kStreamSampleFormatF32Planar;
     toc.frameCount = frameCount;
     toc.payloadOffset = payloadOffset;
     toc.payloadBytes = payloadBytes;
     toc.chunkChecksumOffset = checksumOffset;
     toc.chunkCount = chunkCount;
-    toc.flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
+    toc.flags = harken::kStreamFlagLoopable;
     toc.loopStartFrame = 0;
     toc.loopEndFrame = frameCount;
     harken::SerializeStreamTocEntry(
-        toc, bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
+        toc, bytes.data() + harken::kStreamHeaderBytes);
 
     std::uint64_t tocChecksum =
         harken::Fnv1a64(
-            bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES,
-            HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES);
+            bytes.data() + harken::kStreamHeaderBytes,
+            harken::kStreamTocEntryBytes);
     tocChecksum = harken::Fnv1a64(
         bytes.data() +
             static_cast<std::size_t>(checksumOffset),
         static_cast<std::size_t>(checksumBytes), tocChecksum);
     harken::StreamHeader header;
-    header.formatVersion = HK_PACK_STREAM_FILE_FORMAT_VERSION;
-    header.headerBytes = HK_PACK_STREAM_FILE_HEADER_BYTES;
+    header.formatVersion = harken::kStreamFormatVersion;
+    header.headerBytes = harken::kStreamHeaderBytes;
     header.fileBytes = bytes.size();
-    header.entryCount = HK_PACK_STREAM_FILE_ENTRY_COUNT;
-    header.tocOffset = HK_PACK_STREAM_FILE_HEADER_BYTES;
+    header.entryCount = harken::kStreamEntryCount;
+    header.tocOffset = harken::kStreamHeaderBytes;
     header.chunkFrames = kChunkFrames;
     header.tocChecksum = tocChecksum;
     harken::SerializeStreamHeader(header, bytes.data());

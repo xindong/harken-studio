@@ -1,42 +1,5 @@
 # Harken for Unity
 
-**English** | [简体中文](README.zh-CN.md)
-
 `com.harken.core` integrates the Harken game-audio engine into Unity.
 
 Documentation: ONLINE_DOCUMENTATION_URL_PENDING
-
-## What It Is
-
-Harken is a game-audio middleware. Sound designers author sounds and playback logic in Harken Studio and export them as Packs; this package loads those Packs in a Unity game and plays them through the Harken engine, so game code triggers sounds by name instead of handling audio files directly.
-
-## Features
-
-- Start the engine from Project Settings with a selected Pack directory, or from code with directory, byte or custom sources.
-- Post Actions by name, stop them, and follow their playback state.
-- Write Variables by name to drive authored parameters.
-- Position sounds in 3D with emitter and listener components that follow Unity transforms.
-- Load and release Packs explicitly, with per-language and per-platform Pack directories.
-- Preview Actions in the Unity Editor.
-- Connect Harken Studio to a running game for live inspection.
-
-## Requirements
-
-| Item | Requirement |
-| --- | --- |
-| Unity | 2022.3 or later |
-| Platforms | Windows x64, macOS, Linux x64, Android arm64-v8a, iOS |
-| Unity built-in modules | Audio, JSONSerialize, UnityWebRequest (declared as package dependencies) |
-| Content | Packs exported by Harken Studio |
-
-## Versions and Compatibility
-
-- The package version is the `version` field of `package.json`. It is independent of the Harken Studio and Harken engine versions.
-- The package ships two native library editions: Release (`HarkenEngine`) and Development (`HarkenEngineDev`). **Project Settings > Harken > Project > Native Library** selects the edition: *Automatic* uses Development in the Editor and in Development Builds and Release otherwise; *Release* and *Development* force one edition everywhere. Restart Unity after changing it.
-- APIs that exist only in the Development edition are compiled only when `HARKEN_ENGINE_DEV` is defined, so Release builds never reference them.
-- Startup refuses a native library whose ABI major version differs from the managed bindings.
-- Each package version reads one Pack metadata version (currently 4). Export Packs with a Harken Studio release that writes that version. The engine checks the Pack binary version itself.
-
-## License
-
-See [LICENSE.md](LICENSE.md) and [NOTICE.md](NOTICE.md).

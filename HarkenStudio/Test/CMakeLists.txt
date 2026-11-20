@@ -188,7 +188,7 @@ target_compile_definitions(harken_studio_tests PRIVATE
     HARKEN_STUDIO_CLI_PATH="$<TARGET_FILE:harken_studio_cli>")
 add_dependencies(harken_studio_tests harken_studio_cli)
 add_test(NAME studio_cli_contract
-    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/E2E/verify_studio_cli.py"
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/.scripts/verify_studio_cli.py"
         --cli "$<TARGET_FILE:harken_studio_cli>"
         --work-dir "${CMAKE_BINARY_DIR}/cli-contract" --skip-audio-output)
 set_tests_properties(studio_cli_contract PROPERTIES TIMEOUT 300)
@@ -330,7 +330,7 @@ gtest_discover_tests(harken_bus_compiler_tests TEST_PREFIX "BusCompiler." PROPER
 
 harken_add_ci_test_target(studio)
 harken_add_python_check_test(studio_schema_archive_unit
-    "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_schema_archive.py")
+    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py")
 harken_add_python_check_test(studio_schema_generated_check
     "${HARKEN_SCHEMA_TOOL}"
     --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"

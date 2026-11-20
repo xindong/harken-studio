@@ -17,7 +17,7 @@
 #include "UnitTest/JsonTestUtil.h"
 
 #include "JsonReader.h"
-#include "harken/media/PackFormatV2.h"
+#include "harken/media/StreamFormat.h"
 
 #include <array>
 #include <cmath>
@@ -329,11 +329,11 @@ TEST(StreamRoundtrip, SpatialMonoAndStereoPreserveChannelsAndMatchResident) {
         ASSERT_NO_FATAL_FAILURE(BuildContainer(sources[i], &containers[i]));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(containers[i], &bytes));
-        ASSERT_GE(bytes.size(), HK_PACK_STREAM_FILE_HEADER_BYTES);
+        ASSERT_GE(bytes.size(), harken::kStreamHeaderBytes);
         harken::StreamHeader header;
         ASSERT_TRUE(harken::ParseStreamHeader(bytes.data(), &header));
         ASSERT_LE(header.tocOffset, bytes.size());
-        ASSERT_LE(HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES, bytes.size() - header.tocOffset);
+        ASSERT_LE(harken::kStreamTocEntryBytes, bytes.size() - header.tocOffset);
         const auto toc = harken::ParseStreamTocEntry(bytes.data() + header.tocOffset);
         EXPECT_EQ(sources[i].id, toc.soundId);
         EXPECT_EQ(sources[i].channels, toc.channelCount);

@@ -3,7 +3,7 @@
 // loop-seek arithmetic both the tool and the streaming reader rely on.
 // All pure math over the format header — no engine, no files.
 #include "Common/ObjectIdTestSupport.h"
-#include "harken/media/PackFormatV2.h"
+#include "harken/media/StreamFormat.h"
 
 #include <gtest/gtest.h>
 
@@ -14,15 +14,15 @@ namespace {
 
 TEST(StreamFormat, HeaderRoundTripPreservesEveryField) {
     harken::StreamHeader in;
-    in.formatVersion = HK_PACK_STREAM_FILE_FORMAT_VERSION;
-    in.headerBytes = HK_PACK_STREAM_FILE_HEADER_BYTES;
+    in.formatVersion = harken::kStreamFormatVersion;
+    in.headerBytes = harken::kStreamHeaderBytes;
     in.fileBytes = 0x0123456789abcdefull;
-    in.entryCount = HK_PACK_STREAM_FILE_ENTRY_COUNT;
-    in.tocOffset = HK_PACK_STREAM_FILE_HEADER_BYTES;
+    in.entryCount = harken::kStreamEntryCount;
+    in.tocOffset = harken::kStreamHeaderBytes;
     in.chunkFrames = 4096;
     in.tocChecksum = 0xfedcba9876543210ull;
 
-    std::uint8_t bytes[HK_PACK_STREAM_FILE_HEADER_BYTES] = {};
+    std::uint8_t bytes[harken::kStreamHeaderBytes] = {};
     harken::SerializeStreamHeader(in, bytes);
     EXPECT_EQ('V', bytes[0]);
     EXPECT_EQ('S', bytes[1]);
@@ -42,7 +42,7 @@ TEST(StreamFormat, HeaderRoundTripPreservesEveryField) {
 
 TEST(StreamFormat, HeaderParseRefusesWrongMagic) {
     harken::StreamHeader in;
-    std::uint8_t bytes[HK_PACK_STREAM_FILE_HEADER_BYTES] = {};
+    std::uint8_t bytes[harken::kStreamHeaderBytes] = {};
     harken::SerializeStreamHeader(in, bytes);
     bytes[2] = 'P'; // one wrong magic byte suffices
     harken::StreamHeader out;
@@ -54,17 +54,17 @@ TEST(StreamFormat, TocEntryRoundTripPreservesEveryField) {
     in.soundId = harkentest::ObjectId(0x1122334455667788ull);
     in.sampleRate = 44100;
     in.channelCount = 6;
-    in.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
+    in.sampleFormat = harken::kStreamSampleFormatF32Planar;
     in.frameCount = 123456789ull;
     in.payloadOffset = 128;
     in.payloadBytes = 0xaabbccddull;
     in.chunkChecksumOffset = 112;
     in.chunkCount = 30140;
-    in.flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
+    in.flags = harken::kStreamFlagLoopable;
     in.loopStartFrame = 4096;
     in.loopEndFrame = 100000000ull;
 
-    std::uint8_t bytes[HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES] = {};
+    std::uint8_t bytes[harken::kStreamTocEntryBytes] = {};
     harken::SerializeStreamTocEntry(in, bytes);
     const harken::StreamTocEntry out =
         harken::ParseStreamTocEntry(bytes);
@@ -90,41 +90,41 @@ TEST(StreamFormat, ChunkGeometryCoversFrameCountExactly) {
     const std::uint16_t channels = 2;
 
     EXPECT_EQ(256u * 2u * sizeof(float),
-              hkPackStreamFileChunkBytes(chunkFrames, channels));
+              harken::StreamChunkBytes(chunkFrames, channels));
     const std::uint32_t chunkCount =
-        hkPackStreamFileChunkCount(frameCount, chunkFrames);
+        harken::StreamChunkCount(frameCount, chunkFrames);
     EXPECT_EQ(4u, chunkCount);
 
     std::uint64_t covered = 0;
     for (std::uint32_t c = 0; c < chunkCount; ++c) {
-        covered += hkPackStreamFileChunkValidFrames(c, chunkFrames,
+        covered += harken::StreamChunkValidFrames(c, chunkFrames,
                                                     frameCount);
     }
     EXPECT_EQ(frameCount, covered);
     EXPECT_EQ(256u,
-              hkPackStreamFileChunkValidFrames(0, chunkFrames, frameCount));
+              harken::StreamChunkValidFrames(0, chunkFrames, frameCount));
     EXPECT_EQ(232u,
-              hkPackStreamFileChunkValidFrames(3, chunkFrames, frameCount));
+              harken::StreamChunkValidFrames(3, chunkFrames, frameCount));
     // Past the end there is no material at all.
     EXPECT_EQ(0u,
-              hkPackStreamFileChunkValidFrames(4, chunkFrames, frameCount));
+              harken::StreamChunkValidFrames(4, chunkFrames, frameCount));
 
     // An exact multiple has no partial chunk.
-    EXPECT_EQ(4u, hkPackStreamFileChunkCount(1024, chunkFrames));
-    EXPECT_EQ(256u, hkPackStreamFileChunkValidFrames(3, chunkFrames, 1024));
+    EXPECT_EQ(4u, harken::StreamChunkCount(1024, chunkFrames));
+    EXPECT_EQ(256u, harken::StreamChunkValidFrames(3, chunkFrames, 1024));
 }
 
 TEST(StreamFormat, SeekDecomposesFrameAgainstChunkGrid) {
     const std::uint32_t chunkFrames = 512;
 
     // Boundaries: frame 0, last frame of a chunk, first frame of the next.
-    HkPackStreamFileSeek s = hkPackStreamFileSeekToFrame(0, chunkFrames);
+    harken::StreamSeek s = harken::StreamSeekToFrame(0, chunkFrames);
     EXPECT_EQ(0u, s.chunkIndex);
     EXPECT_EQ(0u, s.frameInChunk);
-    s = hkPackStreamFileSeekToFrame(511, chunkFrames);
+    s = harken::StreamSeekToFrame(511, chunkFrames);
     EXPECT_EQ(0u, s.chunkIndex);
     EXPECT_EQ(511u, s.frameInChunk);
-    s = hkPackStreamFileSeekToFrame(512, chunkFrames);
+    s = harken::StreamSeekToFrame(512, chunkFrames);
     EXPECT_EQ(1u, s.chunkIndex);
     EXPECT_EQ(0u, s.frameInChunk);
 
@@ -132,7 +132,7 @@ TEST(StreamFormat, SeekDecomposesFrameAgainstChunkGrid) {
     // including frames far past 32 bits of samples.
     const std::uint64_t frames[] = {1, 513, 12345, 0x100000000ull + 777};
     for (const std::uint64_t frame : frames) {
-        s = hkPackStreamFileSeekToFrame(frame, chunkFrames);
+        s = harken::StreamSeekToFrame(frame, chunkFrames);
         EXPECT_LT(s.frameInChunk, chunkFrames);
         EXPECT_EQ(frame,
                   static_cast<std::uint64_t>(s.chunkIndex) * chunkFrames +
@@ -151,13 +151,13 @@ TEST(StreamFormat, LoopSeekLandsOnChunkBoundaryPlusOffset) {
     const std::uint64_t loopStartFrame = 1234;
 
     const std::uint64_t chunkBytes =
-        hkPackStreamFileChunkBytes(chunkFrames, channels);
-    const HkPackStreamFileSeek seek =
-        hkPackStreamFileSeekToFrame(loopStartFrame, chunkFrames);
+        harken::StreamChunkBytes(chunkFrames, channels);
+    const harken::StreamSeek seek =
+        harken::StreamSeekToFrame(loopStartFrame, chunkFrames);
     EXPECT_EQ(4u, seek.chunkIndex);   // 1234 / 300
     EXPECT_EQ(34u, seek.frameInChunk); // 1234 % 300
 
-    const std::uint64_t offset = hkPackStreamFileChunkOffset(
+    const std::uint64_t offset = harken::StreamChunkFileOffset(
         payloadOffset, seek.chunkIndex, chunkBytes);
     EXPECT_EQ(payloadOffset + 4ull * 300ull * 2ull * sizeof(float), offset);
 

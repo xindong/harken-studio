@@ -198,7 +198,7 @@ CLI 使用 `QCoreApplication`，依赖 Qt Core/Network/Concurrent，无 Gui/Widg
 
 随 Studio 构建 `harken_studio` 会同时构建 CLI；独立构建启用 `HARKEN_BUILD_CORE/TOOLS/STUDIO_CLI`，关闭 Editor/Hub 及其不需要的测试。构建目标 `harken_studio_cli`，工具链要求见根 [README](../../../README.md)。私有 `--resource-worker` 只供资源编译调用，不属于公共终端命令。
 
-[verify_studio_cli.py](../../../HarkenStudio/Test/E2E/verify_studio_cli.py) 验证命令发现/筛选、帮助、所有公开命令拒绝未知参数、批处理执行前校验、逐行协议、工程生命周期、保存重开、转换及包体一致性；目录一致性测试位于既有 `AICommandCatalogTest.cpp`。Windows 验证不代表 macOS、所有音频设备和全部参数组合均已验证。
+[verify_studio_cli.py](../../../.scripts/verify_studio_cli.py) 验证命令发现/筛选、帮助、所有公开命令拒绝未知参数、批处理执行前校验、逐行协议、工程生命周期、保存重开、转换及包体一致性；目录一致性测试位于既有 `AICommandCatalogTest.cpp`。Windows 验证不代表 macOS、所有音频设备和全部参数组合均已验证。
 
 本地验证脚本可使用 `--skip-audio-output` 跳过依赖物理音频设备的检查，并在仍需运行时的流程中使用 `device_mode:null`；默认仍验证真实输出和播放。
 

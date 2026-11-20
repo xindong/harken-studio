@@ -12,6 +12,7 @@ struct ProjectDocumentData
     QString projectId;
     int schemaVersion = 0;
     QString studioVersion;
+    int packSchemaVersion = 0;
     QJsonObject header;
     QJsonObject content;
 };

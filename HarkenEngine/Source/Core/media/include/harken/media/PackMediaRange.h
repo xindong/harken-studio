@@ -18,7 +18,7 @@
 namespace harken {
 
 // The streaming compiler's default chunk length. It bounds per-slot staging
-// well below HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES.
+// well below kMaxStreamChunkFrames.
 inline constexpr std::uint32_t kPackMediaRangeChunkFrames = 4096;
 
 struct PackMediaRange {

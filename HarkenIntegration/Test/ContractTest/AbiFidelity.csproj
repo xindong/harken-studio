@@ -39,6 +39,8 @@
     <Compile Include="RemoteCommunicationContract.cs" />
     <Compile Include="RepositoryPublicationContract.cs" />
     <Compile Include="CompanionVersionContract.cs" />
+    <Compile Include="StreamSourceContract.cs" />
+    <Content Include="Fixtures/StreamSource.stream" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

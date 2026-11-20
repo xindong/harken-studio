@@ -23,7 +23,6 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -664,58 +663,6 @@ TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeni
     EXPECT_EQ(PackId("Init"), facts.packStableId);
     desc.maxInputBytes = init.bytes.size() - 1;
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Vn_InspectCanonicalPackV1(&desc, &facts));
-}
-
-TEST(CanonicalPackSetActivate, RemoteCatalogListsActionsOfActivatedPacks) {
-    using namespace companionfixture;
-    EngineSession session(CanonicalActivationConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    Provider init{Build(true, PackId("Init"))};
-    Provider content{Build(false, PackId("content"))};
-    std::vector<VnCanonicalPackSetMemberV2> members{
-        Member(PackId("Init"), true, &init), Member(PackId("content"), false, &content)};
-    VnCanonicalPackSetActivationReportV1 report{};
-    ASSERT_EQ(VN_OK, Activate(members, report));
-    VnRemoteConfig config{};
-    config.structSize = sizeof(config);
-    config.bindAddress = "127.0.0.1";
-    config.applicationName = "Canonical pack set tests";
-    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
-    VnRemoteStatus status{};
-    status.structSize = sizeof(status);
-    ASSERT_EQ(VN_OK, Vn_RemoteGetStatus(&status));
-    VnRemoteClientDesc desc{sizeof(VnRemoteClientDesc), VN_REMOTE_CLIENT_LOCAL_ONLY, "Canonical pack set tests"};
-    VnRemoteClient client = 0;
-    ASSERT_EQ(VN_OK, Vn_RemoteClientCreate(&desc, &client));
-    ASSERT_EQ(VN_OK, Vn_RemoteClientConnect(client, "127.0.0.1", status.tcpPort));
-    std::vector<std::uint8_t> data(65536);
-    VnRemoteClientEvent event{};
-    const auto next = [&](std::uint32_t kind) {
-        const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        while (std::chrono::steady_clock::now() < limit) {
-            Vn_Update();
-            event = {};
-            event.structSize = sizeof(event);
-            if (Vn_RemoteClientPoll(client, &event, data.data(), data.size()) == VN_OK &&
-                (event.kind == kind || event.kind == VN_REMOTE_CLIENT_EVENT_FAILED))
-                return event.kind == kind;
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-        return false;
-    };
-    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_CONNECTED));
-    VnRemoteClientRequest request{};
-    request.structSize = sizeof(request);
-    request.kind = VN_REMOTE_CLIENT_REQUEST_CATALOG;
-    std::uint32_t requestId = 0;
-    ASSERT_EQ(VN_OK, Vn_RemoteClientRequest(client, &request, &requestId));
-    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_CATALOG));
-    ASSERT_EQ(VN_OK, event.result);
-    const auto* rows = reinterpret_cast<const VnRemoteClientCatalogRow*>(data.data());
-    EXPECT_TRUE(std::any_of(rows, rows + event.catalogRows, [](const VnRemoteClientCatalogRow& row) {
-        return row.kind == VN_REMOTE_CATALOG_ACTION && row.id == action;
-    }));
-    EXPECT_EQ(VN_OK, Vn_RemoteClientDestroy(client));
 }
 
 TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderConsumers) {

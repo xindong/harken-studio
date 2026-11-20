@@ -15,7 +15,7 @@
 #include "harken/core/StableRowStorage.h"
 #include "harken/core/StreamRing.h"
 #include "harken/media/PackMediaRange.h"
-#include "harken/media/PackFormatV2.h"
+#include "harken/media/StreamFormat.h"
 #include "harken/media/StreamByteSource.h"
 
 #include <array>

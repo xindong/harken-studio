@@ -8,7 +8,7 @@
 
 #include "harken_studio_build/PackFormat.h"
 #include "harken_studio_build/PackFormatV2.h"
-
+#include "harken_studio_build/StreamFormat.h"
 
 #include <algorithm>
 #include <cmath>
@@ -797,21 +797,21 @@ bool BuildPackBytesV2(const Manifest& manifest,
 bool BuildStreamBytes(const PackEntry& entry, std::uint32_t chunkFrames,
                       std::vector<std::uint8_t>* out, Diag* diag) {
     const std::uint64_t chunkBytes =
-        hkPackStreamFileChunkBytes(chunkFrames, entry.channelCount);
+        harkenstudiobuild::StreamChunkBytes(chunkFrames, entry.channelCount);
     const std::uint32_t chunkCount =
-        hkPackStreamFileChunkCount(entry.frameCount, chunkFrames);
+        harkenstudiobuild::StreamChunkCount(entry.frameCount, chunkFrames);
     if (chunkCount == 0) {
         return Fail(diag,
                     "'%s' decodes to zero frames — nothing to stream",
                     entry.path.c_str());
     }
     const std::uint64_t checksumOffset =
-        static_cast<std::uint64_t>(HK_PACK_STREAM_FILE_HEADER_BYTES) +
-        HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES;
+        static_cast<std::uint64_t>(harkenstudiobuild::kStreamHeaderBytes) +
+        harkenstudiobuild::kStreamTocEntryBytes;
     const std::uint64_t checksumBytes =
         static_cast<std::uint64_t>(chunkCount) *
-        HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
-    const std::uint64_t align = HK_PACK_STREAM_FILE_PAYLOAD_ALIGN;
+        harkenstudiobuild::kStreamChunkChecksumBytes;
+    const std::uint64_t align = harkenstudiobuild::kStreamPayloadAlign;
     const std::uint64_t payloadOffset =
         (checksumOffset + checksumBytes + align - 1) / align * align;
     const std::uint64_t payloadBytes =
@@ -831,11 +831,11 @@ bool BuildStreamBytes(const PackEntry& entry, std::uint32_t chunkFrames,
     // checksum covers the full fixed span including padding zeros.
     const std::size_t frames = static_cast<std::size_t>(entry.frameCount);
     for (std::uint32_t c = 0; c < chunkCount; ++c) {
-        const std::uint32_t valid = hkPackStreamFileChunkValidFrames(
+        const std::uint32_t valid = harkenstudiobuild::StreamChunkValidFrames(
             c, chunkFrames, entry.frameCount);
         std::uint8_t* chunk =
             out->data() +
-            static_cast<std::size_t>(hkPackStreamFileChunkOffset(
+            static_cast<std::size_t>(harkenstudiobuild::StreamChunkFileOffset(
                 payloadOffset, c, chunkBytes));
         for (std::uint32_t ch = 0; ch < entry.channelCount; ++ch) {
             const float* src = entry.planar.data() +
@@ -849,7 +849,7 @@ bool BuildStreamBytes(const PackEntry& entry, std::uint32_t chunkFrames,
         harkenstudiobuild::StoreLE64(
             out->data() + static_cast<std::size_t>(checksumOffset) +
                 static_cast<std::size_t>(c) *
-                    HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
+                    harkenstudiobuild::kStreamChunkChecksumBytes,
             harkenstudiobuild::Fnv1a64(chunk, static_cast<std::size_t>(chunkBytes)));
     }
 
@@ -857,34 +857,34 @@ bool BuildStreamBytes(const PackEntry& entry, std::uint32_t chunkFrames,
     toc.soundId = entry.soundId;
     toc.sampleRate = entry.sampleRate;
     toc.channelCount = entry.channelCount;
-    toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
+    toc.sampleFormat = harkenstudiobuild::kStreamSampleFormatF32Planar;
     toc.frameCount = entry.frameCount;
     toc.payloadOffset = payloadOffset;
     toc.payloadBytes = payloadBytes;
     toc.chunkChecksumOffset = checksumOffset;
     toc.chunkCount = chunkCount;
-    toc.flags = entry.loopable ? HK_PACK_MEDIA_FLAG_LOOPABLE : 0;
+    toc.flags = entry.loopable ? harkenstudiobuild::kStreamFlagLoopable : 0;
     toc.loopStartFrame = entry.loopable ? entry.loopStartFrame : 0;
     toc.loopEndFrame = entry.loopable ? entry.loopEndFrame : 0;
     harkenstudiobuild::SerializeStreamTocEntry(
-        toc, out->data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
+        toc, out->data() + harkenstudiobuild::kStreamHeaderBytes);
 
     // tocChecksum chains the TOC entry bytes then the chunk-checksum
     // table bytes, in that order — the reader recomputes the same chain
     // at registration, covering both regions with one value.
     std::uint64_t tocChecksum =
-        harkenstudiobuild::Fnv1a64(out->data() + HK_PACK_STREAM_FILE_HEADER_BYTES,
-                       HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES);
+        harkenstudiobuild::Fnv1a64(out->data() + harkenstudiobuild::kStreamHeaderBytes,
+                       harkenstudiobuild::kStreamTocEntryBytes);
     tocChecksum =
         harkenstudiobuild::Fnv1a64(out->data() + static_cast<std::size_t>(checksumOffset),
                        static_cast<std::size_t>(checksumBytes), tocChecksum);
 
     harkenstudiobuild::StreamHeader header;
-    header.formatVersion = HK_PACK_STREAM_FILE_FORMAT_VERSION;
-    header.headerBytes = HK_PACK_STREAM_FILE_HEADER_BYTES;
+    header.formatVersion = harkenstudiobuild::kStreamFormatVersion;
+    header.headerBytes = harkenstudiobuild::kStreamHeaderBytes;
     header.fileBytes = fileBytes;
-    header.entryCount = HK_PACK_STREAM_FILE_ENTRY_COUNT;
-    header.tocOffset = HK_PACK_STREAM_FILE_HEADER_BYTES;
+    header.entryCount = harkenstudiobuild::kStreamEntryCount;
+    header.tocOffset = harkenstudiobuild::kStreamHeaderBytes;
     header.chunkFrames = chunkFrames;
     header.tocChecksum = tocChecksum;
     harkenstudiobuild::SerializeStreamHeader(header, out->data());
@@ -1259,11 +1259,11 @@ bool BuildOneStream(const Manifest& manifest, const std::string& outputText,
     if (manifest.chunkFrames != 0) {
         chunkFrames = manifest.chunkFrames;
     }
-    if (manifest.chunkFrames > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES) {
+    if (manifest.chunkFrames > harkenstudiobuild::kMaxStreamChunkFrames) {
         return Fail(diag,
                     "manifest \"chunkFrames\" must be an integer in "
                     "[0, %u] (0 selects the default %u)",
-                    HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES, kDefaultChunkFrames);
+                    harkenstudiobuild::kMaxStreamChunkFrames, kDefaultChunkFrames);
     }
     if (manifest.entries.size() != 1) {
         return Fail(diag,

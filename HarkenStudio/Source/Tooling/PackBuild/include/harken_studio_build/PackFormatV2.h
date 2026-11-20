@@ -354,31 +354,6 @@ struct PackMediaFileHeader {
     std::uint64_t tocChecksum{};
 };
 
-struct StreamHeader {
-    std::uint32_t formatVersion{};
-    std::uint32_t headerBytes{};
-    std::uint64_t fileBytes{};
-    std::uint32_t entryCount{};
-    std::uint32_t tocOffset{};
-    std::uint32_t chunkFrames{};
-    std::uint64_t tocChecksum{};
-};
-
-struct StreamTocEntry {
-    harkenstudio::ObjectId soundId{};
-    std::uint32_t sampleRate{};
-    std::uint16_t channelCount{};
-    std::uint16_t sampleFormat{};
-    std::uint64_t frameCount{};
-    std::uint64_t payloadOffset{};
-    std::uint64_t payloadBytes{};
-    std::uint64_t chunkChecksumOffset{};
-    std::uint32_t chunkCount{};
-    std::uint32_t flags{};
-    std::uint64_t loopStartFrame{};
-    std::uint64_t loopEndFrame{};
-};
-
 struct PackDirectoryEntry {
     std::uint32_t kind{};
     std::uint32_t vintage{};
@@ -741,24 +716,6 @@ inline bool ReadPackBusDefinitionSnapshotHeader(
 
 inline bool ReadPackMediaFileHeader(const std::uint8_t* in, PackMediaFileHeader* out) noexcept {
     return ParsePackRow<HkPackMediaFileHeader>(in, kPackBytes<HkPackMediaFileHeader>, out);
-}
-
-inline void SerializeStreamHeader(const StreamHeader& header, std::uint8_t* out) noexcept {
-    SerializePackRow<HkPackStreamFileHeader>(header, out);
-}
-
-inline bool ParseStreamHeader(const std::uint8_t* in, StreamHeader* out) noexcept {
-    return ParsePackRow<HkPackStreamFileHeader>(in, kPackBytes<HkPackStreamFileHeader>, out);
-}
-
-inline void SerializeStreamTocEntry(const StreamTocEntry& entry, std::uint8_t* out) noexcept {
-    SerializePackRow<HkPackStreamFileTocEntry>(entry, out);
-}
-
-inline StreamTocEntry ParseStreamTocEntry(const std::uint8_t* in) noexcept {
-    StreamTocEntry entry;
-    (void)ParsePackRow<HkPackStreamFileTocEntry>(in, kPackBytes<HkPackStreamFileTocEntry>, &entry);
-    return entry;
 }
 
 inline bool ReadPackFileHeader(const std::uint8_t* in, PackFileHeader* out) noexcept {

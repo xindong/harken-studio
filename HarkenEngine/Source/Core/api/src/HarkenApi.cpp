@@ -8909,7 +8909,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     double croppedStreamRatio = 0.0;
     std::uint64_t streamLoopStart = 0;
     std::uint64_t streamLoopEnd = streamFacts.frameCount;
-    if (install.streamed && (streamFacts.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0 &&
+    if (install.streamed && (streamFacts.flags & harken::kStreamFlagLoopable) != 0 &&
         streamFacts.loopStartFrame < install.streamLoopEndFrame &&
         install.streamLoopEndFrame <= streamFacts.frameCount) {
         streamLoopStart = streamFacts.loopStartFrame;
@@ -113477,7 +113477,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     std::uint64_t loopStart = isStream ? 0 : view.loop.startFrame;
     std::uint64_t loopEnd = isStream ? streamFacts.frameCount : view.LoopEndFrame();
     if (isStream) {
-        if ((streamFacts.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0) {
+        if ((streamFacts.flags & harken::kStreamFlagLoopable) != 0) {
             const std::uint64_t end =
                 streamFacts.loopEndFrame == 0 ? streamFacts.frameCount
                                                : streamFacts.loopEndFrame;

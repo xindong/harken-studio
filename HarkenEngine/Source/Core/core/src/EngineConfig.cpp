@@ -18,7 +18,7 @@
 #include "harken/core/CurrentSelection.h"
 
 #include "harken/core/ChannelLayout.h"
-#include <harken_pack/HarkenPack.h>
+#include "harken/media/StreamFormat.h"
 
 #include <cmath>
 #include <cstddef>
@@ -855,7 +855,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     const std::uint64_t ringBytesPerStream =
         ringFramesPow2 * bytesPerStreamFrame;
     const std::uint64_t stagingBytesPerStream =
-        static_cast<std::uint64_t>(HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES) *
+        static_cast<std::uint64_t>(kMaxStreamChunkFrames) *
         bytesPerStreamFrame;
     const std::uint64_t bytesPerStream =
         ringBytesPerStream + stagingBytesPerStream;
