@@ -42,6 +42,20 @@ private:
 // includes identification and setup bytes; hashes only accelerate lookup.
 class VorbisSettingsCache {
 public:
+    explicit VorbisSettingsCache(bool compactCodebooks = false) noexcept : compactCodebooks_(compactCodebooks) {}
+    class CompactScope {
+    public:
+        explicit CompactScope(VorbisSettingsCache& cache) noexcept
+            : cache_(cache), previous_(cache.compactCodebooks_) { cache_.compactCodebooks_ = true; }
+        ~CompactScope() { cache_.compactCodebooks_ = previous_; }
+        CompactScope(const CompactScope&) = delete;
+        CompactScope& operator=(const CompactScope&) = delete;
+    private:
+        VorbisSettingsCache& cache_;
+        bool previous_;
+    };
+    bool PrefersCompact() const noexcept { return compactCodebooks_; }
+    std::uint64_t WideRequests() const noexcept { return wideRequests_; }
     bool Initialize(std::size_t tableBudget);
     std::shared_ptr<const VorbisSettings> Prepare(const VorbisMedia& media,
         std::size_t resourceBudget, VorbisPrepareResult& result);
@@ -49,6 +63,8 @@ public:
 private:
     std::shared_ptr<HvTables> tables_;
     std::unordered_multimap<std::uint64_t, std::weak_ptr<const VorbisSettings>> settings_;
+    bool compactCodebooks_;
+    std::uint64_t wideRequests_ = 0;
 };
 
 class VorbisWorkspace {
@@ -99,7 +115,7 @@ public:
     State* Acquire(std::shared_ptr<const VorbisSettings> settings);
     void Collect() noexcept;
     std::size_t Bytes() const noexcept { return bytes_; }
-    std::size_t ActiveBytes() const noexcept { return activeBytes_; }
+    std::size_t ActiveBytes() const noexcept { return activeBytes_.load(std::memory_order_relaxed); }
     std::size_t HighWater() const noexcept { return highWater_; }
     static std::size_t RequiredBytes(const VorbisSettings& settings) noexcept;
 private:
@@ -107,14 +123,16 @@ private:
     State* all_ = nullptr;
     // Legal channel counts and power-of-two blocks determine the key domain.
     std::array<State*, 64> free_{};
-    std::size_t bytes_ = 0, activeBytes_ = 0, highWater_ = 0;
+    std::size_t bytes_ = 0;
+    std::atomic<std::size_t> activeBytes_{0};
+    std::size_t highWater_ = 0;
 };
 
 // Engine lifetime owns tables, reusable state and one workspace for
 // each render thread. Resources own only compressed bytes and shared setup.
 class VorbisCodec {
 public:
-    explicit VorbisCodec(unsigned renderWorkers);
+    explicit VorbisCodec(unsigned renderWorkers, bool compactCodebooks = false);
     std::uint64_t nextGeneration = 1;
     VorbisSettingsCache settings;
     VorbisStatePool states;

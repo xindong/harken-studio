@@ -6,7 +6,7 @@
 #include <new>
 
 namespace harken {
-VorbisCodec::VorbisCodec(unsigned workers) {
+VorbisCodec::VorbisCodec(unsigned workers, bool compactCodebooks) : settings(compactCodebooks) {
     if (!settings.Initialize(256 * 1024)) throw std::bad_alloc{};
     for (unsigned i = 0; i <= workers; ++i) {
         auto workspace = std::make_unique<VorbisWorkspace>();
@@ -83,6 +83,17 @@ bool VorbisStatePool::State::Read(std::uint64_t frame, std::uint32_t requested,
         nextFrame = frame;
     }
     auto& workspace = *resident->codec_->workspaces[thread];
+    // One or two reads remain in the current PCM block. Decode the next
+    // packet's spectrum now; overlap and playback position advance on demand.
+    const auto remaining = decodedFrames - decodedOffset;
+    if (decodedOffset != 0 && remaining >= requested && remaining <= 2ull * requested &&
+        packetOffset < media.packetBytes && media.frames - frame > remaining &&
+        resident->codec_->states.ActiveBytes() == backingBytes + sizeof(State)) {
+        const std::uint8_t* nextPacket = nullptr;
+        std::uint32_t nextBytes = 0;
+        if (media.Packet(packetOffset, nextPacket, nextBytes))
+            hv_predecode_next(decoder, workspace.workspace_, nextPacket, nextBytes, resident->generation_, packetOffset);
+    }
     while (decodedOffset == decodedFrames) {
         const std::uint8_t* packet = nullptr;
         std::uint32_t bytes = 0;
@@ -180,7 +191,10 @@ std::shared_ptr<const VorbisSettings> VorbisSettingsCache::Prepare(const VorbisM
     if (!tables_ || !media.ident || !media.setup || media.identBytes != 30 || !media.setupBytes) return {};
     for (auto i = settings_.begin(); i != settings_.end();)
         if (i->second.expired()) i = settings_.erase(i); else ++i;
-    const auto hash = Fnv1a64(media.setup, media.setupBytes, Fnv1a64(media.ident, media.identBytes));
+    if (!compactCodebooks_) ++wideRequests_;
+    // Identical headers from an earlier successful load may still have a wide table.
+    const auto hash = Fnv1a64(media.setup, media.setupBytes, Fnv1a64(media.ident, media.identBytes)) ^
+        (compactCodebooks_ ? (UINT64_C(1) << 63) : 0);
     const auto found = settings_.equal_range(hash);
     const std::size_t headerBytes = std::size_t(media.identBytes) + media.setupBytes;
     for (auto i = found.first; i != found.second; ++i) {
@@ -201,7 +215,8 @@ std::shared_ptr<const VorbisSettings> VorbisSettingsCache::Prepare(const VorbisM
         settings->headers_.insert(settings->headers_.end(), media.ident, media.ident + media.identBytes);
         settings->headers_.insert(settings->headers_.end(), media.setup, media.setup + media.setupBytes);
         HvResult status;
-        settings->setup_ = hv_setup_create(Memory(), budget - sizeof(VorbisSettings) - headerBytes,
+        const auto createSetup = compactCodebooks_ ? hv_setup_create_compact : hv_setup_create;
+        settings->setup_ = createSetup(Memory(), budget - sizeof(VorbisSettings) - headerBytes,
             tables_.get(), media.ident, media.identBytes, media.setup, media.setupBytes, &status);
         if (!settings->setup_) {
             result = status == HV_UNSUPPORTED ? VorbisPrepareResult::Unsupported :
@@ -249,12 +264,13 @@ VorbisStatePool::~VorbisStatePool() {
 void VorbisStatePool::Collect() noexcept {
     for (auto* state = all_; state; state = state->next) {
         if (!state->available && state->retired.exchange(false, std::memory_order_acquire)) {
-            activeBytes_ -= state->backingBytes + sizeof(State);
+            activeBytes_.store(ActiveBytes() - (state->backingBytes + sizeof(State)), std::memory_order_relaxed);
             state->settings.reset(); state->decoder = nullptr; state->available = true;
             state->nextFree = free_[state->key]; free_[state->key] = state;
         }
     }
-    if (bytes_ - activeBytes_ > activeBytes_) TrimFree();
+    const auto active = ActiveBytes();
+    if (bytes_ - active > active) TrimFree();
 }
 void VorbisStatePool::TrimFree() noexcept {
     free_.fill(nullptr);
@@ -288,7 +304,7 @@ VorbisStatePool::State* VorbisStatePool::Acquire(std::shared_ptr<const VorbisSet
     state->decoder = hv_state_init(state->storage.get(), state->backingBytes, state->settings->setup_);
     state->resident = nullptr;
     state->Restart();
-    activeBytes_ += state->backingBytes + sizeof(State);
+    activeBytes_.store(ActiveBytes() + state->backingBytes + sizeof(State), std::memory_order_relaxed);
     return state;
 }
 }

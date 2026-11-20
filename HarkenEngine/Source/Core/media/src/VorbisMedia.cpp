@@ -79,17 +79,17 @@ bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& outpu
     const auto gridCount = 1 + (m.frames - 1) / m.seekGranularity;
     const bool extraLoopPoint = m.loopEnd && m.loopStart % m.seekGranularity;
     if (count != gridCount + extraLoopPoint) return false;
-    m.packetDataOffset = sizeof(HkPackVorbisHeader) + std::uint64_t(m.identBytes) + m.setupBytes +
+    const auto packetDataOffset = sizeof(HkPackVorbisHeader) + std::uint64_t(m.identBytes) + m.setupBytes +
         std::uint64_t(count) * sizeof(HkPackVorbisSeek);
-    if (m.packetDataOffset >= bytes) return false;
+    if (packetDataOffset >= bytes) return false;
     m.ident = header + sizeof(HkPackVorbisHeader);
     m.setup = m.ident + m.identBytes;
     if (m.ident[0] != 1 || std::memcmp(m.ident + 1, "vorbis", 6) ||
         LoadLE32(m.ident + 7) != 0 || m.ident[11] != m.channels || LoadLE32(m.ident + 12) != m.sampleRate ||
         (1u << (m.ident[28] & 15)) != m.blockShort || (1u << (m.ident[28] >> 4)) != m.blockLong ||
         m.ident[29] != 1 || m.setup[0] != 5 || std::memcmp(m.setup + 1, "vorbis", 6)) return false;
-    m.packets = header + m.packetDataOffset;
-    m.packetBytes = bytes - m.packetDataOffset;
+    m.packets = header + packetDataOffset;
+    m.packetBytes = bytes - packetDataOffset;
     if (gridCount > indexBudget / sizeof(VorbisSeekPoint)) throw std::bad_alloc{};
     m.seek.reserve(static_cast<std::size_t>(gridCount));
     const auto* row = m.setup + m.setupBytes;
@@ -99,9 +99,9 @@ bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& outpu
         const auto frame = LoadLE64(row + offsetof(HkPackVorbisSeek, outputFrame));
         const auto offset = LoadLE64(row + offsetof(HkPackVorbisSeek, packetOffset));
         const auto discard = LoadLE32(row + offsetof(HkPackVorbisSeek, discardFrames));
-        if ((i && frame <= lastFrame) || frame >= m.frames || offset < m.packetDataOffset ||
+        if ((i && frame <= lastFrame) || frame >= m.frames || offset < packetDataOffset ||
             offset >= bytes || discard > m.blockLong / 2) return false;
-        const auto relative = offset - m.packetDataOffset;
+        const auto relative = offset - packetDataOffset;
         while (packet < relative) {
             const std::uint8_t* payload; std::uint32_t size;
             if (!m.Packet(packet, payload, size) || (payload[0] & 1)) return false;
@@ -175,7 +175,6 @@ bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& outp
         static_cast<std::uint64_t>(m.identBytes) + m.setupBytes + indexBytes;
     if (indexBytes > r.remaining || metadataBytes > bytes ||
         m.packetBytes != bytes - metadataBytes) return false;
-    m.packetDataOffset = metadataBytes;
     m.seek.reserve(static_cast<std::size_t>(seekCount));
     for (std::uint64_t i = 0; i < seekCount; ++i) {
         VorbisSeekPoint s;
@@ -193,7 +192,7 @@ bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& outp
     for (std::uint64_t i = 0; i < segmentCount; ++i) m.segmentChecksums.push_back(r.Read(8));
     if (m.loopEnd && (m.loopStartPacket >= m.packetBytes || m.loopEndPacket >= m.packetBytes ||
         m.loopDiscard > m.blockLong / 2 || m.loopTrim > m.blockLong / 2)) return false;
-    m.packets = static_cast<const std::uint8_t*>(data) + m.packetDataOffset;
+    m.packets = static_cast<const std::uint8_t*>(data) + metadataBytes;
     if (Fnv1a64(m.packets, static_cast<std::size_t>(m.packetBytes)) != m.packetChecksum) return false;
     std::size_t seekIndex = 0;
     bool loopStartFound = !m.loopEnd, loopEndFound = !m.loopEnd;

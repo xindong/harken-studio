@@ -298,7 +298,8 @@ struct EngineConfig {
     std::uint64_t maxCatalogBytes = 4ull * 1024ull * 1024ull;
     std::uint64_t maxResidentDefinitionBytes = 32ull * 1024ull * 1024ull;
     std::uint64_t maxCompositeIndexBytes = 2ull * 1024ull * 1024ull;
-    std::uint64_t maxPackDecodeStagingBytes = 64ull * 1024ull * 1024ull;
+    static constexpr std::uint64_t kDefaultPackDecodeStagingBytes = 64ull * 1024ull * 1024ull;
+    std::uint64_t maxPackDecodeStagingBytes = kDefaultPackDecodeStagingBytes;
     std::uint64_t maxPackResourceBytes = 0;
     std::uint64_t maxPackReplacementPeakBytes = 96ull * 1024ull * 1024ull;
 };

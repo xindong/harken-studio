@@ -352,9 +352,9 @@ TEST(VorbisDecoder, IndependentResidentVoicesRetainTheirOwnSeekAndOverlapHistory
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
 
-    const auto check = [&](harken::MediaDecoder* decoder, std::uint64_t frame) {
+    const auto check = [&](harken::MediaDecoder* decoder, std::uint64_t frame, std::uint32_t request = 256) {
         harken::PCMView audio;
-        ASSERT_TRUE(decoder->Read(frame, 256, 0, audio));
+        ASSERT_TRUE(decoder->Read(frame, request, 0, audio));
         ASSERT_GT(audio.frames, 0u);
         ASSERT_EQ(audio.channelCount, 2u);
         for (unsigned n = 0; n < audio.frames; ++n)
@@ -366,6 +366,14 @@ TEST(VorbisDecoder, IndependentResidentVoicesRetainTheirOwnSeekAndOverlapHistory
             check(first, start + i * 256);
             check(second, start + (i > 2 ? i * 256 : 1741 + i * 256));
         }
+    }
+    // A continuous reader can leave an unfinished transform in the shared
+    // workspace. Interleave another reader and a seek while it is pending.
+    for (unsigned block = 0; block < 96; ++block) {
+        const auto frame = block * 128u;
+        check(first, frame, 128);
+        if (block % 13 == 7) check(second, frame + 3072u, 128);
+        if (block % 23 == 19) check(first, 9183u, 128);
     }
     first->Retire();
     second->Retire();
