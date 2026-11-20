@@ -10,6 +10,5 @@
   <ItemGroup>
     <Reference Include="Harken.Core"><HintPath>$(HarkenCoreAssembly)</HintPath></Reference>
     <Compile Include="$(ConsumerSource)" />
-    <Compile Include="$(RemoteContractSource)" Condition="'$(RemoteContractSource)' != ''" />
   </ItemGroup>
 </Project>
