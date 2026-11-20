@@ -16,13 +16,14 @@ VorbisCodec::VorbisCodec(unsigned workers) {
 }
 
 std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
-    std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result) {
+    std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat) {
     result = VorbisPrepareResult::OutOfMemory;
     if (bytes.size() > budget) return {};
     auto source = std::make_shared<VorbisResident>();
     source->bytes_ = std::move(bytes);
     result = VorbisPrepareResult::Invalid;
-    if (!ParseVorbisTestMedia(source->bytes_.data(), source->bytes_.size(), source->media_)) return {};
+    const auto parse = packFormat ? ParseResidentVorbis : ParseVorbisTestMedia;
+    if (!parse(source->bytes_.data(), source->bytes_.size(), source->media_)) return {};
     const auto overhead = source->ResidentBytes();
     result = VorbisPrepareResult::OutOfMemory;
     if (overhead > budget) return {};
@@ -66,7 +67,7 @@ bool VorbisStatePool::State::Read(std::uint64_t frame, std::uint32_t requested,
         const auto skip = frame - point->frame + point->discardFrames;
         if (skip > UINT32_MAX) return false;
         discard = static_cast<std::uint32_t>(skip);
-        if (frame == media.loopStart) {
+        if (media.loopEnd && frame == media.loopStart) {
             packetOffset = media.loopStartPacket; discard = media.loopDiscard;
         }
         nextFrame = frame;
@@ -74,10 +75,10 @@ bool VorbisStatePool::State::Read(std::uint64_t frame, std::uint32_t requested,
     auto& workspace = *resident->codec_->workspaces[thread];
     while (decodedOffset == decodedFrames) {
         const std::uint8_t* packet = nullptr;
-        std::uint16_t bytes = 0;
+        std::uint32_t bytes = 0;
         if (!media.Packet(packetOffset, packet, bytes) || !Decode(workspace, packet, bytes, planes, decodedFrames))
             return false;
-        packetOffset += 2u + bytes;
+        packetOffset += std::uint64_t(media.packetPrefixBytes) + bytes;
         decodedOffset = std::min(discard, decodedFrames);
         discard -= decodedOffset;
     }
@@ -105,9 +106,9 @@ bool ValidatePositions(const VorbisMedia& media, const VorbisSettings& settings)
     std::uint64_t produced = 0, previousOffset = 0, lastStart = 0;
     long previousBlock = 0;
     std::size_t seek = 0;
-    bool loopStart = media.loopEnd == 0, loopEnd = loopStart;
+    bool loopStart = media.loopEnd == 0, loopEnd = loopStart || media.packetPrefixBytes == 4;
     for (std::uint64_t at = 0; at < media.packetBytes;) {
-        const std::uint8_t* packet; std::uint16_t bytes;
+        const std::uint8_t* packet; std::uint32_t bytes;
         if (!media.Packet(at, packet, bytes)) return false;
         const auto block = settings.PacketBlock(packet, bytes);
         if (block <= 0) return false;
@@ -116,13 +117,15 @@ bool ValidatePositions(const VorbisMedia& media, const VorbisSettings& settings)
             const auto frames = static_cast<std::uint64_t>(previousBlock / 4 + block / 4);
             if (frames > UINT64_MAX - produced) return false;
             produced += frames;
-            while (seek < media.seek.size() && media.seek[seek].frame < produced) {
+            while (seek < media.seek.size() && media.seek[seek].frame + media.prerollFrames < produced) {
                 const auto& point = media.seek[seek++];
-                if (point.frame < lastStart || point.packetOffset != previousOffset ||
-                    point.discardFrames != point.frame - lastStart) return false;
+                const auto rawFrame = point.frame + media.prerollFrames;
+                if (rawFrame < lastStart || point.packetOffset != previousOffset ||
+                    point.discardFrames != rawFrame - lastStart) return false;
             }
-            if (!loopStart && media.loopStart >= lastStart && media.loopStart < produced) {
-                if (media.loopStartPacket != previousOffset || media.loopDiscard != media.loopStart - lastStart)
+            const auto rawLoopStart = media.loopStart + media.prerollFrames;
+            if (!loopStart && rawLoopStart >= lastStart && rawLoopStart < produced) {
+                if (media.loopStartPacket != previousOffset || media.loopDiscard != rawLoopStart - lastStart)
                     return false;
                 loopStart = true;
             }
@@ -131,9 +134,12 @@ bool ValidatePositions(const VorbisMedia& media, const VorbisSettings& settings)
                 loopEnd = true;
             }
         }
-        previousOffset = at; previousBlock = block; at += bytes + 2;
+        previousOffset = at; previousBlock = block; at += std::uint64_t(bytes) + media.packetPrefixBytes;
     }
-    return seek == media.seek.size() && loopStart && loopEnd && media.frames > lastStart && media.frames <= produced;
+    const bool lengthValid = media.packetPrefixBytes == 4
+        ? produced == media.prerollFrames + media.frames + media.tailFrames
+        : media.frames > lastStart && media.frames <= produced;
+    return seek == media.seek.size() && loopStart && loopEnd && lengthValid;
 }
 }
 VorbisSettings::~VorbisSettings() { hv_setup_destroy(setup_); }

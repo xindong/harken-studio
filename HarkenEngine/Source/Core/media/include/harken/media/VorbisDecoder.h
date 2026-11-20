@@ -123,7 +123,7 @@ public:
 class VorbisResident final : public EncodedMedia {
 public:
     static std::shared_ptr<VorbisResident> Prepare(VorbisCodec& codec,
-        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result);
+        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat = false);
     MediaDecoder* Acquire() const noexcept override;
     std::size_t ResidentBytes() const noexcept override;
     std::span<const std::uint8_t> ContentBytes() const noexcept override { return bytes_; }

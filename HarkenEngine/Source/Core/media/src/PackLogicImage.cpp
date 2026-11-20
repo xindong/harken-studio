@@ -1,6 +1,7 @@
 #include <harken/core/BindingTransition.h>
 #include <harken_pack/PackBus.h>
 #include "harken/media/PackLogicImage.h"
+#include "harken/media/VorbisMedia.h"
 
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/EngineConfig.h"
@@ -36,8 +37,9 @@ namespace {
 // purpose: the v1 parse branch stays untouched line for line, and the
 // two branches version independently from here on.
 bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
-                          std::uint64_t blobRegionStart) {
-    if (e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
+                          std::uint64_t blobRegionStart, bool canonical = false) {
+    const bool vorbis = canonical && e.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+    if (!vorbis && e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
         return false;
     }
     if ((e.flags & ~HK_PACK_MEDIA_KNOWN_FLAGS) != 0) {
@@ -48,10 +50,12 @@ bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
         return false;
     }
     const std::uint64_t channels = e.channelCount;
-    if (e.frameCount > UINT64_MAX / (channels * sizeof(float))) {
-        return false;
-    }
-    if (e.blobBytes != e.frameCount * channels * sizeof(float)) {
+    if (vorbis) {
+        if (e.blobBytes < sizeof(HkPackVorbisHeader) ||
+            (channels != 1 && channels != 2 && channels != 4 && channels != 6 && channels != 8))
+            return false;
+    } else if (e.frameCount > UINT64_MAX / (channels * sizeof(float)) ||
+               e.blobBytes != e.frameCount * channels * sizeof(float)) {
         return false;
     }
     if (e.blobOffset % HK_PACK_BLOB_ALIGN != 0) {
@@ -1152,7 +1156,7 @@ struct SpanCanonicalSource {
                     next.offset % HK_PACK_PAYLOAD_ALIGN == 0) {
                     const auto nextMedia = ReadPackMedia(bytes + next.offset);
                     if (nextMedia.soundId == next.id &&
-                        ValidateV2MediaEntry(nextMedia, fileBytes, dirEnd)) {
+                        ValidateV2MediaEntry(nextMedia, fileBytes, dirEnd, true)) {
                         const auto hashes = Fnv1a64Pair(
                             bytes + media.blobOffset,
                             static_cast<std::size_t>(media.blobBytes),
@@ -1169,7 +1173,16 @@ struct SpanCanonicalSource {
                 checksum = Fnv1a64(bytes + media.blobOffset,
                                   static_cast<std::size_t>(media.blobBytes));
         }
-        return checksum == media.blobChecksum;
+        if (checksum != media.blobChecksum) return false;
+        if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+            VorbisMedia parsed;
+            if (!ParseResidentVorbis(bytes + media.blobOffset, static_cast<std::size_t>(media.blobBytes), parsed) ||
+                parsed.sampleRate != media.sampleRate || parsed.channels != media.channelCount ||
+                parsed.frames != media.frameCount || parsed.loopStart != media.loopStartFrame ||
+                parsed.loopEnd != media.loopEndFrame ||
+                bool(parsed.loopEnd) != bool(media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE)) return false;
+        }
+        return true;
     }
     VnResult Finish(PackCanonicalImage&,
         std::vector<std::pair<std::uint64_t, std::uint64_t>>&) const {
@@ -1314,7 +1327,8 @@ struct FileCanonicalSource {
         std::uint64_t residentBytes = fileBytes;
         std::uint32_t maxStreamChannels = 0;
         for (std::size_t i = 0; i < image.media.size(); ++i) {
-            streamed[i] = ResolvePackMediaDemand(demand, image, image.media[i].soundId) ==
+            streamed[i] = image.media[i].sampleFormat == HK_PACK_SAMPLE_FORMAT_F32_PLANAR &&
+                ResolvePackMediaDemand(demand, image, image.media[i].soundId) ==
                 PackMediaDemand::Stream;
             if (streamed[i] != 0) {
                 residentBytes -= image.media[i].blobBytes;
@@ -1325,6 +1339,8 @@ struct FileCanonicalSource {
         encoded.Add(residentBytes);
         std::vector<PCMRegistry::PackSampleBuilder> builders;
         detail::DecodeResize(builders, image.media.size(), scanScratch);
+        std::vector<std::vector<std::uint8_t>> compressed;
+        detail::DecodeResize(compressed, image.media.size(), scanScratch);
         std::vector<PlanarChunkChecksumBuilder> chunkSums;
         detail::DecodeResize(chunkSums, image.media.size(), scanScratch);
         detail::PackDecodeCharge completedStaging(scratch.Budget());
@@ -1394,6 +1410,16 @@ struct FileCanonicalSource {
                 }
                 const auto step = static_cast<std::size_t>(std::min<std::uint64_t>(
                     count - cursor, media.blobOffset + media.blobBytes - position));
+                if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+                    auto& blob = compressed[index];
+                    if (position == media.blobOffset)
+                        detail::DecodeResize(blob, static_cast<std::size_t>(media.blobBytes), completedStaging);
+                    std::memcpy(blob.data() + (position - media.blobOffset), bytes + cursor, step);
+                    const auto hashes = Fnv1a64Pair(bytes + cursor, step, bytes + cursor, step, hash, checksums[index]);
+                    hash = hashes[0]; checksums[index] = hashes[1];
+                    cursor += step;
+                    continue;
+                }
                 if (cursor % alignof(float) != 0 || step % sizeof(float) != 0) return VN_BAD_PACK;
                 if (position == media.blobOffset && streamed[index] != 0) {
                     completedStaging.Add(detail::DecodeBytes(
@@ -1413,7 +1439,8 @@ struct FileCanonicalSource {
                     const PCMRegistry::PreparedPackSamples* candidate = nullptr;
                     for (std::size_t priorOrder = 0; priorOrder < currentMedia; ++priorOrder) {
                         const auto prior = physicalOrder[priorOrder];
-                        if (image.media[prior].soundId != media.soundId || streamed[prior] != 0) continue;
+                        if (image.media[prior].soundId != media.soundId || streamed[prior] != 0 ||
+                            image.media[prior].sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) continue;
                         if (!completed[prior].IsPrepared() && sampleStatus[prior] == VN_OK)
                             sampleStatus[prior] = builders[prior].Complete(&completed[prior]);
                         if (completed[prior].IsPrepared()) { candidate = &completed[prior]; break; }
@@ -1458,6 +1485,21 @@ struct FileCanonicalSource {
         if (std::filesystem::file_size(path, sizeError) != fileBytes || sizeError) return VN_BAD_PACK;
         for (std::size_t i = 0; i < image.media.size(); ++i) {
             if (checksums[i] != image.media[i].blobChecksum) return VN_BAD_PACK;
+            if (image.media[i].sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+                const auto& media = image.media[i];
+                const auto budget = scratch.Budget();
+                const auto available = budget ? budget->limit - budget->live : SIZE_MAX - media.blobBytes;
+                auto result = registry.PrepareResidentVorbis(media.soundId, std::move(compressed[i]),
+                    static_cast<std::size_t>(std::min<std::uint64_t>(SIZE_MAX - media.blobBytes, available)
+                                             + media.blobBytes), &completed[i]);
+                if (result != VN_OK) return result;
+                const auto view = completed[i].View();
+                if (view.sampleRate != media.sampleRate || view.channelCount != media.channelCount ||
+                    view.frames != media.frameCount || view.loop.startFrame != media.loopStartFrame ||
+                    view.loop.endFrame != media.loopEndFrame ||
+                    bool(view.loop.endFrame) != bool(media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE)) return VN_BAD_PACK;
+                completedStaging.Add(view.encoded->ResidentBytes() - media.blobBytes);
+            }
             if (streamed[i] != 0 && !chunkSums[i].Complete()) return VN_BAD_PACK;
         }
         // Retain the existing independent revision chains across two final
@@ -1466,7 +1508,8 @@ struct FileCanonicalSource {
             const auto index = physicalOrder[order];
             if (streamed[index] != 0 || sampleStatus[index] != VN_OK || completed[index].IsPrepared())
                 continue;
-            if (order + 1 < physicalOrder.size() && streamed[physicalOrder[order + 1]] == 0) {
+            if (order + 1 < physicalOrder.size() && streamed[physicalOrder[order + 1]] == 0 &&
+                image.media[physicalOrder[order + 1]].sampleFormat == HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
                 const auto following = physicalOrder[order + 1];
                 VnResult results[2]{};
                 if (builders[index].TryCompletePair(builders[following],
@@ -1719,7 +1762,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
             }
             const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
-                !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
+                !ValidateV2MediaEntry(media, fileBytes, dirEnd, true)) {
                 return VN_BAD_PACK;
             }
             if (!source.VerifyMedia(media, i, dir, header, dirEnd)) return VN_BAD_PACK;

@@ -153,7 +153,7 @@ TEST(VorbisDecoder, PoolReordersCanonicalChannelsWithoutAllocatingOnRenderRetire
         {
             harken::memguard::AudioThreadScope audio;
             for (std::uint64_t at = 0; at < media.packetBytes;) {
-                const std::uint8_t* packet; std::uint16_t bytes;
+                const std::uint8_t* packet; std::uint32_t bytes;
                 if (!media.Packet(at, packet, bytes)) { ok = false; break; }
                 const float* pcm[8]{}; unsigned count = 0;
                 if (!state->Decode(workspace, packet, bytes, pcm, count)) { ok = false; break; }
@@ -192,7 +192,7 @@ TEST(VorbisDecoder, DISABLED_DesktopDecodeTiming) {
         for (unsigned repeat = 0; repeat < 10; ++repeat) {
             for (auto* state : states) state->Restart();
             for (std::uint64_t at = 0; at < media.packetBytes;) {
-                const std::uint8_t* packet; std::uint16_t bytes; ASSERT_TRUE(media.Packet(at, packet, bytes));
+                const std::uint8_t* packet; std::uint32_t bytes; ASSERT_TRUE(media.Packet(at, packet, bytes));
                 const auto begin = std::chrono::steady_clock::now();
                 for (auto* state : states) {
                     const float* pcm[8]{}; unsigned count = 0;
@@ -240,7 +240,7 @@ TEST(VorbisDecoder, ExactAcrossLayoutsSeeksRestartsAndSharedSettings) {
                 auto offset = point->packetOffset;
                 std::uint64_t frame = target;
                 while (frame < media.frames) {
-                    const std::uint8_t* packet; std::uint16_t bytes;
+                    const std::uint8_t* packet; std::uint32_t bytes;
                     ASSERT_TRUE(media.Packet(offset, packet, bytes));
                     float** pcm = nullptr; unsigned count = 0;
                     ASSERT_EQ(hv_decode_packet(state, workspace, packet, bytes, &pcm, &count), HV_OK);
@@ -284,7 +284,7 @@ TEST(VorbisDecoder, RenderUsesNoAllocatorAndExistingAudioMemoryGuard) {
         for (unsigned repeat = 0; repeat < 3 && ok; ++repeat) {
             hv_state_restart(state);
             for (std::uint64_t offset = 0; offset < media.packetBytes;) {
-                const std::uint8_t* packet; std::uint16_t bytes;
+                const std::uint8_t* packet; std::uint32_t bytes;
                 if (!media.Packet(offset, packet, bytes)) { ok = false; break; }
                 float** pcm = nullptr; unsigned count = 0;
                 if (hv_decode_packet(state, workspace, packet, bytes, &pcm, &count) != HV_OK) { ok = false; break; }

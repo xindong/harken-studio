@@ -7067,6 +7067,7 @@ public:
         : config(resolved),
           playableStorage(resolved),
           vorbis(resolved.renderWorkerCount),
+          registry(vorbis),
           logicPacks(resolved.maxPacks),
           packComposition(PackIdentityLeaseCapacity(resolved) -
                               resolved.maxPlayableInstances,

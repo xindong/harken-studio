@@ -68,6 +68,7 @@ class VorbisCodec;
 
 class PCMRegistry {
 private:
+    VorbisCodec* codec_ = nullptr;
     struct Entry {
         PCMView view;                     // useCount wired to `uses` below;
                                           // invalid when only a range backs it
@@ -86,6 +87,8 @@ private:
     using Map = std::unordered_map<VnSoundId, std::shared_ptr<Entry>>;
 
 public:
+    PCMRegistry() = default;
+    explicit PCMRegistry(VorbisCodec& codec) noexcept : codec_(&codec) {}
     class PackReference {
     public:
         bool Valid() const noexcept { return entry_ != nullptr; }
@@ -321,7 +324,9 @@ public:
                              const PreparedPackSamples* equalCandidate = nullptr);
 
     VnResult PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
-        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out);
+        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out, bool packFormat = false);
+    VnResult PrepareResidentVorbis(VnSoundId soundId, std::vector<std::uint8_t> bytes,
+        std::size_t budget, PreparedPackSamples* out);
 
     // Range-only record. A caller that has proven bit-exact equality with an
     // earlier prepared record of the same id passes it to share that entry.

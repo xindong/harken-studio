@@ -129167,6 +129167,40 @@ void CollectCanonicalSetDemand(Engine& engine, const VnCanonicalPackSetActivatio
     for (const auto& member : *rows) out->incoming.push_back(&member);
 }
 
+// Prepare all rows of a mixed memory-backed member together. Pack publication
+// consumes either raw PCM bytes or a complete array of unpublished owners.
+VnResult PrepareCompressedMember(Engine& engine, const PackCanonicalImage& image,
+    const std::uint8_t* bytes, std::vector<PCMRegistry::PreparedPackSamples>& samples,
+    detail::PackDecodeCharge& staging) {
+    if (std::none_of(image.media.begin(), image.media.end(), [](const auto& row) {
+            return row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+        })) return VN_OK;
+    detail::DecodeResize(samples, image.media.size(), staging);
+    for (std::size_t i = 0; i < image.media.size(); ++i) {
+        const auto& row = image.media[i];
+        const auto* blob = bytes + row.blobOffset;
+        VnResult result;
+        if (row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+            const auto available = staging.Budget()->limit - staging.Budget()->live;
+            if (row.blobBytes > available) return VN_PACK_RESIDENT_CAPACITY;
+            result = engine.registry.PrepareResidentVorbis(row.soundId,
+                {blob, blob + row.blobBytes}, static_cast<std::size_t>(available), &samples[i]);
+            if (result == VN_OK) staging.Add(samples[i].View().encoded->ResidentBytes());
+        } else {
+            std::array<const float*, kMaxChannels> planes{};
+            for (std::uint32_t ch = 0; ch < row.channelCount; ++ch)
+                planes[ch] = reinterpret_cast<const float*>(blob) + ch * row.frameCount;
+            VnPCMDesc desc{};
+            desc.structSize = sizeof(desc); desc.sampleRate = row.sampleRate; desc.channels = row.channelCount;
+            desc.frames = row.frameCount; desc.layout = VN_PCM_LAYOUT_PLANAR; desc.policy = VN_PCM_POLICY_COPY;
+            desc.samplesPlanar = planes.data();
+            result = engine.registry.PreparePackSamples(row.soundId, &desc, &samples[i], CanonicalPcmLoop(row));
+        }
+        if (result != VN_OK) return result;
+    }
+    return VN_OK;
+}
+
 VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     const detail::PackDecodeBudget& budget,
     AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
@@ -129227,6 +129261,16 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         }
     }
     if (parsed != VN_OK) { return parsed; }
+    if (!out->boundedFile) {
+        const auto prepared = PrepareCompressedMember(engine, out->image, out->bytes.get(),
+            out->samples, out->sampleStaging);
+        if (prepared != VN_OK) return prepared;
+        if (!out->samples.empty()) {
+            out->bytes.reset();
+            out->encodedStaging.Reset();
+            out->boundedFile = true;
+        }
+    }
     if (out->image.requirement.storageModelVersion != 2) { return VN_PACK_INCOMPATIBLE; }
     if (PackFault(PackStagingFault::AfterParse) || PackFault(PackStagingFault::PartitionDecode)) {
         return VN_BAD_PACK;
@@ -131027,6 +131071,12 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const PackRevisionKey revisionKey =
         MakeCanonicalRevisionKey(token.Handle(), image);
+    std::vector<PCMRegistry::PreparedPackSamples> decoded;
+    if (samples == nullptr) {
+        const auto result = PrepareCompressedMember(engine, image, owned.get(), decoded, staging);
+        if (result != VN_OK) return result;
+        if (!decoded.empty()) samples = &decoded;
+    }
     PackTable::AlignedBuffer noMediaBytes;
     const VnResult loaded = engine.packs.LoadPrepared(
         &token, samples ? noMediaBytes : owned, std::move(mediaEntries), image.media, engine.registry,
@@ -131335,6 +131385,15 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     if (!boundedFile) {
         const VnResult adopted = AdoptOwnedPackBytes(span, &owned);
         if (adopted != VN_OK) return adopted;
+    }
+    if (!boundedFile) {
+        const auto prepared = PrepareCompressedMember(engine, image, owned.get(), samples, sampleStaging);
+        if (prepared != VN_OK) return prepared;
+        if (!samples.empty()) {
+            owned.reset();
+            staging.Reset();
+            boundedFile = true;
+        }
     }
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const VnResult canReplace = engine.packs.CanReplacePreparedV2(
