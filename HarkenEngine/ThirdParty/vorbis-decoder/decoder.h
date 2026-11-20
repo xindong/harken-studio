@@ -44,6 +44,9 @@ size_t hv_workspace_high_water(const HvWorkspace* workspace);
    No allocation callbacks, locks, I/O or trigonometric functions are invoked. */
 enum HvResult hv_decode_packet(HvState* state, HvWorkspace* workspace,
     const uint8_t* packet, size_t bytes, float*** pcm, unsigned* frames);
+enum HvResult hv_decode_resident_packet(HvState* state, HvWorkspace* workspace,
+    const uint8_t* packet, size_t bytes, uint64_t generation, uint64_t offset,
+    float*** pcm, unsigned* frames);
 long hv_packet_blocksize(const HvSetup* setup, const uint8_t* packet, size_t bytes);
 
 #ifdef __cplusplus

@@ -375,10 +375,15 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
       c->dec_firsttable[0]=c->dec_firsttable[1]=1;
 
     }else{
-      c->dec_firsttablen=ov_ilog(c->used_entries)-4; /* this is magic */
-      if(c->dec_firsttablen<5)c->dec_firsttablen=5;
-      if(c->dec_firsttablen>8)c->dec_firsttablen=8;
+      c->dec_firsttablen=ov_ilog(c->used_entries)-1; /* this is magic */
+      if(c->dec_firsttablen<8)c->dec_firsttablen=8;
+      if(c->dec_firsttablen>11)c->dec_firsttablen=11;
 
+      if(allocator->compactCodebook){
+        c->dec_firsttablen=ov_ilog(c->used_entries)-4;
+        if(c->dec_firsttablen<5)c->dec_firsttablen=5;
+        if(c->dec_firsttablen>8)c->dec_firsttablen=8;
+      }
       tabn=1<<c->dec_firsttablen;
       c->dec_firsttable=hv_callocate(allocator, tabn,sizeof(*c->dec_firsttable));
 
@@ -386,7 +391,7 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
         if(c->dec_codelengths[i]<=c->dec_firsttablen){
           ogg_uint32_t orig=bitreverse(c->codelist[i]);
           for(j=0;j<(1<<(c->dec_firsttablen-c->dec_codelengths[i]));j++)
-            c->dec_firsttable[orig|(j<<c->dec_codelengths[i])]=i+1;
+            c->dec_firsttable[orig|(j<<c->dec_codelengths[i])]=((ogg_uint32_t)i<<4)|c->dec_codelengths[i];
         }
       }
 

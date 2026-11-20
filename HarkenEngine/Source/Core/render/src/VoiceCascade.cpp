@@ -590,7 +590,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     const auto& rs = ctx.resampler;
     if (ctx.fxChainTransition != nullptr || offset >= blockFrames || ctx.pcm.channelCount == 0 ||
         ctx.pcm.channelCount > kMaxChannels || ctx.phase != SourcePhase::Active ||
-        ctx.streamParkActive || ctx.mediaDecoder != nullptr ||
+        ctx.streamParkActive || ctx.mediaDecodeFailed ||
         ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
         ctx.tailStarted || ctx.tailRemaining != 0 ||
         ctx.tailRearmPosition != kNoTailRearmPosition ||
@@ -642,6 +642,17 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     }
     const std::uint64_t limit = ctx.loopInfinite || ctx.loopPassesRemaining > 1
         ? ctx.loopEndFrame : ctx.pcm.frames;
+    if (ctx.mediaDecoder != nullptr) {
+        // Packet boundaries can shorten each feed. Reserve the final full
+        // request and let the regular path handle source boundaries.
+        const auto upper = needed == 0 ? 0 : needed + kResampleChunkFrames - 1;
+        if (rs.phaseHigh != 0 || rs.phaseLow != 0 ||
+            frames > UINT64_MAX - rs.readIndex || upper > rs.FreeFrames() ||
+            upper > UINT64_MAX - rs.writeIndex || ctx.srcCursor >= limit ||
+            upper >= limit - ctx.srcCursor) return false;
+        feedFrames = static_cast<std::uint32_t>(needed);
+        return true;
+    }
     // Every feed stays a complete chunk, matching the interleaved source pass.
     if (frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
         extra > UINT64_MAX - rs.writeIndex || ctx.srcCursor >= limit ||
@@ -674,6 +685,15 @@ bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
                 const bool supplied = FeedResamplerFromStream(ctx);
                 assert(supplied);
                 (void)supplied;
+            }
+        } else if (ctx.mediaDecoder != nullptr) {
+            while (ctx.resampler.writeIndex - ctx.resampler.readIndex <= frames) {
+                if (!FeedResampler(ctx)) {
+                    // Match the consumption of the interleaved path before
+                    // terminal cleanup discards output from a failed read.
+                    ctx.resampler.Produce(ctx.cascade.scratch, 0, frames);
+                    return false;
+                }
             }
         } else {
             // Preparation proved that every complete chunk fits before the next

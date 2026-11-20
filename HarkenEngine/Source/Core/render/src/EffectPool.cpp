@@ -337,8 +337,11 @@ std::uint64_t EffectPoolBank::DrainRetire() {
     EffectInstanceRef ref;
     std::uint64_t count = 0;
     for (auto& slot : m_slots)
-        for (const auto& lane : slot.retireLanes)
-            if (lane) while (lane->TryPop(ref)) { Recycle(ref); ++count; }
+        for (const auto& lane : slot.retireLanes) {
+            // GrowBacking constructs lanes in index order and never removes one.
+            if (!lane) break;
+            while (lane->TryPop(ref)) { Recycle(ref); ++count; }
+        }
     return count;
 }
 

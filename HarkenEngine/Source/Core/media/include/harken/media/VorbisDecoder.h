@@ -72,7 +72,7 @@ public:
                   std::uint32_t renderThread, PCMView& output) noexcept override;
         void Restart() noexcept;
         bool Decode(VorbisWorkspace& workspace, const std::uint8_t* packet, std::size_t bytes,
-                    const float* (&pcm)[8], unsigned& frames) noexcept;
+                    const float* (&pcm)[8], unsigned& frames, std::uint64_t generation = 0) noexcept;
         void Retire() noexcept override { retired.store(true, std::memory_order_release); }
     private:
         friend class VorbisStatePool;
@@ -115,6 +115,7 @@ private:
 class VorbisCodec {
 public:
     explicit VorbisCodec(unsigned renderWorkers);
+    std::uint64_t nextGeneration = 1;
     VorbisSettingsCache settings;
     VorbisStatePool states;
     std::vector<std::unique_ptr<VorbisWorkspace>> workspaces;
@@ -130,6 +131,7 @@ public:
     PCMView View() const noexcept;
 private:
     friend struct VorbisStatePool::State;
+    std::uint64_t generation_ = 0;
     VorbisCodec* codec_ = nullptr;
     std::vector<std::uint8_t> bytes_;
     VorbisMedia media_;

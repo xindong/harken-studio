@@ -8748,7 +8748,8 @@ void TrackStreamResync(harken::Engine& engine, VnVoiceHandle handle,
     const harken::TimelineVoiceInstallFacts& install, std::uint32_t sampleRate,
     std::uint32_t prebufferFrames) noexcept {
     const auto index = static_cast<std::uint32_t>(handle);
-    if (index >= engine.streamResyncs.size()) return;
+    if (index >= engine.voices.Capacity()) return;
+    if (index >= engine.streamResyncs.size()) engine.streamResyncs.resize(index + 1);
     auto& row = engine.streamResyncs[index];
     // A reused slot cannot still be rendering the previous voice.
     if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);
@@ -37830,6 +37831,9 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
 // A boundary past the clip end leaves the voice silent until it ends.
 void ServiceStreamResyncs(harken::Engine& engine) noexcept {
     constexpr std::uint64_t kResyncTicketBit = UINT64_C(1) << 63;
+    // Keep the preallocated storage but scan only through the last registered owner.
+    while (!engine.streamResyncs.empty() && engine.streamResyncs.back().handle == 0)
+        engine.streamResyncs.pop_back();
     for (auto& row : engine.streamResyncs) {
         if (row.handle == 0) continue;
         harken::VoicePool::StreamResyncView view;
@@ -112182,11 +112186,10 @@ VnResult Vn_Update(void) {
      * re-stages (one command per target per tick). */
     harken::PropertyPublisher& publisher = engine->propertyPublisher;
     publisher.Restage();
-    std::fill(engine->spatialPropertyGroupIndices.begin(),
-              engine->spatialPropertyGroupIndices.end(), ~0u);
+    bool spatialIndicesPrepared = false;
     const auto flushVoices = [&]() {
         engine->params.FlushCommits(
-        [engine, &publisher](
+        [engine, &publisher, &spatialIndicesPrepared](
             const harken::ParamCommit& commit) -> harken::FlushOutcome {
             // The bank can still precede the captured start until EndService acknowledges it.
             if (engine->variables.HasNativePublicationHold(commit.handle))
@@ -112231,6 +112234,10 @@ VnResult Vn_Update(void) {
                     ? harken::kSpatialPropertyPan : harken::kSpatialPropertyWidth;
                 staged.spatialWidth = commit.targetId == harken::kTargetVoiceWidth
                     ? commit.resolved : 0.0f;
+                if (!spatialIndicesPrepared) {
+                    std::fill(engine->spatialPropertyGroupIndices.begin(), engine->spatialPropertyGroupIndices.end(), ~0u);
+                    spatialIndicesPrepared = true;
+                }
                 stagedOk = publisher.StageSpatial(staged,
                     engine->spatialPropertyGroupIndices[static_cast<std::uint32_t>(commit.handle)]);
             } else {
@@ -112315,10 +112322,8 @@ VnResult Vn_Update(void) {
         flushBuses();
     }
     engine->propertyBusFirst = !engine->propertyBusFirst;
-    std::fill(engine->toneSectionCommandsPublished.begin(),
-              engine->toneSectionCommandsPublished.end(), 0);
-    std::fill(engine->toneSectionPublishedRampMs.begin(),
-              engine->toneSectionPublishedRampMs.end(), 0);
+    if (publisher.StagedCount() != 0)
+        std::fill(engine->toneSectionCommandsPublished.begin(), engine->toneSectionCommandsPublished.end(), 0);
     (void)publisher.Publish(&CommandQueueFreeSlots, &PushPropertyCommit,
                             engine);
     /* Audibility parking runs after the combine flush so each voice's metric
