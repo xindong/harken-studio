@@ -43,22 +43,8 @@ QTextBrowser, QTreeWidget { border: 1px solid palette(mid); }
   QLineEdit#newProjectField:hover, QComboBox#newProjectVersion:hover { border-color: palette(mid); }
   QLineEdit#newProjectField:focus, QComboBox#newProjectVersion:focus { border-color: palette(highlight); }
   QComboBox#newProjectVersion::drop-down { border-left: 1px solid palette(mid); width: 24px; }
-  QPushButton#newProjectBrowse, QPushButton#newProjectAddTemplate { border-color: palette(mid); padding: 4px 16px; }
-  QPushButton#newProjectBrowse:hover, QPushButton#newProjectAddTemplate:hover { border-color: palette(mid); }
-  QTreeWidget#templatePreviewTree {
-      background-color: palette(base);
-      border: 1px solid palette(mid);
-      border-radius: 0;
-      outline: none;
-  }
-  QTreeWidget#templatePreviewTree::item { border: none; padding: 1px 4px; }
-  QTreeWidget#templatePreviewTree QHeaderView::section {
-      background-color: palette(alternate-base);
-      border: none;
-      border-bottom: 1px solid palette(mid);
-      color: palette(placeholder-text);
-      padding: 6px 9px;
-  }
+  QPushButton#newProjectBrowse { border-color: palette(mid); padding: 4px 16px; }
+  QPushButton#newProjectBrowse:hover { border-color: palette(mid); }
 QPushButton {
     background-color: palette(button);
     border: 1px solid palette(mid);
