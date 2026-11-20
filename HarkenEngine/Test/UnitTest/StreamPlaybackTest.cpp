@@ -14,7 +14,7 @@
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ResamplerAdvance.h"
 #include "harken/core/SourcePhase.h"
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <algorithm>
@@ -551,10 +551,10 @@ TEST(StreamPlayback, CorruptChunkEndsVoiceAfterVerifiedMaterial) {
         harkentest::MakeSine(2000, 500.0, kRate, 0.5f);
     std::vector<std::uint8_t> bytes = BuildStreamBytes(spec, tone);
     const harken::StreamTocEntry toc = harken::ParseStreamTocEntry(
-        bytes.data() + harken::kStreamHeaderBytes);
+        bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
     const std::uint64_t chunkBytes =
-        harken::StreamChunkBytes(256, 1);
-    bytes[static_cast<std::size_t>(harken::StreamChunkFileOffset(
+        hkPackStreamFileChunkBytes(256, 1);
+    bytes[static_cast<std::size_t>(hkPackStreamFileChunkOffset(
         toc.payloadOffset, 4, chunkBytes))] ^= 0x01;
     const std::string path = TempPath("stream_corrupt_chunk.stream");
     WriteFileBytes(path, bytes);
@@ -607,25 +607,25 @@ TEST(StreamPlayback, ChecksummedNonFiniteSamplesNeverReachBusFilters) {
             auto bytes = BuildStreamBytes(spec,
                 std::vector<float>(kFrames * spec.channelCount, 0.25f));
             const auto toc = harken::ParseStreamTocEntry(
-                bytes.data() + harken::kStreamHeaderBytes);
-            const auto chunkBytes = harken::StreamChunkBytes(
+                bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
+            const auto chunkBytes = hkPackStreamFileChunkBytes(
                 spec.chunkFrames, spec.channelCount);
             const auto chunkIndex = frame / spec.chunkFrames;
-            auto* chunk = bytes.data() + harken::StreamChunkFileOffset(
+            auto* chunk = bytes.data() + hkPackStreamFileChunkOffset(
                 toc.payloadOffset, chunkIndex, chunkBytes);
             std::memcpy(chunk + (spec.chunkFrames + frame % spec.chunkFrames) *
                                    sizeof(float),
                         &invalid, sizeof(invalid));
             harken::StoreLE64(bytes.data() + toc.chunkChecksumOffset +
-                                 chunkIndex * harken::kStreamChunkChecksumBytes,
+                                 chunkIndex * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
                              harken::Fnv1a64(chunk, chunkBytes));
             harken::StreamHeader header;
             ASSERT_TRUE(harken::ParseStreamHeader(bytes.data(), &header));
             header.tocChecksum = harken::Fnv1a64(
                 bytes.data() + toc.chunkChecksumOffset,
-                toc.chunkCount * harken::kStreamChunkChecksumBytes,
-                harken::Fnv1a64(bytes.data() + harken::kStreamHeaderBytes,
-                               harken::kStreamTocEntryBytes));
+                toc.chunkCount * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
+                harken::Fnv1a64(bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES,
+                               HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES));
             harken::SerializeStreamHeader(header, bytes.data());
             const auto path = TempPath("stream_nonfinite_checksummed.stream");
             WriteFileBytes(path, bytes);
@@ -694,10 +694,10 @@ TEST(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
     const std::vector<float> source = MakeDistinctSignal(320);
     std::vector<std::uint8_t> bytes = BuildStreamBytes(spec, source);
     const harken::StreamTocEntry toc = harken::ParseStreamTocEntry(
-        bytes.data() + harken::kStreamHeaderBytes);
+        bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
     const std::uint64_t chunkBytes =
-        harken::StreamChunkBytes(spec.chunkFrames, spec.channelCount);
-    bytes[static_cast<std::size_t>(harken::StreamChunkFileOffset(
+        hkPackStreamFileChunkBytes(spec.chunkFrames, spec.channelCount);
+    bytes[static_cast<std::size_t>(hkPackStreamFileChunkOffset(
         toc.payloadOffset, 3, chunkBytes))] ^= 0x01;
     const std::string path = TempPath("stream_corrupt_outro.stream");
     WriteFileBytes(path, bytes);
@@ -2982,10 +2982,10 @@ TEST(StreamPlayback, IntegrityAbortRacingParkHasOneTerminalWinner) {
     std::vector<std::uint8_t> bytes =
         BuildStreamBytes(spec, MakeDistinctSignal(4096));
     const harken::StreamTocEntry toc = harken::ParseStreamTocEntry(
-        bytes.data() + harken::kStreamHeaderBytes);
+        bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
     const std::uint64_t chunkBytes =
-        harken::StreamChunkBytes(spec.chunkFrames, spec.channelCount);
-    bytes[static_cast<std::size_t>(harken::StreamChunkFileOffset(
+        hkPackStreamFileChunkBytes(spec.chunkFrames, spec.channelCount);
+    bytes[static_cast<std::size_t>(hkPackStreamFileChunkOffset(
         toc.payloadOffset, 1, chunkBytes))] ^= 0x01;
     const std::string path = TempPath("stream_wait_integrity_race.stream");
     WriteFileBytes(path, bytes);

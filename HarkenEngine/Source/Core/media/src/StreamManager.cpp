@@ -60,10 +60,10 @@ std::uint64_t RoundUpPow2(std::uint64_t v) {
 bool ValidateStreamEntry(const StreamHeader& header,
                             const StreamTocEntry& e,
                             std::uint64_t fileBytes) {
-    if (e.sampleFormat != kStreamSampleFormatF32Planar) {
+    if (e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
         return false;
     }
-    if ((e.flags & ~kStreamKnownFlagsMask) != 0) {
+    if ((e.flags & ~HK_PACK_STREAM_FILE_KNOWN_FLAGS) != 0) {
         return false;
     }
     if (e.sampleRate == 0 || e.sampleRate > kMaxSaneSampleRate ||
@@ -78,22 +78,22 @@ bool ValidateStreamEntry(const StreamHeader& header,
         return false; // chunk index space exceeded
     }
     if (e.chunkCount == 0 ||
-        e.chunkCount != StreamChunkCount(e.frameCount,
+        e.chunkCount != hkPackStreamFileChunkCount(e.frameCount,
                                             header.chunkFrames)) {
         return false;
     }
     const std::uint64_t checksumBytes =
         static_cast<std::uint64_t>(e.chunkCount) *
-        kStreamChunkChecksumBytes;
+        HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     const std::uint64_t tocEnd =
         static_cast<std::uint64_t>(header.tocOffset) +
-        kStreamTocEntryBytes;
+        HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES;
     if (e.chunkChecksumOffset < tocEnd ||
         e.chunkChecksumOffset > fileBytes ||
         checksumBytes > fileBytes - e.chunkChecksumOffset) {
         return false;
     }
-    if (e.payloadOffset % kStreamPayloadAlign != 0) {
+    if (e.payloadOffset % HK_PACK_STREAM_FILE_PAYLOAD_ALIGN != 0) {
         return false;
     }
     if (e.payloadOffset < e.chunkChecksumOffset + checksumBytes) {
@@ -102,7 +102,7 @@ bool ValidateStreamEntry(const StreamHeader& header,
     // Fixed-size framing: the payload is exactly chunkCount full chunks,
     // the last one zero-padded.
     const std::uint64_t chunkBytes =
-        StreamChunkBytes(header.chunkFrames, e.channelCount);
+        hkPackStreamFileChunkBytes(header.chunkFrames, e.channelCount);
     if (chunkBytes == 0 ||
         e.chunkCount > UINT64_MAX / chunkBytes) {
         return false;
@@ -115,7 +115,7 @@ bool ValidateStreamEntry(const StreamHeader& header,
         e.payloadBytes > fileBytes - e.payloadOffset) {
         return false;
     }
-    if ((e.flags & kStreamFlagLoopable) != 0) {
+    if ((e.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0) {
         const std::uint64_t loopEnd =
             e.loopEndFrame == 0 ? e.frameCount : e.loopEndFrame;
         if (loopEnd > e.frameCount || e.loopStartFrame >= loopEnd) {
@@ -333,7 +333,7 @@ VnResult StreamManager::ResolvePackSource(
     const std::shared_ptr<const PackMediaRange>& range, StreamFacts* out) {
     if (out == nullptr || range == nullptr || range->source == nullptr ||
         range->channelCount == 0 || range->channelCount > kMaxChannels ||
-        range->chunkFrames == 0 || range->chunkFrames > kMaxStreamChunkFrames ||
+        range->chunkFrames == 0 || range->chunkFrames > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES ||
         range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
         return VN_INVALID_ARG;
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -366,10 +366,10 @@ VnResult StreamManager::ResolvePackSource(
         record->source = range->source;
         record->toc.sampleRate = range->sampleRate;
         record->toc.channelCount = static_cast<std::uint16_t>(range->channelCount);
-        record->toc.sampleFormat = kStreamSampleFormatF32Planar;
+        record->toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
         record->toc.frameCount = range->frameCount;
         record->toc.chunkCount = static_cast<std::uint32_t>(range->chunkChecksums.size());
-        record->toc.flags = range->packFlags & kStreamKnownFlagsMask;
+        record->toc.flags = range->packFlags & HK_PACK_STREAM_FILE_KNOWN_FLAGS;
         record->toc.loopStartFrame = range->loop.startFrame;
         record->toc.loopEndFrame = range->loop.endFrame;
         record->chunkFrames = range->chunkFrames;
@@ -1017,25 +1017,25 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
     if (request.phase == 0) {
         if (!record.source) record.source = OpenStreamByteSource(request.path.c_str());
         if (!record.source) { request.result = VN_BAD_STREAM_FILE; return; }
-        std::array<std::uint8_t, kStreamHeaderBytes> bytes{};
+        std::array<std::uint8_t, HK_PACK_STREAM_FILE_HEADER_BYTES> bytes{};
         if (ReadStreamBytes(*record.source, 0, bytes.data(), bytes.size(), cancel) != StreamReadStatus::Ok ||
             !ParseStreamHeader(bytes.data(), &request.header)) {
             request.result = VN_BAD_STREAM_FILE; return;
         }
         const auto& header = request.header;
         const auto length = record.source->ByteCount();
-        if (header.formatVersion != kStreamFormatVersion || header.headerBytes != kStreamHeaderBytes ||
-            header.fileBytes != length || header.entryCount != kStreamEntryCount ||
-            header.chunkFrames == 0 || header.chunkFrames > kMaxStreamChunkFrames ||
+        if (header.formatVersion != HK_PACK_STREAM_FILE_FORMAT_VERSION || header.headerBytes != HK_PACK_STREAM_FILE_HEADER_BYTES ||
+            header.fileBytes != length || header.entryCount != HK_PACK_STREAM_FILE_ENTRY_COUNT ||
+            header.chunkFrames == 0 || header.chunkFrames > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES ||
             header.tocOffset < header.headerBytes || header.tocOffset > length ||
-            kStreamTocEntryBytes > length - header.tocOffset) {
+            HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES > length - header.tocOffset) {
             request.result = VN_BAD_STREAM_FILE; return;
         }
         request.phase = 1;
         return;
     }
     if (request.phase == 1) {
-        std::array<std::uint8_t, kStreamTocEntryBytes> bytes{};
+        std::array<std::uint8_t, HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES> bytes{};
         if (ReadStreamBytes(*record.source, request.header.tocOffset, bytes.data(), bytes.size(), cancel)
             != StreamReadStatus::Ok) { request.result = VN_BAD_STREAM_FILE; return; }
         record.toc = ParseStreamTocEntry(bytes.data());
@@ -1053,8 +1053,8 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
         request.checksum = Fnv1a64(bytes.data(), bytes.size());
         request.semantic = {entry.sampleRate, entry.channelCount, entry.frameCount, entry.sampleFormat,
             request.header.formatVersion, record.chunkFrames, entry.chunkCount,
-            (entry.flags & kStreamFlagLoopable) != 0 ? entry.loopStartFrame : 0,
-            (entry.flags & kStreamFlagLoopable) != 0
+            (entry.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0 ? entry.loopStartFrame : 0,
+            (entry.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0
                 ? (entry.loopEndFrame == 0 ? entry.frameCount : entry.loopEndFrame) : 0};
         request.revision = BeginMediaStreamContentRevisionV1(request.semantic);
         request.phase = 2;
@@ -1064,16 +1064,16 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
     // to the actual source metadata and may contain any validated chunk count.
     std::array<std::uint8_t, 64 * 1024> bytes{};
     const auto count = std::min<std::uint32_t>(record.toc.chunkCount - request.checksumsRead,
-        static_cast<std::uint32_t>(bytes.size() / kStreamChunkChecksumBytes));
-    const auto size = static_cast<std::size_t>(count) * kStreamChunkChecksumBytes;
+        static_cast<std::uint32_t>(bytes.size() / HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES));
+    const auto size = static_cast<std::size_t>(count) * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     const auto offset = record.toc.chunkChecksumOffset +
-        static_cast<std::uint64_t>(request.checksumsRead) * kStreamChunkChecksumBytes;
+        static_cast<std::uint64_t>(request.checksumsRead) * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES;
     if (ReadStreamBytes(*record.source, offset, bytes.data(), size, cancel) != StreamReadStatus::Ok) {
         request.result = VN_BAD_STREAM_FILE; return;
     }
     request.checksum = Fnv1a64(bytes.data(), size, request.checksum);
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto checksum = LoadLE64(bytes.data() + i * kStreamChunkChecksumBytes);
+        const auto checksum = LoadLE64(bytes.data() + i * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES);
         record.chunkChecksums[request.checksumsRead + i] = checksum;
         request.revision->AddU64(checksum);
     }
@@ -1266,7 +1266,7 @@ bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& s
                                       const ReadWindow& window) noexcept {
     if (job.file->packPrivate || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
         window.validBytes > window.bytes.size()) return false;
-    const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
+    const auto offset = hkPackStreamFileChunkOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     if (offset < window.offset || offset - window.offset > window.validBytes ||
         job.chunkBytes > window.validBytes - (offset - window.offset)) return false;
     std::memcpy(staging.data(), window.bytes.data() + static_cast<std::size_t>(offset - window.offset),
@@ -1284,7 +1284,7 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
                    job.cancellation) == StreamReadStatus::Ok &&
                !job.cancellation.IsCancelled();
     }
-    const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
+    const auto offset = hkPackStreamFileChunkOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     const auto required = static_cast<std::size_t>(job.chunkBytes);
     const auto direct = [&] {
         return ReadStreamBytes(source, offset, staging.data(), required, job.cancellation) == StreamReadStatus::Ok;
@@ -1329,7 +1329,7 @@ bool StreamManager::ValidateChunk(const ChunkJob& job,
     // A valid checksum does not make NaN/Infinity safe for persistent DSP.
     // Check every real sample before publishing any of this chunk; unused
     // final-chunk padding is checksummed above but is never sent to the ring.
-    const std::uint32_t validFrames = StreamChunkValidFrames(
+    const std::uint32_t validFrames = hkPackStreamFileChunkValidFrames(
         job.chunkIndex, job.chunkFrames, file.toc.frameCount);
     for (std::uint32_t ch = 0; ch < job.channels; ++ch) {
         const float* samples = staging.data() +
@@ -1373,7 +1373,7 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
     const std::uint32_t channels = ring.channelCount;
     const std::uint64_t frameCount = file.toc.frameCount;
     const std::uint64_t chunkBytes =
-        StreamChunkBytes(chunkFrames, file.toc.channelCount);
+        hkPackStreamFileChunkBytes(chunkFrames, file.toc.channelCount);
 
     for (;;) {
         const bool wrapAtLimit =
@@ -1399,8 +1399,8 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
             return false;
         }
         if (cursor.framesServed >= cursor.maxServeFrames) return false;
-        const StreamSeek seek =
-            StreamSeekToFrame(slot.nextFrame, chunkFrames);
+        const HkPackStreamFileSeek seek =
+            hkPackStreamFileSeekToFrame(slot.nextFrame, chunkFrames);
         if (slot.stagedChunk != seek.chunkIndex) {
             // Stage and verify the whole chunk before any of it becomes
             // eligible for the ring: frames the audio thread can see have
@@ -1408,7 +1408,7 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
             *job = {&file, seek.chunkIndex, chunkFrames, channels, chunkBytes};
             return true;
         }
-        const std::uint32_t valid = StreamChunkValidFrames(
+        const std::uint32_t valid = hkPackStreamFileChunkValidFrames(
             seek.chunkIndex, chunkFrames, frameCount);
         const std::uint32_t remainInChunk = valid - seek.frameInChunk;
         const std::uint32_t remainToLimit = static_cast<std::uint32_t>(
