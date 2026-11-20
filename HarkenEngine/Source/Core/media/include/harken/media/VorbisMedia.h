@@ -50,7 +50,8 @@ struct VorbisMedia {
     bool VerifySegment(std::size_t index) const noexcept;
 };
 
-bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output);
+bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output,
+                        std::size_t indexBudget = SIZE_MAX);
 bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& output);
 
 } // namespace harken

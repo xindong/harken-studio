@@ -71,6 +71,13 @@ public:
                            std::move(samples), 0, loop, channels});
     }
 
+    void AddVorbis(VnObjectId id, std::vector<std::uint8_t> blob, std::uint64_t frames,
+                   std::uint16_t channels, harken::PcmLoopRegion loop = {}) {
+        AddMedia(id, {}, loop, channels);
+        entries_.back().encoded = std::move(blob);
+        entries_.back().frames = frames;
+    }
+
     std::vector<std::uint8_t> Build() {
         const std::uint64_t directoryOffset = harken::kPackBytes<HkPackFileHeader>;
         const std::uint64_t directoryBytes =
@@ -89,17 +96,17 @@ public:
 
         std::vector<std::uint64_t> mediaOffsets(entries_.size(), 0);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
-            if (entries_[i].samples.empty()) {
+            if (entries_[i].samples.empty() && entries_[i].encoded.empty()) {
                 continue;
             }
             mediaOffsets[i] = AlignUp(contentEnd, HK_PACK_BLOB_ALIGN);
-            contentEnd = mediaOffsets[i] + entries_[i].samples.size() * sizeof(float);
+            contentEnd = mediaOffsets[i] + entries_[i].samples.size() * sizeof(float) + entries_[i].encoded.size();
         }
 
         std::vector<std::uint8_t> bytes(
             static_cast<std::size_t>(contentEnd), 0);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
-            if (!entries_[i].samples.empty()) {
+            if (!entries_[i].samples.empty() || !entries_[i].encoded.empty()) {
                 harken::PackTocEntry media;
                 media.soundId = entries_[i].id;
                 media.sampleRate = 48000;
@@ -112,9 +119,15 @@ public:
                 media.loopStartFrame = entries_[i].loop.startFrame;
                 media.loopEndFrame = entries_[i].loop.endFrame;
                 media.blobOffset = mediaOffsets[i];
-                media.blobBytes = entries_[i].samples.size() * sizeof(float);
-                std::memcpy(bytes.data() + media.blobOffset,
-                            entries_[i].samples.data(), media.blobBytes);
+                const bool encoded = !entries_[i].encoded.empty();
+                if (encoded) {
+                    media.frameCount = entries_[i].frames;
+                    media.sampleFormat = HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+                }
+                media.blobBytes = encoded ? entries_[i].encoded.size() : entries_[i].samples.size() * sizeof(float);
+                const void* source = encoded ? static_cast<const void*>(entries_[i].encoded.data())
+                                             : static_cast<const void*>(entries_[i].samples.data());
+                std::memcpy(bytes.data() + media.blobOffset, source, media.blobBytes);
                 media.blobChecksum = harken::Fnv1a64(bytes.data() + media.blobOffset,
                                                    media.blobBytes);
                 harken::SerializePackRow<HkPackMedia>(media, entries_[i].payload.data());
@@ -165,6 +178,8 @@ private:
         std::uint32_t vintage = 0;
         harken::PcmLoopRegion loop{};
         std::uint16_t channels = 1;
+        std::vector<std::uint8_t> encoded;
+        std::uint64_t frames = 0;
     };
 
     std::uint32_t packKind_ = 0;

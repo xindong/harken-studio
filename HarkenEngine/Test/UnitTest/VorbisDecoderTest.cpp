@@ -395,3 +395,33 @@ TEST(VorbisDecoder, RejectsSeekLoopAndDurationMetadataThatDisagreesWithPackets) 
 }
 
 }
+
+
+TEST(VorbisDecoder, PackSeeksUseAudibleFramesAfterLeadingAndTrailingTrim) {
+    harken::VorbisCodec codec(0);
+    for (auto channels : {1u, 2u, 4u, 6u, 8u}) {
+        SCOPED_TRACE(channels);
+        const auto fixture = harken::test::MakeVorbisFixture(channels, false, 6503, 11997, 4096, true, 173);
+        harken::VorbisPrepareResult status;
+        auto resident = harken::VorbisResident::Prepare(codec, fixture.media, 8u << 20, status, true);
+        ASSERT_TRUE(resident);
+        const auto view = resident->View();
+        ASSERT_EQ(fixture.reference.size(), view.frames * channels);
+        auto* decoder = resident->Acquire();
+        ASSERT_NE(decoder, nullptr);
+        const unsigned surround6[] = {0, 2, 1, 5, 3, 4};
+        const unsigned surround8[] = {0, 2, 1, 7, 5, 6, 3, 4};
+        for (auto frame : std::array<std::uint64_t, 6>{0, 4095, 8243, 6503, view.frames - 17, 0}) {
+            harken::PCMView block;
+            ASSERT_TRUE(decoder->Read(frame, 17, 0, block));
+            for (unsigned ch = 0; ch < channels; ++ch) {
+                const auto referenceChannel = channels == 6 ? surround6[ch] : channels == 8 ? surround8[ch] : ch;
+                for (unsigned i = 0; i < block.frames; ++i)
+                    ASSERT_NEAR(static_cast<const float*>(block.channels[ch])[i], fixture.reference[(frame+i)*channels+referenceChannel], 2e-5f);
+            }
+        }
+        decoder->Retire();
+        codec.states.Collect();
+        EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+    }
+}

@@ -48,7 +48,8 @@ bool VorbisMedia::VerifySegment(std::size_t index) const noexcept {
     return Fnv1a64(packets + begin, static_cast<std::size_t>(end - begin), segmentChecksumSeed) == segmentChecksums[index];
 }
 
-bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output) {
+bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output,
+                        std::size_t indexBudget) {
     if (!data || bytes < sizeof(HkPackVorbisHeader)) return false;
     const auto* header = static_cast<const std::uint8_t*>(data);
     if (LoadLE32(header + offsetof(HkPackVorbisHeader, version)) != HK_PACK_VORBIS_VERSION ||
@@ -89,6 +90,7 @@ bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& outpu
         m.ident[29] != 1 || m.setup[0] != 5 || std::memcmp(m.setup + 1, "vorbis", 6)) return false;
     m.packets = header + m.packetDataOffset;
     m.packetBytes = bytes - m.packetDataOffset;
+    if (gridCount > indexBudget / sizeof(VorbisSeekPoint)) throw std::bad_alloc{};
     m.seek.reserve(static_cast<std::size_t>(gridCount));
     const auto* row = m.setup + m.setupBytes;
     std::uint64_t packet = 0, lastFrame = 0;

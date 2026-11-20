@@ -61,4 +61,26 @@ TEST(VorbisMedia, RejectsMalformedMetadataAndCorruptionWithoutPublishing) {
     bytes = fixture.media; Write(bytes, table + vorbis_test_wire::kSeekBytes + 8, 1, 8); reject(bytes);
     bytes = fixture.media; Write(bytes, table + published.seek.size() * vorbis_test_wire::kSeekBytes, 0, 8); reject(bytes);
 }
+
+TEST(VorbisMedia, ResidentPacketLengthsAndSeekOffsetsAreByteExact) {
+    auto fixture = harken::test::MakeVorbisFixture(1, false, 6503, 11997, 4096, true, 173);
+    VorbisMedia m;
+    ASSERT_TRUE(ParseResidentVorbis(fixture.media.data(), fixture.media.size(), m));
+    const auto index = sizeof(HkPackVorbisHeader) + m.identBytes + m.setupBytes;
+    auto broken = fixture.media;
+    ++broken[index + offsetof(HkPackVorbisSeek, packetOffset)];
+    EXPECT_FALSE(ParseResidentVorbis(broken.data(), broken.size(), m));
+    for (const auto length : {65535u, 65536u}) {
+        auto bytes = fixture.media;
+        const auto position = bytes.size();
+        bytes.resize(position + 4 + length);
+        StoreLE32(bytes.data() + position, length);
+        ASSERT_TRUE(ParseResidentVorbis(bytes.data(), bytes.size(), m));
+        const std::uint8_t* packet;
+        std::uint32_t actual;
+        ASSERT_TRUE(m.Packet(position - m.packetDataOffset, packet, actual));
+        EXPECT_EQ(length, actual);
+        EXPECT_FALSE(ParseResidentVorbis(bytes.data(), bytes.size() - 1, m));
+    }
+}
 }
