@@ -30,11 +30,13 @@
 namespace harken {
 
 inline constexpr char kTraceMagic[4] = {'V', 'T', 'R', 'C'};
-// The replayer accepts only the current writer vintage.
+// V9 retires the standalone stream API. V8 journals can still replay when
+// they do not need those calls; only the original Host can reproduce them.
 inline constexpr std::uint32_t kTraceFormatVersionV2 = 2;
 inline constexpr std::uint32_t kTraceFormatVersionV3 = 3;
 inline constexpr std::uint32_t kTraceFormatVersionV4 = 4;
-inline constexpr std::uint32_t kTraceFormatVersion = 8;
+inline constexpr std::uint32_t kTraceFormatVersionV8 = 8;
+inline constexpr std::uint32_t kTraceFormatVersion = 9;
 
 // Fixed-size header fields ahead of the config image. Serialized field by
 // field (never as a struct overlay — the container-format discipline).
@@ -214,6 +216,8 @@ enum : std::uint16_t {
     kTraceCallClearVoiceEffect = 20, // u64 handle, u32 slot
     kTraceCallSetVoiceEffectParam = 21, // u64 handle, u32 slot,
                                         //   u32 paramIndex, f32 value
+    kTraceCallReservedLegacyRegisterStreamFile = 22,
+    kTraceCallReservedLegacyUnregisterStreamFile = 23,
     kTraceCallCreateEmitter = 24,  // v4: u64 trace-local emitter ordinal
     kTraceCallDestroyEmitter = 25, // u64 handle
     kTraceCallSetEmitterPosition = 26, // u64 handle, vec3
@@ -246,6 +250,7 @@ enum : std::uint16_t {
     kTraceCallReservedLegacyActionTriggerByName = 48,
     kTraceCallReplacePCM = 49,     // u64 soundId, desc(VnPCMDesc) + samples
                                    //   (the RegisterPCM encoding)
+    kTraceCallReservedLegacyReplaceStreamFile = 50,
     kTraceCallReplacePack = 51,    // u64 handle, desc(VnPackDesc), fileref
     kTraceCallReplaceAttenuation = 52, // u64 id, desc(VnAttenuationDesc)
     kTraceCallReservedLegacyActionReplace = 53,

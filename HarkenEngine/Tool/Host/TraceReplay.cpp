@@ -3163,6 +3163,34 @@ void PumpOneBlock(harken::Engine* engine, RenderCapture& capture) {
     }
 }
 
+// Old journals lack the Pack identity that now owns each stream. Check all
+// complete V8 calls before executing the first call or opening a capture.
+const char* FindRetiredStreamCall(ByteReader records) {
+    while (records.Remaining() >= harken::kTraceRecordHeaderBytes) {
+        const auto payloadBytes = records.U32();
+        const auto type = records.U16();
+        const auto flags = records.U16();
+        (void)records.U64(); // ordinal
+        (void)records.U64(); // timestamp
+        ByteReader payload;
+        payload.data = records.Bytes(payloadBytes);
+        payload.size = payloadBytes;
+        if (payload.data == nullptr || type == harken::kTraceRecordEnd) {
+            break;
+        }
+        if (type != harken::kTraceRecordApiCall ||
+            (flags & harken::kTraceFlagArgsUnreplayable) != 0) {
+            continue;
+        }
+        switch (payload.U16()) {
+        case harken::kTraceCallReservedLegacyRegisterStreamFile: return "RegisterStreamFile";
+        case harken::kTraceCallReservedLegacyUnregisterStreamFile: return "UnregisterStreamFile";
+        case harken::kTraceCallReservedLegacyReplaceStreamFile: return "ReplaceStreamFile";
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 void PrintTraceReplayUsage() {
@@ -3172,7 +3200,8 @@ void PrintTraceReplayUsage() {
         "Vn_TraceStart on the null backend with the recorded config, seed\n"
         "and block/tick schedule, and reports an FNV-1a 64 hash of the\n"
         "rendered output. The same journal renders byte-identically on\n"
-        "every replay.\n"
+        "every replay. V8 journals that require standalone stream file\n"
+        "registration, replacement or removal need the original V8 Host.\n"
         "  --capture <file>  also write the raw render (interleaved f32,\n"
         "                    little-endian) for byte comparison\n"
         "  --null            accepted for symmetry; replay always runs the\n"
@@ -3244,11 +3273,13 @@ int RunTraceReplay(int argc, char** argv) {
         return 1;
     }
     const std::uint32_t version = r.U32();
-    if (version != harken::kTraceFormatVersion) {
+    if (version != harken::kTraceFormatVersion &&
+        version != harken::kTraceFormatVersionV8) {
         std::fprintf(stderr,
-                     "error: trace format version %u is not the supported "
-                     "version %u\n",
+                     "error: unsupported trace format version %u "
+                     "(supported: %u and %u)\n",
                      static_cast<unsigned>(version),
+                     static_cast<unsigned>(harken::kTraceFormatVersionV8),
                      static_cast<unsigned>(harken::kTraceFormatVersion));
         return 1;
     }
@@ -3312,6 +3343,15 @@ int RunTraceReplay(int argc, char** argv) {
             return 1;
         }
         configStructSize = sizeof(VnConfig);
+    }
+    if (version == harken::kTraceFormatVersionV8) {
+        if (const char* call = FindRetiredStreamCall(r)) {
+            std::fprintf(stderr,
+                         "error: VTRC v8 call %s lacks the owning Pack "
+                         "identity; replay with the recording's original V8 Host\n",
+                         call);
+            return 1;
+        }
     }
     const std::uint32_t recordedDeviceMode = config.deviceMode;
     const bool recordedNullDevice =
