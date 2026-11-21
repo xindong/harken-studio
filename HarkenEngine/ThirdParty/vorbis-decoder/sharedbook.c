@@ -62,10 +62,8 @@ float _float32_unpack(long val){
   return(ldexp(mant,exp));
 }
 
-/* given a list of word lengths, generate a list of codewords.  Works
-   for length ordered or unordered, always assigns the lowest valued
-   codewords first.  Extended to handle unused entries (length 0) */
-static int mark_words(const char *l,long n,long sparsecount,ogg_uint32_t *r){
+/* Preserve the original 32-bit marker validation at the maximum wire length. */
+static int validate_long_codewords(const char *l,long n){
   long i,j,count=0;
   ogg_uint32_t marker[33];
   memset(marker,0,sizeof(marker));
@@ -85,7 +83,6 @@ static int mark_words(const char *l,long n,long sparsecount,ogg_uint32_t *r){
         /* error condition; the lengths must specify an overpopulated tree */
         return -1;
       }
-      if(r)r[count]=entry;
       count++;
 
       /* Look to see if the next shorter marker points to the node
@@ -115,8 +112,7 @@ static int mark_words(const char *l,long n,long sparsecount,ogg_uint32_t *r){
           marker[j]=marker[j-1]<<1;
         }else
           break;
-    }else
-      if(sparsecount==0)count++;
+    }
   }
 
   /* any underpopulated tree must be rejected. */
@@ -144,39 +140,12 @@ int hv_book_validate(const static_codebook *book){
     counts[(unsigned char)book->lengthlist[i]]++;
   /* Use the decoder's marker arithmetic at its 32-bit boundary. */
   if(counts[32])
-    return mark_words(book->lengthlist,book->entries,1,NULL);
+    return validate_long_codewords(book->lengthlist,book->entries);
   for(i=1;i<32;i++)
     occupied+=(uint64_t)counts[i]<<(32-i);
   /* Empty sparse books and a lone one-bit word are accepted by the decoder. */
   if(!occupied || (counts[1]==1 && occupied==capacity/2))return 0;
   return occupied==capacity ? 0 : -1;
-}
-
-static ogg_uint32_t *make_words(HvAllocator *allocator, char *l,long n,long sparsecount){
-  long i,j,count;
-  ogg_uint32_t *r=hv_allocate(allocator, (sparsecount?sparsecount:n)*sizeof(*r));
-  if(mark_words(l,n,sparsecount,r)){
-    hv_free(allocator,r);
-    return NULL;
-  }
-
-  /* bitreverse the words because our bitwise packer/unpacker is LSb
-     endian */
-  for(i=0,count=0;i<n;i++){
-    ogg_uint32_t temp=0;
-    for(j=0;j<l[i];j++){
-      temp<<=1;
-      temp|=(r[count]>>j)&1;
-    }
-
-    if(sparsecount){
-      if(l[i])
-        r[count++]=temp;
-    }else
-      r[count++]=temp;
-  }
-
-  return(r);
 }
 
 /* there might be a straightforward one-line way to do the below
@@ -244,24 +213,35 @@ float *_book_unquantize(HvAllocator *allocator, const static_codebook *b,int n,i
          values (and are wasted).  So don't generate codebooks like
          that */
       quantvals=_book_maptype1_quantvals(b);
-      for(j=0;j<b->entries;j++){
-        if((sparsemap && b->lengthlist[j]) || !sparsemap){
-          float last=0.f;
-          int indexdiv=1;
-          for(k=0;k<b->dim;k++){
-            int index= (j/indexdiv)%quantvals;
-            float val=b->quantlist[index];
-            val=fabs(val)*delta+mindel+last;
-            if(b->q_sequencep)last=val;
-            if(sparsemap)
-              r[sparsemap[count]*b->dim+k]=val;
-            else
-              r[count*b->dim+k]=val;
-            indexdiv*=quantvals;
-          }
-          count++;
+      /* Advance the map-1 lattice as a mixed-radix counter. Only entries
+         present in a sparse book need a vector. The wire limits entries to
+         24 bits, so a base greater than one cannot use more than 24 digits. */
+      {
+        unsigned digits[24]={0};
+        double levels[32];
+        if(quantvals<=32){
+          for(k=0;k<quantvals;k++)levels[k]=fabs((float)b->quantlist[k])*delta+mindel;
         }
-
+        for(j=0;j<b->entries;j++){
+          if(!sparsemap || b->lengthlist[j]){
+            float *out=r+(sparsemap?sparsemap[count]:count)*b->dim;
+            float last=0.f;
+            for(k=0;k<b->dim;k++){
+              unsigned digit=k<24?digits[k]:0;
+              const double value=quantvals<=32 ? levels[digit] :
+                  fabs((float)b->quantlist[digit])*delta+mindel;
+              out[k]=(float)(value+last);
+              if(b->q_sequencep)last=out[k];
+            }
+            count++;
+          }
+          if(quantvals>1){
+            for(k=0;k<b->dim && k<24;k++){
+              if(++digits[k]<(unsigned)quantvals)break;
+              digits[k]=0;
+            }
+          }
+        }
       }
       break;
     case 2:
@@ -321,41 +301,62 @@ static ogg_uint32_t bitreverse(ogg_uint32_t x){
   return((x>> 1)&0x55555555UL) | ((x<< 1)&0xaaaaaaaaUL);
 }
 
-/* Build a stable ascending order for the canonical codewords. The output
-   list and the existing inverse-index allocation supply both radix buffers. */
-static void order_codewords(const ogg_uint32_t *codes,int count,
-                            ogg_uint32_t *order,ogg_uint32_t *scratch){
-  int i;
-  for(i=0;i<count;i++)order[i]=(ogg_uint32_t)i;
-  if(count<32){
-    for(i=1;i<count;i++){
-      ogg_uint32_t key=order[i];
-      int pos=i;
-      while(pos>0 && codes[order[pos-1]]>codes[key]){
-        order[pos]=order[pos-1];
-        pos--;
-      }
-      order[pos]=key;
+/* A Vorbis code is the first available prefix of the requested length.
+   The free intervals are ordered from deepest to shallowest, with at most
+   one per depth. Taking the deepest prefix that fits, then splitting its
+   left edge, gives the same canonical assignment as the marker algorithm.
+   Keep free intervals and assigned leaves in one ordered list: each split
+   creates one interval and each leaf is visited once to emit the lookup. */
+static int make_decode_order(HvAllocator *allocator,const static_codebook *book,
+                             int used,int *ranks,ogg_uint32_t *words){
+  struct FreePrefix { int previous,next; } freeAt[33]={{-1,-1}};
+  int *nextLeaf=hv_allocate(allocator,(size_t)used*sizeof(*nextLeaf));
+  uint64_t available=1;
+  int head=used,leaf=0;
+  for(long i=0;i<book->entries;++i){
+    int length=book->lengthlist[i];
+    if(!length)continue;
+    uint64_t fits=available&((UINT64_C(1)<<(length+1))-1);
+    if(!fits)goto invalid;
+    unsigned depth;
+#if defined(__clang__) || defined(__GNUC__)
+    depth=63u-(unsigned)__builtin_clzll(fits);
+#else
+    for(depth=0;fits>>=1;)++depth;
+#endif
+    int before=freeAt[depth].previous,after=freeAt[depth].next;
+    if(before<0)head=leaf;
+    else if(before<used)nextLeaf[before]=leaf;
+    else freeAt[before-used].next=leaf;
+    int last=leaf;
+    for(int d=length;d>(int)depth;--d){
+      const int slot=used+d;
+      freeAt[d].previous=last;
+      if(last<used)nextLeaf[last]=slot;
+      else freeAt[last-used].next=slot;
+      last=slot;
     }
-  }else{
-    unsigned shift;
-    for(shift=0;shift<32;shift+=8){
-      unsigned offsets[256]={0};
-      unsigned next=0;
-      int bucket;
-      for(i=0;i<count;i++)offsets[(codes[order[i]]>>shift)&255u]++;
-      for(bucket=0;bucket<256;bucket++){
-        unsigned n=offsets[bucket];
-        offsets[bucket]=next;
-        next+=n;
-      }
-      for(i=0;i<count;i++){
-        unsigned key=order[i];
-        scratch[offsets[(codes[key]>>shift)&255u]++]=key;
-      }
-      {ogg_uint32_t *swap=order;order=scratch;scratch=swap;}
-    }
+    if(last<used)nextLeaf[last]=after;
+    else freeAt[last-used].next=after;
+    if(after>=used)freeAt[after-used].previous=last;
+    available &= ~(UINT64_C(1) << depth);
+    available |= (UINT64_C(1) << (length + 1)) - (UINT64_C(1) << (depth + 1));
+    ranks[leaf++]=length;
   }
+  if(available && !(used==1 && ranks[0]==1))goto invalid;
+  uint64_t word=0;
+  for(int rank=0;rank<used;++rank){
+    const int length=ranks[head];
+    words[rank]=(ogg_uint32_t)word;
+    word+=UINT64_C(1)<<(32-length);
+    ranks[head]=rank;
+    head=nextLeaf[head];
+  }
+  hv_free(allocator,nextLeaf);
+  return 0;
+invalid:
+  hv_free(allocator,nextLeaf);
+  return -1;
 }
 
 /* decode codebook arrangement is more heavily optimized than encode */
@@ -366,9 +367,11 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
   memset(c,0,sizeof(*c));
 
   /* count actually used entries and find max length */
-  for(i=0;i<s->entries;i++)
-    if(s->lengthlist[i]>0)
-      n++;
+  for(i=0;i<s->entries;i++){
+    int length=s->lengthlist[i];
+    n+=length>0;
+    if(length>c->dec_maxlength)c->dec_maxlength=length;
+  }
 
   c->entries=s->entries;
   c->used_entries=n;
@@ -385,35 +388,24 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
     Second, we reorder all vectors, including the entry index above,
     by sorted bitreversed codeword to allow treeless decode. */
 
-    /* perform sort */
-    ogg_uint32_t *codes=make_words(allocator, s->lengthlist,s->entries,c->used_entries);
-    if(codes==NULL)goto err_out;
-    for(i=0;i<n;i++)codes[i]=bitreverse(codes[i]);
-
     sortindex=hv_allocate(allocator, n*sizeof(*sortindex));
     c->codelist=hv_allocate(allocator, n*sizeof(*c->codelist));
-    order_codewords(codes,n,c->codelist,(ogg_uint32_t *)sortindex);
-    for(i=0;i<n;i++)sortindex[c->codelist[i]]=i;
-
-    for(i=0;i<n;i++)
-      c->codelist[sortindex[i]]=codes[i];
-    hv_free(allocator, codes);
+    if(make_decode_order(allocator,s,n,sortindex,c->codelist)){
+      hv_free(allocator,sortindex);
+      goto err_out;
+    }
 
     c->valuelist=_book_unquantize(allocator, s,n,sortindex);
     c->dec_index=hv_allocate(allocator, n*sizeof(*c->dec_index));
 
-    for(n=0,i=0;i<s->entries;i++)
-      if(s->lengthlist[i]>0)
-        c->dec_index[sortindex[n++]]=i;
-
     c->dec_codelengths=hv_allocate(allocator, n*sizeof(*c->dec_codelengths));
-    c->dec_maxlength=0;
-    for(n=0,i=0;i<s->entries;i++)
+    for(n=0,i=0;i<s->entries;i++){
       if(s->lengthlist[i]>0){
-        c->dec_codelengths[sortindex[n++]]=s->lengthlist[i];
-        if(s->lengthlist[i]>c->dec_maxlength)
-          c->dec_maxlength=s->lengthlist[i];
+        const int index=sortindex[n++];
+        c->dec_index[index]=i;
+        c->dec_codelengths[index]=s->lengthlist[i];
       }
+    }
 
     if(n==1 && c->dec_maxlength==1){
       /* special case the 'single entry codebook' with a single bit
