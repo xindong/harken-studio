@@ -143,7 +143,8 @@ public:
 class VorbisResident final : public EncodedMedia {
 public:
     static std::shared_ptr<VorbisResident> Prepare(VorbisCodec& codec,
-        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat = false);
+        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat = false,
+        const std::uint64_t* verifiedChecksum = nullptr);
     const VorbisSettings& Settings() const noexcept { return *settings_; }
     std::size_t TryWidenUnpublished(std::size_t budget) noexcept;
     MediaDecoder* Acquire() const noexcept override;

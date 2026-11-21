@@ -507,16 +507,17 @@ PCMRegistry::PackReference::ResidentCost PCMRegistry::PackReference::Cost() cons
 }
 
 VnResult PCMRegistry::PrepareResidentVorbis(VnSoundId soundId, std::vector<std::uint8_t> bytes,
-    std::size_t budget, PreparedPackSamples* out) {
+    std::size_t budget, PreparedPackSamples* out, const std::uint64_t* verifiedChecksum) {
     if (!codec_) return VN_CAPABILITY_UNAVAILABLE;
-    return PrepareVorbisSamples(soundId, *codec_, std::move(bytes), budget, out, true);
+    return PrepareVorbisSamples(soundId, *codec_, std::move(bytes), budget, out, true, verifiedChecksum);
 }
 
 VnResult PCMRegistry::PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
-    std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out, bool packFormat) {
+    std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out, bool packFormat,
+    const std::uint64_t* verifiedChecksum) {
     if (!out || out->IsPrepared()) return VN_INVALID_ARG;
     VorbisPrepareResult result;
-    auto source = VorbisResident::Prepare(codec, std::move(bytes), budget, result, packFormat);
+    auto source = VorbisResident::Prepare(codec, std::move(bytes), budget, result, packFormat, verifiedChecksum);
     if (!source) return result == VorbisPrepareResult::OutOfMemory ? VN_PACK_RESIDENT_CAPACITY :
         result == VorbisPrepareResult::Unsupported && !packFormat ? VN_CAPABILITY_UNAVAILABLE : VN_BAD_PACK;
     auto entry = std::make_shared<Entry>();

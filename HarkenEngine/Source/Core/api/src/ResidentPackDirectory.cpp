@@ -1,4 +1,4 @@
-#include "harken/core/CurrentWorldCodec.h"
+#include "ResidentPackDirectory.h"
 #include "harken/media/PackLogicImage.h"
 #include <harken/Harken.h>
 
@@ -20,6 +20,8 @@
 #pragma comment(lib, "bcrypt.lib")
 namespace {
 constexpr size_t Max = 16u * 1024u * 1024u;
+constexpr uint32_t Hrp1 = 0x31505248;
+constexpr uint32_t Hrp2 = 0x32505248;
 using Row = VnResidentPackRowV1;
 
 struct Owner {
@@ -125,6 +127,56 @@ VnResult Provide(void *ctx, uint64_t, const char *, uint32_t, uint64_t,
   return VN_OK;
 }
 void Release(void *, uint64_t, VnPackByteSpan) {}
+bool Unpack(DECOMPRESSOR_HANDLE decoder, uint32_t format,
+            std::span<const uint8_t> input, std::span<uint8_t> output) {
+  if (format == Hrp1) {
+    SIZE_T written{};
+    return Decompress(decoder, input.data(), input.size(), output.data(),
+                      output.size(), &written) && written == output.size();
+  }
+  while (!output.empty()) {
+    uint32_t stored{};
+    if (input.size() < sizeof(stored))
+      return false;
+    memcpy(&stored, input.data(), sizeof(stored));
+    input = input.subspan(sizeof(stored));
+    const size_t bytes = std::min<size_t>(8192, output.size());
+    if (!stored || stored > bytes || stored > input.size())
+      return false;
+    if (stored == bytes) {
+      memcpy(output.data(), input.data(), bytes);
+    } else {
+      SIZE_T written{};
+      if (!Decompress(decoder, input.data(), stored, output.data(), bytes,
+                      &written) || written != bytes)
+        return false;
+    }
+    input = input.subspan(stored);
+    output = output.subspan(bytes);
+  }
+  return input.empty();
+}
+
+struct VisitScope {
+  std::span<Owner> owners;
+  std::span<harken::PackCanonicalImage> images;
+  std::span<Row> rows;
+  VisitScope* prior;
+  static thread_local VisitScope* current;
+  VisitScope(std::span<Owner> owners, std::span<harken::PackCanonicalImage> images, std::span<Row> rows)
+      : owners(owners), images(images), rows(rows), prior(current) { current = this; }
+  ~VisitScope() { current = prior; }
+  size_t Index(void* context) const noexcept {
+    const auto begin = reinterpret_cast<uintptr_t>(owners.data());
+    const auto address = reinterpret_cast<uintptr_t>(context);
+    if (address < begin || address - begin >= owners.size_bytes() ||
+        (address - begin) % sizeof(Owner) != 0)
+      return owners.size();
+    return (address - begin) / sizeof(Owner);
+  }
+};
+thread_local VisitScope* VisitScope::current = nullptr;
+
 struct Decoder {
   DECOMPRESSOR_HANDLE h{};
   ~Decoder() {
@@ -135,32 +187,16 @@ struct Decoder {
 } // namespace
 static VnResult BindingFacts(const VnPackInspectDescV1 &request,
                              const harken::PackCanonicalImage &init,
-                             VnPackInspectReportV1 &report, const harken::detail::PackDecodeBudget& budget) {
-  harken::PackCanonicalImage image;
+                             VnPackInspectReportV1 &report, const harken::detail::PackDecodeBudget& budget,
+                             harken::PackCanonicalImage& image) {
+  report.rootActionId = request.rootActionId;
   auto res = harken::ParsePackForResidentPreparation(
       request.pack.bytes, request.pack.byteCount, &image, &report.contentHash,
-      budget);
+      budget, &report);
   if (res != VN_OK)
     return res;
   if (!image.hasPartition || image.requirement.storageModelVersion != 2 ||
       image.packKind != HK_PACK_KIND_CANONICAL_CONTENT)
-    return VN_BAD_PACK;
-  harken::CurrentWorldBodyImage body;
-  auto decoded = body.DecodeWithBudget(
-      image.partitionBody.data(), image.partitionBody.size(),
-      harken::kCanonicalDefinitionPartitionBodyVintage,
-      harken::CurrentWorldDecodeMode::StrictArtifact, budget);
-  if (decoded == harken::CurrentWorldBodyDecodeResult::Capacity)
-    return VN_PACK_RESIDENT_CAPACITY;
-  const auto *view = body.ProductionView();
-  if (decoded != harken::CurrentWorldBodyDecodeResult::Ok || !view)
-    return VN_BAD_PACK;
-  bool rooted = false;
-  for (uint32_t i = 0; i < view->actionCount; i++)
-    rooted |=
-        (view->actions[i].actionStableId.high == request.rootActionId.high &&
-         view->actions[i].actionStableId.low == request.rootActionId.low);
-  if (!rooted)
     return VN_BAD_PACK;
   bool linked = false;
   for (const auto &edge : image.dependencyEdges) {
@@ -189,8 +225,6 @@ static VnResult BindingFacts(const VnPackInspectDescV1 &request,
   report.packStableId = image.packStableId;
   report.contentRevision = image.requirement.packContentRevision;
   report.rootActionId = request.rootActionId;
-  report.projectId = view->identity.projectId;
-  report.executionFingerprint = view->identity.runtimeSemanticFingerprint;
   return VN_OK;
 }
 static std::wstring Wide(const char *utf8) {
@@ -207,8 +241,39 @@ static std::wstring Wide(const char *utf8) {
 }
 #endif
 
-extern "C" VnResult
-Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
+bool harken::IsResidentDirectorySource(VnPackByteProviderFn provide, VnPackByteReleaseFn release, void* context) noexcept {
+#if defined(_WIN32)
+  const auto* visit = VisitScope::current;
+  return provide == Provide && release == Release && visit && visit->Index(context) < visit->owners.size();
+#else
+  return false;
+#endif
+}
+
+bool harken::TakeResidentDirectoryImage(const VnPackLoadDesc& source, const VnPackByteSpan& span,
+    const detail::PackDecodeBudget& budget, PackCanonicalImage& output, uint64_t& hash) {
+#if defined(_WIN32)
+  if (!IsResidentDirectorySource(source.provide, source.release, source.providerUserData)) return false;
+  auto& visit = *VisitScope::current;
+  const auto index = visit.Index(source.providerUserData);
+  if (index >= visit.images.size()) return false;
+  auto& image = visit.images[index];
+  const auto& bytes = visit.owners[index].bytes;
+  if (!image.hasPartition || image.packStableId != source.packStableId ||
+      bytes.data() != span.bytes || bytes.size() != span.byteCount) return false;
+  detail::PackDecodeCharge charge(budget);
+  charge.Add(image.staging.Bytes());
+  image.staging = std::move(charge);
+  output = std::move(image);
+  image.hasPartition = false;
+  hash = visit.rows[index].facts.contentHash;
+  return true;
+#else
+  return false;
+#endif
+}
+
+static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepImages, bool& submitted) {
   if (!desc || desc->structSize != sizeof(*desc) || !desc->memberCount ||
       !desc->utf8Directory || !desc->utf8Names || !desc->visit ||
       !desc->maxInputBytes || desc->init.structSize != sizeof(VnPackByteSpan) ||
@@ -255,6 +320,8 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
     if (!CreateDecompressor(COMPRESS_ALGORITHM_XPRESS_HUFF, nullptr,
                             &decoder.h))
       return VN_DEVICE_ERROR;
+    std::vector<harken::PackCanonicalImage> images;
+    if (keepImages) harken::detail::DecodeResize(images, count, retained);
     std::vector<Owner> owners(count);
     std::vector<Row> rows(count);
     std::wstring_view rest(names);
@@ -310,7 +377,7 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
         return VN_PACK_PROVIDER_FAILED;
       uint32_t h[4];
       memcpy(h, image.data(), 16);
-      if (h[0] != 0x31505248 || h[1] == 0 || h[1] > Max || !h[2] ||
+      if ((h[0] != Hrp1 && h[0] != Hrp2) || h[1] == 0 || h[1] > Max || !h[2] ||
           h[2] > Max || !h[3] || size_t(h[2]) + h[3] + 48 != image.size())
         return VN_BAD_PACK;
       retained.Add(h[1]);
@@ -324,10 +391,7 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
       if (!Meta({reinterpret_cast<char *>(image.data() + 16), h[2]}, name, id))
         return VN_CAPABILITY_UNAVAILABLE;
       owner.bytes.resize(h[1]);
-      SIZE_T written{};
-      if (!Decompress(decoder.h, image.data() + 16 + h[2], h[3],
-                      owner.bytes.data(), h[1], &written) ||
-          written != h[1])
+      if (!Unpack(decoder.h, h[0], {image.data() + 16 + h[2], h[3]}, owner.bytes))
         return VN_BAD_PACK;
       VnPackInspectDescV1 req{};
       req.structSize = sizeof req;
@@ -337,7 +401,8 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
       req.rootActionId = id;
       req.maxInputBytes = desc->init.byteCount + owner.bytes.size();
       row.facts.structSize = sizeof row.facts;
-      status = BindingFacts(req, initImage, row.facts, staging);
+      harken::PackCanonicalImage scratch;
+      status = BindingFacts(req, initImage, row.facts, staging, keepImages ? images[j] : scratch);
       if (status != VN_OK)
         return status;
       row.byteCount = owner.bytes.size();
@@ -354,6 +419,8 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
     }
     if (!MarkerClear(directory))
       return VN_PACK_STALE_REVISION;
+    VisitScope scope(owners, images, rows);
+    submitted = true;
     return desc->visit(desc->userData, rows.data(), count);
   } catch (const std::bad_alloc &) {
     return VN_PACK_RESIDENT_CAPACITY;
@@ -363,4 +430,13 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
 #else
   return VN_CAPABILITY_UNAVAILABLE;
 #endif
+}
+
+extern "C" VnResult Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
+  bool submitted = false;
+  const auto result = VisitDirectory(desc, true, submitted);
+  if (result == VN_PACK_RESIDENT_CAPACITY && !submitted)
+    // Admit tight inputs using one temporary image at a time. The visitor has not run yet.
+    return VisitDirectory(desc, false, submitted);
+  return result;
 }
