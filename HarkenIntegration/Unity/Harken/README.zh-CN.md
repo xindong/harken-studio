@@ -53,4 +53,6 @@ python Tools~/publish_packs.py --studio-cli /path/to/HarkenStudioCLI --project G
 
 直接使用原生文件 API 或旧版 Unity SDK 的项目可使用 Studio CLI 的常规导出目录。如果交付渠道已有外层压缩，请按最终归档大小评估收益。
 
+在 Windows 上为 Windows 游戏发布常驻音效时，可在发布命令末尾添加 `--format windows-resident`。把生成的整个平台目录随游戏分发，`PackBootstrap.StartDirectory` 会识别 `Init.hrp`。进入关卡时用 `Session.PrepareActions` 一次传入本关的 Action 名称，成功返回后即可按名播放。每个 Action 有独立的 `.hrp` 文件。使用同一项目和兼容的 Init 更新单个声音时，只需分发变化的文件。
+
 需要标准 ZIP 时，在同一命令末尾添加 `--format zip`。工具会生成 `<输出目录>/<平台>/Packs.zip`，归档根目录直接包含 Studio 导出的 Pack、配套 JSON 和辅助文件，保留各自的相对路径和原始字节。16 MiB 以内且压缩后更小的条目使用 DEFLATE，其余条目原样存储。使用标准 ZIP 工具解包后，普通文件加载入口可直接使用该平台目录。
