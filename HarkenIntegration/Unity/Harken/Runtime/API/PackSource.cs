@@ -65,7 +65,7 @@ namespace Harken
         {
             if (snapshot != null) return null;
             return new PackSource(language, reader, asyncReader, revision,
-                directory == null ? null : new PackDirectorySource(directory.Root, language), archive: archive);
+                directory?.ForLanguage(language), archive: archive);
         }
 
         internal static bool HasControlContext => SynchronizationContext.Current != null &&

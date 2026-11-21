@@ -22,12 +22,14 @@ namespace Harken
         internal readonly string Root;
         internal readonly string Language;
 
-        internal PackDirectorySource(string root, string language)
+        internal PackDirectorySource(string root, string language, bool? residentLayout = null)
         {
             Root = Path.GetFullPath(root);
             Language = language ?? string.Empty;
-            resident = File.Exists(Path.Combine(Root, "Init.hrp"));
+            resident = residentLayout ?? File.Exists(Path.Combine(Root, "Init.hrp"));
         }
+
+        internal PackDirectorySource ForLanguage(string language) => new PackDirectorySource(Root, language, resident);
 
         internal static bool ValidLanguage(string value)
         {
