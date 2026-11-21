@@ -8587,6 +8587,51 @@ TABLE_JSON = r'''
       ]
     },
     {
+      "name": "Vn_BeginOutputPreparation",
+      "note": "The host owns the local output device lifecycle. No remote opcode.",
+      "params": [
+        {
+          "name": "config",
+          "ctype": "const VnConfig*",
+          "wire": "desc",
+          "type": "VnConfig"
+        },
+        {
+          "name": "outTicket",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "Vn_InitWithOutputPreparation",
+      "note": "The host owns the local output device lifecycle. No remote opcode.",
+      "params": [
+        {
+          "name": "config",
+          "ctype": "const VnConfig*",
+          "wire": "desc",
+          "type": "VnConfig"
+        },
+        {
+          "name": "ticket",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "Vn_CancelOutputPreparation",
+      "note": "The host owns the local output device lifecycle. No remote opcode.",
+      "params": [
+        {
+          "name": "ticket",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
       "opcode": 2,
       "name": "Vn_Term",
       "policy": "refused-lifecycle",
@@ -13435,7 +13480,7 @@ TABLE_JSON = r'''
       },
       "VN_ABI_VERSION_MINOR": {
         "type": "u32",
-        "value": 4
+        "value": 5
       },
       "VN_EMITTER_CREATE_STATE_ONLY": {
         "type": "u32",

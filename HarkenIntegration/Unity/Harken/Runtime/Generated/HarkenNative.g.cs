@@ -40,6 +40,15 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_Init", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_Init(in VnConfig config);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_BeginOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_BeginOutputPreparation(in VnConfig config, out ulong outTicket);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_InitWithOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_InitWithOutputPreparation(in VnConfig config, ulong ticket);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_CancelOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_CancelOutputPreparation(ulong ticket);
+
         [DllImport(LibraryName, EntryPoint = "Vn_Term", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_Term();
 

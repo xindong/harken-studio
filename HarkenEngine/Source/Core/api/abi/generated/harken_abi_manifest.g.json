@@ -1465,7 +1465,7 @@
         "VN_ABI_VERSION_MINOR": {
           "edition": "core",
           "type": "u32",
-          "value": 4
+          "value": 5
         },
         "VN_ATTENUATION_MAX_CURVE_POINTS": {
           "edition": "core",
@@ -3264,6 +3264,50 @@
             {
               "ctype": "const VnConfig*",
               "name": "config"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_BeginOutputPreparation",
+          "parameters": [
+            {
+              "ctype": "const VnConfig*",
+              "name": "config"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outTicket"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_InitWithOutputPreparation",
+          "parameters": [
+            {
+              "ctype": "const VnConfig*",
+              "name": "config"
+            },
+            {
+              "ctype": "uint64_t",
+              "name": "ticket"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_CancelOutputPreparation",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "ticket"
             }
           ],
           "returnType": "VnResult"
@@ -6587,9 +6631,11 @@
         "Vn_ApplyBusTopology",
         "Vn_ApplyVoiceBinding",
         "Vn_AttachBinding",
+        "Vn_BeginOutputPreparation",
         "Vn_BeginStreamFile",
         "Vn_BeginStreamSource",
         "Vn_BindVoiceAttenuation",
+        "Vn_CancelOutputPreparation",
         "Vn_CancelStreamSource",
         "Vn_CaptureCompressorRuntimeInfo",
         "Vn_CaptureEffectCapabilities",
@@ -6616,6 +6662,7 @@
         "Vn_DetachBinding",
         "Vn_DisconnectBusSend",
         "Vn_Init",
+        "Vn_InitWithOutputPreparation",
         "Vn_InspectCanonicalPackV1",
         "Vn_InspectInitPack",
         "Vn_LoadCurrentWorld",
@@ -27049,7 +27096,7 @@
       }
     }
   },
-  "contractSha256": "9c35e3d96ebadcb193fdb0c8735d0cea22f02dc679a651b1010635e7ab1592e8",
+  "contractSha256": "4d2ac125828a0c4d05478a72d77ec5fd3d9529dde45d7baba3c92d4c0ac0121f",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }
