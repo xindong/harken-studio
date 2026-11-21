@@ -2,7 +2,7 @@
 #define HARKEN_CORE_ARM_GROUP_TABLE_H
 
 #include "harken/core/DecisionToken.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/TimelineArmTable.h"
 
 #include <atomic>
@@ -11,7 +11,6 @@
 
 namespace harken {
 
-inline constexpr std::uint32_t kMaxArmGroupsHard = 16384;
 inline constexpr std::uint16_t kMaxArmsPerGroupHard = 1024;
 
 enum class ArmGroupState : std::uint8_t {
@@ -59,13 +58,13 @@ public:
     };
     class PreparedUse {
     public:
-        PreparedUse(ArmGroupTable& owner, BackingPreparation* backing) noexcept;
+        PreparedUse(ArmGroupTable& owner, const BackingPreparation* backing) noexcept;
         ~PreparedUse();
         PreparedUse(const PreparedUse&) = delete;
         PreparedUse& operator=(const PreparedUse&) = delete;
     private:
         ArmGroupTable& owner_;
-        BackingPreparation* previous_;
+        const BackingPreparation* previous_;
         StableStoragePreparedUse rows_;
     };
     bool PrepareBacking(std::uint32_t groupCount, std::uint32_t totalMembers,
@@ -73,12 +72,14 @@ public:
     ArmGroupTable(std::uint32_t capacity,
                   std::uint32_t maxMembersPerGroup);
 
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t Capacity() const noexcept { return rows_.ConstructedCount(); }
     bool Valid() const noexcept {
         return capacity_ != 0 && maxMembersPerGroup_ != 0;
     }
     std::uint32_t LiveCount() const noexcept;
     std::uint32_t FreeCount() const noexcept;
+    std::uint32_t OccupiedCount() const noexcept { return Capacity() - FreeCount(); }
+    bool PrepareAvailable(std::uint32_t count) noexcept;
     std::uint32_t QuarantinedCount() const noexcept;
     std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
@@ -180,11 +181,12 @@ private:
     void ReturnPreparedMembers(Row& row) noexcept;
 
     std::size_t preparedMemberBytes_ = 0;
-    StableRowStorage<Row> rows_;
+    std::uint32_t CountOccupiedUntil(std::uint64_t needed) const noexcept;
+    GrowingRowStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
     std::uint16_t maxMembersPerGroup_ = 0;
     std::uint16_t memberAllocationLimitForTests_ = UINT16_MAX;
-    BackingPreparation* activeBacking_ = nullptr;
+    const BackingPreparation* activeBacking_ = nullptr;
 };
 
 static_assert(std::atomic<ArmGroupState>::is_always_lock_free);

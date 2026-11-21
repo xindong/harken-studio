@@ -37,9 +37,12 @@ inline bool LimitOccurrenceGrowthToCurrentPages(harken::OccurrenceStatePool& poo
     return pool.FreeCount() != 0;
 }
 
-inline bool LimitTransitionGrowthToCurrentPages(harken::TransitionInstancePool& pool) {
+template<class Pool>
+inline bool LimitRowGrowthToCurrentPages(Pool& pool) {
     if (!pool.PrepareAvailable(1u)) return false;
-    pool.SetCommitPageLimitForTests(0);
+    if constexpr (requires { pool.SetRowCommitPageLimitForTests(0); })
+        pool.SetRowCommitPageLimitForTests(0);
+    else pool.SetCommitPageLimitForTests(0);
     while (pool.FreeCount() < UINT32_MAX && pool.PrepareAvailable(pool.FreeCount() + 1u)) {}
     return pool.FreeCount() != 0;
 }

@@ -3078,9 +3078,8 @@ TEST(DecisionGroup, HardCapacityProfilesFailClosedBeforeAllocation) {
                      .Valid());
     EXPECT_FALSE(harken::ArmGroupTable(0, 1).Valid());
     EXPECT_FALSE(harken::ArmGroupTable(1, 0).Valid());
-    EXPECT_FALSE(harken::ArmGroupTable(
-                     harken::kMaxArmGroupsHard + 1, 1)
-                     .Valid());
+    EXPECT_TRUE(harken::ArmGroupTable(UINT32_MAX, 1).Valid());
+    EXPECT_FALSE(harken::ArmGroupTable(1, harken::kMaxArmsPerGroupHard + 1u).Valid());
 
     auto config = MakePoolConfig();
     config.maxPlan03GroupHeadersPerPage =
@@ -4222,7 +4221,7 @@ TEST(ArmGroup, PreparedMembersRequireExactIdentityAndCompleteOrderedCensus) {
     EXPECT_EQ(0u, groups.RowStorageBytes());
     EXPECT_EQ(0u, groups.RowCommittedBytes());
     EXPECT_EQ(0u, groups.MemberStorageBytes());
-    EXPECT_EQ(1u, groups.FreeCount());
+    EXPECT_EQ(0u, groups.FreeCount());
     groups.SetRowCommitPageLimitForTests(0);
     EXPECT_FALSE(groups.Prepare(parent, members.data(), 2, &token));
     EXPECT_FALSE(token.Valid());

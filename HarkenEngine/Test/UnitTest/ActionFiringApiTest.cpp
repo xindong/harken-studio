@@ -5474,7 +5474,7 @@ struct ActionPreparationOwnerSnapshot {
     std::uint32_t transitionLive = 0;
     std::uint32_t unavailableTransitions = 0;
     std::uint32_t armGroupLive = 0;
-    std::uint32_t armGroupFree = 0;
+    std::uint32_t armGroupOccupied = 0;
     std::uint32_t voiceActive = 0;
     std::uint32_t voiceHighWater = 0;
     std::uint32_t ledgerAvailable = 0;
@@ -5521,7 +5521,7 @@ ActionPreparationOwnerSnapshot CaptureActionPreparationOwners(
     snapshot.transitionLive = engine.transitionInstances.LiveCount();
     snapshot.unavailableTransitions = engine.transitionInstances.Capacity() - engine.transitionInstances.FreeCount();
     snapshot.armGroupLive = engine.armGroups.LiveCount();
-    snapshot.armGroupFree = engine.armGroups.FreeCount();
+    snapshot.armGroupOccupied = engine.armGroups.OccupiedCount();
     snapshot.voiceActive = engine.voices.ActiveCount();
     snapshot.voiceHighWater = engine.voices.HighWaterVoices();
     snapshot.ledgerAvailable = engine.ledger.AvailableEntryCount();
@@ -5621,7 +5621,7 @@ void ExpectActionPreparationOwnersUnchanged(
     EXPECT_EQ(expected.transitionLive, actual.transitionLive);
     EXPECT_EQ(expected.unavailableTransitions, actual.unavailableTransitions);
     EXPECT_EQ(expected.armGroupLive, actual.armGroupLive);
-    EXPECT_EQ(expected.armGroupFree, actual.armGroupFree);
+    EXPECT_EQ(expected.armGroupOccupied, actual.armGroupOccupied);
     EXPECT_EQ(expected.voiceActive, actual.voiceActive);
     EXPECT_EQ(expected.voiceHighWater, actual.voiceHighWater);
     EXPECT_EQ(expected.ledgerAvailable, actual.ledgerAvailable);
@@ -6030,7 +6030,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
         break;
     }
     case ContinuationOwnerExhaustion::Transition:
-        ASSERT_TRUE(harkentest::LimitTransitionGrowthToCurrentPages(engine->transitionInstances));
+        ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->transitionInstances));
         transitions.resize(engine->transitionInstances.FreeCount());
         for (auto& token : transitions) {
             ASSERT_TRUE(engine->transitionInstances.Acquire({0, 0}, &token));
@@ -6038,6 +6038,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
         ASSERT_EQ(0u, engine->transitionInstances.FreeCount());
         break;
     case ContinuationOwnerExhaustion::ArmGroup:
+        ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->armGroups));
         armGroups.resize(engine->armGroups.FreeCount());
         for (auto& token : armGroups) {
             ASSERT_TRUE(engine->armGroups.Reserve(
@@ -6050,7 +6051,8 @@ void ExpectTransitionContinuationOwnerExhaustion(
     const auto before = CaptureActionPreparationOwners(*engine);
     ExpectPublicActionPreparationRefusal(
         *engine, image.actions[9].actionStableId, emitter,
-        exhaustion == ContinuationOwnerExhaustion::Transition ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
+        (exhaustion == ContinuationOwnerExhaustion::Transition ||
+            exhaustion == ContinuationOwnerExhaustion::ArmGroup) ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
 
     for (auto& prepared : decisions) {
         EXPECT_TRUE(engine->decisions.CancelPreparedReservation(&prepared));
@@ -6090,6 +6092,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
         EXPECT_TRUE(
             engine->transitionInstances.CancelBeforePublication(token));
     }
+    engine->armGroups.SetRowCommitPageLimitForTests(SIZE_MAX);
     for (const auto token : armGroups) {
         EXPECT_TRUE(engine->armGroups.CancelBeforePublication(token));
     }
@@ -25468,7 +25471,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(admissionRecheck.owners.firingOccupied, returnedOwners.firingOccupied);
             EXPECT_EQ(admissionRecheck.owners.occupiedPlayableRows, returnedOwners.occupiedPlayableRows);
             EXPECT_EQ(admissionRecheck.owners.unavailableTransitions, returnedOwners.unavailableTransitions);
-            EXPECT_EQ(admissionRecheck.owners.armGroupFree, returnedOwners.armGroupFree);
+            EXPECT_EQ(admissionRecheck.owners.armGroupOccupied, returnedOwners.armGroupOccupied);
             EXPECT_EQ(admissionRecheck.owners.armFree, returnedOwners.armFree);
             EXPECT_EQ(admissionRecheck.owners.unavailableOccurrences, returnedOwners.unavailableOccurrences);
             EXPECT_EQ(admissionRecheck.owners.compositeFree, returnedOwners.compositeFree);
@@ -64703,7 +64706,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     PreparationMatrixQueueContinuationArmGroupCapacityReturnsBackpressure) {
+     PreparationMatrixQueueContinuationArmGroupAllocationFailureRecovers) {
     ExpectTransitionContinuationOwnerExhaustion(
         ContinuationOwnerExhaustion::ArmGroup);
 }
@@ -65455,7 +65458,7 @@ TEST(ActionFiringApi,
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueBefore));
 
-    ASSERT_TRUE(harkentest::LimitTransitionGrowthToCurrentPages(engine->transitionInstances));
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->transitionInstances));
     std::vector<harken::TransitionInstanceToken> occupied(
         engine->transitionInstances.FreeCount());
     for (auto& token : occupied) {
@@ -65485,7 +65488,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     PreparationMatrixQueueReplacementArmGroupCapacityReturnsBackpressure) {
+     PreparationMatrixQueueReplacementArmGroupAllocationFailurePreservesSuccessor) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(4, 64, 48000));
@@ -65520,6 +65523,7 @@ TEST(ActionFiringApi,
     const VnVoiceHandle successorBefore = row->QueuePayload().queueSuccessorRenderHandle;
     const harken::ArmGroupToken armGroupBefore = row->QueueFiling().queueArmGroup;
 
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->armGroups));
     std::vector<harken::ArmGroupToken> occupied(
         engine->armGroups.FreeCount());
     for (auto& token : occupied) {
@@ -65530,7 +65534,7 @@ TEST(ActionFiringApi,
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(49), emitter, VN_BACKPRESSURE, before);
+        *engine, harkentest::ObjectId(49), emitter, VN_OUT_OF_MEMORY, before);
 
     EXPECT_EQ(decisionBefore.slot, row->QueueFiling().queueDecision.slot);
     EXPECT_EQ(decisionBefore.generation, row->QueueFiling().queueDecision.generation);

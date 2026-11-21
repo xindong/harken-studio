@@ -97,6 +97,8 @@ struct Profile {
     std::uint32_t variableControls = 0;
     std::uint32_t queueRows = 0;
     std::uint32_t conditionalRows = 0;
+    std::uint64_t embeddedArmGroups = 0;
+    std::uint64_t embeddedArmMembers = 0;
     bool mayExposeMusic = false;
     std::uint32_t selectionCount = 0;
     VoiceColumns voice{};
@@ -262,6 +264,8 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     a.profile.variableControls = SaturatingAdd(a.profile.variableControls, b.profile.variableControls, UINT32_MAX, a.flags);
     a.profile.queueRows = SaturatingAdd(a.profile.queueRows, b.profile.queueRows, UINT32_MAX, a.flags);
     a.profile.conditionalRows = SaturatingAdd(a.profile.conditionalRows, b.profile.conditionalRows, UINT32_MAX, a.flags);
+    a.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull, a.profile.embeddedArmGroups + b.profile.embeddedArmGroups);
+    a.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull, a.profile.embeddedArmMembers + b.profile.embeddedArmMembers);
     a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
         kControlSideCapacity, a.flags);
     a.profile.voice.Include(b.profile.voice);
@@ -298,6 +302,8 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.variableControls = std::max(a.profile.variableControls, b.profile.variableControls);
     a.profile.queueRows = std::max(a.profile.queueRows, b.profile.queueRows);
     a.profile.conditionalRows = std::max(a.profile.conditionalRows, b.profile.conditionalRows);
+    a.profile.embeddedArmGroups = std::max(a.profile.embeddedArmGroups, b.profile.embeddedArmGroups);
+    a.profile.embeddedArmMembers = std::max(a.profile.embeddedArmMembers, b.profile.embeddedArmMembers);
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
     a.profile.queue.Include(b.profile.queue);
@@ -325,6 +331,23 @@ inline std::uint64_t ReservedRows(const Profile& profile) noexcept {
     std::uint64_t rows = profile.current;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) rows += profile.H[t];
     return rows;
+}
+
+// Current control sides share a coordinator. A queue may also retain
+// the entry and exit groups of both its current and following transition.
+inline std::uint64_t ArmGroupRows(const Profile& profile) noexcept {
+    return std::max(2u, profile.controlSides) + 1ull + 4ull * profile.Q;
+}
+
+inline std::uint64_t DeferredArmGroups(const Profile& p) noexcept {
+    return p.embeddedArmGroups + (p.controlSides || p.Q ? ArmGroupRows(p) : 0u);
+}
+
+inline std::uint64_t DeferredArmMembers(const Profile& p) noexcept {
+    if (!p.controlSides && !p.Q) return p.embeddedArmMembers;
+    // A queue can retain its current group while preparing both transition sides.
+    const auto futureLeaves = ReservedRows(p) - p.current;
+    return p.embeddedArmMembers + p.current * (1ull + p.Q) + 2ull * (futureLeaves + p.Q);
 }
 
 template<class Emit>
@@ -700,6 +723,10 @@ private:
                         dynamic.profile.variableControls, UINT32_MAX, result.flags);
                     result.profile.queueRows = SaturatingAdd(result.profile.queueRows, dynamic.profile.queueRows, UINT32_MAX, result.flags);
                     result.profile.conditionalRows = SaturatingAdd(result.profile.conditionalRows, dynamic.profile.conditionalRows, UINT32_MAX, result.flags);
+                    result.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull,
+                        result.profile.embeddedArmGroups + DeferredArmGroups(dynamic.profile));
+                    result.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull,
+                        result.profile.embeddedArmMembers + DeferredArmMembers(dynamic.profile));
                     result.profile.mayExposeMusic |= dynamic.profile.mayExposeMusic;
                 }
             } else {
@@ -837,6 +864,7 @@ private:
             std::uint32_t futureControls = 0;
             std::uint32_t futureQueueRows = 0;
             std::uint32_t futureConditionalRows = 0;
+            std::uint64_t futureEmbeddedGroups = 0, futureEmbeddedMembers = 0;
             bool canTransition = false;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
                 const bool possible = program.mode == ContainerModeV1::SequenceQueue
@@ -849,6 +877,8 @@ private:
                 futureControls = std::max(futureControls, next.profile.variableControls);
                 futureQueueRows = std::max(futureQueueRows, next.profile.queueRows);
                 futureConditionalRows = std::max(futureConditionalRows, next.profile.conditionalRows);
+                futureEmbeddedGroups = std::max(futureEmbeddedGroups, next.profile.embeddedArmGroups);
+                futureEmbeddedMembers = std::max(futureEmbeddedMembers, next.profile.embeddedArmMembers);
                 capacity = std::max(capacity, next.profile.current);
                 futureInstances = std::max(futureInstances, next.profile.instanceRows);
                 if (limits_.includeDynamicInstanceRows)
@@ -867,6 +897,8 @@ private:
             current.profile.variableControls = SaturatingAdd(current.profile.variableControls, futureControls, UINT32_MAX, current.flags);
             current.profile.queueRows = SaturatingAdd(current.profile.queueRows, futureQueueRows, UINT32_MAX, current.flags);
             current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, futureConditionalRows, UINT32_MAX, current.flags);
+            current.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull, current.profile.embeddedArmGroups + futureEmbeddedGroups);
+            current.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull, current.profile.embeddedArmMembers + futureEmbeddedMembers);
             current.profile.transitionRows = SaturatingAdd(current.profile.transitionRows, futureTransitions, UINT32_MAX, current.flags);
             // Current and following chains can overlap their replacements.
             if (canTransition) current.profile.transitionRows = SaturatingAdd(current.profile.transitionRows, 4u, UINT32_MAX, current.flags);

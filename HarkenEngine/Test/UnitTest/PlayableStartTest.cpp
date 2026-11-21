@@ -11754,6 +11754,7 @@ TEST(PlayableStart,
     const harken::DecisionToken dummyParent{17, 19};
     const harken::TimelineArmToken dummyMember{23, 29, 31, 37};
     std::vector<harken::ArmGroupToken> occupiedGroups;
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->armGroups));
     occupiedGroups.reserve(engine->armGroups.Capacity() - 1u);
     while (engine->armGroups.LiveCount() + 1u <
            engine->armGroups.Capacity()) {
@@ -29980,6 +29981,7 @@ TEST(PlayableStart, SequenceQueueArmGroupPreflightHasZeroSuccessorMutation) {
     ASSERT_TRUE(engine->timelineArms.Reserve(
         0, 1, 0, 1, 1, target, &fillerArm));
     std::vector<harken::ArmGroupToken> fillerGroups;
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->armGroups));
     fillerGroups.reserve(engine->armGroups.Capacity());
     for (std::uint32_t index = 0;
          index < engine->armGroups.Capacity(); ++index) {

@@ -20628,7 +20628,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
     const auto controls = engine.variableControlInstances.LiveCount();
     const auto decisions = engine.decisions.LiveCount();
     const auto arms = engine.timelineArms.LiveCount();
-    const auto groups = engine.armGroups.FreeCount();
+    const auto groups = engine.armGroups.OccupiedCount();
     const auto occurrences = engine.timelineOccurrences.OccupiedCount();
     const auto compositeOwners = engine.compositeCompletionOwners.OccupiedCount();
     const auto ledger = engine.ledger.AvailableEntryCount();
@@ -20781,7 +20781,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
     EXPECT_EQ(controls, engine.variableControlInstances.LiveCount());
     EXPECT_EQ(decisions, engine.decisions.LiveCount());
     EXPECT_EQ(arms, engine.timelineArms.LiveCount());
-    EXPECT_EQ(groups, engine.armGroups.FreeCount());
+    EXPECT_EQ(groups, engine.armGroups.OccupiedCount());
     EXPECT_EQ(occurrences, engine.timelineOccurrences.OccupiedCount());
     EXPECT_EQ(compositeOwners, engine.compositeCompletionOwners.OccupiedCount());
     EXPECT_EQ(ledger, engine.ledger.AvailableEntryCount());
@@ -20990,7 +20990,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
         return std::array<std::uint32_t, 13>{
             engine.playableInstances.UnavailableRowCount(), engine.containerPlayback.OccupiedCount(),
             engine.variableControlInstances.LiveCount(), engine.decisions.LiveCount(),
-            engine.timelineArms.LiveCount(), engine.armGroups.FreeCount(),
+            engine.timelineArms.LiveCount(), engine.armGroups.OccupiedCount(),
             engine.timelineOccurrences.OccupiedCount(), engine.compositeCompletionOwners.OccupiedCount(),
             engine.ledger.AvailableEntryCount(), engine.timelinePool.LiveTransactionCount(),
             engine.transitionInstances.LiveCount(), engine.voices.ActiveCount(), sources};
@@ -25695,6 +25695,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 competing.push_back(token);
         }
         std::vector<QueueInstanceToken> competingQueues;
+        std::vector<ArmGroupToken> competingGroups;
         if (scenario >= 5) {
             QueueInstanceCreateRequest request{};
             request.world = 1;
@@ -25708,6 +25709,10 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             engine.queueInstances.SetConditionalRowCommitPageLimitForTests(0);
             QueueInstanceToken token{};
             while (engine.queueInstances.Acquire(request, &token)) competingQueues.push_back(token);
+            engine.armGroups.SetRowCommitPageLimitForTests(0);
+            engine.armGroups.SetMemberAllocationLimitForTests(0);
+            ArmGroupToken group{};
+            while (engine.armGroups.Reserve({1, 1}, nullptr, 0, &group)) competingGroups.push_back(group);
         }
         struct ResetFault {
             ~ResetFault() { detail::DisarmLogicAllocFaultForTests(); }
@@ -25746,6 +25751,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
+        for (auto group : competingGroups) EXPECT_TRUE(engine.armGroups.CancelBeforePublication(group));
         for (auto token : competingQueues) EXPECT_TRUE(engine.queueInstances.Release(token));
         for (auto token : competing) EXPECT_TRUE(engine.variableControlInstances.Release(token));
         if (scenario <= 2) referenceStart[scenario] = onsets[0];

@@ -7081,7 +7081,7 @@ public:
           effectBank(resolved),
           decisions(resolved.maxDecisionRows,
                     resolved.maxParticipantsPerDecision),
-          armGroups(resolved.maxArmGroups,
+          armGroups(UINT32_MAX,
                     resolved.maxArmsPerGroup),
           timelineArms(TimelineArmCapacity(resolved)),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
@@ -8281,6 +8281,9 @@ public:
         QueueInstanceTable::BackingPreparation queues;
         std::uint32_t queueCount = 0;
         std::uint32_t conditionalCount = 0;
+        ArmGroupTable::BackingPreparation groups;
+        std::uint32_t groupCount = 0;
+        std::uint32_t groupMembers = 0;
         DeferredTreeWidths* widths = nullptr;
         DeferredTreeWidths::iterator widthEntry;
         std::uint32_t width = 0;
@@ -8289,9 +8292,13 @@ public:
             if (widths != nullptr) widths->erase(widthEntry);
         }
         bool Include(std::uint32_t additional, std::uint32_t rows, std::uint32_t controls,
-                     std::uint32_t queueRows, std::uint32_t conditionalRows) noexcept {
+                     std::uint32_t queueRows, std::uint32_t conditionalRows,
+                     std::uint64_t groupsNeeded, std::uint64_t membersNeeded) noexcept {
             if (additional > UINT32_MAX - count || controls > UINT32_MAX - controlCount ||
                 queueRows > UINT32_MAX - queueCount || conditionalRows > UINT32_MAX - conditionalCount) return false;
+            if (groupsNeeded > UINT32_MAX - groupCount || membersNeeded > UINT32_MAX - groupMembers) return false;
+            groupCount += static_cast<std::uint32_t>(groupsNeeded);
+            groupMembers += static_cast<std::uint32_t>(membersNeeded);
             queueCount += queueRows;
             conditionalCount += conditionalRows;
             controlCount += controls;
@@ -8332,6 +8339,8 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (backing.groupCount != 0 && !armGroups.PrepareBacking(
+                backing.groupCount, backing.groupMembers, &backing.groups)) return false;
         if (backing.queueCount != 0 && !queueInstances.PrepareBacking(backing.queueCount,
                 backing.conditionalCount, &backing.queues)) return false;
         if (backing.controlCount != 0 && !variableControlInstances.PrepareBacking(
@@ -8356,12 +8365,15 @@ public:
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse use;
         ActionFiringHandle& controlOwner;
         const ActionFiringHandle previousOwner;
+        std::optional<ArmGroupTable::PreparedUse> groups;
         BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner) noexcept
             : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
               controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
             if (held) {
                 active = held->width;
-                controlOwner = held->controlCount != 0 || held->queueCount != 0 ? owner : 0;
+                controlOwner = held->controlCount != 0 || held->queueCount != 0 || held->groupCount != 0 ? owner : 0;
+                if (owner && held->groups.Valid() && !engine.nativeRuntimeBackingInUse)
+                    groups.emplace(engine.armGroups, &held->groups);
             }
         }
         BorrowedTree(const BorrowedTree&) = delete;

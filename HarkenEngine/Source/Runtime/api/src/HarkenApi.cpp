@@ -27232,7 +27232,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             return result;
         }
     }
-    if (engine.armGroups.FreeCount() < groupCount) {
+    if (!engine.armGroups.PrepareAvailable(groupCount)) {
         result.status = harken::PlayableStartStatus::Capacity;
         return result;
     }
@@ -31346,7 +31346,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     const bool commandBatchAdmitted =
         AdmitCommandBatch(engine, combinedCommandCount);
     if (schedulePreflight != harken::PlayableStartStatus::Accepted ||
-        engine.armGroups.FreeCount() == 0 ||
+        !engine.armGroups.PrepareAvailable(1u) ||
         sourceControlCount + materialized.leafCount >
             engine.config.maxArmsPerGroup ||
         engine.timelineArms.FreeCount() <
@@ -31938,7 +31938,7 @@ bool PrepareSameKeyQueueContinuation(
         return false;
     if (row.QueuePayload().queueCompletionFrame < engine.timelinePool.WindowStartFrame() ||
         row.QueuePayload().queueCompletionFrame >= engine.timelinePool.WindowEndFrame() ||
-        engine.armGroups.FreeCount() == 0) {
+        !engine.armGroups.PrepareAvailable(1u)) {
         return false;
     }
     if (successorHasContinuation &&
@@ -32399,6 +32399,10 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         (row.parentService.Valid() && row.queueMode) ||
         (row.variableControlInstance.Valid() &&
          row.variableControlNestedContainerCount != 0);
+    std::optional<harken::ArmGroupTable::PreparedUse> deferredGroups;
+    const auto* backing = engine.DeferredBackingFor(&row);
+    if (backing && backing->groups.Valid() && !engine.nativeRuntimeBackingInUse)
+        deferredGroups.emplace(engine.armGroups, &backing->groups);
     PreparedQueueContinuationTree preparedTree{engine, row};
     harken::PlayableInstanceHandle queueOwnerInstance = row.rootInstance;
     std::uint64_t queueOwnerEpoch = 0;
@@ -32868,7 +32872,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
           (sourceFadeActive && !inWindow(sourcePhaseFrame)))) ||
         engine.timelineArms.FreeCount() < groupMemberCount ||
         groupMemberCount > engine.config.maxArmsPerGroup ||
-        engine.armGroups.FreeCount() == 0 ||
+        !engine.armGroups.PrepareAvailable(1u) ||
         !AtomicBatchFitsCapacities(engine, combinedCommandCount) ||
         !AdmitCommandBatch(engine, combinedCommandCount) ||
         (transitionRule != nullptr &&
@@ -39926,7 +39930,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
             harken::ReserveRefusal::None ||
         sourceMemberCount > engine.config.maxArmsPerGroup ||
         engine.timelineArms.FreeCount() < sourceMemberCount ||
-        engine.armGroups.FreeCount() == 0 ||
+        !engine.armGroups.PrepareAvailable(1u) ||
         !AtomicBatchFitsCapacities(engine, sourceMemberCount) ||
         !AdmitCommandBatch(engine, sourceMemberCount)) {
         return VariableRetargetPrepareStatus::Retry;
@@ -40352,7 +40356,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
             harken::Plan03GroupReserveStatus::Committed ||
         targetSchedule.leafCount > engine.config.maxArmsPerGroup ||
         engine.timelineArms.FreeCount() < targetSchedule.leafCount ||
-        engine.armGroups.FreeCount() == 0 ||
+        !engine.armGroups.PrepareAvailable(1u) ||
         (targetSchedule.leafCount != 0 && PreflightCapturedScheduleLeafStarts(
             engine, targetSchedule, captureSpan,
             decisionFrame, false) != harken::PlayableStartStatus::Accepted) ||
@@ -41519,7 +41523,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         groupPreflight != harken::Plan03GroupReserveStatus::Committed ||
         groupMemberCount > engine.config.maxArmsPerGroup ||
         engine.timelineArms.FreeCount() < (nativeTargets ? sourceMemberCount : groupMemberCount) ||
-        engine.armGroups.FreeCount() == 0 ||
+        !engine.armGroups.PrepareAvailable(1u) ||
         (needsTransition && !transition.Valid() &&
          !engine.transitionInstances.PrepareAvailable(1)) ||
         leafPreflight != harken::PlayableStartStatus::Accepted ||
@@ -42678,7 +42682,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
     if (decisionFrame >= engine.timelinePool.WindowEndFrame() ||
         groupPreflight != harken::Plan03GroupReserveStatus::Committed ||
         engine.timelineArms.FreeCount() < audioMemberCount ||
-        engine.armGroups.FreeCount() == 0 ||
+        !engine.armGroups.PrepareAvailable(1u) ||
         livePriorMemberCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, livePriorMemberCount) ||
         !AdmitCommandBatch(engine, totalCommandCount)) {
@@ -64386,7 +64390,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             nativeTransitions += result.profile.transitionRows;
             if (group->replacementControls.ReservedRows() < result.profile.variableControls - 1u) return false;
             queueControls += result.profile.Q;
-            nativeGroups += std::max(2u, result.profile.controlSides) + 1u + 4ull * result.profile.Q;
+            nativeGroups += backing::ArmGroupRows(result.profile);
             for (std::uint32_t threshold = 1; threshold <= backing::kLeafCapacity; ++threshold) {
                 if (result.profile.H[threshold] > UINT32_MAX - futures.H[threshold]) return false;
                 futures.H[threshold] += result.profile.H[threshold];
@@ -86980,7 +86984,8 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
                 if (width > UINT32_MAX) return VN_OUT_OF_MEMORY;
                 if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
                 if (!trees->Include(result.profile.preparationTrees, static_cast<std::uint32_t>(width),
-                        result.profile.variableControls, result.profile.queueRows, result.profile.conditionalRows))
+                        result.profile.variableControls, result.profile.queueRows, result.profile.conditionalRows,
+                        backing::DeferredArmGroups(result.profile), backing::DeferredArmMembers(result.profile)))
                     return VN_BACKPRESSURE;
             }
             return VN_OK;
