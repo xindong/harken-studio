@@ -27207,6 +27207,7 @@ TEST(PlayableStart, CompositeOwnerCapacityRefusesBeforeInitialQueueMutation) {
     fillerLeaf.predicate.program.stableId = harkentest::ObjectId(1);
     fillerLeaf.predicate.program.world = 1;
     fillerLeaf.predicate.program.runtimeSemanticFingerprint = 1;
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->compositeCompletionOwners));
     for (std::uint32_t index = 0;
          index < engine->compositeCompletionOwners.Capacity(); ++index) {
         harken::CompositeCompletionOwnerToken filler{};

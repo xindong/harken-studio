@@ -47,21 +47,8 @@ bool ValidLeaf(const KnownScheduleLeafV1& leaf,
 
 CompositeCompletionOwnerPool::CompositeCompletionOwnerPool(
     std::uint32_t capacity, std::uint32_t maxLeaves) {
-    constexpr std::uint32_t kHardMaxCapacity = 16384;
-    constexpr std::uint32_t kHardMaxLeaves = 64;
-    const std::size_t max =
-        (std::numeric_limits<std::size_t>::max)();
-    if (capacity > kHardMaxCapacity || maxLeaves == 0 ||
-        maxLeaves > kHardMaxLeaves ||
-        capacity > max / maxLeaves) {
-        return;
-    }
-    capacity_ = capacity;
-    maxLeaves_ = maxLeaves;
-    const auto leafCapacity = capacity * maxLeaves;
-    if (!leaves_.Reserve(leafCapacity) || !leafOriginals_.Reserve(leafCapacity) ||
-        !leafCommitProofs_.Reserve(leafCapacity) || !rows_.Reserve(capacity))
-        throw harken::detail::LogicPreparationFailure{};
+    capacity_ = maxLeaves > 0 && maxLeaves <= 64 ? capacity : 0;
+    maxLeaves_ = maxLeaves <= 64 ? maxLeaves : 0;
 }
 
 CompositeCompletionOwnerPool::~CompositeCompletionOwnerPool() {
@@ -70,44 +57,119 @@ CompositeCompletionOwnerPool::~CompositeCompletionOwnerPool() {
 }
 
 bool CompositeCompletionOwnerPool::PrepareSlotStorage(std::uint32_t slot) noexcept {
-    const auto count = (slot + 1u) * maxLeaves_;
-    return slot < capacity_ && leaves_.ConstructThrough(count) &&
-        leafOriginals_.ConstructThrough(count) && leafCommitProofs_.ConstructThrough(count) &&
-        rows_.ConstructThrough(slot + 1u);
+    if (slot < capacity_ && rows_.ConstructThrough(slot + 1u, [this](auto count) noexcept {
+            return prepareRows_ == nullptr || prepareRows_(rowContext_, count);
+        })) return true;
+    if (slot < capacity_) detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
 }
 
-bool CompositeCompletionOwnerPool::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
-    if (out == nullptr) return false;
-    for (const auto& held : *out) if (held.Valid()) return false;
-    count = std::min(count, capacity_);
-    auto occupied = rows_.ConstructedCount();
-    while (occupied != 0 && rows_[occupied - 1u].state.load(std::memory_order_acquire) == State::Free)
-        --occupied;
+bool CompositeCompletionOwnerPool::PrepareLeaves(Row& row, std::uint32_t count) noexcept {
+    if (row.leafCapacity >= count) return true;
+    if (active_ != nullptr || memguard::IsAudioTagged()) return false;
+    try {
+        auto leaves = std::make_unique<KnownScheduleLeafV1[]>(count);
+        auto originals = std::make_unique<OccurrenceStatePool::OriginalCompositeCompletionOwnerPin[]>(count);
+        auto proofs = std::make_unique<OccurrenceStatePool::PreparedCompositeCompletionCommitProof[]>(count);
+        leafBytes_ += std::uint64_t{count - row.leafCapacity} *
+            (sizeof(*leaves.get()) + sizeof(*originals.get()) + sizeof(*proofs.get()));
+        row.leaves = std::move(leaves);
+        row.originals = std::move(originals);
+        row.proofs = std::move(proofs);
+        row.leafCapacity = count;
+        return true;
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return false;
+    }
+}
+
+std::uint32_t CompositeCompletionOwnerPool::FindSlot(std::uint32_t width) noexcept {
+    if (active_ != nullptr) {
+        std::uint32_t best = UINT32_MAX;
+        for (auto slot : active_->slots_) {
+            const auto& row = rows_[slot];
+            if (row.state.load(std::memory_order_acquire) == State::Free && row.leafCapacity >= width &&
+                (best == UINT32_MAX || row.leafCapacity < rows_[best].leafCapacity)) best = slot;
+        }
+        return best;
+    }
+    while (firstFree_ < rows_.ConstructedCount()) {
+        const auto& row = rows_[firstFree_];
+        if (!row.held && row.state.load(std::memory_order_acquire) == State::Free) break;
+        ++firstFree_;
+    }
+    if (!PrepareSlotStorage(firstFree_)) return UINT32_MAX;
+    auto& first = rows_[firstFree_];
+    if (first.leafCapacity < width) {
+        for (auto slot = firstFree_ + 1u; slot < rows_.ConstructedCount(); ++slot) {
+            auto& other = rows_[slot];
+            if (other.held || other.state.load(std::memory_order_acquire) != State::Free ||
+                other.leafCapacity < width) continue;
+            first.leaves.swap(other.leaves);
+            first.originals.swap(other.originals);
+            first.proofs.swap(other.proofs);
+            std::swap(first.leafCapacity, other.leafCapacity);
+            break;
+        }
+    }
+    return PrepareLeaves(first, width) ? firstFree_ : UINT32_MAX;
+}
+
+bool CompositeCompletionOwnerPool::PrepareAvailable(std::uint32_t count) noexcept {
+    if (count == 0) return true;
+    if (active_ != nullptr) {
+        for (auto slot : active_->slots_)
+            if (rows_[slot].state.load(std::memory_order_acquire) == State::Free && --count == 0) return true;
+        return false;
+    }
+    const auto size = rows_.ConstructedCount();
+    for (auto slot = firstFree_; slot < size; ++slot) {
+        const auto& row = rows_[slot];
+        if (!row.held && row.state.load(std::memory_order_acquire) == State::Free && --count == 0) return true;
+    }
+    return count <= capacity_ - size && PrepareSlotStorage(size + count - 1u);
+}
+
+CompositeCompletionOwnerPool::BackingPreparation::~BackingPreparation() {
+    for (auto slot : slots_) {
+        pool_->rows_[slot].held = false;
+        pool_->firstFree_ = std::min(pool_->firstFree_, slot);
+    }
+}
+
+CompositeCompletionOwnerPool::PreparedUse::PreparedUse(
+    CompositeCompletionOwnerPool& pool, const BackingPreparation* backing) noexcept
+    : pool_(pool), previous_(std::exchange(pool.active_, backing)) {}
+
+CompositeCompletionOwnerPool::PreparedUse::~PreparedUse() { pool_.active_ = previous_; }
+
+bool CompositeCompletionOwnerPool::PrepareBacking(const std::vector<std::uint32_t>& widths,
+                                                  BackingPreparation* out) noexcept {
+    if (out == nullptr || out->pool_ != nullptr || active_ != nullptr || memguard::IsAudioTagged()) return false;
     BackingPreparation candidate;
-    const auto leafCount = count * maxLeaves_;
-    const auto occupiedLeaves = occupied * maxLeaves_;
-    if (!leaves_.PrepareBacking(leafCount, occupiedLeaves, &candidate[0]) ||
-        !leafOriginals_.PrepareBacking(leafCount, occupiedLeaves, &candidate[1]) ||
-        !leafCommitProofs_.PrepareBacking(leafCount, occupiedLeaves, &candidate[2]) ||
-        !rows_.PrepareBacking(count, occupied, &candidate[3])) return false;
-    *out = std::move(candidate);
+    candidate.pool_ = this;
+    try {
+        candidate.slots_.reserve(widths.size());
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return false;
+    }
+    for (auto width : widths) {
+        if (width == 0 || width > maxLeaves_) return false;
+        const auto slot = FindSlot(width);
+        if (slot == UINT32_MAX) return false;
+        rows_[slot].held = true;
+        candidate.slots_.push_back(slot);
+    }
+    out->pool_ = this;
+    out->slots_.swap(candidate.slots_);
     return true;
 }
 
-std::uint64_t CompositeCompletionOwnerPool::StorageBytes() const noexcept {
-    return rows_.RequestedBytes() + leaves_.RequestedBytes() +
-        leafOriginals_.RequestedBytes() + leafCommitProofs_.RequestedBytes();
-}
-
-std::uint64_t CompositeCompletionOwnerPool::CommittedBytes() const noexcept {
-    return rows_.CommittedBytes() + leaves_.CommittedBytes() +
-        leafOriginals_.CommittedBytes() + leafCommitProofs_.CommittedBytes();
-}
-
-std::uint64_t CompositeCompletionOwnerPool::ReservedBytes() const noexcept {
-    return rows_.ReservedBytes() + leaves_.ReservedBytes() +
-        leafOriginals_.ReservedBytes() + leafCommitProofs_.ReservedBytes();
-}
+std::uint64_t CompositeCompletionOwnerPool::StorageBytes() const noexcept { return rows_.RequestedBytes() + leafBytes_; }
+std::uint64_t CompositeCompletionOwnerPool::CommittedBytes() const noexcept { return rows_.CommittedBytes() + leafBytes_; }
+std::uint64_t CompositeCompletionOwnerPool::ReservedBytes() const noexcept { return rows_.ReservedBytes() + leafBytes_; }
 
 CompositeCompletionOwnerPool::OriginalLifetimePin::OriginalLifetimePin(
     OriginalLifetimePin&& other) noexcept { *this = std::move(other); }
@@ -174,7 +236,7 @@ bool CompositeCompletionOwnerPool::CaptureOriginalLeaf(const OriginalLifetimePin
 bool CompositeCompletionOwnerPool::BorrowOriginalLeafCompletion(const OriginalLifetimePin& original,
     std::uint32_t index, OccurrenceStatePool::OriginalCompositeCompletionOwnerPin* out) noexcept {
     if (!IsOriginalLifetimePinned(original) || index >= rows_[original.token_.slot].leafCount) return false;
-    return leafOriginals_[static_cast<std::size_t>(original.token_.slot) * maxLeaves_ + index].Borrow(out);
+    return rows_[original.token_.slot].originals[index].Borrow(out);
 }
 
 bool CompositeCompletionOwnerPool::PrepareOriginalLeafCompletionCommits(
@@ -186,7 +248,6 @@ bool CompositeCompletionOwnerPool::PrepareOriginalLeafCompletionCommits(
     const auto* aggregate = occurrences.Find(row.composedOccurrence);
     if (aggregate == nullptr || !aggregate->preparedReservation || aggregate->stage != OccurrenceStage::Preparing)
         return false;
-    const auto base = static_cast<std::size_t>(original.token_.slot) * maxLeaves_;
     const auto* leaves = LeafStorage(original.token_.slot);
     for (std::uint32_t index = 0; index < row.leafCount; ++index) {
         const auto& leaf = leaves[index];
@@ -194,20 +255,20 @@ bool CompositeCompletionOwnerPool::PrepareOriginalLeafCompletionCommits(
         CompletionOwnerRef existing{};
         if (!ValidLeaf(leaf, occurrences) || entry == nullptr || !entry->preparedReservation ||
             entry->stage != OccurrenceStage::Preparing || entry->originalSinglePreparedCommitHeld ||
-            leafOriginals_[base + index].Valid() || leafCommitProofs_[base + index].Valid() ||
+            row.originals[index].Valid() || row.proofs[index].Valid() ||
             occurrences.CaptureCompletionOwner(leaf.occurrence, &existing)) return false;
     }
     for (std::uint32_t index = 0; index < row.leafCount; ++index) {
         const auto& leaf = leaves[index];
-        auto& native = leafOriginals_[base + index];
+        auto& native = row.originals[index];
         if (occurrences.TryPinOriginalCompositeCompletionOwner(leaf.occurrence, leaf.predicate.owner, &native) &&
             occurrences.ProvePreparedCompositeCompletionCommit(native, leaf.predicate.owner,
                 occurrences.CompletionProgressOf(leaf.occurrence), leaf.renderGeneration,
-                occurrences.ScheduleEpochOf(leaf.occurrence), &leafCommitProofs_[base + index])) continue;
+                occurrences.ScheduleEpochOf(leaf.occurrence), &row.proofs[index])) continue;
         for (std::uint32_t undo = index + 1u; undo > 0; --undo) {
             const auto offset = undo - 1u;
-            leafCommitProofs_[base + offset].Release();
-            auto& issued = leafOriginals_[base + offset];
+            row.proofs[offset].Release();
+            auto& issued = row.originals[offset];
             if (!issued.Valid()) continue;
             const bool rolled = occurrences.RollbackCompletionOwnerPinExact(
                 leaves[offset].occurrence, leaves[offset].predicate.owner);
@@ -228,10 +289,9 @@ bool CompositeCompletionOwnerPool::BorrowOriginalPreparedLeafCompletion(
     const auto& row = rows_[original.token_.slot];
     if (row.state.load(std::memory_order_acquire) != State::Reserved ||
         !row.originalLeafCommitsPrepared || row.originalOccurrenceReceiver == nullptr || index >= row.leafCount) return false;
-    const auto offset = static_cast<std::size_t>(original.token_.slot) * maxLeaves_ + index;
     return row.originalOccurrenceReceiver->IsPreparedCompositeCompletionCommitFor(
-        leafCommitProofs_[offset], LeafStorage(original.token_.slot)[index].occurrence) &&
-        leafOriginals_[offset].Borrow(out);
+        row.proofs[index], LeafStorage(original.token_.slot)[index].occurrence) &&
+        row.originals[index].Borrow(out);
 }
 
 OccurrenceStatePool::PreparedCompositeCompletionCommitProof*
@@ -243,7 +303,7 @@ CompositeCompletionOwnerPool::ResolveOriginalPreparedLeafCommit(
             row.state.load(std::memory_order_acquire) != State::Reserved) continue;
         for (std::uint32_t index = 0; index < row.leafCount; ++index) {
             if (!SameToken(LeafStorage(slot)[index].occurrence, token)) continue;
-            auto& proof = leafCommitProofs_[static_cast<std::size_t>(slot) * maxLeaves_ + index];
+            auto& proof = row.proofs[index];
             if (occurrences.IsPreparedCompositeCompletionCommitFor(proof, token)) return &proof;
         }
     }
@@ -251,8 +311,8 @@ CompositeCompletionOwnerPool::ResolveOriginalPreparedLeafCommit(
 }
 
 void CompositeCompletionOwnerPool::ReleaseOriginalPreparedLeafCommitProofsForQuiescentOwnerTeardown() noexcept {
-    for (std::uint32_t index = 0; index < leafCommitProofs_.ConstructedCount(); ++index)
-        leafCommitProofs_[index].Release();
+    for (auto& row : rows_)
+        for (std::uint32_t index = 0; index < row.leafCount; ++index) row.proofs[index].Release();
 }
 
 bool CompositeCompletionOwnerPool::BorrowOriginalLifetime(const OriginalLifetimePin& original,
@@ -306,10 +366,9 @@ bool CompositeCompletionOwnerPool::ResolveOriginalBaselineForNativeEnd(
 }
 
 void CompositeCompletionOwnerPool::RetireRow(Row& row, bool occupied) noexcept {
-    const auto slot = rows_.IndexOf(row);
     for (std::uint32_t index = 0; index < row.leafCount; ++index) {
-        leafCommitProofs_[slot * maxLeaves_ + index].Release();
-        leafOriginals_[slot * maxLeaves_ + index].Release();
+        row.proofs[index].Release();
+        row.originals[index].Release();
     }
     if (occupied) --occupied_;
     row.state.store(State::Retired, std::memory_order_release);
@@ -330,25 +389,26 @@ void CompositeCompletionOwnerPool::RecycleRow(Row& row) noexcept {
         ++quarantinedCount_;
     } else {
         ++row.generation;
+        firstFree_ = std::min(firstFree_, rows_.IndexOf(&row));
         row.state.store(State::Free, std::memory_order_release);
     }
 }
 
 KnownScheduleLeafV1* CompositeCompletionOwnerPool::LeafStorage(
     std::uint32_t slot) noexcept {
-    return &leaves_[slot * maxLeaves_];
+    return rows_[slot].leaves.get();
 }
 
 const KnownScheduleLeafV1* CompositeCompletionOwnerPool::LeafStorage(
     std::uint32_t slot) const noexcept {
-    return &leaves_[slot * maxLeaves_];
+    return rows_[slot].leaves.get();
 }
 
 std::uint32_t CompositeCompletionOwnerPool::FreeCount() const noexcept {
-    std::uint32_t count = capacity_ - rows_.ConstructedCount();
+    std::uint32_t count = 0;
     for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const auto& row = rows_[slot];
-        if (row.state.load(std::memory_order_acquire) == State::Free) {
+        if (!row.held && row.state.load(std::memory_order_acquire) == State::Free) {
             ++count;
         }
     }
@@ -395,14 +455,8 @@ CompositeCompletionOwnerPool::PrepareAcquire(
         ++refusalCount_;
         return CompositeCompletionAcquireStatus::Invalid;
     }
-    std::uint32_t slot = rows_.ConstructedCount();
-    for (std::uint32_t i = 0; i < rows_.ConstructedCount(); ++i) {
-        if (rows_[i].state.load(std::memory_order_acquire) == State::Free) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot == capacity_ || !PrepareSlotStorage(slot)) {
+    const auto slot = FindSlot(leafCount);
+    if (slot == UINT32_MAX) {
         ++refusalCount_;
         return CompositeCompletionAcquireStatus::Capacity;
     }
@@ -509,13 +563,12 @@ CompositeCompletionOwnerPool::CommitPrepared(
             ++refusalCount_;
             return CompositeCompletionAcquireStatus::Invalid;
         }
-        const auto base = static_cast<std::size_t>(token.slot) * maxLeaves_;
         for (std::uint32_t index = 0; index < row.leafCount; ++index) {
             const auto& leaf = leaves[index];
             const auto* entry = occurrences.Find(leaf.occurrence);
             if (!ValidLeaf(leaf, occurrences) || entry == nullptr || entry->preparedReservation ||
-                entry->originalSinglePreparedCommitHeld || leafCommitProofs_[base + index].Valid() ||
-                !occurrences.IsOriginalCompositeCompletionOwnerCurrent(leafOriginals_[base + index],
+                entry->originalSinglePreparedCommitHeld || row.proofs[index].Valid() ||
+                !occurrences.IsOriginalCompositeCompletionOwnerCurrent(row.originals[index],
                     leaf.predicate.owner, occurrences.CompletionProgressOf(leaf.occurrence),
                     leaf.renderGeneration, occurrences.ScheduleEpochOf(leaf.occurrence))) {
                 ++refusalCount_;
@@ -541,7 +594,7 @@ CompositeCompletionOwnerPool::CommitPrepared(
         }
     }
     std::uint32_t pinned = 0;
-    auto* originals = &leafOriginals_[token.slot * maxLeaves_];
+    auto* originals = row.originals.get();
     const bool retainOriginalLeaves = row.originalPinCount != 0;
     for (; pinned < row.leafCount; ++pinned) {
         const CompletionOwnerRef owner = CompletionOwnerRef::Composite(
@@ -583,21 +636,20 @@ bool CompositeCompletionOwnerPool::CancelPrepared(
     if (row.originalLeafCommitsPrepared) {
         auto* occurrences = row.originalOccurrenceReceiver;
         if (occurrences == nullptr) return false;
-        const auto base = static_cast<std::size_t>(token.slot) * maxLeaves_;
         for (std::uint32_t index = 0; index < row.leafCount; ++index) {
             const auto& leaf = LeafStorage(token.slot)[index];
             CompletionOwnerRef actual{};
             const auto* entry = occurrences->Find(leaf.occurrence);
             if (entry == nullptr ||
                 (entry->originalSinglePreparedCommitHeld &&
-                 !occurrences->IsPreparedCompositeCompletionCommitFor(leafCommitProofs_[base + index], leaf.occurrence)) ||
+                 !occurrences->IsPreparedCompositeCompletionCommitFor(row.proofs[index], leaf.occurrence)) ||
                 !occurrences->CaptureCompletionOwner(leaf.occurrence, &actual) ||
                 !SameCompletionOwner(actual, leaf.predicate.owner)) return false;
         }
         for (std::uint32_t index = row.leafCount; index > 0; --index) {
             const auto offset = index - 1u;
             const auto& leaf = LeafStorage(token.slot)[offset];
-            leafCommitProofs_[base + offset].Release();
+            row.proofs[offset].Release();
             const bool rolled = occurrences->RollbackCompletionOwnerPinExact(leaf.occurrence, leaf.predicate.owner);
             assert(rolled);
             if (!rolled) return false;

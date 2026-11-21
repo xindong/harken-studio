@@ -64340,7 +64340,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         std::uint64_t nativeSelections = 0;
         SelectionMemoryTableV1::BackingShape selectionShape{};
         std::uint64_t nativeRelations = 0;
-        std::uint64_t nativeCompletions = 0;
+        std::vector<std::uint32_t> completionWidths;
         std::uint64_t nativeGroups = 0;
         std::uint64_t nativeTransitions = 0;
         std::uint64_t nativeLaneMembers = 0;
@@ -64389,7 +64389,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             selectionShape.Include(result.profile.selection);
             nativeRelations += result.profile.referenceRows;
             nativeInstances += result.profile.instanceRows - 1u;
-            nativeCompletions += result.profile.Q + result.profile.H[2];
+            if (!backing::AppendCompositeWidths(result.profile, completionWidths)) return shortage();
             nativeTransitions += result.profile.transitionRows;
             if (group->replacementControls.ReservedRows() < result.profile.variableControls - 1u) return false;
             queueControls += result.profile.Q;
@@ -64464,7 +64464,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 slot.lanes.resize(slot.LaneCapacity());
             }
         }
-        if (nativeVoices > UINT32_MAX || nativeCompletions > UINT32_MAX || nativeGroups > UINT32_MAX ||
+        if (nativeVoices > UINT32_MAX || nativeGroups > UINT32_MAX ||
             nativeTransitions > UINT32_MAX || nativeRelations > UINT32_MAX ||
             queueControls > UINT32_MAX - nativeVoices) return false;
         if (!AllowNativeBackingAllocation()) return shortage();
@@ -64582,7 +64582,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 static_cast<std::uint32_t>(queueControls), &nativeCandidate->queues) ||
             !queueCheckpoints.PrepareBacking(static_cast<std::uint32_t>(queueControls), &nativeCandidate->checkpoints) ||
             !decisions.PrepareBacking(static_cast<std::uint32_t>(nativeGroups), &nativeCandidate->decisions) ||
-            !compositeCompletionOwners.PrepareBacking(static_cast<std::uint32_t>(nativeCompletions), &nativeCandidate->completions) ||
+            !compositeCompletionOwners.PrepareBacking(completionWidths, &nativeCandidate->completions) ||
             !voices.PrepareSlotBacking(static_cast<std::uint32_t>(nativeVoices), &nativeCandidate->voices) ||
             !ledger.PrepareBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 nativeVoices, ledger.Capacity())), &nativeCandidate->ledger) ||
@@ -86986,6 +86986,7 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
                 const auto width = 2ull * result.profile.instanceRows + 1u;
                 if (width > UINT32_MAX) return VN_OUT_OF_MEMORY;
                 if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+                if (!backing::AppendCompositeWidths(result.profile, trees->completionWidths)) return VN_OUT_OF_MEMORY;
                 if (!trees->Include(result.profile.preparationTrees, static_cast<std::uint32_t>(width),
                         result.profile.variableControls, result.profile.queueRows, result.profile.conditionalRows,
                         backing::DeferredArmGroups(result.profile), backing::DeferredArmMembers(result.profile)))
@@ -96331,7 +96332,7 @@ bool PrepareContainerCompositeQueueChild(
         packQueue ? harken::PlayableWorldViewV1{}
                   : context.world;
     if (context.directRoot && !context.directQueueSignalOnlyNoOverlap && hasContinuation && materialized.leafCount > 1u &&
-        engine.compositeCompletionOwners.FreeCount() == 0) {
+        !engine.compositeCompletionOwners.PrepareAvailable(1u)) {
         context.result = VN_NO_VOICE;
         return false;
     }

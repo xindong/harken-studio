@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace harken::native_backing {
 
@@ -85,6 +86,8 @@ struct Profile {
     std::uint32_t referenceRows = 0;
     std::uint32_t containerRows = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
+    // Number of concurrent completion owners requiring at least each width.
+    std::array<std::uint32_t, kLeafCapacity + 1u> completionWidths{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerWeights{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerChildWeights{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerInitialArms{};
@@ -249,9 +252,9 @@ inline std::uint32_t SaturatingAdd(std::uint32_t a, std::uint32_t b,
     return a + b;
 }
 
-inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexcept {
-    if (!a) return a;
-    if (!b) return b;
+inline void Concurrent(Result& a, const Result& b, const Limits& limits) noexcept {
+    if (!a) return;
+    if (!b) { a = b; return; }
     a.flags |= b.flags;
     a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
     a.profile.preparationTrees = SaturatingAdd(a.profile.preparationTrees, b.profile.preparationTrees, UINT32_MAX, a.flags);
@@ -276,6 +279,8 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     a.profile.rootContinuousChildren = 0;
     a.profile.rootInitialMembers = 0;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+        a.profile.completionWidths[t] = SaturatingAdd(a.profile.completionWidths[t],
+            b.profile.completionWidths[t], UINT32_MAX, a.flags);
         a.profile.H[t] = SaturatingAdd(a.profile.H[t], b.profile.H[t], limits.immediateFutureSides, a.flags);
         a.profile.controllerWeights[t] = SaturatingAdd(a.profile.controllerWeights[t], b.profile.controllerWeights[t],
             kControlSideCapacity, a.flags);
@@ -284,12 +289,11 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
         a.profile.controllerInitialArms[t] = SaturatingAdd(a.profile.controllerInitialArms[t],
             b.profile.controllerInitialArms[t], kControlSideCapacity, a.flags);
     }
-    return a;
 }
 
-inline Result Alternative(Result a, const Result& b) noexcept {
-    if (!a) return a;
-    if (!b) return b;
+inline void Alternative(Result& a, const Result& b) noexcept {
+    if (!a) return;
+    if (!b) { a = b; return; }
     a.flags |= b.flags;
     a.profile.current = std::max(a.profile.current, b.profile.current);
     a.profile.preparationTrees = std::max(a.profile.preparationTrees, b.profile.preparationTrees);
@@ -313,12 +317,12 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.rootContinuousChildren = 0;
     a.profile.rootInitialMembers = 0;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+        a.profile.completionWidths[t] = std::max(a.profile.completionWidths[t], b.profile.completionWidths[t]);
         a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
         a.profile.controllerWeights[t] = std::max(a.profile.controllerWeights[t], b.profile.controllerWeights[t]);
         a.profile.controllerChildWeights[t] = std::max(a.profile.controllerChildWeights[t], b.profile.controllerChildWeights[t]);
         a.profile.controllerInitialArms[t] = std::max(a.profile.controllerInitialArms[t], b.profile.controllerInitialArms[t]);
     }
-    return a;
 }
 
 inline void AddFuture(Result& result, std::uint32_t capacity, const Limits& limits) noexcept {
@@ -362,6 +366,15 @@ bool EmitDescendingCapacities(const std::array<std::uint32_t, kLeafCapacity + 1u
         next = capacities[t];
     }
     return true;
+}
+
+inline bool AppendCompositeWidths(const Profile& profile, std::vector<std::uint32_t>& widths) {
+    if (profile.completionWidths[1] > UINT32_MAX - widths.size()) return false;
+    widths.reserve(widths.size() + profile.completionWidths[1]);
+    return EmitDescendingCapacities(profile.completionWidths, [&](std::uint32_t width) noexcept {
+        widths.push_back(width);
+        return true;
+    });
 }
 
 template<class Emit>
@@ -600,12 +613,13 @@ private:
         return {};
     }
 
-    Result Visit(const PlayableRefV1& ref, Mode mode, Budget budget) noexcept {
+    const Result& Visit(const PlayableRefV1& ref, Mode mode, Budget budget) noexcept {
         bool inserted = false;
         auto* entry = memo_.FindOrInsert({ref, mode, budget}, inserted);
-        if (entry == nullptr) return Failure(Status::WorkspaceExhausted);
-        if (!inserted) return entry->state == MemoState::Visiting
-            ? Failure(Status::InvalidInput) : entry->result;
+        static const Result exhausted = Failure(Status::WorkspaceExhausted);
+        static const Result invalid = Failure(Status::InvalidInput);
+        if (entry == nullptr) return exhausted;
+        if (!inserted) return entry->state == MemoState::Visiting ? invalid : entry->result;
         entry->result = Compute(ref, mode, budget);
         if (entry->result && ref.kind == PlayableKindV1::Container)
             entry->result.profile.referenceRows = SaturatingAdd(entry->result.profile.referenceRows,
@@ -694,7 +708,7 @@ private:
             if (segment == nullptr) return Failure(Status::MissingContent);
             result.profile.mayExposeMusic = content_.HasMusicBody(*segment);
             for (std::uint32_t i = 0; i < segment->trackRefCount; ++i) {
-                result = Concurrent(result, Visit(segment->trackRefs[i].trackDefinition, Mode::StaticSchedule, budget), limits_);
+                Concurrent(result, Visit(segment->trackRefs[i].trackDefinition, Mode::StaticSchedule, budget), limits_);
                 if (!result) return result;
             }
             return result;
@@ -723,6 +737,9 @@ private:
                         dynamic.profile.variableControls, UINT32_MAX, result.flags);
                     result.profile.queueRows = SaturatingAdd(result.profile.queueRows, dynamic.profile.queueRows, UINT32_MAX, result.flags);
                     result.profile.conditionalRows = SaturatingAdd(result.profile.conditionalRows, dynamic.profile.conditionalRows, UINT32_MAX, result.flags);
+                    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
+                        result.profile.completionWidths[t] = SaturatingAdd(result.profile.completionWidths[t],
+                            dynamic.profile.completionWidths[t], UINT32_MAX, result.flags);
                     result.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull,
                         result.profile.embeddedArmGroups + DeferredArmGroups(dynamic.profile));
                     result.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull,
@@ -730,7 +747,7 @@ private:
                     result.profile.mayExposeMusic |= dynamic.profile.mayExposeMusic;
                 }
             } else {
-                result = Concurrent(result, Visit(child, Mode::StaticSchedule, budget), limits_);
+                Concurrent(result, Visit(child, Mode::StaticSchedule, budget), limits_);
                 if (!result) return result;
             }
         }
@@ -747,7 +764,7 @@ private:
     Result Choices(const ContainerProgramViewV3& program, Budget budget) noexcept {
         Result result{};
         for (std::uint32_t i = 0; i < program.childCount; ++i) {
-            result = Alternative(result, Visit(program.children[i].playable, Mode::Frontier, budget));
+            Alternative(result, Visit(program.children[i].playable, Mode::Frontier, budget));
             if (!result) return result;
         }
         result.profile.selectionCount = SaturatingAdd(result.profile.selectionCount, 1u, UINT32_MAX, result.flags);
@@ -763,7 +780,7 @@ private:
         for (std::uint32_t i = 0; i < program.discreteRowCount; ++i) {
             const auto* child = Child(program, program.discreteRows[i].childStableOrdinal);
             if (child == nullptr) return Failure(Status::MissingContent);
-            discrete = Alternative(discrete, Visit(child->playable, Mode::Frontier, budget));
+            Alternative(discrete, Visit(child->playable, Mode::Frontier, budget));
             if (!discrete) return discrete;
         }
         Result continuous{};
@@ -777,10 +794,11 @@ private:
             const auto* child = Child(program, ordinal);
             if (child == nullptr) return Failure(Status::MissingContent);
             continuousChildren = SaturatingAdd(continuousChildren, 1u, kLeafCapacity, continuous.flags);
-            continuous = Concurrent(continuous, Visit(child->playable, Mode::Frontier, budget), limits_);
+            Concurrent(continuous, Visit(child->playable, Mode::Frontier, budget), limits_);
             if (!continuous) return continuous;
         }
-        auto result = Concurrent(discrete, continuous, limits_);
+        auto& result = discrete;
+        Concurrent(result, continuous, limits_);
         result.profile.rootContinuousMembers = continuous.profile.current;
         result.profile.rootContinuousChildren = continuousChildren;
         for (std::uint32_t t = 1; t <= continuousChildren; ++t)
@@ -864,6 +882,7 @@ private:
             std::uint32_t futureControls = 0;
             std::uint32_t futureQueueRows = 0;
             std::uint32_t futureConditionalRows = 0;
+            decltype(Profile::completionWidths) futureCompletions{};
             std::uint64_t futureEmbeddedGroups = 0, futureEmbeddedMembers = 0;
             bool canTransition = false;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
@@ -879,6 +898,11 @@ private:
                 futureConditionalRows = std::max(futureConditionalRows, next.profile.conditionalRows);
                 futureEmbeddedGroups = std::max(futureEmbeddedGroups, next.profile.embeddedArmGroups);
                 futureEmbeddedMembers = std::max(futureEmbeddedMembers, next.profile.embeddedArmMembers);
+                for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+                    const auto own = next.profile.current > 1 && next.profile.current >= t ? 1u : 0u;
+                    futureCompletions[t] = std::max(futureCompletions[t],
+                        SaturatingAdd(next.profile.completionWidths[t], own, UINT32_MAX, current.flags));
+                }
                 capacity = std::max(capacity, next.profile.current);
                 futureInstances = std::max(futureInstances, next.profile.instanceRows);
                 if (limits_.includeDynamicInstanceRows)
@@ -892,6 +916,12 @@ private:
             const bool wraps = CanWrap(program);
             const auto conditions = wraps || program.childCount > 2 ? 2u : program.childCount - 1u;
             current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, conditions, UINT32_MAX, current.flags);
+            for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+                const auto own = current.profile.current > 1 && current.profile.current >= t ? 1u : 0u;
+                auto& count = current.profile.completionWidths[t];
+                count = SaturatingAdd(count, own, UINT32_MAX, current.flags);
+                count = SaturatingAdd(count, futureCompletions[t], UINT32_MAX, current.flags);
+            }
             targetCapacity = std::max(targetCapacity, capacity);
             AddFuture(current, capacity, limits_);
             current.profile.variableControls = SaturatingAdd(current.profile.variableControls, futureControls, UINT32_MAX, current.flags);
@@ -907,7 +937,7 @@ private:
             current.profile.instanceRows = SaturatingAdd(current.profile.instanceRows, futureInstances, UINT32_MAX, current.flags);
             current.profile.referenceRows = SaturatingAdd(current.profile.referenceRows,
                 futureReferences, UINT32_MAX, current.flags);
-            result = Alternative(result, current);
+            Alternative(result, current);
             if (!result) return result;
         }
         for (std::uint32_t i = 0; i < program.childCount; ++i) {

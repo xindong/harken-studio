@@ -6274,7 +6274,8 @@ struct Engine {
     };
     NativeRuntimeBacking* nativeRuntimeBackingInUse = nullptr;
     struct NativeRuntimeBackingUse {
-        std::array<StableStoragePreparedUse, 12> columns;
+        std::array<StableStoragePreparedUse, 8> columns;
+        CompositeCompletionOwnerPool::PreparedUse composites;
         VoiceLedger::BackingUse ledger;
         VoiceLedger::MonitorSelectionUse monitor;
         SelectionMemoryTableV1::BackingUse selectionHistory;
@@ -6296,9 +6297,9 @@ struct Engine {
         Engine& owner;
         NativeRuntimeBacking* previous;
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
-            : columns{backing == nullptr ? StableStoragePreparedUse{} : backing->decisions.Use(), Use(backing, 3),
-                      Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
+            : columns{backing == nullptr ? StableStoragePreparedUse{} : backing->decisions.Use(), Use(backing, 7), Use(backing, 8),
                       Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12), Use(backing, 13)},
+              composites(engine.compositeCompletionOwners, backing == nullptr ? nullptr : &backing->completions),
               ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
               monitor(backing == nullptr ? VoiceLedger::MonitorSelectionUse{} : backing->monitor.Use()),
               selectionHistory(backing == nullptr ? SelectionMemoryTableV1::BackingUse{} : backing->selectionHistory.Use()),
@@ -6328,7 +6329,6 @@ struct Engine {
     private:
         static StableStoragePreparedUse Use(NativeRuntimeBacking* backing, std::uint32_t index) noexcept {
             if (backing == nullptr) return {};
-            if (index < 7u) return backing->completions[index - 3u].Use();
             if (index == 7u) return backing->voices.Use();
             if (index == 8u) return backing->queueOrigins.Use();
             if (index == 9u) return backing->laneEntries.Use();
@@ -7084,6 +7084,7 @@ public:
           timelineArms(TimelineArmCapacity(resolved)),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
           queueInstances(UINT32_MAX, originalConditionalCapacity),
+          compositeCompletionOwners(UINT32_MAX, resolved.maxKnownScheduleLeaves),
           topologyPlans(resolved.topologyPlanPoolCapacity, resolved.maxBuses,
                         resolved.busSendSlotsPerBus),
           preparedTopologyPlans(resolved.topologyPlanPoolCapacity,
@@ -7185,10 +7186,6 @@ public:
                        resolved.voiceCapacity.Logical()),
           logicNotifications(resolved.voiceCapacity.Logical()),
           sourceCursors(resolved.voiceCapacity.Render()),
-          compositeCompletionOwners(
-              resolved.maxCompositeCompletionOwners,
-              resolved.maxKnownScheduleLeaves),
-          originalCompositeCompletionPreparations(resolved.maxCompositeCompletionOwners),
           timelinePrograms(2),
            timelineSink(voices, timelineArms),
            mixer(resolved, voices, buses, dynamicRoutes, commands, actionSeeks,
@@ -7334,6 +7331,9 @@ public:
         assert(originalDecisionResolver && originalOccurrenceResolvers);
         (void)originalDecisionResolver;
         (void)originalOccurrenceResolvers;
+        compositeCompletionOwners.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            return static_cast<Engine*>(context)->originalCompositeCompletionPreparations.ConstructThrough(required);
+        });
         const bool originalCompositeResolver = compositeCompletionOwners.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalCompositeBaseline);
         assert(originalCompositeResolver);
@@ -7511,7 +7511,7 @@ public:
             boundedFrontierCount(frontierNodes, resolved.maxPendingSelectionDeltasTotal),
             boundedFrontierCount(2u * frontierNodes + 1u, UINT32_MAX),
             boundedFrontierCount(2u * frontierNodes, UINT32_MAX),
-            boundedFrontierCount(frontierNodes, resolved.maxCompositeCompletionOwners),
+            boundedFrontierCount(frontierNodes, UINT32_MAX),
             boundedFrontierCount(frontierNodes, resolved.voiceCapacity.Render()),
             resolved.maxPlayableInstances, resolved.maxPlayableInstances,
             resolved.maxScheduledTransactions,
@@ -7543,9 +7543,6 @@ public:
             resolved.maxVariableControlLiveRows <
                 resolved.maxVariableControlActiveRows ||
             resolved.maxVariableControlLiveRows > 64 ||
-            resolved.maxCompositeCompletionOwners == 0 ||
-            resolved.maxCompositeCompletionOwners >
-                kMaxCompositeCompletionOwners ||
             resolved.maxContainerInstances == 0 ||
             resolved.maxContainerInstances > kMaxContainerInstances ||
             resolved.maxQueueChildren == 0 ||
@@ -8286,6 +8283,8 @@ public:
         ArmGroupTable::BackingPreparation groups;
         std::uint32_t groupCount = 0;
         std::uint32_t groupMembers = 0;
+        std::vector<std::uint32_t> completionWidths;
+        CompositeCompletionOwnerPool::BackingPreparation completions;
         DeferredTreeWidths* widths = nullptr;
         DeferredTreeWidths::iterator widthEntry;
         std::uint32_t width = 0;
@@ -8341,6 +8340,8 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (!backing.completionWidths.empty() &&
+            !compositeCompletionOwners.PrepareBacking(backing.completionWidths, &backing.completions)) return false;
         if (backing.groupCount != 0 &&
             (!decisions.PrepareBacking(backing.groupCount, &backing.decisions) ||
              !armGroups.PrepareBacking(backing.groupCount, backing.groupMembers, &backing.groups))) return false;
@@ -8368,6 +8369,7 @@ public:
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse use;
         ActionFiringHandle& controlOwner;
         const ActionFiringHandle previousOwner;
+        std::optional<CompositeCompletionOwnerPool::PreparedUse> composites;
         std::optional<ArmGroupTable::PreparedUse> groups;
         std::optional<StableStoragePreparedUse> decisions;
         BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner) noexcept
@@ -8376,6 +8378,8 @@ public:
             if (held) {
                 active = held->width;
                 controlOwner = held->controlCount != 0 || held->queueCount != 0 || held->groupCount != 0 ? owner : 0;
+                if (owner && !held->completionWidths.empty() && !engine.nativeRuntimeBackingInUse)
+                    composites.emplace(engine.compositeCompletionOwners, &held->completions);
                 if (owner && held->groups.Valid() && !engine.nativeRuntimeBackingInUse) {
                     groups.emplace(engine.armGroups, &held->groups);
                     decisions.emplace(held->decisions.Use());
@@ -13991,6 +13995,7 @@ public:
     SourceTerminalRecords sourceTerminals;
     GrowingRowStorage<EnginePlayableMemberToken> sourcePlayableMembers;
     OccurrenceStatePool timelineOccurrences;
+    CompositeCompletionOwnerPool compositeCompletionOwners;
     VoicePool voices;
     StableRowStorage<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
     BusTree buses;
@@ -15538,9 +15543,8 @@ public:
     // mixer holds a reference and publishes into it). One row per configured
     // voice slot.
     SourceCursorMirror sourceCursors;
-    CompositeCompletionOwnerPool compositeCompletionOwners;
     // Same native capacity; receiver outlives all own factory output holders.
-    std::vector<EngineOriginalCompositeCompletionPreparation> originalCompositeCompletionPreparations;
+    GrowingRowStorage<EngineOriginalCompositeCompletionPreparation> originalCompositeCompletionPreparations;
     void (*originalCompositePreparationHookForTest)(Engine&, const EngineOriginalCompositeCompletionPreparation&, void*) = nullptr;
     void* originalCompositePreparationContextForTest = nullptr;
     void (*originalCompositeLeafPreparationHookForTest)(Engine&, const EngineOriginalCompositeCompletionPreparation&, void*) = nullptr;

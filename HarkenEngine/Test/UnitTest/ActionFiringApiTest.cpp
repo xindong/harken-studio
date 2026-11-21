@@ -5484,7 +5484,7 @@ struct ActionPreparationOwnerSnapshot {
     std::uint32_t unavailableOccurrences = 0;
     std::uint32_t occurrenceHighWater = 0;
     std::uint32_t compositeOccupied = 0;
-    std::uint32_t compositeFree = 0;
+    std::uint32_t compositeUnavailable = 0;
     std::uint32_t compositeHighWater = 0;
     std::uint32_t delayInUse = 0;
     std::uint32_t delayHighWater = 0;
@@ -5532,7 +5532,7 @@ ActionPreparationOwnerSnapshot CaptureActionPreparationOwners(
     snapshot.occurrenceHighWater = engine.timelineOccurrences.HighWater();
     snapshot.compositeOccupied =
         engine.compositeCompletionOwners.OccupiedCount();
-    snapshot.compositeFree = engine.compositeCompletionOwners.FreeCount();
+    snapshot.compositeUnavailable = engine.compositeCompletionOwners.Capacity() - engine.compositeCompletionOwners.FreeCount();
     snapshot.compositeHighWater =
         engine.compositeCompletionOwners.HighWater();
     snapshot.delayInUse = engine.effectBank.DelayInUse();
@@ -5631,7 +5631,7 @@ void ExpectActionPreparationOwnersUnchanged(
     EXPECT_EQ(expected.unavailableOccurrences, actual.unavailableOccurrences);
     EXPECT_EQ(expected.occurrenceHighWater, actual.occurrenceHighWater);
     EXPECT_EQ(expected.compositeOccupied, actual.compositeOccupied);
-    EXPECT_EQ(expected.compositeFree, actual.compositeFree);
+    EXPECT_EQ(expected.compositeUnavailable, actual.compositeUnavailable);
     EXPECT_EQ(expected.compositeHighWater, actual.compositeHighWater);
     EXPECT_EQ(expected.delayInUse, actual.delayInUse);
     EXPECT_EQ(expected.delayHighWater, actual.delayHighWater);
@@ -6019,6 +6019,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
         leaf.predicate.program.world =
             engine->variables.CurrentWorldGeneration();
         leaf.predicate.program.runtimeSemanticFingerprint = 9003;
+        ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->compositeCompletionOwners));
         compositeOwners.resize(
             engine->compositeCompletionOwners.Capacity());
         for (auto& token : compositeOwners) {
@@ -6054,6 +6055,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
         *engine, image.actions[9].actionStableId, emitter,
         (exhaustion == ContinuationOwnerExhaustion::SuccessorDecision ||
             exhaustion == ContinuationOwnerExhaustion::Transition ||
+            exhaustion == ContinuationOwnerExhaustion::SuccessorCompositeOwner ||
             exhaustion == ContinuationOwnerExhaustion::ArmGroup) ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
 
     for (auto& prepared : decisions) {
@@ -25479,7 +25481,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(admissionRecheck.owners.armGroupOccupied, returnedOwners.armGroupOccupied);
             EXPECT_EQ(admissionRecheck.owners.armFree, returnedOwners.armFree);
             EXPECT_EQ(admissionRecheck.owners.unavailableOccurrences, returnedOwners.unavailableOccurrences);
-            EXPECT_EQ(admissionRecheck.owners.compositeFree, returnedOwners.compositeFree);
+            EXPECT_EQ(admissionRecheck.owners.compositeUnavailable, returnedOwners.compositeUnavailable);
             EXPECT_EQ(admissionRecheck.owners.ingress, returnedOwners.ingress);
             EXPECT_EQ(admissionRecheck.owners.occupiedQueueProgramBanks,
                       returnedOwners.occupiedQueueProgramBanks);
@@ -65173,15 +65175,14 @@ TEST(ActionFiringApi,
     }
 }
 
-TEST(ActionFiringApi,
-     PreparationMatrixCompositeCompletionOwnerCapacityReturnsNoVoice) {
+static void CheckCompositePlaybackPastCapacity(bool delayed) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     std::vector<float> first(64, 0.25f);
-    std::vector<float> second(64, -0.25f);
+    std::vector<float> second(128, 0.125f);
     const VnPCMDesc firstPcm = harkentest::MonoDesc(first, 48000);
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK,
@@ -65196,6 +65197,12 @@ TEST(ActionFiringApi,
             .contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
     image.MakeFirstQueueChildCompositeTrack();
+    if (delayed) {
+        SetAbsoluteTime(&image.steps[11].delay, DelayNanosecondsForTargetFrame(*engine, 4096));
+        image.actions[9].directFeatureMask = image.actions[9].transitiveFeatureMask = 1;
+        image.actions[9].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    }
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
     VnEmitterHandle emitter = 0;
@@ -65234,19 +65241,46 @@ TEST(ActionFiringApi,
     leaf.predicate.program.world =
         engine->variables.CurrentWorldGeneration();
     leaf.predicate.program.runtimeSemanticFingerprint = 9003;
-    std::vector<harken::CompositeCompletionOwnerToken> occupied(
-        engine->compositeCompletionOwners.Capacity());
+    VnPostActionDesc desc = ValidPostDesc();
+    desc.actionId = harkentest::ObjectId(50);
+    desc.emitter = emitter;
+    VnActionFiringHandle firing = 0;
+    if (delayed) ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    std::vector<harken::CompositeCompletionOwnerToken> occupied(256u);
     for (auto& token : occupied) {
         ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok,
                   engine->compositeCompletionOwners.PrepareAcquire(
                       composed, 1, &leaf, 1,
                       engine->timelineOccurrences, &token));
     }
-    ASSERT_EQ(0u, engine->compositeCompletionOwners.FreeCount());
-    const auto before = CaptureActionPreparationOwners(*engine);
-
-    ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(50), emitter, VN_NO_VOICE, before);
+    if (delayed) {
+        engine->compositeCompletionOwners.SetRowCommitPageLimitForTests(0);
+        for (;;) {
+            harken::CompositeCompletionOwnerToken next{};
+            const auto status = engine->compositeCompletionOwners.PrepareAcquire(
+                composed, 1, &leaf, 1, engine->timelineOccurrences, &next);
+            if (status == harken::CompositeCompletionAcquireStatus::Capacity) break;
+            ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok, status);
+            occupied.push_back(next);
+        }
+    } else {
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    }
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    bool heard = false;
+    for (unsigned block = 0; block < 128; ++block) {
+        engine->nullBackend.Pump(1);
+        heard |= harkentest::Peak(engine->nullBackend.LastBlock(),
+            engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()) > harkentest::kSilenceFloor;
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_TRUE(heard);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 
     for (const auto token : occupied) {
         EXPECT_TRUE(engine->compositeCompletionOwners.CancelPrepared(
@@ -65258,6 +65292,14 @@ TEST(ActionFiringApi,
         leafOccurrence));
     EXPECT_TRUE(engine->timelineOccurrences.CancelPreparedAcquire(
         composed));
+}
+
+TEST(ActionFiringApi, PreparationMatrixCompositeCompletionOwnerGrowsPast256) {
+    CheckCompositePlaybackPastCapacity(false);
+}
+
+TEST(ActionFiringApi, DelayedCompositeUsesOwnCompletionRecordUnderPressure) {
+    CheckCompositePlaybackPastCapacity(true);
 }
 
 TEST(ActionFiringApi,
