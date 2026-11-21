@@ -342,6 +342,8 @@ public:
           ownerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u),
           committedOwnerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u) {}
     bool PrepareStorage() noexcept;
+    bool PrepareReservationCount(std::uint32_t count) noexcept;
+    std::uint32_t ReservationCapacity() const noexcept { return step_.maxReservations_; }
 
     PlayableTreeExecutor(const PlayableTreeExecutor&) = delete;
     PlayableTreeExecutor& operator=(const PlayableTreeExecutor&) = delete;

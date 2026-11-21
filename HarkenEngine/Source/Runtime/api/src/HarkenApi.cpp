@@ -103154,6 +103154,12 @@ bool PrepareStaticScheduleExecution(
     const auto rootKind = root.kind;
     const auto world = context.world;
     std::vector<harken::CapturedTimelineVoiceInstall> captures;
+    if (!scratch->playableTreeExecutor.PrepareReservationCount(materialized.leafCount) ||
+        !scratch->storage.ownerLedger.PrepareDomain(harken::FrontierOwnerKind::Voice, materialized.leafCount)) {
+        (void)operations.ReleaseLease(scratch);
+        context.result = VN_BACKPRESSURE;
+        return false;
+    }
     bool allocationRefused = materialized.leafCount != 0 &&
         engine.forcePreparedScheduleAllocationFailureForTest;
     if (!allocationRefused) {

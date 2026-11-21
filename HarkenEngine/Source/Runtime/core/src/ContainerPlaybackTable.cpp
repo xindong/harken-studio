@@ -1340,6 +1340,17 @@ bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     return false;
 }
 
+bool PlayableTreeExecutor::PrepareReservationCount(std::uint32_t count) noexcept {
+    if (count <= step_.maxReservations_) return true;
+    if (step_.CommitProofsRequired() || step_.committed_ || !step_.instances_.empty() ||
+        !step_.containers_.empty() || memguard::IsAudioTagged()) return false;
+    const auto previous = step_.maxReservations_;
+    step_.maxReservations_ = count;
+    if (step_.PrepareStorage()) return true;
+    step_.maxReservations_ = previous;
+    return false;
+}
+
 bool PlayableTreeExecutor::PrepareStorage() noexcept {
     if (memguard::IsAudioTagged() || !step_.PrepareStorage()) return false;
     try {

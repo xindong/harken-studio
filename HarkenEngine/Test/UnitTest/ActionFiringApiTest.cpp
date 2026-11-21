@@ -39227,6 +39227,7 @@ TEST(ActionFiringApi, ImmediateCompositeContainerAcrossPagesSurvivesLateUpdate) 
 
 TEST(ActionFiringApi, MultiLeafLateNormalUpdateKeepsOriginalSourcesAndAuthoredOffsets) {
     for (const bool track : {false, true}) {
+        harkentest::PlayableCapacityScope legacyPlaybackLimit(track ? 1u : 0u, 0);
         for (const std::int64_t secondLeafStartNanoseconds :
              {INT64_C(0), INT64_C(128) * INT64_C(1000000000) / 48000}) {
             (void)Vn_Term();
@@ -39258,7 +39259,17 @@ TEST(ActionFiringApi, MultiLeafLateNormalUpdateKeepsOriginalSourcesAndAuthoredOf
                                         return member.InvocationValid() &&
                                                member.Invocation().actionFiring == firing;
                                     });
-            ASSERT_NE(engine->playableServices.end(), row);
+            if (row == engine->playableServices.end()) {
+                VnActionStepResult step{};
+                step.structSize = sizeof(step);
+                VnActionFiringInfo query{};
+                query.structSize = sizeof(query);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+                ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &query));
+                FAIL() << "track=" << track << " offsetNs=" << secondLeafStartNanoseconds
+                       << " stepResult=" << step.result << " stepState=" << step.state
+                       << " firingState=" << query.state << " outcome=" << query.outcome;
+            }
             ASSERT_EQ(2u, row->scheduleLeafCount);
             const auto base = row->scheduleStorageBase;
             const auto firstArm = engine->ReadPlayableMember(base).arm;
