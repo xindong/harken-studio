@@ -13,9 +13,11 @@ EXPORTS
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
     Vn_AttachBinding
+    Vn_BeginOutputPreparation
     Vn_BeginStreamFile
     Vn_BeginStreamSource
     Vn_BindVoiceAttenuation
+    Vn_CancelOutputPreparation
     Vn_CancelStreamSource
     Vn_ClearBusEffect
     Vn_ClearBusEffectDynamicRoute
@@ -33,6 +35,7 @@ EXPORTS
     Vn_DetachBinding
     Vn_DisconnectBusSend
     Vn_Init
+    Vn_InitWithOutputPreparation
     Vn_InspectCanonicalPackV1
     Vn_InspectInitPack
     Vn_LoadCurrentWorld

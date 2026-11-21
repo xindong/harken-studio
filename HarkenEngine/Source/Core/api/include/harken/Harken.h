@@ -443,6 +443,17 @@ typedef struct VnConfig {
  * logic thread. The audio thread never allocates. */
 VnResult Vn_Init(const VnConfig* config);
 
+/* Start preparing the Windows game output device before engine initialization.
+ * On success the caller owns the returned ticket and must pass it to
+ * Vn_InitWithOutputPreparation or Vn_CancelOutputPreparation. */
+VnResult Vn_BeginOutputPreparation(const VnConfig* config, uint64_t* outTicket);
+
+/* Initialize the engine using output preparation started for this configuration. */
+VnResult Vn_InitWithOutputPreparation(const VnConfig* config, uint64_t ticket);
+
+/* Release an unused output preparation ticket and its device resources. */
+VnResult Vn_CancelOutputPreparation(uint64_t ticket);
+
 /* Release the platform audio device while preserving the engine, mixer,
  * voices, streams, and content state. Audio-frame time does not advance while
  * the device is suspended. The host must call this from its externally
@@ -1318,7 +1329,7 @@ typedef void (*VnPackByteReleaseFn)(
     VnPackByteSpan span);
 
 #define VN_ABI_VERSION_MAJOR 1u
-#define VN_ABI_VERSION_MINOR 4u
+#define VN_ABI_VERSION_MINOR 5u
 
 typedef struct VnAbiVersionInfo {
     uint32_t structSize;
