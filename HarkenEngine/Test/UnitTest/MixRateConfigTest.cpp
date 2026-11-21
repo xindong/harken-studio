@@ -158,6 +158,9 @@ protected:
     }
 
     void TearDown() override {
+#if defined(_WIN32)
+        if (outputTicket != 0) (void)Vn_CancelOutputPreparation(outputTicket);
+#endif
         if (harken::detail::ActiveEngine() != nullptr) {
             (void)Vn_Term();
         }
@@ -165,9 +168,88 @@ protected:
     }
 
     harken::DeviceBackendTestState deviceState{};
+#if defined(_WIN32)
+    std::uint64_t outputTicket = 0;
+#endif
 };
 
 #if defined(_WIN32)
+TEST_F(MixRateDeviceTest, OutputTicketCancellationNeverStartsCallbackOrRevivesOldTicket) {
+    auto config = MakeConfig(VN_DEVICE_REAL, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    ASSERT_EQ(VN_OK, Vn_BeginOutputPreparation(&config, &outputTicket));
+    const auto oldTicket = outputTicket;
+    ASSERT_NE(0u, oldTicket);
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    EXPECT_EQ(VN_IN_USE, Vn_Init(&config));
+    std::uint64_t duplicate = 7;
+    EXPECT_EQ(VN_IN_USE, Vn_BeginOutputPreparation(&config, &duplicate));
+    EXPECT_EQ(0u, duplicate);
+    VnResult foreignInit = VN_OK;
+    VnResult foreignCancel = VN_OK;
+    std::thread foreign([&] {
+        foreignInit = Vn_InitWithOutputPreparation(&config, oldTicket);
+        foreignCancel = Vn_CancelOutputPreparation(oldTicket);
+    });
+    foreign.join();
+    EXPECT_EQ(VN_IN_USE, foreignInit);
+    EXPECT_EQ(VN_IN_USE, foreignCancel);
+    ASSERT_EQ(VN_OK, Vn_CancelOutputPreparation(oldTicket));
+    EXPECT_EQ(0u, deviceState.startCount);
+    EXPECT_EQ(1u, deviceState.destroyCount);
+
+    ASSERT_EQ(VN_OK, Vn_BeginOutputPreparation(&config, &outputTicket));
+    EXPECT_NE(oldTicket, outputTicket);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_InitWithOutputPreparation(&config, oldTicket));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelOutputPreparation(oldTicket));
+    auto finalConfig = config;
+    finalConfig.maxVoices = 32;
+    ASSERT_EQ(VN_OK, Vn_InitWithOutputPreparation(&finalConfig, outputTicket));
+    EXPECT_EQ(32u, harken::detail::ActiveEngine()->config.voiceCapacity.Render());
+    EXPECT_TRUE(harken::detail::ActiveEngine()->device.RenderAdmissionCommitted());
+    EXPECT_EQ(2u, deviceState.createCount);
+    EXPECT_EQ(1u, deviceState.startCount);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelOutputPreparation(outputTicket));
+}
+
+TEST_F(MixRateDeviceTest, OutputTicketRejectsUnsupportedBeginAndMismatchedAdoption) {
+    auto config = MakeConfig(VN_DEVICE_NULL, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_BeginOutputPreparation(&config, &outputTicket));
+    EXPECT_EQ(0u, outputTicket);
+    config.deviceMode = VN_DEVICE_REAL;
+    config.sampleRate = 0;
+    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_BeginOutputPreparation(&config, &outputTicket));
+    EXPECT_EQ(0u, deviceState.createCount);
+    config.sampleRate = 48000;
+    ASSERT_EQ(VN_OK, Vn_BeginOutputPreparation(&config, &outputTicket));
+    auto other = config;
+    other.sampleRate = 44100;
+    EXPECT_EQ(VN_INVALID_CONFIG, Vn_InitWithOutputPreparation(&other, outputTicket));
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    ASSERT_EQ(VN_OK, Vn_CancelOutputPreparation(outputTicket));
+    EXPECT_EQ(0u, deviceState.startCount);
+    EXPECT_EQ(1u, deviceState.destroyCount);
+    ASSERT_EQ(VN_OK, Vn_Init(&other));
+    EXPECT_EQ(44100u, harken::detail::ActiveEngine()->config.mixRate.SampleRate());
+    EXPECT_FALSE(harken::detail::ActiveEngine()->gameOutputStartup.OwnsDevice());
+}
+
+TEST_F(MixRateDeviceTest, FailedOutputTicketIsReleasedAndTheSameRequestCanRetry) {
+    auto config = MakeConfig(VN_DEVICE_REAL, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    deviceState.failCreateCount = 1;
+    ASSERT_EQ(VN_OK, Vn_BeginOutputPreparation(&config, &outputTicket));
+    EXPECT_EQ(VN_DEVICE_ERROR, Vn_InitWithOutputPreparation(&config, outputTicket));
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelOutputPreparation(outputTicket));
+    ASSERT_EQ(VN_OK, Vn_BeginOutputPreparation(&config, &outputTicket));
+    ASSERT_EQ(VN_OK, Vn_InitWithOutputPreparation(&config, outputTicket));
+    EXPECT_TRUE(harken::detail::ActiveEngine()->device.RenderAdmissionCommitted());
+    EXPECT_EQ(2u, deviceState.createCount);
+    EXPECT_EQ(1u, deviceState.startCount);
+}
+
 TEST_F(MixRateDeviceTest, FixedFormatSyncStartFailureCanRetrySameRequest) {
     auto config = MakeConfig(VN_DEVICE_REAL, 48000);
     config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
