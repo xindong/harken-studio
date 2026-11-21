@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -38,9 +37,23 @@ namespace Harken
 
         internal static bool IsSafeRelativePath(string value)
         {
-            if (string.IsNullOrWhiteSpace(value) || Path.IsPathRooted(value) || value.IndexOf(':') >= 0 || value.IndexOf('\\') >= 0) return false;
-            return !value.Split('/').Any(part => string.IsNullOrEmpty(part) || part == "." || part == ".." ||
-                Regex.IsMatch(part, @"[\x00-\x1f<>:""|?*]"));
+            if (string.IsNullOrWhiteSpace(value) || Path.IsPathRooted(value)) return false;
+            int start = 0;
+            for (int i = 0; i <= value.Length; ++i)
+            {
+                if (i < value.Length && value[i] != '/')
+                {
+                    char c = value[i];
+                    if (c < 32 || c == '\\' || c == ':' || c == '<' || c == '>' || c == '"' ||
+                        c == '|' || c == '?' || c == '*') return false;
+                    continue;
+                }
+                int length = i - start;
+                if (length == 0 || (value[start] == '.' &&
+                    (length == 1 || (length == 2 && value[start + 1] == '.')))) return false;
+                start = i + 1;
+            }
+            return true;
         }
 
     }
