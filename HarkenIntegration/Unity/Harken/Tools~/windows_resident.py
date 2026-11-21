@@ -40,11 +40,12 @@ def write_release(canonical: Path, output: Path):
         metadata = binary.with_suffix(".json")
         if not metadata.is_file():
             continue
+        with binary.open("rb") as stream:
+            if stream.read(4) != b"VSPK":
+                continue
         if max(binary.stat().st_size, metadata.stat().st_size) > MAX_BYTES:
             raise ValueError(f"Resident Pack exceeds the bounded Windows publication size: {binary}")
         raw, json_bytes = binary.read_bytes(), metadata.read_bytes()
-        if raw[:4] != b"VSPK":
-            continue
         packed = compress(raw)
         header = struct.pack("<4sIII", b"HRP1", len(raw), len(json_bytes), len(packed))
         content = header + json_bytes + packed

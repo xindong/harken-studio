@@ -135,21 +135,21 @@ struct Decoder {
 } // namespace
 static VnResult BindingFacts(const VnPackInspectDescV1 &request,
                              const harken::PackCanonicalImage &init,
-                             VnPackInspectReportV1 &report) {
+                             VnPackInspectReportV1 &report, const harken::detail::PackDecodeBudget& budget) {
   harken::PackCanonicalImage image;
   auto res = harken::ParsePackForResidentPreparation(
       request.pack.bytes, request.pack.byteCount, &image, &report.contentHash,
-      {});
+      budget);
   if (res != VN_OK)
     return res;
   if (!image.hasPartition || image.requirement.storageModelVersion != 2 ||
       image.packKind != HK_PACK_KIND_CANONICAL_CONTENT)
     return VN_BAD_PACK;
   harken::CurrentWorldBodyImage body;
-  auto decoded = body.DecodeWithResult(
+  auto decoded = body.DecodeWithBudget(
       image.partitionBody.data(), image.partitionBody.size(),
       harken::kCanonicalDefinitionPartitionBodyVintage,
-      harken::CurrentWorldDecodeMode::StrictArtifact);
+      harken::CurrentWorldDecodeMode::StrictArtifact, budget);
   if (decoded == harken::CurrentWorldBodyDecodeResult::Capacity)
     return VN_PACK_RESIDENT_CAPACITY;
   const auto *view = body.ProductionView();
@@ -231,12 +231,16 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
     const uint64_t identity[] = {desc->initVolumeId, desc->initFileId,
                                  desc->initFileSize, desc->initWriteTime,
                                  desc->initChangeTime};
+    const auto staging = harken::detail::MakePackDecodeBudget(budget);
+    harken::detail::PackDecodeCharge retained(staging);
+    retained.Add(desc->init.byteCount);
+    retained.AddRows<Owner>(count);
+    retained.AddRows<Row>(count);
     harken::PackCanonicalImage initImage;
-    if (harken::ParsePackCanonicalImage(desc->init.bytes, desc->init.byteCount,
-                                        &initImage) != VN_OK ||
-        initImage.packKind != HK_PACK_KIND_INIT ||
-        !initImage.hasBusDefinitionSnapshot)
-      return VN_BAD_PACK;
+    const auto parsedInit = harken::ParsePackCanonicalImageWithBudget(desc->init.bytes,
+        desc->init.byteCount, &initImage, nullptr, staging);
+    if (parsedInit != VN_OK) return parsedInit;
+    if (initImage.packKind != HK_PACK_KIND_INIT || !initImage.hasBusDefinitionSnapshot) return VN_BAD_PACK;
     Owner dir, boot;
     auto status = Open(dir, directory, true);
     if (status != VN_OK)
@@ -253,10 +257,7 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
       return VN_DEVICE_ERROR;
     std::vector<Owner> owners(count);
     std::vector<Row> rows(count);
-    std::vector<uint8_t> image;
     std::wstring_view rest(names);
-    size_t resident =
-        desc->init.byteCount + count * (sizeof(Owner) + sizeof(Row));
     for (uint32_t j = 0; j < count; j++) {
       size_t end = rest.find(L'\n');
       auto wide = rest.substr(0, end);
@@ -299,9 +300,9 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
       if (!GetFileSizeEx(owner.file, &size) || size.QuadPart < 48 ||
           size.QuadPart > 3 * Max)
         return VN_BAD_PACK;
-      if (size_t(size.QuadPart) > budget - resident)
-        return VN_PACK_RESIDENT_CAPACITY;
-      image.resize(size_t(size.QuadPart));
+      harken::detail::PackDecodeCharge input(staging);
+      input.Add(static_cast<uint64_t>(size.QuadPart));
+      std::vector<uint8_t> image(static_cast<size_t>(size.QuadPart));
       DWORD read = 0;
       if (!ReadFile(owner.file, image.data(), DWORD(image.size()), &read,
                     nullptr) ||
@@ -312,8 +313,7 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
       if (h[0] != 0x31505248 || h[1] == 0 || h[1] > Max || !h[2] ||
           h[2] > Max || !h[3] || size_t(h[2]) + h[3] + 48 != image.size())
         return VN_BAD_PACK;
-      if (h[1] > budget - resident - image.size())
-        return VN_PACK_RESIDENT_CAPACITY;
+      retained.Add(h[1]);
       uint8_t digest[32];
       if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, image.data(),
                      ULONG(image.size() - 32), digest, 32) < 0)
@@ -329,7 +329,6 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
                       owner.bytes.data(), h[1], &written) ||
           written != h[1])
         return VN_BAD_PACK;
-      resident += h[1];
       VnPackInspectDescV1 req{};
       req.structSize = sizeof req;
       req.pack = {sizeof(VnPackByteSpan), 0, owner.bytes.data(),
@@ -338,7 +337,7 @@ Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
       req.rootActionId = id;
       req.maxInputBytes = desc->init.byteCount + owner.bytes.size();
       row.facts.structSize = sizeof row.facts;
-      status = BindingFacts(req, initImage, row.facts);
+      status = BindingFacts(req, initImage, row.facts, staging);
       if (status != VN_OK)
         return status;
       row.byteCount = owner.bytes.size();
