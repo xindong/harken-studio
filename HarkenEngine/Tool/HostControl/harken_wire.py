@@ -13221,7 +13221,7 @@ TABLE_JSON = r'''
       },
       "VN_ABI_VERSION_MINOR": {
         "type": "u32",
-        "value": 0
+        "value": 1
       },
       "VN_EMITTER_CREATE_STATE_ONLY": {
         "type": "u32",

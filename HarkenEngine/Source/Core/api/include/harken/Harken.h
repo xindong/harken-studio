@@ -1314,7 +1314,7 @@ typedef void (*VnPackByteReleaseFn)(
     VnPackByteSpan span);
 
 #define VN_ABI_VERSION_MAJOR 1u
-#define VN_ABI_VERSION_MINOR 0u
+#define VN_ABI_VERSION_MINOR 1u
 
 typedef struct VnAbiVersionInfo {
     uint32_t structSize;

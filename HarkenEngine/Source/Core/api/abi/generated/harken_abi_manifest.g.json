@@ -1461,7 +1461,7 @@
         "VN_ABI_VERSION_MINOR": {
           "edition": "core",
           "type": "u32",
-          "value": 0
+          "value": 1
         },
         "VN_ATTENUATION_MAX_CURVE_POINTS": {
           "edition": "core",
@@ -26676,7 +26676,7 @@
       }
     }
   },
-  "contractSha256": "68ab73c9815ee244a96132c14ef3b0fe61547eca3bd74397ac69bfff97fa9e09",
+  "contractSha256": "3e4cd16aebeda39917ba86dbe2d6e53c06c79437c277471eeba5470e1f77b260",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

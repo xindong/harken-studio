@@ -3641,6 +3641,32 @@ TEST(CanonicalPackSetActivate, ResidentVorbisActionLoadsMixedPackAndRendersAgain
     }
 }
 
+TEST(CanonicalPackSetActivate, ExplicitResidentMediaBudgetRejectsProviderSetAtomically) {
+    using namespace packstream;
+    auto config = StreamConfig();
+    config.maxPackResourceBytes = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+    Provider init{Build(true, PackId("Init"))};
+    Provider content{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+        0, true, fingerprint, &fixture.media)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Activate(members, report));
+    EXPECT_EQ(0u, session.Engine()->registry.CookieOf(kSound));
+    EXPECT_EQ(nullptr, PackMasterHolder(session.Engine()));
+    EXPECT_EQ(content.reads, content.releases);
+
+    members.pop_back();
+    ASSERT_EQ(VN_OK, Activate(members, report));
+    EXPECT_EQ(1u, report.resultSetRevision);
+    EXPECT_TRUE(PackAdmissionOpenForInit(session.Engine(), report.initHandle));
+}
+
 TEST(CanonicalPackSetActivate, ProviderVorbisRejectsWrongTrimWithoutReplacingLiveMedia) {
     using namespace packstream;
     EngineSession session(StreamConfig());
