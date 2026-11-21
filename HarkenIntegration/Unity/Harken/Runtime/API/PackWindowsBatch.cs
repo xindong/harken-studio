@@ -232,14 +232,10 @@ namespace Harken
 
         private bool CanAcquireNamedDirectory(int count)
         {
-#if ENABLE_IL2CPP
-            return false;
-#else
             return HarkenEngine.NativeAbiMinor >= 3 && !namedEntryMissing && !directEntryMissing &&
                 initSelection != null && Language.Length == 0 && count > 0 && count <= SmallBatchLimit &&
                 (directoryLease == null ? KnownOwnerCount == 0 :
                     directoryLease.Scope == null && directoryLease.Names.Length == count);
-#endif
         }
 
         private void ExpandDirectoryLease()
@@ -324,7 +320,12 @@ namespace Harken
                     length += names[i].Length + 1;
                 }
                 byte[] list = null, path = null;
-                if (named) next.Keys = new byte[count * 129];
+                string wideNames = null;
+                if (named)
+                {
+                    wideNames = string.Join("\n", names);
+                    next.Keys = new byte[count * 129];
+                }
                 else
                 {
                     list = new byte[length];
@@ -339,6 +340,7 @@ namespace Harken
                 ReserveKeepBuffers(count + 1);
                 var report = new VnCanonicalPackSetActivationReportV1 { structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1) };
                 mutationPhase = MutationPhase.ApplyingNative;
+                fixed (char* wideDirectory = companionSource.Root, wideActions = wideNames)
                 fixed (VnResidentDirectoryMemberV1* output = rows)
                 fixed (byte* init = initBytes, root = path, actions = list, keys = next.Keys)
                 {
@@ -350,7 +352,8 @@ namespace Harken
                         directory = DescribeDirectory(count, init, root, actions)
                     };
                     var result = named
-                        ? HarkenNative.Vn_ActivateNamedResidentDirectoryV1(desc, companionSource.Root, names, (uint)count,
+                        ? HarkenNative.Vn_ActivateNamedResidentDirectoryV1(desc, (ushort*)wideDirectory, (uint)companionSource.Root.Length,
+                            (ushort*)wideActions, (uint)wideNames.Length,
                             keys, (uint)next.Keys.Length, ref report)
                         : HarkenNative.Vn_ActivateResidentPackDirectoryV1(desc, ref report);
                     Packs.ObserveMutation(result);

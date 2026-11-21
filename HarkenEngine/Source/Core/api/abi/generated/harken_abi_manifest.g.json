@@ -6322,12 +6322,16 @@
               "name": "directory"
             },
             {
-              "ctype": "const uint16_t* const*",
+              "ctype": "uint32_t",
+              "name": "directoryUnits"
+            },
+            {
+              "ctype": "const uint16_t*",
               "name": "names"
             },
             {
               "ctype": "uint32_t",
-              "name": "count"
+              "name": "nameUnits"
             },
             {
               "ctype": "void*",
@@ -27043,7 +27047,7 @@
       }
     }
   },
-  "contractSha256": "cadad168245fa663e9e546b6b281672fe76596638a91ac50bd00e62c9acd49ac",
+  "contractSha256": "c48d7af3b2fd2eab0218782f6030fb390594f7411647350e849338180e3c7072",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

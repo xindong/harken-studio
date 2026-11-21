@@ -412,13 +412,9 @@ def validate_params(table):
             if wire == "string":
                 if ctype != "const char*":
                     bad("string wants const char*")
-            elif wire in ("utf16string", "utf16names"):
-                expected = "const uint16_t*" if wire == "utf16string" else "const uint16_t* const*"
-                if ctype != expected:
-                    bad("invalid UTF-16 string declaration")
-                if wire == "utf16names" and (len(fn["params"]) <= 3 or
-                        fn["params"][3]["name"] != "count" or fn["params"][3]["ctype"] != "uint32_t"):
-                    bad("UTF-16 name array requires a uint32_t count at parameter index 3")
+            elif wire == "utf16buf":
+                if ctype != "const uint16_t*":
+                    bad("UTF-16 buffer wants const uint16_t*")
             elif wire == "vec3":
                 if ctype != "VnVec3":
                     bad("vec3 wants VnVec3")
@@ -543,10 +539,8 @@ def cs_param(param):
         return "VnVec3 %s" % name
     if wire == "string":
         return "byte* %s" % name
-    if wire == "utf16string":
-        return "[MarshalAs(UnmanagedType.LPWStr)] string %s" % name
-    if wire == "utf16names":
-        return "[In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 3)] string[] %s" % name
+    if wire == "utf16buf":
+        return "ushort* %s" % name
     if wire == "desc":
         return "in %s %s" % (param["type"], name)
     if wire == "pathdesc":

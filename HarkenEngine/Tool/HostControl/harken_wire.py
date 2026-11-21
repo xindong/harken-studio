@@ -12061,15 +12061,20 @@ TABLE_JSON = r'''
         {
           "name": "directory",
           "ctype": "const uint16_t*",
-          "wire": "utf16string"
+          "wire": "utf16buf"
+        },
+        {
+          "name": "directoryUnits",
+          "ctype": "uint32_t",
+          "wire": "u32"
         },
         {
           "name": "names",
-          "ctype": "const uint16_t* const*",
-          "wire": "utf16names"
+          "ctype": "const uint16_t*",
+          "wire": "utf16buf"
         },
         {
-          "name": "count",
+          "name": "nameUnits",
           "ctype": "uint32_t",
           "wire": "u32"
         },
