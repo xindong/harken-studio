@@ -25483,7 +25483,8 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
     const auto play = [&](unsigned scenario, bool referenceScan, std::vector<float>& pcm) {
         const bool deferred = scenario != 0;
         const bool lateClip = scenario >= 7;
-        const bool competingPlayback = scenario == 5 || scenario == 6 || scenario == 8;
+        const bool twoRequests = scenario >= 9;
+        const bool competingPlayback = scenario == 5 || scenario == 6 || scenario == 8 || scenario == 10;
         const bool trackRoot = scenario == 2 || scenario == 4 || lateClip;
         SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot << " scenario=" << scenario);
         const std::vector<float> first(960, 0.125f), second(960, -0.25f);
@@ -25685,6 +25686,13 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(immediate));
             }
         }
+        VnActionFiringHandle laterFiring = 0;
+        VnEmitterHandle laterEmitter = 0;
+        if (twoRequests) {
+            ASSERT_EQ(VN_OK, Vn_CreateEmitter(&laterEmitter));
+            post.emitter = laterEmitter;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &laterFiring));
+        }
         std::vector<VariableControlInstanceToken> competing;
         if (competingPlayback) {
             auto& controls = engine.variableControlInstances;
@@ -25743,7 +25751,10 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         }
         std::array<unsigned, 2> audible{};
         std::array<unsigned, 2> onsets{};
-        bool secondStarted = false;
+        std::array<unsigned, 2> laterAudible{};
+        std::array<unsigned, 2> laterOnsets{};
+        // The second request was posted after the 128 captured blocks above.
+        const auto laterStart = lateClipStart + 128u * 64u;
         for (unsigned block = 0; block < (deferred ? 1024u : 128u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             ASSERT_FALSE(engine.runtimeRecreateRequired);
@@ -25756,16 +25767,17 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             for (unsigned frame = 0; frame < 64; ++frame) {
                 const auto outputFrame = block * 64u + frame;
                 const auto sample = output[2u * frame];
+                auto& frames = twoRequests && outputFrame >= laterStart ? laterAudible : audible;
+                auto& start = twoRequests && outputFrame >= laterStart ? laterOnsets : onsets;
                 if (std::abs(sample - 0.125f) < 1e-6f) {
-                    ASSERT_FALSE(secondStarted);
-                    if (audible[0] == 0) onsets[0] = outputFrame;
-                    ASSERT_EQ(onsets[0] + audible[0], outputFrame);
-                    ++audible[0];
+                    ASSERT_EQ(0u, frames[1]);
+                    if (frames[0] == 0) start[0] = outputFrame;
+                    ASSERT_EQ(start[0] + frames[0], outputFrame);
+                    ++frames[0];
                 } else if (std::abs(sample + 0.25f) < 1e-6f) {
-                    secondStarted = true;
-                    if (audible[1] == 0) onsets[1] = outputFrame;
-                    ASSERT_EQ(onsets[1] + audible[1], outputFrame);
-                    ++audible[1];
+                    if (frames[1] == 0) start[1] = outputFrame;
+                    ASSERT_EQ(start[1] + frames[1], outputFrame);
+                    ++frames[1];
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
@@ -25777,7 +25789,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         for (auto token : competingQueues) EXPECT_TRUE(engine.queueInstances.Release(token));
         for (auto token : competing) EXPECT_TRUE(engine.variableControlInstances.Release(token));
         if (scenario == 7) lateClipStart = onsets[0];
-        else if (scenario == 8) EXPECT_EQ(lateClipStart, onsets[0]);
+        else if (lateClip) EXPECT_EQ(lateClipStart, onsets[0]);
         else if (scenario <= 2) referenceStart[scenario] = onsets[0];
         else EXPECT_EQ(referenceStart[trackRoot ? 2u : 1u], onsets[0]);
         if (scenario == 1 || scenario == 2 || scenario == 4)
@@ -25791,6 +25803,18 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
         EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
         EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        if (twoRequests) {
+            EXPECT_EQ(laterStart, laterOnsets[0]);
+            EXPECT_EQ(laterStart + first.size(), laterOnsets[1]);
+            EXPECT_EQ(first.size(), laterAudible[0]);
+            EXPECT_EQ(second.size(), laterAudible[1]);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(laterFiring, &info));
+            EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+            EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(laterFiring));
+            ASSERT_EQ(VN_OK, Vn_DestroyEmitter(laterEmitter));
+        }
         EXPECT_EQ(0u, engine.playableInstances.LiveCount());
         EXPECT_EQ(0u, engine.playablePartitions.OccupiedCount());
         EXPECT_EQ(0u, engine.sourceTerminals.OccupiedCount());
@@ -25802,7 +25826,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         EXPECT_EQ(VN_OK, Vn_UnloadPackEx(rows[1].handle, VN_PACK_UNLOAD_REFUSE_IF_USED));
         EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
     };
-    for (unsigned scenario = 0; scenario < 9; ++scenario) {
+    for (unsigned scenario = 0; scenario < 11; ++scenario) {
         std::vector<float> actual;
         ASSERT_NO_FATAL_FAILURE(play(scenario, false, actual));
 #if !defined(HARKEN_RT_QUALIFICATION)
