@@ -117,3 +117,4 @@ EXPORTS
     Vn_UnregisterPCM
     Vn_UnregisterStreamFile
     Vn_Update
+    Vn_VisitResidentPackDirectoryV1

@@ -8313,6 +8313,96 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnResidentPackRowV1": {
+      "fields": [
+        [
+          "facts",
+          {
+            "struct": "VnPackInspectReportV1"
+          }
+        ],
+        [
+          "provider",
+          {
+            "struct": "VnCanonicalPackSetMemberV1"
+          }
+        ],
+        [
+          "byteCount",
+          "u64"
+        ]
+      ]
+    },
+    "VnResidentPackVisitDescV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "memberCount",
+          "u32"
+        ],
+        [
+          "utf8Directory",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "utf8Names",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "initVolumeId",
+          "u64"
+        ],
+        [
+          "initFileId",
+          "u64"
+        ],
+        [
+          "initFileSize",
+          "u64"
+        ],
+        [
+          "initWriteTime",
+          "u64"
+        ],
+        [
+          "initChangeTime",
+          "u64"
+        ],
+        [
+          "maxInputBytes",
+          "u64"
+        ],
+        [
+          "init",
+          {
+            "struct": "VnPackByteSpan"
+          }
+        ],
+        [
+          "userData",
+          {
+            "ptr": "opaque",
+            "ctype": "void*"
+          }
+        ],
+        [
+          "visit",
+          {
+            "ptr": "opaque",
+            "ctype": "VnResidentPackVisitorFn"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -11797,6 +11887,18 @@ TABLE_JSON = r'''
           "wire": "u32"
         }
       ]
+    },
+    {
+      "name": "Vn_VisitResidentPackDirectoryV1",
+      "note": "Synchronous local Windows resident directory visitor. No remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnResidentPackVisitDescV1*",
+          "wire": "desc",
+          "type": "VnResidentPackVisitDescV1"
+        }
+      ]
     }
   ],
   "binding_overloads": [
@@ -13769,6 +13871,27 @@ TABLE_JSON = r'''
             "name": "userData",
             "kind": "ptr",
             "ctype": "void*"
+          }
+        ]
+      },
+      "VnResidentPackVisitorFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "rows",
+            "kind": "ptr",
+            "ctype": "const VnResidentPackRowV1*"
+          },
+          {
+            "name": "memberCount",
+            "kind": "u32",
+            "ctype": "uint32_t"
           }
         ]
       }

@@ -116,6 +116,26 @@ namespace Harken
         {
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
+            if (captured == null && initSelection != null && Language.Length == 0 && expectedId == 0 &&
+                !refresh && names.Length != 0 && (packs.Count == 0 || packs.Count == names.Length))
+            {
+                bool empty = true;
+                foreach (SharedPack owner in companionOwners) if (owner.Handle.IsValid) { empty = false; break; }
+                if (empty)
+                {
+                    VnResult batch = VisitBatch(names, acquired, cancellation, out bool consumed);
+                    if (consumed || batch != VnResult.VN_CAPABILITY_UNAVAILABLE) return batch;
+                }
+            }
+            return AcquireCompanionInputs(names, acquired, refresh, expectedId, captured, cancellation);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private VnResult AcquireCompanionInputs(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId,
+            Dictionary<string, CompanionInput> captured, CancellationToken cancellation)
+        {
+            VnResult allowed = CompanionMutationAllowed();
+            if (allowed != VnResult.VN_OK) return allowed;
             mutationPhase = MutationPhase.ReadingContent;
             try
             {
@@ -232,10 +252,10 @@ namespace Harken
                 if (changes.TryGetValue(owner, out CompanionInput input))
                 {
                     uint operation = expected.IsValid && owner.ContentHash == input.Facts.contentHash &&
-                        owner.ByteCount == input.Bytes.Length
+                        owner.ByteCount == input.ByteCount && input.BatchProvider.provide == IntPtr.Zero
                         ? VnConstants.VN_PACK_MEMBER_KEEP : VnConstants.VN_PACK_MEMBER_CONTENT;
                     members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT,
-                        expected, operation, input.Bytes, input.Names);
+                        expected, operation, input.Bytes, input.Names, input.BatchProvider);
                 }
                 else members[i + 1] = new CompanionMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT, expected);
             }
@@ -258,7 +278,7 @@ namespace Harken
                 if (changes.TryGetValue(owners[i], out CompanionInput input))
                 {
                     owners[i].ContentHash = input.Facts.contentHash;
-                    owners[i].ByteCount = input.Bytes.Length;
+                    owners[i].ByteCount = input.ByteCount;
                     owners[i].Names = input.Names;
                 }
             }
@@ -527,6 +547,7 @@ namespace Harken
                     source.Root, source.Language, initBytes: init.Bytes);
                 candidate.companionLocators = locators;
                 candidate.initSelection = init.Selection;
+                candidate.inputBudget = config.maxPackDecodeStagingBytes;
                 candidate.BindCompanionSource(source, init.Facts.projectId.ToString(), init.Names);
                 GameplayNames.Table names = GameplayNames.Prepare(init.Facts.projectId, init.Names,
                     Array.Empty<KeyValuePair<string, GameplayNames.Action>>());

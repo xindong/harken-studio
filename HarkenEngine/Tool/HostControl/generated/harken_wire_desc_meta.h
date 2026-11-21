@@ -203,6 +203,24 @@ struct WireDescMeta<VnVariableBatchDescV1> {
     }
 };
 
+template <>
+struct WireDescMeta<VnResidentPackVisitDescV1> {
+    static bool DecodeSections(WireReader& reader, WireArena& arena,
+                               VnResidentPackVisitDescV1* desc, std::uint32_t declared) {
+        if (offsetof(VnResidentPackVisitDescV1, utf8Directory) + sizeof(void*) <= declared) {
+            if (!ReadStringSection(reader, arena, &desc->utf8Directory)) {
+                return false;
+            }
+        }
+        if (offsetof(VnResidentPackVisitDescV1, utf8Names) + sizeof(void*) <= declared) {
+            if (!ReadStringSection(reader, arena, &desc->utf8Names)) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_DESC_META_H

@@ -1583,6 +1583,37 @@ typedef struct VnPackInspectReportV1 {
 VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
                                   VnPackInspectReportV1* outReport);
 
+/* The directory visitor pins independently published Windows resident Packs
+ * during one synchronous game-thread callback. Only activation of CONTENT
+ * members performs the complete media and world validation. The visitor must
+ * not retain a row, provider or borrowed pointer after it returns. */
+typedef struct VnResidentPackRowV1 {
+    VnPackInspectReportV1 facts;
+    VnCanonicalPackSetMemberV1 provider;
+    uint64_t byteCount;
+} VnResidentPackRowV1;
+
+typedef VnResult (*VnResidentPackVisitorFn)(
+    void* userData, const VnResidentPackRowV1* rows, uint32_t memberCount);
+
+typedef struct VnResidentPackVisitDescV1 {
+    uint32_t structSize;
+    uint32_t memberCount;
+    const char* utf8Directory;
+    const char* utf8Names; /* Valid Action names separated by a single LF. */
+    uint64_t initVolumeId;
+    uint64_t initFileId;
+    uint64_t initFileSize;
+    uint64_t initWriteTime;
+    uint64_t initChangeTime;
+    uint64_t maxInputBytes;
+    VnPackByteSpan init;
+    void* userData;
+    VnResidentPackVisitorFn visit;
+} VnResidentPackVisitDescV1;
+
+VnResult Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1* desc);
+
 typedef uint32_t VnCurrentWorldLoadStatus;
 
 enum {

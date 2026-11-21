@@ -3912,6 +3912,44 @@ static_assert(offsetof(VnPreviewVoiceEffectChainV1, entryCount) == 4,
 static_assert(offsetof(VnPreviewVoiceEffectChainV1, entries) == 8,
               "wire table offset drift: VnPreviewVoiceEffectChainV1.entries");
 
+static_assert(sizeof(VnResidentPackRowV1) == 192,
+              "wire table size drift: VnResidentPackRowV1");
+static_assert(offsetof(VnResidentPackRowV1, facts) == 0,
+              "wire table offset drift: VnResidentPackRowV1.facts");
+static_assert(offsetof(VnResidentPackRowV1, provider) == 112,
+              "wire table offset drift: VnResidentPackRowV1.provider");
+static_assert(offsetof(VnResidentPackRowV1, byteCount) == 184,
+              "wire table offset drift: VnResidentPackRowV1.byteCount");
+
+static_assert(sizeof(VnResidentPackVisitDescV1) == 112,
+              "wire table size drift: VnResidentPackVisitDescV1");
+static_assert(offsetof(VnResidentPackVisitDescV1, structSize) == 0,
+              "wire table offset drift: VnResidentPackVisitDescV1.structSize");
+static_assert(offsetof(VnResidentPackVisitDescV1, memberCount) == 4,
+              "wire table offset drift: VnResidentPackVisitDescV1.memberCount");
+static_assert(offsetof(VnResidentPackVisitDescV1, utf8Directory) == 8,
+              "wire table offset drift: VnResidentPackVisitDescV1.utf8Directory");
+static_assert(offsetof(VnResidentPackVisitDescV1, utf8Names) == 16,
+              "wire table offset drift: VnResidentPackVisitDescV1.utf8Names");
+static_assert(offsetof(VnResidentPackVisitDescV1, initVolumeId) == 24,
+              "wire table offset drift: VnResidentPackVisitDescV1.initVolumeId");
+static_assert(offsetof(VnResidentPackVisitDescV1, initFileId) == 32,
+              "wire table offset drift: VnResidentPackVisitDescV1.initFileId");
+static_assert(offsetof(VnResidentPackVisitDescV1, initFileSize) == 40,
+              "wire table offset drift: VnResidentPackVisitDescV1.initFileSize");
+static_assert(offsetof(VnResidentPackVisitDescV1, initWriteTime) == 48,
+              "wire table offset drift: VnResidentPackVisitDescV1.initWriteTime");
+static_assert(offsetof(VnResidentPackVisitDescV1, initChangeTime) == 56,
+              "wire table offset drift: VnResidentPackVisitDescV1.initChangeTime");
+static_assert(offsetof(VnResidentPackVisitDescV1, maxInputBytes) == 64,
+              "wire table offset drift: VnResidentPackVisitDescV1.maxInputBytes");
+static_assert(offsetof(VnResidentPackVisitDescV1, init) == 72,
+              "wire table offset drift: VnResidentPackVisitDescV1.init");
+static_assert(offsetof(VnResidentPackVisitDescV1, userData) == 96,
+              "wire table offset drift: VnResidentPackVisitDescV1.userData");
+static_assert(offsetof(VnResidentPackVisitDescV1, visit) == 104,
+              "wire table offset drift: VnResidentPackVisitDescV1.visit");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H
