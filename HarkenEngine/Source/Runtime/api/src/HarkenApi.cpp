@@ -19641,6 +19641,10 @@ std::uint32_t ReadTrackPlayCount(const World& world, VnObjectId id) noexcept {
     else return ReadPlayableLoopCount(world, id);
 }
 
+bool HasNativeMusicBody(const harken::SegmentScheduleProgramViewV1& segment, std::uint32_t playCount) noexcept {
+    return segment.bounds.nominalEnd > segment.bounds.nominalStart || playCount != 1;
+}
+
 template<class World>
 bool UsesMusicTimeline(const World& world, const harken::SegmentScheduleProgramViewV1& segment) noexcept {
     return segment.entryMarker.stableMarkerId != VnObjectId{} ||
@@ -20440,8 +20444,7 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
         // A single natural-duration clip can have zero-width authored bounds.
         // Preserve its ordinary completion; repeating an unlocatable body must
         // still fail preparation instead of silently discarding the requested count.
-        if (segment != nullptr && UsesMusicTimeline(world, *segment) &&
-            (segment->bounds.nominalEnd > segment->bounds.nominalStart || playCount != 1)) {
+        if (segment != nullptr && HasNativeMusicBody(*segment, playCount)) {
             candidate->music = std::make_unique<harken::EngineMusicScheduleState>();
             auto& music = *candidate->music;
             if (!ActionQuantizeClockFromSegment(*segment, static_cast<std::int64_t>(sampleRate),
@@ -30636,6 +30639,14 @@ harken::QueueSequenceStepStatus ResolveQueueStep(
 } // namespace
 
 namespace harken {
+bool native_backing::WorldContent::HasMusicBody(const SegmentScheduleProgramViewV1& segment) const noexcept {
+    return HasNativeMusicBody(segment, ReadSegmentPlayCount(view_, segment.rootDefinition.stableId));
+}
+
+bool native_backing::PackContent::HasMusicBody(const SegmentScheduleProgramViewV1& segment) const noexcept {
+    return HasNativeMusicBody(segment, ReadSegmentPlayCount(view_, segment.rootDefinition.stableId));
+}
+
 class PreparedQueueProjection {
 public:
     explicit PreparedQueueProjection(harken::Engine& engine) noexcept : engine_(engine) {
@@ -31342,7 +31353,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         !atomicBatchFits ||
         !commandBatchAdmitted ||
         (transitionRule != nullptr &&
-          engine.transitionInstances.FreeCount() == 0)) {
+          !engine.transitionInstances.PrepareAvailable(1))) {
         return QueueContinuationPrepareStatus::Failed;
     }
     PreparedTimelineStarts starts(engine);
@@ -32860,7 +32871,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         !AtomicBatchFitsCapacities(engine, combinedCommandCount) ||
         !AdmitCommandBatch(engine, combinedCommandCount) ||
         (transitionRule != nullptr &&
-         engine.transitionInstances.FreeCount() == 0) ||
+         !engine.transitionInstances.PrepareAvailable(1)) ||
         PreflightTimelineVoiceStart(engine, voice) != VN_OK) {
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -41507,7 +41518,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         engine.timelineArms.FreeCount() < (nativeTargets ? sourceMemberCount : groupMemberCount) ||
         engine.armGroups.FreeCount() == 0 ||
         (needsTransition && !transition.Valid() &&
-         engine.transitionInstances.FreeCount() == 0) ||
+         !engine.transitionInstances.PrepareAvailable(1)) ||
         leafPreflight != harken::PlayableStartStatus::Accepted ||
         !sourceBatchFits || !commandsAdmitted) {
         return VariableRetargetPrepareStatus::Retry;
@@ -64075,6 +64086,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         std::uint64_t nativeRelations = 0;
         std::uint64_t nativeCompletions = 0;
         std::uint64_t nativeGroups = 0;
+        std::uint64_t nativeTransitions = 0;
         std::uint64_t nativeLaneMembers = 0;
         std::uint64_t nativeBindingRows = 0;
         std::uint64_t queueControls = 0;
@@ -64181,6 +64193,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             nativeRelations += result.profile.referenceRows;
             nativeInstances += result.profile.instanceRows - 1u;
             nativeCompletions += result.profile.Q + result.profile.H[2];
+            nativeTransitions += result.profile.transitionRows;
             queueControls += result.profile.Q;
             nativeGroups += std::max(2u, result.profile.controlSides) + 1u + 4ull * result.profile.Q;
             for (std::uint32_t threshold = 1; threshold <= backing::kLeafCapacity; ++threshold) {
@@ -64253,7 +64266,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 slot.lanes.resize(slot.LaneCapacity());
             }
         }
-        if (nativeVoices > UINT32_MAX || nativeCompletions > UINT32_MAX || nativeGroups > UINT32_MAX || nativeRelations > UINT32_MAX ||
+        if (nativeVoices > UINT32_MAX || nativeCompletions > UINT32_MAX || nativeGroups > UINT32_MAX ||
+            nativeTransitions > UINT32_MAX || nativeRelations > UINT32_MAX ||
             queueControls > UINT32_MAX - nativeVoices) return false;
         if (!AllowNativeBackingAllocation()) return shortage();
         auto nativeCandidate = std::make_unique<NativeRuntimeBacking>();
@@ -64358,6 +64372,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 &nativeCandidate->actionPlays) ||
             !PrepareQueueProgramBankBacking(queueControls == 0 ? 0u : queueProgramBanks.size(),
                 &nativeCandidate->queueBanks) ||
+            (nativeTransitions != 0 && !transitionInstances.PrepareBacking(
+                static_cast<std::uint32_t>(nativeTransitions), &nativeCandidate->transitions)) ||
             !PrepareQueueFutureBacking(static_cast<std::uint32_t>(queueControls), &nativeCandidate->queueFutures) ||
             !PrepareMemberProgramBacking(static_cast<std::uint32_t>(nativeVoices),
                 &nativeCandidate->memberPrograms) ||

@@ -5472,7 +5472,7 @@ struct ActionPreparationOwnerSnapshot {
     std::uint32_t queueCheckpointLive = 0;
     std::uint32_t decisionLive = 0;
     std::uint32_t transitionLive = 0;
-    std::uint32_t transitionFree = 0;
+    std::uint32_t unavailableTransitions = 0;
     std::uint32_t armGroupLive = 0;
     std::uint32_t armGroupFree = 0;
     std::uint32_t voiceActive = 0;
@@ -5519,7 +5519,7 @@ ActionPreparationOwnerSnapshot CaptureActionPreparationOwners(
     snapshot.queueCheckpointLive = engine.queueCheckpoints.LiveCount();
     snapshot.decisionLive = engine.decisions.LiveCount();
     snapshot.transitionLive = engine.transitionInstances.LiveCount();
-    snapshot.transitionFree = engine.transitionInstances.FreeCount();
+    snapshot.unavailableTransitions = engine.transitionInstances.Capacity() - engine.transitionInstances.FreeCount();
     snapshot.armGroupLive = engine.armGroups.LiveCount();
     snapshot.armGroupFree = engine.armGroups.FreeCount();
     snapshot.voiceActive = engine.voices.ActiveCount();
@@ -5619,7 +5619,7 @@ void ExpectActionPreparationOwnersUnchanged(
     EXPECT_EQ(expected.queueCheckpointLive, actual.queueCheckpointLive);
     EXPECT_EQ(expected.decisionLive, actual.decisionLive);
     EXPECT_EQ(expected.transitionLive, actual.transitionLive);
-    EXPECT_EQ(expected.transitionFree, actual.transitionFree);
+    EXPECT_EQ(expected.unavailableTransitions, actual.unavailableTransitions);
     EXPECT_EQ(expected.armGroupLive, actual.armGroupLive);
     EXPECT_EQ(expected.armGroupFree, actual.armGroupFree);
     EXPECT_EQ(expected.voiceActive, actual.voiceActive);
@@ -6030,6 +6030,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
         break;
     }
     case ContinuationOwnerExhaustion::Transition:
+        ASSERT_TRUE(harkentest::LimitTransitionGrowthToCurrentPages(engine->transitionInstances));
         transitions.resize(engine->transitionInstances.FreeCount());
         for (auto& token : transitions) {
             ASSERT_TRUE(engine->transitionInstances.Acquire({0, 0}, &token));
@@ -6049,7 +6050,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
     const auto before = CaptureActionPreparationOwners(*engine);
     ExpectPublicActionPreparationRefusal(
         *engine, image.actions[9].actionStableId, emitter,
-        VN_BACKPRESSURE, before);
+        exhaustion == ContinuationOwnerExhaustion::Transition ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
 
     for (auto& prepared : decisions) {
         EXPECT_TRUE(engine->decisions.CancelPreparedReservation(&prepared));
@@ -25466,7 +25467,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(admissionRecheck.owners.renderedBlocks, returnedOwners.renderedBlocks);
             EXPECT_EQ(admissionRecheck.owners.firingOccupied, returnedOwners.firingOccupied);
             EXPECT_EQ(admissionRecheck.owners.occupiedPlayableRows, returnedOwners.occupiedPlayableRows);
-            EXPECT_EQ(admissionRecheck.owners.transitionFree, returnedOwners.transitionFree);
+            EXPECT_EQ(admissionRecheck.owners.unavailableTransitions, returnedOwners.unavailableTransitions);
             EXPECT_EQ(admissionRecheck.owners.armGroupFree, returnedOwners.armGroupFree);
             EXPECT_EQ(admissionRecheck.owners.armFree, returnedOwners.armFree);
             EXPECT_EQ(admissionRecheck.owners.unavailableOccurrences, returnedOwners.unavailableOccurrences);
@@ -50772,6 +50773,11 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
     auto& engine = *session.Engine();
     const bool newComposite = shape == PendingVariableSelectionShape::SoundToTrack ||
         shape == PendingVariableSelectionShape::SoundToSegment;
+    if (shape == PendingVariableSelectionShape::SoundToSilent || shape == PendingVariableSelectionShape::SegmentToSound) {
+        // Neither a plain sound nor a single-pass segment with no music body needs a transition gate.
+        ASSERT_EQ(0u, engine.transitionInstances.Capacity());
+        engine.transitionInstances.SetCommitPageLimitForTests(0);
+    }
     const bool newLogicalOnly = newComposite && newVariant == PendingVariableNewTreeVariant::LogicalOnly;
     const bool newLogicalTail = newComposite && newVariant == PendingVariableNewTreeVariant::LogicalTail;
     const bool newBounded = newComposite && newVariant == PendingVariableNewTreeVariant::Bounded;
@@ -65408,6 +65414,7 @@ TEST(ActionFiringApi,
     ASSERT_TRUE(engine->queueInstances.Capture(row->queueInstance,
                                                &queueBefore));
 
+    ASSERT_TRUE(harkentest::LimitTransitionGrowthToCurrentPages(engine->transitionInstances));
     std::vector<harken::TransitionInstanceToken> occupied(
         engine->transitionInstances.FreeCount());
     for (auto& token : occupied) {
@@ -65417,7 +65424,7 @@ TEST(ActionFiringApi,
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(49), emitter, VN_BACKPRESSURE, before);
+        *engine, harkentest::ObjectId(49), emitter, VN_OUT_OF_MEMORY, before);
 
     EXPECT_EQ(decisionBefore.slot, row->QueueFiling().queueDecision.slot);
     EXPECT_EQ(decisionBefore.generation, row->QueueFiling().queueDecision.generation);

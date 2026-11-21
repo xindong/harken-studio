@@ -6262,6 +6262,7 @@ struct Engine {
         StableStoragePreparation members;
         StableStoragePreparation relations;
         StableStoragePreparation queueFutures;
+        StableStoragePreparation transitions;
         StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
         EngineQueueScheduleStorage::Preparation queueSchedules;
         QueueInstanceTable::BackingPreparation queues;
@@ -6284,6 +6285,7 @@ struct Engine {
         StableStoragePreparedUse members;
         StableStoragePreparedUse relations;
         StableStoragePreparedUse queueFutures;
+        StableStoragePreparedUse transitions;
         StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
         EngineQueueScheduleStorage::PreparedUse queueSchedules;
         QueueInstanceTable::BackingUse queues;
@@ -6310,6 +6312,7 @@ struct Engine {
                   : backing->members.Use()),
               relations(backing == nullptr ? StableStoragePreparedUse{} : backing->relations.Use()),
               queueFutures(backing == nullptr ? StableStoragePreparedUse{} : backing->queueFutures.Use()),
+              transitions(backing == nullptr ? StableStoragePreparedUse{} : backing->transitions.Use()),
               queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
                   : backing->queueBanks.Use()),
               queueSchedules(backing == nullptr ? EngineQueueScheduleStorage::PreparedUse{}
@@ -7074,7 +7077,6 @@ public:
           effectBank(resolved),
           decisions(resolved.maxDecisionRows,
                     resolved.maxParticipantsPerDecision),
-          transitionInstances(resolved.maxTransitionInstances),
           armGroups(resolved.maxArmGroups,
                     resolved.maxArmsPerGroup),
           timelineArms(TimelineArmCapacity(resolved)),
@@ -7515,7 +7517,7 @@ public:
             resolved.maxPlayableInstances, resolved.maxPlayableInstances,
             resolved.maxScheduledTransactions,
             EngineActionPlayScratch::kFrontierExposureOwnerCapacity,
-            resolved.maxTransitionInstances};
+            boundedFrontierCount(frontierNodes, UINT32_MAX)};
         actionPlayOwnerLimits = frontierOwnerLimits;
         SelectionMemoryConfigV1 selectionConfig{};
         selectionConfig.maxChildren = kHardContainerChildCapacity;
@@ -7542,9 +7544,6 @@ public:
             resolved.maxVariableControlLiveRows <
                 resolved.maxVariableControlActiveRows ||
             resolved.maxVariableControlLiveRows > 64 ||
-            resolved.maxTransitionInstances == 0 ||
-            resolved.maxTransitionInstances >
-                kMaxTransitionInstancesHard ||
             resolved.maxCompositeCompletionOwners == 0 ||
             resolved.maxCompositeCompletionOwners >
                 kMaxCompositeCompletionOwners ||

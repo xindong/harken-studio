@@ -37,6 +37,13 @@ inline bool LimitOccurrenceGrowthToCurrentPages(harken::OccurrenceStatePool& poo
     return pool.FreeCount() != 0;
 }
 
+inline bool LimitTransitionGrowthToCurrentPages(harken::TransitionInstancePool& pool) {
+    if (!pool.PrepareAvailable(1u)) return false;
+    pool.SetCommitPageLimitForTests(0);
+    while (pool.FreeCount() < UINT32_MAX && pool.PrepareAvailable(pool.FreeCount() + 1u)) {}
+    return pool.FreeCount() != 0;
+}
+
 class PlayableCapacityScope {
 public:
     PlayableCapacityScope(std::uint32_t playable, std::uint32_t modes) {

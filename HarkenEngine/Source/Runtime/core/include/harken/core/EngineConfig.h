@@ -258,7 +258,6 @@ struct EngineConfig {
     std::uint32_t maxKnownScheduleLeaves = 64;
     std::uint32_t maxVariableControlActiveRows = 16;
     std::uint32_t maxVariableControlLiveRows = 32;
-    std::uint32_t maxTransitionInstances = 32;
     std::uint32_t maxCompositeCompletionOwners = 256;
     std::uint32_t maxContainerInstances = 256;
     std::uint32_t maxQueueChildren = 64;
