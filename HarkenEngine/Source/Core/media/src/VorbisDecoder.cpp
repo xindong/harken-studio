@@ -49,6 +49,16 @@ std::size_t VorbisResident::ResidentBytes() const noexcept {
     return sizeof(*this) + bytes_.capacity() + media_.seek.capacity() * sizeof(VorbisSeekPoint) +
         media_.segmentChecksums.capacity() * sizeof(std::uint64_t) + (settings_ ? settings_->Bytes() : 0);
 }
+std::size_t VorbisResident::TryWidenUnpublished(std::size_t budget) noexcept {
+    if (budget <= settings_->Bytes()) return 0;
+    VorbisPrepareResult status;
+    auto candidate = codec_->settings.Prepare(media_, budget, status);
+    if (!candidate || candidate->Bytes() <= settings_->Bytes()) return 0;
+    settings_ = std::move(candidate);
+    // The compact setup may still be shared by another resident. Keep its
+    // admission and charge the entire replacement against remaining staging.
+    return settings_->Bytes();
+}
 PCMView VorbisResident::View() const noexcept {
     PCMView view;
     view.encoded = this; view.frames = media_.frames; view.channelCount = media_.channels;

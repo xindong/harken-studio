@@ -130496,9 +130496,9 @@ void JournalSuccessfulCanonicalPackSetActivation(
 VnResult ActivateCanonicalPackSetAttempt(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport,
-    const std::vector<std::uint32_t>* operations = nullptr,
-    std::vector<std::uint64_t>* traceResources = nullptr,
-    bool* traceInputMissing = nullptr) {
+    const std::vector<std::uint32_t>* operations,
+    std::vector<std::uint64_t>* traceResources,
+    bool* traceInputMissing, bool widenPrepared) {
     VariableOperationScope variableOperation(&engine);
     if (descriptor == nullptr || outReport == nullptr ||
         descriptor->structSize != sizeof(VnCanonicalPackSetActivationDescV1) ||
@@ -130690,6 +130690,14 @@ VnResult ActivateCanonicalPackSetAttempt(
             result = VN_DEVICE_ERROR;
         }
         if (commit) {
+            if (widenPrepared) {
+                // Provider spans have been released. Only new, unpublished
+                // registrations may spend the remaining transaction budget.
+                VorbisSettingsCache::CodebookScope wide(engine.vorbis.settings, false);
+                const auto available = prepared.budget->limit - prepared.budget->live;
+                prepared.storage.PreferWideVorbisCodebooks(static_cast<std::size_t>(
+                    std::min<std::uint64_t>(available, SIZE_MAX)));
+            }
             CommitCanonicalPackSet(engine, prepared);
         }
         engine.statefulCallSeen = true;
@@ -130723,7 +130731,7 @@ template<class F> VnResult WithPackCodebookFallback(Engine& engine, bool replaya
     auto& cache = engine.vorbis.settings;
     if (cache.PrefersCompact()) return attempt();
     if (!replayable || engine.trace || PackStagingFaultForTests() != PackStagingFault::None) {
-        VorbisSettingsCache::CompactScope compact(cache);
+        VorbisSettingsCache::CodebookScope compact(cache, true);
         return attempt();
     }
     const auto before = cache.WideRequests();
@@ -130731,7 +130739,7 @@ template<class F> VnResult WithPackCodebookFallback(Engine& engine, bool replaya
     if (result != VN_PACK_RESIDENT_CAPACITY || cache.WideRequests() == before) return result;
     // A capacity refusal precedes publication. The first attempt has released its
     // staging owners. Re-open file inputs and validate the complete transaction.
-    VorbisSettingsCache::CompactScope compact(cache);
+    VorbisSettingsCache::CodebookScope compact(cache, true);
     return attempt();
 }
 } // namespace
@@ -130753,9 +130761,12 @@ VnResult ActivateCanonicalPackSetImpl(
             }
         }
     }
+    const bool widenPrepared = operations != nullptr && !filesOnly &&
+        engine.config.maxPackResourceBytes == 0 && !engine.trace &&
+        PackStagingFaultForTests() == PackStagingFault::None;
     return WithPackCodebookFallback(engine, filesOnly, [&] {
         return ActivateCanonicalPackSetAttempt(engine, descriptor, outReport, operations,
-                                              traceResources, traceInputMissing);
+                                              traceResources, traceInputMissing, widenPrepared);
     });
 }
 

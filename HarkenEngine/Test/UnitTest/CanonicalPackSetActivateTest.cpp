@@ -3656,7 +3656,13 @@ TEST(CanonicalPackSetActivate, ProviderVorbisRejectsWrongTrimWithoutReplacingLiv
     std::vector<VnCanonicalPackSetMemberV2> members{
         Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
     VnCanonicalPackSetActivationReportV1 activation{};
+    const auto beforeWide = engine->vorbis.settings.WideRequests();
     ASSERT_EQ(VN_OK, Activate(members, activation));
+    EXPECT_GT(engine->vorbis.settings.WideRequests(), beforeWide);
+    EXPECT_EQ(init.reads, 1u);
+    EXPECT_EQ(init.releases, 1u);
+    EXPECT_EQ(content.reads, 1u);
+    EXPECT_EQ(content.releases, 1u);
     const auto previous = engine->registry.CookieOf(kSound);
     ASSERT_NE(0u, previous);
     const auto blocks = static_cast<unsigned>((fixture.reference.size() / 2 + 255) / 256 + 8);

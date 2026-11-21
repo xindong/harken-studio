@@ -65,6 +65,7 @@ struct PcmMediaFacts {
 };
 
 class VorbisCodec;
+class VorbisResident;
 
 class PCMRegistry {
 private:
@@ -77,7 +78,7 @@ private:
         // Optional immutable Pack range. Resident storage may be added once,
         // at a transaction commit, to an entry backed only by this range.
         std::shared_ptr<const PackMediaRange> range;
-        std::shared_ptr<const EncodedMedia> encoded;
+        std::shared_ptr<VorbisResident> encoded;
         std::atomic<std::uint32_t> uses{0};
         std::uint64_t cookie = 0;         // provenance stamp of this
                                           // registration (see RegisterPCM)
@@ -215,6 +216,7 @@ public:
             PreparedPackMutation&&) noexcept = default;
 
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
+        void PreferWideVorbisCodebooks(std::size_t budget) noexcept;
         std::uint64_t CookieOf(VnSoundId soundId) const noexcept;
         PackReference ReferenceOf(VnSoundId soundId) const noexcept;
 
