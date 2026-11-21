@@ -635,7 +635,7 @@ namespace Harken
                 return new PackStartupResult(VnResult.VN_INVALID_ARG);
             if (source.IsDirectory)
             {
-                return await StartDirectoryLevelAsync(source, config, null, cancellation);
+                return await StartDirectoryLevelAsync(source, config, null, cancellation, null);
             }
             int thread = Environment.CurrentManagedThreadId;
             CompanionCapture captured = await source.CaptureAsync(null, default, null, cancellation);
@@ -647,17 +647,20 @@ namespace Harken
         }
 
         /// <summary>Opens output and prepares the first level. On success the session can play
-        /// immediately. Release Preparation when the level unloads.</summary>
+        /// immediately. Release Preparation when the level unloads. An optional onPrepared
+        /// callback can set up emitters and post the opening cue before the output is ready.
+        /// The session is borrowed during this callback; a failed callback rolls back startup.</summary>
         public static Task<PackStartupResult> StartLevelAsync(PackSource source, VnConfig config,
-            string[] actionNames, CancellationToken cancellation = default)
+            string[] actionNames, CancellationToken cancellation = default,
+            Func<PackBootstrapSession, VnResult> onPrepared = null)
         {
             if (source == null || !source.IsDirectory || actionNames == null || actionNames.Length == 0)
                 return Task.FromResult(new PackStartupResult(VnResult.VN_INVALID_ARG));
-            return StartDirectoryLevelAsync(source, config, actionNames, cancellation);
+            return StartDirectoryLevelAsync(source, config, actionNames, cancellation, onPrepared);
         }
 
         private static async Task<PackStartupResult> StartDirectoryLevelAsync(PackSource source, VnConfig config,
-            string[] names, CancellationToken cancellation)
+            string[] names, CancellationToken cancellation, Func<PackBootstrapSession, VnResult> onPrepared)
         {
             cancellation.ThrowIfCancellationRequested();
             bool background = config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL_BACKGROUND;
@@ -677,6 +680,14 @@ namespace Harken
             try
             {
                 if (names != null) result = session.PrepareActions(names, session.ProjectId, out preparation);
+                if (result == VnResult.VN_OK && onPrepared != null)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    result = onPrepared(session);
+                    if (!session.IsActive) return new PackStartupResult(VnResult.VN_NOT_INITIALIZED);
+                    if (result == VnResult.VN_OK) result = HarkenEngine.Update();
+                    if (!session.IsActive) return new PackStartupResult(VnResult.VN_NOT_INITIALIZED);
+                }
                 if (result == VnResult.VN_OK && background)
                 {
                     while ((result = HarkenEngine.Resume()) == VnResult.VN_IN_USE)

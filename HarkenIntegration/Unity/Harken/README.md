@@ -12,7 +12,7 @@ Harken is a game-audio middleware. Sound designers author sounds and playback lo
 
 ## Prepare first-level audio on Windows
 
-Games that own the audio session can call `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)` on the Unity main thread. Create the source from the platform Pack directory and pass the Action names needed for the first level. Supported Windows runtimes open the output while preparing these sounds. On `VN_OK` the game can play them immediately. Call `Preparation.Release()` when leaving the level and `Session.Shutdown()` when ending the session. Scenes using the default audio component let that component own startup and shutdown.
+Games that own the audio session can call `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)` on the Unity main thread. Create the source from the platform Pack directory and pass the Action names needed for the first level. Supported Windows runtimes open the output while preparing these sounds. To play an opening cue immediately, create its emitter and post the Action in `onPrepared`, returning the post result. Playback starts at the beginning of the cue on the real output. On `VN_OK` both the level and the device are ready. Call `Preparation.Release()` when leaving the level and `Session.Shutdown()` when ending the session. Scenes using the default audio component let that component own startup and shutdown.
 
 ## Features
 

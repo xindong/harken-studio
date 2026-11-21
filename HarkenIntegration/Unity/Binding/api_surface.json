@@ -443,7 +443,7 @@
         "native:Vn_PostNamedResidentActionV1",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public ActionPreparation Preparation { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public readonly struct PackStartupResult [ordered-members:1126a2b65fab3289d91a41976cf47cbd859335c772a54249a08a8b1afffd2683]",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static Task < PackStartupResult > StartLevelAsync ( PackSource source , VnConfig config , string [ ] actionNames , CancellationToken cancellation = default )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static Task < PackStartupResult > StartLevelAsync ( PackSource source , VnConfig config , string [ ] actionNames , CancellationToken cancellation = default , Func < PackBootstrapSession , VnResult > onPrepared = null )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static VnResult StartArchive ( string archivePath , string language , ref VnConfig config , out PackBootstrapSession session )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public sealed class PackSource [ordered-members:d1ba2ec451ef09c2528212f614724978963ba40a622aca048cf10100254e18a9]"
       ]
