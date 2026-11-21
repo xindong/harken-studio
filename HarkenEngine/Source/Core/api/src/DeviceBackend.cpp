@@ -776,6 +776,18 @@ DeviceBackend::~DeviceBackend() {
 VnResult DeviceBackend::Prepare(
     MixerLoop& mixer, const EngineConfig& config,
     const DeviceQueryResult* endpointObservation) {
+    if (m_impl != nullptr) return VN_OK;
+    const auto result = Prepare(config, endpointObservation);
+    if (result == VN_OK) BindPreparedMixer(mixer);
+    return result;
+}
+
+void DeviceBackend::BindPreparedMixer(MixerLoop& mixer) noexcept {
+    m_impl->mixer = &mixer;
+}
+
+VnResult DeviceBackend::Prepare(const EngineConfig& config,
+                                const DeviceQueryResult* endpointObservation) {
     if (m_impl != nullptr) {
         return VN_OK; // lifecycle calls are idempotent
     }
@@ -816,7 +828,7 @@ VnResult DeviceBackend::Prepare(
         }
     }
     std::unique_ptr<Impl, ImplDeleter> impl(new Impl());
-    impl->mixer = &mixer;
+    impl->mixer = nullptr;
     impl->renderState = m_renderState;
     impl->hostOutputMute = &m_hostOutputMute;
     impl->workerCount = config.renderWorkerCount;
@@ -1068,7 +1080,7 @@ VnResult DeviceBackend::StartPrepared(
         return VN_DEVICE_ERROR;
     }
     *admissionGeneration = 0;
-    if (m_impl == nullptr) {
+    if (m_impl == nullptr || m_impl->mixer == nullptr) {
         return VN_DEVICE_ERROR;
     }
     if (m_impl->started) {

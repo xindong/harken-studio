@@ -6739,6 +6739,7 @@ bool CanonicalSetMutationBlocked() noexcept {
 
 namespace {
 struct EnginePageOwner {
+    std::unique_ptr<GameOutputResources> openingOutput;
     StablePageReservation pages;
     Engine* instance = nullptr;
 
@@ -111640,13 +111641,30 @@ VnResult Vn_Init(const VnConfig* config) {
             originalConditionalRows = originalCapacity.originalConditionalRows;
 #endif
         engineOwner = std::make_unique<harken::detail::EnginePageOwner>();
+#if defined(_WIN32)
+        if (!resolved.nullDevice && resolved.renderWorkerCount == 0 &&
+            (fixedDeviceFormat || config->deviceMode == VN_DEVICE_REAL_BACKGROUND)) {
+            try {
+                auto opening = std::make_unique<harken::GameOutputResources>();
+                opening->startup.Begin(opening->device, resolved, initialEndpointObservation);
+                engineOwner->openingOutput = std::move(opening);
+            } catch (...) {
+                // A synchronous caller can still use the regular calling-thread open.
+                if (config->deviceMode == VN_DEVICE_REAL_BACKGROUND) {
+                    engineOwner.reset();
+                    harken::memguard::Uninstall();
+                    return VN_DEVICE_ERROR;
+                }
+            }
+        }
+#endif
         if (!engineOwner->pages.Reserve(sizeof(harken::Engine), alignof(harken::Engine)) ||
             !engineOwner->pages.CommitThrough(sizeof(harken::Engine))) {
             throw std::bad_alloc();
         }
         engine = std::construct_at(static_cast<harken::Engine*>(engineOwner->pages.Address()),
             resolved, harken::detail::g_lastPackGeneration, originalConditionalRows,
-            harken::detail::g_lastHandleGenerations);
+            harken::detail::g_lastHandleGenerations, engineOwner->openingOutput.get());
         engineOwner->instance = engine;
     } catch (...) {
         engineOwner.reset();
@@ -111666,11 +111684,10 @@ VnResult Vn_Init(const VnConfig* config) {
     engine->traceOrigin.resolvedSampleRate = resolved.mixRate.SampleRate();
     engine->traceOrigin.resolvedDeviceLayout = resolved.deviceChannelLayout;
 #if defined(_WIN32)
-    if (config->deviceMode == VN_DEVICE_REAL_BACKGROUND && resolved.renderWorkerCount == 0) {
-        engine->suspended = true;
-        try {
-            engine->gameOutputStartup.Begin(engine->device, engine->mixer, engine->config, initialEndpointObservation);
-        } catch (...) {
+    if (engineOwner->openingOutput) {
+        engine->suspended = config->deviceMode == VN_DEVICE_REAL_BACKGROUND;
+        engine->gameOutputStartup.Attach(engine->mixer);
+        if (!engine->suspended && engine->gameOutputStartup.Finish(engine->device, true) != VN_OK) {
             engineOwner.reset();
             harken::memguard::Uninstall();
             return VN_DEVICE_ERROR;

@@ -168,6 +168,34 @@ protected:
 };
 
 #if defined(_WIN32)
+TEST_F(MixRateDeviceTest, FixedFormatSyncStartFailureCanRetrySameRequest) {
+    auto config = MakeConfig(VN_DEVICE_REAL, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    deviceState.failStartCount = 1;
+    EXPECT_EQ(VN_DEVICE_ERROR, Vn_Init(&config));
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
+    EXPECT_EQ(1u, deviceState.destroyCount);
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    EXPECT_TRUE(harken::detail::ActiveEngine()->device.RenderAdmissionCommitted());
+    EXPECT_EQ(VN_OK, Vn_Term());
+    EXPECT_EQ(2u, deviceState.destroyCount);
+}
+
+TEST_F(MixRateDeviceTest, AbandonedOutputPreparationClosesWithoutStartingCallback) {
+    auto config = MakeConfig(VN_DEVICE_REAL, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    harken::EngineConfig resolved{};
+    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
+    {
+        harken::GameOutputResources output;
+        output.startup.Begin(output.device, resolved, nullptr);
+        // Engine construction can fail before a mixer is attached.
+    }
+    EXPECT_EQ(1u, deviceState.createCount);
+    EXPECT_EQ(1u, deviceState.destroyCount);
+    EXPECT_EQ(0u, deviceState.startCount);
+}
+
 TEST_F(MixRateDeviceTest, BackgroundOpenErrorCanTerminateAndRetry) {
     auto config = MakeConfig(VN_DEVICE_REAL_BACKGROUND, 48000);
     config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;

@@ -7064,7 +7064,8 @@ public:
 
     explicit Engine(const EngineConfig& resolved, std::uint64_t packGenerationFloor = 0,
                     std::uint32_t originalConditionalCapacity = 0,
-                    const EngineHandleGenerationFloors& handleFloors = {})
+                    const EngineHandleGenerationFloors& handleFloors = {},
+                    GameOutputResources* openingOutput = nullptr)
         : config(resolved),
           playableStorage(resolved),
           vorbis(resolved.renderWorkerCount,
@@ -7244,7 +7245,9 @@ public:
                 static_cast<std::uint32_t>(
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
-           nullBackend(mixer, resolved) {
+           nullBackend(mixer, resolved),
+           device((openingOutput ? *openingOutput : localOutput).device),
+           gameOutputStartup((openingOutput ? *openingOutput : localOutput).startup) {
 #if HARKEN_ENGINE_DEV
         monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
             playableInstances.Capacity());
@@ -15395,8 +15398,9 @@ public:
     // Declared last on purpose: destruction runs in reverse order, so the
     // device callback stops before any render state it drives is torn
     // down. Idle in null mode; Vn_Init starts it for VN_DEVICE_REAL.
-    DeviceBackend device;
-    GameOutputStartup gameOutputStartup;
+    GameOutputResources localOutput;
+    DeviceBackend& device;
+    GameOutputStartup& gameOutputStartup;
 
     // Resolved parameter commits consumed as non-finite at the wire
     // boundary (poisoned math never retries). Logic thread only.
