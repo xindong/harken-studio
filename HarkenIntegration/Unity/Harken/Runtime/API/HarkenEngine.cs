@@ -86,7 +86,12 @@ namespace Harken
             VnResult result;
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             if (ticket != 0)
+            {
                 result = HarkenNative.Vn_InitWithOutputPreparation(config, ticket);
+                if (result == VnResult.VN_INVALID_CONFIG &&
+                    HarkenNative.Vn_CancelOutputPreparation(ticket) == VnResult.VN_OK)
+                    result = HarkenNative.Vn_Init(config);
+            }
             else
 #endif
                 result = HarkenNative.Vn_Init(config);
