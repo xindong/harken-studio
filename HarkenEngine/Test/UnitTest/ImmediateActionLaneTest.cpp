@@ -61,6 +61,28 @@ TEST(ImmediateActionLane, FutureBucketsAreDueWithoutAnotherLogicService) {
 }
 
 #if !defined(HARKEN_RT_QUALIFICATION)
+TEST(ImmediateActionLane, CaptureWalkSkipsRetiredWordsAndSeesReusedSlotsInOrder) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({131, 1, 1, 64}));
+    std::array<harken::ImmediateLaneHandle, 131> pending{};
+    for (auto& handle : pending) ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &handle));
+    for (unsigned i = 1; i < 130; ++i) ASSERT_TRUE(lane.Retire(pending[i]));
+    const auto end = lane.ReservedAttemptPrefix();
+    ASSERT_EQ(131u, end);
+    EXPECT_EQ(0u, lane.NextReservedAttempt(0, end));
+    EXPECT_EQ(130u, lane.NextReservedAttempt(1, end));
+    EXPECT_EQ(100u, lane.NextReservedAttempt(1, 100));
+    harken::ImmediateLaneHandle reused{};
+    ASSERT_TRUE(lane.Reserve(2, {1, 0, 0, 1}, &reused));
+    ASSERT_EQ(1u, reused.slot);
+    EXPECT_EQ(reused.slot, lane.NextReservedAttempt(1, end));
+    EXPECT_EQ(130u, lane.NextReservedAttempt(2, end));
+    ASSERT_TRUE(lane.Retire(reused));
+    ASSERT_TRUE(lane.Retire(pending[0]));
+    ASSERT_TRUE(lane.Retire(pending[130]));
+    EXPECT_EQ(end, lane.NextReservedAttempt(0, end));
+}
+
 TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHighSlotRows) {
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({8, 128, 8, 64}));

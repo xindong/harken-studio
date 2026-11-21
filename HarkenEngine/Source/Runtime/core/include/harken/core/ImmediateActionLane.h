@@ -497,7 +497,7 @@ private:
 class ImmediateActionLane {
     friend class QueueContinuationLane;
 public:
-    ImmediateActionLane() noexcept = default;
+    ImmediateActionLane() noexcept;
     ~ImmediateActionLane();
     ImmediateActionLane(const ImmediateActionLane&) = delete;
     ImmediateActionLane& operator=(const ImmediateActionLane&) = delete;
@@ -564,6 +564,10 @@ public:
     std::uint32_t ReservedAttemptPrefix() const noexcept {
         return reservedAttemptPrefix_.load(std::memory_order_acquire);
     }
+    std::uint32_t NextReservedAttempt(std::uint32_t start, std::uint32_t end) const noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    void UseFullCaptureScanForTest(bool enabled) noexcept { fullCaptureScanForTest_ = enabled; }
+#endif
     bool HasOutstandingAttempts() const noexcept {
         return outstandingAttemptCount_.load(std::memory_order_acquire) != 0;
     }
@@ -1176,6 +1180,11 @@ private:
     Config config_{};
     std::atomic<std::uint32_t> outstandingAttemptCount_{0};
     std::atomic<std::uint32_t> reservedAttemptPrefix_{0};
+    struct ActiveAttemptSlots;
+    std::unique_ptr<ActiveAttemptSlots> activeAttemptSlots_;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    bool fullCaptureScanForTest_ = false;
+#endif
     StableRowStorage<ImmediateLaneAttempt> attempts_;
     StableRowStorage<ImmediateLaneEvent> singleEvents_;
     StableRowStorage<SingleEventMetadata> singleEventMetadata_;

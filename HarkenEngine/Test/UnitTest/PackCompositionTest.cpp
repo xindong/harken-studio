@@ -25479,7 +25479,7 @@ TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBounda
 
 TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
     std::array<unsigned, 3> referenceStart{};
-    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+    const auto play = [&](unsigned scenario, bool referenceScan, std::vector<float>& pcm) {
         const bool deferred = scenario != 0;
         const bool trackRoot = scenario == 2 || scenario == 4;
         SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot);
@@ -25599,6 +25599,9 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         EngineSession session(MakeNullConfig(16, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+#if !defined(HARKEN_RT_QUALIFICATION)
+        engine.immediateActionLane.UseFullCaptureScanForTest(referenceScan);
+#endif
         VnCanonicalPackSetMemberV1 members[2]{};
         VnCanonicalPackSetMemberResultV1 rows[2]{};
         const char* paths[] = {initPath.c_str(), path.c_str()};
@@ -25632,6 +25635,8 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 ASSERT_EQ(VN_OK, Vn_Update());
                 engine.nullBackend.Pump(1);
                 const auto* samples = engine.nullBackend.LastBlock();
+                ASSERT_NE(nullptr, samples);
+                pcm.insert(pcm.end(), samples, samples + 128);
                 for (unsigned frame = 0; frame < 64; ++frame) {
                     immediateFrames[0] += std::abs(samples[2u * frame] - 0.125f) < 1e-6f;
                     immediateFrames[1] += std::abs(samples[2u * frame] + 0.25f) < 1e-6f;
@@ -25666,6 +25671,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
             const auto* output = engine.nullBackend.LastBlock();
             ASSERT_NE(nullptr, output);
+            pcm.insert(pcm.end(), output, output + 128);
             for (unsigned frame = 0; frame < 64; ++frame) {
                 const auto outputFrame = block * 64u + frame;
                 const auto sample = output[2u * frame];
@@ -25705,6 +25711,17 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
         EXPECT_EQ(VN_OK, Vn_UnloadPackEx(rows[1].handle, VN_PACK_UNLOAD_REFUSE_IF_USED));
         EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    };
+    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+        std::vector<float> actual;
+        ASSERT_NO_FATAL_FAILURE(play(scenario, false, actual));
+#if !defined(HARKEN_RT_QUALIFICATION)
+        std::vector<float> reference;
+        ASSERT_NO_FATAL_FAILURE(play(scenario, true, reference));
+        ASSERT_EQ(reference.size(), actual.size());
+        EXPECT_EQ(0, std::memcmp(reference.data(), actual.data(), actual.size() * sizeof(float)))
+            << "capture scan changed the rendered samples in scenario " << scenario;
+#endif
     }
 }
 

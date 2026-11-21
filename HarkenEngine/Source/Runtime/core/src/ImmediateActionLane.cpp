@@ -1,4 +1,5 @@
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/QueueContinuationLane.h"
 #include "harken/core/OriginalImmediateLaneConditionalProjection.h"
@@ -488,6 +489,69 @@ bool ImmediateActionLane::CapturePrivatePlacedEvent(const PrivateImmediateLanePl
     return true;
 }
 
+// Reserve and Retire publish membership on the control thread. Capture reads
+// the next slot after each attempt so publication during capture stays visible.
+struct ImmediateActionLane::ActiveAttemptSlots {
+    struct Level {
+        std::atomic<std::uint64_t> first{0};
+        GrowingRowStorage<std::atomic<std::uint64_t>> rest;
+
+        std::uint64_t Read(std::uint32_t word) const noexcept {
+            const auto* value = word == 0 ? &first : rest.TryAt(word - 1u);
+            return value ? value->load(std::memory_order_acquire) : 0;
+        }
+    };
+    // Six base-64 digits cover every representable slot.
+    std::array<Level, 6> levels;
+
+    bool Prepare(std::uint32_t slot, bool allowGrowth) noexcept {
+        for (auto& level : levels) {
+            slot /= 64u;
+            if (slot == 0) break;
+            if (level.rest.size() < slot && (!allowGrowth || !level.rest.ConstructThrough(slot)))
+                return false;
+        }
+        return true;
+    }
+
+    void Set(std::uint32_t slot, bool active) noexcept {
+        for (auto& level : levels) {
+            const auto word = slot / 64u;
+            const auto mask = UINT64_C(1) << (slot % 64u);
+            auto& value = word == 0 ? level.first : level.rest[word - 1u];
+            const auto previous = value.load(std::memory_order_relaxed);
+            const auto updated = active ? previous | mask : previous & ~mask;
+            value.store(updated, std::memory_order_release);
+            if ((previous == 0) == (updated == 0)) break;
+            slot = word;
+        }
+    }
+
+    std::uint32_t Next(unsigned level, std::uint32_t start, std::uint32_t end) const noexcept {
+        if (start >= end) return end;
+        auto word = start / 64u;
+        const auto words = (end - 1u) / 64u + 1u;
+        auto bits = levels[level].Read(word) & (UINT64_MAX << (start % 64u));
+        while (bits == 0) {
+            if (word + 1u >= words) return end;
+            word = Next(level + 1u, word + 1u, words);
+            if (word == words) return end;
+            // A concurrent retirement can empty a word after its parent was read.
+            bits = levels[level].Read(word);
+        }
+        return std::min(end, word * 64u + static_cast<std::uint32_t>(std::countr_zero(bits)));
+    }
+};
+
+ImmediateActionLane::ImmediateActionLane() noexcept = default;
+
+std::uint32_t ImmediateActionLane::NextReservedAttempt(std::uint32_t start, std::uint32_t end) const noexcept {
+#if !defined(HARKEN_RT_QUALIFICATION)
+    if (fullCaptureScanForTest_) return std::min(start, end);
+#endif
+    return activeAttemptSlots_ ? activeAttemptSlots_->Next(0, start, end) : end;
+}
+
 ImmediateActionLane::~ImmediateActionLane() {
     while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     assert(payloadGrowth_.heldRows == 0 && payloadGrowth_.preparedUsers == 0);
@@ -944,6 +1008,11 @@ bool ImmediateActionLane::Reset(Config config) {
     events_ = static_cast<ImmediateLaneEvent*>(eventStorage_.Address());
     members_ = static_cast<ImmediateLaneMemberManifest*>(memberStorage_.Address());
     if (!attempts_.Reserve(config.attempts)) return false;
+    activeAttemptSlots_.reset(new (std::nothrow) ActiveAttemptSlots);
+    if (!activeAttemptSlots_) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ImmediateEntryStorage);
+        return false;
+    }
     privateEntries_.Swap(privateEntries);
     config_ = config;
     valid_ = true;
@@ -991,6 +1060,8 @@ void ImmediateActionLane::AttachEventStorage(EventStorageRegistration& registrat
 
 bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     ImmediateLaneDemand demand) noexcept {
+    if (!activeAttemptSlots_->Prepare(slot, !memguard::IsAudioTagged() && payloadGrowth_.preparedUsers == 0))
+        return false;
     auto& attempt = attempts_[slot];
     auto& metadata = metadata_[slot];
     const auto metadataReady = [&]() noexcept {
@@ -1311,6 +1382,7 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
         }
         attempt.nextBucket.store(0, std::memory_order_relaxed);
         // Count the identity before audio can observe its Reserved publication.
+        activeAttemptSlots_->Set(slot, true);
         if (slot >= reservedAttemptPrefix_.load(std::memory_order_relaxed))
             reservedAttemptPrefix_.store(slot + 1u, std::memory_order_release);
         outstandingAttemptCount_.fetch_add(1, std::memory_order_release);
@@ -5545,6 +5617,7 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
     attempt->nextBucket.store(0, std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Free,
                          std::memory_order_release);
+    activeAttemptSlots_->Set(handle.slot, false);
     const auto previous = outstandingAttemptCount_.fetch_sub(1, std::memory_order_release);
     assert(previous != 0);
     (void)previous;

@@ -54,6 +54,80 @@ struct EnginePlayablePartitionTestAccess {
 namespace {
 
 using PartitionPool = harken::EnginePlayablePartitionPool;
+#if !defined(HARKEN_RT_QUALIFICATION)
+TEST(CapacityContract, CaptureRetainsPublicationAtAnUnvisitedSlotInTheSameQuantum) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto run = [&](bool reference, bool duringCapture, unsigned reusedSlot) {
+        SCOPED_TRACE(::testing::Message() << "reference=" << reference << " during=" << duringCapture
+                     << " reusedSlot=" << reusedSlot);
+        harken::ImmediateActionLane lane;
+        ASSERT_TRUE(lane.Reset({std::max(2u, reusedSlot + 1u), 4, 4, 64}));
+        lane.UseFullCaptureScanForTest(reference);
+        harken::ImmediateLaneTimelineFinalizer mix(engine.voices, engine.timelineArms);
+        ASSERT_TRUE(mix.Attach(lane, 64));
+        harken::TimelineProgramReadFence fences[2];
+        harken::TimelineProgramView programs[2]{};
+        harken::ImmediateLaneHandle handles[2]{};
+        const auto place = [&](unsigned i) {
+            programs[i].readFence = &fences[i];
+            harken::ImmediateLaneEvent event{};
+            event.event.program.program = &programs[i];
+            std::uint64_t anchor = 0;
+            return lane.Reserve(i + 1u, 1, &handles[i]) && lane.Prepare(handles[i], &event, 1) &&
+                lane.TryPlace(handles[i], 64, 1, &anchor) && anchor == 64;
+        };
+        ASSERT_TRUE(place(0));
+        ASSERT_TRUE(lane.Publish(handles[0]));
+        std::vector<harken::ImmediateLaneHandle> occupied(reusedSlot == 0 ? 0u : reusedSlot - 1u);
+        for (auto& handle : occupied) ASSERT_TRUE(lane.Reserve(7, 1, &handle));
+        if (reusedSlot == 0) {
+            ASSERT_TRUE(place(1));
+        } else {
+            harken::ImmediateLaneHandle previous;
+            ASSERT_TRUE(lane.Reserve(8, 1, &previous));
+            ASSERT_EQ(reusedSlot, previous.slot);
+            ASSERT_TRUE(lane.Retire(previous));
+        }
+        bool called = false;
+        auto publish = [&] {
+            if (called) return;
+            called = true;
+            if (reusedSlot != 0) {
+                ASSERT_TRUE(place(1));
+                ASSERT_EQ(reusedSlot, handles[1].slot);
+            }
+            ASSERT_TRUE(lane.Publish(handles[1]));
+        };
+        if (duringCapture) lane.SetCaptureGateHookForTest([](void* ptr) {
+            (*static_cast<decltype(publish)*>(ptr))();
+        }, &publish);
+        ASSERT_TRUE(mix.Capture(1));
+        lane.SetCaptureGateHookForTest(nullptr, nullptr);
+        if (!duringCapture) publish();
+        ASSERT_TRUE(called);
+        EXPECT_TRUE(fences[0].WasRead());
+        EXPECT_EQ(duringCapture, fences[1].WasRead());
+        mix.Discard();
+        mix.Finish();
+        EXPECT_FALSE(mix.Capture(2));
+        mix.Discard();
+        mix.Finish();
+        for (auto handle : handles) {
+            (void)lane.Cancel(handle);
+            EXPECT_TRUE(lane.Retire(handle, 3));
+        }
+        for (auto handle : occupied) EXPECT_TRUE(lane.Retire(handle));
+    };
+    for (bool reference : {true, false}) {
+        for (bool during : {true, false}) {
+            for (unsigned reusedSlot : {0u, 1u, 65u})
+                ASSERT_NO_FATAL_FAILURE(run(reference, during, reusedSlot));
+        }
+    }
+}
+#endif
 static_assert(!std::is_aggregate_v<PartitionPool::ReservationInput>);
 static_assert(!std::is_constructible_v<PartitionPool::ReservationInput,
     PartitionPool*, harken::EnginePlayablePartitionToken, harken::EnginePlayableServiceToken>);
