@@ -8,7 +8,6 @@
 #define _book_unquantize hv_private__book_unquantize
 #define _float32_unpack hv_private__float32_unpack
 #define _floor_P hv_private__floor_P
-#define _make_words hv_private__make_words
 #define _mapping_P hv_private__mapping_P
 #define _residue_P hv_private__residue_P
 #define _v_readstring hv_private__v_readstring

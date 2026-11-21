@@ -120,10 +120,10 @@ HvMemory Memory() noexcept {
 std::size_t AlignCount(std::size_t bytes) noexcept {
     return (bytes + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t);
 }
-bool ValidatePositions(const VorbisMedia& media, const VorbisSettings& settings) noexcept {
+bool ValidatePositions(const VorbisMedia& media, const HvSetup* setup) noexcept {
     if (!media.packets || !media.packetBytes || !media.frames || !media.seekGranularity ||
         media.seek.size() != 1 + (media.frames - 1) / media.seekGranularity ||
-        media.channels != settings.Channels() || media.blockLong != settings.LongBlock()) return false;
+        media.channels != hv_setup_channels(setup) || media.blockLong != hv_setup_blocksize(setup)) return false;
     std::uint64_t produced = 0, previousOffset = 0, lastStart = 0;
     long previousBlock = 0;
     std::size_t seek = 0;
@@ -131,7 +131,7 @@ bool ValidatePositions(const VorbisMedia& media, const VorbisSettings& settings)
     for (std::uint64_t at = 0; at < media.packetBytes;) {
         const std::uint8_t* packet; std::uint32_t bytes;
         if (!media.Packet(at, packet, bytes)) return false;
-        const auto block = settings.PacketBlock(packet, bytes);
+        const auto block = hv_packet_blocksize(setup, packet, bytes);
         if (block <= 0) return false;
         if (previousBlock) {
             lastStart = produced;
@@ -163,6 +163,15 @@ bool ValidatePositions(const VorbisMedia& media, const VorbisSettings& settings)
     return seek == media.seek.size() && loopStart && loopEnd && lengthValid;
 }
 }
+VorbisPrepareResult InspectResidentVorbis(const VorbisMedia& media, std::size_t budget) noexcept {
+    const auto result = hv_inspect_packets(Memory(), budget, media.ident, media.identBytes,
+        media.setup, media.setupBytes, [](const HvSetup* layout, const void* context) -> int {
+            return ValidatePositions(*static_cast<const VorbisMedia*>(context), layout);
+        }, &media);
+    if (result == HV_MEMORY) return VorbisPrepareResult::OutOfMemory;
+    if (result == HV_UNSUPPORTED) return VorbisPrepareResult::Unsupported;
+    return result == HV_OK ? VorbisPrepareResult::Ok : VorbisPrepareResult::Invalid;
+}
 VorbisSettings::~VorbisSettings() { hv_setup_destroy(setup_); }
 unsigned VorbisSettings::Channels() const noexcept { return hv_setup_channels(setup_); }
 unsigned VorbisSettings::LongBlock() const noexcept { return hv_setup_blocksize(setup_); }
@@ -170,11 +179,8 @@ std::size_t VorbisSettings::Bytes() const noexcept {
     return sizeof(*this) + headers_.capacity() + hv_setup_bytes(setup_);
 }
 std::size_t VorbisSettings::StateBytes() const noexcept { return hv_state_bytes(setup_); }
-long VorbisSettings::PacketBlock(const std::uint8_t* bytes, std::size_t count) const noexcept {
-    return hv_packet_blocksize(setup_, bytes, count);
-}
 bool VorbisSettings::ValidateResident(const VorbisMedia& media) const noexcept {
-    return ValidatePositions(media, *this);
+    return ValidatePositions(media, setup_);
 }
 bool VorbisSettingsCache::Initialize(std::size_t budget) {
     if (tables_) return true;

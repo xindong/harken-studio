@@ -29,6 +29,11 @@ HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
 HvSetup* hv_setup_create_compact(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes,
     enum HvResult* result);
+/* The callback may query channels, block sizes and packet modes while headers
+   are alive. This transient layout has no synthesis tables or decode states. */
+enum HvResult hv_inspect_packets(HvMemory memory, size_t budget,
+    const uint8_t* ident, size_t identBytes, const uint8_t* header, size_t headerBytes,
+    int (*validate)(const HvSetup*, const void*), const void* context);
 void hv_setup_destroy(HvSetup* setup);
 size_t hv_setup_bytes(const HvSetup* setup);
 size_t hv_setup_peak_bytes(const HvSetup* setup);

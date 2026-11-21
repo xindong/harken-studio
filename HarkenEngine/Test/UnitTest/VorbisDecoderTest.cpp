@@ -66,7 +66,7 @@ TEST(VorbisDecoder, FloorZeroIsExplicitlyUnsupportedInResourceAndFixturePreparat
     EXPECT_EQ(rejected, nullptr); EXPECT_EQ(result, HV_UNSUPPORTED);
 }
 
-TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstruction) {
+TEST(VorbisDecoder, InspectionAndPlaybackRejectInvalidDimensionsAndIncompleteUnusedCodebooks) {
     const auto fixture = harken::test::MakeVorbisFixture(1);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
@@ -74,7 +74,8 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
     Tables tables(hv_tables_create(memory.Callbacks(), kSetupBudget), hv_tables_destroy);
     ASSERT_NE(tables, nullptr);
     const auto tableAllocations = memory.live;
-    for (unsigned map : {1u, 2u}) for (unsigned dimension : {1u, 0u}) {
+    for (unsigned map : {1u, 2u}) for (auto [dimension, length] :
+         {std::pair{1u, 1u}, std::pair{0u, 1u}, std::pair{1u, 2u}}) {
         std::vector<std::uint8_t> setup{5, 'v', 'o', 'r', 'b', 'i', 's'};
         unsigned bit = 0;
         auto put = [&](std::uint32_t value, unsigned n) {
@@ -86,7 +87,7 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
         put(1,8);
         // The first mapped book is deliberately unused by floor and residue.
         put(0x564342,24); put(dimension,16); put(1,24);
-        put(0,1); put(0,1); put(0,5); put(map,4);
+        put(0,1); put(0,1); put(length - 1,5); put(map,4);
         put(0,32); put(0,32); put(0,4); put(0,1);
         if (dimension) put(0,1);
         put(0x564342,24); put(1,16); put(1,24);
@@ -100,8 +101,13 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
         HvResult result;
         DecoderSetup decoded(hv_setup_create(memory.Callbacks(), kSetupBudget, tables.get(), media.ident,
             media.identBytes, setup.data(), setup.size(), &result), hv_setup_destroy);
-        EXPECT_EQ(result, dimension ? HV_OK : HV_INVALID) << map;
-        EXPECT_EQ(decoded != nullptr, dimension != 0) << map;
+        const bool valid = dimension != 0 && length == 1;
+        EXPECT_EQ(result, valid ? HV_OK : HV_INVALID) << map;
+        EXPECT_EQ(decoded != nullptr, valid) << map;
+        const auto inspected = hv_inspect_packets(memory.Callbacks(), kSetupBudget, media.ident,
+            media.identBytes, setup.data(), setup.size(),
+            [](const HvSetup*, const void*) -> int { return 1; }, nullptr);
+        EXPECT_EQ(inspected, result);
         decoded.reset();
         EXPECT_EQ(memory.live, tableAllocations);
     }
