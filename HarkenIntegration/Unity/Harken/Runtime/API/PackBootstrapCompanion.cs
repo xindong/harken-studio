@@ -614,15 +614,22 @@ namespace Harken
         {
             session = null;
             cancellation.ThrowIfCancellationRequested();
-            string archive = Path.Combine(source.Root, PackArchive.FileName);
-            if (File.Exists(archive) && !File.Exists(Path.Combine(source.Root, "Init.hrp")) && !File.Exists(Path.Combine(source.Root, "Init.bytes")) &&
-                !File.Exists(Path.Combine(source.Root, "Init.json")))
+            ulong ownedTicket = outputTicket == 0 && config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL
+                ? HarkenEngine.BeginOutputPreparation(config) : 0;
+            try
             {
-                if (File.Exists(Path.Combine(source.Root, ".harken-pack-publishing")))
-                    return VnResult.VN_PACK_STALE_REVISION;
-                return StartArchive(archive, source.Language, ref config, out session, cancellation, outputTicket);
+                if (ownedTicket != 0) outputTicket = ownedTicket;
+                string archive = Path.Combine(source.Root, PackArchive.FileName);
+                if (File.Exists(archive) && !File.Exists(Path.Combine(source.Root, "Init.hrp")) && !File.Exists(Path.Combine(source.Root, "Init.bytes")) &&
+                    !File.Exists(Path.Combine(source.Root, "Init.json")))
+                {
+                    if (File.Exists(Path.Combine(source.Root, ".harken-pack-publishing")))
+                        return VnResult.VN_PACK_STALE_REVISION;
+                    return StartArchive(archive, source.Language, ref config, out session, cancellation, outputTicket);
+                }
+                return CaptureAndStart(source, ref config, out session, cancellation, outputTicket);
             }
-            return CaptureAndStart(source, ref config, out session, cancellation, outputTicket);
+            finally { HarkenEngine.CancelOutputPreparation(ownedTicket); }
         }
 
         private static VnResult CaptureAndStart(PackSource source, ref VnConfig config,
