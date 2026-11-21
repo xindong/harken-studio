@@ -85167,7 +85167,7 @@ bool PrepareActionCooldown(ImmediateActionPlan& plan,
     }
     if (prepared.status != harken::ActionCooldownPrepareStatus::Prepared) {
         plan.result = prepared.status == harken::ActionCooldownPrepareStatus::Capacity
-                          ? VN_BACKPRESSURE
+                          ? VN_OUT_OF_MEMORY
                           : VN_CAPABILITY_UNAVAILABLE;
         return false;
     }

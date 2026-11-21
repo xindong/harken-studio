@@ -7555,7 +7555,6 @@ public:
             !actionSeeks.Reset() ||
             !streamSeekHandoffs.Reset(resolved.maxStreams) ||
             !actionDeferredRecords.Reset() ||
-            !actionCooldowns.Reset(resolved.maxActionCooldownRows) ||
             !selectionMemory.Reset(selectionConfig) ||
             !variables.NoteEmitterCreated(emitters.DefaultState()) ||
             !playablePropertyCutScratch.Reset(cutConfig)) {

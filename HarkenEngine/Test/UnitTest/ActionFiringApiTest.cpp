@@ -18602,7 +18602,9 @@ TEST(ActionFiringApi,
 
 TEST(ActionFiringApi, PerEmitterCooldownUsesTheExactEmitterGeneration) {
     (void)Vn_Term();
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    auto config = harkentest::MakeNullConfig();
+    config.maxActionCooldownRows = 1;
+    harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     std::vector<float> samples(4096, 0.25f);

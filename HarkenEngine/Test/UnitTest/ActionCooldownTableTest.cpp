@@ -17,7 +17,6 @@ harken::ActionCooldownKey GlobalKey(std::uint64_t action,
 
 TEST(ActionCooldownTable, PreparedRowsSuppressWithinTheSameAdmission) {
     harken::ActionCooldownTable table;
-    ASSERT_TRUE(table.Reset(2));
 
     auto first = table.Prepare(GlobalKey(10, 0), 100, 120);
     ASSERT_EQ(first.status, harken::ActionCooldownPrepareStatus::Prepared);
@@ -35,7 +34,6 @@ TEST(ActionCooldownTable, PreparedRowsSuppressWithinTheSameAdmission) {
 
 TEST(ActionCooldownTable, ExpiryIsExclusiveAndSuppressionDoesNotRefresh) {
     harken::ActionCooldownTable table;
-    ASSERT_TRUE(table.Reset(1));
 
     auto first = table.Prepare(GlobalKey(20, 0), 100, 120);
     ASSERT_EQ(first.status, harken::ActionCooldownPrepareStatus::Prepared);
@@ -52,7 +50,6 @@ TEST(ActionCooldownTable, ExpiryIsExclusiveAndSuppressionDoesNotRefresh) {
 
 TEST(ActionCooldownTable, CapacityRefusalAndAbandonLeaveNoLiveMutation) {
     harken::ActionCooldownTable table;
-    ASSERT_TRUE(table.Reset(2));
 
     auto first = table.Prepare(GlobalKey(30, 0), 0, 10);
     auto second = table.Prepare(GlobalKey(30, 1), 0, 10);
@@ -60,9 +57,20 @@ TEST(ActionCooldownTable, CapacityRefusalAndAbandonLeaveNoLiveMutation) {
     ASSERT_EQ(second.status, harken::ActionCooldownPrepareStatus::Prepared);
     EXPECT_EQ(table.HighWater(), 0u);
 
-    EXPECT_EQ(table.Prepare(GlobalKey(30, 2), 0, 10).status,
-              harken::ActionCooldownPrepareStatus::Capacity);
-    EXPECT_EQ(table.RefusalCount(), 1u);
+    table.SetCommitPageLimitForTests(0);
+    std::vector<harken::ActionCooldownToken> more;
+    for (std::uint32_t index = 2;; ++index) {
+        auto row = table.Prepare(GlobalKey(30, index), 0, 10);
+        if (row.status == harken::ActionCooldownPrepareStatus::Capacity) break;
+        ASSERT_EQ(harken::ActionCooldownPrepareStatus::Prepared, row.status);
+        more.push_back(row.token);
+    }
+    EXPECT_EQ(1u, table.RefusalCount());
+    table.SetCommitPageLimitForTests(SIZE_MAX);
+    auto retry = table.Prepare(GlobalKey(31, 0), 0, 10);
+    ASSERT_EQ(harken::ActionCooldownPrepareStatus::Prepared, retry.status);
+    ASSERT_TRUE(table.Abandon(&retry.token));
+    for (auto& token : more) ASSERT_TRUE(table.Abandon(&token));
     ASSERT_TRUE(table.Abandon(&second.token));
     ASSERT_TRUE(table.Abandon(&first.token));
     EXPECT_EQ(table.LiveCount(), 0u);
@@ -71,7 +79,6 @@ TEST(ActionCooldownTable, CapacityRefusalAndAbandonLeaveNoLiveMutation) {
 
 TEST(ActionCooldownTable, OwnerAndEmitterCleanupAreExact) {
     harken::ActionCooldownTable table;
-    ASSERT_TRUE(table.Reset(4));
 
     auto world = table.Prepare(GlobalKey(40, 0), 1, 100);
     harken::ActionCooldownKey pack = GlobalKey(40, 0);
@@ -93,7 +100,6 @@ TEST(ActionCooldownTable, OwnerAndEmitterCleanupAreExact) {
 
 TEST(ActionCooldownTable, GenerationExhaustionQuarantinesOnRelease) {
     harken::ActionCooldownTable table;
-    ASSERT_TRUE(table.Reset(1));
     ASSERT_TRUE(table.SetFreeGenerationForTests(0, UINT64_MAX));
     auto row = table.Prepare(GlobalKey(50, 0), 0, 1);
     ASSERT_EQ(row.status, harken::ActionCooldownPrepareStatus::Prepared);
@@ -106,7 +112,6 @@ TEST(ActionCooldownTable, GenerationExhaustionQuarantinesOnRelease) {
 TEST(ActionCooldownTable,
      AbandonPreparedLeavesGenerationAndVisibleFactsUntouched) {
     harken::ActionCooldownTable table;
-    ASSERT_TRUE(table.Reset(1));
     ASSERT_TRUE(table.SetFreeGenerationForTests(0, UINT64_MAX));
 
     auto first = table.Prepare(GlobalKey(60, 0), 0, 10);

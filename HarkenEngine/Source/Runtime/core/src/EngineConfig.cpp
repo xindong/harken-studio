@@ -1,6 +1,5 @@
 #include "harken/core/EngineConfig.h"
 #include "TimelineCapacityOverrideForTest.h"
-#include "harken/core/ActionCooldownTable.h"
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 #include "harken/core/ScheduledTransactionPool.h"
 #endif
@@ -484,9 +483,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
                 config->maxPackReplacementPeakBytes;
         }
     }
-    if (hasActionCooldownFields && config->maxActionCooldownRows != 0) {
-        resolved.maxActionCooldownRows = config->maxActionCooldownRows;
-    }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     detail::TimelineCapacityOverrideForTest testCapacity{};
@@ -578,7 +574,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxPackReplacementPeakBytes >
             kMaxPackReplacementPeakBytesCeiling ||
         resolved.maxActionFirings > kMaxActionFiringsCeiling ||
-        resolved.maxActionCooldownRows > kMaxActionCooldownRowsHard ||
         resolved.maxContainers > kMaxContainersCeiling ||
         resolved.maxContainerChildren > kMaxContainerChildrenCeiling ||
         resolved.containerCursorCapacity > kMaxContainerCursorCeiling ||

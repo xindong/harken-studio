@@ -422,8 +422,7 @@ typedef struct VnConfig {
                                             * 0 = existing pack/media limits */
     uint64_t maxPackReplacementPeakBytes;  /* old + retiring + staging peak;
                                             * 0 = 96 MiB */
-    uint32_t maxActionCooldownRows;         /* committed Action cooldown rows;
-                                            * 0 = 256 */
+    uint32_t maxActionCooldownRows;         /* legacy field, ignored; cooldown rows grow on demand */
     uint32_t reserved12;                    /* must be 0 */
 } VnConfig;
 

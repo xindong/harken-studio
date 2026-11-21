@@ -1196,34 +1196,26 @@ TEST(CapacityContract, ActionFiringCapacityDefaultsAndStopsAtItsHardCeiling) {
     EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
 }
 
-TEST(CapacityContract,
-     ActionCooldownCapacityIsVintageAwareAndStopsAtItsHardCeiling) {
+TEST(CapacityContract, ActionCooldownIgnoresLegacyQuotaAndGrowsBeyond4096) {
     VnConfig config = MakeNullConfig();
-    harken::EngineConfig resolved;
-
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.maxActionCooldownRows);
-
-    config.maxActionCooldownRows = 4096;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(4096u, resolved.maxActionCooldownRows);
-
     config.maxActionCooldownRows = 4097;
-    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
-
-    config.structSize =
-        static_cast<std::uint32_t>(offsetof(VnConfig, maxActionCooldownRows));
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.maxActionCooldownRows);
-}
-
-TEST(CapacityContract, ActionCooldownCapacityPreallocatesAtInit) {
-    VnConfig config = MakeNullConfig();
-    config.maxActionCooldownRows = 3;
-
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
-    EXPECT_EQ(3u, session.Engine()->actionCooldowns.Capacity());
+    auto& cooldowns = session.Engine()->actionCooldowns;
+    EXPECT_EQ(0u, cooldowns.Capacity());
+    harken::ActionCooldownKey key{};
+    key.owner = {harken::ActionDefinitionOwnerKind::World, 0, 7};
+    key.actionStableId = harkentest::ObjectId(1);
+    key.programSemanticFingerprint = 42;
+    for (std::uint32_t i = 0; i < 4098; ++i) {
+        key.authoredEventIndex = i;
+        auto result = cooldowns.Prepare(key, 0, 10);
+        ASSERT_TRUE(cooldowns.Commit(&result.token)) << i;
+    }
+    EXPECT_EQ(4098u, cooldowns.LiveCount());
+    EXPECT_EQ(harken::ActionCooldownPrepareStatus::Suppressed, cooldowns.Prepare(key, 9, 20).status);
+    EXPECT_EQ(4098u, cooldowns.SweepExpired(10));
+    EXPECT_EQ(0u, cooldowns.LiveCount());
 }
 
 TEST(CapacityContract, CompositeActionInternalDefaultsCoverBothLeafPlanes) {

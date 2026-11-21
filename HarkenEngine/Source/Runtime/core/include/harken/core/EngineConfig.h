@@ -272,7 +272,6 @@ struct EngineConfig {
     // rather than being dropped.
     std::uint32_t maxDeferredMaterializationsPerQuantum = 32;
     std::uint32_t maxDeferredIntents = 256;
-    std::uint32_t maxActionCooldownRows = 256;
     std::uint32_t maxDecisionRows = 512;
     std::uint32_t maxParticipantsPerDecision = 128;
     std::uint32_t maxPlan03GroupHeadersPerPage = 64;
