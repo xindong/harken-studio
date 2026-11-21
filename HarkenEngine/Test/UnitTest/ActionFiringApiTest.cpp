@@ -16538,8 +16538,17 @@ TEST(ActionFiringApi,
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
         rows.SetCommitPageLimitForTests(SIZE_MAX);
     };
-    refuseBacking(engine->initialFrontierEvents);
-    refuseBacking(engine->initialFrontierRequests);
+    for (auto site : {harken::detail::LogicAllocSite::InitialFrontierEvents,
+                      harken::detail::LogicAllocSite::InitialFrontierRequests}) {
+        harken::detail::ArmLogicAllocFaultForTests(1, site);
+        const auto rc = Vn_PostAction(&desc, &firing);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_OUT_OF_MEMORY, rc);
+        ASSERT_EQ(0u, firing);
+        EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+    }
     refuseBacking(engine->pendingVariableLeafSources);
     refuseBacking(engine->pendingVariableFutureSources);
     // A delayed Random container does not need a queued successor.
@@ -16553,12 +16562,14 @@ TEST(ActionFiringApi,
     engine->playableInstances.SetCommitPageLimitForTests(0);
     engine->originalPlayableLifetimeHolders.SetCommitPageLimitForTests(0);
     engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
-    engine->initialFrontierEvents.SetCommitPageLimitForTests(0);
-    engine->initialFrontierRequests.SetCommitPageLimitForTests(0);
+    const auto* preparedEvents = engine->initialFrontierEvents.data();
+    const auto* preparedRequests = engine->initialFrontierRequests.data();
     engine->pendingVariableLeafSources.SetCommitPageLimitForTests(0);
     engine->pendingVariableFutureSources.SetCommitPageLimitForTests(0);
     engine->pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
     DrainActionDeferred(engine);
+    EXPECT_EQ(preparedEvents, engine->initialFrontierEvents.data());
+    EXPECT_EQ(preparedRequests, engine->initialFrontierRequests.data());
 
     VnActionStepResult step{};
     step.structSize = sizeof(step);
@@ -73375,8 +73386,8 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
     auto desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
-    engine.initialFrontierEvents.SetCommitPageLimitForTests(0);
-    engine.initialFrontierRequests.SetCommitPageLimitForTests(0);
+    EXPECT_TRUE(engine.initialFrontierEvents.empty());
+    EXPECT_TRUE(engine.initialFrontierRequests.empty());
     engine.pendingVariableLeafSources.SetCommitPageLimitForTests(0);
     engine.pendingVariableFutureSources.SetCommitPageLimitForTests(0);
     engine.pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
@@ -73537,12 +73548,10 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
     EXPECT_EQ(engine.config.maxPlayableInstances, storage.variableControlNestedModes.size());
     EXPECT_EQ(retainedRender, firstStart->renderHandle);
     fullBacking.Release();
-    engine.initialFrontierEvents.SetCommitPageLimitForTests(SIZE_MAX);
     EXPECT_FALSE(engine.PreparePlayableStateStorage());
     EXPECT_EQ(firstStart, &timeline.starts[0]);
     EXPECT_EQ(retainedRender, firstStart->renderHandle);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
-    engine.initialFrontierRequests.SetCommitPageLimitForTests(SIZE_MAX);
     engine.pendingVariableLeafSources.SetCommitPageLimitForTests(SIZE_MAX);
     engine.pendingVariableFutureSources.SetCommitPageLimitForTests(SIZE_MAX);
     engine.pendingVariableFutureNodes.SetCommitPageLimitForTests(SIZE_MAX);

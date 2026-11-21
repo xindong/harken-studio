@@ -7501,8 +7501,6 @@ public:
                         engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
                         engine.originalQueueGroupHolders.ConstructThrough(required);
                 })) throw harken::detail::LogicPreparationFailure{};
-        if (!initialFrontierEvents.Reserve(4ull * resolved.maxPlayableInstances + 1u) ||
-            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw harken::detail::LogicPreparationFailure{};
         const std::uint64_t frontierNodes = resolved.maxPlayableInstances;
         const auto boundedFrontierCount = [](std::uint64_t proposed, std::uint32_t limit) {
             return static_cast<std::uint32_t>(std::min<std::uint64_t>(proposed, limit));
@@ -14721,14 +14719,31 @@ public:
         catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage); return false; }
         return true;
     }
+    bool PrepareInitialFrontierStorage(std::uint32_t count, bool assembling = false) noexcept {
+        if (count <= initialFrontierEvents.size() && count <= initialFrontierRequests.size()) return true;
+        if (memguard::IsAudioTagged() || actionPlayScratch.PreparedUseActive() ||
+            (initialFrontierWorkspaceOccupied && !assembling)) return false;
+        try {
+            const auto grow = [count](auto& rows, detail::LogicAllocSite site) {
+                if (rows.size() >= count) return;
+                detail::CheckedGrow(rows, count, site);
+                rows.resize(count);
+            };
+            grow(initialFrontierEvents, detail::LogicAllocSite::InitialFrontierEvents);
+            grow(initialFrontierRequests, detail::LogicAllocSite::InitialFrontierRequests);
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
+    }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
         std::uint32_t independentRoots = 1u, bool needsCurrentHolders = true) noexcept {
         return PrepareTimelineStartStorage(needsContainerState, independentRoots) &&
             PrepareOriginalPlayableStorage(needsContainerState, independentRoots) &&
             (!needsContainerState || !needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             (!needsContainerState ||
-                (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
-                 initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
+                (PrepareInitialFrontierStorage(1) &&
                  pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
                  pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()))) &&
             (!needsContainerState || spatial.PrepareVoiceStorage(config.voiceCapacity.Render())) &&
@@ -15202,8 +15217,8 @@ public:
         return true;
     }
     std::vector<TimelineTransactionProgramRef> publishedFrontierProgramRefsScratch;
-    StableRowStorage<ScheduledEventInput, std::size_t> initialFrontierEvents;
-    StableRowStorage<TransactionRequest, std::size_t> initialFrontierRequests;
+    std::vector<ScheduledEventInput> initialFrontierEvents;
+    std::vector<TransactionRequest> initialFrontierRequests;
     bool initialFrontierWorkspaceOccupied = false;
     // Serial producer leaves delegate before acquiring this exclusive scratch.
     EngineTimelineStartScratch timelineStartScratch{};

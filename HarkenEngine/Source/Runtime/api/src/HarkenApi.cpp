@@ -34341,7 +34341,7 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
         harken::TimelineTransactionProgramRef program, harken::TimelineArmToken arm,
         harken::Plan03GroupSliceIdentity group, const harken::EventTemplate* original,
         std::uint64_t frame, harken::PlayableInstanceHandle resourceOwner, std::uint64_t resourceEpoch) {
-        if (eventCount >= engine.initialFrontierEvents.size()) return false;
+        if (eventCount == UINT32_MAX || !engine.PrepareInitialFrontierStorage(eventCount + 1u, true)) return false;
         auto& event = engine.initialFrontierEvents[eventCount];
         event = {};
         event.executeFrame = frame;
@@ -34379,7 +34379,6 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
         request.ownerInstanceScheduleEpoch = resourceEpoch;
         request.program = program;
         request.armToken = arm;
-        request.events = &event;
         request.eventCount = 1;
         return true;
     };
@@ -34435,7 +34434,6 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
                     engine.initialFrontierEvents[index].frontier.operationEventCount = end - first;
             }
             auto request = engine.initialFrontierRequests[firstRequest + first - firstEvent];
-            request.events = &event;
             request.eventCount = end - first;
             engine.initialFrontierRequests[requestCount++] = request;
             first = end;
@@ -34545,6 +34543,16 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
         expectedSources += group.memberCount;
     }
     if (sourceCount != expectedSources) return InitialFrontierPrepareStatus::Failed;
+    // Requests cover consecutive ranges. Bind them only after both scratch
+    // vectors have stopped growing and before any consumer borrows a pointer.
+    std::uint32_t offset = 0;
+    for (std::uint32_t i = 0; i < requestCount; ++i) {
+        auto& request = engine.initialFrontierRequests[i];
+        if (request.eventCount > eventCount - offset) return InitialFrontierPrepareStatus::Failed;
+        request.events = engine.initialFrontierEvents.data() + offset;
+        offset += static_cast<std::uint32_t>(request.eventCount);
+    }
+    if (offset != eventCount) return InitialFrontierPrepareStatus::Failed;
     if (reusePrivateBatch) {
         if (eventCount != privateBatch.pageBatchOriginalEvents.size() ||
             !engine.timelinePool.MatchesFrozenPreparedTransactionEvents(scratch.queueTransactions,
@@ -86266,7 +86274,12 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
         }
         harken::StableStoragePreparation futureInstances;
-        if (futurePlays != 0 && ((futureTrees && !engine.PrepareDeferredTrees(*futureTrees)) ||
+        // Each delayed Play reuses the same batch workspace. Prepare it for the
+        // largest retained tree, independently of other pending Play steps.
+        const auto futureEvents = futureTrees ? 2ull * futureTrees->width - 1u : 0u;
+        if (futurePlays != 0 && ((futureTrees && (futureEvents > UINT32_MAX ||
+                !engine.PrepareInitialFrontierStorage(static_cast<std::uint32_t>(futureEvents)) ||
+                !engine.PrepareDeferredTrees(*futureTrees))) ||
                 !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity()) ||
                 !engine.playableInstances.PrepareFutureAcquisitions(futurePlays, &futureInstances) ||
                 !engine.containerPlayback.PrepareStorage(engine.playableInstances.ConstructedEntryCount()) ||

@@ -47,8 +47,6 @@ auto StorageIdentity(const harken::StableRowStorage<T, Index>& rows) {
 
 inline auto CapturePlayableStorage(const harken::Engine& engine) {
     return std::array{
-        StorageIdentity(engine.initialFrontierEvents),
-        StorageIdentity(engine.initialFrontierRequests),
         StorageIdentity(engine.variableControlRetargetPrograms),
         StorageIdentity(engine.queueProgramBanks)};
 }
