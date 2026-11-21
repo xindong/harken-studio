@@ -228,6 +228,9 @@ public:
         PreparedSetMutation& operator=(PreparedSetMutation&& other) noexcept;
 
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
+        void PreferWideVorbisCodebooks(std::size_t budget) noexcept {
+            m_pcm.PreferWideVorbisCodebooks(budget);
+        }
         VnPackHandle HandleAt(std::size_t member) const noexcept;
         PackResourceRevisionToken ResourceTokenAt(std::size_t member) const noexcept;
 

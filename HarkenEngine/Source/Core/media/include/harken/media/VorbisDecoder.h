@@ -44,13 +44,13 @@ private:
 class VorbisSettingsCache {
 public:
     explicit VorbisSettingsCache(bool compactCodebooks = false) noexcept : compactCodebooks_(compactCodebooks) {}
-    class CompactScope {
+    class CodebookScope {
     public:
-        explicit CompactScope(VorbisSettingsCache& cache) noexcept
-            : cache_(cache), previous_(cache.compactCodebooks_) { cache_.compactCodebooks_ = true; }
-        ~CompactScope() { cache_.compactCodebooks_ = previous_; }
-        CompactScope(const CompactScope&) = delete;
-        CompactScope& operator=(const CompactScope&) = delete;
+        CodebookScope(VorbisSettingsCache& cache, bool compact) noexcept
+            : cache_(cache), previous_(cache.compactCodebooks_) { cache_.compactCodebooks_ = compact; }
+        ~CodebookScope() { cache_.compactCodebooks_ = previous_; }
+        CodebookScope(const CodebookScope&) = delete;
+        CodebookScope& operator=(const CodebookScope&) = delete;
     private:
         VorbisSettingsCache& cache_;
         bool previous_;
@@ -144,6 +144,7 @@ class VorbisResident final : public EncodedMedia {
 public:
     static std::shared_ptr<VorbisResident> Prepare(VorbisCodec& codec,
         std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat = false);
+    std::size_t TryWidenUnpublished(std::size_t budget) noexcept;
     MediaDecoder* Acquire() const noexcept override;
     std::size_t ResidentBytes() const noexcept override;
     std::span<const std::uint8_t> ContentBytes() const noexcept override { return bytes_; }

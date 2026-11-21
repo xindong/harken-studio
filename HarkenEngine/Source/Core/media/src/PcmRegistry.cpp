@@ -249,6 +249,12 @@ void SetPcmRegisterFaultForTests(PcmRegisterFault fault) {
 
 PcmRegisterFault PcmRegisterFaultForTests() { return g_pcmRegisterFault; }
 
+void PCMRegistry::PreparedPackMutation::PreferWideVorbisCodebooks(std::size_t budget) noexcept {
+    for (auto& [soundId, entry] : m_staged) {
+        if (entry->encoded) budget -= entry->encoded->TryWidenUnpublished(budget);
+    }
+}
+
 std::uint64_t PCMRegistry::PreparedPackMutation::CookieOf(
     VnSoundId soundId) const noexcept {
     const auto it = m_staged.find(soundId);
