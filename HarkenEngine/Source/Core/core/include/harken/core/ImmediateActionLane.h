@@ -262,6 +262,7 @@ struct ImmediateLaneBucket {
     std::uint32_t firstGroup = 0;
     std::uint32_t groupCount = 0;
     std::uint32_t memberCount = 0;
+    bool elasticSoundStart = false;
     std::atomic<std::uint64_t> sourceWaitSequence{0};
     std::atomic<std::uint64_t> completedAudioSequence{0};
 };
@@ -827,7 +828,7 @@ public:
         std::uint32_t ordinal, ImmediateLaneEvent* out) const noexcept;
     bool TryPlaceExactPrivate(ImmediateLaneHandle handle, std::uint64_t anchor,
         PrivateImmediateLanePlacementProof* outPlacement = nullptr) noexcept;
-    bool Publish(ImmediateLaneHandle handle) noexcept;
+    bool Publish(ImmediateLaneHandle handle, bool elasticSoundStart = false) noexcept;
     // Holds the actual reader gate until publication or explicit abandonment.
     bool ProvePrivatePublication(ImmediateLaneHandle handle, std::uint64_t root,
         PrivateImmediateLanePublicationProof* out) noexcept;
