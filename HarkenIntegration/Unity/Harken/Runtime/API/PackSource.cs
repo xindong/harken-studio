@@ -182,6 +182,7 @@ namespace Harken
                 });
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+            catch (PackStorage.InvalidMember) { return new CompanionCapture(VnResult.VN_BAD_PACK); }
             catch (OutOfMemoryException) { return new CompanionCapture(VnResult.VN_DEVICE_ERROR); }
             catch { return new CompanionCapture(VnResult.VN_PACK_PROVIDER_FAILED); }
         }

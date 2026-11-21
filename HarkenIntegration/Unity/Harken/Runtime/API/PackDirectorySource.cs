@@ -64,7 +64,7 @@ namespace Harken
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (PlatformNotSupportedException) { return VnResult.VN_CAPABILITY_UNAVAILABLE; }
-            catch (InvalidDataException) { return VnResult.VN_BAD_PACK; }
+            catch (PackStorage.InvalidMember) { return VnResult.VN_BAD_PACK; }
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
