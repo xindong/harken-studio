@@ -188,13 +188,17 @@ namespace Harken
                 foreach (SharedPack owner in companionOwners) if (owner.Handle.IsValid) { empty = false; break; }
                 if (empty)
                 {
-                    if (!directEntryMissing && !cancellation.CanBeCanceled && names.Length <= SmallBatchLimit)
+                    if (HarkenEngine.NativeAbiMinor >= 2 && !directEntryMissing && !cancellation.CanBeCanceled && names.Length <= SmallBatchLimit)
                     {
                         var direct = ActivateSmallResidentSet(names, acquired);
                         if (direct != VnResult.VN_CAPABILITY_UNAVAILABLE) return direct;
                     }
                     VnResult batch = VisitBatch(names, acquired, cancellation, out bool consumed);
-                    if (consumed || batch != VnResult.VN_CAPABILITY_UNAVAILABLE) return batch;
+                    // ABI 1.1 reports BAD_PACK for an HRP2 envelope before visiting its contents.
+                    // The managed reader validates the whole set again under its publication guards.
+                    bool legacyReadFailure = !consumed && batch == VnResult.VN_BAD_PACK &&
+                        HarkenEngine.NativeAbiMinor < 2 && HasBlockEnvelope(names);
+                    if (!legacyReadFailure && (consumed || batch != VnResult.VN_CAPABILITY_UNAVAILABLE)) return batch;
                 }
             }
             return AcquireCompanionInputs(names, acquired, refresh, expectedId, captured, cancellation);

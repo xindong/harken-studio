@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -153,6 +154,25 @@ namespace Harken
                 // Provider pointers belong to the native visit and cannot outlive this callback.
                 Array.Clear(companionKeepMembers, 1, count);
             }
+        }
+
+        private bool HasBlockEnvelope(string[] names)
+        {
+            var header = new byte[4];
+            foreach (string name in names)
+            {
+                try
+                {
+                    // This only selects a reader. Capture and activation must still validate the entire set.
+                    using var file = File.Open(Path.Combine(companionSource.Root, name + ".hrp"),
+                        FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    if (file.Read(header, 0, header.Length) == header.Length &&
+                        header[0] == 'H' && header[1] == 'R' && header[2] == 'P' && header[3] == '2') return true;
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            return false;
         }
 
         private static byte[] EncodeDirectory(string path)
