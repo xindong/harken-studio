@@ -131993,11 +131993,18 @@ VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV
 }
 
 static VnResult PostWithMonitor(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring,
-    harken::detail::ActionAdmissionValidator validator, const void* context) {
+    harken::detail::ActionAdmissionValidator validator, const void* context,
+    uint64_t expectedInit = 0, uint64_t expectedRevision = 0) {
     const auto request = harken::detail::BeginMonitorRequest(
         harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationPostAction);
     harken::monitor::RequestObservation observation(request);
-    const auto result = PostActionObserved(desc, outFiring, request, &observation, validator, context);
+    auto* engine = harken::detail::ActiveEngine();
+    const auto* current = expectedInit && engine ? engine->packComposition.Published() : nullptr;
+    const bool superseded = expectedInit && engine && !engine->callbackFatalSticky &&
+        !engine->runtimeRecreateRequired && !harken::detail::CanonicalSetMutationBlocked() &&
+        (!current || current->initHandle != expectedInit || current->ledger.setRevision != expectedRevision);
+    const auto result = superseded ? VN_STALE_HANDLE :
+        PostActionObserved(desc, outFiring, request, &observation, validator, context);
     const bool readable = desc && desc->structSize == sizeof(*desc);
     harken::monitor::ObserveOperation(harken::monitor::kOperationPostAction, result,
         harken::monitor::kEntityAction, readable ? desc->actionId : VnObjectId{},
@@ -132050,7 +132057,7 @@ VnResult Vn_PostNamedResidentActionV1(const VnNamedResidentPostV1* desc, uint64_
         post.actionId = row.rootActionId;
         post.emitter = desc->emitter;
         post.callerSeed = desc->callerSeed;
-        return PostWithMonitor(&post, outFiring, validate, &expected);
+        return PostWithMonitor(&post, outFiring, validate, &expected, expected.init, expected.revision);
     }
     return VN_UNKNOWN_ID;
 }
