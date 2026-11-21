@@ -418,7 +418,7 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
     for (const auto& pending : pendingStarts) bindingBytes += column(pending.preparedBindings);
     for (const auto& parked : parkRecords) bindingBytes += column(parked.preparedBindings);
     return ActionPlayStorageBytes() + ActionPlayDirectoryBytes() + ActionPlayDynamicBytes() +
-        memberProgramRecords.DirectoryBytes() + playableMemberRecords.DirectoryBytes() + column(sourcePlayableMembers) +
+        memberProgramRecords.DirectoryBytes() + playableMemberRecords.DirectoryBytes() + sourcePlayableMembers.RequestedBytes() +
         column(actionFiringPlanScratch) + column(actionStepPlanScratch) + column(actionVariableWriteScratch) +
         column(actionSelectionResetScratch) + column(actionFixedSelectionCommitInputs) + column(actionQueueResetScratch) +
         column(actionQueueCheckpointResetScratch) + column(actionPlayAttemptTokens) +
@@ -11428,7 +11428,7 @@ bool PrepareAuthoredStopOperation(
         const auto& candidate = engine.authoredStopRoots[slot];
         if (!candidate.operation && candidate.generation != UINT64_MAX) break;
     }
-    if (slot == engine.authoredStopRoots.size()) return false;
+    if (slot == UINT32_MAX || !engine.authoredStopRoots.ConstructThrough(slot + 1u)) return false;
     auto& root = engine.authoredStopRoots[slot];
     if (!engine.playableInstances.PrepareDelayedCancellation(
             handle, firing, executionOrdinal, &root.cancellation)) return false;
@@ -17512,7 +17512,11 @@ struct OrdinaryRetirementReservation {
                 break;
             }
         }
-        if (slot == UINT32_MAX) return false;
+        if (slot == UINT32_MAX) {
+            const auto next = engine.ordinaryRetiringSources.size();
+            if (next == UINT32_MAX || !engine.ordinaryRetiringSources.ConstructThrough(next + 1u)) return false;
+            slot = next;
+        }
         auto& source = engine.ordinaryRetiringSources[slot];
         source.root = row.rootInstance;
         source.subtree = subtree;
@@ -17540,7 +17544,7 @@ struct OrdinaryRetirementReservation {
             for (; resource < engine.ordinaryRetiringLeaves.size(); ++resource) {
                 if (!engine.ordinaryRetiringLeaves[resource].occupied) break;
             }
-            if (resource == engine.ordinaryRetiringLeaves.size()) return false;
+            if (resource == UINT32_MAX || !engine.ordinaryRetiringLeaves.ConstructThrough(resource + 1u)) return false;
             auto& leaf = engine.ordinaryRetiringLeaves[resource];
             leaf.occupied = true;
             if (previous == UINT32_MAX) source.firstLeafResource = resource;
@@ -20825,7 +20829,7 @@ bool PrepareVariableControlFrontierSelection(
     const harken::VariableReadCutReader* initialVariables = nullptr,
     bool continuousRoot = false) noexcept {
     auto& workspace = engine.frontierExpansion;
-    if (workspace.occupied || workspace.nodes.empty()) return false;
+    if (workspace.occupied) return false;
     workspace.occupied = true;
     workspace.count = 0;
     struct ReleaseWorkspace {
@@ -20869,7 +20873,8 @@ bool PrepareVariableControlFrontierSelection(
     const auto append = [&](std::uint32_t parent, const harken::ContainerProgramViewV3& program,
                             std::uint32_t ordinal, bool continuous, float weight) {
         const auto* child = FindQueueChild(program, ordinal);
-        if (child == nullptr || workspace.count >= workspace.nodes.size()) return false;
+        if (child == nullptr || workspace.count == UINT32_MAX ||
+            !workspace.nodes.ConstructThrough(workspace.count + 1u)) return false;
         auto& next = workspace.nodes[workspace.count++];
         next = {};
         next.authored = child->playable;
@@ -29460,8 +29465,7 @@ bool PrepareQueueFutureFactoryOutputs(harken::Engine& engine,
             if (census[node] == nullptr) return false;
         }
         if (!tree.IssueOriginalPreparedInstanceLifetimes(engine.playableInstances,
-                {census.data(), count}, {engine.originalPlayableLifetimeHolders.data(),
-                    engine.originalPlayableLifetimeHolders.size()}) ||
+                {census.data(), count}, engine.originalPlayableLifetimeHolders) ||
             !ProvePreparedQueueFutureVoiceCommits(engine, *child)) return false;
         owner.originalParentLinks = &links;
     }
@@ -34888,7 +34892,7 @@ bool PrepareFrontierContainerPath(
     bool stopBeforeVariableControl, QueueActionInitialization action) noexcept {
     auto& workspace = engine.frontierExpansion;
     const bool adopted = result.adoptedSelectionCount != 0;
-    if (workspace.occupied || workspace.nodes.empty() || (!adopted && (parent == 0 || parentEpoch == 0)) ||
+    if (workspace.occupied || !workspace.nodes.ConstructThrough(1u) || (!adopted && (parent == 0 || parentEpoch == 0)) ||
         result.selectionCount >= result.path.size()) return false;
     const auto parentView = engine.playableInstances.Classify(parent);
     if (!adopted && (!parentView.live || parentView.scheduleEpoch != parentEpoch)) return false;
@@ -35048,7 +35052,7 @@ bool PrepareFrontierContainerPath(
         result.ordinals[node.depth] = node.selectedOrdinal;
         result.selectionCount = node.depth + 1u;
         result.terminalChild = selected;
-        if (workspace.count >= workspace.nodes.size()) return false;
+        if (workspace.count == UINT32_MAX || !workspace.nodes.ConstructThrough(workspace.count + 1u)) return false;
         auto& next = workspace.nodes[workspace.count++];
         next = {};
         next.parentIndex = index;
@@ -64039,6 +64043,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         std::vector<backing::MemoEntry> memo;
         backing::Profile futures{};
         std::uint64_t nativeVoices = 0;
+        std::uint64_t nativeInstances = 0;
         std::uint64_t nativeSelections = 0;
         SelectionMemoryTableV1::BackingShape selectionShape{};
         std::uint64_t nativeRelations = 0;
@@ -64067,6 +64072,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 producer->storage.queueFutureAttempts.size(), producer->storage.queueFutureOwners.size(),
                 static_cast<std::size_t>(config.maxPlayableInstances)});
             if (futureCapacity > UINT32_MAX || row.selectionCount > row.selectedChildOrdinals.size()) return false;
+            limits.includeDynamicInstanceRows = true;
             limits.immediateFutureSides = static_cast<std::uint32_t>(futureCapacity);
             limits.queueRoleCapacity = producer->storage.queueRoleCapacity;
             limits.propertyPrefixCount = row.VariableControlPropertyRoot().stableId != VnObjectId{} ? row.selectionCount : 0;
@@ -64147,6 +64153,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             nativeSelections += selectionDemand;
             selectionShape.Include(result.profile.selection);
             nativeRelations += result.profile.referenceRows;
+            nativeInstances += result.profile.instanceRows - 1u;
             nativeCompletions += result.profile.Q + result.profile.H[2];
             queueControls += result.profile.Q;
             nativeGroups += std::max(2u, result.profile.controlSides) + 1u + 4ull * result.profile.Q;
@@ -64318,7 +64325,10 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 {futures.queue.programs, futures.queue.events}, &nativeCandidate->queueSchedules,
                 [&]() noexcept { return AllowNativeBackingAllocation(); })) return shortage();
         // Queue futures acquire a slot even when their selected schedule has no leaves.
-        if (!PrepareActionPlayBacking(producerCount, static_cast<std::uint32_t>(queueControls),
+        if (nativeInstances > UINT32_MAX ||
+            !playableInstances.PrepareFutureAcquisitions(static_cast<std::uint32_t>(nativeInstances), &nativeCandidate->instances) ||
+            !containerPlayback.PrepareStorage(playableInstances.ConstructedEntryCount()) ||
+            !PrepareActionPlayBacking(producerCount, static_cast<std::uint32_t>(queueControls),
                 &nativeCandidate->actionPlays) ||
             !PrepareQueueProgramBankBacking(queueControls == 0 ? 0u : queueProgramBanks.size(),
                 &nativeCandidate->queueBanks) ||
@@ -73105,6 +73115,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPlayOrStop(
     const ActionFiringSnapshot& firing,
     std::uint64_t currentQuantum,
     std::uint64_t* newPageStartBlocker) noexcept {
+    auto playableUse = engine.actionFirings.UsePlayableBacking(record.firing);
     ImmediateActionPlan plan{};
     plan.playbackRequest = firing.playbackRequest;
     plan.emitterOrigin = firing.emitterOrigin;
@@ -85802,6 +85813,10 @@ bool ImmediateActionNeedsContainerState(const ImmediateActionPlan& plan) noexcep
         plan.playCount > plan.engine->immediateActionLane.EventsPerAttempt();
 }
 
+VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
+    const harken::ActionStepProgramViewV1& step, const harken::PackPartitionLease& lease,
+    std::uint32_t depth, std::uint32_t& rows) noexcept;
+
 bool ReserveImmediateActionFirings(void* opaque,
                                    std::uint32_t count) noexcept {
     auto* plan = static_cast<ImmediateActionPlan*>(opaque);
@@ -86196,14 +86211,11 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     if (plan->deferredParentFiring == 0) {
         constexpr auto limit = UINT32_MAX;
         std::uint32_t futureWrites = 0;
-        bool futurePlay = false;
+        std::uint32_t futurePlays = 0;
         for (std::uint32_t index = 0;
-             index < plan->stepCount && (futureWrites < limit || !futurePlay); ++index) {
+             index < plan->stepCount; ++index) {
             const auto& planned = engine.actionStepPlanScratch[index];
             if (planned.deferred) {
-                if (!futurePlay)
-                    futurePlay = CountActionOperations(*plan, *planned.step,
-                        harken::ActionOpcodeV1::Play, planned.depth, 1) != 0;
                 if (futureWrites < limit)
                     futureWrites += CountActionOperations(*plan, *planned.step,
                         harken::ActionOpcodeV1::SetVariable, planned.depth, limit - futureWrites);
@@ -86211,7 +86223,24 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         // Far playback chooses its render slots at materialization. Prepare their
         // full shared scratch allowance now without claiming any voice identity.
-        if (futurePlay && !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity())) {
+        for (std::uint32_t i = 0; i < plan->deferredPreparedCount; ++i) {
+            const auto& deferred = engine.actionDeferredScratch[i];
+            const auto& planned = engine.actionStepPlanScratch[deferred.plannedStepIndex];
+            const auto counted = CountDeferredInstanceRows(*plan, *planned.step, deferred.targetPackLease,
+                planned.depth, futurePlays);
+            if (counted != VN_OK) {
+                plan->result = counted;
+                abandonPrepared();
+                return false;
+            }
+        }
+        harken::StableStoragePreparation futureInstances;
+        if (futurePlays != 0 && (!engine.mixer.PrepareVoiceBacking(engine.voices.Capacity()) ||
+                !engine.playableInstances.PrepareFutureAcquisitions(futurePlays, &futureInstances) ||
+                !engine.containerPlayback.PrepareStorage(engine.playableInstances.ConstructedEntryCount()) ||
+                !engine.PrepareOriginalSingleCurrentStorage() ||
+                !engine.actionFirings.AdoptPreparedPlayableBacking(engine.actionFiringPlanScratch[0].prepared,
+                    std::move(futureInstances)))) {
             plan->result = VN_BACKPRESSURE;
             abandonPrepared();
             return false;
@@ -86624,6 +86653,87 @@ harken::PlayableRefV1 MakeImmediateActionPlayableRef(
     root.routeStableId = property.routeStableId;
     root.compatibilityFingerprint = property.compatibilityFingerprint;
     return root;
+}
+
+VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
+    const harken::ActionStepProgramViewV1& step, const harken::PackPartitionLease& lease,
+    std::uint32_t depth, std::uint32_t& rows) noexcept {
+    namespace backing = harken::native_backing;
+    auto& engine = *plan.engine;
+    if (step.opcode == harken::ActionOpcodeV1::PostAction) {
+        const auto child = lease.leaseToken != 0
+            ? engine.packComposition.FindActionAtLease(lease, step.target.stableId)
+            : FindCanonicalActionProgram(engine, step.target.stableId, plan.pinnedPublished);
+        if (!child || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
+            depth >= engine.config.maxTriggerDepth) return VN_OK;
+        for (std::uint32_t i = 0; i < child->stepCount; ++i) {
+            const auto rc = CountDeferredInstanceRows(plan, child->steps[i], lease, depth + 1u, rows);
+            if (rc != VN_OK) return rc;
+        }
+        return VN_OK;
+    }
+    if (step.opcode != harken::ActionOpcodeV1::Play) return VN_OK;
+    if (rows == UINT32_MAX) return VN_OUT_OF_MEMORY;
+    if (step.target.kind == harken::ActionTargetKindV1::Sound) {
+        ++rows;
+        return VN_OK;
+    }
+    harken::PlayableKindV1 kind{};
+    harken::PlayableKind instanceKind{};
+    if (!ResolveImmediateActionPlayableKind(step.target.kind, &kind, &instanceKind)) return VN_INVALID_ARG;
+    harken::PackPlaybackView view{};
+    const bool pack = lease.leaseToken != 0;
+    if (pack && !engine.packComposition.PlaybackViewAtLease(lease, &view)) return VN_BAD_PACK;
+    const auto world = pack ? harken::PlayableWorldViewV1{} : ImmediateActionPlayableWorld(plan);
+    harken::PlayableRefV1 root{};
+    if (kind == harken::PlayableKindV1::Container) {
+        const auto* property = pack ? view.ResolveProperty(ImmediateActionTargetPropertyKind(step.target.kind), step.target.stableId)
+                                    : FindImmediateActionPlayableProperty(world, step.target);
+        if (property == nullptr) return pack ? VN_BAD_PACK : VN_UNKNOWN_ID;
+        root = MakeImmediateActionPlayableRef(*property, kind);
+    } else if (kind == harken::PlayableKindV1::Track) {
+        if (pack) {
+            const auto schedule = view.ResolveTrack(step.target.stableId, 0);
+            if (schedule) root = schedule->rootDefinition;
+        } else for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
+            if (world.trackSchedules[i].rootDefinition.stableId == step.target.stableId)
+                root = world.trackSchedules[i].rootDefinition;
+        }
+    } else {
+        if (pack) {
+            const auto schedule = view.ResolveSegment(step.target.stableId, 0);
+            if (schedule) root = schedule->rootDefinition;
+        } else for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
+            if (world.segmentSchedules[i].rootDefinition.stableId == step.target.stableId)
+                root = world.segmentSchedules[i].rootDefinition;
+        }
+    }
+    backing::Limits limits{};
+    limits.currentScheduleDepth = limits.directFutureScheduleDepth = backing::kPathCapacity;
+    limits.includeDynamicInstanceRows = true;
+    limits.queueRoleCapacity = limits.immediateFutureSides = UINT32_MAX;
+    try {
+        std::vector<backing::MemoEntry> entries;
+        for (;;) {
+            backing::MemoWorkspace memo(entries.data(), entries.size());
+            const auto count = [&](const auto& content) {
+                return backing::Counter(content, limits, memo).Count(root, content.Authority());
+            };
+            const auto result = pack ? count(backing::PackContent(view)) : count(backing::WorldContent(world));
+            if (result.status == backing::Status::WorkspaceExhausted) {
+                if (entries.size() > entries.max_size() / 2u) return VN_OUT_OF_MEMORY;
+                entries.resize(entries.empty() ? 8u : entries.size() * 2u);
+                continue;
+            }
+            if (!result) return pack ? VN_BAD_PACK : VN_BAD_CURRENT_WORLD;
+            if (result.profile.instanceRows > UINT32_MAX - rows) return VN_OUT_OF_MEMORY;
+            rows += result.profile.instanceRows;
+            return VN_OK;
+        }
+    } catch (const std::bad_alloc&) {
+        harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
+        return VN_OUT_OF_MEMORY;
+    }
 }
 
 bool ResolveImmediateActionPlayableRef(
@@ -88341,7 +88451,7 @@ bool PreparePlayableExecution(
     harken::PlayableKind kind, const harken::MonitorRequestContext& playbackRequest,
     const harken::MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (scratch == nullptr ||
-        !engine.playableInstances.PrepareAcquireFromPreparedStorage(
+        !engine.playableInstances.PrepareAcquire(
             kind, 0, &scratch->instance, playbackRequest, emitterOrigin)) {
         return false;
     }
@@ -104150,7 +104260,8 @@ bool PrepareScheduledActionStop(
     ImmediateActionPlan& plan, harken::EnginePlayableServiceRow& row,
     std::uint32_t stepIndex, std::uint64_t fadeStart, std::uint64_t silence) noexcept {
     auto& engine = *plan.engine;
-    if (plan.stopCaptureCount >= engine.actionStopScratch.size()) return false;
+    if (plan.stopCaptureCount == UINT32_MAX ||
+        !engine.actionStopScratch.ConstructThrough(plan.stopCaptureCount + 1u)) return false;
     auto& scratch = engine.actionStopScratch[plan.stopCaptureCount++];
     scratch = {};
     scratch.row = &row;
@@ -104420,7 +104531,8 @@ bool PrepareImmediateActionStop(
                 engine.actionPlayCommandScratch[plan.playCommandCount++] = stop;
                 return true;
             });
-        if (!captured || plan.stopCaptureCount >= engine.actionStopScratch.size()) {
+        if (!captured || plan.stopCaptureCount == UINT32_MAX ||
+            !engine.actionStopScratch.ConstructThrough(plan.stopCaptureCount + 1u)) {
             plan.result = VN_BACKPRESSURE;
             plan.playCommandCount = commandBase;
             (void)ReleaseImmediateActionStops(plan);
@@ -105117,6 +105229,11 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
         plan->result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
+    // A delayed child owns backing for its Play steps. Queue replacements prepare
+    // their own rows from the live queue at materialization.
+    auto playableUse = plan->deferredParentFiring != 0 && plan->playCount != 0
+        ? engine.actionFirings.UsePlayableBacking(plan->deferredParentFiring)
+        : harken::StableStoragePreparedUse{};
     plan->playCommandCount = 0;
     plan->playFrameCount = 0;
     plan->playCommandsReserved = false;

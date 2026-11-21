@@ -924,7 +924,10 @@ TEST(VoicePool, SourceTerminalCapacityGenerationReuseAndExhaustionStayBounded) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
     auto& engine = *session.Engine();
     ASSERT_EQ(engine.playableInstances.Capacity(), engine.sourceTerminals.Capacity());
-    std::vector<HeldSource> sources(engine.sourceTerminals.Capacity());
+    ASSERT_TRUE(engine.playableInstances.PrepareStorageForAcquire(2));
+    engine.playableInstances.SetCommitPageLimitForTests(0);
+    while (engine.playableInstances.PrepareStorageForAcquire(engine.playableInstances.Capacity() + 1u)) {}
+    std::vector<HeldSource> sources(engine.playableInstances.Capacity());
     for (auto& source : sources) {
         VnVoiceHandle voice = 0;
         ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voice, true));
@@ -999,8 +1002,8 @@ TEST(VoicePool, SourceOwnerCancelFailureRetainsPreparedAndCommittedTree) {
         const auto desc = MonoDesc(samples, kSampleRate);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
         auto& engine = *session.Engine();
-        const auto freeBefore = engine.playableInstances.FreeCount();
-        const auto containersBefore = engine.containerPlayback.FreeCount();
+        const auto occupiedBefore = engine.playableInstances.UnavailableRowCount();
+        const auto containersBefore = engine.containerPlayback.OccupiedCount();
         harken::PlayableTreeExecutor executor(2);
         ASSERT_TRUE(executor.PrepareInstance(engine.playableInstances, harken::PlayableKind::Container));
         const auto root = executor.PreparedInstanceHandle(0);
@@ -1042,8 +1045,8 @@ TEST(VoicePool, SourceOwnerCancelFailureRetainsPreparedAndCommittedTree) {
         EXPECT_EQ(2u, executor.InstanceReservationCount());
         EXPECT_EQ(1u, executor.ContainerReservationCount());
         EXPECT_EQ(leaf, executor.PreparedInstanceHandle(1));
-        EXPECT_EQ(freeBefore - 2u, engine.playableInstances.FreeCount());
-        EXPECT_EQ(containersBefore - 1u, engine.containerPlayback.FreeCount());
+        EXPECT_EQ(occupiedBefore + 2u, engine.playableInstances.UnavailableRowCount());
+        EXPECT_EQ(containersBefore + 1u, engine.containerPlayback.OccupiedCount());
         EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(leaf));
         EXPECT_FALSE(engine.voices.ReleaseObserved(release));
         ASSERT_NE(nullptr, engine.sourceTerminals.Resolve(token));
@@ -1058,8 +1061,8 @@ TEST(VoicePool, SourceOwnerCancelFailureRetainsPreparedAndCommittedTree) {
         EXPECT_EQ(0u, executor.OwnerTokenCount());
         EXPECT_EQ(0u, executor.InstanceReservationCount());
         EXPECT_EQ(0u, executor.ContainerReservationCount());
-        EXPECT_EQ(freeBefore, engine.playableInstances.FreeCount());
-        EXPECT_EQ(containersBefore, engine.containerPlayback.FreeCount());
+        EXPECT_EQ(occupiedBefore, engine.playableInstances.UnavailableRowCount());
+        EXPECT_EQ(containersBefore, engine.containerPlayback.OccupiedCount());
         EXPECT_TRUE(engine.voices.ReleaseObserved(release));
         EXPECT_EQ(nullptr, engine.sourceTerminals.Resolve(token));
         EXPECT_EQ(token.generation + 1u, engine.sourceTerminals.At(token.slot)->generation);

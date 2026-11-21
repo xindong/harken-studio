@@ -80,6 +80,7 @@ struct QueueColumns {
 
 struct Profile {
     std::uint32_t current = 0;
+    std::uint32_t instanceRows = 0;
     std::uint32_t referenceRows = 0;
     std::uint32_t containerRows = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
@@ -111,6 +112,7 @@ struct Limits {
     std::uint32_t directFutureScheduleDepth = 0;
     std::uint32_t propertyPrefixCount = 0;
     std::uint32_t seedPrefixCount = 0;
+    bool includeDynamicInstanceRows = false;
 };
 
 struct AuthorityStamp {
@@ -242,6 +244,7 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
+    a.profile.instanceRows = SaturatingAdd(a.profile.instanceRows, b.profile.instanceRows, UINT32_MAX, a.flags);
     a.profile.referenceRows = SaturatingAdd(a.profile.referenceRows, b.profile.referenceRows, UINT32_MAX, a.flags);
     a.profile.containerRows = SaturatingAdd(a.profile.containerRows, b.profile.containerRows, UINT32_MAX, a.flags);
     a.profile.Q = SaturatingAdd(a.profile.Q, b.profile.Q, limits.queueRoleCapacity, a.flags);
@@ -271,6 +274,7 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = std::max(a.profile.current, b.profile.current);
+    a.profile.instanceRows = std::max(a.profile.instanceRows, b.profile.instanceRows);
     a.profile.referenceRows = std::max(a.profile.referenceRows, b.profile.referenceRows);
     a.profile.containerRows = std::max(a.profile.containerRows, b.profile.containerRows);
     a.profile.Q = std::max(a.profile.Q, b.profile.Q);
@@ -578,6 +582,7 @@ private:
         if (ref.kind == PlayableKindV1::Sound) {
             Result result{};
             result.profile.current = 1;
+            result.profile.instanceRows = 1;
             result.profile.referenceRows = 1;
             result.profile.voice.path = 1;
             const auto* property = content_.Property(ref);
@@ -625,7 +630,10 @@ private:
             default: return Failure(Status::UnsupportedMode);
             }
         }
-        if (result) result.profile.containerRows = SaturatingAdd(result.profile.containerRows, 1u, UINT32_MAX, result.flags);
+        if (result) {
+            result.profile.containerRows = SaturatingAdd(result.profile.containerRows, 1u, UINT32_MAX, result.flags);
+            result.profile.instanceRows = SaturatingAdd(result.profile.instanceRows, 1u, UINT32_MAX, result.flags);
+        }
         return result;
     }
 
@@ -633,6 +641,7 @@ private:
         if (budget.schedules == 0) return Omitted(UnprunedSchedule | OmittedDepthBranch);
         --budget.schedules;
         Result result{};
+        result.profile.instanceRows = 1;
         result.flags = UnprunedSchedule;
         if (ref.kind == PlayableKindV1::Segment) {
             const auto* segment = content_.Segment(ref);
@@ -650,8 +659,17 @@ private:
         if (track->placementCount != 0) --budget.materializedPath;
         for (std::uint32_t i = 0; i < track->placementCount; ++i) {
             const auto child = track->placements[i].content;
-            if (child.kind == PlayableKindV1::Container) result.flags |= ExistingDynamicPath;
-            else {
+            if (child.kind == PlayableKindV1::Container) {
+                result.flags |= ExistingDynamicPath;
+                if (limits_.includeDynamicInstanceRows) {
+                    // Dynamic clips instantiate their selected tree even when the
+                    // static schedule has no voice columns for that clip.
+                    const auto dynamic = Visit(child, Mode::Frontier, budget);
+                    if (!dynamic) return dynamic;
+                    result.profile.instanceRows = SaturatingAdd(result.profile.instanceRows,
+                        dynamic.profile.instanceRows, UINT32_MAX, result.flags);
+                }
+            } else {
                 result = Concurrent(result, Visit(child, Mode::StaticSchedule, budget), limits_);
                 if (!result) return result;
             }
@@ -775,6 +793,7 @@ private:
             current.profile.Q = SaturatingAdd(current.profile.Q, 1, limits_.queueRoleCapacity, current.flags);
             std::uint32_t capacity = 0;
             std::uint32_t futureReferences = 0;
+            std::uint32_t futureInstances = 0;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
                 const bool possible = program.mode == ContainerModeV1::SequenceQueue
                     ? j > i || (j == 0 && CanWrap(program)) : j != i || CanWrap(program);
@@ -782,12 +801,14 @@ private:
                 const auto next = DirectFuture(program.children[j]);
                 if (!next) return next;
                 capacity = std::max(capacity, next.profile.current);
+                futureInstances = std::max(futureInstances, next.profile.instanceRows);
                 futureReferences = std::max(futureReferences, SaturatingAdd(next.profile.referenceRows,
                     next.profile.current, UINT32_MAX, current.flags));
                 current.flags |= next.flags;
             }
             targetCapacity = std::max(targetCapacity, capacity);
             AddFuture(current, capacity, limits_);
+            current.profile.instanceRows = SaturatingAdd(current.profile.instanceRows, futureInstances, UINT32_MAX, current.flags);
             current.profile.referenceRows = SaturatingAdd(current.profile.referenceRows,
                 futureReferences, UINT32_MAX, current.flags);
             result = Alternative(result, current);

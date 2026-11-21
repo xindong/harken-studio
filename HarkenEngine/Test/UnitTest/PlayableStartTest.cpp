@@ -4461,7 +4461,7 @@ void ExpectContainerStartsThroughM2(
               harken::WorldInstallStatus::Ok);
     const std::uint32_t freeDeltas =
         engine->selectionMemory.FreeDeltaCount();
-    const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
+    const std::uint32_t occupiedInstances = engine->playableInstances.UnavailableRowCount();
     const std::uint64_t issued = engine->logicCommits.Current();
     const std::uint64_t commandHead = engine->commands.PublishedHead();
     const std::uint64_t initialSourceHead = engine->commands.InitialSourcePublishedHead();
@@ -4479,7 +4479,7 @@ void ExpectContainerStartsThroughM2(
     ASSERT_NE(started.instance, 0u);
     EXPECT_EQ(started.ticket, issued + 1u);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas - 1u);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances - 2u);
+    EXPECT_EQ(engine->playableInstances.UnavailableRowCount(), occupiedInstances + 2u);
     EXPECT_EQ(engine->commands.PublishedHead(), commandHead);
     EXPECT_EQ(engine->commands.InitialSourcePublishedHead(), initialSourceHead + 1u);
     EXPECT_EQ(engine->voices.ActiveCount(), activeVoices + 1u);
@@ -4902,24 +4902,24 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     harken::PlayableStartRequest request{};
     request.root = image.Root();
     request.callerSeed = 77;
-    const auto freeInstances = engine->playableInstances.FreeCount();
+    const auto occupiedInstances = engine->playableInstances.UnavailableRowCount();
     const auto refuseBacking = [&](auto& storage) {
         storage.SetCommitPageLimitForTests(0);
         const auto refused = harken::StartPlayable(*engine, request);
         EXPECT_EQ(harken::PlayableStartStatus::Backpressure, refused.status);
         EXPECT_EQ(0u, refused.instance);
-        EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+        EXPECT_EQ(occupiedInstances, engine->playableInstances.UnavailableRowCount());
         EXPECT_EQ(0u, engine->playableInstances.LiveCount());
         storage.SetCommitPageLimitForTests(SIZE_MAX);
     };
-    refuseBacking(engine->playableInstances);
     refuseBacking(engine->originalPlayableLifetimeHolders);
+    refuseBacking(engine->playableInstances);
     refuseBacking(engine->originalSingleCurrentHolders);
     engine->spatial.SetVoiceCommitPageLimitForTests(0);
     const auto refusedSpatial = harken::StartPlayable(*engine, request);
     EXPECT_EQ(harken::PlayableStartStatus::Backpressure, refusedSpatial.status);
     EXPECT_EQ(0u, refusedSpatial.instance);
-    EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+    EXPECT_EQ(occupiedInstances, engine->playableInstances.UnavailableRowCount());
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     engine->spatial.SetVoiceCommitPageLimitForTests(SIZE_MAX);
     const harken::PlayableStartResult started =
@@ -4986,7 +4986,7 @@ TEST(PlayableStart, DirectStartUsesCanonicalEntryResolverBeforeAdmission) {
     ASSERT_EQ(harken::InstallContainerWorldV1(*engine, image.world).status,
               harken::WorldInstallStatus::Ok);
 
-    const auto freeInstances = engine->playableInstances.FreeCount();
+    const auto occupiedInstances = engine->playableInstances.UnavailableRowCount();
     const auto freeRows = std::count_if(
         engine->playableServices.begin(), engine->playableServices.end(),
         [](const harken::EnginePlayableServiceRow& row) {
@@ -4998,7 +4998,7 @@ TEST(PlayableStart, DirectStartUsesCanonicalEntryResolverBeforeAdmission) {
     ++invalid.root.expectedProgramSemanticFingerprint;
     const auto refused = harken::StartCurrentPlayable(invalid);
     EXPECT_EQ(refused.status, harken::PlayableStartStatus::UnknownPlayable);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances);
+    EXPECT_EQ(engine->playableInstances.UnavailableRowCount(), occupiedInstances);
     EXPECT_EQ(std::count_if(
                   engine->playableServices.begin(), engine->playableServices.end(),
                   [](const harken::EnginePlayableServiceRow& row) {
@@ -5011,7 +5011,7 @@ TEST(PlayableStart, DirectStartUsesCanonicalEntryResolverBeforeAdmission) {
     const auto accepted = harken::StartCurrentPlayable(valid);
     ASSERT_EQ(accepted.status, harken::PlayableStartStatus::Accepted);
     ASSERT_NE(accepted.instance, 0u);
-    EXPECT_LT(engine->playableInstances.FreeCount(), freeInstances);
+    EXPECT_GT(engine->playableInstances.UnavailableRowCount(), occupiedInstances);
 }
 
 TEST(PlayableStart,
@@ -5687,7 +5687,7 @@ TEST(PlayableStart, QueueNestedSelectionRefusalsKeepTypedStatusAndDoNotCommit) {
         }
         const auto ticket = engine.logicCommits.Current();
         const auto commands = engine.commands.PublishedHead();
-        const auto freeInstances = engine.playableInstances.FreeCount();
+        const auto occupiedInstances = engine.playableInstances.UnavailableRowCount();
         harken::PlayableStartRequest request{};
         request.root = image.Ref(6);
         const auto refused = harken::StartPlayable(engine, request);
@@ -5698,7 +5698,7 @@ TEST(PlayableStart, QueueNestedSelectionRefusalsKeepTypedStatusAndDoNotCommit) {
         EXPECT_EQ(0u, refused.ticket);
         EXPECT_EQ(ticket, engine.logicCommits.Current());
         EXPECT_EQ(commands, engine.commands.PublishedHead());
-        EXPECT_EQ(freeInstances, engine.playableInstances.FreeCount());
+        EXPECT_EQ(occupiedInstances, engine.playableInstances.UnavailableRowCount());
         EXPECT_EQ(0u, engine.queueInstances.LiveCount());
         EXPECT_EQ(0u, engine.voices.ActiveCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
@@ -15250,7 +15250,7 @@ void ExpectDirectTrackAudioAdvance(bool duringPublication, bool stopBeforeBindin
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
     DirectTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision);
     const auto owners = [&] {
-        return std::tuple{engine.playableInstances.FreeCount(), engine.voices.AvailableSlotCount(),
+        return std::tuple{engine.playableInstances.UnavailableRowCount(), engine.voices.AvailableSlotCount(),
             engine.ledger.AvailableEntryCount(), engine.timelineArms.LiveCount(),
             engine.timelinePool.LiveTransactionCount(), engine.timelineDeferred.Count(),
             engine.timelineDeferred.PreparedCount()};
@@ -15472,7 +15472,7 @@ TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyRec
         request.root = wrapperRoot ? sequence.Root() : segmentRoot ? segment.rootDefinition : image.Root();
         if (scenario < 2) {
             ASSERT_EQ(0u, engine->originalSingleCurrentHolders.size());
-            const auto freeInstances = engine->playableInstances.FreeCount();
+            const auto occupiedInstances = engine->playableInstances.UnavailableRowCount();
             engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
             const auto refused = harken::StartPlayable(*engine, request);
             engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
@@ -15481,7 +15481,7 @@ TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyRec
                 << static_cast<unsigned>(refused.status);
             EXPECT_EQ(0u, refused.instance);
             EXPECT_EQ(0u, refused.ticket);
-            EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+            EXPECT_EQ(occupiedInstances, engine->playableInstances.UnavailableRowCount());
             EXPECT_EQ(0u, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
             EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
@@ -15515,7 +15515,7 @@ TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyRec
                 return std::array<std::uint64_t, 15>{
                     engine->logicCommits.Current(), engine->commands.PublishedHead(),
                     engine->commands.FreeSlots(), engine->playableInstances.LiveCount(),
-                    engine->playableInstances.FreeCount(), engine->containerPlayback.LiveCount(),
+                    engine->playableInstances.UnavailableRowCount(), engine->containerPlayback.LiveCount(),
                     engine->playablePartitions.OccupiedCount(), engine->timelineArms.LiveCount(),
                     engine->timelineArms.FreeCount(), engine->voices.ActiveCount(),
                     engine->ledger.AvailableEntryCount(), engine->timelineOccurrences.OccupiedCount(),
@@ -16177,7 +16177,7 @@ TEST(PlayableStart, SubFrameAuthoredClipPublishesZeroWorkLogicalCompletion) {
     image.track.scheduleSemanticFingerprint =
         harken::ComputeTrackScheduleFingerprintV1(image.track);
     const std::uint64_t ticket = engine->logicCommits.Current();
-    const std::uint32_t instances = engine->playableInstances.FreeCount();
+    const std::uint32_t instances = engine->playableInstances.UnavailableRowCount();
     const std::uint32_t voices = engine->voices.ActiveCount();
     const std::uint32_t arms = engine->timelineArms.LiveCount();
 
@@ -16189,7 +16189,7 @@ TEST(PlayableStart, SubFrameAuthoredClipPublishesZeroWorkLogicalCompletion) {
     EXPECT_NE(0u, started.instance);
     EXPECT_EQ(ticket + 1u, started.ticket);
     EXPECT_EQ(ticket + 1u, engine->logicCommits.Current());
-    EXPECT_EQ(instances - 1u, engine->playableInstances.FreeCount());
+    EXPECT_EQ(instances + 1u, engine->playableInstances.UnavailableRowCount());
     EXPECT_EQ(voices, engine->voices.ActiveCount());
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
 
@@ -16242,7 +16242,7 @@ TEST(PlayableStart, SubFrameAuthoredClipPublishesZeroWorkLogicalCompletion) {
         retired = !engine->playableInstances.Classify(started.instance).live;
     }
     EXPECT_TRUE(retired);
-    EXPECT_EQ(instances, engine->playableInstances.FreeCount());
+    EXPECT_EQ(instances, engine->playableInstances.UnavailableRowCount());
 }
 
 TEST(PlayableStart, ActionSubFrameTrackPublishesZeroWorkLogicalCompletion) {
@@ -17645,7 +17645,7 @@ TEST(PlayableStart, AbsoluteClipDeadlineOverflowRefusesAtomically) {
     ASSERT_TRUE(engine->timelinePool.ResetForEpoch(
         nearMax, engine->transportEpochOwner.Current()));
     const std::uint64_t ticket = engine->logicCommits.Current();
-    const std::uint32_t instances = engine->playableInstances.FreeCount();
+    const std::uint32_t instances = engine->playableInstances.UnavailableRowCount();
     const std::uint32_t voices = engine->voices.ActiveCount();
     const std::uint32_t arms = engine->timelineArms.LiveCount();
 
@@ -17658,7 +17658,7 @@ TEST(PlayableStart, AbsoluteClipDeadlineOverflowRefusesAtomically) {
     EXPECT_EQ(0u, refused.instance);
     EXPECT_EQ(0u, refused.ticket);
     EXPECT_EQ(ticket, engine->logicCommits.Current());
-    EXPECT_EQ(instances, engine->playableInstances.FreeCount());
+    EXPECT_EQ(instances, engine->playableInstances.UnavailableRowCount());
     EXPECT_EQ(voices, engine->voices.ActiveCount());
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
 }
@@ -21220,7 +21220,7 @@ TEST(PlayableStart,
             fillers.push_back(added.token);
         }
         const auto sequenceBefore = engine->logicCommits.Current();
-        const auto instancesBefore = engine->playableInstances.FreeCount();
+        const auto instancesBefore = engine->playableInstances.UnavailableRowCount();
         const auto voicesBefore = engine->voices.AvailableSlotCount();
         const auto ledgerBefore = engine->ledger.AvailableEntryCount();
         const auto armsBefore = engine->timelineArms.LiveCount();
@@ -21235,7 +21235,7 @@ TEST(PlayableStart,
         EXPECT_EQ(0u, refused.instance);
         EXPECT_EQ(0u, refused.ticket);
         EXPECT_EQ(sequenceBefore, engine->logicCommits.Current());
-        EXPECT_EQ(instancesBefore, engine->playableInstances.FreeCount());
+        EXPECT_EQ(instancesBefore, engine->playableInstances.UnavailableRowCount());
         EXPECT_EQ(voicesBefore, engine->voices.AvailableSlotCount());
         EXPECT_EQ(ledgerBefore, engine->ledger.AvailableEntryCount());
         EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
@@ -21307,7 +21307,7 @@ TEST(PlayableStart,
             }
         }
         EXPECT_FALSE(engine->playableInstances.Classify(accepted.instance).live);
-        EXPECT_EQ(instancesBefore, engine->playableInstances.FreeCount());
+        EXPECT_EQ(instancesBefore, engine->playableInstances.UnavailableRowCount());
         EXPECT_EQ(voicesBefore, engine->voices.AvailableSlotCount());
         EXPECT_EQ(ledgerBefore, engine->ledger.AvailableEntryCount());
         EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
@@ -25665,7 +25665,7 @@ TEST(PlayableStart, EmptyDirectTrackRefusesBeforeAnyRuntimeMutation) {
     image.track.placementCount = 0;
     image.track.placements = nullptr;
     const std::uint64_t ticket = engine->logicCommits.Current();
-    const std::uint32_t instances = engine->playableInstances.FreeCount();
+    const std::uint32_t instances = engine->playableInstances.UnavailableRowCount();
     const std::uint32_t voices = engine->voices.ActiveCount();
     const std::uint32_t arms = engine->timelineArms.LiveCount();
     harken::PlayableStartRequest request{};
@@ -25677,7 +25677,7 @@ TEST(PlayableStart, EmptyDirectTrackRefusesBeforeAnyRuntimeMutation) {
     EXPECT_EQ(0u, refused.instance);
     EXPECT_EQ(0u, refused.ticket);
     EXPECT_EQ(ticket, engine->logicCommits.Current());
-    EXPECT_EQ(instances, engine->playableInstances.FreeCount());
+    EXPECT_EQ(instances, engine->playableInstances.UnavailableRowCount());
     EXPECT_EQ(voices, engine->voices.ActiveCount());
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
 }
@@ -27215,7 +27215,7 @@ TEST(PlayableStart, CompositeOwnerCapacityRefusesBeforeInitialQueueMutation) {
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     const std::uint64_t ticket = engine->logicCommits.Current();
-    const std::uint32_t instances = engine->playableInstances.FreeCount();
+    const std::uint32_t instances = engine->playableInstances.UnavailableRowCount();
     const std::uint32_t voices = engine->voices.ActiveCount();
     const std::uint32_t arms = engine->timelineArms.LiveCount();
     const std::uint32_t occurrences =
@@ -27230,7 +27230,7 @@ TEST(PlayableStart, CompositeOwnerCapacityRefusesBeforeInitialQueueMutation) {
     EXPECT_EQ(0u, refused.ticket);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     EXPECT_EQ(ticket, engine->logicCommits.Current());
-    EXPECT_EQ(instances, engine->playableInstances.FreeCount());
+    EXPECT_EQ(instances, engine->playableInstances.UnavailableRowCount());
     EXPECT_EQ(voices, engine->voices.ActiveCount());
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
     EXPECT_EQ(occurrences, engine->timelineOccurrences.OccupiedCount());
@@ -31212,20 +31212,20 @@ TEST(PlayableStart, LegacyPlayUsesOnlyTheSoundRegistryAtATypedContainerId) {
 
     ASSERT_EQ(Vn_UnregisterPCM(kSound), VN_OK);
     const std::uint64_t commandHead = engine->commands.PublishedHead();
-    const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
+    const std::uint32_t occupiedInstances = engine->playableInstances.UnavailableRowCount();
     const std::uint32_t freeDeltas = engine->selectionMemory.FreeDeltaCount();
     VnPlayDesc play = harkentest::MakePlayDesc(kSound);
     VnVoiceHandle voice = 0;
     EXPECT_EQ(harkentest::PlayRaw(&play, &voice), VN_UNKNOWN_ID);
     EXPECT_EQ(voice, 0u);
     EXPECT_EQ(engine->commands.PublishedHead(), commandHead);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances);
+    EXPECT_EQ(engine->playableInstances.UnavailableRowCount(), occupiedInstances);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas);
 
     ASSERT_EQ(Vn_RegisterPCM(kSound, &pcm), VN_OK);
     ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
     EXPECT_NE(voice, 0u);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances);
+    EXPECT_EQ(engine->playableInstances.UnavailableRowCount(), occupiedInstances);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas);
     VnSnapshot snapshot{};
     snapshot.structSize = sizeof(snapshot);
@@ -32616,7 +32616,7 @@ TEST(PlayableStartContract, MediaMismatchRollsBackSelectionAndIssuesNoTicket) {
               harken::WorldInstallStatus::Ok);
     const std::uint32_t freeDeltas =
         engine->selectionMemory.FreeDeltaCount();
-    const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
+    const std::uint32_t occupiedInstances = engine->playableInstances.UnavailableRowCount();
     const std::uint64_t issued = engine->logicCommits.Current();
 
     harken::PlayableStartRequest request{};
@@ -32628,7 +32628,7 @@ TEST(PlayableStartContract, MediaMismatchRollsBackSelectionAndIssuesNoTicket) {
     EXPECT_EQ(refused.ticket, 0u);
     EXPECT_EQ(engine->logicCommits.Current(), issued);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances);
+    EXPECT_EQ(engine->playableInstances.UnavailableRowCount(), occupiedInstances);
     EXPECT_TRUE(std::all_of(
         engine->playableServices.begin(), engine->playableServices.end(),
         [](const harken::EnginePlayableServiceRow& row) {
@@ -32655,7 +32655,7 @@ TEST(PlayableStart, PhysicalAdmissionRefusalLeavesNoAcceptedRootOrChild) {
 
     const std::uint32_t freeDeltas =
         engine->selectionMemory.FreeDeltaCount();
-    const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
+    const std::uint32_t occupiedInstances = engine->playableInstances.UnavailableRowCount();
     const std::uint64_t issued = engine->logicCommits.Current();
     const std::uint64_t commandHead = engine->commands.PublishedHead();
     const std::uint32_t activeVoices = engine->voices.ActiveCount();
@@ -32674,7 +32674,7 @@ TEST(PlayableStart, PhysicalAdmissionRefusalLeavesNoAcceptedRootOrChild) {
     EXPECT_EQ(refused.ticket, 0u);
     EXPECT_EQ(engine->logicCommits.Current(), issued);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances);
+    EXPECT_EQ(engine->playableInstances.UnavailableRowCount(), occupiedInstances);
     EXPECT_EQ(engine->commands.PublishedHead(), commandHead);
     EXPECT_EQ(engine->voices.ActiveCount(), activeVoices);
     EXPECT_EQ(engine->timelineArms.LiveCount(), liveArms);

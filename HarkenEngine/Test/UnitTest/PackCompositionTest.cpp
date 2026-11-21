@@ -15362,12 +15362,14 @@ TEST(PackComposition, PackActionDelayedPlayBackpressureRetryDoesNotDoubleOccupy)
                                    "f5-delayed-backpressure");
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
     std::vector<PreparedPlayableInstance> held;
-    held.resize(fixture.session.Engine()->playableInstances.FreeCount());
-    for (auto& prepared : held) {
-        ASSERT_TRUE(fixture.session.Engine()->playableInstances.PrepareAcquire(
-            PlayableKind::Sound, 0, &prepared));
+    auto& instances = fixture.session.Engine()->playableInstances;
+    instances.SetCommitPageLimitForTests(0);
+    while (instances.PrepareStorageForAcquire(1)) {
+        PreparedPlayableInstance prepared{};
+        ASSERT_TRUE(instances.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+        held.push_back(prepared);
     }
-    EXPECT_EQ(0u, fixture.session.Engine()->playableInstances.FreeCount());
+    EXPECT_EQ(1u, instances.FreeCount());
     PackIdentityLookup extraSharedBefore;
     EXPECT_EQ(VN_OK, fixture.session.Engine()->packComposition.PrepareLookup(
                          fixture.targetStableId, &extraSharedBefore));
@@ -15385,11 +15387,12 @@ TEST(PackComposition, PackActionDelayedPlayBackpressureRetryDoesNotDoubleOccupy)
     fixture.session.Engine()->packComposition.AbandonPreparedLease(
         extraSharedAfter.lease);
     for (auto& prepared : held) {
-        ASSERT_TRUE(fixture.session.Engine()->playableInstances.CancelPrepared(
-            &prepared));
+        ASSERT_TRUE(instances.CancelPrepared(&prepared));
     }
-    ASSERT_EQ(VN_OK, Vn_StopActionFiring(fixture.firing, 0));
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(fixture.firing));
+    fixture.PumpUntilDeferredGone();
+    ASSERT_NE(nullptr, fixture.LiveStartRow());
+    EXPECT_EQ(fixture.leaseToken, fixture.LiveStartRow()->Invocation().packLease.leaseToken);
+    fixture.PumpUntilFiringTerminal();
 }
 
 TEST(PackComposition, PackActionDelayedPlayableSliceFullRetriesWithoutRetag) {
@@ -20984,7 +20987,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
         for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index)
             sources += engine.sourceTerminals.At(index)->occupied ? 1u : 0u;
         return std::array<std::uint32_t, 13>{
-            engine.playableInstances.FreeCount(), engine.containerPlayback.FreeCount(),
+            engine.playableInstances.UnavailableRowCount(), engine.containerPlayback.OccupiedCount(),
             engine.variableControlInstances.LiveCount(), engine.decisions.LiveCount(),
             engine.timelineArms.LiveCount(), engine.armGroups.FreeCount(),
             engine.timelineOccurrences.OccupiedCount(), engine.compositeCompletionOwners.OccupiedCount(),
@@ -21362,8 +21365,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
     auto* engine = session.Engine();
     ASSERT_NE(nullptr, engine);
     const auto baseline = engine->playableInstances.LiveCount();
-    const auto instanceFreeBaseline = engine->playableInstances.FreeCount();
-    const auto containerFreeBaseline = engine->containerPlayback.FreeCount();
+    const auto instanceBaseline = engine->playableInstances.UnavailableRowCount();
+    const auto occupiedContainerBaseline = engine->containerPlayback.OccupiedCount();
     const auto selectionFreeBaseline = engine->selectionMemory.FreeDeltaCount();
     if (entry == ContainerMatrixEntry::PackAction) {
         ImageBuilder builder(kPackKindCanonicalContent);
@@ -21432,8 +21435,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
             EXPECT_EQ(PlayableStartStatus::Capacity, started.status);
             EXPECT_EQ(baseline, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
-            EXPECT_EQ(instanceFreeBaseline, engine->playableInstances.FreeCount());
-            EXPECT_EQ(containerFreeBaseline, engine->containerPlayback.FreeCount());
+            EXPECT_EQ(instanceBaseline, engine->playableInstances.UnavailableRowCount());
+            EXPECT_EQ(occupiedContainerBaseline, engine->containerPlayback.OccupiedCount());
             EXPECT_EQ(selectionFreeBaseline, engine->selectionMemory.FreeDeltaCount());
             return;
         }
@@ -21449,8 +21452,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
             EXPECT_EQ(VN_NO_VOICE, posted);
             EXPECT_EQ(baseline, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
-            EXPECT_EQ(instanceFreeBaseline, engine->playableInstances.FreeCount());
-            EXPECT_EQ(containerFreeBaseline, engine->containerPlayback.FreeCount());
+            EXPECT_EQ(instanceBaseline, engine->playableInstances.UnavailableRowCount());
+            EXPECT_EQ(occupiedContainerBaseline, engine->containerPlayback.OccupiedCount());
             EXPECT_EQ(selectionFreeBaseline, engine->selectionMemory.FreeDeltaCount());
             return;
         }
@@ -21580,8 +21583,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
     EXPECT_EQ(0u, engine->voices.ActiveCount());
     EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
     EXPECT_EQ(0u, engine->compositeCompletionOwners.OccupiedCount());
-    EXPECT_EQ(instanceFreeBaseline, engine->playableInstances.FreeCount());
-    EXPECT_EQ(containerFreeBaseline, engine->containerPlayback.FreeCount());
+    EXPECT_EQ(instanceBaseline, engine->playableInstances.UnavailableRowCount());
+    EXPECT_EQ(occupiedContainerBaseline, engine->containerPlayback.OccupiedCount());
     EXPECT_EQ(selectionFreeBaseline, engine->selectionMemory.FreeDeltaCount());
 }
 
@@ -22914,8 +22917,9 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
 
     std::vector<PlayableInstanceHandle> capacityOccupants;
     if (availableInstances != 0) {
-        ASSERT_GT(engine->playableInstances.FreeCount(), availableInstances);
-        while (engine->playableInstances.FreeCount() > availableInstances) {
+        ASSERT_TRUE(engine->playableInstances.PrepareStorageForAcquire(availableInstances + 1u));
+        engine->playableInstances.SetCommitPageLimitForTests(0);
+        while (engine->playableInstances.PrepareStorageForAcquire(availableInstances + 1u)) {
             const auto occupant = engine->playableInstances.Acquire(PlayableKind::Sound, 0);
             ASSERT_NE(0u, occupant);
             capacityOccupants.push_back(occupant);

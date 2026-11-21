@@ -239,6 +239,9 @@ public:
         ChildActivationReceipt* out = nullptr) noexcept;
     bool SetPreparedProgramFingerprint(const PreparedActionFiring& prepared,
                                         std::uint64_t fingerprint) noexcept;
+    bool AdoptPreparedPlayableBacking(const PreparedActionFiring& prepared,
+        StableStoragePreparation&& backing) noexcept;
+    StableStoragePreparedUse UsePlayableBacking(ActionFiringHandle firing) const noexcept;
     bool AdoptPreparedVariableResultBacking(const PreparedActionFiring& prepared,
         std::unique_ptr<ActionVariableResultBacking> backing) noexcept;
     const ActionVariableResultBacking* VariableResultBackingFor(
@@ -379,6 +382,7 @@ private:
         std::uint32_t ownedDeferredCount = 0;
         // The serialized control owner constructs this before publishing the row.
         std::vector<ActionFiringStepResult> results;
+        StableStoragePreparation playableBacking;
         std::unique_ptr<ActionVariableResultBacking> variableResultBacking;
     };
 

@@ -69,12 +69,15 @@ class SourceTerminalRecords {
     struct ActiveFamily {};
     using ActiveIdentity = RuntimeIndexIdentity<ActiveFamily>;
 public:
-    explicit SourceTerminalRecords(std::uint32_t capacity) : records_(capacity) {
-        // Prepare navigation alongside the fixed records, never during a
-        // Source reservation or an audio completion publication.
-        if (capacity == 0) return;
-        for (std::uint64_t slot = 0; slot < capacity; slot += 256u)
-            if (!active_.Prepare({1, static_cast<std::uint32_t>(slot), 0})) throw harken::detail::LogicPreparationFailure{};
+    explicit SourceTerminalRecords(std::uint32_t initial = 0) {
+        if (!PrepareStorage(initial)) throw detail::LogicPreparationFailure{};
+    }
+    bool PrepareStorage(std::uint32_t count) noexcept {
+        return records_.ConstructThrough(count, [this](std::uint32_t required) {
+            for (std::uint64_t slot = records_.size() / 256u * 256u; slot < required; slot += 256u)
+                if (!active_.Prepare({1, static_cast<std::uint32_t>(slot), 0})) return false;
+            return true;
+        });
     }
     std::uint32_t Capacity() const noexcept {
         return static_cast<std::uint32_t>(records_.size());
@@ -166,7 +169,7 @@ private:
                 return id.slot == token.slot && id.generation == token.generation && Resolve(token) != nullptr;
             });
     }
-    std::vector<SourceTerminalRecord> records_;
+    GrowingRowStorage<SourceTerminalRecord> records_;
     RuntimeActivityIndex<ActiveFamily> active_;
     std::uint32_t occupiedCount_ = 0;
 };

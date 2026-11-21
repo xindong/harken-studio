@@ -431,12 +431,24 @@ std::vector<std::uint32_t> CaptureSourceGenerations(harken::Engine& engine) {
     return generations;
 }
 
+std::uint32_t SourceGenerationBefore(const std::vector<std::uint32_t>& generations,
+    std::uint32_t slot) {
+    return slot < generations.size() ? generations[slot] : harken::SourceTerminalRecord{}.generation;
+}
+
+void ExpectUnchangedSourceGenerations(harken::Engine& engine,
+    const std::vector<std::uint32_t>& generations) {
+    ASSERT_LE(generations.size(), engine.sourceTerminals.Capacity());
+    for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot)
+        EXPECT_EQ(SourceGenerationBefore(generations, slot), engine.sourceTerminals.At(slot)->generation);
+}
+
 void ExpectBoundSourcesReleased(harken::Engine& engine,
     const std::vector<std::uint32_t>& generations) {
     std::uint32_t bindingsReleased = 0;
-    for (std::uint32_t slot = 0; slot < generations.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
         const auto& record = *engine.sourceTerminals.At(slot);
-        if (record.generation == generations[slot]) continue;
+        if (record.generation == SourceGenerationBefore(generations, slot)) continue;
         ++bindingsReleased;
         EXPECT_FALSE(record.occupied);
         EXPECT_TRUE(engine.voices.ReleaseObserved(record.release));
@@ -649,7 +661,7 @@ TEST(ActionFiringApi, FrontierAttemptOwnsConfiguredTreeBeyondExternalAdoptionLim
     auto& engine = *storage;
     ASSERT_TRUE(engine.EnsureActionPlaySlot(0));
     auto& executor = engine.actionPlayScratch[0].playableTreeExecutor;
-    const auto freeBefore = engine.playableInstances.FreeCount();
+    const auto occupiedInstanceRows = engine.playableInstances.UnavailableRowCount();
     ASSERT_TRUE(executor.PrepareInstance(engine.playableInstances, harken::PlayableKind::Container));
     const auto root = executor.PreparedInstanceHandle(0);
     for (std::uint32_t index = 1; index < config.maxPlayableInstances; ++index) {
@@ -668,7 +680,7 @@ TEST(ActionFiringApi, FrontierAttemptOwnsConfiguredTreeBeyondExternalAdoptionLim
     }
     EXPECT_EQ(config.maxPlayableInstances - 1u, children);
     ASSERT_TRUE(executor.RollbackCommitted(engine.playableInstances));
-    EXPECT_EQ(freeBefore, engine.playableInstances.FreeCount());
+    EXPECT_EQ(occupiedInstanceRows, engine.playableInstances.UnavailableRowCount());
     EXPECT_TRUE(executor.ResetForReuse());
 }
 
@@ -1088,9 +1100,18 @@ TEST(ActionFiringApi, FailedVariableControlRootPreparationCanReuseScratch)
         harken::PlayableKind::Container, 0, &root));
     ASSERT_TRUE(scratch.playableTreeExecutor.AdoptPreparedInstance(
         instances, &root));
+    instances.SetCommitPageLimitForTests(0);
+    std::vector<harken::PreparedPlayableInstance> held;
+    while (instances.PrepareStorageForAcquire(1)) {
+        harken::PreparedPlayableInstance extra{};
+        ASSERT_TRUE(instances.PrepareAcquire(harken::PlayableKind::Sound, 0, &extra));
+        held.push_back(extra);
+    }
     EXPECT_FALSE(scratch.playableTreeExecutor.PrepareInstance(
         instances, harken::PlayableKind::Sound, root.Handle()));
     EXPECT_TRUE(scratch.playableTreeExecutor.Cancel(instances));
+    for (auto& extra : held) ASSERT_TRUE(instances.CancelPrepared(&extra));
+    instances.SetCommitPageLimitForTests(SIZE_MAX);
     EXPECT_EQ(0u, instances.LiveCount());
     EXPECT_EQ(instances.Capacity(), instances.FreeCount());
 
@@ -4342,7 +4363,7 @@ void ExpectScheduleCapacityActionCompletes(
     if (refuseAllocationFirst) {
         const auto commandHead = engine->commands.PublishedHead();
         const auto sequence = engine->logicCommits.IssuedCount();
-        const auto playableFree = engine->playableInstances.FreeCount();
+        const auto occupiedInstanceRows = engine->playableInstances.UnavailableRowCount();
         ASSERT_EQ(nullptr, engine->variableControlRetargetScratch);
         harken::detail::ArmLogicAllocFaultForTests(1,
             harken::detail::LogicAllocSite::VariableControlRetargetStorage);
@@ -4354,7 +4375,7 @@ void ExpectScheduleCapacityActionCompletes(
         EXPECT_EQ(nullptr, engine->variableControlRetargetScratch);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(0u, engine->actionFirings.LiveCount());
-        EXPECT_EQ(playableFree, engine->playableInstances.FreeCount());
+        EXPECT_EQ(occupiedInstanceRows, engine->playableInstances.UnavailableRowCount());
         EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
         EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
         EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
@@ -4369,7 +4390,7 @@ void ExpectScheduleCapacityActionCompletes(
         engine->originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
-        EXPECT_EQ(playableFree, engine->playableInstances.FreeCount());
+        EXPECT_EQ(occupiedInstanceRows, engine->playableInstances.UnavailableRowCount());
         EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
         EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
         EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
@@ -5428,7 +5449,7 @@ struct ActionPreparationOwnerSnapshot {
     std::uint32_t firingOccupied = 0;
     std::uint32_t firingHighWater = 0;
     std::uint32_t playableLive = 0;
-    std::uint32_t playableFree = 0;
+    std::uint32_t occupiedPlayableRows = 0;
     std::uint32_t playableHighWater = 0;
     std::uint32_t variableControlLive = 0;
     std::uint32_t variableControlHighWater = 0;
@@ -5473,7 +5494,7 @@ ActionPreparationOwnerSnapshot CaptureActionPreparationOwners(
     snapshot.firingOccupied = (engine.actionFirings.ConstructedRowCount() - engine.actionFirings.FreeCount());
     snapshot.firingHighWater = engine.actionFirings.HighWater();
     snapshot.playableLive = engine.playableInstances.LiveCount();
-    snapshot.playableFree = engine.playableInstances.FreeCount();
+    snapshot.occupiedPlayableRows = engine.playableInstances.UnavailableRowCount();
     snapshot.playableHighWater = engine.playableInstances.HighWater();
     snapshot.variableControlLive =
         engine.variableControlInstances.LiveCount();
@@ -5574,7 +5595,7 @@ void ExpectActionPreparationOwnersUnchanged(
     EXPECT_EQ(expected.firingOccupied, actual.firingOccupied);
     EXPECT_EQ(expected.firingHighWater, actual.firingHighWater);
     EXPECT_EQ(expected.playableLive, actual.playableLive);
-    EXPECT_EQ(expected.playableFree, actual.playableFree);
+    EXPECT_EQ(expected.occupiedPlayableRows, actual.occupiedPlayableRows);
     EXPECT_EQ(expected.playableHighWater, actual.playableHighWater);
     EXPECT_EQ(expected.variableControlLive, actual.variableControlLive);
     EXPECT_EQ(expected.variableControlHighWater,
@@ -7021,7 +7042,7 @@ TEST(ActionFiringApi, FrontierAttemptOneShortRollsBackWholeActionAndQuarantinesE
                                           : harken::EngineFrontierAttemptPhase::Preparing;
                 storage.generation = exhausted ? UINT64_MAX : 11;
             }
-            const auto freeInstances = engine.playableInstances.FreeCount();
+            const auto occupiedInstanceRows = engine.playableInstances.UnavailableRowCount();
             const auto freeDeltas = engine.selectionMemory.FreeDeltaCount();
             const auto arms = engine.timelineArms.LiveCount();
             auto desc = ValidPostDesc();
@@ -7029,7 +7050,7 @@ TEST(ActionFiringApi, FrontierAttemptOneShortRollsBackWholeActionAndQuarantinesE
             VnActionFiringHandle firing = 99;
             EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
             EXPECT_EQ(0u, firing);
-            EXPECT_EQ(freeInstances, engine.playableInstances.FreeCount());
+            EXPECT_EQ(occupiedInstanceRows, engine.playableInstances.UnavailableRowCount());
             EXPECT_EQ(freeDeltas, engine.selectionMemory.FreeDeltaCount());
             EXPECT_EQ(arms, engine.timelineArms.LiveCount());
             EXPECT_EQ(0u, engine.voices.ActiveCount());
@@ -16502,14 +16523,14 @@ TEST(ActionFiringApi,
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
         rows.SetCommitPageLimitForTests(SIZE_MAX);
     };
-    refuseBacking(engine->playableInstances);
-    refuseBacking(engine->originalPlayableLifetimeHolders);
-    refuseBacking(engine->originalSingleCurrentHolders);
     refuseBacking(engine->initialFrontierEvents);
     refuseBacking(engine->initialFrontierRequests);
     refuseBacking(engine->pendingVariableLeafSources);
     refuseBacking(engine->pendingVariableFutureSources);
     refuseBacking(engine->pendingVariableFutureNodes);
+    refuseBacking(engine->originalPlayableLifetimeHolders);
+    refuseBacking(engine->playableInstances);
+    refuseBacking(engine->originalSingleCurrentHolders);
     engine->queueContinuationRecords.SetCommitPageLimitForTests(0);
     engine->queueFutureRecords.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
@@ -19130,7 +19151,7 @@ static void CheckImmediateVariableControlAllZeroWorkSelection(bool segment) {
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     EXPECT_EQ(baseline, CaptureActionReclaimableOwners(*engine));
-    EXPECT_EQ(sourceGenerations, CaptureSourceGenerations(*engine));
+    ExpectUnchangedSourceGenerations(*engine, sourceGenerations);
 }
 
 TEST(ActionFiringApi, ImmediateVariableControlPlayAcceptsAllZeroWorkTrackSelection) {
@@ -25386,7 +25407,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(admissionRecheck.owners.commandFree, returnedOwners.commandFree);
             EXPECT_EQ(admissionRecheck.owners.renderedBlocks, returnedOwners.renderedBlocks);
             EXPECT_EQ(admissionRecheck.owners.firingOccupied, returnedOwners.firingOccupied);
-            EXPECT_EQ(admissionRecheck.owners.playableFree, returnedOwners.playableFree);
+            EXPECT_EQ(admissionRecheck.owners.occupiedPlayableRows, returnedOwners.occupiedPlayableRows);
             EXPECT_EQ(admissionRecheck.owners.transitionFree, returnedOwners.transitionFree);
             EXPECT_EQ(admissionRecheck.owners.armGroupFree, returnedOwners.armGroupFree);
             EXPECT_EQ(admissionRecheck.owners.armFree, returnedOwners.armFree);
@@ -25595,13 +25616,14 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             ++acceptedCount;
         }
         ASSERT_TRUE(refused);
-        EXPECT_EQ(2u, acceptedCount);
         if (playableCapacity < modeCapacity) {
             constexpr std::uint32_t instancesPerInitialFrontier = 4;
             EXPECT_EQ(acceptedCount * instancesPerInitialFrontier, engine->playableInstances.LiveCount());
-            EXPECT_LT(engine->playableInstances.FreeCount(), instancesPerInitialFrontier);
+            EXPECT_GT(engine->playableInstances.LiveCount(), playableCapacity);
+            EXPECT_EQ(playableCapacity, engine->playablePartitions.OccupiedCount());
             EXPECT_LT(engine->queueInstances.LiveCount(), modeCapacity);
         } else {
+            EXPECT_EQ(modeCapacity, acceptedCount);
             EXPECT_EQ(modeCapacity, engine->variableControlInstances.LiveCount());
             EXPECT_EQ(modeCapacity, engine->queueInstances.LiveCount());
             EXPECT_LT(engine->playableInstances.LiveCount(), playableCapacity);
@@ -31473,9 +31495,9 @@ void ExpectSetValueMixedVcGroupCapacityBeforeCommit(bool refuseSecondGroup,
         EXPECT_EQ(pending, engine->variables.PendingCount());
         EXPECT_EQ(before, CaptureActionReclaimableOwners(*engine));
         EXPECT_EQ(groups, engine->timelinePool.CaptureLivePlan03Groups(nullptr, 0));
-        for (std::uint32_t slot = 0; slot < sources.size(); ++slot) {
+        for (std::uint32_t slot = 0; slot < engine->sourceTerminals.Capacity(); ++slot) {
             const auto& source = *engine->sourceTerminals.At(slot);
-            if (source.generation == sources[slot]) continue;
+            if (source.generation == SourceGenerationBefore(sources, slot)) continue;
             EXPECT_FALSE(source.occupied);
             EXPECT_TRUE(engine->voices.ReleaseObserved(source.release));
             EXPECT_FALSE(engine->playableInstances.HasSourceRetirementHold(source.leaf));
@@ -37154,8 +37176,8 @@ TEST(ActionFiringApi, AuthoredStopFadeUsesCheckedNanosecondCeiling) {
             engine->actionFirings.ConstructedRowCount() - engine->actionFirings.FreeCount();
         const std::uint32_t playableLive =
             engine->playableInstances.LiveCount();
-        const std::uint32_t playableFree =
-            engine->playableInstances.FreeCount();
+        const std::uint32_t occupiedInstanceRows =
+            engine->playableInstances.UnavailableRowCount();
 
         VnPostActionDesc stopDesc = ValidPostDesc();
         stopDesc.actionId = image.actions[8].actionStableId;
@@ -37170,8 +37192,8 @@ TEST(ActionFiringApi, AuthoredStopFadeUsesCheckedNanosecondCeiling) {
             EXPECT_EQ(firingOccupied, engine->actionFirings.ConstructedRowCount() - engine->actionFirings.FreeCount());
             EXPECT_EQ(playableLive,
                       engine->playableInstances.LiveCount());
-            EXPECT_EQ(playableFree,
-                      engine->playableInstances.FreeCount());
+            EXPECT_EQ(occupiedInstanceRows,
+                      engine->playableInstances.UnavailableRowCount());
             const harken::PlayableInstanceView playableAfter =
                 engine->playableInstances.Classify(
                     play.producedPlayableInstance);
@@ -43711,12 +43733,12 @@ void ExpectStaggeredCurrentOriginalTailReleased(harken::Engine& engine,
     EXPECT_EQ(ownersBefore, CaptureActionReclaimableOwners(engine));
     EXPECT_EQ(sourcesBefore, CountStaggeredCurrentOriginalSourceOwners(engine));
     std::uint32_t releasedSources = 0;
-    for (std::uint32_t slot = 0; slot < sourceGenerationsBefore.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
         const auto& source = *engine.sourceTerminals.At(slot);
-        if (source.generation == sourceGenerationsBefore[slot]) continue;
+        if (source.generation == SourceGenerationBefore(sourceGenerationsBefore, slot)) continue;
         ++releasedSources;
-        ASSERT_LT(sourceGenerationsBefore[slot], UINT32_MAX);
-        EXPECT_GT(source.generation, sourceGenerationsBefore[slot]);
+        ASSERT_LT(SourceGenerationBefore(sourceGenerationsBefore, slot), UINT32_MAX);
+        EXPECT_GT(source.generation, SourceGenerationBefore(sourceGenerationsBefore, slot));
         EXPECT_FALSE(source.occupied);
         const auto original = std::find_if(installs.begin(), installs.end(),
             [&](const auto& installed) { return installed.renderHandle == source.render; });
@@ -50999,7 +51021,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                     EXPECT_FALSE(engine.playableInstances.Classify(oldLeaves[0]).live);
                     EXPECT_EQ(foreignLoanTarget == PendingVariableTreeLoan::SecondLeaf,
                         engine.playableInstances.Classify(oldLeaves[1]).live);
-                } else EXPECT_EQ(sourceGenerations, CaptureSourceGenerations(engine));
+                } else ExpectUnchangedSourceGenerations(engine, sourceGenerations);
                 if (stopWhileWaiting) {
                     ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
                     stopRequested = true;
@@ -51335,7 +51357,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
     }
     EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
-    if (stopWhileWaiting) EXPECT_EQ(sourceGenerations, CaptureSourceGenerations(engine));
+    if (stopWhileWaiting) ExpectUnchangedSourceGenerations(engine, sourceGenerations);
     else ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(engine, sourceGenerations));
 }
 
@@ -51708,7 +51730,6 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
         EXPECT_EQ(0u, engine.selectionMemory.Snapshot(key).selectionOrdinal);
         ASSERT_GE(engine.voices.AvailableSlotCount(), 4u);
         ASSERT_GE(engine.ledger.AvailableEntryCount(), 4u);
-        ASSERT_GE(engine.playableInstances.FreeCount(), 8u);
         ASSERT_GE(engine.selectionMemory.FreePendingBatchCount(), 2u);
         ASSERT_GE(engine.selectionMemory.FreeDeltaCount(), 2u);
     }
@@ -53777,11 +53798,12 @@ static void CheckOrderedVariableSubtreeFirstPcm(SubtreeBindingScenario scenario,
             if (original.RepreparePending()) ++retirementProbe.pendingVisits;
             for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
                 const auto& source = *engine.sourceTerminals.At(slot);
-                const auto originalGeneration = retirementProbe.sourceGenerations[slot];
+                const auto originalGeneration = SourceGenerationBefore(retirementProbe.sourceGenerations, slot);
+                const bool previouslyOccupied = slot < retirementProbe.sourceOccupied.size() && retirementProbe.sourceOccupied[slot];
                 if (source.generation == originalGeneration) {
-                    if (!retirementProbe.sourceOccupied[slot]) EXPECT_FALSE(source.occupied);
+                    if (!previouslyOccupied) EXPECT_FALSE(source.occupied);
                 } else {
-                    EXPECT_TRUE(retirementProbe.sourceOccupied[slot]);
+                    EXPECT_TRUE(previouslyOccupied);
                     EXPECT_EQ(originalGeneration + 1u, source.generation);
                     EXPECT_FALSE(source.occupied);
                     EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
@@ -54174,7 +54196,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(SubtreeBindingScenario scenario,
         EXPECT_FALSE(engine.ledger.OwnerForRender(retirementProbe.currentRender).live);
         EXPECT_FALSE(engine.ledger.OwnerForRender(retirementProbe.successorRender).live);
     }
-    if (cancel && deferred) EXPECT_EQ(sourceGenerations, CaptureSourceGenerations(engine));
+    if (cancel && deferred) ExpectUnchangedSourceGenerations(engine, sourceGenerations);
     else ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(engine, sourceGenerations));
     if (!cancelPreparedNested && nestedPolicyShape != NestedReplacementPolicyShape::Single) {
         for (unsigned index = 0; index < nestedPolicyProbe.capturedControls; ++index) {
@@ -56560,7 +56582,7 @@ TEST(ActionFiringApi, PendingVariableGroupZeroNativeQueueCancelsRetriesAndReturn
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
-    EXPECT_EQ(sourceGenerations, CaptureSourceGenerations(engine));
+    ExpectUnchangedSourceGenerations(engine, sourceGenerations);
     EXPECT_EQ(availableVoices, engine.voices.AvailableSlotCount());
     RecordQueueBackingInventory(engine, "zero_queue_final");
     EXPECT_FALSE(engine.runtimeRecreateRequired);
@@ -64662,7 +64684,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     PreparationMatrixPlayableInstanceCapacityReturnsNoVoice) {
+     PreparationMatrixPlayableInstanceAllocationFailureCanRetry) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(1, 64, 48000));
@@ -64679,21 +64701,18 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
-    std::vector<harken::PreparedPlayableInstance> occupied(
-        engine->playableInstances.Capacity());
-    for (auto& prepared : occupied) {
-        ASSERT_TRUE(engine->playableInstances.PrepareAcquire(
-            harken::PlayableKind::Sound, 0, &prepared));
-    }
-    ASSERT_EQ(0u, engine->playableInstances.FreeCount());
+    engine->playableInstances.SetCommitPageLimitForTests(0);
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(50), 0, VN_NO_VOICE, before);
+        *engine, harkentest::ObjectId(50), 0, VN_OUT_OF_MEMORY, before);
 
-    for (auto& prepared : occupied) {
-        EXPECT_TRUE(engine->playableInstances.CancelPrepared(&prepared));
-    }
+    engine->playableInstances.SetCommitPageLimitForTests(SIZE_MAX);
+    auto desc = ValidPostDesc();
+    desc.actionId = harkentest::ObjectId(50);
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    EXPECT_NE(0u, firing);
 }
 
 TEST(ActionFiringApi,
@@ -71528,9 +71547,9 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
             observation.installs[index].renderHandle, &staleInstall));
     }
     EXPECT_EQ(sourcesBefore, sourceCount());
-    for (std::uint32_t slot = 0; slot < sourceGenerationsBefore.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
         const auto& source = *engine.sourceTerminals.At(slot);
-        if (source.generation == sourceGenerationsBefore[slot]) continue;
+        if (source.generation == SourceGenerationBefore(sourceGenerationsBefore, slot)) continue;
         EXPECT_FALSE(source.occupied);
         EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
         EXPECT_FALSE(engine.playableInstances.HasSourceRetirementHold(source.leaf));
@@ -73505,7 +73524,7 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
     timeline.queueEvents.SetCommitPageLimitForTests(SIZE_MAX);
     engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(engine.PreparePlayableStateStorage());
-    EXPECT_EQ(engine.originalSingleCurrentHolders.Capacity(), engine.originalSingleCurrentHolders.size());
+    EXPECT_EQ(engine.playableInstances.ConstructedEntryCount(), engine.originalSingleCurrentHolders.size());
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialFrontierArmPins.size());
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialRootArmPublicationInputs.size());
     EXPECT_EQ(firstStart, &timeline.starts[0]);

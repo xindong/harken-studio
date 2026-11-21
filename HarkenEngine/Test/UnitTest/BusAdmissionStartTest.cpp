@@ -425,7 +425,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
     ASSERT_NE(engine, nullptr);
     const std::uint32_t liveBefore = engine->topologyPlans.InUse();
     const std::uint32_t commandFreeBefore = engine->commands.FreeSlots();
-    const std::uint32_t instanceFreeBefore = engine->playableInstances.FreeCount();
+    const auto instancesBefore = engine->playableInstances.UnavailableRowCount();
     const harken::ProjectGenerationInstallViewV1 view =
         MakeInstallView(fixture.image);
     harken::PreparedProjectGenerationV1 prepared;
@@ -435,7 +435,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
               harken::ProjectGenerationPrepareStatusV1::Ok);
     EXPECT_EQ(engine->topologyPlans.InUse(), liveBefore);
     EXPECT_EQ(engine->commands.FreeSlots(), commandFreeBefore);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), instanceFreeBefore);
+    EXPECT_EQ(instancesBefore, engine->playableInstances.UnavailableRowCount());
     EXPECT_TRUE(prepared.Valid());
     EXPECT_EQ(engine->preparedTopologyPlans.InUse(), 1u);
     EXPECT_NE(engine->preparedTopologyPlans.View(prepared.PreparedPlanIndex())
@@ -448,9 +448,9 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
               harken::PlayableStartStatus::Accepted);
     const std::uint32_t liveAfterStart = engine->topologyPlans.InUse();
     const std::uint32_t commandFreeAfterStart = engine->commands.FreeSlots();
-    const std::uint32_t instanceFreeAfterStart = engine->playableInstances.FreeCount();
+    const auto instancesAfterStart = engine->playableInstances.UnavailableRowCount();
     EXPECT_EQ(liveAfterStart, liveBefore);
-    EXPECT_LT(instanceFreeAfterStart, instanceFreeBefore);
+    EXPECT_GT(instancesAfterStart, instancesBefore);
 
     const harken::ProjectGenerationCommitResultV1 committed =
         harken::CommitPreparedProjectGenerationV1(*engine, prepared);
@@ -459,7 +459,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
     EXPECT_TRUE(prepared.Valid());
     EXPECT_EQ(engine->topologyPlans.InUse(), liveAfterStart);
     EXPECT_EQ(engine->commands.FreeSlots(), commandFreeAfterStart);
-    EXPECT_EQ(engine->playableInstances.FreeCount(), instanceFreeAfterStart);
+    EXPECT_EQ(instancesAfterStart, engine->playableInstances.UnavailableRowCount());
     EXPECT_EQ(engine->currentWorldReplacementAdmissionClosed, false);
     EXPECT_EQ(harken::StartPlayable(*engine, request).status,
               harken::PlayableStartStatus::Accepted);

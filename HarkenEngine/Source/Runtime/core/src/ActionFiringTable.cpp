@@ -272,6 +272,21 @@ bool ActionFiringTable::SetPreparedProgramFingerprint(
     return true;
 }
 
+bool ActionFiringTable::AdoptPreparedPlayableBacking(
+    const PreparedActionFiring& prepared, StableStoragePreparation&& backing) noexcept {
+    auto* row = ResolvePrepared(prepared);
+    if (row == nullptr || row->parent != 0 || row->root != prepared.Handle() ||
+        row->playableBacking.Valid() || !backing.Valid()) return false;
+    row->playableBacking = std::move(backing);
+    return true;
+}
+
+StableStoragePreparedUse ActionFiringTable::UsePlayableBacking(ActionFiringHandle firing) const noexcept {
+    const auto* row = Resolve(firing);
+    const auto* root = row == nullptr ? nullptr : Resolve(row->root);
+    return root != nullptr ? root->playableBacking.Use() : StableStoragePreparedUse{};
+}
+
 bool ActionFiringTable::AdoptPreparedVariableResultBacking(
     const PreparedActionFiring& prepared,
     std::unique_ptr<ActionVariableResultBacking> backing) noexcept {
@@ -884,6 +899,7 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
     }
     const bool stopping = row.state == SlotState::Stopping;
     row.state = SlotState::TerminalRetained;
+    row.playableBacking.Release();
     row.variableResultBacking.reset();
     if (stopping || hasCancellation) {
         row.outcome = ActionFiringOutcome::Cancelled;
@@ -1139,6 +1155,7 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.livePlayableCount = 0;
     row.ownedDeferredCount = 0;
     std::vector<ActionFiringStepResult>{}.swap(row.results);
+    row.playableBacking.Release();
     row.variableResultBacking.reset();
     if (row.generation == kMaxActionFiringGeneration) {
         row.state = SlotState::Quarantined;
@@ -1346,6 +1363,7 @@ bool ActionFiringTable::MarkTerminal(
         child = childRow->nextSibling;
     }
     row->state = SlotState::TerminalRetained;
+    row->playableBacking.Release();
     row->variableResultBacking.reset();
     row->outcome = outcome;
     row->terminalReason = reason;

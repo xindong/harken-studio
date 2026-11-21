@@ -729,6 +729,7 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(0u, timeline.queueEvents.size());
     harken::StableStoragePreparation backing;
     engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    ASSERT_TRUE(engine.playableInstances.PrepareStorageForAcquire(2));
     EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
     EXPECT_FALSE(backing.Valid());
     EXPECT_EQ(0u, engine.originalSingleCurrentHolders.CommittedBytes());
@@ -760,10 +761,12 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     auto* transactions = timeline.transactions.data();
     auto* extraCommands = timeline.extraCommands.data();
     auto* queueEvents = timeline.queueEvents.data();
-    EXPECT_EQ(engine.originalSingleCurrentHolders.Capacity(), engine.originalSingleCurrentHolders.size());
+    ASSERT_TRUE(engine.playableInstances.PrepareStorageForAcquire(1));
+    ASSERT_TRUE(engine.PrepareOriginalSingleCurrentStorage());
+    EXPECT_EQ(engine.playableInstances.ConstructedEntryCount(), engine.originalSingleCurrentHolders.size());
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialFrontierArmPins.size());
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialRootArmPublicationInputs.size());
-    auto* currentHolders = engine.originalSingleCurrentHolders.data();
+    auto* currentHolders = engine.originalSingleCurrentHolders.TryAt(0);
     auto* frontierPins = engine.initialFrontierArmPins.data();
     auto* publicationInputs = engine.initialRootArmPublicationInputs.data();
     auto* retargetTree = engine.variableControlRetargetScratch.get();
@@ -972,7 +975,7 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
         engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
         EXPECT_TRUE(engine.PrepareOriginalSingleCurrentStorage());
         EXPECT_TRUE(engine.PreparePlayablePublicationStorage());
-        EXPECT_EQ(currentHolders, engine.originalSingleCurrentHolders.data());
+        EXPECT_EQ(currentHolders, engine.originalSingleCurrentHolders.TryAt(0));
         EXPECT_EQ(frontierPins, engine.initialFrontierArmPins.data());
         EXPECT_EQ(publicationInputs, engine.initialRootArmPublicationInputs.data());
         timeline.starts.SetCommitPageLimitForTests(0);
@@ -1308,7 +1311,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->memberRelations.ConstructedCount());
     EXPECT_EQ(0u, engine->memberRelations.RequestedBytes());
     EXPECT_EQ(0u, engine->occupiedMemberRelations);
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->sourceTerminals.Capacity());
+    EXPECT_EQ(0u, engine->sourceTerminals.Capacity());
 
     EXPECT_EQ(layout.initialProgramCount, engine->memberProgramRecords.size());
     EXPECT_EQ(0u, engine->memberProgramRecords.ConstructedCount());
@@ -1366,8 +1369,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(sizeof(harken::TimelineArmToken), continuousBytesPerSlot);
 
-    EXPECT_EQ(static_cast<std::uint64_t>(engine->config.maxPlayableInstances) * sizeof(harken::SourceTerminalRecord),
-              static_cast<std::uint64_t>(engine->sourceTerminals.Capacity()) * sizeof(harken::SourceTerminalRecord));
+    EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
 
     testing::Test::RecordProperty("removed_prebuilt_initial_continuous_arm_bytes",
         std::to_string(layout.continuousCount * continuousBytesPerSlot));

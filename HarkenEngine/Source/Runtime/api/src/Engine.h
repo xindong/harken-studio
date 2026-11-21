@@ -4310,8 +4310,7 @@ struct EngineFrontierWorkItem {
 };
 
 struct EngineFrontierExpansionScratch {
-    explicit EngineFrontierExpansionScratch(std::uint32_t capacity) : nodes(capacity) {}
-    std::vector<EngineFrontierWorkItem> nodes;
+    GrowingRowStorage<EngineFrontierWorkItem> nodes;
     std::uint32_t count = 0;
     bool occupied = false;
 };
@@ -6245,6 +6244,7 @@ struct Engine {
         ScheduledTransactionPool::ImmediateLaneBackingPreparation laneGroups;
         StableStoragePreparation laneEntries;
         StableStoragePreparation laneAttempts;
+        StableStoragePreparation instances;
         StableStoragePreparation services;
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
         StableSlotStorage<EngineMemberProgramRecord>::Preparation memberPrograms;
@@ -6261,7 +6261,7 @@ struct Engine {
     };
     NativeRuntimeBacking* nativeRuntimeBackingInUse = nullptr;
     struct NativeRuntimeBackingUse {
-        std::array<StableStoragePreparedUse, 13> columns;
+        std::array<StableStoragePreparedUse, 14> columns;
         VoiceLedger::BackingUse ledger;
         VoiceLedger::MonitorSelectionUse monitor;
         SelectionMemoryTableV1::BackingUse selectionHistory;
@@ -6283,7 +6283,7 @@ struct Engine {
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
             : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
-                      Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12)},
+                      Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12), Use(backing, 13)},
               ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
               monitor(backing == nullptr ? VoiceLedger::MonitorSelectionUse{} : backing->monitor.Use()),
               selectionHistory(backing == nullptr ? SelectionMemoryTableV1::BackingUse{} : backing->selectionHistory.Use()),
@@ -6318,6 +6318,7 @@ struct Engine {
             if (index == 9u) return backing->laneEntries.Use();
             if (index == 10u) return backing->laneAttempts.Use();
             if (index == 12u) return backing->services.Use();
+            if (index == 13u) return backing->instances.Use();
             return backing->arms.Use();
         }
     };
@@ -7086,8 +7087,6 @@ public:
                   : resolved.dynamicRouteCapacity),
           influenceVisited(resolved.maxBuses, 0),
           influenceStack(resolved.maxBuses, 0),
-          sourceTerminals(resolved.maxPlayableInstances),
-          sourcePlayableMembers(resolved.maxPlayableInstances),
           timelineOccurrences(resolved.maxDeferredIntents),
           voices(resolved, &tables, &multirateTables, &biquadTrig, effectBank,
                  dynamicRoutes, &timelineArms),
@@ -7095,7 +7094,6 @@ public:
                 &biquadTrig),
           actionCommitBundle(16),
           playableInstances(resolved.maxPlayableInstances, handleFloors.playable),
-          authoredStopRoots(resolved.maxPlayableInstances),
           params(resolved, 0),
           variables(resolved.maxEmitters + 1u, resolved.emitterVariableSlots,
                      resolved.maxPropertiesPerCurrentSlice,
@@ -7114,7 +7112,6 @@ public:
            actionQueueCheckpointResetScratch(1),
            actionDeferredScratch(resolved.maxDeferredIntents),
            originalDeferredPackHolders(resolved.maxDeferredIntents),
-          containerPlayback(resolved.maxPlayableInstances),
           variableControlInstances(resolved.maxContainerInstances),
           // A bounded diagnostic budget, independent of playback admission.
           ledger(resolved.voiceCapacity.Logical(),
@@ -7132,7 +7129,6 @@ public:
                resolved.maxPlayableInstances),
            initialQueueCoordinatorParticipantsScratch(
                resolved.maxPlayableInstances),
-          actionStopScratch(resolved.maxPlayableInstances),
           actionPlayFrameScratch(resolved.commandQueueDepth),
           initialLaneDemandEventQuantaScratch(std::max(
               resolved.maxTransactionEvents,
@@ -7142,9 +7138,6 @@ public:
               resolved.maxKnownScheduleLeaves * 4u)),
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
-          frontierExpansion(resolved.maxPlayableInstances),
-          ordinaryRetiringSources(resolved.maxPlayableInstances),
-          ordinaryRetiringLeaves(resolved.maxPlayableInstances),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -7208,8 +7201,30 @@ public:
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
            nullBackend(mixer, resolved) {
-        monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
-            playableInstances.Capacity());
+        playableInstances.SetStoragePreparation(this, [](void* context, std::uint32_t count) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            try {
+                const auto needed = static_cast<std::size_t>(engine.timelineArms.Capacity()) + count;
+                if (needed > engine.monitorPlaybackEvents.capacity()) {
+                    engine.monitorPlaybackEvents.reserve(std::max(needed,
+                        engine.monitorPlaybackEvents.capacity() + engine.monitorPlaybackEvents.capacity() / 2));
+                }
+            } catch (const std::bad_alloc&) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::MonitorStorage);
+                return false;
+            }
+            return engine.sourceTerminals.PrepareStorage(count) &&
+                engine.sourcePlayableMembers.ConstructThrough(count) &&
+                engine.actionStopScratch.ConstructThrough(count) &&
+                engine.authoredStopRoots.ConstructThrough(count) &&
+                engine.ordinaryRetiringSources.ConstructThrough(count) &&
+                engine.ordinaryRetiringLeaves.ConstructThrough(count) &&
+                (!engine.playableInstances.HasPreparedBacking() ||
+                    (engine.containerPlayback.PrepareStorage(count) &&
+                     engine.PrepareOriginalSingleCurrentStorage(count))) &&
+                engine.originalPlayableLifetimeHolders.ConstructThrough(count);
+        });
+        monitorPlaybackEvents.reserve(timelineArms.Capacity());
         voices.AttachTimelineVariableStartAuthority({&variables,
             [](void* context, VariableTimelineReadUseRef use, std::uint64_t nativeHandle) noexcept {
                 return static_cast<VariableServiceV1*>(context)->TimelineReadUseStartStatus(use, nativeHandle);
@@ -7260,9 +7275,7 @@ public:
         for (std::size_t index = 0; index < playableStarts.size(); ++index) {
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
         }
-        if (!originalPlayableLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
-            !originalPlayableServiceLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
-            !originalSingleCurrentHolders.Reserve(resolved.maxPlayableInstances) ||
+        if (!originalPlayableServiceLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
             !authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
             !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
             !queueFutureRecords.Reserve(resolved.maxPlayableInstances) ||
@@ -7453,7 +7466,7 @@ public:
         if (timelinePool.MaxArmsPerGroup() == 0)
             throw harken::detail::LogicPreparationFailure{};
         if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw harken::detail::LogicPreparationFailure{};
-        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw harken::detail::LogicPreparationFailure{};
+        if (!pendingVariableFutureNodes.Reserve(resolved.maxPlayableInstances)) throw harken::detail::LogicPreparationFailure{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxPlan03GroupHeadersPerPage;
@@ -11929,7 +11942,7 @@ public:
         return originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
             (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             playableInstances.IssueOriginalPreparedLifetimeBaselines(original,
-                {originalPlayableLifetimeHolders.data(), originalPlayableLifetimeHolders.size()});
+                originalPlayableLifetimeHolders);
     }
     bool IssueOriginalPlayableTreeLifetimes(PlayableTreeExecutor& tree,
         bool needsCurrentHolders = true) noexcept {
@@ -11963,7 +11976,6 @@ public:
         auto* arrangingOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, arranging);
         const auto slot = static_cast<std::uint32_t>(arranging);
         if (rootOriginal == nullptr || arrangingOriginal == nullptr ||
-            slot >= originalSingleCurrentHolders.Capacity() ||
             !PrepareOriginalSingleCurrentStorage(slot + 1u)) return false;
         auto& holder = originalSingleCurrentHolders[slot];
         if (holder.state == OriginalSingleCurrentHolder::State::Ending && !holder.ResetAfterNativeRetirement(*this)) return false;
@@ -13847,7 +13859,7 @@ public:
     std::vector<std::uint8_t> influenceVisited;
     std::vector<std::uint32_t> influenceStack;
     SourceTerminalRecords sourceTerminals;
-    std::vector<EnginePlayableMemberToken> sourcePlayableMembers;
+    GrowingRowStorage<EnginePlayableMemberToken> sourcePlayableMembers;
     OccurrenceStatePool timelineOccurrences;
     VoicePool voices;
     StableRowStorage<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
@@ -13876,7 +13888,7 @@ public:
     // Stop cancellation holders must return before their native table dies.
     PlayableInstanceTable playableInstances;
     // Lane fence references must be destroyed before their original backing.
-    std::vector<EngineAuthoredStopRoot> authoredStopRoots;
+    GrowingRowStorage<EngineAuthoredStopRoot> authoredStopRoots;
     std::uint32_t authoredStopRootPrefixCount = 0;
     StableRowStorage<EngineAuthoredStopResource> authoredStopResources;
     ImmediateActionLane immediateActionLane;
@@ -13900,8 +13912,8 @@ public:
     std::vector<EngineActionDeferredScratch> actionDeferredScratch;
     std::vector<EngineOriginalDeferredPackHolder> originalDeferredPackHolders;
     // Stable backing. Native tables outlive every genuine cap and bundle.
-    StableRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
-    StableRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
+    GrowingRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
+    GrowingRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
     std::uint32_t originalSingleCurrentCount = 0;
     void (*originalPlayableTreePreparationHookForTest)(Engine&, PlayableTreeExecutor&, void*) = nullptr;
     void* originalPlayableTreePreparationContextForTest = nullptr;
@@ -13925,7 +13937,7 @@ public:
     std::unique_ptr<VariableControlRetargetTreeScratch> variableControlRetargetScratch;
     // Serial logic-side service preparation, separate from Action start scratch.
     bool servicePreparedScheduleLeavesInUse = false;
-    std::vector<EngineActionStopScratch> actionStopScratch;
+    GrowingRowStorage<EngineActionStopScratch> actionStopScratch;
     std::vector<std::uint64_t> actionPlayFrameScratch;
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
@@ -14567,13 +14579,13 @@ public:
              scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
     }
     bool PrepareOriginalSingleCurrentStorage(std::size_t count) noexcept {
-        if (count > originalSingleCurrentHolders.Capacity()) return false;
+        if (count > UINT32_MAX) return false;
         if (originalSingleCurrentHolders.size() >= count) return true;
         if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
         return originalSingleCurrentHolders.ConstructThrough(count);
     }
     bool PrepareOriginalSingleCurrentStorage() noexcept {
-        return PrepareOriginalSingleCurrentStorage(originalSingleCurrentHolders.Capacity());
+        return PrepareOriginalSingleCurrentStorage(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayableFeatureBacking() noexcept {
         if (!PrepareOriginalSingleCurrentStorage() || !PreparePlayablePublicationStorage() ||
@@ -14586,8 +14598,7 @@ public:
     }
     bool PrepareOriginalPlayableStorage(bool needsCompleteInstanceStorage = true,
         std::uint32_t independentRoots = 1u) noexcept {
-        return (needsCompleteInstanceStorage ? playableInstances.PrepareStorage()
-                : playableInstances.PrepareStorageForAcquire(independentRoots)) &&
+        return playableInstances.PrepareStorageForAcquire(independentRoots) &&
             originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayablePublicationStorage(bool needsContainerState = true,
@@ -15098,9 +15109,9 @@ public:
     bool initialFrontierWorkspaceOccupied = false;
     // Serial producer leaves delegate before acquiring this exclusive scratch.
     EngineTimelineStartScratch timelineStartScratch{};
-    std::vector<EngineOrdinaryRetiringSource> ordinaryRetiringSources;
+    GrowingRowStorage<EngineOrdinaryRetiringSource> ordinaryRetiringSources;
     std::uint32_t ordinaryRetiringSourceCount = 0;
-    std::vector<EngineOrdinaryRetiringLeaf> ordinaryRetiringLeaves;
+    GrowingRowStorage<EngineOrdinaryRetiringLeaf> ordinaryRetiringLeaves;
     struct MemberOnsetFamily {};
     using MemberOnsetIdentity = RuntimeIndexIdentity<MemberOnsetFamily>;
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
