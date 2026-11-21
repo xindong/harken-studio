@@ -134,7 +134,22 @@ static int mark_words(const char *l,long n,long sparsecount,ogg_uint32_t *r){
 }
 
 int hv_book_validate(const static_codebook *book){
-  return mark_words(book->lengthlist,book->entries,1,NULL);
+  unsigned long counts[33]={0};
+  long i;
+  uint64_t occupied=0;
+  const uint64_t capacity=UINT64_C(1)<<32;
+  /* Header unpacking bounds each length to 0..32 and the entry count to 24 bits.
+     A word of length n occupies 2^(32-n) leaves at the deepest level. */
+  for(i=0;i<book->entries;i++)
+    counts[(unsigned char)book->lengthlist[i]]++;
+  /* Use the decoder's marker arithmetic at its 32-bit boundary. */
+  if(counts[32])
+    return mark_words(book->lengthlist,book->entries,1,NULL);
+  for(i=1;i<32;i++)
+    occupied+=(uint64_t)counts[i]<<(32-i);
+  /* Empty sparse books and a lone one-bit word are accepted by the decoder. */
+  if(!occupied || (counts[1]==1 && occupied==capacity/2))return 0;
+  return occupied==capacity ? 0 : -1;
 }
 
 static ogg_uint32_t *make_words(HvAllocator *allocator, char *l,long n,long sparsecount){
