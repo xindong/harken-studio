@@ -64,6 +64,7 @@ namespace Harken
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (PlatformNotSupportedException) { return VnResult.VN_CAPABILITY_UNAVAILABLE; }
+            catch (InvalidDataException) { return VnResult.VN_BAD_PACK; }
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
@@ -121,8 +122,8 @@ namespace Harken
                 FileIdentity beforeBinary = FileIdentity.Read(binary), beforeMetadata = FileIdentity.Read(metadata);
                 if (!FileIdentity.ExactName(binary, name + ".bytes", language) ||
                     !FileIdentity.ExactName(metadata, name + ".json", language)) return VnResult.VN_BAD_PACK;
-                bytes = Read(binary);
-                json = Read(metadata);
+                bytes = PackStorage.ReadBinary(binary);
+                json = PackStorage.ReadPlain(metadata);
                 using (FileStream currentBinary = Open(bytesPath))
                 using (FileStream currentMetadata = Open(jsonPath))
                 {
@@ -135,20 +136,6 @@ namespace Harken
                 }
                 return VnResult.VN_OK;
             }
-        }
-
-        private static byte[] Read(FileStream stream)
-        {
-            if (stream.Length > int.MaxValue) throw new IOException("Pack input exceeds the managed byte limit.");
-            var bytes = new byte[(int)stream.Length];
-            int offset = 0;
-            while (offset < bytes.Length)
-            {
-                int count = stream.Read(bytes, offset, bytes.Length - offset);
-                if (count == 0) throw new EndOfStreamException();
-                offset += count;
-            }
-            return bytes;
         }
 
         private readonly struct FileIdentity : IEquatable<FileIdentity>
