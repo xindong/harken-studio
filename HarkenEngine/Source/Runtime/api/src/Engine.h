@@ -1617,6 +1617,7 @@ struct EnginePlayableStartRow {
     std::uint32_t serviceCount = 0;
     EnginePlayableServiceToken rootService{};
     bool quarantined = false;
+    ActionFiringHandle deferredControlOwner = 0;
     VnEmitterHandle invocationEmitter = 0;
     ActionFiringHandle actionFiring = 0;
     std::uint32_t actionExecutionOrdinal = UINT32_MAX;
@@ -6459,6 +6460,7 @@ struct Engine {
             nativeReplacementSlots = std::move(other.nativeReplacementSlots);
             queueRoleReservations = std::move(other.queueRoleReservations);
             nativeRuntimeBacking = std::move(other.nativeRuntimeBacking);
+            replacementControls = std::move(other.replacementControls);
             leafRetirementReceipts.swap(other.leafRetirementReceipts);
             initialSides = std::move(other.initialSides);
             initialDecisionInputs = std::exchange(other.initialDecisionInputs, {});
@@ -6481,7 +6483,7 @@ struct Engine {
                 !reprepare_.replacementCommandsReserved && reprepare_.replacementCommandCount == 0 &&
                 !reprepare_.replacementLane.Valid() && reprepare_.replacementDemand.events == 0 &&
                 !selectionReservations[0].Valid() && !selectionReservations[1].Valid() && !topology_.sealed &&
-                nativeReplacementSlots.empty() && queueRoleReservations.empty() && !nativeRuntimeBacking &&
+                nativeReplacementSlots.empty() && queueRoleReservations.empty() && !nativeRuntimeBacking && !replacementControls.Valid() &&
                 leafArms.capacity() == 0 && leafRetained.capacity() == 0 &&
                 leafRetirementReceipts.capacity() == 0 && reprepare_.StorageBytes() == 0 &&
                 boundAbort.queues.capacity() == 0 &&
@@ -6549,6 +6551,7 @@ struct Engine {
         std::vector<NativeReplacementSlot> nativeReplacementSlots;
         std::vector<QueueRoleReservationSlot> queueRoleReservations;
         std::unique_ptr<NativeRuntimeBacking> nativeRuntimeBacking;
+        StableStoragePreparation replacementControls;
         std::vector<OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt>
             leafRetirementReceipts;
         std::array<VariableControlInstanceTable::OriginalInitialSideReceipt, 2> initialSides{};
@@ -6838,6 +6841,7 @@ struct Engine {
         std::vector<NativeReplacementSlot>().swap(group.nativeReplacementSlots);
         std::vector<QueueRoleReservationSlot>().swap(group.queueRoleReservations);
         group.nativeRuntimeBacking.reset();
+        group.replacementControls.Release();
         return true;
     }
     bool EnsurePendingVariableNativeBacking(EngineActionPlayScratch& producer,
@@ -7124,7 +7128,6 @@ public:
           actionFixedSelectionCommitInputs(1),
           actionQueueResetScratch(1),
            actionQueueCheckpointResetScratch(1),
-          variableControlInstances(resolved.maxContainerInstances),
           // A bounded diagnostic budget, independent of playback admission.
           ledger(resolved.voiceCapacity.Logical(),
                  resolved.voiceCapacity.Render(),
@@ -8275,8 +8278,11 @@ public:
     using DeferredTreeWidths = std::multiset<std::uint32_t>;
     DeferredTreeWidths deferredTreeWidths;
     std::uint32_t borrowedTreeWidth = 0;
+    ActionFiringHandle preparingDeferredControlOwner = 0;
     struct DeferredTreeBacking final : ActionTreeBacking {
         StableSlotStorage<EngineActionPlayScratch>::Preparation attempts;
+        StableStoragePreparation variableControls;
+        std::uint32_t controlCount = 0;
         DeferredTreeWidths* widths = nullptr;
         DeferredTreeWidths::iterator widthEntry;
         std::uint32_t width = 0;
@@ -8284,8 +8290,9 @@ public:
         ~DeferredTreeBacking() override {
             if (widths != nullptr) widths->erase(widthEntry);
         }
-        bool Include(std::uint32_t additional, std::uint32_t rows) noexcept {
-            if (additional > UINT32_MAX - count) return false;
+        bool Include(std::uint32_t additional, std::uint32_t rows, std::uint32_t controls) noexcept {
+            if (additional > UINT32_MAX - count || controls > UINT32_MAX - controlCount) return false;
+            controlCount += controls;
             count += additional;
             width = std::max(width, rows);
             return true;
@@ -8323,6 +8330,8 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (backing.controlCount != 0 && !variableControlInstances.PrepareBacking(
+                backing.controlCount, &backing.variableControls)) return false;
         const auto width = std::max(RequiredDeferredTreeWidth(), backing.width);
         if (!actionPlayScratch.PrepareBacking(backing.count, backing.count,
                 [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
@@ -8341,15 +8350,32 @@ public:
         std::uint32_t& active;
         const std::uint32_t previous;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse use;
-        BorrowedTree(std::uint32_t& width, const DeferredTreeBacking* held) noexcept
-            : active(width), previous(width), use(held ? held->attempts.Use() : decltype(use){}) {
-            if (held) active = held->width;
+        ActionFiringHandle& controlOwner;
+        const ActionFiringHandle previousOwner;
+        BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner) noexcept
+            : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
+              controlOwner(engine.preparingDeferredControlOwner), previousOwner(controlOwner) {
+            if (held) {
+                active = held->width;
+                controlOwner = held->controlCount != 0 ? owner : 0;
+            }
         }
         BorrowedTree(const BorrowedTree&) = delete;
-        ~BorrowedTree() { active = previous; }
+        ~BorrowedTree() {
+            active = previous;
+            controlOwner = previousOwner;
+        }
     };
-    BorrowedTree UseDeferredTrees(ActionFiringHandle firing) noexcept {
-        return {borrowedTreeWidth, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing))};
+    BorrowedTree UseDeferredTrees(ActionFiringHandle firing, ActionFiringHandle controlOwner) noexcept {
+        return {*this, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing)), controlOwner};
+    }
+    VariableControlInstanceStatus PrepareVariableControlInstance(const EnginePlayableServiceRow& service,
+        const VariableControlInstanceCreateRequest& request, PreparedVariableControlInstance* result) noexcept {
+        const auto owner = service.InvocationValid() ? service.Invocation().deferredControlOwner : 0;
+        const auto* backing = owner == 0 ? nullptr :
+            static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(owner));
+        auto use = backing ? backing->variableControls.Use() : StableStoragePreparedUse{};
+        return variableControlInstances.PrepareAcquire(request, result);
     }
     bool EnsureActionPlaySlot(std::uint32_t slot, bool needsContainerState = true) noexcept {
         needsContainerState |= actionPlayScratch.HasPreparedBacking();
@@ -8543,7 +8569,10 @@ public:
         row.invocation = &invocation;
         row.invocationGeneration = invocation.generation;
         ++invocation.serviceCount;
-        if (rootService) invocation.rootService = row.identity;
+        if (rootService) {
+            invocation.rootService = row.identity;
+            invocation.deferredControlOwner = preparingDeferredControlOwner;
+        }
         row.partition = partition;
         row.ownerInstance = owner;
         row.ownerEpoch = epoch;

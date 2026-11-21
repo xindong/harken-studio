@@ -24169,7 +24169,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         EXPECT_EQ(0u, engine->playableServices.size());
         EXPECT_EQ(0u, engine->playablePartitions.Capacity());
         EXPECT_EQ(modeCapacity, engine->queueInstances.Capacity());
-        EXPECT_EQ(modeCapacity, engine->variableControlInstances.Capacity());
+        EXPECT_EQ(0u, engine->variableControlInstances.ConstructedCount());
     }
     const auto Vn_PostAction = [&](const VnPostActionDesc* post, VnActionFiringHandle* handle) {
         return storage.Measure([&] { return ::Vn_PostAction(post, handle); });
@@ -50939,7 +50939,16 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
             if (record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_PREPARED) candidates.push_back(record);
         }
     };
-    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    const auto previousCountdown = engine.nativeBackingAllocationFailureCountdownForTest;
+    if (shape == PendingVariableSelectionShape::SoundToSilent || shape == PendingVariableSelectionShape::SoundToTrack)
+        engine.nativeBackingAllocationFailureCountdownForTest = 0;
+#endif
+    const auto posted = Vn_PostAction(&desc, &firing);
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    engine.nativeBackingAllocationFailureCountdownForTest = previousCountdown;
+#endif
+    ASSERT_EQ(VN_OK, posted);
     collectSelections();
     EXPECT_TRUE(selected.empty());
     if (capture != 0) {
@@ -52957,6 +52966,19 @@ static void CheckOrderedVariableSubtreeFirstPcm(SubtreeBindingScenario scenario,
     }
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    // Prepare unrelated controllers after acceptance to exercise the retained replacement backing.
+    std::vector<harken::PreparedVariableControlInstance> competingControls;
+    if (nestedPolicyShape == NestedReplacementPolicyShape::TwoLevels && finalSubtree && !cancelPreparedNested) {
+        auto& controls = engine.variableControlInstances;
+        harken::VariableControlInstanceCreateRequest request{1, 1, image.properties[5].stableId, 1};
+        for (unsigned index = 0; ; ++index) {
+            if (index == 257) controls.SetCommitPageLimitForTests(0);
+            harken::PreparedVariableControlInstance entry;
+            if (controls.PrepareAcquire(request, &entry) != harken::VariableControlInstanceStatus::Ok) break;
+            competingControls.push_back(std::move(entry));
+        }
+        ASSERT_GE(competingControls.size(), 257u);
+    }
     const auto secondBinding = harkentest::ObjectId(9711);
     if (scenario.timing == BindingTiming::RefusedAfterAcceptance) ASSERT_EQ(VN_OK, Vn_RegisterBinding(secondBinding, &binding));
     VnActionStepResult accepted{};
@@ -54311,6 +54333,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(SubtreeBindingScenario scenario,
             EXPECT_FALSE(engine.armGroups.Capture(token, &group));
         }
     }
+    for (auto& control : competingControls) EXPECT_TRUE(engine.variableControlInstances.CancelPreparedAcquire(&control));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
@@ -55467,6 +55490,11 @@ static void CheckPendingVariableSelectedContainerAtPlacement(bool sequence, bool
     }
     for (auto& action : image.actions)
         action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+    if (sequence && !oldContainer && testCase == PendingSelectedContainerCase::OneShot && !bindVolume) {
+        ASSERT_EQ(0u, image.world.trackScheduleCount);
+        ASSERT_EQ(0u, image.world.segmentScheduleCount);
+        image.world.capacity.maxTrackSegmentScheduleDepth = 0;
+    }
     image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
     if (bindVolume) {

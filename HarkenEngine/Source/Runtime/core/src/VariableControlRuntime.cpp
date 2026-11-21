@@ -437,10 +437,21 @@ bool ResolveVariableControlCadenceFrame(
     return true;
 }
 
-VariableControlInstanceTable::VariableControlInstanceTable(
-    std::uint32_t capacity)
-    : capacity_(capacity) {
-    if (!entries_.Reserve(capacity)) throw harken::detail::LogicPreparationFailure{};
+std::uint32_t VariableControlInstanceTable::OccupiedRows() const noexcept {
+    std::uint32_t occupied = 0;
+    for (const auto& entry : entries_) {
+        if (entry.state.load(std::memory_order_acquire) != SlotState::Free) ++occupied;
+    }
+    return occupied;
+}
+
+bool VariableControlInstanceTable::PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+    if (out == nullptr || out->Valid() || entries_.PreparedUseActive() || memguard::IsAudioTagged()) return false;
+    const auto occupied = OccupiedRows();
+    if (count > limit_ - occupied || entries_.HeldRows() > limit_ - occupied - count) return false;
+    if (entries_.PrepareBacking(count, occupied, out)) return true;
+    detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
 }
 
 VariableControlInstanceTable::Entry*
@@ -706,8 +717,15 @@ VariableControlInstanceStatus VariableControlInstanceTable::AcquireInternal(
         request.programSemanticFingerprint == 0) {
         return VariableControlInstanceStatus::Invalid;
     }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        if (!entries_.ConstructThrough(slot + 1u)) return VariableControlInstanceStatus::Capacity;
+    const auto occupied = OccupiedRows();
+    if (occupied == limit_ || (!entries_.PreparedUseActive() && entries_.HeldRows() >= limit_ - occupied))
+        return VariableControlInstanceStatus::Capacity;
+    if (!entries_.ConstructThrough(occupied + 1u)) {
+        if (!entries_.PreparedUseActive() && !memguard::IsAudioTagged())
+            detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return VariableControlInstanceStatus::Capacity;
+    }
+    for (std::uint32_t slot = 0; slot < entries_.ConstructedCount(); ++slot) {
         Entry& entry = entries_[slot];
         SlotState expected = SlotState::Free;
         if (!entry.state.compare_exchange_strong(

@@ -25570,12 +25570,21 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             image.step.target.expectedProgramSemanticFingerprint = track.expectedProgramSemanticFingerprint;
         }
         const auto immediateStep = image.step;
+        const bool mixed = scenario == 6;
+        std::array<ActionStepProgramViewV1, 2> mixedSteps{};
         std::array<ActionProgramViewV1, 2> actions{image.action, image.action};
         if (deferred) {
             SetAbsoluteTime(&image.step.delay, INT64_C(1000000000));
             image.action.directFeatureMask = image.action.transitiveFeatureMask = 1u;
             image.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(image.action);
             actions[0] = image.action;
+            if (mixed) {
+                mixedSteps = {immediateStep, image.step};
+                mixedSteps[1].authoredEventIndex = 1;
+                actions[0].steps = mixedSteps.data();
+                actions[0].stepCount = actions[0].expandedStepOccurrenceCount = 2;
+                actions[0].programSemanticFingerprint = ComputeActionProgramFingerprintV1(actions[0]);
+            }
             actions[1].actionStableId = harkentest::ObjectId(72101);
             actions[1].steps = &immediateStep;
             actions[1].programSemanticFingerprint = ComputeActionProgramFingerprintV1(actions[1]);
@@ -25627,9 +25636,28 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
         if (deferred) {
             VnActionFiringHandle cancelled = 0;
-            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &cancelled));
-            if (!trackRoot) ASSERT_EQ(VN_OK, Vn_PostAction(&now, &immediate));
-            ASSERT_EQ(VN_OK, Vn_StopActionFiring(cancelled, 0));
+            if (!mixed) {
+                ASSERT_EQ(VN_OK, Vn_PostAction(&post, &cancelled));
+                if (!trackRoot) ASSERT_EQ(VN_OK, Vn_PostAction(&now, &immediate));
+                ASSERT_EQ(VN_OK, Vn_StopActionFiring(cancelled, 0));
+            } else {
+                const auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+                    [&](const auto& row) { return row.InvocationValid() && row.Invocation().actionFiring == firing; });
+                ASSERT_NE(engine.playableServices.end(), service);
+                // The immediate step shares the firing with a delayed step but owns no future control rows.
+                auto& controls = engine.variableControlInstances;
+                controls.SetCommitPageLimitForTests(0);
+                VariableControlInstanceCreateRequest request{1, 1, ContainerMatrixWorld::kRoot, 1};
+                std::vector<VariableControlInstanceToken> live;
+                VariableControlInstanceToken token{};
+                while (controls.Acquire(request, &token) == VariableControlInstanceStatus::Ok) live.push_back(token);
+                PreparedVariableControlInstance attempted;
+                EXPECT_EQ(VariableControlInstanceStatus::Capacity,
+                    engine.PrepareVariableControlInstance(*service, request, &attempted));
+                if (attempted.Valid()) EXPECT_TRUE(controls.CancelPreparedAcquire(&attempted));
+                for (auto occupied : live) ASSERT_TRUE(controls.Release(occupied));
+                controls.SetCommitPageLimitForTests(SIZE_MAX);
+            }
             unsigned immediateFrames[2]{};
             for (unsigned block = 0; block < 128; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());
@@ -25646,15 +25674,30 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             EXPECT_EQ(second.size(), immediateFrames[1]);
             VnActionFiringInfo stopped{};
             stopped.structSize = sizeof(stopped);
-            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(cancelled, &stopped));
-            EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, stopped.outcome);
-            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(cancelled));
-            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(immediate));
+            if (!mixed) {
+                ASSERT_EQ(VN_OK, Vn_QueryActionFiring(cancelled, &stopped));
+                EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, stopped.outcome);
+                ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(cancelled));
+                ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(immediate));
+            }
+        }
+        std::vector<VariableControlInstanceToken> competing;
+        if (scenario >= 5) {
+            auto& controls = engine.variableControlInstances;
+            VariableControlInstanceCreateRequest request{1, 1, ContainerMatrixWorld::kRoot, 1};
+            VariableControlInstanceToken token{};
+            for (unsigned i = 0; i < 257; ++i) {
+                ASSERT_EQ(VariableControlInstanceStatus::Ok, controls.Acquire(request, &token));
+                competing.push_back(token);
+            }
+            controls.SetCommitPageLimitForTests(0);
+            while (controls.Acquire(request, &token) == VariableControlInstanceStatus::Ok)
+                competing.push_back(token);
         }
         struct ResetFault {
             ~ResetFault() { detail::DisarmLogicAllocFaultForTests(); }
         } resetFault;
-        if (deferred) {
+        if (deferred && scenario < 5) {
             const auto site = scenario <= 2 ? detail::LogicAllocSite::PlayableTreeStorage :
                 scenario == 3 ? detail::LogicAllocSite::ActionPlayContainerStorage :
                 detail::LogicAllocSite::FrontierOwnerLedgerStorage;
@@ -25688,6 +25731,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
+        for (auto token : competing) EXPECT_TRUE(engine.variableControlInstances.Release(token));
         if (scenario <= 2) referenceStart[scenario] = onsets[0];
         else EXPECT_EQ(referenceStart[trackRoot ? 2u : 1u], onsets[0]);
         if (scenario == 1 || scenario == 2 || scenario == 4)
@@ -25712,7 +25756,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         EXPECT_EQ(VN_OK, Vn_UnloadPackEx(rows[1].handle, VN_PACK_UNLOAD_REFUSE_IF_USED));
         EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
     };
-    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+    for (unsigned scenario = 0; scenario < 7; ++scenario) {
         std::vector<float> actual;
         ASSERT_NO_FATAL_FAILURE(play(scenario, false, actual));
 #if !defined(HARKEN_RT_QUALIFICATION)

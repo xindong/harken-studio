@@ -1368,7 +1368,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->playableServices.Capacity());
     EXPECT_EQ(0u, engine->playablePartitions.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->queueInstances.Capacity());
-    EXPECT_EQ(engine->config.maxContainerInstances, engine->variableControlInstances.Capacity());
+    EXPECT_EQ(0u, engine->variableControlInstances.ConstructedCount());
 
     EXPECT_EQ(0u, engine->playableMemberRecords.size());
     EXPECT_EQ(0u, engine->playableMemberRecords.ConstructedCount());

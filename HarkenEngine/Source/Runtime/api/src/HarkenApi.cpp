@@ -3,6 +3,8 @@
 #include "Engine.h"
 #include "BusBindingSourceStamp.h"
 #include "EngineNativeBackingEnvelope.h"
+#include <map>
+#include <optional>
 #include "RealDeviceInitStage.h"
 #include "ActionAdmission.h"
 #include "PackVariablePublication.h"
@@ -22105,8 +22107,7 @@ bool PrepareVariableControlRetargetSubtree(
                 out->nestedVariableControlCount;
             auto& prepared =
                 out->nestedVariableControlInstances[index];
-            if (engine.variableControlInstances.PrepareAcquire(
-                    create, &prepared) !=
+            if (engine.PrepareVariableControlInstance(parentService, create, &prepared) !=
                 harken::VariableControlInstanceStatus::Ok) {
                 return false;
             }
@@ -26475,7 +26476,7 @@ bool PrepareNestedVariableControlInitialResources(
     create.containerStableId = nestedProgram->containerStableId;
     create.programSemanticFingerprint = nestedProgram->programSemanticFingerprint;
     auto& preparedControl = scratch.variableControlNestedVariableControls[nestedIndex];
-    if (engine.variableControlInstances.PrepareAcquire(create, &preparedControl) !=
+    if (engine.PrepareVariableControlInstance(parentService, create, &preparedControl) !=
         harken::VariableControlInstanceStatus::Ok) return false;
     auto& nestedDecision = scratch.variableControlNestedDecisions[nestedIndex];
     harken::DecisionReserveRequest decision{};
@@ -28051,8 +28052,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     create.rootInstance = instance;
     create.containerStableId = program.containerStableId;
     create.programSemanticFingerprint = program.programSemanticFingerprint;
-    if (engine.variableControlInstances.PrepareAcquire(
-            create, &scratch->variableControlInstance) !=
+    if (engine.PrepareVariableControlInstance(row, create, &scratch->variableControlInstance) !=
         harken::VariableControlInstanceStatus::Ok) {
         scratch->row = &row;
         scratch->variableControl = true;
@@ -31038,7 +31038,8 @@ struct PreparedQueueContinuationTree {
     bool Prepare(const harken::ContainerChildProgramViewV2& child,
                  harken::PlayableInstanceHandle parent, const WorldView& world) noexcept {
         if (row.parentService.Valid() && row.variableControlNestedQueueSuccessorInstance != 0) return true;
-        auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0);
+        auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0,
+            row.InvocationValid() ? row.Invocation().deferredControlOwner : 0);
         scratch = AcquireFrontierAttempt(engine);
         if (scratch == nullptr) return false;
         const auto kind = child.playable.kind == harken::PlayableKindV1::Sound ? harken::PlayableKind::Sound :
@@ -37654,7 +37655,8 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessor(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame) noexcept {
-    auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0);
+    auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0,
+        row.InvocationValid() ? row.Invocation().deferredControlOwner : 0);
     std::uint64_t continuationFrame = QueueEarliestContinuationFrame(engine);
     harken::LogicCommitSequence deferredTicket = 0;
     for (std::uint32_t attempt = 0;
@@ -49223,6 +49225,7 @@ PendingVariableGroupSelectionResult ServicePendingVariableGroupSelectionReplacem
     auto* backingOwner = engine.NativeBackingOwnerFor(*group, &backingOrdinal);
     if (backingOwner == nullptr || !backingOwner->nativeRuntimeBacking) return Result::Refused;
     harken::Engine::NativeRuntimeBackingUse preparedBacking(engine, backingOwner->nativeRuntimeBacking.get());
+    auto controlRows = group->replacementControls.Use();
     // Fully cancel the previous private attempt before rebuilding its captured inputs.
     if (!engine.CancelPendingVariableGroupChildren(*group)) return Result::Waiting;
     auto& reservations = group->selectionReservations;
@@ -49358,6 +49361,7 @@ PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelecti
         auto& row = *producer.row;
         if (row.pendingCancellationIntent != 0) continue;
         auto& group = engine.acceptedPendingVariableGroups[row.identity.slot];
+        auto controlRows = group.replacementControls.Use();
         const auto* program = ResolveVariableControlProgram(engine, row);
         harken::VariableReadCutReader reader;
         SharedVariableControlDecisionPlan selected;
@@ -64039,6 +64043,250 @@ bool Engine::PregrantPendingVariableCohortNativeBacking(const EngineImmediateEnt
     return true;
 }
 
+// Before publication the preparing play owns the Pack. After publication the
+// invocation owns it. Resolve the program and its backing from the same view.
+struct PendingControlContent {
+    const PackPartitionLease& lease;
+    const PackPlaybackView& view;
+
+    const ContainerProgramViewV3* Program(Engine& engine, const EnginePlayableServiceRow& row) const noexcept {
+        return lease.leaseToken != 0 && !row.variableControlWorldUsesCurrentAuthority
+            ? view.ResolveContainer(row.root.stableId, row.root.expectedProgramSemanticFingerprint).programView
+            : ResolveVariableControlProgram(engine, row);
+    }
+};
+
+static PendingControlContent PendingControlContentFor(const EngineActionPlayScratch& producer) noexcept {
+    const auto& invocation = producer.row->Invocation();
+    if (invocation.packLease.leaseToken != 0) return {invocation.packLease, invocation.packPlaybackView};
+    return {producer.packLease, producer.packPlaybackView};
+}
+
+static bool CountPendingVariableBacking(Engine& engine, EngineActionPlayScratch& producer,
+    std::vector<native_backing::MemoEntry>& memo, native_backing::Result& result, bool* waiting) {
+    namespace backing = native_backing;
+    auto& row = *producer.row;
+    if (!row.InvocationValid()) return false;
+    const auto source = PendingControlContentFor(producer);
+    const auto* program = source.Program(engine, row);
+    if (program == nullptr || program->mode != ContainerModeV1::VariableControl ||
+        row.root.kind != PlayableKindV1::Container) return false;
+    const auto& selection = producer.storage.initialSelection;
+    const bool boundSelection = selection.BoundFor(producer.storage.generation);
+    if (boundSelection && (!selection.prefixSealed || selection.prefixCount > selection.prefix.size())) return false;
+    backing::Limits limits{};
+    const auto futureCapacity = std::min({static_cast<std::size_t>(producer.storage.queueRoleCapacity),
+        producer.storage.queueFutureAttempts.size(), producer.storage.queueFutureOwners.size(),
+        static_cast<std::size_t>(engine.config.maxPlayableInstances)});
+    if (futureCapacity > UINT32_MAX || row.selectionCount > row.selectedChildOrdinals.size()) return false;
+    limits.includeDynamicInstanceRows = true;
+    limits.immediateFutureSides = static_cast<std::uint32_t>(futureCapacity);
+    limits.queueRoleCapacity = producer.storage.queueRoleCapacity;
+    limits.propertyPrefixCount = row.VariableControlPropertyRoot().stableId != VnObjectId{} ? row.selectionCount : 0;
+    limits.seedPrefixCount = boundSelection ? selection.prefixCount : 0;
+    const bool pack = !row.variableControlWorldUsesCurrentAuthority && source.lease.leaseToken != 0;
+    PlayableWorldViewV1 world{};
+    backing::AuthorityStamp stamp{};
+    if (pack) {
+        const auto& invocation = row.Invocation();
+        if (source.lease.compositeGeneration != invocation.worldGeneration ||
+            source.view.CompositeGeneration() != invocation.worldGeneration ||
+            engine.packComposition.ValidateLease(source.lease) != VN_OK) return false;
+        stamp = {invocation.worldGeneration, source.view.WorldSemanticFingerprint()};
+        limits.currentScheduleDepth = kSelectionPathNodeCapacity;
+        limits.directFutureScheduleDepth = WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth;
+    } else {
+        world = row.variableControlWorldUsesCurrentAuthority ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld();
+        if (world.generation != row.Invocation().worldGeneration) return false;
+        stamp = {world.generation, world.identity.runtimeSemanticFingerprint};
+        // A world containing no schedules may declare zero depth. There is no
+        // schedule edge to traverse when sizing an ordinary container switch.
+        limits.currentScheduleDepth = limits.directFutureScheduleDepth =
+            world.trackScheduleCount == 0 && world.segmentScheduleCount == 0 ? 1u : world.maxTrackSegmentScheduleDepth;
+    }
+    for (;;) {
+        backing::MemoWorkspace workspace(memo.data(), memo.size());
+        if (pack) {
+            backing::PackContent content(source.view);
+            result = backing::Counter(content, limits, workspace).Count(row.root, stamp,
+                limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot(),
+                {row.selectionPath.data(), limits.propertyPrefixCount});
+        } else {
+            backing::WorldContent content(world, &engine.bindings);
+            result = backing::Counter(content, limits, workspace).Count(row.root, stamp,
+                limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot(),
+                {row.selectionPath.data(), limits.propertyPrefixCount});
+        }
+        if (result.status != backing::Status::WorkspaceExhausted) break;
+        if (memo.size() > memo.max_size() / 2u) return false;
+        const auto nextSize = memo.empty() ? 64u : memo.size() * 2u;
+        if (!engine.AllowNativeBackingAllocation()) {
+            if (waiting != nullptr) *waiting = true;
+            return false;
+        }
+        memo.resize(nextSize);
+    }
+    if (!result || source.Program(engine, row) != program) return false;
+    if (!pack) {
+        const auto after = row.variableControlWorldUsesCurrentAuthority ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld();
+        if (after.generation != stamp.generation || after.identity.runtimeSemanticFingerprint != stamp.semanticFingerprint)
+            return false;
+    } else if (engine.packComposition.ValidateLease(source.lease) != VN_OK ||
+        source.view.CompositeGeneration() != stamp.generation ||
+        source.view.WorldSemanticFingerprint() != stamp.semanticFingerprint) return false;
+    return true;
+}
+
+// Count only controller instances. A Sound needs no controller, including when
+// reached through an ordinary container, Track or Segment.
+template<class Content>
+static bool CountPendingControllers(const Content& content, const PlayableRefV1& root, std::uint32_t& count) {
+    struct Node {
+        const ContainerProgramViewV3* container = nullptr;
+        const TrackScheduleProgramViewV1* track = nullptr;
+        const SegmentScheduleProgramViewV1* segment = nullptr;
+        std::uint32_t next = 0;
+        std::uint32_t largest = 0;
+        std::uint32_t second = 0;
+        std::uint32_t first = 0;
+        std::uint64_t sum = 0;
+        bool HasChild() const noexcept {
+            return next < (container ? container->childCount : track ? track->placementCount : segment->trackRefCount);
+        }
+        const PlayableRefV1& Child() const noexcept {
+            return container ? container->children[next].playable : track ? track->placements[next].content :
+                segment->trackRefs[next].trackDefinition;
+        }
+        const void* Key() const noexcept {
+            if (container) return container;
+            if (track) return track;
+            return segment;
+        }
+        void Add(std::uint32_t rows) noexcept {
+            const auto index = next++;
+            if (rows == 0) return;
+            if (!container) { sum += rows; return; }
+            if (container->mode == ContainerModeV1::VariableControl) {
+                const auto ordinal = container->children[index].stableChildOrdinal;
+                for (const auto& row : std::span(container->continuousRows, container->continuousRowCount)) {
+                    if (row.childStableOrdinal == ordinal) { sum += rows; break; }
+                }
+                for (const auto& row : std::span(container->discreteRows, container->discreteRowCount)) {
+                    if (row.childStableOrdinal == ordinal) { largest = std::max(largest, rows); break; }
+                }
+            } else {
+                if (index == 0) first = rows;
+                second = std::max(second, std::min(rows, largest));
+                largest = std::max(largest, rows);
+            }
+        }
+        std::uint64_t Total() const noexcept {
+            if (!container) return sum;
+            if (container->mode == ContainerModeV1::VariableControl) return 1u + sum + largest;
+            if (container->mode != ContainerModeV1::SequenceQueue && container->mode != ContainerModeV1::RandomQueue)
+                return largest;
+            // Current and prepared successor coexist. Sequence can wrap to its
+            // first child, and Random can repeat any child when looping.
+            auto total = std::uint64_t{largest} + second;
+            if (container->queueCycle == QueueCycleV1::Loop && (container->queueCycleCount == 0 || container->queueCycleCount > 1u)) {
+                const auto repeat = container->mode == ContainerModeV1::SequenceQueue ? first : largest;
+                total = std::max(total, std::uint64_t{2} * repeat);
+            }
+            return total;
+        }
+    };
+    auto resolve = [&](const PlayableRefV1& ref) {
+        Node node;
+        if (ref.kind == PlayableKindV1::Container) node.container = content.Container(ref);
+        else if (ref.kind == PlayableKindV1::Track) node.track = content.Track(ref);
+        else if (ref.kind == PlayableKindV1::Segment) node.segment = content.Segment(ref);
+        return node;
+    };
+    // Keep ordinary graphs on the stack. A shared definition is visited once
+    // and contributes separately for each placement.
+    struct Entry { Node node; std::size_t parent = SIZE_MAX; std::optional<std::uint32_t> total; };
+    std::array<Entry, 16> local{};
+    struct Overflow {
+        std::vector<Entry> entries;
+        std::map<const void*, std::size_t> byDefinition;
+    };
+    std::optional<Overflow> overflow;
+    std::size_t used = 1;
+    auto at = [&](std::size_t i) -> Entry& {
+        return i < local.size() ? local[i] : overflow->entries[i - local.size()];
+    };
+    local[0].node = resolve(root);
+    if (!local[0].node.Key()) return false;
+    std::size_t index = 0;
+    while (index != SIZE_MAX) {
+        auto& entry = at(index);
+        auto& node = entry.node;
+        if (!node.HasChild()) {
+            const auto total = node.Total();
+            if (total > UINT32_MAX) return false;
+            count = static_cast<std::uint32_t>(total);
+            entry.total = count;
+            index = entry.parent;
+            if (index != SIZE_MAX) at(index).node.Add(count);
+            continue;
+        }
+        const auto& ref = node.Child();
+        if (ref.kind == PlayableKindV1::Sound) { node.Add(0); continue; }
+        const auto child = resolve(ref);
+        const auto key = child.Key();
+        if (!key) return false;
+        std::size_t slot = 0;
+        const auto end = std::min(used, local.size());
+        while (slot < end && local[slot].node.Key() != key) ++slot;
+        if (slot == local.size()) {
+            if (!overflow) overflow.emplace();
+            const auto [position, inserted] = overflow->byDefinition.try_emplace(key, used);
+            slot = position->second;
+            if (inserted) overflow->entries.emplace_back();
+        }
+        if (slot == used) {
+            ++used;
+            at(slot) = {child, index, std::nullopt};
+            index = slot;
+        } else {
+            const auto value = at(slot).total;
+            if (!value) return false;
+            at(index).node.Add(*value);
+        }
+    }
+    return true;
+}
+
+static bool PreparePendingControllerRows(Engine& engine, EngineActionPlayScratch& producer,
+    StableStoragePreparation* out) noexcept {
+    if (producer.row == nullptr || !producer.row->InvocationValid() || out == nullptr || out->Valid()) return false;
+    const auto& row = *producer.row;
+    const auto source = PendingControlContentFor(producer);
+    const auto* program = source.Program(engine, row);
+    if (program == nullptr) return false;
+    const auto children = std::span(program->children, program->childCount);
+    if (std::all_of(children.begin(), children.end(),
+            [](const auto& child) { return child.playable.kind == PlayableKindV1::Sound; })) return true;
+    try {
+        std::uint32_t count = 0;
+        if (!row.variableControlWorldUsesCurrentAuthority && source.lease.leaseToken != 0) {
+            if (source.view.CompositeGeneration() != row.Invocation().worldGeneration ||
+                engine.packComposition.ValidateLease(source.lease) != VN_OK ||
+                !CountPendingControllers(native_backing::PackContent(source.view), row.root, count)) return false;
+        } else {
+            const auto world = row.variableControlWorldUsesCurrentAuthority ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld();
+            if (world.generation != row.Invocation().worldGeneration ||
+                !CountPendingControllers(native_backing::WorldContent(world), row.root, count)) return false;
+        }
+        return count == 1u || (count > 1u && engine.variableControlInstances.PrepareBacking(count - 1u, out));
+    } catch (const std::bad_alloc&) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
+}
+
 bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt& attempt,
     EngineActionPlayScratch* single, std::vector<NativeReplacementSlot>* slots,
     std::vector<QueueRoleReservationSlot>* queueSlots,
@@ -64099,70 +64347,11 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 group->leafRetirement != OriginalPendingVariableGroupHolder::LeafRetirement::None ||
                 !group->nativeReplacementSlots.empty() || !group->queueRoleReservations.empty()) return false;
             auto& row = *producer->row;
-            const auto* program = ResolveVariableControlProgram(*this, row);
-            if (program == nullptr || program->mode != ContainerModeV1::VariableControl ||
-                row.root.kind != PlayableKindV1::Container || !row.InvocationValid()) return false;
-            const auto& selection = producer->storage.initialSelection;
-            const bool boundSelection = selection.BoundFor(producer->storage.generation);
-            if (boundSelection && (!selection.prefixSealed || selection.prefixCount > selection.prefix.size())) return false;
-            backing::Limits limits{};
-            const auto futureCapacity = std::min({static_cast<std::size_t>(producer->storage.queueRoleCapacity),
-                producer->storage.queueFutureAttempts.size(), producer->storage.queueFutureOwners.size(),
-                static_cast<std::size_t>(config.maxPlayableInstances)});
-            if (futureCapacity > UINT32_MAX || row.selectionCount > row.selectedChildOrdinals.size()) return false;
-            limits.includeDynamicInstanceRows = true;
-            limits.immediateFutureSides = static_cast<std::uint32_t>(futureCapacity);
-            limits.queueRoleCapacity = producer->storage.queueRoleCapacity;
-            limits.propertyPrefixCount = row.VariableControlPropertyRoot().stableId != VnObjectId{} ? row.selectionCount : 0;
-            limits.seedPrefixCount = boundSelection ? selection.prefixCount : 0;
-            const bool pack = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0;
-            PlayableWorldViewV1 world{};
-            backing::AuthorityStamp stamp{};
-            if (pack) {
-                const auto& invocation = row.Invocation();
-                if (invocation.packLease.compositeGeneration != invocation.worldGeneration ||
-                    invocation.packPlaybackView.CompositeGeneration() != invocation.worldGeneration ||
-                    packComposition.ValidateLease(invocation.packLease) != VN_OK) return false;
-                stamp = {invocation.worldGeneration, invocation.packPlaybackView.WorldSemanticFingerprint()};
-                limits.currentScheduleDepth = kSelectionPathNodeCapacity;
-                limits.directFutureScheduleDepth = WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth;
-            } else {
-                world = row.variableControlWorldUsesCurrentAuthority ? variables.CurrentPlayableWorld() : row.VariableControlWorld();
-                if (world.generation != row.Invocation().worldGeneration) return false;
-                stamp = {world.generation, world.identity.runtimeSemanticFingerprint};
-                limits.currentScheduleDepth = limits.directFutureScheduleDepth = world.maxTrackSegmentScheduleDepth;
-            }
             backing::Result result;
-            for (;;) {
-                backing::MemoWorkspace workspace(memo.data(), memo.size());
-                if (pack) {
-                    backing::PackContent content(row.Invocation().packPlaybackView);
-                    result = backing::Counter(content, limits, workspace).Count(row.root, stamp,
-                        limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot(),
-                        {row.selectionPath.data(), limits.propertyPrefixCount});
-                } else {
-                    backing::WorldContent content(world, &bindings);
-                    result = backing::Counter(content, limits, workspace).Count(row.root, stamp,
-                        limits.propertyPrefixCount == 0 ? nullptr : &row.VariableControlPropertyRoot(),
-                        {row.selectionPath.data(), limits.propertyPrefixCount});
-                }
-                if (result.status != backing::Status::WorkspaceExhausted) break;
-                if (memo.size() > memo.max_size() / 2u) return false;
-                const auto nextSize = memo.empty() ? 64u : memo.size() * 2u;
-                if (!AllowNativeBackingAllocation()) return shortage();
-                memo.resize(nextSize);
-            }
-            if (!result || ResolveVariableControlProgram(*this, row) != program) return false;
-            if (!pack) {
-                const auto after = row.variableControlWorldUsesCurrentAuthority ? variables.CurrentPlayableWorld() : row.VariableControlWorld();
-                if (after.generation != stamp.generation || after.identity.runtimeSemanticFingerprint != stamp.semanticFingerprint)
-                    return false;
-            } else if (packComposition.ValidateLease(row.Invocation().packLease) != VN_OK ||
-                row.Invocation().packPlaybackView.CompositeGeneration() != stamp.generation ||
-                row.Invocation().packPlaybackView.WorldSemanticFingerprint() != stamp.semanticFingerprint) return false;
+            if (!CountPendingVariableBacking(*this, *producer, memo, result, waiting)) return false;
             if (!PrepareVoiceBindingResolutionStorage(result.profile.voice.bindings)) return shortage();
             profiles[ordinal] = result.profile;
-            if (result.profile.controlSides < 2u || result.profile.containerRows == 0) return false;
+            if (result.profile.controlSides < 2u || result.profile.containerRows == 0 || result.profile.variableControls == 0) return false;
             if (!PrepareVariableControlOwners(row,
                     std::min(kMaxKnownScheduleLeaves + 64u, result.profile.controlSides / 2u - 1u),
                     std::min(kMaxKnownScheduleLeaves + 64u, result.profile.containerRows - 1u))) return shortage();
@@ -64194,6 +64383,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             nativeInstances += result.profile.instanceRows - 1u;
             nativeCompletions += result.profile.Q + result.profile.H[2];
             nativeTransitions += result.profile.transitionRows;
+            if (group->replacementControls.ReservedRows() < result.profile.variableControls - 1u) return false;
             queueControls += result.profile.Q;
             nativeGroups += std::max(2u, result.profile.controlSides) + 1u + 4ull * result.profile.Q;
             for (std::uint32_t threshold = 1; threshold <= backing::kLeafCapacity; ++threshold) {
@@ -73158,7 +73348,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPlayOrStop(
     const ActionFiringSnapshot& firing,
     std::uint64_t currentQuantum,
     std::uint64_t* newPageStartBlocker) noexcept {
-    auto trees = engine.UseDeferredTrees(record.firing);
+    auto trees = engine.UseDeferredTrees(record.firing, record.step.opcode == ActionOpcodeV1::Play ? record.firing : 0);
     auto playableUse = engine.actionFirings.UsePlayableBacking(record.firing);
     ImmediateActionPlan plan{};
     plan.playbackRequest = firing.playbackRequest;
@@ -86788,7 +86978,8 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
                 const auto width = 2ull * result.profile.instanceRows + 1u;
                 if (width > UINT32_MAX) return VN_OUT_OF_MEMORY;
                 if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
-                if (!trees->Include(result.profile.preparationTrees, static_cast<std::uint32_t>(width)))
+                if (!trees->Include(result.profile.preparationTrees, static_cast<std::uint32_t>(width),
+                        result.profile.variableControls))
                     return VN_BACKPRESSURE;
             }
             return VN_OK;
@@ -105299,7 +105490,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
     }
     // A delayed child owns backing for its Play steps. Queue replacements prepare
     // their own rows from the live queue at materialization.
-    auto trees = engine.UseDeferredTrees(plan->deferredParentFiring);
+    auto trees = engine.UseDeferredTrees(plan->deferredParentFiring, plan->deferredParentFiring);
     auto playableUse = plan->deferredParentFiring != 0 && plan->playCount != 0
         ? engine.actionFirings.UsePlayableBacking(plan->deferredParentFiring)
         : harken::StableStoragePreparedUse{};
@@ -107608,7 +107799,8 @@ bool PreparePendingInitialVariableGroups(ImmediateActionPlan& plan) noexcept {
         assert(holder != nullptr && holder->Empty());
         prepared.cut = std::exchange(variables.ref, {});
         *holder = std::move(prepared);
-        if (!MatchesPendingInitialVariableLeafMembers(engine, *scratch) ||
+        if (!harken::PreparePendingControllerRows(engine, *scratch, &holder->replacementControls) ||
+            !MatchesPendingInitialVariableLeafMembers(engine, *scratch) ||
             !engine.BindPendingVariableGroupInitialLeafSources(*scratch, *links) ||
             !engine.BindPendingVariableGroupQueueFutureSources(*scratch, *links)) return false;
     }
