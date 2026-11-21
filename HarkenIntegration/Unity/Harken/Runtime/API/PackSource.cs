@@ -23,6 +23,7 @@ namespace Harken
         public string Language { get; }
         public bool IsAsync => asyncReader != null;
         internal bool IsDirectory => directory != null;
+        internal bool IsResidentDirectory => directory?.IsResidentDirectory == true;
         internal string Root => directory?.Root ?? archive?.Root ?? string.Empty;
 
         private PackSource(string language, Func<string, byte[]> reader = null,
