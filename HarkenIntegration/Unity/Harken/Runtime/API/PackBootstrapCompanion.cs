@@ -10,6 +10,7 @@ namespace Harken
     {
         internal IReadOnlyDictionary<ulong, string> companionLocators;
         private PackSource companionSource;
+        internal PackArchive ownedArchive;
         private SharedPack[] companionOwners = Array.Empty<SharedPack>();
         private VnCanonicalPackSetMemberV2[] companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
         private VnCanonicalPackSetMemberResultV1[] companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
@@ -419,13 +420,72 @@ namespace Harken
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
         }
 
+        /// <summary>Starts from a published platform ZIP. The session owns the open archive.</summary>
+        public static VnResult StartArchive(string archivePath, string language, ref VnConfig config,
+            out PackBootstrapSession session)
+            => StartArchive(archivePath, language, ref config, out session, CancellationToken.None);
+
+        private static VnResult StartArchive(string archivePath, string language, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation)
+        {
+            session = null;
+            cancellation.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(archivePath) || !PackDirectorySource.ValidLanguage(language))
+                return VnResult.VN_INVALID_ARG;
+            PackArchive archive = null;
+            try
+            {
+                archive = new PackArchive(archivePath);
+                VnResult result = CaptureAndStart(PackSource.FromArchive(archive, language), ref config, out session, cancellation);
+                if (session != null)
+                {
+                    session.ownedArchive = archive;
+                    archive = null;
+                }
+                return result;
+            }
+            catch (InvalidDataException) { return VnResult.VN_BAD_PACK; }
+            catch (FileNotFoundException) { return VnResult.VN_CONTENT_NOT_LOADED; }
+            catch (DirectoryNotFoundException) { return VnResult.VN_CONTENT_NOT_LOADED; }
+            catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
+            catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
+            finally { archive?.Dispose(); }
+        }
+
         /// <summary>Starts an explicitly selected companion source with Init only.</summary>
         public static VnResult Start(PackSource source, ref VnConfig config, out PackBootstrapSession session)
         {
             session = null;
             if (source == null) return VnResult.VN_INVALID_ARG;
+            return source.IsDirectory ? StartLocal(source, ref config, out session, CancellationToken.None)
+                : CaptureAndStart(source, ref config, out session, CancellationToken.None);
+        }
+
+        internal static VnResult StartLocal(PackSource source, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation)
+        {
+            session = null;
+            cancellation.ThrowIfCancellationRequested();
+            string archive = Path.Combine(source.Root, PackArchive.FileName);
+            if (File.Exists(archive) && !File.Exists(Path.Combine(source.Root, "Init.bytes")) &&
+                !File.Exists(Path.Combine(source.Root, "Init.json")))
+            {
+                if (File.Exists(Path.Combine(source.Root, ".harken-pack-publishing")))
+                    return VnResult.VN_PACK_STALE_REVISION;
+                return StartArchive(archive, source.Language, ref config, out session, cancellation);
+            }
+            return CaptureAndStart(source, ref config, out session, cancellation);
+        }
+
+        private static VnResult CaptureAndStart(PackSource source, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation)
+        {
+            session = null;
             VnResult result = source.Capture(null, default, null, out CompanionInput init);
-            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session) : result;
+            cancellation.ThrowIfCancellationRequested();
+            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session, cancellation) : result;
         }
 
         public static async Task<PackStartupResult> StartAsync(PackSource source, VnConfig config,
@@ -433,6 +493,11 @@ namespace Harken
         {
             if (source == null || (source.IsAsync && !PackSource.HasControlContext))
                 return new PackStartupResult(VnResult.VN_INVALID_ARG);
+            if (source.IsDirectory)
+            {
+                VnResult local = StartLocal(source, ref config, out PackBootstrapSession ready, cancellation);
+                return new PackStartupResult(local, ready);
+            }
             int thread = Environment.CurrentManagedThreadId;
             CompanionCapture captured = await source.CaptureAsync(null, default, null, cancellation);
             cancellation.ThrowIfCancellationRequested();

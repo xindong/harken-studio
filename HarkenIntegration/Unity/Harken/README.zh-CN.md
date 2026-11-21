@@ -52,3 +52,5 @@ python Tools~/publish_packs.py --studio-cli /path/to/HarkenStudioCLI --project G
 将输出的平台目录交给现有 Unity Pack 启动、目录或 reader 入口即可。工具先用 Studio 正式导出，再复制完整发布物。每个不超过 16 MiB 且压缩后更小的 Pack 独立存为 gzip，原文件名和相对路径保留。更大的 Pack、压缩后不节省空间的 Pack、配套 JSON 及其他辅助文件保留原字节。目录加载在准备阶段从文件直接解压到一个有上限的数组，reader 加载在此期间还持有输入数组。SDK 将还原的原始 Pack 交给既有校验和加载路径。
 
 直接使用原生文件 API 或旧版 Unity SDK 的项目可使用 Studio CLI 的常规导出目录。如果交付渠道已有外层压缩，请按最终归档大小评估收益。
+
+需要标准 ZIP 时，在同一命令末尾添加 `--format zip`。工具会生成 `<输出目录>/<平台>/Packs.zip`，归档根目录直接包含 Studio 导出的 Pack、配套 JSON 和辅助文件，保留各自的相对路径和原始字节。16 MiB 以内且压缩后更小的条目使用 DEFLATE，其余条目原样存储。使用标准 ZIP 工具解包后，普通文件加载入口可直接使用该平台目录。

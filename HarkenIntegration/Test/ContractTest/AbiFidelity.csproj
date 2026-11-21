@@ -39,6 +39,7 @@
     <Compile Include="RemoteCommunicationContract.cs" />
     <Compile Include="RepositoryPublicationContract.cs" />
     <Compile Include="CompanionVersionContract.cs" />
+    <Compile Include="ArchivePublicationContract.cs" />
   </ItemGroup>
 
 </Project>

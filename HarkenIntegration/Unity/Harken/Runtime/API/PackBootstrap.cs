@@ -264,6 +264,8 @@ namespace Harken
                     // An inactive session only retains its public diagnostic state.
                     initBytes = null;
                     companionSource = null;
+                    ownedArchive?.Dispose();
+                    ownedArchive = null;
                     companionLocators = null;
                     companionOwners = Array.Empty<SharedPack>();
                     companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();

@@ -17,17 +17,19 @@ namespace Harken
         private readonly Func<string, CancellationToken, Task<byte[]>> asyncReader;
         private readonly Func<ulong> revision;
         private readonly PackDirectorySource directory;
+        private readonly PackArchive archive;
         private readonly Func<string, VnObjectId, byte[], CompanionCapture> snapshot;
         private readonly Func<CompanionInput, VnResult> snapshotValidation;
         public string Language { get; }
         public bool IsAsync => asyncReader != null;
-        internal string Root => directory?.Root ?? string.Empty;
+        internal bool IsDirectory => directory != null;
+        internal string Root => directory?.Root ?? archive?.Root ?? string.Empty;
 
         private PackSource(string language, Func<string, byte[]> reader = null,
             Func<string, CancellationToken, Task<byte[]>> asyncReader = null,
             Func<ulong> revision = null, PackDirectorySource directory = null,
             Func<string, VnObjectId, byte[], CompanionCapture> snapshot = null,
-            Func<CompanionInput, VnResult> snapshotValidation = null)
+            Func<CompanionInput, VnResult> snapshotValidation = null, PackArchive archive = null)
         {
             if (!PackDirectorySource.ValidLanguage(language)) throw new ArgumentException("Invalid Pack language.", nameof(language));
             Language = language ?? string.Empty;
@@ -35,9 +37,13 @@ namespace Harken
             this.asyncReader = asyncReader;
             this.revision = revision;
             this.directory = directory;
+            this.archive = archive;
             this.snapshot = snapshot;
             this.snapshotValidation = snapshotValidation;
         }
+
+        internal static PackSource FromArchive(PackArchive archive, string language)
+            => new PackSource(language, archive: archive);
 
         internal static PackSource FromSnapshot(string language,
             Func<string, VnObjectId, byte[], CompanionCapture> capture, Func<CompanionInput, VnResult> validate)
@@ -59,7 +65,7 @@ namespace Harken
         {
             if (snapshot != null) return null;
             return new PackSource(language, reader, asyncReader, revision,
-                directory == null ? null : new PackDirectorySource(directory.Root, language));
+                directory == null ? null : new PackDirectorySource(directory.Root, language), archive: archive);
         }
 
         internal static bool HasControlContext => SynchronizationContext.Current != null &&
@@ -103,6 +109,7 @@ namespace Harken
         private async Task<byte[]> Read(string path, CancellationToken cancellation, Action<bool> readPhase)
         {
             cancellation.ThrowIfCancellationRequested();
+            if (archive != null) return archive.Read(path);
             Task<byte[]> pending = null;
             byte[] bytes = null;
             readPhase?.Invoke(true);
