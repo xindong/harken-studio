@@ -6,10 +6,8 @@
 // question authors have to answer. So it waits here, stamped with its owner, and
 // materializes into a transaction once the window covers it.
 //
-// Two ceilings, not one. The pool has a total capacity, and a single owner has a
-// per-owner cap, because one Action queueing thousands of far-future intents
-// would otherwise consume the room every other Action needs while looking
-// perfectly legal. Both refuse; neither evicts.
+// The engine grows stable rows on the logic thread before publishing intents.
+// Explicitly bounded pools also support a per-owner admission budget.
 //
 // Cancellation is by stamp rather than by search. An intent carries the owner's
 // schedule epoch, so cancelling the owner invalidates every intent it queued
@@ -17,12 +15,14 @@
 // when the window reaches them, which keeps cancellation constant-time and
 // leaves the pool's occupancy honest until then.
 //
-// Logic thread only. Storage is sized once at construction.
+// Logic thread only.
 #ifndef HARKEN_CORE_DEFERRED_INTENT_POOL_H
 #define HARKEN_CORE_DEFERRED_INTENT_POOL_H
 
 #include "harken/core/LogicCommitCoordinator.h"
 #include "harken/core/PlayableInstanceTable.h"
+
+#include "harken/core/GrowingRowStorage.h"
 
 #include <cstdint>
 #include <vector>
@@ -56,6 +56,7 @@ enum class DeferredIntentRefusal : std::uint32_t {
     OwnerCapReached = 2,
     GenerationExhausted = 3,
     ProtocolViolation = 4,
+    OutOfMemory = 5,
 };
 
 enum class DeferredIntentEntryState : std::uint8_t {
@@ -94,11 +95,17 @@ struct DeferredIntentClaim {
     DeferredIntent intent;
 };
 
+struct StaleIntentSink {
+    void* context = nullptr;
+    void (*release)(void*, const DeferredIntentClaim&) = nullptr;
+};
+
 class DeferredIntentPool {
 public:
     // capacity bounds the whole pool; maxPerOwner bounds any single owner. A
     // maxPerOwner of 0 means an owner may use the whole pool, which is only
     // sensible in a single-owner test.
+    DeferredIntentPool() = default;
     DeferredIntentPool(std::uint32_t capacity, std::uint32_t maxPerOwner);
     DeferredIntentPool(const DeferredIntentPool&) = delete;
     DeferredIntentPool& operator=(const DeferredIntentPool&) = delete;
@@ -110,6 +117,9 @@ public:
         return static_cast<std::uint32_t>(m_entries.size());
     }
     std::uint32_t MaxPerOwner() const { return m_maxPerOwner; }
+
+    bool PrepareAvailable(std::uint32_t count) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { m_entries.SetCommitPageLimitForTests(pages); }
 
     DeferredIntentAddResult AddPrepared(const DeferredIntent& intent);
     bool CommitPrepared(DeferredIntentToken token);
@@ -125,7 +135,7 @@ public:
                            std::uint32_t* staleDropped = nullptr,
                            std::uint32_t* dueCount = nullptr,
                            std::uint64_t currentQuantum = UINT64_MAX,
-                           std::vector<DeferredIntentClaim>* staleClaims = nullptr);
+                           StaleIntentSink stale = {});
     DeferredIntentRefusal Retry(DeferredIntentToken token,
                                 std::uint64_t notBeforeQuantum = 0);
     DeferredIntentAddResult Replace(DeferredIntentToken token,
@@ -165,7 +175,7 @@ public:
     std::uint32_t DropStale(
         const PlayableInstanceTable& instances,
         std::vector<std::uint64_t>* droppedPayloads = nullptr,
-        std::vector<DeferredIntentClaim>* staleClaims = nullptr);
+        StaleIntentSink stale = {});
 
 private:
     friend class ActionDeferredRecordTable;
@@ -186,7 +196,9 @@ private:
                                     std::uint64_t ownerHandle) const;
     void FreeEntry(Entry& entry);
 
-    std::vector<Entry> m_entries;
+    GrowingRowStorage<Entry> m_entries;
+    std::uint32_t m_limit = UINT32_MAX;
+    std::uint32_t m_quarantined = 0;
     std::uint32_t m_maxPerOwner = 0;
     std::uint32_t m_count = 0;
     std::uint32_t m_preparedCount = 0;

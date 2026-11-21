@@ -23704,23 +23704,14 @@ harken::PlayableStartStatus PreflightScheduleLeafStartsImpl(
         }
         commandCount += demand;
     }
-    const std::uint32_t deferredOccupied =
-        engine.timelineDeferred.Count() +
-        engine.timelineDeferred.PreparedCount();
-    const std::uint32_t deferredCapacity =
-        engine.timelineDeferred.Capacity();
-    const std::uint32_t deferredOwnerCapacity =
-        engine.timelineDeferred.MaxPerOwner();
+
+    if (!useImmediateLane && !engine.timelineDeferred.PrepareAvailable(futureFrameCount))
+        return harken::PlayableStartStatus::OutOfMemory;
     if ((!useImmediateLane && currentFrameCount != 0 &&
          engine.timelinePool.PreflightSingleEventTransactionBatch(
              transactionFrames.data(), currentFrameCount,
              engine.timelinePool.PublishCutoffFrame()) !=
              harken::ReserveRefusal::None) ||
-        (!useImmediateLane && deferredOccupied > deferredCapacity) ||
-        (!useImmediateLane &&
-         futureFrameCount > deferredCapacity - deferredOccupied) ||
-        (!useImmediateLane && deferredOwnerCapacity != 0 &&
-         futureFrameCount > deferredOwnerCapacity) ||
         !AtomicBatchFitsCapacities(engine, commandCount) ||
         (!(initialTransportEligible && engine.commands.HasInitialSourceRoom()) &&
          !AdmitCommandBatch(engine, commandCount))) {
@@ -86221,7 +86212,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             intent.executionOrdinal = planned.executionOrdinal;
             const auto added = engine.timelineDeferred.AddPrepared(intent);
             if (added.status != harken::DeferredIntentRefusal::None) {
-                plan->result =
+                plan->result = added.status == harken::DeferredIntentRefusal::OutOfMemory ? VN_OUT_OF_MEMORY :
                     added.status == harken::DeferredIntentRefusal::PoolFull ||
                             added.status ==
                                 harken::DeferredIntentRefusal::OwnerCapReached
@@ -86432,6 +86423,8 @@ VnResult MapImmediateActionPlayStatus(
     switch (status) {
     case harken::PlayableStartStatus::Accepted:
         return VN_OK;
+    case harken::PlayableStartStatus::OutOfMemory:
+        return VN_OUT_OF_MEMORY;
     case harken::PlayableStartStatus::Capacity:
         return VN_NO_VOICE;
     case harken::PlayableStartStatus::Backpressure:
@@ -96139,8 +96132,8 @@ bool PrepareContainerCompositeQueueChild(
                 scratch, root, &selected.stableChildOrdinal, 1u, materialized)) return false;
         context.startFrame = baseFrame + leaf.startOffsetFrames;
         if (context.startFrame >= engine.timelinePool.WindowEndFrame() &&
-            engine.timelineDeferred.Count() + engine.timelineDeferred.PreparedCount() >= engine.timelineDeferred.Capacity()) {
-            context.result = VN_BACKPRESSURE;
+            !engine.timelineDeferred.PrepareAvailable(1)) {
+            context.result = VN_OUT_OF_MEMORY;
             return false;
         }
         context.endFrame = leaf.endOffsetFrames == UINT64_MAX ? UINT64_MAX : baseFrame + leaf.endOffsetFrames;
@@ -103606,6 +103599,7 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
         result.status = engine.runtimeRecreateRequired ? Status::RuntimeRecreateRequired
             : directFailure != Status::Accepted ? directFailure
             : reason == VN_BACKPRESSURE ? Status::Backpressure
+            : reason == VN_OUT_OF_MEMORY ? Status::OutOfMemory
             : reason == VN_NO_VOICE ? Status::Capacity
             : reason == VN_CAPABILITY_UNAVAILABLE ? Status::CapabilityUnavailable
             : reason == VN_REVISION_CONFLICT ? Status::GenerationConflict : Status::InvalidInput;
@@ -103699,8 +103693,8 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
                 context.prefixTrackIds = {leaf.pathTrackIds.data(), leaf.selectionCount};
                 context.startFrame += leaf.startOffsetFrames;
                 if (context.startFrame >= engine.timelinePool.WindowEndFrame() &&
-                    engine.timelineDeferred.Count() + engine.timelineDeferred.PreparedCount() >= engine.timelineDeferred.Capacity())
-                    return fail(VN_BACKPRESSURE);
+                    !engine.timelineDeferred.PrepareAvailable(1))
+                    return fail(VN_OUT_OF_MEMORY);
                 context.endFrame = leaf.endOffsetFrames == UINT64_MAX ? UINT64_MAX : baseFrame + leaf.endOffsetFrames;
                 ScheduleContainerPreparationOperations operations{context, engine};
                 operations.activeScratch = scratch;
@@ -103741,11 +103735,10 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
         if (frame < engine.timelinePool.WindowEndFrame()) engine.actionPlayFrameScratch[current++] = frame;
         else ++future;
     }
-    const auto occupied = engine.timelineDeferred.Count() + engine.timelineDeferred.PreparedCount();
-    const auto capacity = engine.timelineDeferred.Capacity();
+    if (!engine.timelineDeferred.PrepareAvailable(future)) return fail(VN_OUT_OF_MEMORY);
     if ((current != 0 && engine.timelinePool.PreflightSingleEventTransactionBatch(
             engine.actionPlayFrameScratch.data(), current, engine.timelinePool.PublishCutoffFrame()) !=
-                harken::ReserveRefusal::None) || occupied > capacity || future > capacity - occupied ||
+                harken::ReserveRefusal::None) ||
         !AtomicBatchFitsCapacities(engine, commandCount)) return fail(VN_BACKPRESSURE);
     if (commandCount != 0) {
         if (!ReserveVoiceCommandTransport(engine, commandCount, &scratch->directCommandReservation,
@@ -105455,11 +105448,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             ++futureFrameCount;
         }
     }
-    const std::uint32_t deferredOccupied =
-        engine.timelineDeferred.Count() +
-        engine.timelineDeferred.PreparedCount();
-    const std::uint32_t deferredCapacity =
-        engine.timelineDeferred.Capacity();
+    const bool deferredReady = engine.timelineDeferred.PrepareAvailable(futureFrameCount);
     std::uint32_t privateLaneEntries = 0;
     for (std::uint32_t index = 0; index < preparedCount; ++index) {
         const auto* play = FindImmediateActionPlay(*plan, index);
@@ -105481,8 +105470,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
              engine.actionPlayFrameScratch.data(), currentFrameCount,
              engine.timelinePool.PublishCutoffFrame()) !=
               harken::ReserveRefusal::None) ||
-        deferredOccupied > deferredCapacity ||
-        futureFrameCount > deferredCapacity - deferredOccupied ||
+        !deferredReady ||
         (plan->playCommandCount != 0 && !plan->nativeMusicResetPlaysFirst &&
          (!ReserveVoiceCommandTransport(engine, plan->playCommandCount, &plan->playCommands,
               singleSource) ||
@@ -105498,7 +105486,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
         CancelImmediateActionPreparedVariables(*plan);
         plan->playCommandCount = 0;
         plan->playFrameCount = 0;
-        plan->result = VN_BACKPRESSURE;
+        plan->result = deferredReady ? VN_BACKPRESSURE : VN_OUT_OF_MEMORY;
         return false;
     }
     plan->playCommandsReserved = plan->playCommandCount != 0 && !plan->nativeMusicResetPlaysFirst;

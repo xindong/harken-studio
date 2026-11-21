@@ -20,6 +20,14 @@ inline harken::Plan03GroupSliceIdentity QueueContinuationSlice(
     return {};
 }
 
+// Expose exactly the rows that fit on the first committed storage page.
+inline bool LimitDeferredIntentPoolToFirstPage(harken::DeferredIntentPool& pool) {
+    if (!pool.PrepareAvailable(1)) return false;
+    pool.SetCommitPageLimitForTests(0);
+    while (pool.Capacity() < UINT32_MAX && pool.PrepareAvailable(pool.Capacity() + 1u)) {}
+    return pool.Capacity() >= 2u;
+}
+
 class PlayableCapacityScope {
 public:
     PlayableCapacityScope(std::uint32_t playable, std::uint32_t modes) {

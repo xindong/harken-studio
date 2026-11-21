@@ -19911,6 +19911,7 @@ TEST(PackComposition, DeferredStopPartialCapturePoolRefusalRollsBackWithoutTarge
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     auto& engine = *fixture.session.Engine();
+    ASSERT_TRUE(harkentest::LimitDeferredIntentPoolToFirstPage(engine.timelineDeferred));
     std::vector<DeferredIntentToken> fillers;
     for (std::uint32_t i = 0; i + 1u < engine.timelineDeferred.Capacity(); ++i) {
         DeferredIntent intent{};
@@ -19938,7 +19939,7 @@ TEST(PackComposition, DeferredStopPartialCapturePoolRefusalRollsBackWithoutTarge
         }
     };
     engine.originalPackResourceAcquiredContextForTest = &capture;
-    EXPECT_EQ(VN_BACKPRESSURE, fixture.PostOperation());
+    EXPECT_EQ(VN_OUT_OF_MEMORY, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     EXPECT_EQ(0u, fixture.operation);

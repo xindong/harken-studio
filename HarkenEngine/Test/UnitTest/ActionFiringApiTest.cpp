@@ -17469,6 +17469,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firstPlay));
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &secondPlay));
 
+    ASSERT_TRUE(harkentest::LimitDeferredIntentPoolToFirstPage(engine->timelineDeferred));
     std::vector<harken::DeferredIntentToken> fillers;
     fillers.reserve(engine->timelineDeferred.Capacity() - 1u);
     for (std::uint32_t index = 0;
@@ -17487,7 +17488,7 @@ TEST(ActionFiringApi,
 
     desc.actionId = image.actions[8].actionStableId;
     VnActionFiringHandle stopFiring = 123;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &stopFiring));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &stopFiring));
     EXPECT_EQ(0u, stopFiring);
     EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
     EXPECT_EQ(0u, engine->actionDeferredRecords.PreparedCount());
@@ -17533,6 +17534,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
+    ASSERT_TRUE(harkentest::LimitDeferredIntentPoolToFirstPage(engine->timelineDeferred));
     std::vector<harken::DeferredIntentToken> fillers;
     fillers.reserve(engine->timelineDeferred.Capacity());
     for (std::uint32_t index = 0;
@@ -17555,7 +17557,7 @@ TEST(ActionFiringApi,
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 123;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(playablesBefore, engine->playableInstances.LiveCount());
     EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
@@ -17793,6 +17795,42 @@ TEST(ActionFiringApi,
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firstPlay));
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(secondPlay));
+}
+
+TEST(ActionFiringApi, DelayedActionsSurviveGrowthPast256AndCancelIndependently) {
+    (void)Vn_Term();
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    CanonicalActionWorld image;
+    const auto due = engine.timelinePool.WindowEndFrame();
+    image.MakeDelayedSetValueAction(DelayNanosecondsForTargetFrame(engine, due));
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    std::array<VnActionFiringHandle, 257> firings{};
+    for (auto& firing : firings) {
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    }
+    ASSERT_EQ(firings.size(), engine.timelineDeferred.Count());
+    ASSERT_EQ(firings.size(), engine.actionDeferredRecords.LiveCount());
+    for (std::size_t i = 0; i + 1u < firings.size(); ++i) {
+        ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[i], 0));
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firings[i]));
+    }
+    EXPECT_EQ(1u, engine.timelineDeferred.Count());
+    const auto deadline = due / engine.nullBackend.BlockFrames() + 4u;
+    while (engine.mixer.BlocksRendered() < deadline) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    float value = 0;
+    ASSERT_TRUE(engine.variables.CurrentValue(image.variables[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.5f, value);
+    EXPECT_EQ(0u, engine.timelineDeferred.Count());
+    EXPECT_EQ(0u, engine.actionDeferredRecords.LiveCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firings.back()));
 }
 
 TEST(ActionFiringApi, StopFiringCancelsHeldDelayedSetValueExactlyOnce) {
@@ -38524,6 +38562,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
+    ASSERT_TRUE(harkentest::LimitDeferredIntentPoolToFirstPage(engine->timelineDeferred));
     std::vector<harken::DeferredIntentToken> fillers;
     fillers.reserve(engine->timelineDeferred.Capacity());
     for (std::uint32_t index = 0;
@@ -38544,7 +38583,7 @@ TEST(ActionFiringApi,
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 99;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(ownersBefore, CaptureActionReclaimableOwners(*engine));
     EXPECT_EQ(commandHeadBefore, engine->commands.PublishedHead());

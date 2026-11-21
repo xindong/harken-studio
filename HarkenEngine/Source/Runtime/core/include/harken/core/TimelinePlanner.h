@@ -300,7 +300,8 @@ private:
                             bool trimBeforeFrontier = false,
                             std::uint64_t publicationFrontier = UINT64_MAX);
     void ReleaseDeferredSlot(std::uint64_t payload);
-    void ReleaseStaleDeferredClaims();
+    static void ReleaseStaleDeferredClaim(void* context, const DeferredIntentClaim& claim);
+    void ReleaseStaleDeferredClaim(const DeferredIntentClaim& claim);
     std::uint64_t MaterializeDue(TransportEpoch transportEpoch,
                                 std::uint64_t cutoffFrame,
                                 std::uint64_t windowEndFrame);
@@ -323,16 +324,18 @@ private:
     // Non-owning retention of the program behind each deferred intent, indexed by
     // the intent's payload. The compiled program store owns the views; the planner
     // only remembers which one a deferred slot refers to.
-    std::vector<const ProgramView*> deferredProgram_;
-    std::vector<PostInput> deferredInput_;
-    std::vector<std::uint8_t> deferredSlotUsed_;
+    struct DeferredProgramSlot {
+        const ProgramView* program = nullptr;
+        PostInput input{};
+        std::uint8_t state = 0;
+    };
+    std::vector<DeferredProgramSlot> deferredPrograms_;
     std::uint32_t committedDeferredProgramCount_ = 0;
     std::vector<RollingCursor> rolling_;
 
     // Reserve-time scratch for a transaction's events, sized once at Reset.
     std::vector<ScheduledEventInput> scratchEvents_;
     EventTemplate rollingEventScratch_{};
-    std::vector<DeferredIntentClaim> staleClaimScratch_;
 
     std::uint64_t materializationsRetried_ = 0;
     std::uint64_t materializationReserveFailures_ = 0;

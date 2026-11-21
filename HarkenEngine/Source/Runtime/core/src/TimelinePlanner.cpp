@@ -25,9 +25,7 @@ bool TimelinePlanner::Reset(const Config& config, ScheduledTransactionPool* pool
     armTable_ = armTable;
 
     const std::size_t deferredCapacity = deferredPool->Capacity();
-    deferredProgram_.assign(deferredCapacity, nullptr);
-    deferredInput_.assign(deferredCapacity, PostInput{});
-    deferredSlotUsed_.assign(deferredCapacity, 0);
+    deferredPrograms_.resize(deferredCapacity);
     const std::size_t rollingCapacity =
         config.maxRollingOccurrences == 0
             ? deferredCapacity
@@ -35,8 +33,6 @@ bool TimelinePlanner::Reset(const Config& config, ScheduledTransactionPool* pool
                                     deferredCapacity);
     rolling_.assign(rollingCapacity, RollingCursor{});
     scratchEvents_.assign(pool->MaxTransactionEvents(), ScheduledEventInput{});
-    staleClaimScratch_.clear();
-    staleClaimScratch_.reserve(deferredCapacity);
 
     materializationsRetried_ = 0;
     materializationReserveFailures_ = 0;
@@ -55,20 +51,14 @@ bool TimelinePlanner::ResetForTransport() noexcept {
         deferredPool_ == nullptr || deferredPool_->Count() != 0 ||
         deferredPool_->PreparedCount() != 0 ||
         instances_ == nullptr ||
-        deferredProgram_.size() != deferredPool_->Capacity() ||
-        deferredInput_.size() != deferredPool_->Capacity() ||
-        deferredSlotUsed_.size() != deferredPool_->Capacity() ||
         scratchEvents_.size() != pool_->MaxTransactionEvents()) {
         return false;
     }
-    std::fill(deferredProgram_.begin(), deferredProgram_.end(), nullptr);
-    std::fill(deferredInput_.begin(), deferredInput_.end(), PostInput{});
-    std::fill(deferredSlotUsed_.begin(), deferredSlotUsed_.end(), 0);
+    std::fill(deferredPrograms_.begin(), deferredPrograms_.end(), DeferredProgramSlot{});
     committedDeferredProgramCount_ = 0;
     std::fill(rolling_.begin(), rolling_.end(), RollingCursor{});
     std::fill(scratchEvents_.begin(), scratchEvents_.end(),
               ScheduledEventInput{});
-    staleClaimScratch_.clear();
     rollingEventScratch_ = {};
     materializationsRetried_ = 0;
     materializationReserveFailures_ = 0;
@@ -137,13 +127,11 @@ ReserveResult TimelinePlanner::ReserveAt(const ProgramView& program,
 
 void TimelinePlanner::ReleaseDeferredSlot(std::uint64_t payload) {
     const std::size_t slot = static_cast<std::size_t>(payload);
-    if (slot >= deferredProgram_.size()) {
+    if (slot >= deferredPrograms_.size()) {
         return;
     }
-    if (deferredSlotUsed_[slot] == 1) --committedDeferredProgramCount_;
-    deferredSlotUsed_[slot] = 0;
-    deferredProgram_[slot] = nullptr;
-    deferredInput_[slot] = PostInput{};
+    if (deferredPrograms_[slot].state == 1) --committedDeferredProgramCount_;
+    deferredPrograms_[slot] = {};
 }
 
 PostResult TimelinePlanner::FileProgram(const ProgramView& program,
@@ -344,16 +332,23 @@ PostResult TimelinePlanner::PrepareDeferredPlay(
         res.refusal = ReserveRefusal::SpanExceeded;
         return res;
     }
-    std::size_t slot = deferredProgram_.size();
-    for (std::size_t index = 0; index < deferredSlotUsed_.size(); ++index) {
-        if (deferredSlotUsed_[index] == 0) {
+    std::size_t slot = deferredPrograms_.size();
+    for (std::size_t index = 0; index < deferredPrograms_.size(); ++index) {
+        if (deferredPrograms_[index].state == 0) {
             slot = index;
             break;
         }
     }
-    if (slot == deferredProgram_.size()) {
-        res.refusal = ReserveRefusal::PoolFull;
-        return res;
+    if (slot == deferredPrograms_.size()) {
+        if (slot >= UINT32_MAX) { res.refusal = ReserveRefusal::PoolFull; return res; }
+        try {
+            detail::CheckedGrow(deferredPrograms_, slot + 1u, detail::LogicAllocSite::EngineStorage);
+            deferredPrograms_.emplace_back();
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            res.refusal = ReserveRefusal::PoolFull;
+            return res;
+        }
     }
     DeferredIntent intent{};
     intent.ownerDomain = DeferredIntentOwnerDomain::Playable;
@@ -367,9 +362,9 @@ PostResult TimelinePlanner::PrepareDeferredPlay(
         res.refusal = ReserveRefusal::PoolFull;
         return res;
     }
-    deferredProgram_[slot] = &program;
-    deferredInput_[slot] = input;
-    deferredSlotUsed_[slot] = 2;
+    deferredPrograms_[slot].program = &program;
+    deferredPrograms_[slot].input = input;
+    deferredPrograms_[slot].state = 2;
     *out = {added.token, static_cast<std::uint32_t>(slot)};
     res.status = PostStatus::Deferred;
     return res;
@@ -378,12 +373,12 @@ PostResult TimelinePlanner::PrepareDeferredPlay(
 bool TimelinePlanner::CommitPreparedDeferredPlay(
     PreparedDeferredPost* prepared) {
     if (prepared == nullptr || !prepared->Valid() ||
-        prepared->slot >= deferredSlotUsed_.size() ||
-        deferredSlotUsed_[prepared->slot] != 2 ||
+        prepared->slot >= deferredPrograms_.size() ||
+        deferredPrograms_[prepared->slot].state != 2 ||
         !deferredPool_->CommitPrepared(prepared->intent)) {
         return false;
     }
-    deferredSlotUsed_[prepared->slot] = 1;
+    deferredPrograms_[prepared->slot].state = 1;
     ++committedDeferredProgramCount_;
     *prepared = {};
     return true;
@@ -392,8 +387,8 @@ bool TimelinePlanner::CommitPreparedDeferredPlay(
 bool TimelinePlanner::AbandonPreparedDeferredPlay(
     PreparedDeferredPost* prepared) {
     if (prepared == nullptr || !prepared->Valid() ||
-        prepared->slot >= deferredSlotUsed_.size() ||
-        deferredSlotUsed_[prepared->slot] != 2 ||
+        prepared->slot >= deferredPrograms_.size() ||
+        deferredPrograms_[prepared->slot].state != 2 ||
         !deferredPool_->AbandonPrepared(prepared->intent)) {
         return false;
     }
@@ -557,7 +552,15 @@ PostResult TimelinePlanner::PostRolling(const ProgramView& program,
         }
     }
     if (cursor == nullptr) {
-        return refused;
+        if (rolling_.size() == UINT32_MAX ||
+            (config_.maxRollingOccurrences != 0 && rolling_.size() >= config_.maxRollingOccurrences))
+            return refused;
+        try {
+            cursor = &rolling_.emplace_back();
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return refused;
+        }
     }
     *cursor = RollingCursor{};
     cursor->state = RollingState::AwaitingWindow;
@@ -637,8 +640,8 @@ bool TimelinePlanner::HasProgramReference(
         return candidate != nullptr && candidate->runtimeProgram.program == program.program &&
             candidate->runtimeProgram.programGeneration == program.programGeneration;
     };
-    for (std::size_t index = 0; index < deferredProgram_.size(); ++index) {
-        if (deferredSlotUsed_[index] != 0 && matches(deferredProgram_[index])) return true;
+    for (std::size_t index = 0; index < deferredPrograms_.size(); ++index) {
+        if (deferredPrograms_[index].state != 0 && matches(deferredPrograms_[index].program)) return true;
     }
     for (const auto& cursor : rolling_) {
         if (cursor.state != RollingState::Free && matches(cursor.program)) return true;
@@ -725,9 +728,7 @@ bool TimelinePlanner::CompleteRollingAbort(TimelineArmToken armToken) {
 
 void TimelinePlanner::DropStaleDeferred() {
     if (!valid_) return;
-    staleClaimScratch_.clear();
-    deferredPool_->DropStale(*instances_, nullptr, &staleClaimScratch_);
-    ReleaseStaleDeferredClaims();
+    deferredPool_->DropStale(*instances_, nullptr, {this, ReleaseStaleDeferredClaim});
 }
 
 std::uint32_t TimelinePlanner::ClaimDeferredDue(
@@ -739,33 +740,32 @@ std::uint32_t TimelinePlanner::ClaimDeferredDue(
         if (dueCount != nullptr) *dueCount = 0;
         return 0;
     }
-    staleClaimScratch_.clear();
-    const auto claimed = deferredPool_->ClaimDue(windowEndFrame, *instances_,
-        out, capacity, staleDropped, dueCount, currentQuantum, &staleClaimScratch_);
-    ReleaseStaleDeferredClaims();
-    return claimed;
+    return deferredPool_->ClaimDue(windowEndFrame, *instances_,
+        out, capacity, staleDropped, dueCount, currentQuantum, {this, ReleaseStaleDeferredClaim});
 }
 
-void TimelinePlanner::ReleaseStaleDeferredClaims() {
-    for (const auto& claim : staleClaimScratch_) {
-        const auto& intent = claim.intent;
-        const std::size_t slot = static_cast<std::size_t>(intent.payload);
-        if (slot < rolling_.size() &&
-            rolling_[slot].state != RollingState::Free &&
-            rolling_[slot].state != RollingState::Aborted &&
-            rolling_[slot].deferred.slot == claim.token.slot &&
-            rolling_[slot].deferred.generation == claim.token.generation) {
-            if (armTable_ != nullptr && rolling_[slot].armToken.Valid()) {
-                (void)armTable_->RequestCancel(rolling_[slot].armToken);
-            }
-            rolling_[slot].deferred = {};
-            rolling_[slot].state = RollingState::Aborted;
-        } else if (slot < deferredProgram_.size() && deferredSlotUsed_[slot] == 1 &&
-                   deferredProgram_[slot] != nullptr &&
-                   deferredProgram_[slot]->ownerInstance == intent.ownerHandle &&
-                   deferredProgram_[slot]->ownerInstanceScheduleEpoch == intent.ownerEpoch) {
-            ReleaseDeferredSlot(intent.payload);
+void TimelinePlanner::ReleaseStaleDeferredClaim(void* context, const DeferredIntentClaim& claim) {
+    static_cast<TimelinePlanner*>(context)->ReleaseStaleDeferredClaim(claim);
+}
+
+void TimelinePlanner::ReleaseStaleDeferredClaim(const DeferredIntentClaim& claim) {
+    const auto& intent = claim.intent;
+    const std::size_t slot = static_cast<std::size_t>(intent.payload);
+    if (slot < rolling_.size() &&
+        rolling_[slot].state != RollingState::Free &&
+        rolling_[slot].state != RollingState::Aborted &&
+        rolling_[slot].deferred.slot == claim.token.slot &&
+        rolling_[slot].deferred.generation == claim.token.generation) {
+        if (armTable_ != nullptr && rolling_[slot].armToken.Valid()) {
+            (void)armTable_->RequestCancel(rolling_[slot].armToken);
         }
+        rolling_[slot].deferred = {};
+        rolling_[slot].state = RollingState::Aborted;
+    } else if (slot < deferredPrograms_.size() && deferredPrograms_[slot].state == 1 &&
+               deferredPrograms_[slot].program != nullptr &&
+               deferredPrograms_[slot].program->ownerInstance == intent.ownerHandle &&
+               deferredPrograms_[slot].program->ownerInstanceScheduleEpoch == intent.ownerEpoch) {
+        ReleaseDeferredSlot(intent.payload);
     }
 }
 
@@ -829,13 +829,13 @@ TimelineDeferredMaterializeStatus TimelinePlanner::MaterializeDeferredClaim(
         }
         return TimelineDeferredMaterializeStatus::Consumed;
     }
-    if (slot >= deferredProgram_.size() || deferredSlotUsed_[slot] != 1 ||
-        deferredProgram_[slot] == nullptr) {
+    if (slot >= deferredPrograms_.size() || deferredPrograms_[slot].state != 1 ||
+        deferredPrograms_[slot].program == nullptr) {
         (void)deferredPool_->Release(claim.token);
         return TimelineDeferredMaterializeStatus::Consumed;
     }
-    const ProgramView& program = *deferredProgram_[slot];
-    const PostInput input = deferredInput_[slot];
+    const ProgramView& program = *deferredPrograms_[slot].program;
+    const PostInput input = deferredPrograms_[slot].input;
     if (input.transportEpoch != transportEpoch) {
         (void)deferredPool_->Release(claim.token);
         ReleaseDeferredSlot(intent.payload);
@@ -866,11 +866,11 @@ std::uint64_t TimelinePlanner::DeferredBlockerBefore(
     std::uint64_t blocker =
         deferredPool_->EarliestHeldDueBefore(cutoffFrame);
     if (committedDeferredProgramCount_ == 0) return blocker;
-    for (std::size_t slot = 0; slot < deferredProgram_.size(); ++slot) {
-        if (deferredSlotUsed_[slot] != 1 || deferredProgram_[slot] == nullptr) {
+    for (std::size_t slot = 0; slot < deferredPrograms_.size(); ++slot) {
+        if (deferredPrograms_[slot].state != 1 || deferredPrograms_[slot].program == nullptr) {
             continue;
         }
-        const ProgramView& program = *deferredProgram_[slot];
+        const ProgramView& program = *deferredPrograms_[slot].program;
         if (program.events == nullptr || program.eventCount == 0) {
             continue;
         }

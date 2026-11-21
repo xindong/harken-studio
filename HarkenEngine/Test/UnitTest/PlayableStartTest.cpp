@@ -21216,6 +21216,7 @@ TEST(PlayableStart,
         image.track.scheduleSemanticFingerprint =
             harken::ComputeTrackScheduleFingerprintV1(image.track);
 
+        ASSERT_TRUE(harkentest::LimitDeferredIntentPoolToFirstPage(engine->timelineDeferred));
         std::vector<harken::DeferredIntentToken> fillers;
         fillers.reserve(engine->timelineDeferred.Capacity());
         for (std::uint32_t index = 0;
@@ -21241,7 +21242,7 @@ TEST(PlayableStart,
         harken::PlayableStartRequest request{};
         request.root = image.Root();
         const auto refused = harken::StartPlayable(*engine, image.world, request);
-        EXPECT_EQ(harken::PlayableStartStatus::Backpressure, refused.status);
+        EXPECT_EQ(harken::PlayableStartStatus::OutOfMemory, refused.status);
         EXPECT_EQ(0u, refused.instance);
         EXPECT_EQ(0u, refused.ticket);
         EXPECT_EQ(sequenceBefore, engine->logicCommits.Current());

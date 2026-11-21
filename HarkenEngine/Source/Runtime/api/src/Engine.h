@@ -7193,8 +7193,6 @@ public:
               resolved.maxKnownScheduleLeaves),
           originalCompositeCompletionPreparations(resolved.maxCompositeCompletionOwners),
           originalOccurrencePreparations(resolved.maxDeferredIntents),
-          timelineDeferred(resolved.maxDeferredIntents,
-                           resolved.maxDeferredIntents),
           timelinePrograms(2),
            timelineSink(voices, timelineArms),
            mixer(resolved, voices, buses, dynamicRoutes, commands, actionSeeks,
@@ -7572,8 +7570,6 @@ public:
             }
         }
         TimelinePlanner::Config timelinePlannerConfig{};
-        timelinePlannerConfig.maxRollingOccurrences =
-            resolved.maxDeferredIntents;
         if (!timelinePlanner.Reset(timelinePlannerConfig, &timelinePool,
                                    &timelineDeferred, &playableInstances,
                                    &timelineOccurrences, &timelineArms) ||

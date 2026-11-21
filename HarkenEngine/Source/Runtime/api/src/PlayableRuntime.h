@@ -52,6 +52,7 @@ enum class PlayableStartStatus : std::uint8_t {
     RuntimeRecreateRequired = 7,
     NotInitialized = 8,
     GenerationConflict = 9,
+    OutOfMemory = 10,
 };
 
 enum class BusAdmissionVerdict : std::uint8_t {
