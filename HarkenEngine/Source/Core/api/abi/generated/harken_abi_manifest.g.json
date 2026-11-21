@@ -1451,7 +1451,8 @@
           "VnResidentPackRowV1",
           "VnResidentPackVisitDescV1",
           "VnResidentDirectoryMemberV1",
-          "VnResidentDirectoryActivationV1"
+          "VnResidentDirectoryActivationV1",
+          "VnNamedResidentPostV1"
         ]
       },
       "defines": {
@@ -1463,7 +1464,7 @@
         "VN_ABI_VERSION_MINOR": {
           "edition": "core",
           "type": "u32",
-          "value": 2
+          "value": 3
         },
         "VN_ATTENUATION_MAX_CURVE_POINTS": {
           "edition": "core",
@@ -6306,6 +6307,58 @@
             }
           ],
           "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_ActivateNamedResidentDirectoryV1",
+          "parameters": [
+            {
+              "ctype": "const VnResidentDirectoryActivationV1*",
+              "name": "desc"
+            },
+            {
+              "ctype": "const uint16_t*",
+              "name": "directory"
+            },
+            {
+              "ctype": "const uint16_t* const*",
+              "name": "names"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "count"
+            },
+            {
+              "ctype": "void*",
+              "name": "keys"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "keyCapacity"
+            },
+            {
+              "ctype": "VnCanonicalPackSetActivationReportV1*",
+              "name": "outReport"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_PostNamedResidentActionV1",
+          "parameters": [
+            {
+              "ctype": "const VnNamedResidentPostV1*",
+              "name": "desc"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outFiring"
+            }
+          ],
+          "returnType": "VnResult"
         }
       ],
       "monitorRecordEnvelope": [
@@ -6523,6 +6576,7 @@
         "VnPreview_TakeChannelPeaks",
         "Vn_ActivateCanonicalPackSetV1",
         "Vn_ActivateCanonicalPackSetV2",
+        "Vn_ActivateNamedResidentDirectoryV1",
         "Vn_ActivateResidentPackDirectoryV1",
         "Vn_ApplyBusTopology",
         "Vn_ApplyVoiceBinding",
@@ -6584,6 +6638,7 @@
         "Vn_MonitorStopCapture",
         "Vn_MonitorValidateCapturePlan",
         "Vn_PostAction",
+        "Vn_PostNamedResidentActionV1",
         "Vn_QueryAbiVersion",
         "Vn_QueryActionFiring",
         "Vn_QueryActionPlaybackReadiness",
@@ -18492,6 +18547,126 @@
           ],
           "size": 80
         },
+        "VnNamedResidentPostV1": {
+          "alignment": 8,
+          "edition": "core",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "rowCount",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "nameUnits",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "keyCapacity",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "name",
+              "offset": 16,
+              "shape": {
+                "ctype": "const uint16_t*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "keys",
+              "offset": 24,
+              "shape": {
+                "ctype": "const uint8_t*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "rows",
+              "offset": 32,
+              "shape": {
+                "ctype": "const VnResidentDirectoryMemberV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initHandle",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "setRevision",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "emitter",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "callerSeed",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 72
+        },
         "VnNotification": {
           "alignment": 8,
           "edition": "core",
@@ -26413,6 +26588,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnNamedResidentPostV1": {
+            "acceptedSizes": [
+              72
+            ],
+            "currentSize": 72,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnPCMDesc": {
             "acceptedSizes": [
               48
@@ -26859,7 +27043,7 @@
       }
     }
   },
-  "contractSha256": "ecd037eb900e096606a15ad1f55fc7bde57087618841494ff2a260f98f75d527",
+  "contractSha256": "cadad168245fa663e9e546b6b281672fe76596638a91ac50bd00e62c9acd49ac",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

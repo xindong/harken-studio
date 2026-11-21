@@ -25,6 +25,18 @@ namespace Harken
             this.refresh = refresh;
         }
 
+        internal VnResult PrepareNamedDirectory()
+        {
+            var result = owner.ActivateSmallResidentSet(names, owners, true);
+            if (result == VnResult.VN_CAPABILITY_UNAVAILABLE) return Prepare();
+            if (result == VnResult.VN_OK)
+            {
+                count = names.Length;
+                prepared = true;
+            }
+            return result;
+        }
+
         public bool IsPrepared => prepared && owner.IsActive;
         public bool IsReleased => !owner.IsActive || count == 0;
         public VnResult LastReleaseResult { get; private set; } = VnResult.VN_OK;
@@ -97,7 +109,13 @@ namespace Harken
                 count = 0;
                 Array.Clear(owners, 0, owners.Length);
             }
-            if (count > 1 && owner.TryReleaseWholeSet(owners, count))
+            bool directoryReleased = false;
+            if (count != 0)
+            {
+                var result = owner.ReleaseDirectoryLease(owners, out directoryReleased);
+                if (result != VnResult.VN_OK) return LastReleaseResult = result;
+            }
+            if (directoryReleased || (count > 1 && owner.TryReleaseWholeSet(owners, count)))
             {
                 Array.Clear(owners, 0, count);
                 count = 0;
@@ -128,13 +146,14 @@ namespace Harken
 
         internal sealed class SharedPack
         {
-            internal ulong StableId;
-            internal ulong ContentHash;
-            internal int ByteCount;
+            internal VnResidentDirectoryMemberV1 Binding;
             internal PackCompanion Names;
             internal ulong NameRevision;
-            internal ulong CallableFingerprint;
-            public Pack Handle;
+            internal ulong StableId { get => Binding.packStableId; set => Binding.packStableId = value; }
+            internal ulong ContentHash { get => Binding.contentHash; set => Binding.contentHash = value; }
+            internal int ByteCount { get => (int)Binding.byteCount; set => Binding.byteCount = (ulong)value; }
+            internal ulong CallableFingerprint { get => Binding.executionFingerprint; set => Binding.executionFingerprint = value; }
+            internal Pack Handle { get => new Pack(Binding.handle); set => Binding.handle = value.Handle; }
             public int Requests;
             public byte[] Bytes;
             internal GameplayNames.Action Action =>
@@ -194,6 +213,23 @@ namespace Harken
         /// <summary>On failure, a non-null scope still owns any references whose rollback could not finish.</summary>
         public VnResult PrepareActions(string[] names, string projectId, out ActionPreparation preparation)
         {
+            if (active && names != null && projectId == ProjectId && CanAcquireNamedDirectory(names.Length))
+            {
+                preparation = null;
+                var allowed = CompanionMutationAllowed();
+                if (allowed != VnResult.VN_OK) return allowed;
+                try
+                {
+                    var requested = UniqueNames(names);
+                    if (requested == null) return VnResult.VN_INVALID_ARG;
+                    if (directoryLease == null || directoryLease.Names.Length == requested.Length)
+                    {
+                        preparation = new ActionPreparation(this, requested);
+                        return preparation.PrepareNamedDirectory();
+                    }
+                }
+                catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            }
             return PrepareCompanions(names, projectId, false, out preparation);
         }
 
@@ -274,6 +310,7 @@ namespace Harken
                     ownedArchive?.Dispose();
                     ownedArchive = null;
                     companionLocators = null;
+                    directoryLease = null;
                     companionOwners = Array.Empty<SharedPack>();
                     companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
                     companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();

@@ -752,7 +752,7 @@ namespace Harken
     public static class VnConstants
     {
         public const uint VN_ABI_VERSION_MAJOR = 1u;
-        public const uint VN_ABI_VERSION_MINOR = 2u;
+        public const uint VN_ABI_VERSION_MINOR = 3u;
         internal const uint VN_EMITTER_CREATE_STATE_ONLY = 1u;
         public const uint VN_REMOTE_DEFAULT_DISCOVERY_PORT = 37840u;
         public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId(0UL, 1UL);
@@ -2472,6 +2472,22 @@ namespace Harken
     public ulong baseSetRevision;
     public VnObjectId projectId;
     public IntPtr rows;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnNamedResidentPostV1
+    {
+    public uint structSize;
+    public uint rowCount;
+    public uint nameUnits;
+    public uint keyCapacity;
+    public IntPtr name;
+    public IntPtr keys;
+    public IntPtr rows;
+    public ulong initHandle;
+    public ulong setRevision;
+    public ulong emitter;
+    public ulong callerSeed;
     }
 
 }

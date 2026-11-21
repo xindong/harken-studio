@@ -1,6 +1,15 @@
 #include <harken/Harken.h>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <algorithm>
+#include <array>
+#include <cstring>
+#include <string>
 #include <limits>
 #include <numeric>
 #include <tuple>
@@ -93,4 +102,57 @@ extern "C" VnResult Vn_ActivateResidentPackDirectoryV1(
     const auto result = Vn_VisitResidentPackDirectoryV1(&visit);
     if (result == VN_OK) *outReport = state.report;
     return result;
+}
+
+extern "C" VnResult Vn_ActivateNamedResidentDirectoryV1(
+    const VnResidentDirectoryActivationV1* source, const uint16_t* directory,
+    const uint16_t* const* names, uint32_t count, void* keys, uint32_t keyCapacity,
+    VnCanonicalPackSetActivationReportV1* report) {
+    constexpr uint32_t width = 129;
+    if (!source || source->structSize != sizeof(*source) || !directory || !names ||
+        !count || count > 32 || count != source->directory.memberCount || !keys ||
+        keyCapacity < count * width || source->directory.utf8Names || source->directory.utf8Directory)
+        return VN_INVALID_ARG;
+#if defined(_WIN32)
+    try {
+        size_t units = 0;
+        while (units < 32768 && directory[units]) ++units;
+        if (!units || units == 32768) return VN_INVALID_ARG;
+        const auto* path = reinterpret_cast<const wchar_t*>(directory);
+        int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path, static_cast<int>(units),
+                                       nullptr, 0, nullptr, nullptr);
+        if (size <= 0) return VN_INVALID_ARG;
+        std::string utf8(static_cast<size_t>(size), '\0');
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path, static_cast<int>(units),
+                                utf8.data(), size, nullptr, nullptr) != size) return VN_INVALID_ARG;
+        std::array<char, 32 * width> slots{};
+        std::string joined;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (!names[i]) return VN_INVALID_ARG;
+            char* slot = slots.data() + i * width;
+            uint32_t n = 0;
+            while (n < width && names[i][n]) {
+                const uint16_t c = names[i][n];
+                const bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+                if (!letter && (!n || (c != '_' && (c < '0' || c > '9')))) return VN_INVALID_ARG;
+                slot[n++] = static_cast<char>(c);
+            }
+            if (!n || n == width || std::strcmp(slot, "Init") == 0) return VN_INVALID_ARG;
+            for (uint32_t j = 0; j < i; ++j)
+                if (std::strcmp(slot, slots.data() + j * width) == 0) return VN_INVALID_ARG;
+            if (i) joined += '\n';
+            joined.append(slot, n);
+        }
+        auto desc = *source;
+        desc.directory.utf8Directory = utf8.c_str();
+        desc.directory.utf8Names = joined.c_str();
+        const auto result = Vn_ActivateResidentPackDirectoryV1(&desc, report);
+        if (result == VN_OK) std::memcpy(keys, slots.data(), count * width);
+        return result;
+    } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
+      catch (...) { return VN_DEVICE_ERROR; }
+#else
+    (void)report;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
 }

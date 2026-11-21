@@ -8476,6 +8476,63 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnNamedResidentPostV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "rowCount",
+          "u32"
+        ],
+        [
+          "nameUnits",
+          "u32"
+        ],
+        [
+          "keyCapacity",
+          "u32"
+        ],
+        [
+          "name",
+          {
+            "ptr": "opaque",
+            "ctype": "const uint16_t*"
+          }
+        ],
+        [
+          "keys",
+          {
+            "ptr": "opaque",
+            "ctype": "const uint8_t*"
+          }
+        ],
+        [
+          "rows",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnResidentDirectoryMemberV1*"
+          }
+        ],
+        [
+          "initHandle",
+          "u64"
+        ],
+        [
+          "setRevision",
+          "u64"
+        ],
+        [
+          "emitter",
+          "u64"
+        ],
+        [
+          "callerSeed",
+          "u64"
+        ]
+      ]
     }
   },
   "functions": [
@@ -11990,6 +12047,66 @@ TABLE_JSON = r'''
           "type": "VnCanonicalPackSetActivationReportV1"
         }
       ]
+    },
+    {
+      "name": "Vn_ActivateNamedResidentDirectoryV1",
+      "note": "Local resident directory binding. No remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnResidentDirectoryActivationV1*",
+          "wire": "desc",
+          "type": "VnResidentDirectoryActivationV1"
+        },
+        {
+          "name": "directory",
+          "ctype": "const uint16_t*",
+          "wire": "utf16string"
+        },
+        {
+          "name": "names",
+          "ctype": "const uint16_t* const*",
+          "wire": "utf16names"
+        },
+        {
+          "name": "count",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "keys",
+          "ctype": "void*",
+          "wire": "outbuf"
+        },
+        {
+          "name": "keyCapacity",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnCanonicalPackSetActivationReportV1*",
+          "wire": "outstruct",
+          "type": "VnCanonicalPackSetActivationReportV1"
+        }
+      ]
+    },
+    {
+      "name": "Vn_PostNamedResidentActionV1",
+      "note": "Local resident directory binding. No remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnNamedResidentPostV1*",
+          "wire": "desc",
+          "type": "VnNamedResidentPostV1"
+        },
+        {
+          "name": "outFiring",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
     }
   ],
   "binding_overloads": [
@@ -13312,7 +13429,7 @@ TABLE_JSON = r'''
       },
       "VN_ABI_VERSION_MINOR": {
         "type": "u32",
-        "value": 2
+        "value": 3
       },
       "VN_EMITTER_CREATE_STATE_ONLY": {
         "type": "u32",

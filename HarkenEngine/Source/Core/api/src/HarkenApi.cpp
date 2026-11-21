@@ -120341,10 +120341,11 @@ static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
 static VnResult PostActionObserved(const VnPostActionDesc* desc,
                        VnActionFiringHandle* outFiring,
                        const harken::MonitorRequestContext& request,
-                       harken::monitor::RequestObservation* observation) {
+                       harken::monitor::RequestObservation* observation,
+                       harken::detail::ActionAdmissionValidator validator, const void* context) {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     return harken::detail::PostActionWithValidation(
-        desc, outFiring, nullptr, nullptr, true, request, observation);
+        desc, outFiring, validator, context, true, request, observation);
 }
 
 } // extern "C"
@@ -131991,11 +131992,12 @@ VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV
     return result;
 }
 
-VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring) {
+static VnResult PostWithMonitor(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring,
+    harken::detail::ActionAdmissionValidator validator, const void* context) {
     const auto request = harken::detail::BeginMonitorRequest(
         harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationPostAction);
     harken::monitor::RequestObservation observation(request);
-    const auto result = PostActionObserved(desc, outFiring, request, &observation);
+    const auto result = PostActionObserved(desc, outFiring, request, &observation, validator, context);
     const bool readable = desc && desc->structSize == sizeof(*desc);
     harken::monitor::ObserveOperation(harken::monitor::kOperationPostAction, result,
         harken::monitor::kEntityAction, readable ? desc->actionId : VnObjectId{},
@@ -132008,6 +132010,49 @@ VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFi
 #endif
     }
     return observation.Returned(result);
+}
+
+VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring) {
+    return PostWithMonitor(desc, outFiring, nullptr, nullptr);
+}
+
+VnResult Vn_PostNamedResidentActionV1(const VnNamedResidentPostV1* desc, uint64_t* outFiring) {
+    constexpr uint32_t width = 129;
+    if (!outFiring) return VN_INVALID_ARG;
+    *outFiring = 0;
+    if (!desc || desc->structSize != sizeof(*desc) || !desc->keys || !desc->rows || !desc->name ||
+        !desc->initHandle || !desc->setRevision || !desc->nameUnits || desc->nameUnits >= width ||
+        !desc->rowCount || desc->rowCount > 32 || desc->keyCapacity < desc->rowCount * width)
+        return VN_INVALID_ARG;
+    for (uint32_t i = 0; i < desc->nameUnits; ++i) {
+        const uint16_t c = desc->name[i];
+        const bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (!letter && (!i || (c != '_' && (c < '0' || c > '9')))) return VN_INVALID_ARG;
+    }
+    for (uint32_t i = 0; i < desc->rowCount; ++i) {
+        const auto* slot = desc->keys + i * width;
+        if (slot[desc->nameUnits] != 0) continue;
+        uint32_t j = 0;
+        while (j < desc->nameUnits && desc->name[j] && slot[j] == desc->name[j]) ++j;
+        if (j != desc->nameUnits) continue;
+        const auto& row = desc->rows[i];
+        if (!row.handle) return VN_STALE_HANDLE;
+        struct Expected { uint64_t init, revision, pack, handle; };
+        const Expected expected{desc->initHandle, desc->setRevision, row.packStableId, row.handle};
+        const auto validate = [](const harken::detail::ActionAdmissionView& view, const void* context) noexcept -> VnResult {
+            const auto& e = *static_cast<const Expected*>(context);
+            return view.packBacked && view.publication && view.publication->initHandle == e.init &&
+                view.publication->ledger.setRevision == e.revision && view.lease.packStableId == e.pack &&
+                view.lease.handle == e.handle ? VN_OK : VN_STALE_HANDLE;
+        };
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = row.rootActionId;
+        post.emitter = desc->emitter;
+        post.callerSeed = desc->callerSeed;
+        return PostWithMonitor(&post, outFiring, validate, &expected);
+    }
+    return VN_UNKNOWN_ID;
 }
 
 } // extern "C"

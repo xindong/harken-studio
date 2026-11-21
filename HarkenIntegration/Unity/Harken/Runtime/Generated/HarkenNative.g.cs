@@ -492,6 +492,12 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateResidentPackDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_ActivateResidentPackDirectoryV1(in VnResidentDirectoryActivationV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_ActivateNamedResidentDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_ActivateNamedResidentDirectoryV1(in VnResidentDirectoryActivationV1 desc, [MarshalAs(UnmanagedType.LPWStr)] string directory, [In, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 3)] string[] names, uint count, void* keys, uint keyCapacity, ref VnCanonicalPackSetActivationReportV1 outReport);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_PostNamedResidentActionV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_PostNamedResidentActionV1(in VnNamedResidentPostV1 desc, out ulong outFiring);
+
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_MonitorGetEventSessionStatusV2(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus);

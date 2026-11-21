@@ -3984,6 +3984,31 @@ static_assert(offsetof(VnResidentDirectoryActivationV1, projectId) == 144,
 static_assert(offsetof(VnResidentDirectoryActivationV1, rows) == 160,
               "wire table offset drift: VnResidentDirectoryActivationV1.rows");
 
+static_assert(sizeof(VnNamedResidentPostV1) == 72,
+              "wire table size drift: VnNamedResidentPostV1");
+static_assert(offsetof(VnNamedResidentPostV1, structSize) == 0,
+              "wire table offset drift: VnNamedResidentPostV1.structSize");
+static_assert(offsetof(VnNamedResidentPostV1, rowCount) == 4,
+              "wire table offset drift: VnNamedResidentPostV1.rowCount");
+static_assert(offsetof(VnNamedResidentPostV1, nameUnits) == 8,
+              "wire table offset drift: VnNamedResidentPostV1.nameUnits");
+static_assert(offsetof(VnNamedResidentPostV1, keyCapacity) == 12,
+              "wire table offset drift: VnNamedResidentPostV1.keyCapacity");
+static_assert(offsetof(VnNamedResidentPostV1, name) == 16,
+              "wire table offset drift: VnNamedResidentPostV1.name");
+static_assert(offsetof(VnNamedResidentPostV1, keys) == 24,
+              "wire table offset drift: VnNamedResidentPostV1.keys");
+static_assert(offsetof(VnNamedResidentPostV1, rows) == 32,
+              "wire table offset drift: VnNamedResidentPostV1.rows");
+static_assert(offsetof(VnNamedResidentPostV1, initHandle) == 40,
+              "wire table offset drift: VnNamedResidentPostV1.initHandle");
+static_assert(offsetof(VnNamedResidentPostV1, setRevision) == 48,
+              "wire table offset drift: VnNamedResidentPostV1.setRevision");
+static_assert(offsetof(VnNamedResidentPostV1, emitter) == 56,
+              "wire table offset drift: VnNamedResidentPostV1.emitter");
+static_assert(offsetof(VnNamedResidentPostV1, callerSeed) == 64,
+              "wire table offset drift: VnNamedResidentPostV1.callerSeed");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H
