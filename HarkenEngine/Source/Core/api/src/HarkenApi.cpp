@@ -53145,6 +53145,29 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
         }
 }
 
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+bool IsIndependentRelativeSound(const harken::EnginePlayableServiceRow& row) noexcept {
+    return row.root.kind == harken::PlayableKindV1::Sound &&
+        row.pendingImmediateTimeDomain == harken::ImmediateLaneTimeDomain::RelativeToAnchor &&
+        row.pendingImmediateFixedEntryFrame == 0 && !row.parentService.Valid() &&
+        !row.pendingCancellationIntent;
+}
+
+bool OnlyWaitingRelativeSounds(harken::Engine& engine) noexcept {
+    std::uint32_t cursor = 0;
+    while (auto* row = engine.NextOccupiedPlayableService(&cursor)) {
+        harken::TimelineArmObservation arm{};
+        if (!row->pendingImmediateEntry ||
+            row->phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+            !IsIndependentRelativeSound(*row) || row->scheduleLeafCount > 1 ||
+            !engine.timelineArms.Observe(row->arm, &arm) ||
+            arm.state != harken::ArmState::PendingApply)
+            return false;
+    }
+    return true;
+}
+#endif
+
 void ServicePendingImmediateEntries(
     harken::Engine& engine,
     std::uint64_t* requiredPublicationFrame) noexcept {
@@ -53826,10 +53849,7 @@ void ServicePendingImmediateEntries(
                 !member.pendingImmediateEntry ||
                 member.PendingImmediateCohortRoot() != root) continue;
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
-            onlyRelativeSounds &= member.root.kind == harken::PlayableKindV1::Sound &&
-                member.pendingImmediateTimeDomain == harken::ImmediateLaneTimeDomain::RelativeToAnchor &&
-                member.pendingImmediateFixedEntryFrame == 0 && !member.parentService.Valid() &&
-                !member.pendingCancellationIntent;
+            onlyRelativeSounds &= IsIndependentRelativeSound(member);
 #endif
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto* program = leafProgram(member, leaf);
@@ -73930,14 +73950,13 @@ void TimelineServiceCoordinator::Service() {
             engine_.timelinePool.PublishLeadQuanta()) *
             engine_.timelinePool.QuantumFrames();
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
-    // Idle Windows sessions can defer freezing unused pages. Absolute
-    // scheduling still uses its normal lead whenever it has work to publish.
-    std::uint32_t serviceCursor = 0;
+    // A pending relative Sound has no fixed start until the audio thread
+    // acknowledges its arm. Keep empty pages writable through that wait.
     if (engine_.device.UsesGameOutput() && requiredPublicationFrame == 0 &&
         blockingFrame == UINT64_MAX && !engine_.runtimeTransportResetActive &&
         engine_.timelinePool.LiveTransactionCount() == 0 &&
         engine_.timelineDeferred.Count() == 0 && engine_.timelineDeferred.PreparedCount() == 0 &&
-        engine_.NextOccupiedPlayableService(&serviceCursor) == nullptr) {
+        OnlyWaitingRelativeSounds(engine_)) {
         desiredCutoff = std::min(desiredCutoff, engine_.timelinePool.WindowStartFrame() + std::uint64_t{2} * engine_.timelinePool.QuantumFrames());
     }
 #endif
