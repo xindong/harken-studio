@@ -1177,7 +1177,8 @@ struct SpanCanonicalSource {
         if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
             VorbisMedia parsed;
             const auto available = budget ? budget->limit - budget->live : SIZE_MAX;
-            if (!ParseResidentVorbis(bytes + media.blobOffset, static_cast<std::size_t>(media.blobBytes), parsed, static_cast<std::size_t>(available)) ||
+            if (!ParseResidentVorbis(bytes + media.blobOffset, static_cast<std::size_t>(media.blobBytes),
+                                     parsed, static_cast<std::size_t>(available), &checksum) ||
                 parsed.sampleRate != media.sampleRate || parsed.channels != media.channelCount ||
                 parsed.frames != media.frameCount || parsed.loopStart != media.loopStartFrame ||
                 parsed.loopEnd != media.loopEndFrame ||

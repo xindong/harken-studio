@@ -49,7 +49,7 @@ bool VorbisMedia::VerifySegment(std::size_t index) const noexcept {
 }
 
 bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output,
-                        std::size_t indexBudget) {
+                        std::size_t indexBudget, const std::uint64_t* computedChecksum) {
     if (!data || bytes < sizeof(HkPackVorbisHeader)) return false;
     const auto* header = static_cast<const std::uint8_t*>(data);
     if (LoadLE32(header + offsetof(HkPackVorbisHeader, version)) != HK_PACK_VORBIS_VERSION ||
@@ -123,7 +123,7 @@ bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& outpu
         packet += std::uint64_t(size) + 4;
     }
     if (!foundLoop || m.seek.size() != gridCount) return false;
-    m.revision = Fnv1a64(data, bytes);
+    m.revision = computedChecksum ? *computedChecksum : Fnv1a64(data, bytes);
     if (!m.revision) m.revision = 1;
     output = std::move(m);
     return true;

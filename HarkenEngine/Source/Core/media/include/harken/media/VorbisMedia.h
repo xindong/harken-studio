@@ -50,8 +50,10 @@ struct VorbisMedia {
     bool VerifySegment(std::size_t index) const noexcept;
 };
 
+// A supplied checksum must have been computed over this exact immutable span.
 bool ParseResidentVorbis(const void* data, std::size_t bytes, VorbisMedia& output,
-                        std::size_t indexBudget = SIZE_MAX);
+                        std::size_t indexBudget = SIZE_MAX,
+                        const std::uint64_t* computedChecksum = nullptr);
 bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& output);
 
 } // namespace harken

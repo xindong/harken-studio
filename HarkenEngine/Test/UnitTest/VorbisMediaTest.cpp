@@ -66,6 +66,11 @@ TEST(VorbisMedia, ResidentPacketLengthsAndSeekOffsetsAreByteExact) {
     auto fixture = harken::test::MakeVorbisFixture(1, false, 6503, 11997, 4096, true, 173);
     VorbisMedia m;
     ASSERT_TRUE(ParseResidentVorbis(fixture.media.data(), fixture.media.size(), m));
+    const auto checksum = Fnv1a64(fixture.media.data(), fixture.media.size());
+    EXPECT_EQ(m.revision, checksum);
+    VorbisMedia verified;
+    ASSERT_TRUE(ParseResidentVorbis(fixture.media.data(), fixture.media.size(), verified, SIZE_MAX, &checksum));
+    EXPECT_EQ(verified.revision, m.revision);
     EXPECT_THROW(ParseResidentVorbis(fixture.media.data(), fixture.media.size(), m,
         m.seek.size() * sizeof(VorbisSeekPoint) - 1), std::bad_alloc);
     const auto index = sizeof(HkPackVorbisHeader) + m.identBytes + m.setupBytes;
@@ -78,6 +83,7 @@ TEST(VorbisMedia, ResidentPacketLengthsAndSeekOffsetsAreByteExact) {
         bytes.resize(position + 4 + length);
         StoreLE32(bytes.data() + position, length);
         ASSERT_TRUE(ParseResidentVorbis(bytes.data(), bytes.size(), m));
+        EXPECT_EQ(m.revision, Fnv1a64(bytes.data(), bytes.size()));
         const std::uint8_t* packet;
         std::uint32_t actual;
         ASSERT_TRUE(m.Packet(position - static_cast<std::size_t>(m.packets - bytes.data()), packet, actual));
