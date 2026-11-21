@@ -7,6 +7,7 @@
 #define NOMINMAX
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <windows.h>
 #include <bcrypt.h>
 #include <compressapi.h>
@@ -273,7 +274,7 @@ bool harken::TakeResidentDirectoryImage(const VnPackLoadDesc& source, const VnPa
 #endif
 }
 
-static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepImages, bool& submitted) {
+static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepImages, bool allowParallel, bool& submitted) {
   if (!desc || desc->structSize != sizeof(*desc) || !desc->memberCount ||
       !desc->utf8Directory || !desc->utf8Names || !desc->visit ||
       !desc->maxInputBytes || desc->init.structSize != sizeof(VnPackByteSpan) ||
@@ -316,106 +317,160 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
     status = Identity(boot.file, identity);
     if (status != VN_OK)
       return status;
-    Decoder decoder;
-    if (!CreateDecompressor(COMPRESS_ALGORITHM_XPRESS_HUFF, nullptr,
-                            &decoder.h))
-      return VN_DEVICE_ERROR;
     std::vector<harken::PackCanonicalImage> images;
     if (keepImages) harken::detail::DecodeResize(images, count, retained);
     std::vector<Owner> owners(count);
     std::vector<Row> rows(count);
-    std::wstring_view rest(names);
-    for (uint32_t j = 0; j < count; j++) {
-      size_t end = rest.find(L'\n');
-      auto wide = rest.substr(0, end);
-      if (wide.empty() || wide.size() > 128 ||
-          ((end == std::wstring_view::npos) != (j + 1 == count)))
-        return VN_INVALID_ARG;
-      if (!((wide.front() >= 'A' && wide.front() <= 'Z') ||
-            (wide.front() >= 'a' && wide.front() <= 'z')) ||
-          wide == L"Init")
-        return VN_INVALID_ARG;
-      std::string name;
-      for (wchar_t c : wide) {
-        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-              (c >= '0' && c <= '9') || c == '_'))
-          return VN_INVALID_ARG;
-        name.push_back(char(c));
-      }
-      auto file = std::wstring(wide) + L".hrp";
-      auto &owner = owners[j];
-      auto &row = rows[j];
-      status = Open(owner, directory + L"\\" + file);
-      if (status != VN_OK)
-        return status;
-      std::wstring normalized(
-          std::max<size_t>(260, directory.size() + file.size() + 32), L'\0');
-      auto n =
-          GetFinalPathNameByHandleW(owner.file, normalized.data(),
-                                    static_cast<DWORD>(normalized.size()), 0);
-      if (n >= normalized.size()) {
-        normalized.resize(n + 1);
-        n = GetFinalPathNameByHandleW(owner.file, normalized.data(),
-                                      static_cast<DWORD>(normalized.size()), 0);
-      }
-      if (!n || n >= normalized.size())
-        return VN_PACK_PROVIDER_FAILED;
-      std::wstring_view actual(normalized.data(), n);
-      if (actual.substr(actual.find_last_of(L'\\') + 1) != file)
-        return VN_BAD_PACK;
-      LARGE_INTEGER size{};
-      if (!GetFileSizeEx(owner.file, &size) || size.QuadPart < 48 ||
-          size.QuadPart > 3 * Max)
-        return VN_BAD_PACK;
-      harken::detail::PackDecodeCharge input(staging);
-      input.Add(static_cast<uint64_t>(size.QuadPart));
-      std::vector<uint8_t> image(static_cast<size_t>(size.QuadPart));
-      DWORD read = 0;
-      if (!ReadFile(owner.file, image.data(), DWORD(image.size()), &read,
-                    nullptr) ||
-          read != image.size())
-        return VN_PACK_PROVIDER_FAILED;
-      uint32_t h[4];
-      memcpy(h, image.data(), 16);
-      if ((h[0] != Hrp1 && h[0] != Hrp2) || h[1] == 0 || h[1] > Max || !h[2] ||
-          h[2] > Max || !h[3] || size_t(h[2]) + h[3] + 48 != image.size())
-        return VN_BAD_PACK;
-      retained.Add(h[1]);
-      uint8_t digest[32];
-      if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, image.data(),
-                     ULONG(image.size() - 32), digest, 32) < 0)
+    auto prepareRange = [&](uint32_t begin, uint32_t endIndex, std::wstring_view rest,
+                            const harken::detail::PackDecodeBudget& laneBudget,
+                            harken::detail::PackDecodeCharge& rawBytes) -> VnResult {
+      Decoder decoder;
+      if (!CreateDecompressor(COMPRESS_ALGORITHM_XPRESS_HUFF, nullptr, &decoder.h))
         return VN_DEVICE_ERROR;
-      if (memcmp(digest, image.data() + image.size() - 32, 32))
-        return VN_BAD_PACK;
-      VnObjectId id{};
-      if (!Meta({reinterpret_cast<char *>(image.data() + 16), h[2]}, name, id))
-        return VN_CAPABILITY_UNAVAILABLE;
-      owner.bytes.resize(h[1]);
-      if (!Unpack(decoder.h, h[0], {image.data() + 16 + h[2], h[3]}, owner.bytes))
-        return VN_BAD_PACK;
-      VnPackInspectDescV1 req{};
-      req.structSize = sizeof req;
-      req.pack = {sizeof(VnPackByteSpan), 0, owner.bytes.data(),
-                  owner.bytes.size()};
-      req.init = desc->init;
-      req.rootActionId = id;
-      req.maxInputBytes = desc->init.byteCount + owner.bytes.size();
-      row.facts.structSize = sizeof row.facts;
-      harken::PackCanonicalImage scratch;
-      status = BindingFacts(req, initImage, row.facts, staging, keepImages ? images[j] : scratch);
-      if (status != VN_OK)
-        return status;
-      row.byteCount = owner.bytes.size();
-      auto &p = row.provider;
-      p.structSize = sizeof p;
-      p.packStableId = row.facts.packStableId;
-      p.packKind = VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
-      p.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
-      p.providerUserData = &owner;
-      p.provide = Provide;
-      p.release = Release;
-      if (end != std::wstring_view::npos)
-        rest.remove_prefix(end + 1);
+      for (uint32_t j = begin; j < endIndex; ++j) {
+        size_t end = rest.find(L'\n');
+        auto wide = rest.substr(0, end);
+        if (wide.empty() || wide.size() > 128 ||
+            ((end == std::wstring_view::npos) != (j + 1 == endIndex)))
+          return VN_INVALID_ARG;
+        if (!((wide.front() >= 'A' && wide.front() <= 'Z') ||
+              (wide.front() >= 'a' && wide.front() <= 'z')) ||
+            wide == L"Init")
+          return VN_INVALID_ARG;
+        std::string name;
+        for (wchar_t c : wide) {
+          if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') || c == '_'))
+            return VN_INVALID_ARG;
+          name.push_back(char(c));
+        }
+        auto file = std::wstring(wide) + L".hrp";
+        auto &owner = owners[j];
+        auto &row = rows[j];
+        auto status = Open(owner, directory + L"\\" + file);
+        if (status != VN_OK)
+          return status;
+        std::wstring normalized(
+            std::max<size_t>(260, directory.size() + file.size() + 32), L'\0');
+        auto n =
+            GetFinalPathNameByHandleW(owner.file, normalized.data(),
+                                      static_cast<DWORD>(normalized.size()), 0);
+        if (n >= normalized.size()) {
+          normalized.resize(n + 1);
+          n = GetFinalPathNameByHandleW(owner.file, normalized.data(),
+                                        static_cast<DWORD>(normalized.size()), 0);
+        }
+        if (!n || n >= normalized.size())
+          return VN_PACK_PROVIDER_FAILED;
+        std::wstring_view actual(normalized.data(), n);
+        if (actual.substr(actual.find_last_of(L'\\') + 1) != file)
+          return VN_BAD_PACK;
+        LARGE_INTEGER size{};
+        if (!GetFileSizeEx(owner.file, &size) || size.QuadPart < 48 ||
+            size.QuadPart > 3 * Max)
+          return VN_BAD_PACK;
+        harken::detail::PackDecodeCharge input(laneBudget);
+        input.Add(static_cast<uint64_t>(size.QuadPart));
+        std::vector<uint8_t> image(static_cast<size_t>(size.QuadPart));
+        DWORD read = 0;
+        if (!ReadFile(owner.file, image.data(), DWORD(image.size()), &read,
+                      nullptr) ||
+            read != image.size())
+          return VN_PACK_PROVIDER_FAILED;
+        uint32_t h[4];
+        memcpy(h, image.data(), 16);
+        if ((h[0] != Hrp1 && h[0] != Hrp2) || h[1] == 0 || h[1] > Max || !h[2] ||
+            h[2] > Max || !h[3] || size_t(h[2]) + h[3] + 48 != image.size())
+          return VN_BAD_PACK;
+        rawBytes.Add(h[1]);
+        uint8_t digest[32];
+        if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, image.data(),
+                       ULONG(image.size() - 32), digest, 32) < 0)
+          return VN_DEVICE_ERROR;
+        if (memcmp(digest, image.data() + image.size() - 32, 32))
+          return VN_BAD_PACK;
+        VnObjectId id{};
+        if (!Meta({reinterpret_cast<char *>(image.data() + 16), h[2]}, name, id))
+          return VN_CAPABILITY_UNAVAILABLE;
+        owner.bytes.resize(h[1]);
+        if (!Unpack(decoder.h, h[0], {image.data() + 16 + h[2], h[3]}, owner.bytes))
+          return VN_BAD_PACK;
+        VnPackInspectDescV1 req{};
+        req.structSize = sizeof req;
+        req.pack = {sizeof(VnPackByteSpan), 0, owner.bytes.data(),
+                    owner.bytes.size()};
+        req.init = desc->init;
+        req.rootActionId = id;
+        req.maxInputBytes = desc->init.byteCount + owner.bytes.size();
+        row.facts.structSize = sizeof row.facts;
+        harken::PackCanonicalImage scratch;
+        status = BindingFacts(req, initImage, row.facts, laneBudget, keepImages ? images[j] : scratch);
+        if (status != VN_OK)
+          return status;
+        row.byteCount = owner.bytes.size();
+        auto &p = row.provider;
+        p.structSize = sizeof p;
+        p.packStableId = row.facts.packStableId;
+        p.packKind = VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        p.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
+        p.providerUserData = &owner;
+        p.provide = Provide;
+        p.release = Release;
+        if (end != std::wstring_view::npos)
+          rest.remove_prefix(end + 1);
+      }
+      return VN_OK;
+    };
+    constexpr uint32_t laneCount = 4;
+    if (allowParallel && count >= laneCount * 2) {
+      // Partition the remaining allowance before submitting work. No mutable
+      // decoder, budget counter or file owner is shared between worker lanes.
+      const auto laneLimit = (budget - staging->live) / laneCount;
+      struct Range { uint32_t first, last; std::wstring_view names; };
+      std::array<Range, laneCount> ranges{};
+      std::wstring_view rest(names);
+      for (uint32_t lane = 0; lane < laneCount; ++lane) {
+        auto& range = ranges[lane];
+        range.first = static_cast<uint32_t>(uint64_t(count) * lane / laneCount);
+        range.last = static_cast<uint32_t>(uint64_t(count) * (lane + 1) / laneCount);
+        if (lane + 1 == laneCount) { range.names = rest; break; }
+        size_t offset = 0;
+        for (auto j = range.first; j < range.last; ++j) {
+          const auto delimiter = rest.find(L'\n', offset);
+          if (delimiter == std::wstring_view::npos) return VN_INVALID_ARG;
+          offset = delimiter + 1;
+        }
+        range.names = rest.substr(0, offset - 1);
+        rest.remove_prefix(offset);
+      }
+      std::array<VnResult, laneCount> results{};
+      std::atomic<uint32_t> next{};
+      auto run = [&]() noexcept {
+        const auto index = next.fetch_add(1, std::memory_order_relaxed);
+        const auto& range = ranges[index];
+        try {
+          auto localBudget = harken::detail::MakePackDecodeBudget(laneLimit);
+          harken::detail::PackDecodeCharge rawBytes(localBudget);
+          results[index] = prepareRange(range.first, range.last, range.names, localBudget, rawBytes);
+        } catch (const std::bad_alloc&) { results[index] = VN_PACK_RESIDENT_CAPACITY; }
+          catch (...) { results[index] = VN_DEVICE_ERROR; }
+      };
+      PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, void* ctx, PTP_WORK) {
+        (*static_cast<decltype(run)*>(ctx))();
+      }, &run, nullptr);
+      if (work) {
+        for (uint32_t i = 1; i < laneCount; ++i) SubmitThreadpoolWork(work);
+        run();
+        WaitForThreadpoolWorkCallbacks(work, FALSE);
+        CloseThreadpoolWork(work);
+        for (auto result : results) if (result != VN_OK) return result;
+      } else {
+        status = prepareRange(0, count, names, staging, retained);
+        if (status != VN_OK) return status;
+      }
+    } else {
+      status = prepareRange(0, count, names, staging, retained);
+      if (status != VN_OK) return status;
     }
     if (!MarkerClear(directory))
       return VN_PACK_STALE_REVISION;
@@ -434,9 +489,9 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
 
 extern "C" VnResult Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1 *desc) {
   bool submitted = false;
-  const auto result = VisitDirectory(desc, true, submitted);
+  const auto result = VisitDirectory(desc, true, true, submitted);
   if (result == VN_PACK_RESIDENT_CAPACITY && !submitted)
     // Admit tight inputs using one temporary image at a time. The visitor has not run yet.
-    return VisitDirectory(desc, false, submitted);
+    return VisitDirectory(desc, false, false, submitted);
   return result;
 }
