@@ -69,6 +69,11 @@ def publish(studio_cli, project, platform, output, release_format="directory"):
             raise RuntimeError("Studio failed to finalize the Pack publication.")
         stored = Path(work) / "release"
         stored.mkdir()
+        if release_format == "windows-resident":
+            from windows_resident import write_release
+            result = write_release(canonical, stored)
+            stored.rename(output)
+            return dict(destination=str(output), **result)
         if release_format == "zip":
             platforms = sorted(canonical.iterdir())
             if not platforms:
@@ -109,7 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--platform-id", required=True)
     parser.add_argument("--output", type=Path, required=True, help="A new release directory")
-    parser.add_argument("--format", choices=("directory", "zip"), default="directory",
-                        help="Publish independent Unity files (default) or <platform>/Packs.zip")
+    parser.add_argument("--format", choices=("directory", "zip", "windows-resident"), default="directory",
+                        help="Publish independent Unity files (default) or <platform>/Packs.zip, or Windows resident .hrp files")
     args = parser.parse_args()
     print(json.dumps(publish(args.studio_cli.resolve(), args.project.resolve(), args.platform_id, args.output.resolve(), args.format), indent=2))

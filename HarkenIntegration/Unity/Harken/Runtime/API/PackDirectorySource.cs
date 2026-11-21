@@ -13,10 +13,11 @@ namespace Harken
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
         internal ulong SourceRevision;
+        internal PackDirectorySource.ResidentSelection Selection;
     }
 
     // Only this source knows about filesystem publication. Sessions consume owned snapshots.
-    internal sealed class PackDirectorySource
+    internal sealed partial class PackDirectorySource
     {
         internal readonly string Root;
         internal readonly string Language;
@@ -25,6 +26,7 @@ namespace Harken
         {
             Root = Path.GetFullPath(root);
             Language = language ?? string.Empty;
+            resident = File.Exists(Path.Combine(Root, "Init.hrp"));
         }
 
         internal static bool ValidLanguage(string value)
@@ -43,6 +45,7 @@ namespace Harken
                 return VnResult.VN_INVALID_ARG;
             try
             {
+                if (resident) return CaptureResident(name, project, init, out input);
                 string scope = name == null ? string.Empty : Language;
                 VnResult result = CapturePair(name ?? "Init", scope, out byte[] bytes, out byte[] json);
                 bool fallback = name != null && scope.Length != 0 && result == VnResult.VN_CONTENT_NOT_LOADED;
@@ -168,10 +171,10 @@ namespace Harken
         private static extern SafeFileHandle CreateFileW(string path, uint access, FileShare share,
             IntPtr securityAttributes, FileMode mode, uint flags, IntPtr template);
 
-        private static SafeFileHandle OpenForIdentity(string path)
+        private static SafeFileHandle OpenForIdentity(string path, FileShare share = FileShare.ReadWrite | FileShare.Delete)
         {
             const uint genericRead = 0x80000000, openReparsePoint = 0x00200000;
-            var handle = CreateFileW(path, genericRead, FileShare.ReadWrite | FileShare.Delete,
+            var handle = CreateFileW(path, genericRead, share,
                 IntPtr.Zero, FileMode.Open, openReparsePoint, IntPtr.Zero);
             if (!handle.IsInvalid) return handle;
             int error = Marshal.GetLastWin32Error();
@@ -180,9 +183,10 @@ namespace Harken
             throw new IOException("Cannot reopen Pack input.", new System.ComponentModel.Win32Exception(error));
         }
 
-        private readonly struct FileIdentity : IEquatable<FileIdentity>
+        internal readonly struct FileIdentity : IEquatable<FileIdentity>
         {
             private readonly ulong device, inode, length, modified, modifiedNs, changed, changedNs;
+            internal ulong Length => length;
             private FileIdentity(ulong device, ulong inode, ulong length, ulong modified,
                 ulong modifiedNs = 0, ulong changed = 0, ulong changedNs = 0)
             {
@@ -231,21 +235,26 @@ namespace Harken
                     ((ulong)info.SizeHigh << 32) | info.SizeLow, ((ulong)info.WriteHigh << 32) | info.WriteLow);
             }
 
+            internal static string WindowsPath(SafeFileHandle handle, int pathLength)
+            {
+                const int maxPathChars = 32768;
+                var buffer = new StringBuilder(Math.Min(maxPathChars, Math.Max(260, pathLength + 16)));
+                uint count = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+                if (count >= buffer.Capacity && count <= maxPathChars)
+                {
+                    buffer = new StringBuilder((int)count);
+                    count = GetFinalPathNameByHandle(handle, buffer, count, 0);
+                }
+                if (count == 0 || count >= buffer.Capacity) throw new IOException("Cannot resolve Pack file identity.");
+                return buffer.ToString();
+            }
+
             internal static bool ExactName(FileStream stream, string name, string language)
             {
                 string path;
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    const int maxPathChars = 32768;
-                    var buffer = new StringBuilder(Math.Min(maxPathChars, Math.Max(260, stream.Name.Length + 16)));
-                    uint count = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, (uint)buffer.Capacity, 0);
-                    if (count >= buffer.Capacity && count <= maxPathChars)
-                    {
-                        buffer = new StringBuilder((int)count);
-                        count = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, count, 0);
-                    }
-                    if (count == 0 || count >= buffer.Capacity) throw new IOException("Cannot resolve Pack file identity.");
-                    path = buffer.ToString();
+                    path = WindowsPath(stream.SafeFileHandle, stream.Name.Length);
                 }
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 {

@@ -778,7 +778,8 @@ namespace Harken.Unity
         private string ResolvePlatformRoot(string exportRoot)
         {
             if (string.IsNullOrEmpty(exportRoot)) return null;
-            if (File.Exists(Path.Combine(exportRoot, "Init.json")) || File.Exists(Path.Combine(exportRoot, "Packs.zip")))
+            if (File.Exists(Path.Combine(exportRoot, "Init.json")) || File.Exists(Path.Combine(exportRoot, "Packs.zip")) ||
+                File.Exists(Path.Combine(exportRoot, "Init.hrp")))
                 return SelectCompanionDirectory(exportRoot);
             if (!string.IsNullOrEmpty(packPlatform) && PackPaths.IsPlatformName(packPlatform))
             {
