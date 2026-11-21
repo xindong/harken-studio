@@ -23,8 +23,12 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#if defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+#include <initguid.h>
 #include <audioclient.h>
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+#define HARKEN_DESKTOP_WASAPI_FORMAT_QUERY
+#include <mmdeviceapi.h>
+#include <wrl/client.h>
 #endif
 #endif
 
@@ -646,6 +650,49 @@ struct ImplDeleter {
 
 } // namespace
 
+#if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
+static bool QueryWindowsPlaybackFormat(DeviceQueryResult& out) {
+    // An existing STA can query its endpoint without changing apartments.
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) return false;
+    struct Apartment {
+        bool acquired;
+        ~Apartment() { if (acquired) CoUninitialize(); }
+    } apartment{SUCCEEDED(initialized)};
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    ComPtr<IMMDevice> endpoint;
+    ComPtr<IAudioClient> client;
+    ComPtr<IPropertyStore> properties;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                IID_PPV_ARGS(enumerator.GetAddressOf()))) ||
+        FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, endpoint.GetAddressOf())) ||
+        FAILED(endpoint->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                  reinterpret_cast<void**>(client.GetAddressOf())))) return false;
+    WAVEFORMATEX* mix = nullptr;
+    if (FAILED(client->GetMixFormat(&mix)) || !mix) return false;
+    const auto channels = mix->nChannels;
+    const auto rate = mix->nSamplesPerSec;
+    CoTaskMemFree(mix);
+    if (!channels || !rate || FAILED(endpoint->OpenPropertyStore(STGM_READ, properties.GetAddressOf())))
+        return false;
+
+    // The existing query picks the widest format, preferring the shared mix
+    // on ties. WASAPI's exclusive-mode probe only considers this property's
+    // channel count. A wider or unavailable format needs the full probe.
+    PROPVARIANT value{};
+    const auto read = properties->GetValue(PKEY_AudioEngine_DeviceFormat, &value);
+    WAVEFORMATEX stored{};
+    const bool hasFormat = SUCCEEDED(read) && value.vt == VT_BLOB &&
+        value.blob.pBlobData && value.blob.cbSize >= sizeof(stored);
+    if (hasFormat) std::memcpy(&stored, value.blob.pBlobData, sizeof(stored));
+    PropVariantClear(&value);
+    if (!hasFormat || !stored.nChannels || stored.nChannels > channels) return false;
+    out = {channels, rate, kDeviceQueryChannelsKnown | kDeviceQuerySampleRateKnown};
+    return true;
+}
+#endif
+
 bool QueryDefaultDeviceFormat(DeviceQueryResult* out) {
     if (out == nullptr) {
         return false;
@@ -673,6 +720,9 @@ bool QueryDefaultDeviceFormat(DeviceQueryResult* out) {
     if (kPlatformBackendCount == 0) {
         return false;
     }
+#if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
+    if (QueryWindowsPlaybackFormat(*out)) return true;
+#endif
     // A temporary context on the platform's backend(s) (the same list the engine
     // opens) just long enough to read the default playback device's native
     // format; no stream is started. Any failure returns false so the caller
