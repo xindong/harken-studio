@@ -97,6 +97,11 @@ namespace Harken
                 count = 0;
                 Array.Clear(owners, 0, owners.Length);
             }
+            if (count > 1 && owner.TryReleaseWholeSet(owners, count))
+            {
+                Array.Clear(owners, 0, count);
+                count = 0;
+            }
             while (count > 0)
             {
                 int index = count - 1;

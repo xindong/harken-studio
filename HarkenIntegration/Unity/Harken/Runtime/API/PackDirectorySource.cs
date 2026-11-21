@@ -12,9 +12,7 @@ namespace Harken
         internal byte[] Json;
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
-        internal VnCanonicalPackSetMemberV1 BatchProvider;
-        internal int BatchLength;
-        internal int ByteCount => Bytes?.Length ?? BatchLength;
+        internal int ByteCount => Bytes.Length;
         internal ulong SourceRevision;
         internal PackDirectorySource.ResidentSelection Selection;
     }

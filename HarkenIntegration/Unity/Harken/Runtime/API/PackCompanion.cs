@@ -135,10 +135,9 @@ namespace Harken
         internal readonly Pack Expected;
         internal readonly byte[] Bytes;
         internal readonly PackCompanion Names;
-        internal readonly VnCanonicalPackSetMemberV1 BatchProvider;
         internal CompanionMember(ulong id, uint kind, Pack expected, uint operation = VnConstants.VN_PACK_MEMBER_KEEP,
-            byte[] bytes = null, PackCompanion names = null, VnCanonicalPackSetMemberV1 batchProvider = default)
-        { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; Names = names; BatchProvider = batchProvider; }
+            byte[] bytes = null, PackCompanion names = null)
+        { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; Names = names; }
     }
 
     internal static class CompanionNative
@@ -221,12 +220,6 @@ namespace Harken
                     member.source.expectedHandle = source.Expected.Handle;
                     rows[i].structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
                     if (source.Operation == VnConstants.VN_PACK_MEMBER_KEEP) continue;
-                    if (source.BatchProvider.provide != IntPtr.Zero)
-                    {
-                        member.source = source.BatchProvider;
-                        member.source.expectedHandle = source.Expected.Handle;
-                        continue;
-                    }
                     providers[i] = PackByteProvider.Register(PackByteProvider.PreparedBytes, source.Bytes);
                     if (providers[i] == 0) return VnResult.VN_BACKPRESSURE;
                     PackByteProvider.BindMember(ref member.source, providers[i]);
