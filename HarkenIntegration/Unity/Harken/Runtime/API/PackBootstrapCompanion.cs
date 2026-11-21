@@ -79,12 +79,8 @@ namespace Harken
             preparation = null;
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
-            if (names == null) return VnResult.VN_INVALID_ARG;
-            if (!string.Equals(project, ProjectId, StringComparison.Ordinal))
-            {
-                if (!Guid.TryParseExact(project, "D", out Guid id) || id == Guid.Empty) return VnResult.VN_INVALID_ARG;
-                if (id.ToString("D") != ProjectId) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
-            }
+            VnResult valid = ValidateRequestProject(names, project);
+            if (valid != VnResult.VN_OK) return valid;
             try
             {
                 string[] requested = UniqueNames(names);
@@ -98,20 +94,74 @@ namespace Harken
         }
 
         private const int SmallBatchLimit = 32;
+        private int KnownOwnerCount => packs?.Count ?? companionOwners.Length;
+
+        private bool FindOwner(ulong stableId, out SharedPack owner)
+        {
+            if (packs != null) return packs.TryGetValue(stableId, out owner);
+            foreach (var candidate in companionOwners)
+                if (candidate.StableId == stableId) { owner = candidate; return true; }
+            owner = null;
+            return false;
+        }
+
+        private bool FindOwner(string name, out SharedPack owner)
+        {
+            if (companionNames != null) return companionNames.TryGetValue(name, out owner);
+            foreach (var candidate in companionOwners)
+                if (candidate.Names.Name == name) { owner = candidate; return true; }
+            owner = null;
+            return false;
+        }
+
+        private void EnsureOwnerIndexes()
+        {
+            if (packs != null) return;
+            var byId = new Dictionary<ulong, SharedPack>(companionOwners.Length);
+            var byName = new Dictionary<string, SharedPack>(companionOwners.Length, StringComparer.Ordinal);
+            foreach (var owner in companionOwners)
+            {
+                byId.Add(owner.StableId, owner);
+                byName.Add(owner.Names.Name, owner);
+            }
+            packs = byId;
+            companionNames = byName;
+        }
+
+        private VnResult ValidateRequestProject(string[] names, string project)
+        {
+            if (names == null) return VnResult.VN_INVALID_ARG;
+            if (string.Equals(project, ProjectId, StringComparison.Ordinal)) return VnResult.VN_OK;
+            if (!Guid.TryParseExact(project, "D", out Guid id) || id == Guid.Empty) return VnResult.VN_INVALID_ARG;
+            return id.ToString("D") == ProjectId ? VnResult.VN_OK : VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+        }
 
         private static string[] UniqueNames(string[] names)
         {
+            if (names.Length > SmallBatchLimit) return UniqueLargeRequest(names);
             var result = new string[names.Length];
-            var seen = names.Length > SmallBatchLimit ? new HashSet<string>(StringComparer.Ordinal) : null;
             int count = 0;
             foreach (string name in names)
             {
                 if (!PackCompanion.IsName(name) || name == "Init") return null;
-                if (seen != null ? !seen.Add(name) : Array.IndexOf(result, name, 0, count) >= 0) continue;
-                result[count++] = name;
+                int index = 0;
+                while (index < count && result[index] != name) ++index;
+                if (index == count) result[count++] = name;
             }
             if (count != result.Length) Array.Resize(ref result, count);
             return result;
+        }
+
+        private static string[] UniqueLargeRequest(string[] names)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var ordered = new List<string>(names.Length);
+            foreach (string name in names)
+            {
+                if (!PackCompanion.IsName(name) || name == "Init") return null;
+                if (seen.Add(name)) ordered.Add(name);
+            }
+            return ordered.ToArray();
         }
 
         private VnResult CompanionMutationAllowed()
@@ -132,12 +182,17 @@ namespace Harken
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             if (captured == null && initSelection != null && Language.Length == 0 && expectedId == 0 &&
-                !refresh && names.Length != 0 && (packs.Count == 0 || packs.Count == names.Length))
+                !refresh && names.Length != 0 && (KnownOwnerCount == 0 || KnownOwnerCount == names.Length))
             {
                 bool empty = true;
                 foreach (SharedPack owner in companionOwners) if (owner.Handle.IsValid) { empty = false; break; }
                 if (empty)
                 {
+                    if (!directEntryMissing && !cancellation.CanBeCanceled && names.Length <= SmallBatchLimit)
+                    {
+                        var direct = ActivateSmallResidentSet(names, acquired);
+                        if (direct != VnResult.VN_CAPABILITY_UNAVAILABLE) return direct;
+                    }
                     VnResult batch = VisitBatch(names, acquired, cancellation, out bool consumed);
                     if (consumed || batch != VnResult.VN_CAPABILITY_UNAVAILABLE) return batch;
                 }
@@ -164,7 +219,7 @@ namespace Harken
                 bool warm = !refresh;
                 for (int i = 0; warm && i < names.Length; ++i)
                 {
-                    warm = companionNames.TryGetValue(names[i], out SharedPack known) && known.Handle.IsValid;
+                    warm = FindOwner(names[i], out SharedPack known) && known.Handle.IsValid;
                     if (warm)
                     {
                         if (known.Requests == int.MaxValue) return VnResult.VN_BACKPRESSURE;
@@ -177,6 +232,7 @@ namespace Harken
                     foreach (SharedPack owner in acquired) ++owner.Requests;
                     return VnResult.VN_OK;
                 }
+                EnsureOwnerIndexes();
                 var nextPacks = new Dictionary<ulong, SharedPack>(packs);
                 var nextNames = new Dictionary<string, SharedPack>(companionNames, StringComparer.Ordinal);
                 var changes = new Dictionary<SharedPack, CompanionInput>();
@@ -323,7 +379,7 @@ namespace Harken
             {
                 var owner = owners[i];
                 if (owner == null || owner.Requests != 1 || !owner.Handle.IsValid ||
-                    !packs.TryGetValue(owner.StableId, out var current) || !ReferenceEquals(owner, current))
+                    !FindOwner(owner.StableId, out var current) || !ReferenceEquals(owner, current))
                     return false;
             }
             try
@@ -350,7 +406,7 @@ namespace Harken
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             if (owner == null || !owner.Handle.IsValid || owner.Requests == 0 ||
-                !packs.TryGetValue(owner.StableId, out SharedPack current) || !ReferenceEquals(owner, current))
+                !FindOwner(owner.StableId, out SharedPack current) || !ReferenceEquals(owner, current))
                 return VnResult.VN_STALE_HANDLE;
             if (owner.Requests > 1) { --owner.Requests; return VnResult.VN_OK; }
             try
@@ -367,7 +423,8 @@ namespace Harken
                 for (int i = 1; i < count; ++i)
                 {
                     ref VnCanonicalPackSetMemberResultV1 row = ref companionKeepResults[i];
-                    packs[row.packStableId].Handle = new Pack(row.handle);
+                    FindOwner(row.packStableId, out var retained);
+                    retained.Handle = new Pack(row.handle);
                 }
                 owner.Handle = default;
                 --owner.Requests;
@@ -400,7 +457,7 @@ namespace Harken
             pack = default;
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
-            if (!packs.TryGetValue(id, out SharedPack owner))
+            if (!FindOwner(id, out SharedPack owner))
             {
                 if (companionLocators == null || !companionLocators.TryGetValue(id, out string name))
                     return VnResult.VN_CAPABILITY_UNAVAILABLE;
