@@ -125,7 +125,7 @@ static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables*
     static const uint8_t emptyComment[] = {3,'v','o','r','b','i','s',0,0,0,0,0,0,0,0,1};
     if (!result) return NULL;
     *result = HV_INVALID;
-    if (!tables || !ident || !setup || identBytes != 30 || setupBytes < 7 || setupBytes > 65535 ||
+    if (!ident || !setup || identBytes != 30 || setupBytes < 7 || setupBytes > 65535 ||
         !memory.allocate || !memory.release) return NULL;
     *result = HV_MEMORY;
     if (budget < sizeof(*s)) return NULL;
@@ -150,6 +150,14 @@ static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables*
     }
     vorbis_comment_clear(&s->allocator, &comment);
     ci = (codec_setup_info*)s->info.codec_setup;
+    if (!tables) {
+        /* Header unpacking checks mapping, floor, residue and mode references.
+           Check every Huffman tree, including books unused by the current modes. */
+        for (i = 0; i < ci->books; ++i)
+            if (hv_book_validate(ci->book_param[i])) goto fail;
+        *result = HV_OK;
+        return s;
+    }
     ci->fullbooks = hv_callocate(&s->allocator, ci->books, sizeof(*ci->fullbooks));
     for (i = 0; i < ci->books; ++i) {
         if (vorbis_book_init_decode(&s->allocator, ci->fullbooks + i, ci->book_param[i])) goto fail;
@@ -180,18 +188,34 @@ fail:
 HvSetup* hv_setup_create_compact(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
     int limitHit = 0;
+    if (!tables) { if (result) *result = HV_INVALID; return NULL; }
     return hv_setup_attempt(memory, budget, tables, ident, identBytes, setup, setupBytes,
                             result, 1, &limitHit);
 }
 HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
     int limitHit = 0;
+    if (!tables) { if (result) *result = HV_INVALID; return NULL; }
     HvSetup* decoded = hv_setup_attempt(memory, budget, tables, ident, identBytes,
         setup, setupBytes, result, 0, &limitHit);
     if (!decoded && limitHit)
         decoded = hv_setup_attempt(memory, budget, tables, ident, identBytes,
             setup, setupBytes, result, 1, &limitHit);
     return decoded;
+}
+enum HvResult hv_inspect_packets(HvMemory memory, size_t budget,
+    const uint8_t* ident, size_t identBytes, const uint8_t* header, size_t headerBytes,
+    int (*validate)(const HvSetup*, const void*), const void* context) {
+    int limitHit = 0;
+    enum HvResult result;
+    if (!validate) return HV_INVALID;
+    HvSetup* layout = hv_setup_attempt(memory, budget, NULL, ident, identBytes,
+        header, headerBytes, &result, 0, &limitHit);
+    if (layout) {
+        result = validate(layout, context) ? HV_OK : HV_INVALID;
+        hv_setup_destroy(layout);
+    }
+    return result;
 }
 void hv_setup_destroy(HvSetup* s) {
     HvMemory memory;

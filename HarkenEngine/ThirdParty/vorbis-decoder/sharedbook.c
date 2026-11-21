@@ -65,10 +65,9 @@ float _float32_unpack(long val){
 /* given a list of word lengths, generate a list of codewords.  Works
    for length ordered or unordered, always assigns the lowest valued
    codewords first.  Extended to handle unused entries (length 0) */
-ogg_uint32_t *_make_words(HvAllocator *allocator, char *l,long n,long sparsecount){
+static int mark_words(const char *l,long n,long sparsecount,ogg_uint32_t *r){
   long i,j,count=0;
   ogg_uint32_t marker[33];
-  ogg_uint32_t *r=hv_allocate(allocator, (sparsecount?sparsecount:n)*sizeof(*r));
   memset(marker,0,sizeof(marker));
 
   for(i=0;i<n;i++){
@@ -84,10 +83,10 @@ ogg_uint32_t *_make_words(HvAllocator *allocator, char *l,long n,long sparsecoun
       /* update ourself */
       if(length<32 && (entry>>length)){
         /* error condition; the lengths must specify an overpopulated tree */
-        hv_free(allocator, r);
-        return(NULL);
+        return -1;
       }
-      r[count++]=entry;
+      if(r)r[count]=entry;
+      count++;
 
       /* Look to see if the next shorter marker points to the node
          above. if so, update it and repeat.  */
@@ -127,9 +126,23 @@ ogg_uint32_t *_make_words(HvAllocator *allocator, char *l,long n,long sparsecoun
   if(!(count==1 && marker[2]==2)){
     for(i=1;i<33;i++)
       if(marker[i] & (0xffffffffUL>>(32-i))){
-        hv_free(allocator, r);
-        return(NULL);
+        return -1;
       }
+  }
+
+  return 0;
+}
+
+int hv_book_validate(const static_codebook *book){
+  return mark_words(book->lengthlist,book->entries,1,NULL);
+}
+
+static ogg_uint32_t *make_words(HvAllocator *allocator, char *l,long n,long sparsecount){
+  long i,j,count;
+  ogg_uint32_t *r=hv_allocate(allocator, (sparsecount?sparsecount:n)*sizeof(*r));
+  if(mark_words(l,n,sparsecount,r)){
+    hv_free(allocator,r);
+    return NULL;
   }
 
   /* bitreverse the words because our bitwise packer/unpacker is LSb
@@ -326,7 +339,7 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
     by sorted bitreversed codeword to allow treeless decode. */
 
     /* perform sort */
-    ogg_uint32_t *codes=_make_words(allocator, s->lengthlist,s->entries,c->used_entries);
+    ogg_uint32_t *codes=make_words(allocator, s->lengthlist,s->entries,c->used_entries);
     ogg_uint32_t **codep=hv_allocate(allocator, sizeof(*codep)*n);
 
     if(codes==NULL)goto err_out;

@@ -18,6 +18,8 @@ class VorbisResident;
 class VorbisCodec;
 enum class VorbisPrepareResult { Ok, Invalid, Unsupported, OutOfMemory };
 
+VorbisPrepareResult InspectResidentVorbis(const VorbisMedia& media, std::size_t budget) noexcept;
+
 class VorbisSettings {
 public:
     ~VorbisSettings();
@@ -27,7 +29,6 @@ public:
     unsigned LongBlock() const noexcept;
     std::size_t Bytes() const noexcept;
     std::size_t StateBytes() const noexcept;
-    long PacketBlock(const std::uint8_t* bytes, std::size_t count) const noexcept;
     bool ValidateResident(const VorbisMedia& media) const noexcept;
 private:
     friend class VorbisSettingsCache;

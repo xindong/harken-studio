@@ -1175,22 +1175,19 @@ struct SpanCanonicalSource {
         }
         if (checksum != media.blobChecksum) return false;
         if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
-            VorbisSettingsCache settings;
             VorbisMedia parsed;
-            auto available = budget ? budget->limit - budget->live : SIZE_MAX;
-            if (!settings.Initialize(static_cast<std::size_t>(available)) || settings.TableBytes() > available)
-                throw detail::PackDecodeCapacity{};
-            available -= settings.TableBytes();
+            const auto available = budget ? budget->limit - budget->live : SIZE_MAX;
             if (!ParseResidentVorbis(bytes + media.blobOffset, static_cast<std::size_t>(media.blobBytes), parsed, static_cast<std::size_t>(available)) ||
                 parsed.sampleRate != media.sampleRate || parsed.channels != media.channelCount ||
                 parsed.frames != media.frameCount || parsed.loopStart != media.loopStartFrame ||
                 parsed.loopEnd != media.loopEndFrame ||
                 bool(parsed.loopEnd) != bool(media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE)) return false;
-            VorbisPrepareResult result;
-            auto setup = settings.Prepare(parsed, static_cast<std::size_t>(available) -
-                parsed.seek.capacity() * sizeof(VorbisSeekPoint), result);
-            if (!setup && result == VorbisPrepareResult::OutOfMemory) throw detail::PackDecodeCapacity{};
-            return setup && setup->ValidateResident(parsed);
+            const auto indexBytes = parsed.seek.capacity() * sizeof(VorbisSeekPoint) +
+                parsed.segmentChecksums.capacity() * sizeof(std::uint64_t);
+            if (indexBytes > available) throw detail::PackDecodeCapacity{};
+            const auto result = InspectResidentVorbis(parsed, static_cast<std::size_t>(available - indexBytes));
+            if (result == VorbisPrepareResult::OutOfMemory) throw detail::PackDecodeCapacity{};
+            return result == VorbisPrepareResult::Ok;
         }
         return true;
     }
