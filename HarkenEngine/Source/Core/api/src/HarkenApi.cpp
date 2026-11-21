@@ -6738,6 +6738,41 @@ bool CanonicalSetMutationBlocked() noexcept {
 }
 
 namespace {
+#if defined(_WIN32)
+bool HasFixedOutputFormat(const VnConfig& config) noexcept {
+    return config.structSize == sizeof(VnConfig) && config.sampleRate != 0 &&
+           config.mixChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT &&
+           config.deviceChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT;
+}
+
+struct PreparedOutputFormat {
+    std::uint32_t sampleRate, blockFrames, mixLayout, deviceLayout;
+
+    static PreparedOutputFormat From(const EngineConfig& config) noexcept {
+        return {config.mixRate.SampleRate(), config.blockFrames,
+                config.mixChannelLayout, config.deviceChannelLayout};
+    }
+    bool operator==(const PreparedOutputFormat&) const = default;
+};
+
+// Like g_engineOwner, a live ticket must be closed before unloading the DLL.
+// Destruction may join a WASAPI thread and cannot run under the loader lock.
+GameOutputResources* g_reservedOutput = nullptr;
+PreparedOutputFormat g_reservedFormat{};
+std::uint64_t g_outputGeneration = 0;
+thread_local std::uint64_t g_ownedOutputGeneration = 0;
+
+VnResult CheckOutputTicket(std::uint64_t ticket) noexcept {
+    if (g_reservedOutput == nullptr || ticket != g_outputGeneration) return VN_STALE_HANDLE;
+    return ticket == g_ownedOutputGeneration ? VN_OK : VN_IN_USE;
+}
+
+std::unique_ptr<GameOutputResources> TakeOutputReservation() noexcept {
+    g_ownedOutputGeneration = 0;
+    return std::unique_ptr<GameOutputResources>(std::exchange(g_reservedOutput, nullptr));
+}
+#endif
+
 struct EnginePageOwner {
     std::unique_ptr<GameOutputResources> openingOutput;
     StablePageReservation pages;
@@ -111548,9 +111583,61 @@ HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHostV2(const VnMonitorHos
 
 #endif
 
-VnResult Vn_Init(const VnConfig* config) {
+VnResult Vn_BeginOutputPreparation(const VnConfig* config, uint64_t* outTicket) {
+    if (!outTicket) return VN_INVALID_ARG;
+    *outTicket = 0;
+#if defined(_WIN32)
+    using namespace harken::detail;
+    try {
+        if (CanonicalSetMutationBlocked()) return VN_IN_USE;
+        if (g_engine || g_termPending) return VN_ALREADY_INITIALIZED;
+        if (g_reservedOutput || harken::monitor::InitWouldExceedProcessCap()) return VN_IN_USE;
+        harken::EngineConfig resolved{};
+        const auto result = harken::ResolveConfig(config, &resolved);
+        if (result != VN_OK) return result;
+        if (config->deviceMode != VN_DEVICE_REAL || resolved.renderWorkerCount != 0 ||
+            !HasFixedOutputFormat(*config)) return VN_CAPABILITY_UNAVAILABLE;
+        if (g_outputGeneration == UINT64_MAX) return VN_IN_USE;
+        auto output = std::make_unique<harken::GameOutputResources>();
+        output->startup.Begin(output->device, resolved, nullptr);
+        g_reservedFormat = PreparedOutputFormat::From(resolved);
+        g_reservedOutput = output.release();
+        g_ownedOutputGeneration = ++g_outputGeneration;
+        *outTicket = g_outputGeneration;
+        return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
+#else
+    (void)config;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
+}
+
+VnResult Vn_CancelOutputPreparation(uint64_t ticket) {
+#if defined(_WIN32)
+    using namespace harken::detail;
+    const auto checked = CheckOutputTicket(ticket);
+    if (checked != VN_OK) return checked;
+    auto output = TakeOutputReservation();
+    return output->startup.Stop();
+#else
+    (void)ticket;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
+}
+
+static VnResult InitEngine(const VnConfig* config, uint64_t ticket) {
     harken::ClearRealDeviceInitStage();
     try {
+#if defined(_WIN32)
+    if (ticket) {
+        const auto checked = harken::detail::CheckOutputTicket(ticket);
+        if (checked != VN_OK) return checked;
+    } else if (harken::detail::g_reservedOutput) {
+        return VN_IN_USE;
+    }
+#else
+    (void)ticket;
+#endif
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     if (harken::detail::g_engine != nullptr) {
         return VN_ALREADY_INITIALIZED;
@@ -111577,9 +111664,12 @@ VnResult Vn_Init(const VnConfig* config) {
     const harken::DeviceQueryResult* initialEndpointObservation = nullptr;
     bool fixedDeviceFormat = false;
 #if defined(_WIN32)
-    fixedDeviceFormat = !baseResolution.nullDevice &&
-        config->structSize == sizeof(VnConfig) && config->sampleRate != 0 &&
-        config->mixChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT && config->deviceChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT;
+    fixedDeviceFormat = !baseResolution.nullDevice && harken::detail::HasFixedOutputFormat(*config);
+    if (ticket && (!fixedDeviceFormat || config->deviceMode != VN_DEVICE_REAL ||
+        baseResolution.renderWorkerCount != 0 ||
+        harken::detail::PreparedOutputFormat::From(baseResolution) != harken::detail::g_reservedFormat)) {
+        return VN_INVALID_CONFIG;
+    }
 #endif
     if (!baseResolution.nullDevice && !fixedDeviceFormat &&
         harken::QueryDefaultDeviceFormat(&initialDeviceQuery)) {
@@ -111619,6 +111709,10 @@ VnResult Vn_Init(const VnConfig* config) {
     if (harken::monitor::InitWouldExceedProcessCap()) {
         return VN_IN_USE;
     }
+#if defined(_WIN32)
+    // Once validated, the local owner closes the reservation on every failed construction path.
+    auto preparedOutput = ticket ? harken::detail::TakeOutputReservation() : nullptr;
+#endif
     harken::memguard::Install();
     std::unique_ptr<harken::detail::EnginePageOwner> engineOwner;
     harken::Engine* engine = nullptr;
@@ -111642,19 +111736,17 @@ VnResult Vn_Init(const VnConfig* config) {
 #endif
         engineOwner = std::make_unique<harken::detail::EnginePageOwner>();
 #if defined(_WIN32)
-        if (!resolved.nullDevice && resolved.renderWorkerCount == 0 &&
-            (fixedDeviceFormat || config->deviceMode == VN_DEVICE_REAL_BACKGROUND)) {
+        if (preparedOutput) {
+            engineOwner->openingOutput = std::move(preparedOutput);
+        } else if (config->deviceMode == VN_DEVICE_REAL_BACKGROUND && resolved.renderWorkerCount == 0) {
             try {
                 auto opening = std::make_unique<harken::GameOutputResources>();
                 opening->startup.Begin(opening->device, resolved, initialEndpointObservation);
                 engineOwner->openingOutput = std::move(opening);
             } catch (...) {
-                // A synchronous caller can still use the regular calling-thread open.
-                if (config->deviceMode == VN_DEVICE_REAL_BACKGROUND) {
-                    engineOwner.reset();
-                    harken::memguard::Uninstall();
-                    return VN_DEVICE_ERROR;
-                }
+                engineOwner.reset();
+                harken::memguard::Uninstall();
+                return VN_DEVICE_ERROR;
             }
         }
 #endif
@@ -111734,6 +111826,20 @@ VnResult Vn_Init(const VnConfig* config) {
     } catch (...) {
         return VN_DEVICE_ERROR;
     }}
+
+VnResult Vn_Init(const VnConfig* config) {
+    return InitEngine(config, 0);
+}
+
+VnResult Vn_InitWithOutputPreparation(const VnConfig* config, uint64_t ticket) {
+#if defined(_WIN32)
+    return ticket ? InitEngine(config, ticket) : VN_STALE_HANDLE;
+#else
+    (void)config;
+    (void)ticket;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
+}
 
 VnResult Vn_Suspend(void) {
     try {
