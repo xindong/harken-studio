@@ -3,6 +3,8 @@ using System.Text;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Harken;
 
 namespace Harken.Test
@@ -47,14 +49,51 @@ namespace Harken.Test
                 byte[] damaged = (byte[])encoded.Clone();
                 for (int i = 0; i < 4; i++) damaged[damaged.Length - 4 + i] = (byte)(size >> (i * 8));
                 try { PackStorage.CaptureBinary(damaged); }
-                catch (InvalidDataException) { continue; }
-                catch (EndOfStreamException) { continue; }
+                catch (PackStorage.InvalidMember) { continue; }
                 throw new InvalidOperationException("Invalid expanded size accepted: " + size);
             }
             encoded[encoded.Length - 8] ^= 1;
-            try { PackStorage.CaptureBinary(encoded); }
-            catch (InvalidDataException) { return; }
-            throw new InvalidOperationException("Corrupted gzip checksum accepted.");
+            CheckStorageFailureSources(encoded);
+        }
+
+        private sealed class TestControlContext : SynchronizationContext { }
+
+        private static void CheckStorageFailureSources(byte[] badCrc)
+        {
+            string root = Path.Combine(Path.GetTempPath(), "HarkenPackStorage-" + Guid.NewGuid().ToString("N"));
+            string binary = Path.Combine(root, "Init.bytes"), json = Path.Combine(root, "Init.json");
+            Directory.CreateDirectory(root);
+            var previous = SynchronizationContext.Current;
+            try
+            {
+                File.WriteAllBytes(binary, badCrc);
+                File.WriteAllText(json, "{\"packMetadataVersion\":4,\"variables\":[]}");
+                SynchronizationContext.SetSynchronizationContext(new TestControlContext());
+                VnConfig config = default;
+                Assert(PackBootstrap.StartDirectory(root, null, ref config, out _) == VnResult.VN_BAD_PACK,
+                    "damaged gzip in directory");
+                foreach (bool brokenProvider in new[] { false, true })
+                {
+                    byte[] Read(string path) => brokenProvider
+                        ? throw new InvalidDataException("Storage provider unavailable.")
+                        : File.ReadAllBytes(Path.Combine(root, path));
+                    VnResult expected = brokenProvider ? VnResult.VN_PACK_PROVIDER_FAILED : VnResult.VN_BAD_PACK;
+                    Assert(PackBootstrap.Start(PackSource.FromReader(Read), ref config, out _) == expected,
+                        "compressed synchronous source error");
+                    var source = PackSource.FromAsyncReader((path, _) => brokenProvider
+                        ? Task.FromException<byte[]>(new InvalidDataException("Storage provider unavailable."))
+                        : Task.FromResult(Read(path)));
+                    Assert(PackBootstrap.StartAsync(source, config).GetAwaiter().GetResult().Result == expected,
+                        "compressed asynchronous source error");
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+                File.Delete(binary);
+                File.Delete(json);
+                Directory.Delete(root);
+            }
         }
 
         private static void VersionContract()

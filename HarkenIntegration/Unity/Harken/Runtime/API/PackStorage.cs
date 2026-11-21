@@ -28,7 +28,19 @@ namespace Harken
             return compressed ? Inflate(file) : ReadPlain(file);
         }
 
+        internal sealed class InvalidMember : IOException
+        {
+            internal InvalidMember(Exception cause) : base("Invalid compressed Pack.", cause) { }
+        }
+
         private static byte[] Inflate(Stream stream)
+        {
+            try { return ReadGzipMember(stream); }
+            catch (InvalidDataException error) { throw new InvalidMember(error); }
+            catch (EndOfStreamException error) { throw new InvalidMember(error); }
+        }
+
+        private static byte[] ReadGzipMember(Stream stream)
         {
             // The writer emits one gzip member only when it is smaller than its canonical input.
             if (stream.Length < 18 || stream.Length > MaxGzipMemberBytes)
