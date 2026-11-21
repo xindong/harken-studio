@@ -22198,6 +22198,7 @@ static ma_result ma_device_init_internal__wasapi(ma_context* pContext, ma_device
     pData->pAudioClient = NULL;
     pData->pRenderClient = NULL;
     pData->pCaptureClient = NULL;
+    pData->deviceName[0] = '\0';
 
     streamFlags = MA_AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
     if (!pData->noAutoConvertSRC && pData->sampleRateIn != 0 && pData->shareMode != ma_share_mode_exclusive) {    /* <-- Exclusive streams must use the native sample rate. */
@@ -22590,7 +22591,10 @@ static ma_result ma_device_init_internal__wasapi(ma_context* pContext, ma_device
             ma_PropVariantInit(&varName);
             hr = ma_IPropertyStore_GetValue(pProperties, &MA_PKEY_Device_FriendlyName, &varName);
             if (SUCCEEDED(hr)) {
-                WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, pData->deviceName, sizeof(pData->deviceName), 0, FALSE);
+                if (varName.vt != MA_VT_LPWSTR || varName.pwszVal == NULL ||
+                    WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, pData->deviceName, sizeof(pData->deviceName), NULL, NULL) == 0) {
+                    pData->deviceName[0] = '\0';
+                }
                 ma_PropVariantClear(pContext, &varName);
             }
 
@@ -22900,6 +22904,7 @@ static ma_result ma_device_init__wasapi(ma_device* pDevice, const ma_device_conf
 
         pDevice->wasapi.pAudioClientPlayback             = data.pAudioClient;
         pDevice->wasapi.pRenderClient                    = data.pRenderClient;
+        ma_strcpy_s(pDevice->playback.name, sizeof(pDevice->playback.name), data.deviceName);
         pDevice->wasapi.originalPeriodSizeInMilliseconds = pDescriptorPlayback->periodSizeInMilliseconds;
         pDevice->wasapi.originalPeriodSizeInFrames       = pDescriptorPlayback->periodSizeInFrames;
         pDevice->wasapi.originalPeriods                  = pDescriptorPlayback->periodCount;

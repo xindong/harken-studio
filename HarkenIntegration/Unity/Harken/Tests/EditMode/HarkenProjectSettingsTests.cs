@@ -410,7 +410,7 @@ namespace Harken.Unity.Tests
                 var runtime = owner.AddComponent<HarkenAudioSystem>();
                 MethodInfo apply = typeof(HarkenAudioSystem).GetMethod("ApplyProjectStartupPolicy", BindingFlags.Instance | BindingFlags.NonPublic);
                 MethodInfo resolve = typeof(HarkenAudioSystem).GetMethod("ResolvePlatformRoot", BindingFlags.Instance | BindingFlags.NonPublic);
-                apply.Invoke(runtime, null);
+                apply.Invoke(runtime, new object[] { settings });
                 Assert.That(resolve.Invoke(runtime, new object[] { platform }), Is.Null);
                 var serialized = new SerializedObject(settings);
                 serialized.FindProperty("packPlatformId").stringValue = string.Empty;
@@ -420,7 +420,7 @@ namespace Harken.Unity.Tests
                 settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(settingsPath);
                 Assert.That(settings.PlatformId, Is.Empty);
                 Assert.That(settings.PlatformName, Is.EqualTo("Windows"));
-                apply.Invoke(runtime, null);
+                apply.Invoke(runtime, new object[] { settings });
                 Assert.That(resolve.Invoke(runtime, new object[] { platform }), Is.EqualTo(platform));
             }
             finally { UnityEngine.Object.DestroyImmediate(owner); Directory.Delete(root, true); }
