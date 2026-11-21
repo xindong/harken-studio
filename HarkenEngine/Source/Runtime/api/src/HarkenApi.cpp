@@ -100517,6 +100517,8 @@ bool PrepareSourceCohortNativeDependencies(harken::Engine& engine,
 bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServiceRow& parent,
     harken::EngineScheduleSourceCohort& cohort) noexcept {
     if (cohort.sealed || cohort.published || cohort.cancelling || cohort.children.empty()) return false;
+    const auto owner = parent.InvocationValid() ? parent.Invocation().deferredTreeOwner : 0;
+    auto trees = engine.UseDeferredTrees(owner, owner);
     for (auto next = cohort.sides.begin(); next != cohort.sides.end();) {
         auto& side = **next;
         if (side.memberCount != 0) { ++next; continue; }
@@ -101646,6 +101648,8 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
     std::uint32_t executionOrdinal, std::uint32_t* sharedSelectionCursor) noexcept {
     using Status = PendingScheduleEntryStatus;
     if (!MatchesPendingScheduleEntryRecord(engine, parent, pending)) return Status::Failed;
+    const auto owner = parent.InvocationValid() ? parent.Invocation().deferredTreeOwner : 0;
+    auto trees = engine.UseDeferredTrees(owner, owner);
     if (!prepareOnly && pending.sourceCohort != nullptr && pending.content.kind != harken::PlayableKindV1::Sound)
         return pending.sourceCohort->cancelling ? Status::Failed : Status::Waiting;
     const auto retention = RetainAppliedNativeEntryDependency(engine, parent);

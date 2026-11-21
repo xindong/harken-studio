@@ -25479,10 +25479,13 @@ TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBounda
 
 TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
     std::array<unsigned, 3> referenceStart{};
+    unsigned lateClipStart = 0;
     const auto play = [&](unsigned scenario, bool referenceScan, std::vector<float>& pcm) {
         const bool deferred = scenario != 0;
-        const bool trackRoot = scenario == 2 || scenario == 4;
-        SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot);
+        const bool lateClip = scenario >= 7;
+        const bool competingPlayback = scenario == 5 || scenario == 6 || scenario == 8;
+        const bool trackRoot = scenario == 2 || scenario == 4 || lateClip;
+        SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot << " scenario=" << scenario);
         const std::vector<float> first(960, 0.125f), second(960, -0.25f);
         const float* firstChannels[] = {first.data()};
         const float* secondChannels[] = {second.data()};
@@ -25515,6 +25518,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         image.children[2].playable = queue;
         image.children[2].frequencyWeight = 0;
         image.placements[0].content = nested;
+        if (lateClip) image.placements[0].authoredStart = INT64_C(20000000);
         image.placements[0].authoredDuration = INT64_C(100000000);
         image.track.placementCount = 1;
         image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
@@ -25682,7 +25686,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             }
         }
         std::vector<VariableControlInstanceToken> competing;
-        if (scenario >= 5) {
+        if (competingPlayback) {
             auto& controls = engine.variableControlInstances;
             VariableControlInstanceCreateRequest request{1, 1, ContainerMatrixWorld::kRoot, 1};
             VariableControlInstanceToken token{};
@@ -25696,7 +25700,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         }
         std::vector<QueueInstanceToken> competingQueues;
         std::vector<ArmGroupToken> competingGroups;
-        if (scenario >= 5) {
+        if (competingPlayback) {
             QueueInstanceCreateRequest request{};
             request.world = 1;
             request.rootInstance = 1;
@@ -25754,7 +25758,9 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         for (auto group : competingGroups) EXPECT_TRUE(engine.armGroups.CancelBeforePublication(group));
         for (auto token : competingQueues) EXPECT_TRUE(engine.queueInstances.Release(token));
         for (auto token : competing) EXPECT_TRUE(engine.variableControlInstances.Release(token));
-        if (scenario <= 2) referenceStart[scenario] = onsets[0];
+        if (scenario == 7) lateClipStart = onsets[0];
+        else if (scenario == 8) EXPECT_EQ(lateClipStart, onsets[0]);
+        else if (scenario <= 2) referenceStart[scenario] = onsets[0];
         else EXPECT_EQ(referenceStart[trackRoot ? 2u : 1u], onsets[0]);
         if (scenario == 1 || scenario == 2 || scenario == 4)
             EXPECT_EQ(1u, detail::g_logicAllocFault.remaining);
@@ -25778,7 +25784,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         EXPECT_EQ(VN_OK, Vn_UnloadPackEx(rows[1].handle, VN_PACK_UNLOAD_REFUSE_IF_USED));
         EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
     };
-    for (unsigned scenario = 0; scenario < 7; ++scenario) {
+    for (unsigned scenario = 0; scenario < 9; ++scenario) {
         std::vector<float> actual;
         ASSERT_NO_FATAL_FAILURE(play(scenario, false, actual));
 #if !defined(HARKEN_RT_QUALIFICATION)
