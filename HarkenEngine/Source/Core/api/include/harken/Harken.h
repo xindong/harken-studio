@@ -443,15 +443,25 @@ typedef struct VnConfig {
  * logic thread. The audio thread never allocates. */
 VnResult Vn_Init(const VnConfig* config);
 
-/* Start preparing the Windows game output device before engine initialization.
- * On success the caller owns the returned ticket and must pass it to
- * Vn_InitWithOutputPreparation or Vn_CancelOutputPreparation. */
+/* Start opening the Windows output device before initializing the engine.
+ * Requires the current VnConfig size, VN_DEVICE_REAL, an explicit sample rate
+ * and mix/device channel layouts, and zero render workers. Other valid setups
+ * return VN_CAPABILITY_UNAVAILABLE and can use ordinary Vn_Init.
+ * On failure outTicket is zero. On success the calling thread owns the sole
+ * reservation and must initialize with it or cancel it before unloading the
+ * runtime. While reserved, ordinary Vn_Init returns VN_IN_USE. */
 VnResult Vn_BeginOutputPreparation(const VnConfig* config, uint64_t* outTicket);
 
-/* Initialize the engine using output preparation started for this configuration. */
+/* Initialize and wait for the prepared output to start. Use the same thread,
+ * device mode, render worker count, sample rate, block size and channel layouts
+ * as preparation. A configuration mismatch leaves the reservation intact.
+ * After an unsuccessful init the owner can always attempt cancellation:
+ * VN_STALE_HANDLE means init already consumed the ticket. */
 VnResult Vn_InitWithOutputPreparation(const VnConfig* config, uint64_t ticket);
 
-/* Release an unused output preparation ticket and its device resources. */
+/* Cancel from the thread that began preparation and wait for device cleanup.
+ * An expired ticket returns VN_STALE_HANDLE. Another thread attempting to use
+ * the current reservation returns VN_IN_USE. */
 VnResult Vn_CancelOutputPreparation(uint64_t ticket);
 
 /* Release the platform audio device while preserving the engine, mixer,
