@@ -5013,7 +5013,7 @@ struct GenuineUnboundConditionalClockHarness {
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 3;
         config.initialImmediateLaneOwnerGates = 1;
-        config.maxImmediateLaneDecisionGates = 8;
+        config.initialImmediateLaneDecisionGates = 8;
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         inputs[0].executeFrame = 117;
         inputs[0].decision = initialDecision;
@@ -5483,7 +5483,7 @@ struct GenuineCatalogStageHarness {
         config.maxTransactionEvents = 8; config.maxCurrentSlicesPerQuantum = 4;
         config.maxPlan03GroupHeadersPerPage = 1; config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 2;
-        config.initialImmediateLaneOwnerGates = 1; config.maxImmediateLaneDecisionGates = 2;
+        config.initialImmediateLaneOwnerGates = 1; config.initialImmediateLaneDecisionGates = 2;
         ASSERT_TRUE(groups.Reset(config, 0, 1));
         for (std::uint32_t i = 0; i < originals.size(); ++i) {
             harken::Plan03GroupSliceInput input{};
@@ -5871,7 +5871,7 @@ struct GenuineHiddenSelectedFuture {
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 4;
         config.initialImmediateLaneOwnerGates = 1;
-        config.maxImmediateLaneDecisionGates = old.decisions.Capacity();
+        config.initialImmediateLaneDecisionGates = old.decisions.Capacity();
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         inputs[0].decision = initialDecision;
         inputs[0].executeFrame = 117;

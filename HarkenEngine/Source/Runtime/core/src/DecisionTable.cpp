@@ -45,7 +45,7 @@ bool ValidPreparedRequest(
 
 bool ValidConfig(std::uint32_t capacity,
                  std::uint32_t maxParticipants) noexcept {
-    return capacity != 0 && capacity <= kMaxDecisionRowsHard &&
+    return capacity != 0 &&
            maxParticipants != 0 &&
            maxParticipants <= kMaxParticipantsPerDecisionHard;
 }
@@ -278,37 +278,63 @@ void DecisionTable::ConsumePreparedReservationCommit(PreparedTicketCommitProof&&
 DecisionTable::DecisionTable(std::uint32_t capacity,
                              std::uint32_t maxParticipantsPerDecision)
     : capacity_(ValidConfig(capacity, maxParticipantsPerDecision)
-                    ? capacity
+                    ? std::min(capacity, UINT32_MAX / maxParticipantsPerDecision)
                     : 0),
-      maxParticipantsPerDecision_(
-          ValidConfig(capacity, maxParticipantsPerDecision)
-              ? maxParticipantsPerDecision
-              : 0) {
-    if (!participants_.Reserve(capacity_ * maxParticipantsPerDecision_) ||
-        !frontiers_.Reserve(capacity_) || !rows_.Reserve(capacity_))
-        throw harken::detail::LogicPreparationFailure{};
+      maxParticipantsPerDecision_(capacity_ != 0 ? maxParticipantsPerDecision : 0) {}
+
+bool DecisionTable::PrepareDependencies(std::uint32_t count) noexcept {
+    return count <= capacity_ && participants_.ConstructThrough(count * maxParticipantsPerDecision_) &&
+        frontiers_.ConstructThrough(count) &&
+        (prepareDependencies_ == nullptr || prepareDependencies_(preparationContext_, count));
 }
 
 bool DecisionTable::PrepareSlotStorage(std::uint32_t slot) noexcept {
-    return slot < capacity_ &&
-        participants_.ConstructThrough((slot + 1u) * maxParticipantsPerDecision_) &&
-        frontiers_.ConstructThrough(slot + 1u) && rows_.ConstructThrough(slot + 1u);
+    if (slot >= capacity_) return false;
+    if (rows_.ConstructThrough(slot + 1u, [this](auto count) noexcept { return PrepareDependencies(count); }))
+        return true;
+    if (!rows_.PreparedUseActive() && !memguard::IsAudioTagged())
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
+}
+
+std::uint32_t DecisionTable::FindFreeSlot() noexcept {
+    return rows_.FindFreeSlot(capacity_, [](const Row& row) noexcept {
+        return row.slotState.load(std::memory_order_acquire) == SlotState::Free &&
+            !row.reservation.test(std::memory_order_acquire);
+    }, [this](auto count) noexcept { return PrepareSlotStorage(count - 1u); });
+}
+
+std::uint32_t DecisionTable::CountOccupiedUntil(std::uint64_t needed) const noexcept {
+    std::uint32_t occupied = 0;
+    for (const auto& row : rows_) {
+        if (needed == 0) break;
+        if (row.slotState.load(std::memory_order_acquire) != SlotState::Free) ++occupied;
+        else --needed;
+    }
+    return occupied;
+}
+
+std::uint32_t DecisionTable::FreeCount() const noexcept {
+    return Capacity() - CountOccupiedUntil(UINT64_MAX);
+}
+
+bool DecisionTable::PrepareAvailable(std::uint32_t count) noexcept {
+    if (count == 0) return true;
+    const auto needed = count + (rows_.PreparedUseActive() ? 0ull : rows_.HeldRows());
+    const auto occupied = CountOccupiedUntil(needed);
+    return needed <= capacity_ - occupied && PrepareSlotStorage(occupied + count - 1u);
 }
 
 bool DecisionTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
-    if (out == nullptr) return false;
-    for (const auto& held : *out) if (held.Valid()) return false;
-    count = std::min(count, capacity_);
-    auto occupied = rows_.ConstructedCount();
-    while (occupied != 0 && rows_[occupied - 1u].slotState.load(std::memory_order_acquire) == SlotState::Free)
-        --occupied;
-    BackingPreparation candidate;
-    if (!participants_.PrepareBacking(count * maxParticipantsPerDecision_,
-            occupied * maxParticipantsPerDecision_, &candidate[0]) ||
-        !frontiers_.PrepareBacking(count, occupied, &candidate[1]) ||
-        !rows_.PrepareBacking(count, occupied, &candidate[2])) return false;
-    *out = std::move(candidate);
-    return true;
+    if (out == nullptr || out->Valid() || memguard::IsAudioTagged() || rows_.PreparedUseActive()) return false;
+    const auto needed = rows_.HeldRows() + count;
+    const auto occupied = CountOccupiedUntil(needed);
+    if (needed > capacity_ - occupied) return false;
+    if (rows_.PrepareBacking(count, occupied, out, [this](auto required) noexcept {
+            return PrepareDependencies(required);
+        })) return true;
+    detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
 }
 
 std::uint64_t DecisionTable::RowStorageBytes() const noexcept {
@@ -842,9 +868,8 @@ bool DecisionTable::CanPublishFrontierActivation(DecisionToken token) const noex
         row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
         activation->descriptor_.order.logicCommitSequence != row->ticket.sequence ||
         activation->descriptor_.expectedMemberCount != row->participantCount) return false;
-    const auto* participants = Participants(token.slot);
     for (std::uint32_t i = 0; i < row->participantCount; ++i) {
-        if (participants[i].kind != DecisionParticipantKind::Subdecision) return false;
+        if (Participant(token.slot, i).kind != DecisionParticipantKind::Subdecision) return false;
     }
     return true;
 }
@@ -910,14 +935,12 @@ bool DecisionTable::ReconcileFrontierActivation(DecisionToken token,
     return true;
 }
 
-DecisionParticipantRef* DecisionTable::Participants(
-    std::uint32_t slot) noexcept {
-    return &participants_[slot * maxParticipantsPerDecision_];
+DecisionParticipantRef& DecisionTable::Participant(std::uint32_t slot, std::uint32_t index) noexcept {
+    return participants_[slot * maxParticipantsPerDecision_ + index];
 }
 
-const DecisionParticipantRef* DecisionTable::Participants(
-    std::uint32_t slot) const noexcept {
-    return const_cast<DecisionTable*>(this)->Participants(slot);
+const DecisionParticipantRef& DecisionTable::Participant(std::uint32_t slot, std::uint32_t index) const noexcept {
+    return participants_[slot * maxParticipantsPerDecision_ + index];
 }
 
 DecisionTable::Row* DecisionTable::Resolve(DecisionToken token) noexcept {
@@ -967,8 +990,7 @@ bool DecisionTable::Reserve(const DecisionReserveRequest& request,
         !ValidRequest(request) || !CanIssueOriginalDecisionLifetime(outOriginal)) {
         return false;
     }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        if (!PrepareSlotStorage(slot)) return false;
+    for (auto slot = FindFreeSlot(); slot != UINT32_MAX; slot = FindFreeSlot()) {
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -1020,8 +1042,7 @@ bool DecisionTable::PrepareReservation(
         !ValidPreparedRequest(request) || !CanIssueOriginalDecisionLifetime(outOriginal)) {
         return false;
     }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        if (!PrepareSlotStorage(slot)) return false;
+    for (auto slot = FindFreeSlot(); slot != UINT32_MAX; slot = FindFreeSlot()) {
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -1286,9 +1307,8 @@ bool DecisionTable::Commit(DecisionToken token,
             std::memory_order_acq_rel, std::memory_order_acquire)) {
         return false;
     }
-    DecisionParticipantRef* destination = Participants(token.slot);
     for (std::uint32_t index = 0; index < payload.participantCount; ++index) {
-        destination[index] = payload.participants[index];
+        Participant(token.slot, index) = payload.participants[index];
     }
     row->participantCount = payload.participantCount;
     row->pages = payload.pages;
@@ -2039,11 +2059,11 @@ bool DecisionTable::HasExclusiveParticipant(DecisionToken token,
     const auto* row = Resolve(token);
     if (row == nullptr || !participant.Valid() ||
         row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed) return false;
-    const auto* source = Participants(token.slot);
     std::uint32_t matches = 0;
     for (std::uint32_t i = 0; i < row->participantCount; ++i) {
-        if (source[i].kind != participant.kind) continue;
-        if (source[i].slot != participant.slot || source[i].generation != participant.generation) return false;
+        const auto& entry = Participant(token.slot, i);
+        if (entry.kind != participant.kind) continue;
+        if (entry.slot != participant.slot || entry.generation != participant.generation) return false;
         ++matches;
     }
     return matches == 1;
@@ -2063,9 +2083,8 @@ bool DecisionTable::CopyCommittedParticipants(
         (row->participantCount != 0 && out == nullptr)) {
         return false;
     }
-    const DecisionParticipantRef* source = Participants(token.slot);
     for (std::uint32_t index = 0; index < row->participantCount; ++index) {
-        out[index] = source[index];
+        out[index] = Participant(token.slot, index);
     }
     *outCount = row->participantCount;
     return true;
@@ -2077,7 +2096,7 @@ bool DecisionTable::CaptureCommittedParticipant(DecisionToken token, std::uint32
     if (out == nullptr || row == nullptr ||
         row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
         index >= row->participantCount) return false;
-    *out = Participants(token.slot)[index];
+    *out = Participant(token.slot, index);
     return true;
 }
 

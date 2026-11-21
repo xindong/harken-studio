@@ -3861,7 +3861,6 @@ struct EngineDecisionRetirement {
 };
 
 static_assert(sizeof(EngineDecisionRetirement) <= 80u);
-static_assert(kMaxDecisionRowsHard <= SIZE_MAX / sizeof(EngineDecisionRetirement));
 
 class EngineOriginalQueueSourcePreparation {
 public:
@@ -6275,7 +6274,7 @@ struct Engine {
     };
     NativeRuntimeBacking* nativeRuntimeBackingInUse = nullptr;
     struct NativeRuntimeBackingUse {
-        std::array<StableStoragePreparedUse, 14> columns;
+        std::array<StableStoragePreparedUse, 12> columns;
         VoiceLedger::BackingUse ledger;
         VoiceLedger::MonitorSelectionUse monitor;
         SelectionMemoryTableV1::BackingUse selectionHistory;
@@ -6297,7 +6296,7 @@ struct Engine {
         Engine& owner;
         NativeRuntimeBacking* previous;
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
-            : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
+            : columns{backing == nullptr ? StableStoragePreparedUse{} : backing->decisions.Use(), Use(backing, 3),
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
                       Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12), Use(backing, 13)},
               ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
@@ -6329,7 +6328,6 @@ struct Engine {
     private:
         static StableStoragePreparedUse Use(NativeRuntimeBacking* backing, std::uint32_t index) noexcept {
             if (backing == nullptr) return {};
-            if (index < 3u) return backing->decisions[index].Use();
             if (index < 7u) return backing->completions[index - 3u].Use();
             if (index == 7u) return backing->voices.Use();
             if (index == 8u) return backing->queueOrigins.Use();
@@ -7079,13 +7077,12 @@ public:
           packs(handleFloors.pack),
           streams(resolved),
           effectBank(resolved),
-          decisions(resolved.maxDecisionRows,
+          decisions(UINT32_MAX,
                     resolved.maxParticipantsPerDecision),
           armGroups(UINT32_MAX,
                     resolved.maxArmsPerGroup),
           timelineArms(TimelineArmCapacity(resolved)),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
-          initialRootActivationPublicationProofs(resolved.maxDecisionRows),
           queueInstances(UINT32_MAX, originalConditionalCapacity),
           topologyPlans(resolved.topologyPlanPoolCapacity, resolved.maxBuses,
                         resolved.busSendSlotsPerBus),
@@ -7147,7 +7144,6 @@ public:
           initialLaneDemandGroupQuantaScratch(std::max(
               resolved.maxTransactionEvents,
               resolved.maxKnownScheduleLeaves * 4u)),
-          decisionRetirements(decisions.Capacity()),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -7174,7 +7170,6 @@ public:
                                        : resolved.randomSeed),
           commands(resolved.commandQueueDepth, &timelineArms),
           originalSourceSubmissions(timelineArms, voices, commands, effectBank),
-          originalSingleDecisionBaselines(decisions.Capacity()),
           actionPlayCommandScratch(commands.Capacity()),
           actionSeekCommandScratch(commands.Capacity()),
           actionSeekPreparationScratch(commands.Capacity()),
@@ -7310,6 +7305,13 @@ public:
         (void)originalPlayableResolver;
         const bool originalDecisionResolver = decisions.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalSingleDecisionBaseline);
+        decisions.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            return engine.decisionRetirements.ConstructThrough(required) &&
+                engine.originalSingleDecisionBaselines.ConstructThrough(required) &&
+                engine.initialRootActivationPublicationProofs.ConstructThrough(required) &&
+                engine.timelinePool.PrepareImmediateLaneDecisionGates(required);
+        });
         timelineOccurrences.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
             auto& engine = *static_cast<Engine*>(context);
             return engine.originalSingleOccurrenceBaselines.ConstructThrough(required) &&
@@ -7376,7 +7378,6 @@ public:
             static_cast<std::uint32_t>(
                 (laneHorizonQuanta + resolved.maxDeferredIntents) *
                 groupsPerBucket);
-        timelinePoolConfig.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
         if (laneAttempts > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
         if (!decisions.Valid() || !transitionInstances.Valid() ||
@@ -7508,7 +7509,7 @@ public:
         };
         const EngineFrontierOwnerLedger::Limits frontierOwnerLimits{
             boundedFrontierCount(frontierNodes, resolved.maxPendingSelectionDeltasTotal),
-            boundedFrontierCount(2u * frontierNodes + 1u, resolved.maxDecisionRows),
+            boundedFrontierCount(2u * frontierNodes + 1u, UINT32_MAX),
             boundedFrontierCount(2u * frontierNodes, UINT32_MAX),
             boundedFrontierCount(frontierNodes, resolved.maxCompositeCompletionOwners),
             boundedFrontierCount(frontierNodes, resolved.voiceCapacity.Render()),
@@ -8281,6 +8282,7 @@ public:
         QueueInstanceTable::BackingPreparation queues;
         std::uint32_t queueCount = 0;
         std::uint32_t conditionalCount = 0;
+        DecisionTable::BackingPreparation decisions;
         ArmGroupTable::BackingPreparation groups;
         std::uint32_t groupCount = 0;
         std::uint32_t groupMembers = 0;
@@ -8339,8 +8341,9 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
-        if (backing.groupCount != 0 && !armGroups.PrepareBacking(
-                backing.groupCount, backing.groupMembers, &backing.groups)) return false;
+        if (backing.groupCount != 0 &&
+            (!decisions.PrepareBacking(backing.groupCount, &backing.decisions) ||
+             !armGroups.PrepareBacking(backing.groupCount, backing.groupMembers, &backing.groups))) return false;
         if (backing.queueCount != 0 && !queueInstances.PrepareBacking(backing.queueCount,
                 backing.conditionalCount, &backing.queues)) return false;
         if (backing.controlCount != 0 && !variableControlInstances.PrepareBacking(
@@ -8366,14 +8369,17 @@ public:
         ActionFiringHandle& controlOwner;
         const ActionFiringHandle previousOwner;
         std::optional<ArmGroupTable::PreparedUse> groups;
+        std::optional<StableStoragePreparedUse> decisions;
         BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner) noexcept
             : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
               controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
             if (held) {
                 active = held->width;
                 controlOwner = held->controlCount != 0 || held->queueCount != 0 || held->groupCount != 0 ? owner : 0;
-                if (owner && held->groups.Valid() && !engine.nativeRuntimeBackingInUse)
+                if (owner && held->groups.Valid() && !engine.nativeRuntimeBackingInUse) {
                     groups.emplace(engine.armGroups, &held->groups);
+                    decisions.emplace(held->decisions.Use());
+                }
             }
         }
         BorrowedTree(const BorrowedTree&) = delete;
@@ -13950,7 +13956,7 @@ public:
     std::vector<EngineInitialFrontierArmPin> initialFrontierArmPins;
     std::vector<TimelineArmTable::BoundArmPublicationInput> initialRootArmPublicationInputs;
     std::vector<TimelineArmTable::Row*> initialRootArmPublicationRows;
-    std::vector<DecisionTable::FrontierPublicationProof> initialRootActivationPublicationProofs;
+    GrowingRowStorage<DecisionTable::FrontierPublicationProof> initialRootActivationPublicationProofs;
     // Original bank storage outlives every genuine Engine-held loan.
     EngineQueueScheduleStorage queueScheduleStorage;
     StableSlotStorage<EngineQueueProgramBank> queueProgramBanks;
@@ -14116,7 +14122,7 @@ public:
     GrowingRowStorage<EngineActionQueueReplacementScratch>
         actionQueueReplacementScratch;
     // Tokens and descriptor pins must be destroyed before their owning tables.
-    std::vector<EngineDecisionRetirement> decisionRetirements;
+    GrowingRowStorage<EngineDecisionRetirement> decisionRetirements;
     GrowingRowStorage<EnginePlayableStartRow> playableStarts;
     GrowingRowStorage<EnginePlayableServiceRow> playableServices;
     std::vector<EngineScheduleSourceServiceWork> scheduleSourceSettlementWork;
@@ -15477,7 +15483,7 @@ public:
     // Each late native fence keeps its own table slot, independent of Arm reuse.
     // Native Decision lifetime outputs cover actual Queue Current and Future
     // reservations. Completion-kind and ordinary Single equality stay strict.
-    std::vector<OriginalDecisionLifetimePin> originalSingleDecisionBaselines;
+    GrowingRowStorage<OriginalDecisionLifetimePin> originalSingleDecisionBaselines;
     void (*originalQueueDecisionPreparationHookForTest)(Engine&, const PreparedDecisionReservation&,
         const OriginalDecisionLifetimePin&, void*) = nullptr;
     void* originalQueueDecisionPreparationContextForTest = nullptr;

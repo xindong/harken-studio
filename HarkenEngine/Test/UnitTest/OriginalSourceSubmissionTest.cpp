@@ -9171,7 +9171,7 @@ harken::ScheduledTransactionPool::Config NativeJointForeignConfig() {
     config.maxTransactionEvents = 4; config.maxCurrentSlicesPerQuantum = 4;
     config.maxPlan03GroupHeadersPerPage = 4; config.maxArmsPerGroup = 4;
     config.maxImmediateLaneGroupRows = 2; config.initialImmediateLaneOwnerGates = 4;
-    config.maxImmediateLaneDecisionGates = 4;
+    config.initialImmediateLaneDecisionGates = 4;
     return config;
 }
 }

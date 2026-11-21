@@ -1245,6 +1245,9 @@ public:
     bool PrepareImmediateLaneBacking(std::uint32_t groupCount, std::uint64_t totalMembers,
         ImmediateLaneBackingPreparation* out) noexcept;
     // Attach before preparing rows; the producer callback must not re-enter this pool.
+    bool PrepareImmediateLaneDecisionGates(std::uint32_t count) noexcept {
+        return immediateLaneDecisionGates_.ConstructThrough(count);
+    }
     bool PrepareImmediateLaneOwnerGates(std::uint32_t count) noexcept {
         return immediateLaneOwnerGates_.ConstructThrough(count);
     }
@@ -1326,7 +1329,7 @@ public:
         std::uint32_t maxArmsPerGroup = 0;
         std::uint32_t maxImmediateLaneGroupRows = 0;
         std::uint32_t initialImmediateLaneOwnerGates = 0;
-        std::uint32_t maxImmediateLaneDecisionGates = 0;
+        std::uint32_t initialImmediateLaneDecisionGates = 0;
     };
 
     ScheduledTransactionPool() = default;
@@ -2658,7 +2661,7 @@ private:
     bool (*prepareImmediateLaneRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     StableRowStorage<LaneGroupRow> immediateLaneGroups_;
     GrowingRowStorage<LaneFrontierGate> immediateLaneOwnerGates_;
-    std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;
+    GrowingRowStorage<LaneFrontierGate> immediateLaneDecisionGates_;
     const TimelineArmTable* plan03ArmTable_ = nullptr;
     bool plan03ArmTableEstablishedByPrepared_ = false;
     std::vector<std::uint32_t> pageBatchCount_;

@@ -25700,6 +25700,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         }
         std::vector<QueueInstanceToken> competingQueues;
         std::vector<ArmGroupToken> competingGroups;
+        std::vector<DecisionToken> competingDecisions;
         if (competingPlayback) {
             QueueInstanceCreateRequest request{};
             request.world = 1;
@@ -25715,6 +25716,19 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             while (engine.queueInstances.Acquire(request, &token)) competingQueues.push_back(token);
             engine.armGroups.SetRowCommitPageLimitForTests(0);
             engine.armGroups.SetMemberAllocationLimitForTests(0);
+            DecisionReserveRequest decision{};
+            decision.ticket.sequence = 1;
+            decision.world = engine.variables.CurrentWorldGeneration();
+            decision.transport = engine.timelinePool.Epoch();
+            decision.expectedContinuationGeneration = 1;
+            decision.sliceCount = 1;
+            DecisionToken decisionToken{};
+            for (unsigned i = 0; i < 513; ++i) {
+                ASSERT_TRUE(engine.decisions.Reserve(decision, &decisionToken));
+                competingDecisions.push_back(decisionToken);
+            }
+            engine.decisions.SetRowCommitPageLimitForTests(0);
+            while (engine.decisions.Reserve(decision, &decisionToken)) competingDecisions.push_back(decisionToken);
             ArmGroupToken group{};
             while (engine.armGroups.Reserve({1, 1}, nullptr, 0, &group)) competingGroups.push_back(group);
         }
@@ -25754,6 +25768,10 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                     ++audible[1];
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
+        }
+        for (auto token : competingDecisions) {
+            ASSERT_TRUE(engine.decisions.Cancel(token));
+            ASSERT_TRUE(engine.decisions.ReclaimCancelled(token));
         }
         for (auto group : competingGroups) EXPECT_TRUE(engine.armGroups.CancelBeforePublication(group));
         for (auto token : competingQueues) EXPECT_TRUE(engine.queueInstances.Release(token));

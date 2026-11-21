@@ -1604,7 +1604,7 @@ bool ScheduledTransactionPool::ProvePrivateImmediateLaneGroupsPublication(
         if (!row.frontierPinsOwned || !row.frontier.Valid() || row.frontier.operation.group != identity ||
             row.frontier.operation.order.executeFrame != row.rebasedFrame ||
             owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-            row.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+            row.decision.slot >= immediateLaneDecisionGates_.size() ||
             immediateLaneOwnerGates_[owner.serviceSlot].state.load(std::memory_order_acquire) != 0 ||
             immediateLaneDecisionGates_[row.decision.slot].state.load(std::memory_order_acquire) != 0)
             return false;
@@ -2255,7 +2255,7 @@ bool ScheduledTransactionPool::CapturePrivateOriginalQueueClockInitialSource(
         const auto& owner = row.frontier.operation.owner;
         DecisionCommittedSnapshot nativeDecision{};
         if (!row.frontier.Valid() || owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+            identity.decision.slot >= immediateLaneDecisionGates_.size() ||
             !decisions.CaptureCommitted(identity.decision, &nativeDecision) ||
             nativeDecision.world != row.frontier.operation.world ||
             nativeDecision.transport != row.frontier.operation.transport ||
@@ -2326,7 +2326,7 @@ bool ScheduledTransactionPool::CapturePrivateOriginalQueueC0Source(
         const auto& owner = row.frontier.operation.owner;
         DecisionCommittedSnapshot nativeDecision{};
         if (!row.frontier.Valid() || owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+            identity.decision.slot >= immediateLaneDecisionGates_.size() ||
             !decisions.CaptureCommitted(identity.decision, &nativeDecision) ||
             nativeDecision.world != row.frontier.operation.world ||
             nativeDecision.transport != row.frontier.operation.transport ||
@@ -2624,7 +2624,7 @@ bool ScheduledTransactionPool::ProvePrivateOriginalQueueGroupClock(
                 identity, row.bucketOrdinal, row.groupIndex)) return false;
         const auto& owner = row.frontier.operation.owner;
         if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates) return false;
+            identity.decision.slot >= immediateLaneDecisionGates_.size()) return false;
         const auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
         const auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
         if (ownerGate.generation.load(std::memory_order_acquire) != owner.serviceGeneration ||
@@ -3115,9 +3115,7 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         (config.maxArmsPerGroup == 0)) {
         return false;
     }
-    if (config.maxImmediateLaneGroupRows != 0 &&
-        (config.maxArmsPerGroup == 0 ||
-         config.maxImmediateLaneDecisionGates == 0)) return false;
+    if (config.maxImmediateLaneGroupRows != 0 && config.maxArmsPerGroup == 0) return false;
     if (config.maxPlan03GroupHeadersPerPage >
             kMaxPlan03GroupHeadersPerPageHard ||
         config.maxArmsPerGroup > kMaxPlan03ArmsPerGroupHard) {
@@ -3272,8 +3270,9 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     GrowingRowStorage<LaneFrontierGate> ownerGates;
     if (!ownerGates.ConstructThrough(config_.initialImmediateLaneOwnerGates)) return false;
     immediateLaneOwnerGates_.Swap(ownerGates);
-    immediateLaneDecisionGates_ = config_.maxImmediateLaneDecisionGates == 0 ? nullptr :
-        std::make_unique<LaneFrontierGate[]>(config_.maxImmediateLaneDecisionGates);
+    GrowingRowStorage<LaneFrontierGate> decisionGates;
+    if (!decisionGates.ConstructThrough(config_.initialImmediateLaneDecisionGates)) return false;
+    immediateLaneDecisionGates_.Swap(decisionGates);
     pageBatchCount_.assign(pageCount_, 0);
     pageBatchOccupiedCount_.assign(pageCount_, 0);
     StableRowStorage<FrameBatchRow, std::size_t> batchRows;
@@ -4333,7 +4332,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
             (immediateLaneOwnerGates_[gate].state.load(std::memory_order_acquire) &
              kLaneGateClaims) != 0)
             return false;
-    for (std::size_t gate = 0; gate < config_.maxImmediateLaneDecisionGates; ++gate)
+    for (std::size_t gate = 0; gate < immediateLaneDecisionGates_.size(); ++gate)
         if (immediateLaneDecisionGates_[gate].references != 0 ||
             (immediateLaneDecisionGates_[gate].state.load(std::memory_order_acquire) &
              kLaneGateClaims) != 0)
@@ -8843,7 +8842,7 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
         if (!MatchesInitialSoundQueueCompanionBinding(identity, binding)) return false;
         const auto& owner = binding.operation.owner;
         if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates)
+            identity.decision.slot >= immediateLaneDecisionGates_.size())
             return false;
         auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
         auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
@@ -8969,7 +8968,7 @@ bool ScheduledTransactionPool::PageReplacementScopeReady(const FrontierOwnerIden
         if (last != 0 && completed <= last) return false;
     }
     if (scope.Valid()) {
-        if (scope.slot < config_.maxImmediateLaneDecisionGates) {
+        if (scope.slot < immediateLaneDecisionGates_.size()) {
             const auto& gate = immediateLaneDecisionGates_[scope.slot];
             if (gate.generation.load(std::memory_order_acquire) == scope.generation &&
                 gate.ownerSlot.load(std::memory_order_acquire) == owner.serviceSlot &&
@@ -9040,7 +9039,7 @@ FrontierOwnerInvalidationDisposition ScheduledTransactionPool::TryInvalidateFron
         return (prior & kLaneGateClaims) == 0;
     };
     if (decision.Valid()) {
-        if (decision.slot < config_.maxImmediateLaneDecisionGates) {
+        if (decision.slot < immediateLaneDecisionGates_.size()) {
             auto& gate = immediateLaneDecisionGates_[decision.slot];
             if (gate.ownerSlot.load(std::memory_order_acquire) == owner.serviceSlot &&
                 gate.ownerGeneration.load(std::memory_order_acquire) ==
@@ -9095,7 +9094,7 @@ void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(
                                     row.laneSlot, row.laneGeneration)) continue;
         const auto& owner = row.frontier.operation.owner;
         if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-            row.decision.slot >= config_.maxImmediateLaneDecisionGates) continue;
+            row.decision.slot >= immediateLaneDecisionGates_.size()) continue;
         const auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
         const auto& decisionGate = immediateLaneDecisionGates_[row.decision.slot];
         // A winning audio claim may not have claimed the shared lease yet.
@@ -10506,7 +10505,7 @@ bool ScheduledTransactionPool::PrivateImmediateLaneFrontierRollbackReady(
     const auto& owner = group.frontier->operation.owner;
     if (!row.frontierPinsOwned ||
         owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-        identity.decision.slot >= config_.maxImmediateLaneDecisionGates)
+        identity.decision.slot >= immediateLaneDecisionGates_.size())
         return false;
     const auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
     const auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
@@ -10538,7 +10537,7 @@ bool ScheduledTransactionPool::ClaimImmediateLaneFrontierBound(
         return false;
     const auto& owner = group.frontier->operation.owner;
     if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
-        identity.decision.slot >= config_.maxImmediateLaneDecisionGates)
+        identity.decision.slot >= immediateLaneDecisionGates_.size())
         return false;
     auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
     auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
@@ -10576,7 +10575,7 @@ bool ScheduledTransactionPool::ReleaseImmediateLaneFrontier(
     ImmediateLaneFrontierClaim* claim) const noexcept {
     if (claim == nullptr || !claim->Valid() ||
         claim->ownerSlot >= immediateLaneOwnerGates_.size() ||
-        claim->decisionSlot >= config_.maxImmediateLaneDecisionGates)
+        claim->decisionSlot >= immediateLaneDecisionGates_.size())
         return false;
     auto& ownerGate = immediateLaneOwnerGates_[claim->ownerSlot];
     auto& decisionGate = immediateLaneDecisionGates_[claim->decisionSlot];

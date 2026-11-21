@@ -22665,7 +22665,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
             resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
         pool.initialImmediateLaneOwnerGates = resolved.maxPlayableInstances;
-        pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
+        pool.initialImmediateLaneDecisionGates = resolved.maxDecisionRows;
         ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         const std::vector<float> resident(blendProbe ? 4096 : 512, -0.5f);
@@ -23460,7 +23460,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
                 resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
             pool.initialImmediateLaneOwnerGates = resolved.maxPlayableInstances;
-            pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
+            pool.initialImmediateLaneDecisionGates = resolved.maxDecisionRows;
             ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         }
         const auto voicesBefore = engine.voices.AvailableSlotCount();
@@ -24583,7 +24583,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
             resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
         pool.initialImmediateLaneOwnerGates = resolved.maxPlayableInstances;
-        pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
+        pool.initialImmediateLaneDecisionGates = resolved.maxDecisionRows;
         ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f), streamed(1024, 0.0f);

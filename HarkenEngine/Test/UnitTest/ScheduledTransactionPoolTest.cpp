@@ -1023,7 +1023,7 @@ TEST(ScheduledTransactionPool, PrivateLaneTransferProofReservedSpansRequireAllFo
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 4;
     config.initialImmediateLaneOwnerGates = 4;
-    config.maxImmediateLaneDecisionGates = 4;
+    config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{4};
     harken::DecisionTable decisions{4, 1};
@@ -1160,7 +1160,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntriesRetainActualFactorySourcesAndOr
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 6;
     config.initialImmediateLaneOwnerGates = 6;
-    config.maxImmediateLaneDecisionGates = 6;
+    config.initialImmediateLaneDecisionGates = 6;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     ASSERT_TRUE(foreignPool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{4};
@@ -1352,7 +1352,7 @@ TEST(ScheduledTransactionPool, AcceptedPrivateEntryRequiresNestedControllersAndO
         config.maxArmsPerGroup = 2;
         config.maxImmediateLaneGroupRows = 8;
         config.initialImmediateLaneOwnerGates = 5;
-        config.maxImmediateLaneDecisionGates = 8;
+        config.initialImmediateLaneDecisionGates = 8;
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         harken::TimelineArmTable arms{4};
@@ -1652,7 +1652,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 6;
         config.initialImmediateLaneOwnerGates = 6;
-        config.maxImmediateLaneDecisionGates = 6;
+        config.initialImmediateLaneDecisionGates = 6;
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         harken::TimelineArmTable arms{4}, foreignArms{4};
@@ -2412,7 +2412,7 @@ struct MixedTimeGroupHarness {
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 4;
         config.initialImmediateLaneOwnerGates = 4;
-        config.maxImmediateLaneDecisionGates = 4;
+        config.initialImmediateLaneDecisionGates = 4;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         ASSERT_TRUE(lane.Reset({2, 2, 1, 100, false, maxGroups}));
     }
@@ -2894,7 +2894,7 @@ TEST(ScheduledTransactionPool, MixedTimePinnedCrossSliceFuturePrecedesSlidUnrela
     config.maxArmsPerGroup = 2;
     config.maxImmediateLaneGroupRows = 3;
     config.initialImmediateLaneOwnerGates = 4;
-    config.maxImmediateLaneDecisionGates = 4;
+    config.initialImmediateLaneDecisionGates = 4;
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{3};
@@ -3118,7 +3118,7 @@ TEST(ScheduledTransactionPool, NativeDisposalReportsPartialSuccessBeforeSlotReus
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 2;
     config.initialImmediateLaneOwnerGates = 2;
-    config.maxImmediateLaneDecisionGates = 2;
+    config.initialImmediateLaneDecisionGates = 2;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(1);
     harken::DecisionTable decisions(2, 2);
@@ -3237,7 +3237,7 @@ TEST(ScheduledTransactionPool, OriginalQueueGroupScopePreservesIssuedInputsAfter
     config.maxArmsPerGroup = 2;
     config.maxImmediateLaneGroupRows = 1;
     config.initialImmediateLaneOwnerGates = 1;
-    config.maxImmediateLaneDecisionGates = 1;
+    config.initialImmediateLaneDecisionGates = 1;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(2);
     harken::DecisionTable decisions(1, 1);
@@ -3304,7 +3304,7 @@ TEST(ScheduledTransactionPool, PrivateLaneTransferProofMaximumGenerationIsRealAn
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 1;
     config.initialImmediateLaneOwnerGates = 2;
-    config.maxImmediateLaneDecisionGates = 2;
+    config.initialImmediateLaneDecisionGates = 2;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(1);
     harken::DecisionTable decisions(1, 1);

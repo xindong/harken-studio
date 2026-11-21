@@ -5900,6 +5900,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
 
     switch (exhaustion) {
     case ContinuationOwnerExhaustion::SuccessorDecision: {
+        ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->decisions));
         const std::uint32_t occupiedCount =
             engine->decisions.Capacity() - 1u;
         decisions.resize(occupiedCount);
@@ -6051,7 +6052,8 @@ void ExpectTransitionContinuationOwnerExhaustion(
     const auto before = CaptureActionPreparationOwners(*engine);
     ExpectPublicActionPreparationRefusal(
         *engine, image.actions[9].actionStableId, emitter,
-        (exhaustion == ContinuationOwnerExhaustion::Transition ||
+        (exhaustion == ContinuationOwnerExhaustion::SuccessorDecision ||
+            exhaustion == ContinuationOwnerExhaustion::Transition ||
             exhaustion == ContinuationOwnerExhaustion::ArmGroup) ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
 
     for (auto& prepared : decisions) {
@@ -8686,6 +8688,7 @@ TEST(ActionFiringApi, DelayedStopApplyingDecisionSurvivesRowReuseUntilDone) {
     EXPECT_FALSE(engine->armGroups.Capture(oldGroup, &group));
     EXPECT_FALSE(retired.group.Valid());
     EXPECT_TRUE(engine->decisions.Contains(oldDecision));
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->decisions));
     while (engine->decisions.LiveCount() < engine->decisions.Capacity()) {
         harken::DecisionToken blocker{};
         ASSERT_TRUE(engine->decisions.Reserve(reserve, &blocker));
@@ -23641,6 +23644,7 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
         const auto decisionsBeforeRefusal = engine->decisions.LiveCount();
         const auto voicesBeforeRefusal = engine->voices.ActiveCount();
         if (refusal == 1) {
+            ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->decisions));
             heldDecisions.resize(engine->decisions.Capacity() - engine->decisions.LiveCount() - 1u);
             harken::DecisionReserveRequest request{};
             request.world = engine->variables.CurrentWorldGeneration();
@@ -23676,6 +23680,7 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
             observeStarts();
         }
         EXPECT_EQ(1u, starts.size());
+        if (refusal == 1) engine->decisions.SetRowCommitPageLimitForTests(SIZE_MAX);
         for (auto& prepared : heldDecisions) ASSERT_TRUE(engine->decisions.CancelPreparedReservation(&prepared));
         for (auto handle : heldVoices) ASSERT_TRUE(engine->voices.CancelPreparedVoice(handle));
         EXPECT_EQ(decisionsBeforeRefusal, engine->decisions.LiveCount());
@@ -57711,6 +57716,7 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
         reserve.expectedContinuationGeneration = 1;
         reserve.sliceCount = 1;
         std::vector<harken::DecisionToken> occupied;
+        ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine.decisions));
         while (engine.decisions.LiveCount() < engine.decisions.Capacity()) {
             harken::DecisionToken token{};
             ASSERT_TRUE(engine.decisions.Reserve(reserve, &token));
@@ -57734,6 +57740,7 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
         EXPECT_EQ(groups, engine.timelinePool.CaptureLivePlan03Groups(nullptr, 0));
         EXPECT_EQ(pressuredOwners, CaptureActionReclaimableOwners(engine));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
+        engine.decisions.SetRowCommitPageLimitForTests(SIZE_MAX);
         for (const auto token : occupied) {
             ASSERT_TRUE(engine.decisions.Cancel(token));
             ASSERT_TRUE(engine.decisions.ReclaimCancelled(token));
@@ -65098,8 +65105,8 @@ TEST(ActionFiringApi,
     request.transport = engine->timelinePool.Epoch();
     request.expectedContinuationGeneration = 1;
     request.sliceCount = 1;
-    std::vector<harken::PreparedDecisionReservation> occupied(
-        engine->decisions.Capacity());
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->decisions));
+    std::vector<harken::PreparedDecisionReservation> occupied(engine->decisions.FreeCount());
     for (auto& prepared : occupied) {
         ASSERT_TRUE(engine->decisions.PrepareReservation(request,
                                                          &prepared));
@@ -65109,7 +65116,7 @@ TEST(ActionFiringApi,
     const auto before = CaptureActionPreparationOwners(*engine);
 
     ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(50), emitter, VN_NO_VOICE, before);
+        *engine, harkentest::ObjectId(50), emitter, VN_OUT_OF_MEMORY, before);
 
     for (auto& prepared : occupied) {
         EXPECT_TRUE(engine->decisions.CancelPreparedReservation(

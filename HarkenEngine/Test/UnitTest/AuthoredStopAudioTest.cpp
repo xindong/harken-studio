@@ -225,7 +225,7 @@ struct FrontierAudioHarness {
         if (laneBackedEntry) {
             config.maxImmediateLaneGroupRows = 4;
             config.initialImmediateLaneOwnerGates = 4;
-            config.maxImmediateLaneDecisionGates = 4;
+            config.initialImmediateLaneDecisionGates = 4;
         }
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         if (laneBackedEntry) {

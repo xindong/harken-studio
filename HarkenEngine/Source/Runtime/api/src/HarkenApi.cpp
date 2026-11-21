@@ -32401,8 +32401,11 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
          row.variableControlNestedContainerCount != 0);
     std::optional<harken::ArmGroupTable::PreparedUse> deferredGroups;
     const auto* backing = engine.DeferredBackingFor(&row);
-    if (backing && backing->groups.Valid() && !engine.nativeRuntimeBackingInUse)
+    std::optional<harken::StableStoragePreparedUse> deferredDecisions;
+    if (backing && backing->groups.Valid() && !engine.nativeRuntimeBackingInUse) {
         deferredGroups.emplace(engine.armGroups, &backing->groups);
+        deferredDecisions.emplace(backing->decisions.Use());
+    }
     PreparedQueueContinuationTree preparedTree{engine, row};
     harken::PlayableInstanceHandle queueOwnerInstance = row.rootInstance;
     std::uint64_t queueOwnerEpoch = 0;
@@ -34886,14 +34889,14 @@ bool CanPublishInitialScheduleFrontiers(harken::Engine& engine,
 
 bool PublishInitialScheduleFrontiers(harken::Engine& engine,
     harken::EngineActionPlayScratch& root,
-    std::span<harken::DecisionTable::FrontierPublicationProof> publications = {}) noexcept {
+    std::size_t publicationCount = 0) noexcept {
     if (root.initialForestCancellationSealed || !CommitMusicSelectionPublication(engine, root)) return false;
     std::size_t publicationIndex = 0;
     return VisitInitialScheduleAttempts(engine, root, [&](auto& scratch) noexcept {
-        auto* publication = !publications.empty() && scratch.frontierCoordinator.Valid() &&
+        auto* publication = publicationCount != 0 && scratch.frontierCoordinator.Valid() &&
             scratch.row != nullptr && !scratch.row->pendingImmediateEntry
-                ? (publicationIndex < publications.size() ? &publications[publicationIndex++] : nullptr) : nullptr;
-        if ((!publications.empty() && scratch.frontierCoordinator.Valid() && publication == nullptr) ||
+                ? (publicationIndex < publicationCount ? &engine.initialRootActivationPublicationProofs[publicationIndex++] : nullptr) : nullptr;
+        if ((publicationCount != 0 && scratch.frontierCoordinator.Valid() && publication == nullptr) ||
             !PublishInitialVariableControlFrontier(engine, scratch, publication) ||
             !ReleaseInitialSourceAdmissionOwners(engine, scratch)) return false;
         while (scratch.actionResourceOwnerContext.groupSlicesCommitted != 0) {
@@ -57164,7 +57167,7 @@ bool PublishPrivateInitialNativePlacement(harken::Engine& engine,
     if (!FilePublishedInitialVariableControlServices(engine, root)) return false;
     root.storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!PublishInitialScheduleFrontiers(engine, root,
-            {engine.initialRootActivationPublicationProofs.data(), publication.activationCount}) ||
+            publication.activationCount) ||
         (transferOwnership && !TransferFrontierAttempt(engine, root))) {
         engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return false;
