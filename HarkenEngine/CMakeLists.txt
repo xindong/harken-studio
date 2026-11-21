@@ -37,6 +37,9 @@ target_include_directories(harken_pack_format INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(harken_pack_format PROPERTIES EXPORT_NAME PackFormat)
 
+option(HARKEN_WINDOWS_GAME_LOW_LATENCY
+       "Use latency-tuned delivery on qualified Windows game playback endpoints" OFF)
+
 option(HARKEN_RT_PROBE_DEVICE_CALLBACK
        "Instrument Runtime-owned work inside the production device callback" OFF)
 option(HARKEN_RT_PROBE_MIX_PUBLICATION
@@ -384,6 +387,9 @@ function(harken_add_engine_edition target output_name export_name)
     add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_CORE_SOURCES} ${ARGN})
     add_library(Harken::${export_name} ALIAS ${target})
     target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:harken_buildinfo>)
+    if(WIN32 AND HARKEN_WINDOWS_GAME_LOW_LATENCY)
+        target_compile_definitions(${target} PRIVATE HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    endif()
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:harken_vorbis_decoder>)
     target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}

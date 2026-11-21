@@ -23,6 +23,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#if defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+#include <audioclient.h>
+#endif
 #endif
 
 #include "miniaudio.h"
@@ -34,6 +37,7 @@ extern "C" ma_bool32
 VnMiniaudioAtomicBool32Get(ma_atomic_bool32* value) noexcept;
 #endif
 
+#include <algorithm>
 #include <cassert>
 #include <atomic>
 #include <cstdio>
@@ -49,6 +53,72 @@ namespace harken {
 
 namespace {
 
+
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+bool SupportsGameOutput(const ma_device& device, const EngineConfig& config) {
+    if (config.renderWorkerCount != 0 || config.blockFrames != 256 ||
+        config.mixRate.SampleRate() != 48000 || config.deviceChannelCount != 2 ||
+        device.playback.internalChannels != 2 || device.playback.internalSampleRate != 48000 ||
+        device.playback.internalFormat != ma_format_f32 ||
+        device.wasapi.actualBufferSizeInFramesPlayback != 1920 ||
+        device.wasapi.pAudioClientPlayback == nullptr || device.wasapi.pRenderClient == nullptr ||
+        device.wasapi.hEventPlayback == nullptr)
+        return false;
+    auto* client = static_cast<IAudioClient*>(device.wasapi.pAudioClientPlayback);
+    IAudioClient3* shared = nullptr;
+    if (FAILED(client->QueryInterface(IID_PPV_ARGS(&shared)))) return false;
+    WAVEFORMATEX* format = nullptr;
+    UINT32 frames = 0;
+    const HRESULT queried = shared->GetCurrentSharedModeEnginePeriod(&format, &frames);
+    CoTaskMemFree(format);
+    shared->Release();
+    return SUCCEEDED(queried) && frames == 480;
+}
+
+ma_result RenderAvailableWasapiFrames(ma_device* device) {
+    auto* client = static_cast<IAudioClient*>(device->wasapi.pAudioClientPlayback);
+    auto* writer = static_cast<IAudioRenderClient*>(device->wasapi.pRenderClient);
+    const HANDLE event = static_cast<HANDLE>(device->wasapi.hEventPlayback);
+    const auto capacity = device->wasapi.actualBufferSizeInFramesPlayback;
+    if (client == nullptr || writer == nullptr || event == nullptr || capacity == 0)
+        return MA_INVALID_DEVICE_CONFIG;
+    const auto sampleRate = device->playback.internalSampleRate;
+    // The open-time check verified the shared period and native float format.
+    const auto idleDepth = sampleRate / 100u;
+    std::uint32_t silence = sampleRate;
+    while (ma_device_get_state(device) == ma_device_state_started) {
+        UINT32 padding = 0;
+        if (FAILED(client->GetCurrentPadding(&padding)) || padding > capacity)
+            return MA_ERROR;
+        // Keep one hardware period during sustained digital silence. The first
+        // audible buffer restores the full queue before waiting on the endpoint.
+        const auto target = silence >= sampleRate / 4u ? idleDepth : capacity;
+        const UINT32 writable = padding < target ? target - padding : 0u;
+        if (writable != 0) {
+            BYTE* output = nullptr;
+            const HRESULT acquired = writer->GetBuffer(writable, &output);
+            if (SUCCEEDED(acquired)) {
+                const auto rendered = ma_device_handle_backend_data_callback(device, output, nullptr, writable);
+                if (rendered == MA_SUCCESS) {
+                    const auto* samples = reinterpret_cast<const float*>(output);
+                    const auto count = static_cast<std::size_t>(writable) * device->playback.internalChannels;
+                    const bool nonzero = std::any_of(samples, samples + count, [](float sample) { return sample != 0.0f; });
+                    silence = nonzero ? 0u : std::min(sampleRate, silence + writable);
+                }
+                const DWORD flags = rendered == MA_SUCCESS ? 0 : AUDCLNT_BUFFERFLAGS_SILENT;
+                if (FAILED(writer->ReleaseBuffer(writable, flags)) || rendered != MA_SUCCESS)
+                    return MA_ERROR;
+                continue;
+            }
+            if (acquired != AUDCLNT_E_BUFFER_TOO_LARGE && acquired != AUDCLNT_E_BUFFER_ERROR)
+                return MA_ERROR;
+        }
+        if (WaitForSingleObject(event, 5000) != WAIT_OBJECT_0)
+            return MA_ERROR;
+    }
+    return MA_SUCCESS;
+}
+#endif
 
 DeviceStartFault g_deviceStartFault = DeviceStartFault::None;
 DeviceBackendTestState* g_deviceBackendTestState = nullptr;
@@ -859,6 +929,14 @@ VnResult DeviceBackend::Prepare(
         }
     }
     impl->deviceReady = true;
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    if (SupportsGameOutput(impl->device, config)) {
+        // This context serves one playback device. Ownership, wakeup, thread
+        // registration, format conversion and shutdown remain with miniaudio.
+        impl->context.callbacks.onDeviceDataLoop = RenderAvailableWasapiFrames;
+        impl->device.noFixedSizedCallback = MA_TRUE;
+    }
+#endif
 #if defined(_WIN32)
     // A parallel session requires miniaudio's callback thread to create and
     // publish a concrete MMCSS task group before workers can join it.
@@ -1027,6 +1105,14 @@ void DeviceBackend::RevokeRenderAdmission() noexcept {
 
 bool DeviceBackend::RenderAdmissionCommitted() const noexcept {
     return m_impl != nullptr && m_impl->RenderAdmitted();
+}
+
+bool DeviceBackend::UsesGameOutput() const noexcept {
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    return m_impl != nullptr && m_impl->context.callbacks.onDeviceDataLoop == RenderAvailableWasapiFrames;
+#else
+    return false;
+#endif
 }
 
 void DeviceBackend::SetHostOutputMute(bool muted,

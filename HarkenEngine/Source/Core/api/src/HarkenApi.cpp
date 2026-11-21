@@ -53816,12 +53816,21 @@ void ServicePendingImmediateEntries(
         }
         bool awaitingApply = false;
         bool invalidArm = false;
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+        bool onlyRelativeSounds = engine.device.UsesGameOutput();
+#endif
         for (harken::Engine::PlayableCohortCursor occupiedCursor{};
              auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
                 !member.pendingImmediateEntry ||
                 member.PendingImmediateCohortRoot() != root) continue;
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+            onlyRelativeSounds &= member.root.kind == harken::PlayableKindV1::Sound &&
+                member.pendingImmediateTimeDomain == harken::ImmediateLaneTimeDomain::RelativeToAnchor &&
+                member.pendingImmediateFixedEntryFrame == 0 && !member.parentService.Valid() &&
+                !member.pendingCancellationIntent;
+#endif
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto* program = leafProgram(member, leaf);
                 harken::TimelineArmObservation arm{};
@@ -53850,7 +53859,21 @@ void ServicePendingImmediateEntries(
             }
             continue;
         }
-        const std::uint64_t admittedFrame = ActionImmediateStartFrame(engine);
+        std::uint64_t admittedFrame = ActionImmediateStartFrame(engine);
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+        // These arms have already been applied. Only advance a relative Sound
+        // cohort if the next block clears the published cutoff and the consumer
+        // can reach it. Keep the ordinary admission when the recheck fails.
+        if (onlyRelativeSounds && blockFrames != 0) {
+            const auto rendered = engine.mixer.BlocksRendered();
+            if (rendered < UINT64_MAX / blockFrames) {
+                const auto earliest = std::max(engine.timelinePool.PublishCutoffFrame(),
+                    (rendered + 1u) * blockFrames);
+                if (earliest < admittedFrame)
+                    (void)EnsurePlayableTimelineWindowAtFrame(engine, earliest, &admittedFrame, false);
+            }
+        }
+#endif
         if (admittedFrame > UINT64_MAX - (blockFrames - 1u)) continue;
         std::uint64_t startFrame =
             ((admittedFrame + blockFrames - 1u) / blockFrames) * blockFrames;
@@ -73906,6 +73929,18 @@ void TimelineServiceCoordinator::Service() {
         static_cast<std::uint64_t>(
             engine_.timelinePool.PublishLeadQuanta()) *
             engine_.timelinePool.QuantumFrames();
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    // Idle Windows sessions can defer freezing unused pages. Absolute
+    // scheduling still uses its normal lead whenever it has work to publish.
+    std::uint32_t serviceCursor = 0;
+    if (engine_.device.UsesGameOutput() && requiredPublicationFrame == 0 &&
+        blockingFrame == UINT64_MAX && !engine_.runtimeTransportResetActive &&
+        engine_.timelinePool.LiveTransactionCount() == 0 &&
+        engine_.timelineDeferred.Count() == 0 && engine_.timelineDeferred.PreparedCount() == 0 &&
+        engine_.NextOccupiedPlayableService(&serviceCursor) == nullptr) {
+        desiredCutoff = std::min(desiredCutoff, engine_.timelinePool.WindowStartFrame() + std::uint64_t{2} * engine_.timelinePool.QuantumFrames());
+    }
+#endif
     if (requiredPublicationFrame != 0) {
         const std::uint64_t quantumFrames =
             engine_.timelinePool.QuantumFrames();
