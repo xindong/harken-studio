@@ -571,7 +571,7 @@ namespace Harken.Unity
                 initPack = settings.InitPack;
         }
 
-        private VnResult StartFromProjectPackDirectory()
+        private VnResult StartFromProjectPackDirectory(ulong outputTicket)
         {
             if (!TryBeginStartup(out VnResult rejection, out var settings)) return rejection;
             try
@@ -591,7 +591,7 @@ namespace Harken.Unity
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
                 }
 #endif
-                return StartCompanionDirectory(platformRoot, settings);
+                return StartCompanionDirectory(platformRoot, settings, outputTicket);
             }
             finally { starting = false; }
         }
@@ -604,7 +604,8 @@ namespace Harken.Unity
             return StartCompanionDirectory(platformRoot);
         }
 
-        private VnResult StartCompanionDirectory(string platformRoot, HarkenProjectSettings settings = null)
+        private VnResult StartCompanionDirectory(string platformRoot, HarkenProjectSettings settings = null,
+            ulong outputTicket = 0)
         {
             if (!MatchesConfiguredInit("Init.bytes"))
             {
@@ -618,7 +619,7 @@ namespace Harken.Unity
             }
             VnResult result = CreateStartupConfig(out VnConfig config, settings);
             if (result != VnResult.VN_OK) return CompleteSessionStartup(result, platformRoot);
-            result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session);
+            result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session, outputTicket);
             if (result == VnResult.VN_CONTENT_NOT_LOADED && session == null)
                 LastStartupError = "The selected directory requires the current Init.bytes and Init.json pair. Re-export Packs with the current Studio.";
             else if (result == VnResult.VN_BAD_PACK || result == VnResult.VN_PACK_INCOMPATIBLE)
@@ -626,15 +627,21 @@ namespace Harken.Unity
             return CompleteSessionStartup(result, platformRoot);
         }
 
-        private VnResult CreateStartupConfig(out VnConfig config, HarkenProjectSettings settings = null)
+        private VnConfig CreateOutputConfig()
         {
-            config = HarkenEngine.DefaultConfig();
+            var config = HarkenEngine.DefaultConfig();
             config.sampleRate = 48000;
             config.mixChannelLayout = (uint)VnChannelLayout.VN_CHANNEL_LAYOUT_STEREO;
             config.deviceChannelLayout = (uint)VnChannelLayout.VN_CHANNEL_LAYOUT_STEREO;
             config.deviceMode = nullDevice
                 ? (uint)VnDeviceMode.VN_DEVICE_NULL
                 : (uint)VnDeviceMode.VN_DEVICE_REAL;
+            return config;
+        }
+
+        private VnResult CreateStartupConfig(out VnConfig config, HarkenProjectSettings settings = null)
+        {
+            config = CreateOutputConfig();
             HarkenProjectSettings.ApplyStartupCapacity(ref config, settings);
             try
             {
@@ -735,6 +742,18 @@ namespace Harken.Unity
                 return;
             }
             Instance = this;
+            ulong outputTicket = 0;
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (autoInitialize && isActiveAndEnabled && !nullDevice && configuredCompanionSource == null &&
+                preparedPackSource == null && preparedPacks == null)
+                outputTicket = HarkenEngine.BeginOutputPreparation(CreateOutputConfig());
+#endif
+            try { InitializeOwnedComponent(outputTicket); }
+            finally { HarkenEngine.CancelOutputPreparation(outputTicket); }
+        }
+
+        private void InitializeOwnedComponent(ulong outputTicket)
+        {
             HarkenSpatialUpdate spatialUpdate = GetComponent<HarkenSpatialUpdate>();
             if (spatialUpdate == null) spatialUpdate = gameObject.AddComponent<HarkenSpatialUpdate>();
             spatialUpdate.hideFlags = HideFlags.HideInInspector;
@@ -769,7 +788,7 @@ namespace Harken.Unity
             }
             finally { starting = false; }
 #else
-            StartFromProjectPackDirectory();
+            StartFromProjectPackDirectory(outputTicket);
 #endif
         }
 

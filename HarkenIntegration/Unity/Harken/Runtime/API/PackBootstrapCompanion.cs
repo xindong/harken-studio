@@ -547,13 +547,18 @@ namespace Harken
         /// <summary>Starts from one explicit platform directory containing Init.bytes and Init.json.</summary>
         public static VnResult StartDirectory(string platformDirectory, string language, ref VnConfig config,
             out PackBootstrapSession session)
+            => StartDirectory(platformDirectory, language, ref config, out session, 0);
+
+        internal static VnResult StartDirectory(string platformDirectory, string language, ref VnConfig config,
+            out PackBootstrapSession session, ulong outputTicket)
         {
             session = null;
             if (string.IsNullOrWhiteSpace(platformDirectory) || !PackDirectorySource.ValidLanguage(language))
                 return VnResult.VN_INVALID_ARG;
             try
             {
-                return Start(PackSource.FromDirectory(platformDirectory, language), ref config, out session);
+                return StartLocal(PackSource.FromDirectory(platformDirectory, language), ref config,
+                    out session, CancellationToken.None, outputTicket);
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
@@ -566,7 +571,7 @@ namespace Harken
             => StartArchive(archivePath, language, ref config, out session, CancellationToken.None);
 
         private static VnResult StartArchive(string archivePath, string language, ref VnConfig config,
-            out PackBootstrapSession session, CancellationToken cancellation)
+            out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
         {
             session = null;
             cancellation.ThrowIfCancellationRequested();
@@ -576,7 +581,8 @@ namespace Harken
             try
             {
                 archive = new PackArchive(archivePath);
-                VnResult result = CaptureAndStart(PackSource.FromArchive(archive, language), ref config, out session, cancellation);
+                VnResult result = CaptureAndStart(PackSource.FromArchive(archive, language), ref config,
+                    out session, cancellation, outputTicket);
                 if (session != null)
                 {
                     session.ownedArchive = archive;
@@ -604,7 +610,7 @@ namespace Harken
         }
 
         internal static VnResult StartLocal(PackSource source, ref VnConfig config,
-            out PackBootstrapSession session, CancellationToken cancellation)
+            out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
         {
             session = null;
             cancellation.ThrowIfCancellationRequested();
@@ -614,18 +620,19 @@ namespace Harken
             {
                 if (File.Exists(Path.Combine(source.Root, ".harken-pack-publishing")))
                     return VnResult.VN_PACK_STALE_REVISION;
-                return StartArchive(archive, source.Language, ref config, out session, cancellation);
+                return StartArchive(archive, source.Language, ref config, out session, cancellation, outputTicket);
             }
-            return CaptureAndStart(source, ref config, out session, cancellation);
+            return CaptureAndStart(source, ref config, out session, cancellation, outputTicket);
         }
 
         private static VnResult CaptureAndStart(PackSource source, ref VnConfig config,
-            out PackBootstrapSession session, CancellationToken cancellation)
+            out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
         {
             session = null;
             VnResult result = source.Capture(null, default, null, out CompanionInput init);
             cancellation.ThrowIfCancellationRequested();
-            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session, cancellation) : result;
+            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session,
+                cancellation, outputTicket: outputTicket) : result;
         }
 
         public static async Task<PackStartupResult> StartAsync(PackSource source, VnConfig config,
@@ -711,7 +718,7 @@ namespace Harken
 
         internal static VnResult StartCaptured(PackSource source, CompanionInput init, ref VnConfig config,
             out PackBootstrapSession session, CancellationToken cancellation = default,
-            ulong[] startupIds = null, IReadOnlyDictionary<ulong, string> locators = null)
+            ulong[] startupIds = null, IReadOnlyDictionary<ulong, string> locators = null, ulong outputTicket = 0)
         {
             session = null;
             try
@@ -736,7 +743,7 @@ namespace Harken
                 result = source.LockPublication(init.Selection, null, out var guards);
                 if (result != VnResult.VN_OK) return result;
                 using var initGuard = guards;
-                result = HarkenEngine.Init(config);
+                result = HarkenEngine.Init(config, outputTicket);
                 if (result != VnResult.VN_OK) return result;
                 result = CompanionNative.Activate(members, default, 0, out var report, out _);
                 if (result != VnResult.VN_OK)
