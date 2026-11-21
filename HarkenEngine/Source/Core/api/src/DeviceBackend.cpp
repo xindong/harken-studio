@@ -998,15 +998,13 @@ VnResult DeviceBackend::Prepare(const EngineConfig& config,
         }
     }
 #if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
-    // Fixed formats can use the existing default client without another activation.
+    // The shared-mode open observed the endpoint rate before applying the requested rate.
     if (!endpointObservation && !openPlan.defaultFailed && impl->context.backend == ma_backend_wasapi) {
-        auto* client = static_cast<IAudioClient*>(impl->device.wasapi.pAudioClientPlayback);
-        WAVEFORMATEX* format = nullptr;
-        if (client && SUCCEEDED(client->GetMixFormat(&format)) && format && format->nSamplesPerSec) {
-            m_rateObservation.queriedDefaultEndpointRate = format->nSamplesPerSec;
+        const auto endpointRate = impl->device.wasapi.endpointMixSampleRatePlayback;
+        if (endpointRate != 0) {
+            m_rateObservation.queriedDefaultEndpointRate = endpointRate;
             m_rateObservation.knownFields |= kDeviceRateQueriedDefaultEndpointKnown;
         }
-        CoTaskMemFree(format);
     }
 #endif
     impl->deviceReady = true;
