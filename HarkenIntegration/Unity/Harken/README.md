@@ -53,4 +53,6 @@ Use the resulting platform directory with the normal Unity Pack startup, directo
 
 For direct native file loads or earlier Unity SDKs, use the ordinary Studio CLI build directory. When another delivery layer already compresses files, compare its final archive sizes before enabling compact publication.
 
+To publish resident sounds for a Windows game on a Windows build machine, add `--format windows-resident`. Ship the resulting platform directory with the game. `PackBootstrap.StartDirectory` recognizes its `Init.hrp`. On level entry, pass the level's Action names together to `Session.PrepareActions`. Once it succeeds, those Actions can play by name. Each Action has its own `.hrp` file, so an update to one sound in the same project with a compatible Init can ship just the changed file.
+
 Add `--format zip` to publish a standard archive at `<output>/<platform>/Packs.zip`. Archive entries start at the platform root and retain the exact Studio Pack, companion JSON and auxiliary file contents. Entries up to 16 MiB use DEFLATE when it reduces their size. Larger entries and entries that would grow use ZIP storage without compression. A standard ZIP extractor can restore the platform directory for the ordinary file loader.
