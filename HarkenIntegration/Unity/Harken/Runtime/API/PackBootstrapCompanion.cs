@@ -16,6 +16,7 @@ namespace Harken
         private VnCanonicalPackSetMemberResultV1[] companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
         private Dictionary<string, SharedPack> companionNames = new Dictionary<string, SharedPack>(StringComparer.Ordinal);
         private PackCompanion initNames;
+        internal PackDirectorySource.ResidentSelection initSelection;
         private ulong nameRevision;
         private Dictionary<(ulong Id, ulong Handle), RawCompanionLease> rawCompanionLeases =
             new Dictionary<(ulong, ulong), RawCompanionLease>();
@@ -245,7 +246,11 @@ namespace Harken
             }
             GameplayNames.Table names = PrepareNames(nextNames, changes, nameRevision);
             mutationPhase = MutationPhase.ApplyingNative;
-            VnResult result = CompanionNative.Activate(members, InitPack, SetRevision, out var report, out var rows);
+            VnResult result = companionSource.LockPublication(initSelection, changes.Values, out var guards);
+            if (result != VnResult.VN_OK) return result;
+            VnCanonicalPackSetActivationReportV1 report;
+            VnCanonicalPackSetMemberResultV1[] rows;
+            using (guards) result = CompanionNative.Activate(members, InitPack, SetRevision, out report, out rows);
             if (result != VnResult.VN_OK) return result;
             for (int i = 0; i < owners.Length; ++i)
             {
@@ -522,6 +527,7 @@ namespace Harken
                 var candidate = new PackBootstrapSession(default, startupIds ?? Array.Empty<ulong>(), inspection,
                     source.Root, source.Language, initBytes: init.Bytes);
                 candidate.companionLocators = locators;
+                candidate.initSelection = init.Selection;
                 candidate.BindCompanionSource(source, init.Facts.projectId.ToString(), init.Names);
                 GameplayNames.Table names = GameplayNames.Prepare(init.Facts.projectId, init.Names,
                     Array.Empty<KeyValuePair<string, GameplayNames.Action>>());
@@ -530,6 +536,9 @@ namespace Harken
                 result = source.Validate(init);
                 if (result != VnResult.VN_OK) return result;
                 cancellation.ThrowIfCancellationRequested();
+                result = source.LockPublication(init.Selection, null, out var guards);
+                if (result != VnResult.VN_OK) return result;
+                using var initGuard = guards;
                 result = HarkenEngine.Init(config);
                 if (result != VnResult.VN_OK) return result;
                 result = CompanionNative.Activate(members, default, 0, out var report, out _);

@@ -88,6 +88,13 @@ namespace Harken
             return captured.Result;
         }
 
+        internal VnResult LockPublication(PackDirectorySource.ResidentSelection init, System.Collections.Generic.ICollection<CompanionInput> changes,
+            out PackDirectorySource.ResidentGuards guards)
+        {
+            guards = null;
+            return directory != null ? directory.LockPublication(init, changes, out guards) : VnResult.VN_OK;
+        }
+
         internal VnResult Validate(CompanionInput input)
         {
             if (snapshotValidation != null) return snapshotValidation(input);
