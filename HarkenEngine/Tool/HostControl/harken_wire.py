@@ -8403,6 +8403,79 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnResidentDirectoryMemberV1": {
+      "fields": [
+        [
+          "packStableId",
+          "u64"
+        ],
+        [
+          "rootActionId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "contentHash",
+          "u64"
+        ],
+        [
+          "byteCount",
+          "u64"
+        ],
+        [
+          "executionFingerprint",
+          "u64"
+        ],
+        [
+          "handle",
+          "u64"
+        ]
+      ]
+    },
+    "VnResidentDirectoryActivationV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "rowCapacity",
+          "u32"
+        ],
+        [
+          "directory",
+          {
+            "struct": "VnResidentPackVisitDescV1"
+          }
+        ],
+        [
+          "initStableId",
+          "u64"
+        ],
+        [
+          "initHandle",
+          "u64"
+        ],
+        [
+          "baseSetRevision",
+          "u64"
+        ],
+        [
+          "projectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rows",
+          {
+            "ptr": "opaque",
+            "ctype": "VnResidentDirectoryMemberV1*"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -11899,6 +11972,24 @@ TABLE_JSON = r'''
           "type": "VnResidentPackVisitDescV1"
         }
       ]
+    },
+    {
+      "name": "Vn_ActivateResidentPackDirectoryV1",
+      "note": "Atomic local activation of Windows resident directory members. No remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnResidentDirectoryActivationV1*",
+          "wire": "desc",
+          "type": "VnResidentDirectoryActivationV1"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnCanonicalPackSetActivationReportV1*",
+          "wire": "outstruct",
+          "type": "VnCanonicalPackSetActivationReportV1"
+        }
+      ]
     }
   ],
   "binding_overloads": [
@@ -13221,7 +13312,7 @@ TABLE_JSON = r'''
       },
       "VN_ABI_VERSION_MINOR": {
         "type": "u32",
-        "value": 1
+        "value": 2
       },
       "VN_EMITTER_CREATE_STATE_ONLY": {
         "type": "u32",

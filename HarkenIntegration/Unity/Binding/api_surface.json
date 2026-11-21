@@ -440,7 +440,8 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult SetHostOutputMute ( uint mute01 , uint fadeMs )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:0ec65078632b0276e68d3d53d8c58c3b43dcef8ca1f612dc7c796d64287000b0]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsBatch.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:b1f3000f863eb6bb60f8a1bfe924a249c087daadfa3dc18d8b9fc986ee8da192]",
-        "native:Vn_VisitResidentPackDirectoryV1"
+        "native:Vn_VisitResidentPackDirectoryV1",
+        "native:Vn_ActivateResidentPackDirectoryV1"
       ]
     },
     "runtime-mix": {
@@ -1973,6 +1974,8 @@
       "VnRemoteClientVoice": "tool-types",
       "VnRemoteOperation": "tool-types",
       "VnResidentPackVisitDescV1": "required-types",
+      "VnResidentDirectoryMemberV1": "required-types",
+      "VnResidentDirectoryActivationV1": "required-types",
       "VnResidentPackRowV1": "tool-types",
       "VnResidentPackVisitorFn": "required-types"
     },

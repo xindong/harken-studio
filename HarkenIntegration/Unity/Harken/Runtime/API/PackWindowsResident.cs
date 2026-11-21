@@ -66,7 +66,10 @@ namespace Harken
         private static unsafe VnResult Unpack(byte[] image, out byte[] bytes, out byte[] json)
         {
             bytes = json = null;
-            if (image.Length < HeaderBytes + DigestBytes || BitConverter.ToUInt32(image, 0) != 0x31505248)
+            if (image.Length < HeaderBytes + DigestBytes)
+                return VnResult.VN_BAD_PACK;
+            uint format = BitConverter.ToUInt32(image, 0);
+            if (format != 0x31505248 && format != 0x32505248)
                 return VnResult.VN_BAD_PACK;
             uint length = BitConverter.ToUInt32(image, 4), meta = BitConverter.ToUInt32(image, 8);
             uint compressed = BitConverter.ToUInt32(image, 12);
@@ -86,15 +89,43 @@ namespace Harken
                 try
                 {
                     fixed (byte* target = bytes)
-                        if (!Decompress(decoder, data + HeaderBytes + meta, (UIntPtr)compressed,
+                    {
+                        if (format == 0x32505248)
+                        {
+                            if (!UnpackResidentBlocks(image, HeaderBytes + (int)meta, count, decoder, data, target, (int)length))
+                                return VnResult.VN_BAD_PACK;
+                        }
+                        else if (!Decompress(decoder, data + HeaderBytes + meta, (UIntPtr)compressed,
                             target, (UIntPtr)length, out UIntPtr written) || written.ToUInt64() != length)
                             return VnResult.VN_BAD_PACK;
+                    }
                 }
                 finally { CloseDecompressor(decoder); }
             }
             json = new byte[meta];
             Buffer.BlockCopy(image, HeaderBytes, json, 0, (int)meta);
             return VnResult.VN_OK;
+        }
+
+        private static unsafe bool UnpackResidentBlocks(byte[] image, int offset, int end, IntPtr decoder,
+            byte* data, byte* target, int length)
+        {
+            for (int output = 0; output < length;)
+            {
+                int expected = Math.Min(8192, length - output);
+                if (end - offset < sizeof(uint)) return false;
+                uint stored = BitConverter.ToUInt32(image, offset);
+                offset += sizeof(uint);
+                if (stored == 0 || stored > expected || stored > end - offset) return false;
+                if (stored == expected)
+                    Buffer.MemoryCopy(data + offset, target + output, expected, expected);
+                else if (!Decompress(decoder, data + offset, (UIntPtr)stored,
+                    target + output, (UIntPtr)(uint)expected, out UIntPtr written) || written.ToUInt64() != (uint)expected)
+                    return false;
+                offset += (int)stored;
+                output += expected;
+            }
+            return offset == end;
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]

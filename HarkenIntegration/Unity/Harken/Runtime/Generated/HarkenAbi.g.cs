@@ -1232,6 +1232,22 @@ namespace Harken
             Off(f, "VnResidentPackVisitDescV1", "init", Marshal.OffsetOf<VnResidentPackVisitDescV1>("init"), 72);
             Off(f, "VnResidentPackVisitDescV1", "userData", Marshal.OffsetOf<VnResidentPackVisitDescV1>("userData"), 96);
             Off(f, "VnResidentPackVisitDescV1", "visit", Marshal.OffsetOf<VnResidentPackVisitDescV1>("visit"), 104);
+            Size(f, "VnResidentDirectoryMemberV1", Marshal.SizeOf<VnResidentDirectoryMemberV1>(), 56);
+            Off(f, "VnResidentDirectoryMemberV1", "packStableId", Marshal.OffsetOf<VnResidentDirectoryMemberV1>("packStableId"), 0);
+            Off(f, "VnResidentDirectoryMemberV1", "rootActionId", Marshal.OffsetOf<VnResidentDirectoryMemberV1>("rootActionId"), 8);
+            Off(f, "VnResidentDirectoryMemberV1", "contentHash", Marshal.OffsetOf<VnResidentDirectoryMemberV1>("contentHash"), 24);
+            Off(f, "VnResidentDirectoryMemberV1", "byteCount", Marshal.OffsetOf<VnResidentDirectoryMemberV1>("byteCount"), 32);
+            Off(f, "VnResidentDirectoryMemberV1", "executionFingerprint", Marshal.OffsetOf<VnResidentDirectoryMemberV1>("executionFingerprint"), 40);
+            Off(f, "VnResidentDirectoryMemberV1", "handle", Marshal.OffsetOf<VnResidentDirectoryMemberV1>("handle"), 48);
+            Size(f, "VnResidentDirectoryActivationV1", Marshal.SizeOf<VnResidentDirectoryActivationV1>(), 168);
+            Off(f, "VnResidentDirectoryActivationV1", "structSize", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("structSize"), 0);
+            Off(f, "VnResidentDirectoryActivationV1", "rowCapacity", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("rowCapacity"), 4);
+            Off(f, "VnResidentDirectoryActivationV1", "directory", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("directory"), 8);
+            Off(f, "VnResidentDirectoryActivationV1", "initStableId", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("initStableId"), 120);
+            Off(f, "VnResidentDirectoryActivationV1", "initHandle", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("initHandle"), 128);
+            Off(f, "VnResidentDirectoryActivationV1", "baseSetRevision", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("baseSetRevision"), 136);
+            Off(f, "VnResidentDirectoryActivationV1", "projectId", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("projectId"), 144);
+            Off(f, "VnResidentDirectoryActivationV1", "rows", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("rows"), 160);
             return f;
         }
 

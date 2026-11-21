@@ -1314,7 +1314,7 @@ typedef void (*VnPackByteReleaseFn)(
     VnPackByteSpan span);
 
 #define VN_ABI_VERSION_MAJOR 1u
-#define VN_ABI_VERSION_MINOR 1u
+#define VN_ABI_VERSION_MINOR 2u
 
 typedef struct VnAbiVersionInfo {
     uint32_t structSize;
@@ -1613,6 +1613,34 @@ typedef struct VnResidentPackVisitDescV1 {
 } VnResidentPackVisitDescV1;
 
 VnResult Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1* desc);
+
+/* In request order. For a fresh binding, both input identities are zero.
+ * Otherwise both must match. Row outputs are written only on success. */
+typedef struct VnResidentDirectoryMemberV1 {
+    uint64_t packStableId;
+    VnObjectId rootActionId;
+    uint64_t contentHash;
+    uint64_t byteCount;
+    uint64_t executionFingerprint;
+    VnPackHandle handle;
+} VnResidentDirectoryMemberV1;
+
+typedef struct VnResidentDirectoryActivationV1 {
+    uint32_t structSize;
+    uint32_t rowCapacity;
+    VnResidentPackVisitDescV1 directory;
+    uint64_t initStableId;
+    VnPackHandle initHandle;
+    uint64_t baseSetRevision;
+    VnObjectId projectId;
+    VnResidentDirectoryMemberV1* rows;
+} VnResidentDirectoryActivationV1;
+
+/* Install the complete desired set at baseSetRevision + 1. Files stay
+ * locked through activation. The nested directory callback fields must be null. */
+VnResult Vn_ActivateResidentPackDirectoryV1(
+    const VnResidentDirectoryActivationV1* desc,
+    VnCanonicalPackSetActivationReportV1* outReport);
 
 typedef uint32_t VnCurrentWorldLoadStatus;
 
