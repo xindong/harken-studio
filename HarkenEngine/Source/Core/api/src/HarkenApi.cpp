@@ -129280,6 +129280,7 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     out->sampleStaging = detail::PackDecodeCharge(budget);
     VnResult parsed = VN_OK;
     CanonicalByteSpanGuard guard{load};
+    const std::uint8_t* preparedBytes = nullptr;
     if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
         std::string path;
         const auto rooted = ResolveCanonicalFilePath(load, &path);
@@ -129316,21 +129317,34 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
             return VN_PACK_PROVIDER_FAILED;
         }
         out->encodedStaging.Add(guard.span.byteCount);
-        const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
-        if (adopted != VN_OK) return adopted;
         out->byteCount = guard.span.byteCount;
-        if (traceResource != nullptr && engine.trace != nullptr) {
+        const bool recording = traceResource != nullptr && engine.trace != nullptr;
+        const bool haveImage = !recording &&
+            TakeResidentDirectoryImage(load, guard.span, budget, out->image, out->hash);
+        // Directory bytes stay immutable until this visit ends. Vorbis preparation
+        // copies each blob into its final owner before releasing the provider.
+        if (haveImage && !out->image.media.empty() &&
+            std::all_of(out->image.media.begin(), out->image.media.end(), [](const auto& row) {
+                return row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+            })) {
+            preparedBytes = guard.span.bytes;
+        } else {
+            const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
+            if (adopted != VN_OK) return adopted;
+            preparedBytes = out->bytes.get();
+        }
+        if (recording) {
             out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
             *traceResource = harken::tracing::RecordPackBytes(engine.trace.get(), out->bytes.get(), out->byteCount);
             parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
-        } else if (!TakeResidentDirectoryImage(load, guard.span, budget, out->image, out->hash)) {
+        } else if (!haveImage) {
             parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount,
                                              &out->image, &out->hash, budget);
         }
     }
     if (parsed != VN_OK) { return parsed; }
     if (!out->boundedFile) {
-        const auto prepared = PrepareCompressedMember(engine, out->image, out->bytes.get(),
+        const auto prepared = PrepareCompressedMember(engine, out->image, preparedBytes,
             out->samples, out->sampleStaging);
         if (prepared != VN_OK) return prepared;
         if (!out->samples.empty()) {
