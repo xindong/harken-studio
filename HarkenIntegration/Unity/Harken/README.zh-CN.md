@@ -40,3 +40,15 @@ Harken 是一套游戏音频中间件。声音设计师在 Harken Studio 中编�
 ## 许可
 
 见 [LICENSE.md](LICENSE.md) 与 [NOTICE.md](NOTICE.md)。
+
+### 减小 Unity 发行目录
+
+使用 Python 3.9 或更高版本运行 SDK 的发布命令，指定已安装的 Studio CLI、保存的工程、目标平台 UUID 和一个新的发行目录。
+
+```sh
+python Tools~/publish_packs.py --studio-cli /path/to/HarkenStudioCLI --project GameAudio.hsp --platform-id <uuid> --output release-042
+```
+
+将输出的平台目录交给现有 Unity Pack 启动、目录或 reader 入口即可。工具先用 Studio 正式导出，再复制完整发布物。每个不超过 16 MiB 且压缩后更小的 Pack 独立存为 gzip，原文件名和相对路径保留。更大的 Pack、压缩后不节省空间的 Pack、配套 JSON 及其他辅助文件保留原字节。目录加载在准备阶段从文件直接解压到一个有上限的数组，reader 加载在此期间还持有输入数组。SDK 将还原的原始 Pack 交给既有校验和加载路径。
+
+直接使用原生文件 API 或旧版 Unity SDK 的项目可使用 Studio CLI 的常规导出目录。如果交付渠道已有外层压缩，请按最终归档大小评估收益。

@@ -40,3 +40,15 @@ Harken is a game-audio middleware. Sound designers author sounds and playback lo
 ## License
 
 See [LICENSE.md](LICENSE.md) and [NOTICE.md](NOTICE.md).
+
+### Compact Unity Pack releases
+
+With Python 3.9+ and the Studio CLI installed, run the SDK publishing tool on the saved project and a target platform UUID. Choose a new output directory for each release.
+
+```sh
+python Tools~/publish_packs.py --studio-cli /path/to/HarkenStudioCLI --project GameAudio.hsp --platform-id <uuid> --output release-042
+```
+
+Use the resulting platform directory with the normal Unity Pack startup, directory, or reader source. The tool performs a fresh Studio export and copies the complete publication. Each canonical Pack of up to 16 MiB is stored as a single independent gzip member if that saves space. Larger or incompressible Packs, companion JSON and auxiliary files keep their original bytes. The SDK retains the normal names and validates the expanded canonical Pack before loading it. A directory load streams the compressed member into one bounded output array on the load path. A reader supplying bytes also retains its input until expansion ends. The native loader and gameplay use the canonical bytes.
+
+For direct native file loads or earlier Unity SDKs, use the ordinary Studio CLI build directory. When another delivery layer already compresses files, compare its final archive sizes before enabling compact publication.

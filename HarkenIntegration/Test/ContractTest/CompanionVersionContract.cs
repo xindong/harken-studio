@@ -1,5 +1,8 @@
 using System;
 using System.Text;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using Harken;
 
 namespace Harken.Test
@@ -11,6 +14,7 @@ namespace Harken.Test
             try
             {
                 VersionContract();
+                CheckStorageBounds();
                 Console.WriteLine("[PackCompanion] metadata version contract PASS.");
                 return true;
             }
@@ -19,6 +23,38 @@ namespace Harken.Test
                 Console.WriteLine("[PackCompanion] FAIL: " + error.Message);
                 return false;
             }
+        }
+
+        private static void CheckStorageBounds()
+        {
+            byte[] expected = new byte[4096];
+            expected[0] = 72;
+            byte[] encoded;
+            using (var buffer = new MemoryStream())
+            {
+                using (var stream = new GZipStream(buffer, CompressionLevel.Optimal, true))
+                    stream.Write(expected, 0, expected.Length);
+                encoded = buffer.ToArray();
+            }
+            Assert(PackStorage.CaptureBinary(encoded).SequenceEqual(expected), "compressed reader ownership");
+            using (var file = new MemoryStream(encoded))
+                Assert(PackStorage.ReadBinary(file).SequenceEqual(expected), "compressed file");
+            var raw = PackStorage.CaptureBinary(expected);
+            expected[0] = 35;
+            Assert(raw[0] == 72, "raw reader ownership");
+            foreach (uint size in new[] { (uint)PackStorage.MaxGzipMemberBytes + 1, 4095u, 4097u, 0u })
+            {
+                byte[] damaged = (byte[])encoded.Clone();
+                for (int i = 0; i < 4; i++) damaged[damaged.Length - 4 + i] = (byte)(size >> (i * 8));
+                try { PackStorage.CaptureBinary(damaged); }
+                catch (InvalidDataException) { continue; }
+                catch (EndOfStreamException) { continue; }
+                throw new InvalidOperationException("Invalid expanded size accepted: " + size);
+            }
+            encoded[encoded.Length - 8] ^= 1;
+            try { PackStorage.CaptureBinary(encoded); }
+            catch (InvalidDataException) { return; }
+            throw new InvalidOperationException("Corrupted gzip checksum accepted.");
         }
 
         private static void VersionContract()

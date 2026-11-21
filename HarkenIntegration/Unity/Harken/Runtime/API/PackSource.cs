@@ -114,7 +114,9 @@ namespace Harken
             finally { readPhase?.Invoke(false); }
             if (asyncReader != null) bytes = await AwaitRead(pending, cancellation);
             cancellation.ThrowIfCancellationRequested();
-            return bytes == null ? null : (byte[])bytes.Clone();
+            if (bytes == null) return null;
+            return path.EndsWith(".bytes", StringComparison.Ordinal)
+                ? PackStorage.CaptureBinary(bytes) : (byte[])bytes.Clone();
         }
 
         private static async Task<byte[]> AwaitRead(Task<byte[]> pending, CancellationToken cancellation)
