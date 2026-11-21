@@ -53842,7 +53842,7 @@ void ServicePendingImmediateEntries(
         bool awaitingApply = false;
         bool invalidArm = false;
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
-        bool onlyRelativeSounds = !engine.gameOutputStartup.Opening() && engine.device.UsesGameOutput();
+        bool onlyRelativeSounds = engine.gameOutputStartup.Opening() || engine.device.UsesGameOutput();
 #endif
         for (harken::Engine::PlayableCohortCursor occupiedCursor{};
              auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
@@ -73954,7 +73954,7 @@ void TimelineServiceCoordinator::Service() {
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
     // A pending relative Sound has no fixed start until the audio thread
     // acknowledges its arm. Keep empty pages writable through that wait.
-    if (!engine_.gameOutputStartup.Opening() && engine_.device.UsesGameOutput() && requiredPublicationFrame == 0 &&
+    if ((engine_.gameOutputStartup.Opening() || engine_.device.UsesGameOutput()) && requiredPublicationFrame == 0 &&
         blockingFrame == UINT64_MAX && !engine_.runtimeTransportResetActive &&
         engine_.timelinePool.LiveTransactionCount() == 0 &&
         engine_.timelineDeferred.Count() == 0 && engine_.timelineDeferred.PreparedCount() == 0 &&
@@ -111878,6 +111878,11 @@ VnResult Vn_Update(void) {
         // re-enter the drains mid-iteration.
         return VN_OK;
     }
+    // Until the first output admission the device only writes silence. Apply
+    // queued control at the frozen mixer frame so an immediate sound can be
+    // scheduled by this tick without losing its opening samples to a dummy sink.
+    if (engine->gameOutputStartup.Opening())
+        engine->mixer.DrainQueuedCommands(1);
     harken::detail::g_callbackExceptionPending = false;
     harken::VariableOperationScope variableOperation(engine, false);
     struct OrdinaryVariableReservationScope {

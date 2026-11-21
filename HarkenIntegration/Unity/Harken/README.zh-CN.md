@@ -12,7 +12,7 @@ Harken 是一套游戏音频中间件。声音设计师在 Harken Studio 中编�
 
 ## 在 Windows 游戏启动时准备首关声音
 
-如果游戏自行管理音频，可以在 Unity 主线程调用 `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)`。传入平台 Pack 目录创建的 `PackSource` 和首关需要的 Action 名称。支持后台打开设备的 Windows Runtime 会同时准备这些声音。返回 `VN_OK` 后即可播放。退出关卡时调用 `Preparation.Release()`，结束音频会话时调用 `Session.Shutdown()`。使用默认音频组件的场景仍由组件负责启动和关闭。
+如果游戏自行管理音频，可以在 Unity 主线程调用 `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)`。传入平台 Pack 目录创建的 `PackSource` 和首关需要的 Action 名称。支持后台打开设备的 Windows Runtime 会同时准备这些声音。游戏需要立即播放开场声音时，可以在 `onPrepared` 回调中创建发声体、提交 Action，并返回提交结果。该声音会在真实设备上从头播放。返回 `VN_OK` 后设备和首关声音都已就绪。退出关卡时调用 `Preparation.Release()`，结束音频会话时调用 `Session.Shutdown()`。使用默认音频组件的场景仍由组件负责启动和关闭。
 
 ## 功能特性
 
