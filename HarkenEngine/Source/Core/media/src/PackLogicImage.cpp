@@ -1111,6 +1111,7 @@ struct SpanCanonicalSource {
         }
     };
     ArtifactHashState artifact;
+    bool prepareVorbisAfterParse = false;
     std::uint32_t pairedMediaEntry = UINT32_MAX;
     std::uint64_t pairedMediaChecksum = 0;
     std::uint64_t ByteCount() const noexcept { return artifact.byteCount; }
@@ -1174,6 +1175,7 @@ struct SpanCanonicalSource {
                                   static_cast<std::size_t>(media.blobBytes));
         }
         if (checksum != media.blobChecksum) return false;
+        if (prepareVorbisAfterParse) return true;
         if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
             VorbisMedia parsed;
             const auto available = budget ? budget->limit - budget->live : SIZE_MAX;
@@ -2018,6 +2020,14 @@ VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes, std::uint6
     PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget) {
     try {
         SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}};
+        return ParsePackCanonicalCore(source, out, budget);
+    } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
+}
+
+VnResult ParsePackForResidentPreparation(const std::uint8_t* bytes, std::uint64_t fileBytes,
+    PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget) {
+    try {
+        SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}, true};
         return ParsePackCanonicalCore(source, out, budget);
     } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
 }
