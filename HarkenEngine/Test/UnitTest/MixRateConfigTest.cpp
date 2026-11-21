@@ -167,6 +167,32 @@ protected:
     harken::DeviceBackendTestState deviceState{};
 };
 
+#if defined(_WIN32)
+TEST_F(MixRateDeviceTest, BackgroundOpenErrorCanTerminateAndRetry) {
+    auto config = MakeConfig(VN_DEVICE_REAL_BACKGROUND, 48000);
+    config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
+    deviceState.failCreateCount = 1;
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    auto finish = [] {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        VnResult result{};
+        while ((result = Vn_Resume()) == VN_IN_USE && std::chrono::steady_clock::now() < end)
+            std::this_thread::yield();
+        return result;
+    };
+    EXPECT_EQ(VN_DEVICE_ERROR, finish());
+    ASSERT_EQ(VN_OK, Vn_Term());
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    ASSERT_EQ(VN_OK, finish());
+    EXPECT_EQ(0u, deviceState.queryCount);
+    EXPECT_EQ(VN_OK, Vn_Suspend());
+    EXPECT_EQ(VN_OK, Vn_Resume());
+    EXPECT_EQ(VN_OK, Vn_Term());
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    EXPECT_EQ(VN_OK, Vn_Term());
+}
+#endif
+
 TEST(MixRateConfig, ProductionDefaultAndSupportedOptInRates) {
     VnConfig config = MakeConfig(VN_DEVICE_NULL, 0);
     harken::EngineConfig resolved;

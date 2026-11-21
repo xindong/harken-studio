@@ -7,6 +7,7 @@
 
 #include <harken/ObjectId.h>
 #include "DeviceBackend.h"
+#include "GameOutputStartup.h"
 #include "EngineFrontierOwnerLedger.h"
 #include "EnginePendingSelectionBatch.h"
 #include "EngineNativeVoiceSide.h"
@@ -10711,6 +10712,7 @@ public:
         // order alone cannot make teardown safe. Keep this as an idempotent
         // final guard for constructor rollback and direct internal deletion;
         // normal API teardown performs the same sequence before trace cleanup.
+        gameOutputStartup.Stop();
         device.RevokeRenderAdmission();
         voices.DisableRenderWorkers();
         (void)device.StopCallback();
@@ -15394,6 +15396,7 @@ public:
     // device callback stops before any render state it drives is torn
     // down. Idle in null mode; Vn_Init starts it for VN_DEVICE_REAL.
     DeviceBackend device;
+    GameOutputStartup gameOutputStartup;
 
     // Resolved parameter commits consumed as non-finite at the wire
     // boundary (poisoned math never retries). Logic thread only.

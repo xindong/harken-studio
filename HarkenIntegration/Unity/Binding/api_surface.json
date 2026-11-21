@@ -336,19 +336,16 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:f2504b20bd14b42fecfbe1c925cee23b25ae879c312e31571ff254cb701788d8]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public PackBootstrapSession Session { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public VnResult Result { get ; }",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public readonly struct PackStartupResult [ordered-members:8bf91a2cfc353c5a42708c7ab571db7ac5821814dee5ca21059d9501fda98028]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static VnResult Start ( PackSource source , ref VnConfig config , out PackBootstrapSession session )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static VnResult StartDirectory ( string platformDirectory , string language , ref VnConfig config , out PackBootstrapSession session )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static async Task < PackStartupResult > StartAsync ( PackSource source , VnConfig config , CancellationToken cancellation = default )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static partial class PackBootstrap",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrapSession::public VnResult RefreshAction ( string name , string projectId , out ActionPreparation preparation )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:36700b3bb70bc99e90efd29fe29a29d68cf97229f1c407cdff1507860dce68f1]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackByteProvider.cs/Harken.PackByteProvider.Handler::public delegate VnResult Handler ( ulong packStableId , string relativeLocatorUtf8 , uint variantKey , ulong expectedContentHash , out byte [ ] payload , object state )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackByteProvider.cs/Harken.PackByteProvider::public static VnResult InspectInitPack ( ulong packStableId , Handler handler , object state , out InitPackInspection inspection )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackByteProvider.cs/Harken.PackByteProvider::public static VnResult LoadPack ( ulong packStableId , Handler handler , object state , out Pack pack )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackByteProvider.cs/Harken.PackByteProvider::public static class PackByteProvider [ordered-members:44aeb9b948d4e88d1e1bd9465f71969d6ff1488e9729a6e35ab864ebe5560156]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public bool IsAsync",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public sealed class PackSource [ordered-members:8cb06b6d22026ce9e758096ef73e0fa85df9c35ee1fba8f38fbaaf1e916cfae5]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public static PackSource FromAsyncReader ( Func < string , CancellationToken , Task < byte [ ] > > reader , string language = null , Func < ulong > revision = null )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public static PackSource FromDirectory ( string platformDirectory , string language = null )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public static PackSource FromReader ( Func < string , byte [ ] > reader , string language = null , Func < ulong > revision = null )",
@@ -443,7 +440,12 @@
         "native:Vn_VisitResidentPackDirectoryV1",
         "native:Vn_ActivateResidentPackDirectoryV1",
         "native:Vn_ActivateNamedResidentDirectoryV1",
-        "native:Vn_PostNamedResidentActionV1"
+        "native:Vn_PostNamedResidentActionV1",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public ActionPreparation Preparation { get ; }",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public readonly struct PackStartupResult [ordered-members:1126a2b65fab3289d91a41976cf47cbd859335c772a54249a08a8b1afffd2683]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static Task < PackStartupResult > StartLevelAsync ( PackSource source , VnConfig config , string [ ] actionNames , CancellationToken cancellation = default )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrap::public static VnResult StartArchive ( string archivePath , string language , ref VnConfig config , out PackBootstrapSession session )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/Harken.PackSource::public sealed class PackSource [ordered-members:d1ba2ec451ef09c2528212f614724978963ba40a622aca048cf10100254e18a9]"
       ]
     },
     "runtime-mix": {
@@ -902,7 +904,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/JsonParser.cs/<global>::using System . Collections . Generic",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/JsonParser.cs/<global>::using System . Globalization",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/JsonParser.cs/<global>::using System . Text",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/JsonParser.cs/<global>::using System . Text . RegularExpressions",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/MonoPInvokeCallbackShim.cs/<global>::using System [conditions:[\"#if ! UNITY_5_3_OR_NEWER\"]]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/<global>::using System",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/<global>::using System . Collections . Generic",
@@ -938,7 +939,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackDirectorySource.cs/<global>::using System . Text",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs/<global>::using System",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs/<global>::using System . IO",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs/<global>::using System . Linq",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs/<global>::using System . Text",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs/<global>::using System . Text . RegularExpressions",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackSource.cs/<global>::using System",
@@ -1149,7 +1149,17 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsResident.cs/<global>::using System . IO",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsResident.cs/<global>::using System . Runtime . InteropServices",
         "source:HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsBatch.cs",
-        "source:HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsResident.cs"
+        "source:HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsResident.cs",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackArchive.cs/<global>::using System",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackArchive.cs/<global>::using System . Collections . Generic",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackArchive.cs/<global>::using System . IO",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackArchive.cs/<global>::using System . IO . Compression",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackArchive.cs/<global>::using System . Text",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackStorage.cs/<global>::using System",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackStorage.cs/<global>::using System . IO",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackStorage.cs/<global>::using System . IO . Compression",
+        "source:HarkenIntegration/Unity/Harken/Runtime/API/PackArchive.cs",
+        "source:HarkenIntegration/Unity/Harken/Runtime/API/PackStorage.cs"
       ]
     },
     "required-types": {
@@ -1423,7 +1433,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_READY = 2u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REGISTER = 0u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REPLACE = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:ca6392b2d4fcdebb0e6eb15ae4fc1ed8e3f6dcfb2d37a1248a56bf791304feab]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId ( 0UL , 1UL )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnCurrentWorldLoadDesc [ordered-members:ed0a74203613697bf8f279e747fce6aeb5e5fc6764c5bdbacbbafa5dea64c5d7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::public IntPtr utf8Path",
@@ -1460,7 +1469,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadStatus::public enum VnCurrentWorldLoadStatus : uint [ordered-members:e09bacd61494cf9093154dfaf2818190ee5c6f0892a09941d547aa5af8b7b7e6]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnDeviceMode::VN_DEVICE_NULL = 1",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnDeviceMode::VN_DEVICE_REAL = 0",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnDeviceMode::public enum VnDeviceMode : uint [ordered-members:644697b17af77b6bb2cea0fb8f60a5c6f933921e1fecb417142971d02f93b3f2]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnInitPackInspectReport::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnInitPackInspectReport [ordered-members:92583111f7da9981f4a89c52df495ca5970ee25eaa90919833a29c5df4a9b3e7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnInitPackInspectReport::public int result",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnInitPackInspectReport::public uint recommendedMaxActions",
@@ -1707,7 +1715,6 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnAbiVersionInfo::public uint minor",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnAbiVersionInfo::public uint structSize",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MAJOR = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 3u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_BUFFER_TOO_SMALL = - 1301",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_NO_EVENT = - 1300",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentDirectoryActivationV1::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnResidentDirectoryActivationV1 [ordered-members:e07d54bf5a2d7940d8158873e597ed111c76a84585cb0bb8ab7a2bd02b2fcaff]",
@@ -1752,7 +1759,11 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnNamedResidentPostV1 [ordered-members:5174139591639da4531e070615f92a9ab574eb105f0bdd466df7697b38ac0d7f]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public uint keyCapacity",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public ulong callerSeed",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public IntPtr name"
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public IntPtr name",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 4u",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:11fca5ae8929f9f47667d1c96625c47debc5c46d996b77528f1ff48fd051b776]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnDeviceMode::VN_DEVICE_REAL_BACKGROUND = 2",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnDeviceMode::public enum VnDeviceMode : uint [ordered-members:a768c4ba1b1d983d666a6477ccbacc73429c824be1f791856707e1fe516cc954]"
       ]
     },
     "tool-types": {
