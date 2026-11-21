@@ -1557,7 +1557,7 @@ struct FileCanonicalSource {
 
 template <class Source>
 VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
-    const detail::PackDecodeBudget& budget) {
+    const detail::PackDecodeBudget& budget, VnPackInspectReportV1* binding = nullptr) {
     detail::PackDecodeCharge scratch(budget);
 
     const auto fileBytes = source.ByteCount();
@@ -1666,6 +1666,15 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
                 return VN_BAD_PACK;
             }
             const ContainerWorldInstallViewV1 decodedView = *body.ProductionView();
+            if (binding != nullptr) {
+                const auto root = binding->rootActionId;
+                bool found = false;
+                for (std::uint32_t i = 0; i < decodedView.actionCount; ++i)
+                    found |= decodedView.actions[i].actionStableId == root;
+                if (!found) return VN_BAD_PACK;
+                binding->projectId = decodedView.identity.projectId;
+                binding->executionFingerprint = decodedView.identity.runtimeSemanticFingerprint;
+            }
             const std::uint64_t decodedOwnedDefinitions =
                 static_cast<std::uint64_t>(decodedView.variableCount) +
                 decodedView.playablePropertyCount + decodedView.actionCount;
@@ -2025,10 +2034,11 @@ VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes, std::uint6
 }
 
 VnResult ParsePackForResidentPreparation(const std::uint8_t* bytes, std::uint64_t fileBytes,
-    PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget) {
+    PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget,
+    VnPackInspectReportV1* binding) {
     try {
         SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}, true};
-        return ParsePackCanonicalCore(source, out, budget);
+        return ParsePackCanonicalCore(source, out, budget, binding);
     } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
 }
 

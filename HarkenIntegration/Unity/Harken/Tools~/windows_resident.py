@@ -26,6 +26,21 @@ def compress(raw):
         cabinet.CloseCompressor(handle)
 
 
+BLOCK_BYTES = 8192
+
+
+def pack_blocks(raw):
+    result = bytearray()
+    for offset in range(0, len(raw), BLOCK_BYTES):
+        block = raw[offset:offset + BLOCK_BYTES]
+        compressed = compress(block)
+        # A small size gain on entropy-coded packets is more expensive to unpack.
+        stored = compressed if len(compressed) <= len(block) * 7 // 8 else block
+        result.extend(struct.pack("<I", len(stored)))
+        result.extend(stored)
+    return result
+
+
 def write_release(canonical: Path, output: Path):
     sources = sorted(canonical.rglob("*"))
     if any(p.is_symlink() for p in sources):
@@ -46,8 +61,8 @@ def write_release(canonical: Path, output: Path):
         if max(binary.stat().st_size, metadata.stat().st_size) > MAX_BYTES:
             raise ValueError(f"Resident Pack exceeds the bounded Windows publication size: {binary}")
         raw, json_bytes = binary.read_bytes(), metadata.read_bytes()
-        packed = compress(raw)
-        header = struct.pack("<4sIII", b"HRP1", len(raw), len(json_bytes), len(packed))
+        packed = pack_blocks(raw)
+        header = struct.pack("<4sIII", b"HRP2", len(raw), len(json_bytes), len(packed))
         content = header + json_bytes + packed
         dest = (output / binary.relative_to(canonical)).with_suffix(".hrp")
         dest.parent.mkdir(parents=True, exist_ok=True)

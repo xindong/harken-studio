@@ -34,6 +34,7 @@
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackLogicImage.h"
+#include "ResidentPackDirectory.h"
 #include "harken/media/CanonicalAttenuationFingerprint.h"
 #include "harken/core/PackComposition.h"
 #include "harken/core/PlayablePropertyRuntime.h"
@@ -129243,7 +129244,7 @@ VnResult PrepareCompressedMember(Engine& engine, const PackCanonicalImage& image
             const auto available = staging.Budget()->limit - staging.Budget()->live;
             if (row.blobBytes > available) return VN_PACK_RESIDENT_CAPACITY;
             result = engine.registry.PrepareResidentVorbis(row.soundId,
-                {blob, blob + row.blobBytes}, static_cast<std::size_t>(available), &samples[i]);
+                {blob, blob + row.blobBytes}, static_cast<std::size_t>(available), &samples[i], &row.blobChecksum);
             if (result == VN_OK) {
                 const auto view = samples[i].View();
                 if (view.sampleRate != row.sampleRate || view.channelCount != row.channelCount ||
@@ -129322,7 +129323,7 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
             out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
             *traceResource = harken::tracing::RecordPackBytes(engine.trace.get(), out->bytes.get(), out->byteCount);
             parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
-        } else {
+        } else if (!TakeResidentDirectoryImage(load, guard.span, budget, out->image, out->hash)) {
             parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount,
                                              &out->image, &out->hash, budget);
         }
@@ -130816,21 +130817,25 @@ VnResult ActivateCanonicalPackSetImpl(
     const std::vector<std::uint32_t>* operations = nullptr,
     std::vector<std::uint64_t>* traceResources = nullptr,
     bool* traceInputMissing = nullptr) {
-    bool filesOnly = descriptor && descriptor->structSize == sizeof(*descriptor) &&
+    bool replayable = descriptor && descriptor->structSize == sizeof(*descriptor) &&
         descriptor->members && descriptor->memberStructSize == sizeof(VnCanonicalPackSetMemberV1) &&
         descriptor->memberCount <= engine.config.maxPacks;
-    if (filesOnly) {
+    if (replayable) {
         for (std::uint32_t i = 0; i < descriptor->memberCount; ++i) {
-            if (descriptor->members[i].flags & VN_CANONICAL_PACK_SET_MEMBER_PROVIDER) {
-                filesOnly = false;
+            const auto& member = descriptor->members[i];
+            if (operations && (*operations)[i] == VN_PACK_MEMBER_KEEP) continue;
+            if ((member.flags & VN_CANONICAL_PACK_SET_MEMBER_PROVIDER) &&
+                (engine.config.maxPackResourceBytes != 0 ||
+                 !IsResidentDirectorySource(member.provide, member.release, member.providerUserData))) {
+                replayable = false;
                 break;
             }
         }
     }
-    const bool widenPrepared = operations != nullptr && !filesOnly &&
+    const bool widenPrepared = operations != nullptr && !replayable &&
         engine.config.maxPackResourceBytes == 0 && !engine.trace &&
         PackStagingFaultForTests() == PackStagingFault::None;
-    return WithPackCodebookFallback(engine, filesOnly, [&] {
+    return WithPackCodebookFallback(engine, replayable, [&] {
         return ActivateCanonicalPackSetAttempt(engine, descriptor, outReport, operations,
                                               traceResources, traceInputMissing, widenPrepared);
     });

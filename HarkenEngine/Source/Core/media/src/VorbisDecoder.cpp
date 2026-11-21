@@ -16,7 +16,8 @@ VorbisCodec::VorbisCodec(unsigned workers, bool compactCodebooks) : settings(com
 }
 
 std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
-    std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat) {
+    std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat,
+    const std::uint64_t* verifiedChecksum) {
     result = VorbisPrepareResult::OutOfMemory;
     if (sizeof(VorbisResident) > budget || bytes.capacity() > budget - sizeof(VorbisResident)) return {};
     auto source = std::make_shared<VorbisResident>();
@@ -26,7 +27,7 @@ std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
         const auto* data = source->bytes_.data();
         const auto size = source->bytes_.size();
         const bool valid = packFormat
-            ? ParseResidentVorbis(data, size, source->media_, budget - sizeof(VorbisResident) - source->bytes_.capacity())
+            ? ParseResidentVorbis(data, size, source->media_, budget - sizeof(VorbisResident) - source->bytes_.capacity(), verifiedChecksum)
             : ParseVorbisTestMedia(data, size, source->media_);
         if (!valid) return {};
     } catch (const std::bad_alloc&) {

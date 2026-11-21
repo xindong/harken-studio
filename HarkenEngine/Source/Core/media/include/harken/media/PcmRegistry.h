@@ -333,9 +333,10 @@ public:
                              const PreparedPackSamples* equalCandidate = nullptr);
 
     VnResult PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
-        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out, bool packFormat = false);
+        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out, bool packFormat = false,
+        const std::uint64_t* verifiedChecksum = nullptr);
     VnResult PrepareResidentVorbis(VnSoundId soundId, std::vector<std::uint8_t> bytes,
-        std::size_t budget, PreparedPackSamples* out);
+        std::size_t budget, PreparedPackSamples* out, const std::uint64_t* verifiedChecksum = nullptr);
 
     // Range-only record. A caller that has proven bit-exact equality with an
     // earlier prepared record of the same id passes it to share that entry.
