@@ -29,8 +29,7 @@ namespace Harken
 
         internal static ulong Generation => current?.Generation ?? 0;
 
-        internal static Table Prepare(VnObjectId project, PackCompanion init,
-            IEnumerable<KeyValuePair<string, Action>> actions)
+        internal static Table PrepareInit(VnObjectId project, PackCompanion init)
         {
             var table = new Table
             {
@@ -39,11 +38,18 @@ namespace Harken
                 Variables = new Dictionary<string, VnObjectId>(StringComparer.Ordinal),
                 Labels = new Dictionary<(VnObjectId, string), VnObjectId>()
             };
-            foreach (var row in actions) table.Actions.Add(row.Key, row.Value);
             foreach (var row in init.Variables) table.Variables[row.Name] = row.Id;
             foreach (var row in init.Labels) table.Labels[(row.VariableId, row.Name)] = row.Id;
             return table;
         }
+
+        internal static Table PrepareActions(Table init, int capacity) => new Table
+        {
+            Project = init.Project,
+            Variables = init.Variables,
+            Labels = init.Labels,
+            Actions = new Dictionary<string, Action>(capacity, StringComparer.Ordinal)
+        };
 
         internal static void Publish(Table table)
         {
