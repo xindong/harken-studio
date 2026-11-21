@@ -500,7 +500,7 @@ VnResult PCMRegistry::PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec
     VorbisPrepareResult result;
     auto source = VorbisResident::Prepare(codec, std::move(bytes), budget, result, packFormat);
     if (!source) return result == VorbisPrepareResult::OutOfMemory ? VN_PACK_RESIDENT_CAPACITY :
-        result == VorbisPrepareResult::Unsupported ? VN_CAPABILITY_UNAVAILABLE : VN_BAD_PACK;
+        result == VorbisPrepareResult::Unsupported && !packFormat ? VN_CAPABILITY_UNAVAILABLE : VN_BAD_PACK;
     auto entry = std::make_shared<Entry>();
     entry->view = source->View(); entry->view.useCount = &entry->uses;
     entry->encoded = std::move(source);
