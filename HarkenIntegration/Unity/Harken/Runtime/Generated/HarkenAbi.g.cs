@@ -1248,6 +1248,18 @@ namespace Harken
             Off(f, "VnResidentDirectoryActivationV1", "baseSetRevision", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("baseSetRevision"), 136);
             Off(f, "VnResidentDirectoryActivationV1", "projectId", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("projectId"), 144);
             Off(f, "VnResidentDirectoryActivationV1", "rows", Marshal.OffsetOf<VnResidentDirectoryActivationV1>("rows"), 160);
+            Size(f, "VnNamedResidentPostV1", Marshal.SizeOf<VnNamedResidentPostV1>(), 72);
+            Off(f, "VnNamedResidentPostV1", "structSize", Marshal.OffsetOf<VnNamedResidentPostV1>("structSize"), 0);
+            Off(f, "VnNamedResidentPostV1", "rowCount", Marshal.OffsetOf<VnNamedResidentPostV1>("rowCount"), 4);
+            Off(f, "VnNamedResidentPostV1", "nameUnits", Marshal.OffsetOf<VnNamedResidentPostV1>("nameUnits"), 8);
+            Off(f, "VnNamedResidentPostV1", "keyCapacity", Marshal.OffsetOf<VnNamedResidentPostV1>("keyCapacity"), 12);
+            Off(f, "VnNamedResidentPostV1", "name", Marshal.OffsetOf<VnNamedResidentPostV1>("name"), 16);
+            Off(f, "VnNamedResidentPostV1", "keys", Marshal.OffsetOf<VnNamedResidentPostV1>("keys"), 24);
+            Off(f, "VnNamedResidentPostV1", "rows", Marshal.OffsetOf<VnNamedResidentPostV1>("rows"), 32);
+            Off(f, "VnNamedResidentPostV1", "initHandle", Marshal.OffsetOf<VnNamedResidentPostV1>("initHandle"), 40);
+            Off(f, "VnNamedResidentPostV1", "setRevision", Marshal.OffsetOf<VnNamedResidentPostV1>("setRevision"), 48);
+            Off(f, "VnNamedResidentPostV1", "emitter", Marshal.OffsetOf<VnNamedResidentPostV1>("emitter"), 56);
+            Off(f, "VnNamedResidentPostV1", "callerSeed", Marshal.OffsetOf<VnNamedResidentPostV1>("callerSeed"), 64);
             return f;
         }
 

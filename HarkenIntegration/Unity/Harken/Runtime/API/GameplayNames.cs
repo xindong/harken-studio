@@ -21,6 +21,7 @@ namespace Harken
             internal ulong Generation;
             internal Dictionary<string, Action> Actions;
             internal PackBootstrapSession.SharedPack[] SmallActions;
+            internal PackBootstrapSession.DirectoryLease Directory;
             internal Dictionary<string, VnObjectId> Variables;
             internal Dictionary<(VnObjectId, string), VnObjectId> Labels;
         }
@@ -28,6 +29,7 @@ namespace Harken
         private static Table current;
         private static ulong generation;
 
+        internal static PackBootstrapSession.DirectoryLease ActiveDirectory => current?.Directory;
         internal static ulong Generation => current?.Generation ?? 0;
 
         internal static Table PrepareInit(VnObjectId project, PackCompanion init)
@@ -58,6 +60,14 @@ namespace Harken
             current = table;
         }
 
+        internal static void Expand(PackBootstrapSession.DirectoryLease lease, Table table)
+        {
+            var previous = current;
+            if (previous?.Directory != lease) return;
+            table.Generation = previous.Generation;
+            current = table;
+        }
+
         internal static void Clear() => current = null;
 
         internal static VnResult FindAction(string name, VnObjectId project, out Action action)
@@ -66,6 +76,7 @@ namespace Harken
             Table table = current;
             if (table == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
             if (!project.IsNull && project != table.Project) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+            if (table.Directory != null) return table.Directory.Find(name, default, out action);
             if (table.SmallActions != null)
             {
                 foreach (var owner in table.SmallActions)
@@ -84,6 +95,7 @@ namespace Harken
             action = default;
             Table table = current;
             if (table == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            if (table.Directory != null) return table.Directory.Find(null, id, out action);
             if (table.SmallActions != null)
             {
                 foreach (var owner in table.SmallActions)

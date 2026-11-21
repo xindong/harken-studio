@@ -116,6 +116,7 @@ namespace Harken
 
         private void EnsureOwnerIndexes()
         {
+            ExpandDirectoryLease();
             if (packs != null) return;
             var byId = new Dictionary<ulong, SharedPack>(companionOwners.Length);
             var byName = new Dictionary<string, SharedPack>(companionOwners.Length, StringComparer.Ordinal);
@@ -181,18 +182,23 @@ namespace Harken
         {
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
-            if (captured == null && initSelection != null && Language.Length == 0 && expectedId == 0 &&
-                !refresh && names.Length != 0 && (KnownOwnerCount == 0 || KnownOwnerCount == names.Length))
+            bool resident = captured == null && initSelection != null && Language.Length == 0 && expectedId == 0 &&
+                !refresh && names.Length != 0;
+            if (resident && HarkenEngine.NativeAbiMinor >= 2 && !directEntryMissing && !cancellation.CanBeCanceled &&
+                names.Length <= SmallBatchLimit && (directoryLease == null ? KnownOwnerCount == 0 :
+                    directoryLease.Scope == null && directoryLease.Names.Length == names.Length))
+            {
+                var direct = ActivateSmallResidentSet(names, acquired);
+                if (direct != VnResult.VN_CAPABILITY_UNAVAILABLE) return direct;
+            }
+            try { ExpandDirectoryLease(); }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            if (resident && (KnownOwnerCount == 0 || KnownOwnerCount == names.Length))
             {
                 bool empty = true;
                 foreach (SharedPack owner in companionOwners) if (owner.Handle.IsValid) { empty = false; break; }
                 if (empty)
                 {
-                    if (HarkenEngine.NativeAbiMinor >= 2 && !directEntryMissing && !cancellation.CanBeCanceled && names.Length <= SmallBatchLimit)
-                    {
-                        var direct = ActivateSmallResidentSet(names, acquired);
-                        if (direct != VnResult.VN_CAPABILITY_UNAVAILABLE) return direct;
-                    }
                     VnResult batch = VisitBatch(names, acquired, cancellation, out bool consumed);
                     // ABI 1.1 reports BAD_PACK for an HRP2 envelope before visiting its contents.
                     // The managed reader validates the whole set again under its publication guards.
@@ -461,6 +467,8 @@ namespace Harken
             pack = default;
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
+            try { ExpandDirectoryLease(); }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             if (!FindOwner(id, out SharedPack owner))
             {
                 if (companionLocators == null || !companionLocators.TryGetValue(id, out string name))

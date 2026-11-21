@@ -43,11 +43,11 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.ActionSeekTicket::public readonly struct ActionSeekTicket : IEquatable < ActionSeekTicket > [ordered-members:22daccb3f134975d74d25f113aa37486120eb095915932838aee195b5bff7560]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.ActionSeekTicket::public readonly ulong Handle",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static VnResult Post ( VnObjectId actionId , Emitter emitter , out ActionFiring firing )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static VnResult Post ( VnObjectId actionId , Emitter emitter , ulong callerSeed , out ActionFiring firing )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static unsafe VnResult Post ( VnObjectId actionId , Emitter emitter , ulong callerSeed , out ActionFiring firing )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static VnResult Post ( in ActionResolved resolved , Emitter emitter , ulong callerSeed , out ActionFiring firing )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static VnResult Post ( string actionName , Emitter emitter , out ActionFiring firing )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static VnResult Resolve ( string actionName , string projectId , out ActionResolved resolved )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static class Actions [ordered-members:3eaf36f1e17790b0c53f339138a0c7dc35fa86d45df7c391cb44582d5e8a8f00]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static class Actions",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static string Describe ( VnResult result , string actionName )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static unsafe VnResult Post ( in ActionReference pinned , Emitter emitter , ulong callerSeed , out ActionFiring firing )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Actions.cs/Harken.Actions::public static unsafe VnResult Post ( string actionName , Emitter emitter , ulong callerSeed , out ActionFiring firing )",
@@ -439,9 +439,11 @@
         "native:Vn_SetHostOutputMute",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult SetHostOutputMute ( uint mute01 , uint fadeMs )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapCompanion.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:f9a5661f5aff9911f5c780d0d4681a53b3b1dfbeae670efb71ca3a157c6864af]",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsBatch.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:164b0c74697227dd424982843a9c679ce9863e65b841258156950f5d19e3bf41]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackWindowsBatch.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:7c4c2f9bc593b0e1b9d64ba5aa08bf72d153e36dd358d4474e5c18056cb8c23b]",
         "native:Vn_VisitResidentPackDirectoryV1",
-        "native:Vn_ActivateResidentPackDirectoryV1"
+        "native:Vn_ActivateResidentPackDirectoryV1",
+        "native:Vn_ActivateNamedResidentDirectoryV1",
+        "native:Vn_PostNamedResidentActionV1"
       ]
     },
     "runtime-mix": {
@@ -1421,7 +1423,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_READY = 2u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REGISTER = 0u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REPLACE = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:581667933fa6bb9e55126604d4315d80652a2b2d47368ad6b28f00150b298ac4]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:ca6392b2d4fcdebb0e6eb15ae4fc1ed8e3f6dcfb2d37a1248a56bf791304feab]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId ( 0UL , 1UL )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnCurrentWorldLoadDesc [ordered-members:ed0a74203613697bf8f279e747fce6aeb5e5fc6764c5bdbacbbafa5dea64c5d7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::public IntPtr utf8Path",
@@ -1705,7 +1707,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnAbiVersionInfo::public uint minor",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnAbiVersionInfo::public uint structSize",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MAJOR = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 2u",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 3u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_BUFFER_TOO_SMALL = - 1301",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_NO_EVENT = - 1300",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentDirectoryActivationV1::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnResidentDirectoryActivationV1 [ordered-members:e07d54bf5a2d7940d8158873e597ed111c76a84585cb0bb8ab7a2bd02b2fcaff]",
@@ -1738,7 +1740,19 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentPackVisitDescV1::public ulong initVolumeId",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentPackVisitDescV1::public ulong initWriteTime",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentPackVisitDescV1::public ulong maxInputBytes",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentPackVisitorFn::[ UnmanagedFunctionPointer ( CallingConvention . Cdecl ) ] public delegate VnResult VnResidentPackVisitorFn ( IntPtr userData , IntPtr rows , uint memberCount )"
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResidentPackVisitorFn::[ UnmanagedFunctionPointer ( CallingConvention . Cdecl ) ] public delegate VnResult VnResidentPackVisitorFn ( IntPtr userData , IntPtr rows , uint memberCount )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public uint structSize",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public ulong setRevision",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public IntPtr rows",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public uint nameUnits",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public ulong initHandle",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public uint rowCount",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public ulong emitter",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public IntPtr keys",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnNamedResidentPostV1 [ordered-members:5174139591639da4531e070615f92a9ab574eb105f0bdd466df7697b38ac0d7f]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public uint keyCapacity",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public ulong callerSeed",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnNamedResidentPostV1::public IntPtr name"
       ]
     },
     "tool-types": {
@@ -1994,7 +2008,8 @@
       "VnResidentDirectoryMemberV1": "required-types",
       "VnResidentDirectoryActivationV1": "required-types",
       "VnResidentPackRowV1": "tool-types",
-      "VnResidentPackVisitorFn": "required-types"
+      "VnResidentPackVisitorFn": "required-types",
+      "VnNamedResidentPostV1": "required-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",

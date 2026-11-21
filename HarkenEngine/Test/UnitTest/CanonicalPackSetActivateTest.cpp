@@ -2184,6 +2184,66 @@ TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers
     EXPECT_NE(0, ReplayCompanionTrace(changed, output)) << output;
 }
 
+TEST(CanonicalPackSetActivate, NamedPostRejectsSupersededSetAndMismatchedContentLease) {
+    using namespace companionfixture;
+    EngineSession session(CanonicalActivationConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto initId = PackId("Init");
+    const auto contentId = PackId("action_" + harken::ObjectIdString(action));
+    Provider init{Build(true, initId)}, content{BuildPreview(false)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(initId, true, &init), Member(contentId, false, &content)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(members, report));
+
+    const uint8_t keys[129] = {'P', 'l', 'a', 'y'};
+    const uint16_t name[] = {'P', 'l', 'a', 'y'};
+    VnResidentDirectoryMemberV1 row{};
+    row.rootActionId = action;
+    row.packStableId = contentId;
+    row.handle = members[1].source.expectedHandle;
+    VnNamedResidentPostV1 post{};
+    post.structSize = sizeof(post);
+    post.rowCount = 1;
+    post.keyCapacity = sizeof(keys);
+    post.nameUnits = 4;
+    post.keys = keys;
+    post.name = name;
+    post.rows = &row;
+    post.initHandle = report.initHandle;
+    post.setRevision = report.resultSetRevision;
+
+    // Retire content, then load the same Action ID in a new set.
+    members.resize(1);
+    ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    members.push_back(Member(contentId, false, &content));
+    ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    uint64_t firing = 99;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    post.initHandle = report.initHandle;
+    post.setRevision = report.resultSetRevision;
+    ASSERT_NE(row.handle, members[1].source.expectedHandle);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    row.handle = members[1].source.expectedHandle;
+    row.packStableId = initId;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    row.packStableId = contentId;
+    --post.keyCapacity;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    ++post.keyCapacity;
+    ASSERT_EQ(VN_OK, Vn_PostNamedResidentActionV1(&post, &firing));
+    ASSERT_NE(0u, firing);
+    for (unsigned i = 0; i < 4; ++i) {
+        session.Engine()->nullBackend.Pump(4);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
 TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss) {
     using namespace companionfixture;
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-media";

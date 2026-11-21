@@ -8,6 +8,7 @@
 EXPORTS
     Vn_ActivateCanonicalPackSetV1
     Vn_ActivateCanonicalPackSetV2
+    Vn_ActivateNamedResidentDirectoryV1
     Vn_ActivateResidentPackDirectoryV1
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
@@ -37,6 +38,7 @@ EXPORTS
     Vn_LoadCurrentWorld
     Vn_LoadPack
     Vn_PostAction
+    Vn_PostNamedResidentActionV1
     Vn_QueryAbiVersion
     Vn_QueryActionFiring
     Vn_QueryActionPlaybackReadiness

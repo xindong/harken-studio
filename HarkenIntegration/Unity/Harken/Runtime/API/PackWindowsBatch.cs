@@ -198,48 +198,149 @@ namespace Harken
             return directory;
         }
 
-        private unsafe VnResult ActivateSmallResidentSet(string[] names, SharedPack[] acquired)
+        internal sealed class DirectoryLease
+        {
+            internal string[] Names;
+            internal VnResidentDirectoryMemberV1[] Rows;
+            internal byte[] Keys;
+            internal ulong InitHandle, SetRevision;
+            internal SharedPack[] Scope;
+            internal ulong Revision;
+
+            internal VnResult Find(string name, VnObjectId id, out GameplayNames.Action action)
+            {
+                if (Scope != null)
+                {
+                    for (int i = 0; i < Names.Length; ++i)
+                    {
+                        ref var row = ref Rows[i];
+                        if (name != null ? Names[i] == name : row.rootActionId == id)
+                        {
+                            action = new GameplayNames.Action(row.rootActionId, Revision + (ulong)i + 1,
+                                row.executionFingerprint, null);
+                            return VnResult.VN_OK;
+                        }
+                    }
+                }
+                action = default;
+                return VnResult.VN_UNKNOWN_ID;
+            }
+        }
+
+        private DirectoryLease directoryLease;
+        private bool namedEntryMissing;
+
+        private bool CanAcquireNamedDirectory(int count)
+        {
+#if ENABLE_IL2CPP
+            return false;
+#else
+            return HarkenEngine.NativeAbiMinor >= 3 && !namedEntryMissing && !directEntryMissing &&
+                initSelection != null && Language.Length == 0 && count > 0 && count <= SmallBatchLimit &&
+                (directoryLease == null ? KnownOwnerCount == 0 :
+                    directoryLease.Scope == null && directoryLease.Names.Length == count);
+#endif
+        }
+
+        private void ExpandDirectoryLease()
+        {
+            var lease = directoryLease;
+            if (lease == null) return;
+            var owners = new SharedPack[lease.Names.Length];
+            var ordered = new SharedPack[owners.Length];
+            var table = new GameplayNames.Table { Project = initNames.Project, Variables = initNames.Variables,
+                Labels = initNames.Labels, SmallActions = ordered };
+            for (int i = 0; i < owners.Length; ++i)
+            {
+                ref var row = ref lease.Rows[i];
+                var owner = new SharedPack { Binding = row, Requests = lease.Scope == null ? 0 : 1,
+                    Names = new PackCompanion { Name = lease.Names[i], RootId = row.rootActionId, ProjectId = initNames.Project },
+                    NameRevision = lease.Revision + (ulong)i + 1 };
+                owners[i] = owner;
+                int j = i;
+                while (j > 0 && ordered[j - 1].StableId > owner.StableId)
+                {
+                    ordered[j] = ordered[j - 1];
+                    --j;
+                }
+                ordered[j] = owner;
+            }
+            if (lease.Scope != null) Array.Copy(owners, lease.Scope, owners.Length);
+            companionOwners = ordered;
+            packs = null;
+            companionNames = null;
+            directoryLease = null;
+            GameplayNames.Expand(lease, table);
+        }
+
+        internal VnResult ReleaseDirectoryLease(SharedPack[] scope, out bool released)
+        {
+            released = false;
+            var lease = directoryLease;
+            if (lease == null || !ReferenceEquals(scope, lease.Scope)) return VnResult.VN_OK;
+            var allowed = CompanionMutationAllowed();
+            if (allowed != VnResult.VN_OK) return allowed;
+            try
+            {
+                SetKeepMember(0, Inspection.PackStableId, VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, InitPack);
+                mutationPhase = MutationPhase.ApplyingNative;
+                var result = CompanionNative.ActivatePrepared(companionKeepMembers, companionKeepResults, 1,
+                    InitPack, SetRevision, out var report);
+                if (result != VnResult.VN_OK)
+                {
+                    ExpandDirectoryLease();
+                    return VnResult.VN_OK;
+                }
+                for (int i = 0; i < lease.Rows.Length; ++i) lease.Rows[i].handle = 0;
+                lease.Scope = null;
+                InitPack = new Pack(report.initHandle);
+                SetRevision = report.resultSetRevision;
+                released = true;
+                return VnResult.VN_OK;
+            }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            finally { mutationPhase = MutationPhase.Idle; }
+        }
+
+        internal unsafe VnResult ActivateSmallResidentSet(string[] names, SharedPack[] acquired, bool named = false)
         {
             try
             {
+                var old = directoryLease;
                 int count = names.Length;
-                bool initial = KnownOwnerCount == 0;
                 var rows = new VnResidentDirectoryMemberV1[count];
-                var owners = new SharedPack[count];
-                var metadata = new PackCompanion[count];
+                var next = new DirectoryLease { Names = names, Rows = rows, Scope = acquired, Revision = nameRevision };
                 var table = new GameplayNames.Table { Project = initNames.Project, Variables = initNames.Variables,
-                    Labels = initNames.Labels, SmallActions = owners };
+                    Labels = initNames.Labels, Directory = next };
                 int length = 0;
                 for (int i = 0; i < count; ++i)
                 {
-                    string name = names[i];
-                    length += name.Length + 1;
-                    SharedPack owner;
-                    if (initial) owner = new SharedPack();
-                    else
+                    if (old != null)
                     {
-                        if (!FindOwner(name, out owner)) return VnResult.VN_CAPABILITY_UNAVAILABLE;
-                        rows[i].packStableId = owner.StableId;
-                        rows[i].rootActionId = owner.Names.RootId;
+                        if (old.Names[i] != names[i]) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+                        rows[i].packStableId = old.Rows[i].packStableId;
+                        rows[i].rootActionId = old.Rows[i].rootActionId;
                     }
-                    owners[i] = acquired[i] = owner;
-                    metadata[i] = owner.Names != null && owner.Names.Language.Length == 0 ? owner.Names :
-                        new PackCompanion { ProjectId = table.Project, Name = name };
+                    length += names[i].Length + 1;
                 }
-                // Valid public names are ASCII, each followed by a newline or the final NUL.
-                var list = new byte[length];
-                int offset = 0;
-                for (int i = 0; i < count; ++i)
+                byte[] list = null, path = null;
+                if (named) next.Keys = new byte[count * 129];
+                else
                 {
-                    foreach (char ch in names[i]) list[offset++] = (byte)ch;
-                    list[offset++] = i + 1 == count ? (byte)0 : (byte)10;
+                    list = new byte[length];
+                    int offset = 0;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        foreach (char ch in names[i]) list[offset++] = (byte)ch;
+                        list[offset++] = i + 1 == count ? (byte)0 : (byte)10;
+                    }
+                    path = EncodeDirectory(companionSource.Root);
                 }
-                var path = EncodeDirectory(companionSource.Root);
                 ReserveKeepBuffers(count + 1);
                 var report = new VnCanonicalPackSetActivationReportV1 { structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1) };
                 mutationPhase = MutationPhase.ApplyingNative;
                 fixed (VnResidentDirectoryMemberV1* output = rows)
-                fixed (byte* init = initBytes, root = path, actions = list)
+                fixed (byte* init = initBytes, root = path, actions = list, keys = next.Keys)
                 {
                     var desc = new VnResidentDirectoryActivationV1
                     {
@@ -248,39 +349,27 @@ namespace Harken
                         projectId = table.Project, rows = (IntPtr)output,
                         directory = DescribeDirectory(count, init, root, actions)
                     };
-                    var result = Packs.ObserveMutation(HarkenNative.Vn_ActivateResidentPackDirectoryV1(desc, ref report));
+                    var result = named
+                        ? HarkenNative.Vn_ActivateNamedResidentDirectoryV1(desc, companionSource.Root, names, (uint)count,
+                            keys, (uint)next.Keys.Length, ref report)
+                        : HarkenNative.Vn_ActivateResidentPackDirectoryV1(desc, ref report);
+                    Packs.ObserveMutation(result);
                     if (result != VnResult.VN_OK) return result;
                 }
-                for (int i = 0; i < count; ++i)
-                {
-                    var owner = acquired[i];
-                    ref var row = ref rows[i];
-                    owner.StableId = row.packStableId;
-                    owner.ContentHash = row.contentHash;
-                    owner.ByteCount = (int)row.byteCount;
-                    owner.Names = metadata[i];
-                    owner.Names.RootId = row.rootActionId;
-                    owner.Handle = new Pack(row.handle);
-                    owner.NameRevision = ++nameRevision;
-                    owner.CallableFingerprint = row.executionFingerprint;
-                    ++owner.Requests;
-                    int j = i;
-                    while (j > 0 && owners[j - 1].StableId > owner.StableId)
-                    {
-                        owners[j] = owners[j - 1];
-                        --j;
-                    }
-                    owners[j] = owner;
-                }
-                companionOwners = owners;
-                packs = null;
-                companionNames = null;
+                next.InitHandle = report.initHandle;
+                next.SetRevision = report.resultSetRevision;
                 InitPack = new Pack(report.initHandle);
                 SetRevision = report.resultSetRevision;
+                nameRevision += (ulong)count;
+                directoryLease = next;
                 GameplayNames.Publish(table);
                 return VnResult.VN_OK;
             }
-            catch (EntryPointNotFoundException) { directEntryMissing = true; return VnResult.VN_CAPABILITY_UNAVAILABLE; }
+            catch (EntryPointNotFoundException)
+            {
+                if (named) namedEntryMissing = true; else directEntryMissing = true;
+                return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             finally { mutationPhase = MutationPhase.Idle; }
         }
