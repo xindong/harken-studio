@@ -138,6 +138,12 @@ struct ActionFiringSnapshot {
     std::uint32_t livePlayableCount = 0;
 };
 
+// Owned by the root firing until it settles or is abandoned. The playback
+// engine supplies the storage and returns it through the same owner.
+struct ActionTreeBacking {
+    virtual ~ActionTreeBacking() = default;
+};
+
 struct ActionVariableResultBacking {
     StableStoragePreparation outcomes;
     StableStoragePreparation queries;
@@ -240,7 +246,8 @@ public:
     bool SetPreparedProgramFingerprint(const PreparedActionFiring& prepared,
                                         std::uint64_t fingerprint) noexcept;
     bool AdoptPreparedPlayableBacking(const PreparedActionFiring& prepared,
-        StableStoragePreparation&& backing) noexcept;
+        StableStoragePreparation&& backing, std::unique_ptr<ActionTreeBacking> trees = {}) noexcept;
+    const ActionTreeBacking* TreeBackingFor(ActionFiringHandle firing) const noexcept;
     StableStoragePreparedUse UsePlayableBacking(ActionFiringHandle firing) const noexcept;
     bool AdoptPreparedVariableResultBacking(const PreparedActionFiring& prepared,
         std::unique_ptr<ActionVariableResultBacking> backing) noexcept;
@@ -383,6 +390,7 @@ private:
         // The serialized control owner constructs this before publishing the row.
         std::vector<ActionFiringStepResult> results;
         StableStoragePreparation playableBacking;
+        std::unique_ptr<ActionTreeBacking> treeBacking;
         std::unique_ptr<ActionVariableResultBacking> variableResultBacking;
     };
 

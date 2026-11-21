@@ -107,6 +107,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <set>
 #include <vector>
 
 #include "harken/core/MonitorRequest.h"
@@ -4777,6 +4778,33 @@ struct EngineActionPlayStorage {
         if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits, 2u);
         if (needsContainerState && !PrepareContainerStorage()) throw harken::detail::LogicPreparationFailure{};
     }
+    bool FitsControlTree(std::uint32_t rows) const noexcept {
+        return rows <= containerChildCapacity && rows <= playableTreeExecutor->ReservationCapacity() &&
+            rows <= ownerLedger.DomainCapacity(FrontierOwnerKind::Mode);
+    }
+    bool PrepareControlChildren(std::uint32_t count) noexcept {
+        if (count <= containerChildCapacity) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try {
+            const auto prepare = [count](auto& column) {
+                detail::CheckedGrow(column, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                column.resize(count);
+            };
+            prepare(variableControlChildren);
+            prepare(variableControlScheduleOwned);
+            prepare(variableControlChildKinds);
+            prepare(variableControlLeafChildren);
+            prepare(variableControlContainerRows);
+            prepare(variableControlNestedParentIndices);
+            prepare(variableControlNestedPathOrdinals);
+            prepare(variableControlNestedModes);
+            containerChildCapacity = count;
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
+    }
     bool PrepareContainerStorage() noexcept {
         if (containerStoragePrepared) return true;
         if (memguard::IsAudioTagged()) return false;
@@ -8253,6 +8281,85 @@ public:
         return bytes;
     }
 
+    using DeferredTreeWidths = std::multiset<std::uint32_t>;
+    DeferredTreeWidths deferredTreeWidths;
+    std::uint32_t borrowedTreeWidth = 0;
+    struct DeferredTreeBacking final : ActionTreeBacking {
+        StableSlotStorage<EngineActionPlayScratch>::Preparation attempts;
+        DeferredTreeWidths* widths = nullptr;
+        DeferredTreeWidths::iterator widthEntry;
+        std::uint32_t width = 0;
+        std::uint32_t count = 0;
+        ~DeferredTreeBacking() override {
+            if (widths != nullptr) widths->erase(widthEntry);
+        }
+        bool Include(std::uint32_t additional, std::uint32_t rows) noexcept {
+            if (additional > UINT32_MAX - count) return false;
+            count += additional;
+            width = std::max(width, rows);
+            return true;
+        }
+    };
+    std::uint32_t RequiredDeferredTreeWidth() const noexcept {
+        return deferredTreeWidths.empty() ? 0 : *deferredTreeWidths.rbegin();
+    }
+    bool FitsDeferredTree(const EngineActionPlayStorage& storage, std::uint32_t width) const noexcept {
+        return storage.containerStoragePrepared && storage.frontierPolicies.size() >= width &&
+            storage.FitsControlTree(width) &&
+            storage.ownerLedger.DomainCapacity(FrontierOwnerKind::Voice) >= std::min(width, config.voiceCapacity.Render());
+    }
+    bool CanPrepareIdleTree(const EngineActionPlayScratch& scratch, std::uint32_t width) const noexcept {
+        return ActionPlaySlotReusable(scratch) && (width == 0 || FitsDeferredTree(scratch.storage, width) ||
+            scratch.playableTreeExecutor.CanGrowReservations());
+    }
+    bool PrepareIdleTree(std::uint32_t slot, std::uint32_t width) noexcept {
+        if (!EnsureActionPlaySlot(slot)) return false;
+        auto& storage = actionPlayStorage[slot];
+        if (width == 0) return true;
+        if (storage.phase != EngineFrontierAttemptPhase::Free) return false;
+        if (storage.frontierPolicies.size() < width) {
+            try {
+                detail::CheckedGrow(storage.frontierPolicies, width, detail::LogicAllocSite::ActionPlayContainerStorage);
+                storage.frontierPolicies.resize(width);
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+                return false;
+            }
+        }
+        return storage.PrepareControlChildren(width) &&
+            storage.playableTreeExecutor->PrepareReservationCount(width) &&
+            storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Mode, width) &&
+            storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
+    }
+    bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        const auto width = std::max(RequiredDeferredTreeWidth(), backing.width);
+        if (!actionPlayScratch.PrepareBacking(backing.count, backing.count,
+                [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
+                [this, width](std::uint32_t slot) noexcept { return PrepareIdleTree(slot, width); },
+                &backing.attempts, true)) return false;
+        try {
+            backing.widthEntry = deferredTreeWidths.insert(backing.width);
+            backing.widths = &deferredTreeWidths;
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
+    }
+    struct BorrowedTree {
+        std::uint32_t& active;
+        const std::uint32_t previous;
+        StableSlotStorage<EngineActionPlayScratch>::PreparedUse use;
+        BorrowedTree(std::uint32_t& width, const DeferredTreeBacking* held) noexcept
+            : active(width), previous(width), use(held ? held->attempts.Use() : decltype(use){}) {
+            if (held) active = held->width;
+        }
+        BorrowedTree(const BorrowedTree&) = delete;
+        ~BorrowedTree() { active = previous; }
+    };
+    BorrowedTree UseDeferredTrees(ActionFiringHandle firing) noexcept {
+        return {borrowedTreeWidth, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing))};
+    }
     bool EnsureActionPlaySlot(std::uint32_t slot, bool needsContainerState = true) noexcept {
         needsContainerState |= actionPlayScratch.HasPreparedBacking();
         if (actionPlayScratch.IsConstructed(slot) &&
@@ -8312,8 +8419,10 @@ public:
             [this](std::uint32_t slot) noexcept { return EnsureActionPlaySlot(slot); }, out);
     }
     bool ProtectActionPlayBackingForAcquire(std::uint32_t slot) noexcept {
-        return actionPlayScratch.ProtectBackingForAcquire(slot, ActionPlaySlotReusable,
-            [this](std::uint32_t next) noexcept { return EnsureActionPlaySlot(next); });
+        const auto width = RequiredDeferredTreeWidth();
+        return actionPlayScratch.ProtectBackingForAcquire(slot,
+            [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
+            [this, width](std::uint32_t next) noexcept { return PrepareIdleTree(next, width); }, width != 0);
     }
     std::size_t ActionPlayStorageBytes() const noexcept {
         return actionPlayStorage.RequestedBytes() + actionPlayScratch.RequestedBytes();

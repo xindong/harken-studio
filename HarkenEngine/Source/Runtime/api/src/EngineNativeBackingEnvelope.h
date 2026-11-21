@@ -81,6 +81,7 @@ struct QueueColumns {
 struct Profile {
     std::uint32_t current = 0;
     std::uint32_t instanceRows = 0;
+    std::uint32_t preparationTrees = 0;
     std::uint32_t referenceRows = 0;
     std::uint32_t containerRows = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
@@ -244,6 +245,7 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
+    a.profile.preparationTrees = SaturatingAdd(a.profile.preparationTrees, b.profile.preparationTrees, UINT32_MAX, a.flags);
     a.profile.instanceRows = SaturatingAdd(a.profile.instanceRows, b.profile.instanceRows, UINT32_MAX, a.flags);
     a.profile.referenceRows = SaturatingAdd(a.profile.referenceRows, b.profile.referenceRows, UINT32_MAX, a.flags);
     a.profile.containerRows = SaturatingAdd(a.profile.containerRows, b.profile.containerRows, UINT32_MAX, a.flags);
@@ -274,6 +276,7 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = std::max(a.profile.current, b.profile.current);
+    a.profile.preparationTrees = std::max(a.profile.preparationTrees, b.profile.preparationTrees);
     a.profile.instanceRows = std::max(a.profile.instanceRows, b.profile.instanceRows);
     a.profile.referenceRows = std::max(a.profile.referenceRows, b.profile.referenceRows);
     a.profile.containerRows = std::max(a.profile.containerRows, b.profile.containerRows);
@@ -631,6 +634,8 @@ private:
             }
         }
         if (result) {
+            if (limits_.includeDynamicInstanceRows)
+                result.profile.preparationTrees = SaturatingAdd(result.profile.preparationTrees, 1u, UINT32_MAX, result.flags);
             result.profile.containerRows = SaturatingAdd(result.profile.containerRows, 1u, UINT32_MAX, result.flags);
             result.profile.instanceRows = SaturatingAdd(result.profile.instanceRows, 1u, UINT32_MAX, result.flags);
         }
@@ -643,6 +648,7 @@ private:
         Result result{};
         result.profile.instanceRows = 1;
         result.flags = UnprunedSchedule;
+        result.profile.preparationTrees = limits_.includeDynamicInstanceRows ? 1u : 0u;
         if (ref.kind == PlayableKindV1::Segment) {
             const auto* segment = content_.Segment(ref);
             if (segment == nullptr) return Failure(Status::MissingContent);
@@ -668,6 +674,8 @@ private:
                     if (!dynamic) return dynamic;
                     result.profile.instanceRows = SaturatingAdd(result.profile.instanceRows,
                         dynamic.profile.instanceRows, UINT32_MAX, result.flags);
+                    result.profile.preparationTrees = SaturatingAdd(result.profile.preparationTrees,
+                        dynamic.profile.preparationTrees, UINT32_MAX, result.flags);
                 }
             } else {
                 result = Concurrent(result, Visit(child, Mode::StaticSchedule, budget), limits_);
@@ -794,6 +802,7 @@ private:
             std::uint32_t capacity = 0;
             std::uint32_t futureReferences = 0;
             std::uint32_t futureInstances = 0;
+            std::uint32_t futureTrees = 0;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
                 const bool possible = program.mode == ContainerModeV1::SequenceQueue
                     ? j > i || (j == 0 && CanWrap(program)) : j != i || CanWrap(program);
@@ -802,12 +811,16 @@ private:
                 if (!next) return next;
                 capacity = std::max(capacity, next.profile.current);
                 futureInstances = std::max(futureInstances, next.profile.instanceRows);
+                if (limits_.includeDynamicInstanceRows)
+                    futureTrees = std::max(futureTrees, std::max(1u, next.profile.preparationTrees));
                 futureReferences = std::max(futureReferences, SaturatingAdd(next.profile.referenceRows,
                     next.profile.current, UINT32_MAX, current.flags));
                 current.flags |= next.flags;
             }
             targetCapacity = std::max(targetCapacity, capacity);
             AddFuture(current, capacity, limits_);
+            current.profile.preparationTrees = SaturatingAdd(current.profile.preparationTrees, futureTrees,
+                UINT32_MAX, current.flags);
             current.profile.instanceRows = SaturatingAdd(current.profile.instanceRows, futureInstances, UINT32_MAX, current.flags);
             current.profile.referenceRows = SaturatingAdd(current.profile.referenceRows,
                 futureReferences, UINT32_MAX, current.flags);

@@ -273,12 +273,20 @@ bool ActionFiringTable::SetPreparedProgramFingerprint(
 }
 
 bool ActionFiringTable::AdoptPreparedPlayableBacking(
-    const PreparedActionFiring& prepared, StableStoragePreparation&& backing) noexcept {
+    const PreparedActionFiring& prepared, StableStoragePreparation&& backing,
+    std::unique_ptr<ActionTreeBacking> trees) noexcept {
     auto* row = ResolvePrepared(prepared);
     if (row == nullptr || row->parent != 0 || row->root != prepared.Handle() ||
         row->playableBacking.Valid() || !backing.Valid()) return false;
     row->playableBacking = std::move(backing);
+    row->treeBacking = std::move(trees);
     return true;
+}
+
+const ActionTreeBacking* ActionFiringTable::TreeBackingFor(ActionFiringHandle firing) const noexcept {
+    const auto* row = Resolve(firing);
+    const auto* root = row == nullptr ? nullptr : Resolve(row->root);
+    return root == nullptr ? nullptr : root->treeBacking.get();
 }
 
 StableStoragePreparedUse ActionFiringTable::UsePlayableBacking(ActionFiringHandle firing) const noexcept {
@@ -900,6 +908,7 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
     const bool stopping = row.state == SlotState::Stopping;
     row.state = SlotState::TerminalRetained;
     row.playableBacking.Release();
+    row.treeBacking.reset();
     row.variableResultBacking.reset();
     if (stopping || hasCancellation) {
         row.outcome = ActionFiringOutcome::Cancelled;
@@ -1156,6 +1165,7 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.ownedDeferredCount = 0;
     std::vector<ActionFiringStepResult>{}.swap(row.results);
     row.playableBacking.Release();
+    row.treeBacking.reset();
     row.variableResultBacking.reset();
     if (row.generation == kMaxActionFiringGeneration) {
         row.state = SlotState::Quarantined;
@@ -1364,6 +1374,7 @@ bool ActionFiringTable::MarkTerminal(
     }
     row->state = SlotState::TerminalRetained;
     row->playableBacking.Release();
+    row->treeBacking.reset();
     row->variableResultBacking.reset();
     row->outcome = outcome;
     row->terminalReason = reason;

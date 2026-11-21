@@ -21027,7 +21027,19 @@ bool PrepareVariableControlFrontierSelection(
         }
         if (!append(index, *program, node.selectedOrdinal, false, 1.0f)) return false;
     }
-    if (workspace.count > scratch.storage.frontierPolicies.size() - policyBase) return false;
+    if (workspace.count > UINT32_MAX - policyBase) return false;
+    auto& policies = scratch.storage.frontierPolicies;
+    const auto required = policyBase + workspace.count;
+    if (required > policies.size()) {
+        if (engine.actionPlayScratch.PreparedUseActive() || harken::memguard::IsAudioTagged()) return false;
+        try {
+            harken::detail::CheckedGrow(policies, required, harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+            policies.resize(required);
+        } catch (...) {
+            harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
+    }
     for (std::uint32_t index = 0; index < workspace.count; ++index) {
         auto node = workspace.nodes[index];
         if (node.parentIndex != UINT32_MAX) node.parentIndex += policyBase;
@@ -23939,6 +23951,7 @@ harken::EngineActionPlayScratch* AcquireFrontierAttempt(
             storage.phase = harken::EngineFrontierAttemptPhase::Quarantined;
             continue;
         }
+        if (engine.borrowedTreeWidth != 0 && !engine.FitsDeferredTree(storage, engine.borrowedTreeWidth)) continue;
         if (!engine.EnsureActionPlaySlot(index, needsContainerState)) return nullptr;
         if (!engine.ProtectActionPlayBackingForAcquire(index)) return nullptr;
         if (!ResetImmediateActionPlayScratch(engine, &scratch)) {
@@ -27055,6 +27068,27 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     // VariableControl decision still owns one selected playable subtree.
     const std::uint32_t childCount =
         static_cast<std::uint32_t>(haveDiscrete) + continuousCount;
+    // Count the selected children and their materialized paths before any
+    // child token address is handed to an owner or to the tree executor.
+    std::uint64_t treeRows = childCount + static_cast<std::uint64_t>(scratch->frontierPolicyCount);
+    for (std::uint32_t index = 0; index < memberCount; ++index) {
+        const auto& leaf = index < discreteCount ? discreteSchedule.leaves[index]
+            : continuousLeaves[index - discreteCount];
+        if (leaf.frontierPolicyIndex != UINT32_MAX || leaf.selectionCount == 0) continue;
+        const auto* selected = FindQueueChild(program, leaf.selectedOrdinals[0]);
+        if (selected != nullptr && selected->playable.kind == harken::PlayableKindV1::Container)
+            treeRows += leaf.selectionCount;
+    }
+    treeRows += memberCount + 1u;
+    if (treeRows > UINT32_MAX ||
+        (engine.actionPlayScratch.PreparedUseActive() && !scratch->storage.FitsControlTree(static_cast<std::uint32_t>(treeRows))) ||
+        !scratch->storage.PrepareControlChildren(static_cast<std::uint32_t>(treeRows)) ||
+        !scratch->playableTreeExecutor.PrepareReservationCount(static_cast<std::uint32_t>(treeRows)) ||
+        !scratch->storage.ownerLedger.PrepareDomain(harken::FrontierOwnerKind::Mode,
+            static_cast<std::uint32_t>(treeRows))) {
+        result.status = harken::PlayableStartStatus::Backpressure;
+        return result;
+    }
     for (std::uint32_t index = 0; index < memberCount; ++index) {
         MaterializedScheduleLeaf materialized{};
         std::uint32_t continuousRowIndex = UINT32_MAX;
@@ -31002,6 +31036,7 @@ struct PreparedQueueContinuationTree {
     bool Prepare(const harken::ContainerChildProgramViewV2& child,
                  harken::PlayableInstanceHandle parent, const WorldView& world) noexcept {
         if (row.parentService.Valid() && row.variableControlNestedQueueSuccessorInstance != 0) return true;
+        auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0);
         scratch = AcquireFrontierAttempt(engine);
         if (scratch == nullptr) return false;
         const auto kind = child.playable.kind == harken::PlayableKindV1::Sound ? harken::PlayableKind::Sound :
@@ -37609,6 +37644,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessor(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame) noexcept {
+    auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0);
     std::uint64_t continuationFrame = QueueEarliestContinuationFrame(engine);
     harken::LogicCommitSequence deferredTicket = 0;
     for (std::uint32_t attempt = 0;
@@ -73107,6 +73143,7 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPlayOrStop(
     const ActionFiringSnapshot& firing,
     std::uint64_t currentQuantum,
     std::uint64_t* newPageStartBlocker) noexcept {
+    auto trees = engine.UseDeferredTrees(record.firing);
     auto playableUse = engine.actionFirings.UsePlayableBacking(record.firing);
     ImmediateActionPlan plan{};
     plan.playbackRequest = firing.playbackRequest;
@@ -85807,7 +85844,8 @@ bool ImmediateActionNeedsContainerState(const ImmediateActionPlan& plan) noexcep
 
 VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
     const harken::ActionStepProgramViewV1& step, const harken::PackPartitionLease& lease,
-    std::uint32_t depth, std::uint32_t& rows) noexcept;
+    std::uint32_t depth, std::uint32_t& rows,
+    std::unique_ptr<harken::Engine::DeferredTreeBacking>& trees) noexcept;
 
 bool ReserveImmediateActionFirings(void* opaque,
                                    std::uint32_t count) noexcept {
@@ -86204,6 +86242,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         constexpr auto limit = UINT32_MAX;
         std::uint32_t futureWrites = 0;
         std::uint32_t futurePlays = 0;
+        std::unique_ptr<harken::Engine::DeferredTreeBacking> futureTrees;
         for (std::uint32_t index = 0;
              index < plan->stepCount; ++index) {
             const auto& planned = engine.actionStepPlanScratch[index];
@@ -86219,7 +86258,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             const auto& deferred = engine.actionDeferredScratch[i];
             const auto& planned = engine.actionStepPlanScratch[deferred.plannedStepIndex];
             const auto counted = CountDeferredInstanceRows(*plan, *planned.step, deferred.targetPackLease,
-                planned.depth, futurePlays);
+                planned.depth, futurePlays, futureTrees);
             if (counted != VN_OK) {
                 plan->result = counted;
                 abandonPrepared();
@@ -86227,12 +86266,13 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
         }
         harken::StableStoragePreparation futureInstances;
-        if (futurePlays != 0 && (!engine.mixer.PrepareVoiceBacking(engine.voices.Capacity()) ||
+        if (futurePlays != 0 && ((futureTrees && !engine.PrepareDeferredTrees(*futureTrees)) ||
+                !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity()) ||
                 !engine.playableInstances.PrepareFutureAcquisitions(futurePlays, &futureInstances) ||
                 !engine.containerPlayback.PrepareStorage(engine.playableInstances.ConstructedEntryCount()) ||
                 !engine.PrepareOriginalSingleCurrentStorage() ||
                 !engine.actionFirings.AdoptPreparedPlayableBacking(engine.actionFiringPlanScratch[0].prepared,
-                    std::move(futureInstances)))) {
+                    std::move(futureInstances), std::move(futureTrees)))) {
             plan->result = VN_BACKPRESSURE;
             abandonPrepared();
             return false;
@@ -86649,7 +86689,8 @@ harken::PlayableRefV1 MakeImmediateActionPlayableRef(
 
 VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
     const harken::ActionStepProgramViewV1& step, const harken::PackPartitionLease& lease,
-    std::uint32_t depth, std::uint32_t& rows) noexcept {
+    std::uint32_t depth, std::uint32_t& rows,
+    std::unique_ptr<harken::Engine::DeferredTreeBacking>& trees) noexcept {
     namespace backing = harken::native_backing;
     auto& engine = *plan.engine;
     if (step.opcode == harken::ActionOpcodeV1::PostAction) {
@@ -86659,7 +86700,7 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
         if (!child || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
             depth >= engine.config.maxTriggerDepth) return VN_OK;
         for (std::uint32_t i = 0; i < child->stepCount; ++i) {
-            const auto rc = CountDeferredInstanceRows(plan, child->steps[i], lease, depth + 1u, rows);
+            const auto rc = CountDeferredInstanceRows(plan, child->steps[i], lease, depth + 1u, rows, trees);
             if (rc != VN_OK) return rc;
         }
         return VN_OK;
@@ -86720,6 +86761,13 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
             if (!result) return pack ? VN_BAD_PACK : VN_BAD_CURRENT_WORLD;
             if (result.profile.instanceRows > UINT32_MAX - rows) return VN_OUT_OF_MEMORY;
             rows += result.profile.instanceRows;
+            if (result.profile.preparationTrees != 0) {
+                const auto width = 2ull * result.profile.instanceRows + 1u;
+                if (width > UINT32_MAX) return VN_OUT_OF_MEMORY;
+                if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+                if (!trees->Include(result.profile.preparationTrees, static_cast<std::uint32_t>(width)))
+                    return VN_BACKPRESSURE;
+            }
             return VN_OK;
         }
     } catch (const std::bad_alloc&) {
@@ -105228,6 +105276,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
     }
     // A delayed child owns backing for its Play steps. Queue replacements prepare
     // their own rows from the live queue at materialization.
+    auto trees = engine.UseDeferredTrees(plan->deferredParentFiring);
     auto playableUse = plan->deferredParentFiring != 0 && plan->playCount != 0
         ? engine.actionFirings.UsePlayableBacking(plan->deferredParentFiring)
         : harken::StableStoragePreparedUse{};

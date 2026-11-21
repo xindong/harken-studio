@@ -343,6 +343,10 @@ public:
           committedOwnerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u) {}
     bool PrepareStorage() noexcept;
     bool PrepareReservationCount(std::uint32_t count) noexcept;
+    bool CanGrowReservations() const noexcept {
+        return !step_.CommitProofsRequired() && !step_.committed_ && step_.instances_.empty() &&
+            step_.containers_.empty() && !memguard::IsAudioTagged();
+    }
     std::uint32_t ReservationCapacity() const noexcept { return step_.maxReservations_; }
 
     PlayableTreeExecutor(const PlayableTreeExecutor&) = delete;

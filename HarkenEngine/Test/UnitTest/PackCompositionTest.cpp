@@ -25477,9 +25477,10 @@ TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBounda
 }
 
 TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
-    for (unsigned scenario = 0; scenario < 3; ++scenario) {
+    std::array<unsigned, 3> referenceStart{};
+    for (unsigned scenario = 0; scenario < 5; ++scenario) {
         const bool deferred = scenario != 0;
-        const bool trackRoot = scenario == 2;
+        const bool trackRoot = scenario == 2 || scenario == 4;
         SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot);
         const std::vector<float> first(960, 0.125f), second(960, -0.25f);
         const float* firstChannels[] = {first.data()};
@@ -25567,10 +25568,18 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             image.step.target.stableId = track.stableId;
             image.step.target.expectedProgramSemanticFingerprint = track.expectedProgramSemanticFingerprint;
         }
+        const auto immediateStep = image.step;
+        std::array<ActionProgramViewV1, 2> actions{image.action, image.action};
         if (deferred) {
             SetAbsoluteTime(&image.step.delay, INT64_C(1000000000));
             image.action.directFeatureMask = image.action.transitiveFeatureMask = 1u;
             image.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(image.action);
+            actions[0] = image.action;
+            actions[1].actionStableId = harkentest::ObjectId(72101);
+            actions[1].steps = &immediateStep;
+            actions[1].programSemanticFingerprint = ComputeActionProgramFingerprintV1(actions[1]);
+            image.world.actions = actions.data();
+            image.world.actionCount = actions.size();
         }
         image.world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
         image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
@@ -25585,6 +25594,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         const auto init = BuildInit();
         const auto initPath = WriteTemp("nested-variable-track-queue-init.pack", init);
         const auto path = WriteTemp("nested-variable-track-queue.pack", bytes);
+        harkentest::PlayableCapacityScope legacyPlaybackLimit(1, 0);
         EngineSession session(MakeNullConfig(16, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
@@ -25606,8 +25616,44 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         post.structSize = sizeof(post);
         post.actionId = ContainerMatrixWorld::kAction;
         post.emitter = emitter;
-        VnActionFiringHandle firing = 0;
+        VnActionFiringHandle firing = 0, immediate = 0;
+        auto now = post;
+        now.actionId = actions[1].actionStableId;
+        if (trackRoot) ASSERT_EQ(VN_OK, Vn_PostAction(&now, &immediate));
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        if (deferred) {
+            VnActionFiringHandle cancelled = 0;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &cancelled));
+            if (!trackRoot) ASSERT_EQ(VN_OK, Vn_PostAction(&now, &immediate));
+            ASSERT_EQ(VN_OK, Vn_StopActionFiring(cancelled, 0));
+            unsigned immediateFrames[2]{};
+            for (unsigned block = 0; block < 128; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.nullBackend.Pump(1);
+                const auto* samples = engine.nullBackend.LastBlock();
+                for (unsigned frame = 0; frame < 64; ++frame) {
+                    immediateFrames[0] += std::abs(samples[2u * frame] - 0.125f) < 1e-6f;
+                    immediateFrames[1] += std::abs(samples[2u * frame] + 0.25f) < 1e-6f;
+                }
+            }
+            EXPECT_EQ(first.size(), immediateFrames[0]);
+            EXPECT_EQ(second.size(), immediateFrames[1]);
+            VnActionFiringInfo stopped{};
+            stopped.structSize = sizeof(stopped);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(cancelled, &stopped));
+            EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, stopped.outcome);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(cancelled));
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(immediate));
+        }
+        struct ResetFault {
+            ~ResetFault() { detail::DisarmLogicAllocFaultForTests(); }
+        } resetFault;
+        if (deferred) {
+            const auto site = scenario <= 2 ? detail::LogicAllocSite::PlayableTreeStorage :
+                scenario == 3 ? detail::LogicAllocSite::ActionPlayContainerStorage :
+                detail::LogicAllocSite::FrontierOwnerLedgerStorage;
+            detail::ArmLogicAllocFaultForTests(1, site);
+        }
         std::array<unsigned, 2> audible{};
         std::array<unsigned, 2> onsets{};
         bool secondStarted = false;
@@ -25635,6 +25681,10 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
+        if (scenario <= 2) referenceStart[scenario] = onsets[0];
+        else EXPECT_EQ(referenceStart[trackRoot ? 2u : 1u], onsets[0]);
+        if (scenario == 1 || scenario == 2 || scenario == 4)
+            EXPECT_EQ(1u, detail::g_logicAllocFault.remaining);
         EXPECT_EQ(first.size(), audible[0]);
         EXPECT_EQ(second.size(), audible[1]);
         EXPECT_EQ(onsets[0] + first.size(), onsets[1]);
