@@ -5,7 +5,7 @@ using System.Threading;
 
 namespace Harken
 {
-    public sealed unsafe partial class PackBootstrapSession
+    public sealed partial class PackBootstrapSession
     {
         internal ulong inputBudget;
 
@@ -16,14 +16,14 @@ namespace Harken
             internal SharedPack[] Owners;
             internal CancellationToken Cancel;
             internal bool Submitted;
+            private static readonly VnResidentPackVisitorFn Visitor = ConsumeBatch;
+            internal static readonly IntPtr VisitorPtr = Marshal.GetFunctionPointerForDelegate(Visitor);
         }
-        private static readonly VnResidentPackVisitorFn BatchVisitor = ConsumeBatch;
-        private static readonly IntPtr BatchVisitorPtr = Marshal.GetFunctionPointerForDelegate(BatchVisitor);
 
         [AOT.MonoPInvokeCallback(typeof(VnResidentPackVisitorFn))]
         private static unsafe VnResult ConsumeBatch(IntPtr user, IntPtr batch, uint count)
         {
-            var call=(BatchCall)GCHandle.FromIntPtr(user).Target;
+            var call = (BatchCall)GCHandle.FromIntPtr(user).Target;
             var session = call.Session;
             try
             {
@@ -69,8 +69,8 @@ namespace Harken
 
         private unsafe VnResult VisitBatch(string[] names, SharedPack[] owners, CancellationToken cancellation, out bool submitted)
         {
-            var call=new BatchCall { Session=this, Names=names, Owners=owners, Cancel=cancellation };
-            var token=GCHandle.Alloc(call);
+            var call = new BatchCall { Session = this, Names = names, Owners = owners, Cancel = cancellation };
+            var token = GCHandle.Alloc(call);
             mutationPhase = MutationPhase.ReadingContent;
             try
             {
@@ -88,7 +88,7 @@ namespace Harken
                         initChangeTime = ids[4], maxInputBytes = inputBudget != 0 ? inputBudget : 64ul * 1024 * 1024,
                         init = new VnPackByteSpan { structSize = (uint)sizeof(VnPackByteSpan),
                             bytes = (IntPtr)init, byteCount = (ulong)initBytes.Length },
-                        visit = BatchVisitorPtr, userData = GCHandle.ToIntPtr(token)
+                        visit = BatchCall.VisitorPtr, userData = GCHandle.ToIntPtr(token)
                     };
                     result = HarkenNative.Vn_VisitResidentPackDirectoryV1(desc);
                 }
@@ -96,7 +96,7 @@ namespace Harken
                 if (result != VnResult.VN_OK) cancellation.ThrowIfCancellationRequested();
                 return result;
             }
-            catch(EntryPointNotFoundException) { submitted=false; return VnResult.VN_CAPABILITY_UNAVAILABLE; }
+            catch (EntryPointNotFoundException) { submitted = false; return VnResult.VN_CAPABILITY_UNAVAILABLE; }
             finally { token.Free(); mutationPhase = MutationPhase.Idle; }
         }
     }
