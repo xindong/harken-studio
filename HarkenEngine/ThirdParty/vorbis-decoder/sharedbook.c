@@ -321,9 +321,41 @@ static ogg_uint32_t bitreverse(ogg_uint32_t x){
   return((x>> 1)&0x55555555UL) | ((x<< 1)&0xaaaaaaaaUL);
 }
 
-static int sort32a(const void *a,const void *b){
-  return ( **(ogg_uint32_t **)a>**(ogg_uint32_t **)b)-
-    ( **(ogg_uint32_t **)a<**(ogg_uint32_t **)b);
+/* Build a stable ascending order for the canonical codewords. The output
+   list and the existing inverse-index allocation supply both radix buffers. */
+static void order_codewords(const ogg_uint32_t *codes,int count,
+                            ogg_uint32_t *order,ogg_uint32_t *scratch){
+  int i;
+  for(i=0;i<count;i++)order[i]=(ogg_uint32_t)i;
+  if(count<32){
+    for(i=1;i<count;i++){
+      ogg_uint32_t key=order[i];
+      int pos=i;
+      while(pos>0 && codes[order[pos-1]]>codes[key]){
+        order[pos]=order[pos-1];
+        pos--;
+      }
+      order[pos]=key;
+    }
+  }else{
+    unsigned shift;
+    for(shift=0;shift<32;shift+=8){
+      unsigned offsets[256]={0};
+      unsigned next=0;
+      int bucket;
+      for(i=0;i<count;i++)offsets[(codes[order[i]]>>shift)&255u]++;
+      for(bucket=0;bucket<256;bucket++){
+        unsigned n=offsets[bucket];
+        offsets[bucket]=next;
+        next+=n;
+      }
+      for(i=0;i<count;i++){
+        unsigned key=order[i];
+        scratch[offsets[(codes[key]>>shift)&255u]++]=key;
+      }
+      {ogg_uint32_t *swap=order;order=scratch;scratch=swap;}
+    }
+  }
 }
 
 /* decode codebook arrangement is more heavily optimized than encode */
@@ -355,24 +387,13 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
 
     /* perform sort */
     ogg_uint32_t *codes=make_words(allocator, s->lengthlist,s->entries,c->used_entries);
-    ogg_uint32_t **codep=hv_allocate(allocator, sizeof(*codep)*n);
-
     if(codes==NULL)goto err_out;
-
-    for(i=0;i<n;i++){
-      codes[i]=bitreverse(codes[i]);
-      codep[i]=codes+i;
-    }
-
-    qsort(codep,n,sizeof(*codep),sort32a);
+    for(i=0;i<n;i++)codes[i]=bitreverse(codes[i]);
 
     sortindex=hv_allocate(allocator, n*sizeof(*sortindex));
     c->codelist=hv_allocate(allocator, n*sizeof(*c->codelist));
-    /* the index is a reverse index */
-    for(i=0;i<n;i++){
-      int position=codep[i]-codes;
-      sortindex[position]=i;
-    }
+    order_codewords(codes,n,c->codelist,(ogg_uint32_t *)sortindex);
+    for(i=0;i<n;i++)sortindex[c->codelist[i]]=i;
 
     for(i=0;i<n;i++)
       c->codelist[sortindex[i]]=codes[i];
@@ -451,7 +472,6 @@ int vorbis_book_init_decode(HvAllocator *allocator, codebook *c,const static_cod
         }
       }
     }
-    hv_free(allocator, codep);
     hv_free(allocator, sortindex);
   }
 

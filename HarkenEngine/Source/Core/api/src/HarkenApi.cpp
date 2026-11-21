@@ -129190,7 +129190,15 @@ VnResult PrepareCompressedMember(Engine& engine, const PackCanonicalImage& image
             if (row.blobBytes > available) return VN_PACK_RESIDENT_CAPACITY;
             result = engine.registry.PrepareResidentVorbis(row.soundId,
                 {blob, blob + row.blobBytes}, static_cast<std::size_t>(available), &samples[i]);
-            if (result == VN_OK) staging.Add(samples[i].View().encoded->ResidentBytes());
+            if (result == VN_OK) {
+                const auto view = samples[i].View();
+                if (view.sampleRate != row.sampleRate || view.channelCount != row.channelCount ||
+                    view.frames != row.frameCount || view.loop.startFrame != row.loopStartFrame ||
+                    view.loop.endFrame != row.loopEndFrame ||
+                    bool(view.loop.endFrame) != bool(row.flags & HK_PACK_MEDIA_FLAG_LOOPABLE))
+                    return VN_BAD_PACK;
+                staging.Add(view.encoded->ResidentBytes());
+            }
         } else {
             std::array<const float*, kMaxChannels> planes{};
             for (std::uint32_t ch = 0; ch < row.channelCount; ++ch)
@@ -129259,9 +129267,9 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         if (traceResource != nullptr && engine.trace != nullptr) {
             out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
             *traceResource = harken::tracing::RecordPackBytes(engine.trace.get(), out->bytes.get(), out->byteCount);
-            parsed = ParsePackCanonicalImageWithBudget(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
+            parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
         } else {
-            parsed = ParsePackCanonicalImageWithBudget(out->bytes.get(), out->byteCount,
+            parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount,
                                              &out->image, &out->hash, budget);
         }
     }
