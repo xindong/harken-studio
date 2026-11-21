@@ -21,6 +21,7 @@ namespace Harken
     public static class HarkenEngine
     {
         private static int updateDepth;
+        internal static uint NativeAbiMinor { get; private set; }
         internal static bool IsUpdating => updateDepth != 0;
         internal static event Action OutermostUpdateReturned;
         internal static event Action Initialized;
@@ -55,6 +56,7 @@ namespace Harken
             if (support != VnResult.VN_OK) return support;
             VnResult result = HarkenNative.Vn_Init(config);
             if (result != VnResult.VN_OK) return result;
+            NativeAbiMinor = abi.minor;
             VariableGameplay.NotifySessionChanged();
             Initialized?.Invoke();
             return result;
