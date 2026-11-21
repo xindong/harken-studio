@@ -137,6 +137,8 @@ namespace Harken
             public Pack Handle;
             public int Requests;
             public byte[] Bytes;
+            internal GameplayNames.Action Action =>
+                new GameplayNames.Action(Names.RootId, NameRevision, CallableFingerprint, this);
         }
 
         internal PackBootstrapSession(
@@ -260,8 +262,8 @@ namespace Harken
                 if (term == VnResult.VN_OK)
                 {
                     active = false;
-                    packs.Clear();
-                    companionNames.Clear();
+                    packs?.Clear();
+                    companionNames?.Clear();
                     rawCompanionLeases.Clear();
                     CancelCompanionReads();
                     CancelLanguageSwitch();

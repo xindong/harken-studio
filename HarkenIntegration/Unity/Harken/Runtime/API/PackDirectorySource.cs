@@ -190,7 +190,14 @@ namespace Harken
         {
             private readonly ulong device, inode, length, modified, modifiedNs, changed, changedNs;
             internal ulong Length => length;
-            internal ulong[] BatchIdentity(long changeTime) => new[] { device, inode, length, modified, (ulong)changeTime };
+            internal void SetBatchIdentity(ref VnResidentPackVisitDescV1 directory, long changeTime)
+            {
+                directory.initVolumeId = device;
+                directory.initFileId = inode;
+                directory.initFileSize = length;
+                directory.initWriteTime = modified;
+                directory.initChangeTime = (ulong)changeTime;
+            }
             private FileIdentity(ulong device, ulong inode, ulong length, ulong modified,
                 ulong modifiedNs = 0, ulong changed = 0, ulong changedNs = 0)
             {
