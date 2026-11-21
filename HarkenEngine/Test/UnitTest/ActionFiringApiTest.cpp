@@ -5481,7 +5481,7 @@ struct ActionPreparationOwnerSnapshot {
     std::uint32_t armLive = 0;
     std::uint32_t armFree = 0;
     std::uint32_t occurrenceOccupied = 0;
-    std::uint32_t occurrenceFree = 0;
+    std::uint32_t unavailableOccurrences = 0;
     std::uint32_t occurrenceHighWater = 0;
     std::uint32_t compositeOccupied = 0;
     std::uint32_t compositeFree = 0;
@@ -5528,7 +5528,7 @@ ActionPreparationOwnerSnapshot CaptureActionPreparationOwners(
     snapshot.armLive = engine.timelineArms.LiveCount();
     snapshot.armFree = engine.timelineArms.FreeCount();
     snapshot.occurrenceOccupied = engine.timelineOccurrences.OccupiedCount();
-    snapshot.occurrenceFree = engine.timelineOccurrences.FreeCount();
+    snapshot.unavailableOccurrences = engine.timelineOccurrences.Capacity() - engine.timelineOccurrences.FreeCount();
     snapshot.occurrenceHighWater = engine.timelineOccurrences.HighWater();
     snapshot.compositeOccupied =
         engine.compositeCompletionOwners.OccupiedCount();
@@ -5628,7 +5628,7 @@ void ExpectActionPreparationOwnersUnchanged(
     EXPECT_EQ(expected.armLive, actual.armLive);
     EXPECT_EQ(expected.armFree, actual.armFree);
     EXPECT_EQ(expected.occurrenceOccupied, actual.occurrenceOccupied);
-    EXPECT_EQ(expected.occurrenceFree, actual.occurrenceFree);
+    EXPECT_EQ(expected.unavailableOccurrences, actual.unavailableOccurrences);
     EXPECT_EQ(expected.occurrenceHighWater, actual.occurrenceHighWater);
     EXPECT_EQ(expected.compositeOccupied, actual.compositeOccupied);
     EXPECT_EQ(expected.compositeFree, actual.compositeFree);
@@ -5922,8 +5922,9 @@ void ExpectTransitionContinuationOwnerExhaustion(
             exhaustion == ContinuationOwnerExhaustion::SuccessorOccurrence
                 ? 1u
                 : 3u;
-        occurrences.resize(
-            engine->timelineOccurrences.FreeCount() - residual);
+        ASSERT_TRUE(harkentest::LimitOccurrenceGrowthToCurrentPages(engine->timelineOccurrences));
+        ASSERT_GE(engine->timelineOccurrences.FreeCount(), residual);
+        occurrences.resize(engine->timelineOccurrences.FreeCount() - residual);
         harken::OccurrenceKey key{};
         key.arrangingInstance = 1;
         key.clipId = harkentest::ObjectId(9001);
@@ -25468,7 +25469,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             EXPECT_EQ(admissionRecheck.owners.transitionFree, returnedOwners.transitionFree);
             EXPECT_EQ(admissionRecheck.owners.armGroupFree, returnedOwners.armGroupFree);
             EXPECT_EQ(admissionRecheck.owners.armFree, returnedOwners.armFree);
-            EXPECT_EQ(admissionRecheck.owners.occurrenceFree, returnedOwners.occurrenceFree);
+            EXPECT_EQ(admissionRecheck.owners.unavailableOccurrences, returnedOwners.unavailableOccurrences);
             EXPECT_EQ(admissionRecheck.owners.compositeFree, returnedOwners.compositeFree);
             EXPECT_EQ(admissionRecheck.owners.ingress, returnedOwners.ingress);
             EXPECT_EQ(admissionRecheck.owners.occupiedQueueProgramBanks,
@@ -65097,8 +65098,8 @@ TEST(ActionFiringApi,
     key.arrangingInstance = 1;
     key.clipId = harkentest::ObjectId(9001);
     key.occurrenceOrdinal = 1;
-    std::vector<harken::OccurrenceToken> occupied(
-        engine->timelineOccurrences.Capacity());
+    ASSERT_TRUE(harkentest::LimitOccurrenceGrowthToCurrentPages(engine->timelineOccurrences));
+    std::vector<harken::OccurrenceToken> occupied(engine->timelineOccurrences.FreeCount());
     for (auto& token : occupied) {
         ASSERT_TRUE(engine->timelineOccurrences.PrepareAcquire(key,
                                                                &token));
@@ -75412,7 +75413,7 @@ TEST(ActionFiringApi, QueueCompositeSecondLeafNativeMarkerRefusalKeepsHeadPrivat
     seen.block = engine.mixer.BlocksRendered();
     const auto owners = CaptureActionReclaimableOwners(engine);
     const auto freeRows = engine.compositeCompletionOwners.FreeCount();
-    const auto freeOccurrences = engine.timelineOccurrences.FreeCount();
+    const auto occupiedOccurrences = engine.timelineOccurrences.Capacity() - engine.timelineOccurrences.FreeCount();
     engine.originalCompositePreparationContextForTest = &seen;
     engine.originalCompositePreparationHookForTest = [](
         harken::Engine& actual, const harken::EngineOriginalCompositeCompletionPreparation& original, void* context) {
@@ -75451,7 +75452,7 @@ TEST(ActionFiringApi, QueueCompositeSecondLeafNativeMarkerRefusalKeepsHeadPrivat
         harken::CompletionOwnerRef owner{};
         EXPECT_FALSE(engine.timelineOccurrences.CaptureCompletionOwner(leaf.occurrence, &owner));
     }
-    EXPECT_EQ(freeOccurrences, engine.timelineOccurrences.FreeCount());
+    EXPECT_EQ(occupiedOccurrences, engine.timelineOccurrences.Capacity() - engine.timelineOccurrences.FreeCount());
     EXPECT_EQ(0u, engine.timelineOccurrences.RetainedStorageCount());
     seen.foreign.Release();
     EXPECT_EQ(freeRows, engine.compositeCompletionOwners.FreeCount());

@@ -14,6 +14,7 @@
 #include <limits>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 using harken::OccurrenceKey;
 using harken::OccurrenceStage;
@@ -32,7 +33,7 @@ struct OccurrenceStatePoolTestAccess {
     static void SeedGeneration(OccurrenceStatePool& pool,
                                std::uint32_t slot,
                                std::uint32_t generation) {
-        auto& entry = pool.m_entries.at(slot);
+        auto& entry = pool.m_entries[slot];
         entry.generation = generation;
         entry.quarantined = false;
         entry.stage = OccurrenceStage::Free;
@@ -48,7 +49,7 @@ struct OccurrenceStatePoolTestAccess {
     // Negative-only overflow setup; no origin is issued by this helper.
     static void SeedStoragePinCount(OccurrenceStatePool& pool,
                                     OccurrenceToken token, std::uint32_t count) {
-        pool.m_entries.at(token.slot).originalStoragePinCount = count;
+        pool.m_entries[token.slot].originalStoragePinCount = count;
     }
 
     static OccurrenceToken Token(std::uint32_t slot,
@@ -131,6 +132,40 @@ TEST(OccurrenceStatePool, CompletionProgressIsInlineAndResolvedByExactToken)
     RunToFence(pool, token);
     ASSERT_TRUE(pool.ReleaseAfterFence(token));
     EXPECT_EQ(nullptr, pool.CompletionProgressOf(token));
+}
+
+TEST(OccurrenceStatePool, LiveClipKeepsItsIdentityAcrossPageRefusalGrowthAndReuse)
+{
+    OccurrenceStatePool pool;
+    const auto clip = harkentest::ObjectId(77);
+    std::vector<OccurrenceToken> tokens;
+    OccurrenceToken first{};
+    ASSERT_TRUE(pool.Acquire(KeyFor(1, clip), &first));
+    tokens.push_back(first);
+    const auto* const firstKey = pool.KeyOf(first);
+    pool.SetCommitPageLimitForTests(0);
+    OccurrenceToken next{};
+    while (pool.PrepareAcquire(KeyFor(2, clip), &next))
+        tokens.push_back(next);
+    EXPECT_EQ(pool.Capacity(), tokens.size());
+    EXPECT_EQ(pool.KeyOf(first), firstKey);
+    pool.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(3, clip), &next));
+    EXPECT_EQ(pool.KeyOf(first), firstKey);
+    ASSERT_NE(pool.KeyOf(next), nullptr);
+    EXPECT_EQ(pool.KeyOf(next)->arrangingInstance, 3u);
+    RunToFence(pool, first);
+    ASSERT_TRUE(pool.ReleaseAfterFence(first));
+    OccurrenceToken reused{};
+    ASSERT_TRUE(pool.PrepareAcquire(KeyFor(4, clip), &reused));
+    EXPECT_EQ(reused.slot, first.slot);
+    EXPECT_NE(reused.generation, first.generation);
+    EXPECT_EQ(pool.KeyOf(first), nullptr);
+    for (std::size_t index = 1; index < tokens.size(); ++index)
+        ASSERT_TRUE(pool.CancelPreparedAcquire(tokens[index]));
+    ASSERT_TRUE(pool.CancelPreparedAcquire(next));
+    ASSERT_TRUE(pool.CancelPreparedAcquire(reused));
+    EXPECT_EQ(pool.FreeCount(), pool.Capacity());
 }
 
 // Both lineage depths use the same key shape, so a directly triggered Track and

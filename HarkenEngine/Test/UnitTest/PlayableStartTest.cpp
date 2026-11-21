@@ -15517,6 +15517,7 @@ TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyRec
             key.arrangingInstance = background;
             key.clipId = harkentest::ObjectId(9001);
             key.occurrenceOrdinal = 1;
+            ASSERT_TRUE(harkentest::LimitOccurrenceGrowthToCurrentPages(engine->timelineOccurrences));
             std::vector<harken::OccurrenceToken> occupied(engine->timelineOccurrences.FreeCount());
             for (auto& token : occupied)
                 ASSERT_TRUE(engine->timelineOccurrences.PrepareAcquire(key, &token));
@@ -15549,6 +15550,7 @@ TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyRec
             EXPECT_FALSE(engine->runtimeRecreateRequired);
             for (const auto token : occupied)
                 EXPECT_TRUE(engine->timelineOccurrences.CancelPreparedAcquire(token));
+            engine->timelineOccurrences.SetCommitPageLimitForTests(SIZE_MAX);
             ASSERT_FALSE(engine->runtimeRecreateRequired);
             ASSERT_EQ(VN_OK, Vn_Update());
             const auto rendered = engine->mixer.BlocksRendered();

@@ -28,6 +28,15 @@ inline bool LimitDeferredIntentPoolToFirstPage(harken::DeferredIntentPool& pool)
     return pool.Capacity() >= 2u;
 }
 
+// Leave a real page boundary after the existing rows so callers can exercise
+// allocation refusal with a chosen number of already constructed slots free.
+inline bool LimitOccurrenceGrowthToCurrentPages(harken::OccurrenceStatePool& pool) {
+    if (!pool.PrepareStorage(pool.Capacity() + 1u)) return false;
+    pool.SetCommitPageLimitForTests(0);
+    while (pool.Capacity() < UINT32_MAX && pool.PrepareStorage(pool.Capacity() + 1u)) {}
+    return pool.FreeCount() != 0;
+}
+
 class PlayableCapacityScope {
 public:
     PlayableCapacityScope(std::uint32_t playable, std::uint32_t modes) {

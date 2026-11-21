@@ -7100,7 +7100,6 @@ public:
                   : resolved.dynamicRouteCapacity),
           influenceVisited(resolved.maxBuses, 0),
           influenceStack(resolved.maxBuses, 0),
-          timelineOccurrences(resolved.maxDeferredIntents),
           voices(resolved, &tables, &multirateTables, &biquadTrig, effectBank,
                  dynamicRoutes, &timelineArms),
           buses(resolved, topologyPlans, effectBank, dynamicRoutes,
@@ -7171,8 +7170,6 @@ public:
           commands(resolved.commandQueueDepth, &timelineArms),
           originalSourceSubmissions(timelineArms, voices, commands, effectBank),
           originalSingleDecisionBaselines(decisions.Capacity()),
-          originalSingleOccurrenceBaselines(timelineOccurrences.Capacity()),
-          originalSingleOccurrenceCommitProofs(timelineOccurrences.Capacity()),
           actionPlayCommandScratch(commands.Capacity()),
           actionSeekCommandScratch(commands.Capacity()),
           actionSeekPreparationScratch(commands.Capacity()),
@@ -7192,7 +7189,6 @@ public:
               resolved.maxCompositeCompletionOwners,
               resolved.maxKnownScheduleLeaves),
           originalCompositeCompletionPreparations(resolved.maxCompositeCompletionOwners),
-          originalOccurrencePreparations(resolved.maxDeferredIntents),
           timelinePrograms(2),
            timelineSink(voices, timelineArms),
            mixer(resolved, voices, buses, dynamicRoutes, commands, actionSeeks,
@@ -7309,6 +7305,12 @@ public:
         (void)originalPlayableResolver;
         const bool originalDecisionResolver = decisions.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalSingleDecisionBaseline);
+        timelineOccurrences.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            return engine.originalSingleOccurrenceBaselines.ConstructThrough(required) &&
+                engine.originalSingleOccurrenceCommitProofs.ConstructThrough(required) &&
+                engine.originalOccurrencePreparations.ConstructThrough(required);
+        });
         actionDeferredRecords.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
             return static_cast<Engine*>(context)->originalDeferredPackHolders.ConstructThrough(required);
         });
@@ -7507,7 +7509,7 @@ public:
         const EngineFrontierOwnerLedger::Limits frontierOwnerLimits{
             boundedFrontierCount(frontierNodes, resolved.maxPendingSelectionDeltasTotal),
             boundedFrontierCount(2u * frontierNodes + 1u, resolved.maxDecisionRows),
-            boundedFrontierCount(2u * frontierNodes, timelineOccurrences.Capacity()),
+            boundedFrontierCount(2u * frontierNodes, UINT32_MAX),
             boundedFrontierCount(frontierNodes, resolved.maxCompositeCompletionOwners),
             boundedFrontierCount(frontierNodes, resolved.voiceCapacity.Render()),
             resolved.maxPlayableInstances, resolved.maxPlayableInstances,
@@ -15424,8 +15426,8 @@ public:
     void (*originalQueueDecisionPreparationHookForTest)(Engine&, const PreparedDecisionReservation&,
         const OriginalDecisionLifetimePin&, void*) = nullptr;
     void* originalQueueDecisionPreparationContextForTest = nullptr;
-    std::vector<OccurrenceStatePool::OriginalSingleCompletionOwnerPin> originalSingleOccurrenceBaselines;
-    std::vector<OccurrenceStatePool::PreparedSingleCompletionCommitProof> originalSingleOccurrenceCommitProofs;
+    GrowingRowStorage<OccurrenceStatePool::OriginalSingleCompletionOwnerPin> originalSingleOccurrenceBaselines;
+    GrowingRowStorage<OccurrenceStatePool::PreparedSingleCompletionCommitProof> originalSingleOccurrenceCommitProofs;
     // Must outlive the proof, whose cancellation releases all prepared seeds.
     std::vector<EffectParamTargetStore::PreparedSeedToken> preparedVoiceEffectSeeds;
     CommandQueue::PreparedBatchProof preparedVoiceCommandBatchProof;
@@ -15482,8 +15484,8 @@ public:
     void* originalCompositePreparationContextForTest = nullptr;
     void (*originalCompositeLeafPreparationHookForTest)(Engine&, const EngineOriginalCompositeCompletionPreparation&, void*) = nullptr;
     void* originalCompositeLeafPreparationContextForTest = nullptr;
-    // Same capacity as actual native Occurrence storage; never grown at runtime.
-    std::vector<EngineOriginalOccurrencePreparation> originalOccurrencePreparations;
+    // Prepared before the corresponding occurrence row becomes visible.
+    GrowingRowStorage<EngineOriginalOccurrencePreparation> originalOccurrencePreparations;
     void (*originalOccurrencePreparationHookForTest)(Engine&, const EngineOriginalOccurrencePreparation&, void*) = nullptr;
     void* originalOccurrencePreparationContextForTest = nullptr;
     DeferredIntentPool timelineDeferred;
