@@ -275,6 +275,8 @@ public:
         const std::vector<VnPackHandle>& removed, PCMRegistry& registry,
         PreparedSetMutation* out,
         const std::vector<PackResourceRevisionToken>& retained = {});
+    bool FitsResidentMediaBudget(const PreparedSetMutation& prepared, std::uint64_t limit,
+                                 std::uint64_t newResidentPcmBytes) const;
     void CancelPreparedSet(PreparedSetMutation* prepared) noexcept;
     void CommitPreparedSet(PreparedSetMutation* prepared,
                            PCMRegistry& registry) noexcept;

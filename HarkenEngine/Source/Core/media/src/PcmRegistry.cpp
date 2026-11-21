@@ -488,6 +488,24 @@ PcmMediaFacts PCMRegistry::Entry::Facts() const noexcept {
     return {};
 }
 
+PCMRegistry::PackReference::ResidentCost PCMRegistry::PackReference::Cost() const noexcept {
+    if (!entry_) return {};
+    if (const auto& media = entry_->encoded) {
+        const auto& settings = media->Settings();
+        const auto shared = settings.Bytes();
+        return {media.get(), media->ResidentBytes() - shared, &settings, shared};
+    }
+    if (entry_->ownedSamples) {
+        const auto& memory = entry_->ownedSamples.get_deleter();
+        const std::uint64_t bytes = memory.pages
+            ? memory.pages->CommittedBytes() + memory.pages->DirectoryBytes()
+            : entry_->view.frames * entry_->view.channelCount *
+                (memory.format == PcmSampleFormat::ExactInt16 ? sizeof(std::int16_t) : sizeof(float));
+        return {entry_->ownedSamples.get(), bytes, nullptr, 0};
+    }
+    return {};
+}
+
 VnResult PCMRegistry::PrepareResidentVorbis(VnSoundId soundId, std::vector<std::uint8_t> bytes,
     std::size_t budget, PreparedPackSamples* out) {
     if (!codec_) return VN_CAPABILITY_UNAVAILABLE;
