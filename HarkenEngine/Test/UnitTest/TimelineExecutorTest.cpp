@@ -702,8 +702,8 @@ TEST(TimelineArmTable, EmptyCapacityDoesNotConstructOrCommitNativeRows) {
     EXPECT_EQ(0u, table.RowCommittedBytes());
     EXPECT_EQ(0u, table.ScopeStorageBytes());
     EXPECT_EQ(0u, table.ScopeCommittedBytes());
-    EXPECT_GE(table.RowReservedBytes(), 1024u * sizeof(harken::TimelineArmTable::Row));
-    EXPECT_GT(table.ScopeReservedBytes(), 0u);
+    EXPECT_EQ(0u, table.RowReservedBytes());
+    EXPECT_EQ(0u, table.ScopeReservedBytes());
     EXPECT_EQ(nullptr, table.RowAt(0));
     EXPECT_EQ(nullptr, view.RowAt(1023));
     const harken::TimelineArmToken unissued{1023, 1, 0, 9};
@@ -718,12 +718,14 @@ TEST(TimelineArmTable, EmptyCapacityDoesNotConstructOrCommitNativeRows) {
     EXPECT_EQ(0u, table.ScopeCommittedBytes());
 }
 
-TEST(TimelineArmTable, NativeReservationFailurePreservesConstructorFailureContract) {
+TEST(TimelineArmTable, FirstUseReservationFailureCanRetry) {
     harken::detail::StablePageReservation::FailNextReservationForTests();
-    EXPECT_THROW({ harken::TimelineArmTable table(4); }, std::bad_alloc);
     harken::TimelineArmTable retry(4);
     harken::TimelineArmToken token{};
-    EXPECT_TRUE(retry.PreparePendingImmediate(0, 9, 7, {}, &token));
+    EXPECT_FALSE(retry.PreparePendingImmediate(0, 9, 7, {}, &token));
+    EXPECT_FALSE(token.Valid());
+    EXPECT_EQ(0u, retry.ConstructedRowCount());
+    ASSERT_TRUE(retry.PreparePendingImmediate(0, 9, 7, {}, &token));
     EXPECT_TRUE(token.Valid());
     EXPECT_TRUE(retry.CancelPrepared(token));
 }
@@ -735,7 +737,9 @@ TEST(TimelineArmTable, SeparateCommitFailuresKeepPriorRowsAndChargeRetainedBacki
     EXPECT_FALSE(table.PreparePendingImmediate(0, 9, 7, {}, &refused));
     EXPECT_FALSE(refused.Valid());
     EXPECT_EQ(0u, table.ConstructedRowCount());
-    EXPECT_EQ(0u, table.ScopeStorageBytes());
+    const auto retainedScope = table.ScopeStorageBytes();
+    EXPECT_FALSE(table.PreparePendingImmediate(0, 9, 7, {}, &refused));
+    EXPECT_EQ(retainedScope, table.ScopeStorageBytes());
     EXPECT_EQ(0u, table.ScopeCommittedBytes());
     EXPECT_EQ(0u, table.RowCommittedBytes());
 
@@ -747,7 +751,9 @@ TEST(TimelineArmTable, SeparateCommitFailuresKeepPriorRowsAndChargeRetainedBacki
     EXPECT_GT(scopeBytes, 0u);
     EXPECT_GE(table.ScopeCommittedBytes(), scopeBytes);
     EXPECT_EQ(0u, table.ConstructedRowCount());
-    EXPECT_EQ(0u, table.RowStorageBytes());
+    const auto retainedRow = table.RowStorageBytes();
+    EXPECT_FALSE(table.PreparePendingImmediate(0, 9, 7, {}, &refused));
+    EXPECT_EQ(retainedRow, table.RowStorageBytes());
     EXPECT_EQ(0u, table.RowCommittedBytes());
     EXPECT_EQ(4096u, table.FreeCount());
     EXPECT_EQ(nullptr, table.RowAt(0));
@@ -765,9 +771,11 @@ TEST(TimelineArmTable, SeparateCommitFailuresKeepPriorRowsAndChargeRetainedBacki
     ASSERT_FALSE(issued.empty());
     ASSERT_LT(issued.size(), table.Capacity());
     EXPECT_EQ(issued.size(), table.ConstructedRowCount());
-    EXPECT_EQ(issued.size() * sizeof(harken::TimelineArmTable::Row), table.RowStorageBytes());
+    EXPECT_GE(table.RowStorageBytes(), issued.size() * sizeof(harken::TimelineArmTable::Row));
     EXPECT_LT(table.RowCommittedBytes(), (issued.size() + 1) * sizeof(harken::TimelineArmTable::Row));
-    EXPECT_EQ((issued.size() + 1) * scopeBytes, table.ScopeStorageBytes());
+    const auto preparedScope = table.ScopeStorageBytes();
+    EXPECT_FALSE(table.PreparePendingImmediate(999, 9, 7, {}, &refused));
+    EXPECT_EQ(preparedScope, table.ScopeStorageBytes());
     EXPECT_EQ(table.Capacity() - issued.size(), table.FreeCount());
     for (const auto token : issued) {
         const auto* row = table.Resolve(token);
@@ -782,7 +790,7 @@ TEST(TimelineArmTable, SeparateCommitFailuresKeepPriorRowsAndChargeRetainedBacki
     ASSERT_TRUE(table.PreparePendingImmediate(999, 9, 7, {}, &retry));
     EXPECT_EQ(issued.size(), retry.slot);
     EXPECT_EQ(1u, retry.generation);
-    EXPECT_EQ((issued.size() + 1) * scopeBytes, table.ScopeStorageBytes());
+    EXPECT_EQ(preparedScope, table.ScopeStorageBytes());
     EXPECT_EQ(issued.size() + 1, table.ConstructedRowCount());
     ASSERT_TRUE(table.CancelPrepared(retry));
     for (const auto token : issued) ASSERT_TRUE(table.CancelPrepared(token));

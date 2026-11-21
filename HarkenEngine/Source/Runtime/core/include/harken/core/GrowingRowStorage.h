@@ -110,16 +110,17 @@ public:
         return *row;
     }
 
-    // Resolve a row held by a control-side owner without assuming contiguity.
+    // Only directories covered by the acquired prefix are visible to a concurrent reader.
     std::uint32_t IndexOf(const T* row) const noexcept {
         const auto address = reinterpret_cast<std::uintptr_t>(row);
-        for (std::uint32_t i = 0; i < segments_.size(); ++i) {
-            if (!segments_[i]) continue;
+        const auto published = ConstructedCount();
+        if (published == 0) return UINT32_MAX;
+        for (std::uint32_t i = 0; i <= SegmentFor(published - 1u); ++i) {
             const auto begin = reinterpret_cast<std::uintptr_t>(segments_[i]->data());
             const auto bytes = std::uint64_t{segments_[i]->ConstructedCount()} * sizeof(T);
             if (address >= begin && address - begin < bytes && (address - begin) % sizeof(T) == 0) {
                 const auto index = SegmentBegin(i) + static_cast<std::uint32_t>((address - begin) / sizeof(T));
-                if (index < ConstructedCount()) return index;
+                if (index < published) return index;
             }
         }
         return UINT32_MAX;

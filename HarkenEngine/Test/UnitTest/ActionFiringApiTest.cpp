@@ -4379,6 +4379,19 @@ void ExpectScheduleCapacityActionCompletes(
         const auto commandHead = engine->commands.PublishedHead();
         const auto sequence = engine->logicCommits.IssuedCount();
         const auto occupiedInstanceRows = engine->playableInstances.UnavailableRowCount();
+        engine->originalSourceSubmissions.SetCommitPageLimitForTests(0);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+        engine->originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+        EXPECT_EQ(occupiedInstanceRows, engine->playableInstances.UnavailableRowCount());
+        EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
+        EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+        EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
+        EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+        EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+        EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
         ASSERT_EQ(nullptr, engine->variableControlRetargetScratch);
         harken::detail::ArmLogicAllocFaultForTests(1,
             harken::detail::LogicAllocSite::VariableControlRetargetStorage);
@@ -4397,19 +4410,6 @@ void ExpectScheduleCapacityActionCompletes(
         EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
         EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
         EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
-        EXPECT_EQ(commandHead, engine->commands.PublishedHead());
-        EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
-        EXPECT_FALSE(engine->runtimeRecreateRequired);
-        engine->originalSourceSubmissions.SetCommitPageLimitForTests(0);
-        EXPECT_EQ(VN_NO_VOICE, Vn_PostAction(&desc, &firing));
-        engine->originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
-        EXPECT_EQ(0u, firing);
-        EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
-        EXPECT_EQ(occupiedInstanceRows, engine->playableInstances.UnavailableRowCount());
-        EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
-        EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
-        EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
-        EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
         EXPECT_EQ(commandHead, engine->commands.PublishedHead());
         EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
         EXPECT_FALSE(engine->runtimeRecreateRequired);
@@ -5969,6 +5969,8 @@ void ExpectTransitionContinuationOwnerExhaustion(
     case ContinuationOwnerExhaustion::SourceArm: {
         const std::uint32_t residual =
             exhaustion == ContinuationOwnerExhaustion::SourceArm ? 4u : 2u;
+        ASSERT_TRUE(engine->timelineArms.PrepareAvailable(engine->timelineArms.Capacity()));
+        ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->timelineArms));
         arms.resize(engine->timelineArms.FreeCount() - residual);
         for (std::uint32_t index = 0; index < arms.size(); ++index) {
             ASSERT_TRUE(engine->timelineArms.Prepare(
@@ -6056,7 +6058,9 @@ void ExpectTransitionContinuationOwnerExhaustion(
         (exhaustion == ContinuationOwnerExhaustion::SuccessorDecision ||
             exhaustion == ContinuationOwnerExhaustion::Transition ||
             exhaustion == ContinuationOwnerExhaustion::SuccessorCompositeOwner ||
-            exhaustion == ContinuationOwnerExhaustion::ArmGroup) ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
+            exhaustion == ContinuationOwnerExhaustion::ArmGroup ||
+            exhaustion == ContinuationOwnerExhaustion::SourceArm ||
+            exhaustion == ContinuationOwnerExhaustion::SuccessorTargetArm) ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
 
     for (auto& prepared : decisions) {
         EXPECT_TRUE(engine->decisions.CancelPreparedReservation(&prepared));
@@ -6070,6 +6074,7 @@ void ExpectTransitionContinuationOwnerExhaustion(
     for (const VnVoiceHandle handle : voices) {
         EXPECT_TRUE(engine->voices.CancelPreparedVoice(handle));
     }
+    engine->timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
     for (const auto token : arms) {
         EXPECT_TRUE(engine->timelineArms.CancelPrepared(token));
     }
@@ -6606,17 +6611,17 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
                 EXPECT_EQ(0u, row->originalSourceEpisode);
                 EXPECT_EQ(nullptr, row->originalSourceSubmission);
             }
-            for (const auto& original : engine.originalQueueSourcePreparationHolders) {
+            engine.originalQueueSourcePreparationHolders.ForEachConstructed([](const auto& original) {
                 EXPECT_FALSE(original.OriginalSource().Valid());
                 EXPECT_FALSE(original.OriginalBody().Valid());
                 EXPECT_FALSE(original.OriginalCompositeLedger().Valid());
-            }
-            for (const auto& original : engine.originalSinglePreparationHolders) {
+            });
+            engine.originalSinglePreparationHolders.ForEachConstructed([](const auto& original) {
                 EXPECT_FALSE(original.OriginalSource().Valid());
                 EXPECT_FALSE(original.OriginalBody().Valid());
                 EXPECT_FALSE(original.OriginalLedger().Valid());
                 EXPECT_FALSE(original.OriginalLedgerPreparation().Valid());
-            }
+            });
         }
         struct CaptureObservation {
             bool queue = false;
@@ -6694,17 +6699,17 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         if (holderRefusal) {
             EXPECT_EQ(availableVoices, engine.voices.AvailableSlotCount());
             EXPECT_EQ(sourceTerminals, engine.sourceTerminals.OccupiedCount());
-            for (const auto& original : engine.originalQueueSourcePreparationHolders) {
+            engine.originalQueueSourcePreparationHolders.ForEachConstructed([](const auto& original) {
                 EXPECT_FALSE(original.OriginalSource().Valid());
                 EXPECT_FALSE(original.OriginalBody().Valid());
                 EXPECT_FALSE(original.OriginalCompositeLedger().Valid());
-            }
-            for (const auto& original : engine.originalSinglePreparationHolders) {
+            });
+            engine.originalSinglePreparationHolders.ForEachConstructed([](const auto& original) {
                 EXPECT_FALSE(original.OriginalSource().Valid());
                 EXPECT_FALSE(original.OriginalBody().Valid());
                 EXPECT_FALSE(original.OriginalLedger().Valid());
                 EXPECT_FALSE(original.OriginalLedgerPreparation().Valid());
-            }
+            });
         }
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
@@ -8579,6 +8584,8 @@ TEST(ActionFiringApi, DelayedStopLastControlArmRefusalLeavesCapturedRootUnchange
     const auto root = engine->playableServices[0].rootInstance;
     const auto before = engine->playableInstances.Classify(root);
     std::vector<harken::TimelineArmToken> blockers;
+    ASSERT_TRUE(engine->timelineArms.PrepareAvailable(engine->timelineArms.FreeCount()));
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->timelineArms));
     while (engine->timelineArms.FreeCount() > 1u) {
         harken::TimelineArmToken token{};
         ASSERT_TRUE(engine->timelineArms.Prepare(0, 1, 3072, 3072, root,
@@ -8591,7 +8598,7 @@ TEST(ActionFiringApi, DelayedStopLastControlArmRefusalLeavesCapturedRootUnchange
     auto stop = ValidPostDesc();
     stop.actionId = image.actions[8].actionStableId;
     VnActionFiringHandle stopFiring = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&stop, &stopFiring));
+    EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&stop, &stopFiring));
     EXPECT_EQ(0u, stopFiring);
     EXPECT_EQ(arms, engine->timelineArms.LiveCount());
     EXPECT_EQ(1u, engine->timelineArms.FreeCount());
@@ -8601,6 +8608,7 @@ TEST(ActionFiringApi, DelayedStopLastControlArmRefusalLeavesCapturedRootUnchange
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     for (const auto& operation : engine->authoredStopRoots) EXPECT_FALSE(operation.operation.has_value());
     for (const auto& resource : engine->authoredStopResources) EXPECT_FALSE(resource.prepared || resource.committed);
+    engine->timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
     for (const auto token : blockers) ASSERT_TRUE(engine->timelineArms.CancelPrepared(token));
     ASSERT_EQ(VN_OK, Vn_PostAction(&stop, &stopFiring));
     EXPECT_NE(0u, stopFiring);
@@ -17404,6 +17412,12 @@ TEST(ActionFiringApi, DelayedStopCapturesEveryMatchingRootAtomically) {
     EXPECT_EQ(2u, stop.capturedPlayableCount);
     EXPECT_EQ(2u, stop.remainingPlayableCount);
 
+    // Both captured sounds already own their stop records. Later submissions
+    // may take all remaining rows, and the accepted stop must still succeed.
+    engine->timelineArms.SetRowCommitPageLimitForTests(0);
+    std::vector<harken::TimelineArmToken> occupied;
+    harken::TimelineArmToken next{};
+    while (engine->timelineArms.Prepare(0, 1, 0, 0, 1, {}, &next)) occupied.push_back(next);
     DrainActionDeferred(engine);
     EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &stop));
@@ -17439,6 +17453,8 @@ TEST(ActionFiringApi, DelayedStopCapturesEveryMatchingRootAtomically) {
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &stop));
     EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, stop.state);
     EXPECT_EQ(0u, stop.remainingPlayableCount);
+    engine->timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
+    for (const auto token : occupied) EXPECT_TRUE(engine->timelineArms.CancelPrepared(token));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firstPlay));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(secondPlay));
@@ -64913,8 +64929,7 @@ TEST(ActionFiringApi,
     EXPECT_TRUE(engine->voices.CancelPreparedVoice(occupied));
 }
 
-TEST(ActionFiringApi,
-     PreparationMatrixTimelineArmCapacityReturnsNoVoice) {
+void CheckTimelineArmGrowthPreservesPlayback(bool delayed) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(1, 64, 48000));
@@ -64927,23 +64942,53 @@ TEST(ActionFiringApi,
     CanonicalActionWorld image(
         engine->registry.Lookup(CanonicalActionWorld::kFirstSound)
             .contentRevision);
-    image.MakeImmediateSoundPlayAction();
+    if (delayed) image.MakeDelayedSoundPlayAction(DelayNanosecondsForTargetFrame(*engine, 4096));
+    else image.MakeImmediateSoundPlayAction();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
 
+    VnPostActionDesc desc = ValidPostDesc();
+    desc.actionId = harkentest::ObjectId(50);
+    VnActionFiringHandle firing = 0;
+    if (delayed) ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     std::vector<harken::TimelineArmToken> occupied(engine->timelineArms.Capacity());
     for (auto& token : occupied) {
         ASSERT_TRUE(engine->timelineArms.Prepare(
             0, 1, 0, 0, 1, harken::TimelineSemanticTarget{}, &token));
     }
-    ASSERT_EQ(0u, engine->timelineArms.FreeCount());
-    const auto before = CaptureActionPreparationOwners(*engine);
-
-    ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(50), 0, VN_NO_VOICE, before);
-
+    if (delayed) {
+        engine->timelineArms.SetRowCommitPageLimitForTests(0);
+        harken::TimelineArmToken token{};
+        while (engine->timelineArms.Prepare(0, 1, 0, 0, 1, {}, &token)) occupied.push_back(token);
+    } else {
+        ASSERT_EQ(0u, engine->timelineArms.FreeCount());
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    }
+    bool heard = false;
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    for (unsigned block = 0; block < 128; ++block) {
+        engine->nullBackend.Pump(1);
+        heard |= harkentest::Peak(engine->nullBackend.LastBlock(),
+            engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()) > harkentest::kSilenceFloor;
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_TRUE(heard);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    engine->timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
     for (const auto token : occupied) EXPECT_TRUE(engine->timelineArms.CancelPrepared(token));
     EXPECT_EQ(engine->timelineArms.Capacity(), engine->timelineArms.FreeCount());
+}
+
+TEST(ActionFiringApi, PreparationMatrixTimelineArmGrowthPreservesPlayback) {
+    CheckTimelineArmGrowthPreservesPlayback(false);
+}
+
+TEST(ActionFiringApi, AcceptedDelayedSoundUsesItsOwnArmWhenOtherStartsFillStorage) {
+    CheckTimelineArmGrowthPreservesPlayback(true);
 }
 
 TEST(ActionFiringApi,
@@ -73498,20 +73543,20 @@ TEST(ActionFiringApi, OriginalSingleProductionRealOwnerCommitRefusalKeepsSourceH
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     EXPECT_EQ(owners, CaptureActionReclaimableOwners(engine));
-    for (const auto& original : engine.originalQueueSourcePreparationHolders) {
+    engine.originalQueueSourcePreparationHolders.ForEachConstructed([](const auto& original) {
         EXPECT_FALSE(original.OriginalSource().Valid());
         EXPECT_FALSE(original.OriginalBody().Valid());
-    }
+    });
     for (const auto& original : engine.originalSingleCurrentHolders) {
         EXPECT_FALSE(original.bundle.Valid());
         EXPECT_FALSE(original.serviceRetention.Valid());
     }
-    for (const auto& original : engine.originalSinglePreparationHolders) {
+    engine.originalSinglePreparationHolders.ForEachConstructed([](const auto& original) {
         EXPECT_FALSE(original.OriginalSource().Valid());
         EXPECT_FALSE(original.OriginalBody().Valid());
         EXPECT_FALSE(original.OriginalLedger().Valid());
         EXPECT_FALSE(original.OriginalLedgerPreparation().Valid());
-    }
+    });
     for (const auto& original : engine.originalSingleDecisionBaselines) EXPECT_FALSE(original.Valid());
     for (const auto& original : engine.originalSingleOccurrenceBaselines) EXPECT_FALSE(original.Valid());
     for (const auto& original : engine.originalSingleOccurrenceCommitProofs) EXPECT_FALSE(original.Valid());
@@ -73599,14 +73644,14 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
             originalRenders[originalCount++] = member.renderHandle;
         }
     ASSERT_EQ(roots, originalCount);
-    for (const auto& original : engine.originalQueueSourcePreparationHolders) {
+    engine.originalQueueSourcePreparationHolders.ForEachConstructed([](const auto& original) {
         EXPECT_FALSE(original.OriginalSource().Valid());
         EXPECT_FALSE(original.OriginalBody().Valid());
-    }
-    for (const auto& original : engine.originalSinglePreparationHolders) {
+    });
+    engine.originalSinglePreparationHolders.ForEachConstructed([](const auto& original) {
         EXPECT_FALSE(original.OriginalSource().Valid());
         EXPECT_FALSE(original.OriginalBody().Valid());
-    }
+    });
     for (const auto& original : engine.originalSingleCurrentHolders) {
         EXPECT_FALSE(original.bundle.Valid());
         EXPECT_FALSE(original.serviceRetention.Valid());

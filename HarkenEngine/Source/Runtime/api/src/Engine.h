@@ -7081,7 +7081,7 @@ public:
                     resolved.maxParticipantsPerDecision),
           armGroups(UINT32_MAX,
                     resolved.maxArmsPerGroup),
-          timelineArms(TimelineArmCapacity(resolved)),
+          timelineArms(TimelineArmCapacity(resolved), true),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
           queueInstances(UINT32_MAX, originalConditionalCapacity),
           compositeCompletionOwners(UINT32_MAX, resolved.maxKnownScheduleLeaves),
@@ -7271,8 +7271,6 @@ public:
             });
         if (!authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
             !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
-            !pendingVariableLeafSources.Reserve(timelineArms.Capacity()) ||
-            !pendingVariableFutureSources.Reserve(timelineArms.Capacity()) ||
             !timelineStartScratch.starts.Reserve(kMaxKnownScheduleLeaves) ||
             !timelineStartScratch.transactions.Reserve(2u * kMaxKnownScheduleLeaves + 2u) ||
             !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
@@ -7288,9 +7286,7 @@ public:
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw harken::detail::LogicPreparationFailure{};
-        if (!variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
-            !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
+        if (!variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions))
             throw harken::detail::LogicPreparationFailure{};
         if (!timelineArms.AttachRowStoragePreparation(this,
             [](void* context, std::uint32_t count, bool fullSourceCommandBacking) noexcept {
@@ -8275,6 +8271,13 @@ public:
     std::uint32_t borrowedTreeWidth = 0;
     ActionFiringHandle preparingDeferredTreeOwner = 0;
     struct DeferredTreeBacking final : ActionTreeBacking {
+        StableStoragePreparation arms;
+        std::uint32_t armCount = 0;
+        bool AddArms(std::uint64_t count) noexcept {
+            if (count > UINT32_MAX - armCount) return false;
+            armCount += static_cast<std::uint32_t>(count);
+            return true;
+        }
         StableSlotStorage<EngineActionPlayScratch>::Preparation attempts;
         StableStoragePreparation variableControls;
         std::uint32_t controlCount = 0;
@@ -8342,6 +8345,8 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (backing.armCount && !timelineArms.PrepareBacking(backing.armCount, &backing.arms)) return false;
+        if (backing.count == 0) return true;
         if (!backing.completionWidths.empty() &&
             !compositeCompletionOwners.PrepareBacking(backing.completionWidths, &backing.completions)) return false;
         if (backing.groupCount != 0 &&
@@ -8374,10 +8379,13 @@ public:
         std::optional<CompositeCompletionOwnerPool::PreparedUse> composites;
         std::optional<ArmGroupTable::PreparedUse> groups;
         std::optional<StableStoragePreparedUse> decisions;
-        BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner) noexcept
+        std::optional<StableStoragePreparedUse> arms;
+        BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner, bool stopping) noexcept
             : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
               controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
             if (held) {
+                if ((owner || stopping) && held->arms.Valid() && !engine.nativeRuntimeBackingInUse)
+                    arms.emplace(held->arms.Use());
                 active = held->width;
                 controlOwner = held->controlCount != 0 || held->queueCount != 0 || held->groupCount != 0 ? owner : 0;
                 if (owner && !held->completionWidths.empty() && !engine.nativeRuntimeBackingInUse)
@@ -8394,8 +8402,8 @@ public:
             controlOwner = previousOwner;
         }
     };
-    BorrowedTree UseDeferredTrees(ActionFiringHandle firing, ActionFiringHandle controlOwner) noexcept {
-        return {*this, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing)), controlOwner};
+    BorrowedTree UseDeferredTrees(ActionFiringHandle firing, ActionFiringHandle controlOwner, bool stopping = false) noexcept {
+        return {*this, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing)), controlOwner, stopping};
     }
     const DeferredTreeBacking* DeferredBackingFor(const EnginePlayableServiceRow* service) const noexcept {
         const auto owner = service && service->InvocationValid() ? service->Invocation().deferredTreeOwner : 0;
@@ -10917,8 +10925,8 @@ public:
         // factory outputs before their Source/Body receivers are shut down.
         for (auto& proof : originalSingleOccurrenceCommitProofs) proof.Release();
         compositeCompletionOwners.ReleaseOriginalPreparedLeafCommitProofsForQuiescentOwnerTeardown();
-        for (auto& original : originalQueueSourcePreparationHolders) original.ReturnAfterJoinedTerm();
-        for (auto& original : originalSinglePreparationHolders) original.ReturnAfterJoinedTerm();
+        originalQueueSourcePreparationHolders.ForEachConstructed([](auto& original) { original.ReturnAfterJoinedTerm(); });
+        originalSinglePreparationHolders.ForEachConstructed([](auto& original) { original.ReturnAfterJoinedTerm(); });
         for (auto& original : originalSingleOccurrenceBaselines) original.Release();
         for (auto& original : originalSingleDecisionBaselines) original.Release();
         // Actual callback/worker join permits own structural Return, never a
@@ -11082,7 +11090,21 @@ public:
             a.renderSlot == b.renderSlot && a.renderGeneration == b.renderGeneration;
     }
     bool PrepareOriginalSourceRowBacking(std::uint32_t count, bool fullSourceCommandBacking) noexcept {
-        if (count > timelineArms.Capacity()) return false;
+        if (count > timelineArms.Capacity()) {
+            try {
+                if (initialRootArmPublicationRows.size() < count) initialRootArmPublicationRows.resize(count);
+                if (!initialFrontierArmPins.empty() && initialFrontierArmPins.size() < count)
+                    initialFrontierArmPins.resize(count);
+                if (!initialRootArmPublicationInputs.empty() && initialRootArmPublicationInputs.size() < count)
+                    initialRootArmPublicationInputs.resize(count);
+                monitorPlaybackEvents.reserve(static_cast<std::size_t>(count) + playableInstances.ConstructedEntryCount());
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+                return false;
+            }
+            if ((pendingVariableLeafSources.size() != 0 && !pendingVariableLeafSources.ConstructThrough(count)) ||
+                (pendingVariableFutureSources.size() != 0 && !pendingVariableFutureSources.ConstructThrough(count))) return false;
+        }
         // Ordinary construction prepares the record; the actual private capture
         // prepares only the holder it needs before issuing its original loans.
         for (; originalSourceBackingPrefix < count; ++originalSourceBackingPrefix)
@@ -11128,7 +11150,7 @@ public:
         const auto arm = originalArm.OriginalPreparedToken();
         const auto render = originalVoice.OriginalPreparedHandle();
         if (originalArm.Owner() != &timelineArms || originalVoice.Owner() != &voices ||
-            !arm.Valid() || arm.slot >= originalSinglePreparationHolders.size() ||
+            !arm.Valid() || arm.slot >= timelineArms.ConstructedRowCount() ||
             render == 0 || render != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return false;
         if (!originalSinglePreparationHolders.Emplace(arm.slot)) return false;
         auto& holder = originalSinglePreparationHolders[arm.slot];
@@ -11204,7 +11226,7 @@ public:
         const auto render = originalVoice.OriginalPreparedHandle();
         if ((issued != nullptr && *issued != nullptr) ||
             originalArm.Owner() != &timelineArms || originalVoice.Owner() != &voices ||
-            !arm.Valid() || arm.slot >= originalQueueSourcePreparationHolders.size() ||
+            !arm.Valid() || arm.slot >= timelineArms.ConstructedRowCount() ||
             render == 0 || render != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return false;
         if (!originalQueueSourcePreparationHolders.Emplace(arm.slot)) return false;
         auto& holder = originalQueueSourcePreparationHolders[arm.slot];
@@ -11244,12 +11266,12 @@ public:
     }
     void ServiceOriginalQueueSourcePreparations() noexcept {
         if (!originalQueueSourcePreparationSeen) return;
-        for (auto& holder : originalQueueSourcePreparationHolders) {
+        originalQueueSourcePreparationHolders.ForEachConstructed([&](auto& holder) {
             if (holder.receiver_ == this && !holder.returned_)
                 (void)ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(holder.arm_);
             if (holder.receiver_ == this && holder.compositeLedgerOriginal_.Valid())
                 (void)ReturnOriginalCompositeLedgerAfterNativeEnd(&holder);
-        }
+        });
     }
     bool MatchesOriginalCompositeLedgerPreparation(const EnginePreparedTimelineVoiceStart& voice) const noexcept {
         const auto* holder = voice.originalQueueSource;
@@ -11963,11 +11985,12 @@ public:
     void ServiceOriginalSingleSourcePreparations() noexcept {
         if (!originalSingleSourcePreparationSeen) return;
         bool retained = false;
-        for (auto& holder : originalSinglePreparationHolders)
+        originalSinglePreparationHolders.ForEachConstructed([&](auto& holder) {
             if (holder.receiver_ == this && !holder.returned_) {
                 (void)ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(holder.arm_);
                 retained = retained || !holder.returned_;
             }
+        });
         originalSingleSourcePreparationSeen = retained;
     }
 
@@ -14810,8 +14833,8 @@ public:
             (!needsContainerState || !needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             (!needsContainerState ||
                 (PrepareInitialFrontierStorage(1) &&
-                 pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
-                 pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()))) &&
+                 pendingVariableLeafSources.ConstructThrough(timelineArms.Capacity()) &&
+                 pendingVariableFutureSources.ConstructThrough(timelineArms.Capacity()))) &&
             (!needsContainerState || spatial.PrepareVoiceStorage(config.voiceCapacity.Render())) &&
             PreparePlayablePublicationStorage(needsContainerState, independentRoots);
     }
@@ -15077,9 +15100,9 @@ public:
     bool pendingVariableGroupReplacementActive = false;
     bool deferRegisteredPendingVariableSelectionReplacementForTest = false;
     bool deferPendingImmediateEntriesForTest = false;
-    StableRowStorage<OriginalPendingVariableLeafSource> pendingVariableLeafSources;
+    GrowingRowStorage<OriginalPendingVariableLeafSource> pendingVariableLeafSources;
     std::uint32_t pendingVariableLeafSourceCount = 0;
-    StableRowStorage<OriginalPendingVariableFutureSource> pendingVariableFutureSources;
+    GrowingRowStorage<OriginalPendingVariableFutureSource> pendingVariableFutureSources;
     bool PreparePendingVariableQueueOriginBacking(std::uint32_t count,
         StableStoragePreparation* out) noexcept {
         auto occupied = pendingVariableQueueNativeOrigins.ConstructedCount();
@@ -15477,8 +15500,8 @@ public:
     }
     OriginalSourceSubmissionRegistry originalSourceSubmissions;
     // Fixed actual Arm factory slots; every Source/Body receiver outlives them.
-    StableSlotStorage<OriginalSinglePreparationHolder> originalSinglePreparationHolders;
-    StableSlotStorage<OriginalQueueSourcePreparationHolder> originalQueueSourcePreparationHolders;
+    SparseRowStorage<OriginalSinglePreparationHolder, StableSlotStorage<OriginalSinglePreparationHolder>> originalSinglePreparationHolders;
+    SparseRowStorage<OriginalQueueSourcePreparationHolder, StableSlotStorage<OriginalQueueSourcePreparationHolder>> originalQueueSourcePreparationHolders;
     bool originalSingleSourcePreparationSeen = false;
     bool originalQueueSourcePreparationSeen = false;
     std::uint32_t originalSourceBackingPrefix = 0;

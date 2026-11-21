@@ -19651,7 +19651,7 @@ struct OriginalDeferredOperationFixture {
 
     explicit OriginalDeferredOperationFixture(ActionOpcodeV1 opcode,
         bool pendingLocalStop = false, bool immediatePost = false,
-        bool nestedDeferredChild = false) {
+        bool nestedDeferredChild = false, bool useContainer = false) {
         EXPECT_EQ(VN_OK, session.InitResult());
         if (session.InitResult() != VN_OK) return;
         const std::vector<float> pcm(96000, 0.25f);
@@ -19663,10 +19663,12 @@ struct OriginalDeferredOperationFixture {
             ContainerMatrixChild::Sound, revision, revision, false, 1, 0,
             MemoryScopeV1::Emitter);
         ActionStepProgramViewV1 play = image.step;
-        play.target.kind = ActionTargetKindV1::Sound;
-        play.target.stableId = ContainerMatrixWorld::kFirstSound;
-        play.target.expectedProgramSemanticFingerprint =
-            image.properties[0].programSemanticFingerprint;
+        if (!useContainer) {
+            play.target.kind = ActionTargetKindV1::Sound;
+            play.target.stableId = ContainerMatrixWorld::kFirstSound;
+            play.target.expectedProgramSemanticFingerprint =
+                image.properties[0].programSemanticFingerprint;
+        }
         ActionStepProgramViewV1 nestedPost = play;
         std::array<ActionProgramViewV1, 3> actions{image.action, image.action, image.action};
         actions[0].steps = &play;
@@ -19987,8 +19989,8 @@ TEST(PackComposition, DeferredPendingStopCancellationReclaimsPairWithoutTargetLe
     ASSERT_NO_FATAL_FAILURE(CheckDeferredPendingStopSettlement(true));
 }
 
-TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLease) {
-    OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop);
+static void VerifyDeferredPackStopPcm(bool useContainer) {
+    OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop, false, false, false, useContainer);
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_EQ(VN_OK, fixture.PostOperation());
     std::vector<ActionDeferredRecordToken> tokens;
@@ -20027,6 +20029,14 @@ TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLeas
     EXPECT_EQ(0u, engine.playableInstances.LiveCount());
     EXPECT_EQ(0u, engine.voices.ActiveCount());
     EXPECT_EQ(0u, engine.decisions.LiveCount());
+}
+
+TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLease) {
+    VerifyDeferredPackStopPcm(false);
+}
+
+TEST(PackComposition, DeferredContainerStopUsesPlayingPackAndStopsActualPcm) {
+    VerifyDeferredPackStopPcm(true);
 }
 
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)

@@ -130,9 +130,32 @@ private:
 
 // A segment is published once and survives until both users are quiescent.
 // Each segment retains the sparse page map, including its acquire/release publication.
-template<class T>
+template<class T, class Segment = SparseRowSegment<T>>
 class SparseRowStorage {
 public:
+    template<class Visit>
+    void ForEachConstructed(Visit&& visit) noexcept {
+        for (auto& owner : owners_)
+            if (owner) for (auto& row : *owner) visit(row);
+    }
+    // Used with StableSlotStorage when each individual row has a distinct lifetime.
+    bool Emplace(std::uint32_t slot) noexcept {
+        if (slot == UINT32_MAX || memguard::IsAudioTagged()) return IsConstructed(slot);
+        const auto index = SegmentFor(slot);
+        auto* segment = EnsureSegment(index);
+        if (!segment) return false;
+        const auto previous = segment->CommittedBytes();
+        segment->SetCommitPageLimitForTests(remainingPages_);
+        const bool ready = segment->Emplace(slot - SegmentBegin(index));
+        Account(*segment, previous);
+        return ready;
+    }
+    std::uint32_t ConstructedCount() const noexcept {
+        std::uint32_t count = 0;
+        for (const auto& entry : published_)
+            if (const auto* segment = entry.load(std::memory_order_acquire)) count += segment->ConstructedCount();
+        return count;
+    }
     bool ConstructPageFor(std::uint32_t slot) noexcept {
         if (slot == UINT32_MAX || memguard::IsAudioTagged()) return IsConstructed(slot);
         const auto index = SegmentFor(slot);
@@ -184,7 +207,7 @@ public:
     void SetCommitPageLimitForTests(std::size_t pages) noexcept { remainingPages_ = pages; }
 
 private:
-    using Segment = SparseRowSegment<T>;
+
     static constexpr unsigned baseShift = std::countr_zero(std::bit_floor(
         static_cast<unsigned>(std::max<std::size_t>(1, 4096 / sizeof(T)))));
     static unsigned SegmentFor(std::uint32_t slot) noexcept {

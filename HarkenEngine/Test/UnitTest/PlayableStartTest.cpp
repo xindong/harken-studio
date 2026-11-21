@@ -29634,6 +29634,8 @@ TEST(PlayableStart,
     std::vector<harken::TimelineArmToken> fillers;
     harken::TimelineSemanticTarget fillerTarget{};
     fillerTarget.programSemanticFingerprint = 1;
+    ASSERT_TRUE(engine->timelineArms.PrepareAvailable(engine->timelineArms.FreeCount()));
+    ASSERT_TRUE(harkentest::LimitRowGrowthToCurrentPages(engine->timelineArms));
     while (engine->timelineArms.FreeCount() > 2u) {
         harken::TimelineArmToken filler{};
         ASSERT_TRUE(engine->timelineArms.Reserve(

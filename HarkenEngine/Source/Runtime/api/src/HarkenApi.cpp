@@ -7454,7 +7454,7 @@ bool ResolveImmediateActionStopFadeFrames(
     std::uint32_t* outFrames) noexcept;
 bool CaptureDeferredActionStopRoots(
     ImmediateActionPlan& plan, std::uint32_t plannedStepIndex,
-    std::uint32_t* outCount) noexcept;
+    std::uint32_t* outCount, std::unique_ptr<harken::Engine::DeferredTreeBacking>& futureTrees) noexcept;
 void RebasePendingImmediateStopIntents(
     harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept;
@@ -8775,7 +8775,7 @@ VnResult PreflightTimelineVoiceStart(
         return VN_BACKPRESSURE;
     }
     if (!engine.ledger.HasFreeEntry() || !engine.voices.HasFreeSlot() ||
-        engine.timelineArms.FreeCount() == 0) {
+        !engine.timelineArms.CanAcquire()) {
         return VN_NO_VOICE;
     }
     if (install.streamed &&
@@ -23660,7 +23660,7 @@ harken::PlayableStartStatus PreflightScheduleLeafStartsImpl(
         leafCount > leafCapacity ||
         leafCount > engine.ledger.AvailableEntryCount() ||
         leafCount > engine.voices.AvailableSlotCount() ||
-        leafCount > engine.timelineArms.FreeCount()) {
+        !engine.timelineArms.PrepareAvailable(leafCount)) {
         return harken::PlayableStartStatus::Capacity;
     }
     std::uint32_t commandCount = 0;
@@ -31349,8 +31349,7 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
         !engine.armGroups.PrepareAvailable(1u) ||
         sourceControlCount + materialized.leafCount >
             engine.config.maxArmsPerGroup ||
-        engine.timelineArms.FreeCount() <
-            sourceControlCount + materialized.leafCount ||
+        !engine.timelineArms.PrepareAvailable(sourceControlCount + materialized.leafCount) ||
         !atomicBatchFits ||
         !commandBatchAdmitted ||
         (transitionRule != nullptr &&
@@ -32873,7 +32872,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         (sourceControlRequired &&
          (!inWindow(sourceStopFrame) ||
           (sourceFadeActive && !inWindow(sourcePhaseFrame)))) ||
-        engine.timelineArms.FreeCount() < groupMemberCount ||
+        !engine.timelineArms.PrepareAvailable(groupMemberCount) ||
         groupMemberCount > engine.config.maxArmsPerGroup ||
         !engine.armGroups.PrepareAvailable(1u) ||
         !AtomicBatchFitsCapacities(engine, combinedCommandCount) ||
@@ -39932,7 +39931,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
             engine.timelinePool.PublishCutoffFrame()) !=
             harken::ReserveRefusal::None ||
         sourceMemberCount > engine.config.maxArmsPerGroup ||
-        engine.timelineArms.FreeCount() < sourceMemberCount ||
+        !engine.timelineArms.PrepareAvailable(sourceMemberCount) ||
         !engine.armGroups.PrepareAvailable(1u) ||
         !AtomicBatchFitsCapacities(engine, sourceMemberCount) ||
         !AdmitCommandBatch(engine, sourceMemberCount)) {
@@ -40358,7 +40357,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
         engine.timelinePool.PreflightPlan03GroupSlices(decisionFrame, 1) !=
             harken::Plan03GroupReserveStatus::Committed ||
         targetSchedule.leafCount > engine.config.maxArmsPerGroup ||
-        engine.timelineArms.FreeCount() < targetSchedule.leafCount ||
+        !engine.timelineArms.PrepareAvailable(targetSchedule.leafCount) ||
         !engine.armGroups.PrepareAvailable(1u) ||
         (targetSchedule.leafCount != 0 && PreflightCapturedScheduleLeafStarts(
             engine, targetSchedule, captureSpan,
@@ -41525,7 +41524,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         targetStartFrame >= engine.timelinePool.WindowEndFrame() ||
         groupPreflight != harken::Plan03GroupReserveStatus::Committed ||
         groupMemberCount > engine.config.maxArmsPerGroup ||
-        engine.timelineArms.FreeCount() < (nativeTargets ? sourceMemberCount : groupMemberCount) ||
+        !engine.timelineArms.PrepareAvailable(nativeTargets ? sourceMemberCount : groupMemberCount) ||
         !engine.armGroups.PrepareAvailable(1u) ||
         (needsTransition && !transition.Valid() &&
          !engine.transitionInstances.PrepareAvailable(1)) ||
@@ -42684,7 +42683,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
         engine.timelinePool.PreflightPlan03GroupSlices(decisionFrame, 1);
     if (decisionFrame >= engine.timelinePool.WindowEndFrame() ||
         groupPreflight != harken::Plan03GroupReserveStatus::Committed ||
-        engine.timelineArms.FreeCount() < audioMemberCount ||
+        !engine.timelineArms.PrepareAvailable(audioMemberCount) ||
         !engine.armGroups.PrepareAvailable(1u) ||
         livePriorMemberCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, livePriorMemberCount) ||
@@ -73356,7 +73355,8 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPlayOrStop(
     const ActionFiringSnapshot& firing,
     std::uint64_t currentQuantum,
     std::uint64_t* newPageStartBlocker) noexcept {
-    auto trees = engine.UseDeferredTrees(record.firing, record.step.opcode == ActionOpcodeV1::Play ? record.firing : 0);
+    auto trees = engine.UseDeferredTrees(record.firing, record.step.opcode == ActionOpcodeV1::Play ? record.firing : 0,
+        record.step.opcode == ActionOpcodeV1::Stop);
     auto playableUse = engine.actionFirings.UsePlayableBacking(record.firing);
     ImmediateActionPlan plan{};
     plan.playbackRequest = firing.playbackRequest;
@@ -86058,7 +86058,7 @@ bool ImmediateActionNeedsContainerState(const ImmediateActionPlan& plan) noexcep
 VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
     const harken::ActionStepProgramViewV1& step, const harken::PackPartitionLease& lease,
     std::uint32_t depth, std::uint32_t& rows,
-    std::unique_ptr<harken::Engine::DeferredTreeBacking>& trees) noexcept;
+    std::unique_ptr<harken::Engine::DeferredTreeBacking>& trees, bool capturedStop) noexcept;
 
 bool ReserveImmediateActionFirings(void* opaque,
                                    std::uint32_t count) noexcept {
@@ -86205,6 +86205,7 @@ bool ReserveImmediateActionDeferred(void* opaque,
         plan->result = VN_RUNTIME_RECREATE_REQUIRED;
         return false;
     }
+    std::unique_ptr<harken::Engine::DeferredTreeBacking> futureTrees;
     plan->deferredPreparedCount = 0;
     const auto abandonPrepared = [&]() noexcept {
         if (engine.originalDeferredTargetPreparation.Valid() &&
@@ -86294,8 +86295,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
         std::uint32_t recordCount = 1;
         if (planned.step->opcode == harken::ActionOpcodeV1::Stop) {
-            if (!CaptureDeferredActionStopRoots(*plan, index,
-                                                &recordCount) ||
+            if (!CaptureDeferredActionStopRoots(*plan, index, &recordCount, futureTrees) ||
                 !engine.actionFirings.SetPreparedDeferredStopCount(
                     firing.prepared, planned.step->authoredEventIndex,
                     recordCount)) {
@@ -86456,7 +86456,6 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         constexpr auto limit = UINT32_MAX;
         std::uint32_t futureWrites = 0;
         std::uint32_t futurePlays = 0;
-        std::unique_ptr<harken::Engine::DeferredTreeBacking> futureTrees;
         for (std::uint32_t index = 0;
              index < plan->stepCount; ++index) {
             const auto& planned = engine.actionStepPlanScratch[index];
@@ -86471,8 +86470,9 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         for (std::uint32_t i = 0; i < plan->deferredPreparedCount; ++i) {
             const auto& deferred = engine.actionDeferredScratch[i];
             const auto& planned = engine.actionStepPlanScratch[deferred.plannedStepIndex];
+            if (planned.step->opcode == harken::ActionOpcodeV1::Stop) continue;
             const auto counted = CountDeferredInstanceRows(*plan, *planned.step, deferred.targetPackLease,
-                planned.depth, futurePlays, futureTrees);
+                planned.depth, futurePlays, futureTrees, false);
             if (counted != VN_OK) {
                 plan->result = counted;
                 abandonPrepared();
@@ -86482,11 +86482,11 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         harken::StableStoragePreparation futureInstances;
         // Each delayed Play reuses the same batch workspace. Prepare it for the
         // largest retained tree, independently of other pending Play steps.
-        const auto futureEvents = futureTrees ? 2ull * futureTrees->width - 1u : 0u;
-        if (futurePlays != 0 && ((futureTrees && (futureEvents > UINT32_MAX ||
+        const auto futureEvents = futureTrees && futureTrees->width ? 2ull * futureTrees->width - 1u : 0u;
+        if ((futurePlays != 0 || futureTrees) && ((futureTrees && (futureEvents > UINT32_MAX ||
                 !engine.PrepareInitialFrontierStorage(static_cast<std::uint32_t>(futureEvents)) ||
                 !engine.PrepareDeferredTrees(*futureTrees))) ||
-                !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity()) ||
+                (futurePlays && !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity())) ||
                 !engine.playableInstances.PrepareFutureAcquisitions(futurePlays, &futureInstances) ||
                 !engine.containerPlayback.PrepareStorage(engine.playableInstances.ConstructedEntryCount()) ||
                 !engine.PrepareOriginalSingleCurrentStorage() ||
@@ -86911,7 +86911,7 @@ harken::PlayableRefV1 MakeImmediateActionPlayableRef(
 VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
     const harken::ActionStepProgramViewV1& step, const harken::PackPartitionLease& lease,
     std::uint32_t depth, std::uint32_t& rows,
-    std::unique_ptr<harken::Engine::DeferredTreeBacking>& trees) noexcept {
+    std::unique_ptr<harken::Engine::DeferredTreeBacking>& trees, bool capturedStop) noexcept {
     namespace backing = harken::native_backing;
     auto& engine = *plan.engine;
     if (step.opcode == harken::ActionOpcodeV1::PostAction) {
@@ -86921,15 +86921,34 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
         if (!child || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
             depth >= engine.config.maxTriggerDepth) return VN_OK;
         for (std::uint32_t i = 0; i < child->stepCount; ++i) {
-            const auto rc = CountDeferredInstanceRows(plan, child->steps[i], lease, depth + 1u, rows, trees);
+            const auto rc = CountDeferredInstanceRows(plan, child->steps[i], lease, depth + 1u, rows, trees, false);
             if (rc != VN_OK) return rc;
         }
         return VN_OK;
     }
-    if (step.opcode != harken::ActionOpcodeV1::Play) return VN_OK;
+    const bool stop = step.opcode == harken::ActionOpcodeV1::Stop;
+    if (stop && !capturedStop) {
+        // A delayed child Action captures its targets at execution. Each render
+        // voice can need at most one control arm for this Stop.
+        try {
+            if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+        } catch (const std::bad_alloc&) {
+            harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
+            return VN_OUT_OF_MEMORY;
+        }
+        return trees->AddArms(engine.config.voiceCapacity.Render()) ? VN_OK : VN_OUT_OF_MEMORY;
+    }
+    if (!stop && step.opcode != harken::ActionOpcodeV1::Play) return VN_OK;
     if (rows == UINT32_MAX) return VN_OUT_OF_MEMORY;
     if (step.target.kind == harken::ActionTargetKindV1::Sound) {
-        ++rows;
+        try {
+            if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+        } catch (...) {
+            harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
+            return VN_OUT_OF_MEMORY;
+        }
+        if (!trees->AddArms(1u)) return VN_OUT_OF_MEMORY;
+        if (!stop) ++rows;
         return VN_OK;
     }
     harken::PlayableKindV1 kind{};
@@ -86980,6 +86999,14 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
                 continue;
             }
             if (!result) return pack ? VN_BAD_PACK : VN_BAD_CURRENT_WORLD;
+            const auto leaves = backing::ReservedRows(result.profile);
+            const auto arms = stop ? std::min<std::uint64_t>(leaves, engine.config.voiceCapacity.Render())
+                                   : std::max(leaves + result.profile.Q, backing::DeferredArmMembers(result.profile));
+            if (arms) {
+                if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+                if (!trees->AddArms(arms)) return VN_OUT_OF_MEMORY;
+            }
+            if (stop) return VN_OK;
             if (result.profile.instanceRows > UINT32_MAX - rows) return VN_OUT_OF_MEMORY;
             rows += result.profile.instanceRows;
             if (result.profile.preparationTrees != 0) {
@@ -104227,7 +104254,7 @@ bool ReleaseImmediateActionStops(ImmediateActionPlan& plan) noexcept {
 
 bool CaptureDeferredActionStopRoots(
     ImmediateActionPlan& plan, std::uint32_t plannedStepIndex,
-    std::uint32_t* outCount) noexcept {
+    std::uint32_t* outCount, std::unique_ptr<harken::Engine::DeferredTreeBacking>& futureTrees) noexcept {
     if (plan.engine == nullptr || plannedStepIndex >= plan.stepCount ||
         outCount == nullptr) {
         return false;
@@ -104290,6 +104317,7 @@ bool CaptureDeferredActionStopRoots(
             plan.result = VN_DEVICE_ERROR;
             return false;
         }
+        const auto* sourceLease = &row.Invocation().packLease;
         std::uint64_t scheduleEpoch = 0;
         if (row.actionPrepared) {
             for (std::uint32_t index = 0; index < plan.playCount; ++index) {
@@ -104297,6 +104325,7 @@ bool CaptureDeferredActionStopRoots(
                 if (attempt == nullptr) continue;
                 const auto& scratch = *attempt;
                 if (scratch.row == &row && scratch.instance.Valid()) {
+                    if (scratch.packLease.leaseToken != 0) sourceLease = &scratch.packLease;
                     scheduleEpoch = scratch.instance.ScheduleEpoch();
                     break;
                 }
@@ -104357,6 +104386,13 @@ bool CaptureDeferredActionStopRoots(
         }
         scratch = {};
         scratch.plannedStepIndex = plannedStepIndex;
+        if (plan.deferredParentFiring == 0) {
+            // Size the Stop from the captured playback while it still owns its definition.
+            std::uint32_t unusedPlayableRows = 0;
+            plan.result = CountDeferredInstanceRows(plan, authored, *sourceLease, planned.depth,
+                unusedPlayableRows, futureTrees, true);
+            if (plan.result != VN_OK) return false;
+        }
         scratch.rootPlayable = row.rootInstance;
         scratch.rootScheduleEpoch = scheduleEpoch;
         scratch.silenceFrame = pendingEntry ? UINT64_MAX : silence;

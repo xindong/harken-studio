@@ -30,16 +30,23 @@ public:
     VoiceTimelineSink(VoicePool& voices, TimelineArmTable& arms)
         : voices_(voices), arms_(arms), frontier_(voices, arms),
           laneFrontier_(voices, arms), immediate_(voices, arms),
-          plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum),
-          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {
+          plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum) {
         if (!pendingVariableStarts_.Reserve(voices.Capacity()) ||
             !voices.AttachSlotStoragePreparation(slotStorageRegistration_, this,
                 [](void* context, std::uint32_t count) noexcept {
                     return static_cast<VoiceTimelineSink*>(context)->pendingVariableStarts_.ConstructThrough(count);
                 })) throw harken::detail::LogicPreparationFailure{};
+        if (!arms_.AttachReader(this, [](void* context, std::uint32_t count) noexcept {
+            auto& sink = *static_cast<VoiceTimelineSink*>(context);
+            return sink.retiringPlainArms_.ConstructThrough(count) &&
+                sink.retiringPlainArmSlots_.ConstructThrough(count);
+        })) throw harken::detail::LogicPreparationFailure{};
     }
 
-    ~VoiceTimelineSink() override { slotStorageRegistration_.Detach(); }
+    ~VoiceTimelineSink() override {
+        arms_.DetachReader(this);
+        slotStorageRegistration_.Detach();
+    }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     struct FrontierStageRecordForTest {
@@ -1544,8 +1551,8 @@ private:
     bool pendingVariableStartSeen_ = false;
     VoicePool::SlotStorageRegistration slotStorageRegistration_;
     std::vector<PlainTransactionResult> plainResults_;
-    std::vector<PlainArmRetirement> retiringPlainArms_;
-    std::vector<std::uint32_t> retiringPlainArmSlots_;
+    GrowingRowStorage<PlainArmRetirement> retiringPlainArms_;
+    GrowingRowStorage<std::uint32_t> retiringPlainArmSlots_;
     std::uint32_t retiringPlainArmCount_ = 0;
     std::uint32_t plainResultCount_ = 0;
     std::uint64_t plainQuantum_ = 0;
