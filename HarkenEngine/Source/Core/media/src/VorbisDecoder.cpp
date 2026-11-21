@@ -128,6 +128,22 @@ HvMemory Memory() noexcept {
     return {nullptr, [](void*, std::size_t bytes) -> void* { return ::operator new(bytes, std::nothrow); },
         [](void*, void* p) { ::operator delete(p); }};
 }
+// This key selects a cache bucket. The complete identification and setup
+// headers are compared before a table can be reused.
+std::uint64_t SetupBucket(const VorbisMedia& media, bool compact) noexcept {
+    auto hash = Fnv1a64(media.ident, media.identBytes);
+    const std::uint8_t* data = media.setup;
+    std::size_t remaining = media.setupBytes;
+    while (remaining >= sizeof(std::uint64_t)) {
+        std::uint64_t word;
+        std::memcpy(&word, data, sizeof(word));
+        hash = (hash ^ word) * UINT64_C(1099511628211);
+        data += sizeof(word);
+        remaining -= sizeof(word);
+    }
+    hash = Fnv1a64(data, remaining, hash);
+    return (hash << 1) | static_cast<std::uint64_t>(compact);
+}
 std::size_t AlignCount(std::size_t bytes) noexcept {
     return (bytes + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t);
 }
@@ -209,9 +225,7 @@ std::shared_ptr<const VorbisSettings> VorbisSettingsCache::Prepare(const VorbisM
     for (auto i = settings_.begin(); i != settings_.end();)
         if (i->second.expired()) i = settings_.erase(i); else ++i;
     if (!compactCodebooks_) ++wideRequests_;
-    // Identical headers from an earlier successful load may still have a wide table.
-    const auto hash = Fnv1a64(media.setup, media.setupBytes, Fnv1a64(media.ident, media.identBytes)) ^
-        (compactCodebooks_ ? (UINT64_C(1) << 63) : 0);
+    const auto hash = SetupBucket(media, compactCodebooks_);
     const auto found = settings_.equal_range(hash);
     const std::size_t headerBytes = std::size_t(media.identBytes) + media.setupBytes;
     for (auto i = found.first; i != found.second; ++i) {

@@ -33,7 +33,7 @@ struct Owner {
       CloseHandle(file);
   }
 };
-VnResult Open(Owner &owner, const std::wstring &path, bool directory = false) {
+VnResult Open(Owner &owner, const std::wstring &path, bool directory = false, uint64_t* fileBytes = nullptr) {
   owner.file = CreateFileW(path.c_str(), GENERIC_READ,
                            directory ? FILE_SHARE_READ | FILE_SHARE_WRITE
                                      : FILE_SHARE_READ,
@@ -52,7 +52,33 @@ VnResult Open(Owner &owner, const std::wstring &path, bool directory = false) {
       bool(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != directory ||
       info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
     return VN_PACK_PROVIDER_FAILED;
+  if (fileBytes)
+    *fileBytes = (uint64_t(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
   return VN_OK;
+}
+VnResult CheckMemberName(HANDLE handle, std::wstring_view expected) {
+  const auto compare = [expected](std::wstring_view actual) {
+    return actual.substr(actual.find_last_of(L'\\') + 1) == expected ? VN_OK : VN_BAD_PACK;
+  };
+  // The name must come from the held file. Its volume or drive name is irrelevant.
+  alignas(FILE_NAME_INFO) std::array<unsigned char, 1024> storage;
+  if (GetFileInformationByHandleEx(handle, FileNormalizedNameInfo, storage.data(),
+                                   static_cast<DWORD>(storage.size()))) {
+    const auto& info = *reinterpret_cast<const FILE_NAME_INFO*>(storage.data());
+    if (info.FileNameLength % sizeof(wchar_t) != 0 ||
+        info.FileNameLength > storage.size() - offsetof(FILE_NAME_INFO, FileName))
+      return VN_PACK_PROVIDER_FAILED;
+    return compare({info.FileName, info.FileNameLength / sizeof(wchar_t)});
+  }
+  // Older systems and longer paths use the variable-length API.
+  std::wstring name(260, L'\0');
+  auto length = GetFinalPathNameByHandleW(handle, name.data(), DWORD(name.size()), VOLUME_NAME_NONE);
+  if (length >= name.size()) {
+    name.resize(length);
+    length = GetFinalPathNameByHandleW(handle, name.data(), DWORD(name.size()), VOLUME_NAME_NONE);
+  }
+  if (!length || length >= name.size()) return VN_PACK_PROVIDER_FAILED;
+  return compare({name.data(), length});
 }
 bool MarkerClear(const std::wstring &root) {
   DWORD a = GetFileAttributesW((root + L"\\.harken-pack-publishing").c_str());
@@ -347,31 +373,18 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
         auto file = std::wstring(wide) + L".hrp";
         auto &owner = owners[j];
         auto &row = rows[j];
-        auto status = Open(owner, directory + L"\\" + file);
+        uint64_t fileBytes{};
+        auto status = Open(owner, directory + L"\\" + file, false, &fileBytes);
         if (status != VN_OK)
           return status;
-        std::wstring normalized(
-            std::max<size_t>(260, directory.size() + file.size() + 32), L'\0');
-        auto n =
-            GetFinalPathNameByHandleW(owner.file, normalized.data(),
-                                      static_cast<DWORD>(normalized.size()), 0);
-        if (n >= normalized.size()) {
-          normalized.resize(n + 1);
-          n = GetFinalPathNameByHandleW(owner.file, normalized.data(),
-                                        static_cast<DWORD>(normalized.size()), 0);
-        }
-        if (!n || n >= normalized.size())
-          return VN_PACK_PROVIDER_FAILED;
-        std::wstring_view actual(normalized.data(), n);
-        if (actual.substr(actual.find_last_of(L'\\') + 1) != file)
-          return VN_BAD_PACK;
-        LARGE_INTEGER size{};
-        if (!GetFileSizeEx(owner.file, &size) || size.QuadPart < 48 ||
-            size.QuadPart > 3 * Max)
+        status = CheckMemberName(owner.file, file);
+        if (status != VN_OK)
+          return status;
+        if (fileBytes < 48 || fileBytes > 3 * Max)
           return VN_BAD_PACK;
         harken::detail::PackDecodeCharge input(laneBudget);
-        input.Add(static_cast<uint64_t>(size.QuadPart));
-        std::vector<uint8_t> image(static_cast<size_t>(size.QuadPart));
+        input.Add(fileBytes);
+        std::vector<uint8_t> image(static_cast<size_t>(fileBytes));
         DWORD read = 0;
         if (!ReadFile(owner.file, image.data(), DWORD(image.size()), &read,
                       nullptr) ||
