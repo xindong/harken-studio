@@ -1007,7 +1007,6 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     harken::EngineConfig resolved;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
     EXPECT_EQ(256u, resolved.voiceCapacity.Render());
-    EXPECT_EQ(256u, resolved.maxPacks);
     EXPECT_EQ(0u, resolved.maxActions);
     EXPECT_EQ(256u, resolved.maxActionFirings);
 
@@ -1017,7 +1016,6 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     config.maxActionFirings = 64;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
     EXPECT_EQ(128u, resolved.voiceCapacity.Render());
-    EXPECT_EQ(8u, resolved.maxPacks);
     EXPECT_EQ(32u, resolved.maxActions);
     EXPECT_EQ(64u, resolved.maxActionFirings);
     config.maxActions = UINT32_MAX;

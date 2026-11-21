@@ -131932,28 +131932,31 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     ledger.initHandle = initHandle;
     ledger.memberCount = desc.memberCount;
     ledger.packMasterHeld = 1;
-    ledger.acceptedMembers.reserve(desc.memberCount);
+    detail::DecodeReserve(ledger.acceptedMembers, desc.memberCount, scratch);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         const auto& member = desc.members[i];
+        if (member.utf8Path != nullptr) scratch.Add(std::strlen(member.utf8Path) + 1);
+        if (member.utf8ContainmentRoot != nullptr) scratch.Add(std::strlen(member.utf8ContainmentRoot) + 1);
         ledger.acceptedMembers.push_back({member.packStableId, out->members[i].hash,
             member.flags, member.packKind, member.utf8Path == nullptr ? "" : member.utf8Path,
             member.utf8ContainmentRoot == nullptr ? "" : member.utf8ContainmentRoot});
     }
     std::vector<PackComposition::PublishedOwner> resultOwners;
-    resultOwners.reserve(desc.memberCount);
+    detail::DecodeReserve(resultOwners, desc.memberCount, scratch);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         PackComposition::PublishedOwner row;
         row.packStableId = desc.members[i].packStableId;
         row.handle = out->members[i].handle;
         resultOwners.push_back(std::move(row));
     }
-    std::vector<VnCanonicalPackSetMemberResultV1> results(desc.memberCount);
+    std::vector<VnCanonicalPackSetMemberResultV1> results;
+    detail::DecodeResize(results, desc.memberCount, scratch);
     auto privateDesc = desc;
     privateDesc.outputMembers = results.data();
     VnCanonicalPackSetActivationReportV1 report{};
     WriteActivationOutputs(ledger, resultOwners, privateDesc, &report);
-    ledger.lastReport.resize(sizeof(report));
-    ledger.lastMemberResults.resize(results.size() * sizeof(results.front()));
+    detail::DecodeResize(ledger.lastReport, sizeof(report), scratch);
+    detail::DecodeResize(ledger.lastMemberResults, results.size() * sizeof(results.front()), scratch);
     std::memcpy(ledger.lastReport.data(), &report, sizeof(report));
     std::memcpy(ledger.lastMemberResults.data(), results.data(), ledger.lastMemberResults.size());
     const auto published = PrepareCanonicalOwners(engine, std::move(owners), &init, initHandle,
@@ -132105,12 +132108,28 @@ VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
 }
 
 
+VnResult ValidateActivationMember(const VnCanonicalPackSetMemberV1& member,
+    bool init, bool keep) {
+    if (!keep) return ValidateCanonicalPackSetMember(member, init);
+    const bool valid = member.structSize == sizeof(member) && member.packStableId != 0 &&
+        member.expectedHandle != 0 && member.flags == 0 && member.reserved0 == 0 &&
+        member.packKind == (init ? kPackKindInit : kPackKindCanonicalContent) &&
+        member.utf8Path == nullptr && member.utf8ContainmentRoot == nullptr &&
+        member.providerUserData == nullptr && member.provide == nullptr && member.release == nullptr;
+    return valid ? VN_OK : VN_INVALID_ARG;
+}
+
+template<class T>
+bool ActivationArrayFits(std::size_t count, const T*) noexcept {
+    return count <= SIZE_MAX / sizeof(T);
+}
+
 VnResult ActivateCanonicalPackSetImpl(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport,
     const std::vector<std::uint32_t>* operations = nullptr,
     const std::vector<std::shared_ptr<const PackCompanionNames>>* names = nullptr,
-    std::uint64_t capturedNameBytes = 0,
+    detail::PackDecodeBudget budget = {},
     std::vector<std::uint64_t>* traceResources = nullptr,
     bool* traceInputMissing = nullptr) {
     VariableOperationScope variableOperation(&engine);
@@ -132121,7 +132140,8 @@ VnResult ActivateCanonicalPackSetImpl(
         descriptor->memberStructSize != sizeof(VnCanonicalPackSetMemberV1) ||
         descriptor->outputMemberStructSize != sizeof(VnCanonicalPackSetMemberResultV1) ||
         descriptor->members == nullptr || descriptor->memberCount == 0 ||
-        descriptor->memberCount > engine.config.maxPacks ||
+        !ActivationArrayFits(descriptor->memberCount, descriptor->members) ||
+        !ActivationArrayFits(descriptor->memberCount, descriptor->outputMembers) ||
         descriptor->outputMemberCapacity < descriptor->memberCount ||
         descriptor->outputMembers == nullptr) {
         return VN_INVALID_ARG;
@@ -132135,13 +132155,7 @@ VnResult ActivateCanonicalPackSetImpl(
         for (std::uint32_t i = 0; i < input.memberCount; ++i) {
             const auto& member = input.members[i];
             const bool keep = operations != nullptr && (*operations)[i] == VN_PACK_MEMBER_KEEP;
-            const auto result = keep ?
-                (member.structSize == sizeof(member) && member.packStableId != 0 &&
-                 member.expectedHandle != 0 && member.flags == 0 && member.reserved0 == 0 &&
-                 member.packKind == (i == 0 ? kPackKindInit : kPackKindCanonicalContent) &&
-                 member.utf8Path == nullptr && member.utf8ContainmentRoot == nullptr &&
-                 member.providerUserData == nullptr && member.provide == nullptr && member.release == nullptr
-                    ? VN_OK : VN_INVALID_ARG) : ValidateCanonicalPackSetMember(member, i == 0);
+            const auto result = ValidateActivationMember(member, i == 0, keep);
             if (result != VN_OK) {
                 return result;
             }
@@ -132151,10 +132165,16 @@ VnResult ActivateCanonicalPackSetImpl(
                 return VN_INVALID_ARG;
             }
         }
-        std::vector<VnCanonicalPackSetMemberV1> members(
-            input.members, input.members + input.memberCount);
-        std::vector<std::string> paths(input.memberCount), roots(input.memberCount);
-        const auto normalize = [](const char* raw, bool absolute) {
+        PreparedCanonicalPackSetV1 prepared;
+        prepared.budget = budget ? budget : detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+        prepared.staging = detail::PackDecodeCharge(prepared.budget);
+        std::vector<VnCanonicalPackSetMemberV1> members;
+        detail::DecodeReserve(members, input.memberCount, prepared.staging);
+        members.assign(input.members, input.members + input.memberCount);
+        std::vector<std::string> paths, roots;
+        detail::DecodeResize(paths, input.memberCount, prepared.staging);
+        detail::DecodeResize(roots, input.memberCount, prepared.staging);
+        const auto normalize = [&prepared](const char* raw, bool absolute) {
             std::filesystem::path path;
             if (!TryMakeUtf8Path(raw, &path)) {
                 throw std::invalid_argument("canonical pack path");
@@ -132163,6 +132183,7 @@ VnResult ActivateCanonicalPackSetImpl(
                 path = std::filesystem::absolute(path);
             }
             const auto utf8 = path.lexically_normal().generic_u8string();
+            prepared.staging.Add(utf8.size() + 1);
             return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
         };
         for (std::uint32_t i = 0; i < input.memberCount; ++i) {
@@ -132180,10 +132201,6 @@ VnResult ActivateCanonicalPackSetImpl(
         }
         auto desc = input;
         desc.members = members.data();
-        PreparedCanonicalPackSetV1 prepared;
-        prepared.budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
-        prepared.staging = detail::PackDecodeCharge(prepared.budget);
-        prepared.staging.Add(capturedNameBytes);
         const auto previousHandle = engine.packComposition.PublishedHandle();
         const PackComposition::PublishedView* success = nullptr;
         bool commit = false;
@@ -132343,7 +132360,7 @@ VnResult ActivateCanonicalPackSetV1(
 
 VnResult ActivateCanonicalPackSetV2(
     Engine& engine, const VnCanonicalPackSetActivationDescV2* input,
-    VnCanonicalPackSetActivationReportV1* outReport) {
+    VnCanonicalPackSetActivationReportV1* outReport) try {
     VariableOperationScope variableOperation(&engine);
     const auto refuse = [&](VnResult result) {
         auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
@@ -132353,25 +132370,41 @@ VnResult ActivateCanonicalPackSetV2(
     if (input == nullptr || input->structSize != sizeof(*input) || input->flags != 0 ||
         input->memberStructSize != sizeof(VnCanonicalPackSetMemberV2) ||
         input->members == nullptr || input->memberCount == 0 ||
-        input->memberCount > engine.config.maxPacks) return refuse(VN_INVALID_ARG);
+        outReport == nullptr || outReport->structSize != sizeof(*outReport) ||
+        input->outputMembers == nullptr || input->outputMemberStructSize != sizeof(*input->outputMembers) ||
+        input->outputMemberCapacity < input->memberCount ||
+        !ActivationArrayFits(input->memberCount, input->members) ||
+        !ActivationArrayFits(input->memberCount, input->outputMembers)) return refuse(VN_INVALID_ARG);
     if (engine.canonicalPackSetBusy) return VN_IN_USE;
-    std::vector<VnCanonicalPackSetMemberV1> members;
-    std::vector<std::uint32_t> operations;
-    std::vector<std::shared_ptr<const PackCompanionNames>> names;
-    members.reserve(input->memberCount);
-    operations.reserve(input->memberCount);
-    names.reserve(input->memberCount);
-    auto nameBudget = engine.config.maxPackDecodeStagingBytes;
     for (std::uint32_t i = 0; i < input->memberCount; ++i) {
         const auto& member = input->members[i];
         if (member.structSize != sizeof(member) || member.operation > VN_PACK_MEMBER_NAME_ONLY ||
-            (member.operation == VN_PACK_MEMBER_KEEP) != (member.names == nullptr))
+            (member.operation == VN_PACK_MEMBER_KEEP) != (member.names == nullptr) ||
+            input->outputMembers[i].structSize != sizeof(*input->outputMembers) ||
+            ValidateActivationMember(member.source, i == 0, member.operation == VN_PACK_MEMBER_KEEP) != VN_OK ||
+            (i > 1 && member.source.packStableId <= input->members[i - 1].source.packStableId) ||
+            (i != 0 && member.source.packStableId == input->members[0].source.packStableId))
             return refuse(VN_INVALID_ARG);
+    }
+    const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+    detail::PackDecodeCharge staging(budget);
+    std::vector<VnCanonicalPackSetMemberV1> members;
+    std::vector<std::uint32_t> operations;
+    std::vector<std::shared_ptr<const PackCompanionNames>> names;
+    detail::DecodeReserve(members, input->memberCount, staging);
+    detail::DecodeReserve(operations, input->memberCount, staging);
+    detail::DecodeReserve(names, input->memberCount, staging);
+    for (std::uint32_t i = 0; i < input->memberCount; ++i) {
+        const auto& member = input->members[i];
         std::shared_ptr<PackCompanionNames> captured;
         if (member.names != nullptr) {
+            auto nameBudget = budget->limit - budget->live;
+            const auto available = nameBudget;
+            if (available < sizeof(PackCompanionNames)) return refuse(VN_PACK_RESIDENT_CAPACITY);
             captured = std::make_shared<PackCompanionNames>();
             const auto result = CapturePackCompanionNames(*member.names, nameBudget, captured.get());
             if (result != VN_OK) return refuse(result);
+            staging.Add(available - nameBudget);
         }
         members.push_back(member.source);
         operations.push_back(member.operation);
@@ -132389,12 +132422,13 @@ VnResult ActivateCanonicalPackSetV2(
     desc.outputMemberStructSize = input->outputMemberStructSize;
     desc.outputMembers = input->outputMembers;
     const bool recording = engine.trace != nullptr && engine.trace->Active();
-    std::vector<std::uint64_t> resources(recording ? desc.memberCount : 0, 0);
+    std::vector<std::uint64_t> resources;
+    if (recording) detail::DecodeResize(resources, desc.memberCount, staging);
     const auto* before = engine.packComposition.Published();
     const auto priorRevision = before != nullptr ? before->ledger.setRevision : 0;
     bool missingInput = false;
     const auto result = ActivateCanonicalPackSetImpl(engine, &desc, outReport, &operations, &names,
-        engine.config.maxPackDecodeStagingBytes - nameBudget, recording ? &resources : nullptr,
+        budget, recording ? &resources : nullptr,
         recording ? &missingInput : nullptr);
     if (!recording) return result;
     auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
@@ -132433,6 +132467,8 @@ VnResult ActivateCanonicalPackSetV2(
                 .U32(desc.outputMembers[i].flags);
     }
     return result;
+} catch (const detail::PackDecodeCapacity&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
 
 VnResult UnloadCanonicalPackSetV1(Engine& engine,

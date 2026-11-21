@@ -173,7 +173,6 @@ struct EngineConfig {
     std::uint32_t maxStreams = 16;
     std::uint32_t prebufferMs = 100;
     std::uint32_t starvationCooldownBlocks = 32;
-    std::uint32_t maxPacks = 256;
     // Playback-management capacities. Every field defaults to
     // the value an unset (zero) config field resolves to. The container,
     // emitter, random-seed, voice-stealing, and parked-voice fields are

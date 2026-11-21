@@ -2738,30 +2738,13 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
 
 } // namespace
 
-PackComposition::PackComposition(std::size_t sharedActionDeferredCapacity,
-                                 std::size_t playableCapacity,
-                                 std::size_t maxPacks,
-                                 std::uint64_t generationFloor)
-    : sharedCapacity_(sharedActionDeferredCapacity),
-      playableCapacity_(playableCapacity),
-      maxPacks_(maxPacks),
-      generationFloor_(generationFloor) {
-    const std::uint64_t leaseTotal =
-        static_cast<std::uint64_t>(sharedActionDeferredCapacity) +
-        playableCapacity;
-    if (leaseTotal > std::numeric_limits<std::size_t>::max()) {
-        throw std::length_error("pack lease pool overflow");
-    }
-    const std::size_t leaseCount = static_cast<std::size_t>(leaseTotal);
-    if (!leases_.Reserve(leaseCount) || !originalLeaseRecords_.Reserve(leaseCount) ||
-        !frozenClosures_.Reserve(leaseCount)) throw harken::detail::LogicPreparationFailure{};
-    originalLeaseIncarnation_ = IssueOriginalPackIncarnation();
-}
+PackComposition::PackComposition(std::uint64_t generationFloor)
+    : generationFloor_(generationFloor), originalLeaseIncarnation_(IssueOriginalPackIncarnation()) {}
 
-bool PackComposition::PrepareLeaseStorage() const noexcept {
-    return originalLeaseRecords_.ConstructThrough(originalLeaseRecords_.Capacity()) &&
-        frozenClosures_.ConstructThrough(frozenClosures_.Capacity()) &&
-        leases_.ConstructThrough(leases_.Capacity());
+bool PackComposition::PrepareLeaseStorage(std::uint32_t count) const noexcept {
+    return leases_.ConstructThrough(count, [&](std::uint32_t required) noexcept {
+        return originalLeaseRecords_.ConstructThrough(required) && frozenClosures_.ConstructThrough(required);
+    });
 }
 
 PackComposition::~PackComposition() {
@@ -3378,6 +3361,13 @@ VnResult PackComposition::PrepareCommit(
         next->owners.push_back(std::move(owner));
     }
     if (ledger != nullptr) {
+        next->staging.AddRows<CanonicalPackSetLedgerV1::AcceptedMember>(ledger->acceptedMembers.size());
+        next->staging.Add(ledger->lastReport.size());
+        next->staging.Add(ledger->lastMemberResults.size());
+        for (const auto& member : ledger->acceptedMembers) {
+            next->staging.Add(member.path.size() + 1);
+            next->staging.Add(member.root.size() + 1);
+        }
         next->ledger = *ledger;
     }
     if (clearInit) {
@@ -3560,11 +3550,11 @@ VnResult PackComposition::PrepareCommit(
         facts_.conflictingPackB = prepared.facts_.conflictingPackB;
         return indexed;
     }
-    const VnResult companions = ValidateSameOwnerCompanions(*next, maxPacks_);
+    const VnResult companions = ValidateSameOwnerCompanions(*next, next->owners.size());
     if (companions != VN_OK) {
         return companions;
     }
-    const VnResult cross = ValidateCrossOwnerReferences(*next, maxPacks_);
+    const VnResult cross = ValidateCrossOwnerReferences(*next, next->owners.size());
     if (cross != VN_OK) {
         return cross;
     }
@@ -3575,7 +3565,7 @@ VnResult PackComposition::PrepareCommit(
         return composite;
     }
     const VnResult playbackStore =
-        BuildPlaybackOwnerStore(*next, maxPacks_, worldSemanticFingerprint,
+        BuildPlaybackOwnerStore(*next, next->owners.size(), worldSemanticFingerprint,
                                 effectiveBindings);
     if (playbackStore != VN_OK) {
         return playbackStore;
@@ -3587,7 +3577,6 @@ VnResult PackComposition::PrepareCommit(
     prepared.facts_.loadedBytes += summaryCount * sizeof(ProgramCapabilitySummaryV1);
     prepared.facts_.highWaterLoadedBytes = std::max(
         prepared.facts_.highWaterLoadedBytes, prepared.facts_.loadedBytes);
-    if (!next->index.empty() && !PrepareLeaseStorage()) return VN_BACKPRESSURE;
     prepared.facts_.compositeGeneration = next->compositeGeneration;
     prepared.facts_.activationFrame = serviceFrame;
     prepared.owner_ = this;
@@ -3629,14 +3618,7 @@ void PackComposition::RestorePublished(
 }
 
 std::size_t PackComposition::LeaseIndex(const LeaseRow& row) const noexcept {
-    if (leases_.size() == 0) {
-        return 0;
-    }
-    const LeaseRow* data = leases_.data();
-    if (&row < data || &row >= data + leases_.size()) {
-        return leases_.size();
-    }
-    return static_cast<std::size_t>(&row - data);
+    return leases_.IndexOf(&row);
 }
 
 PackFrozenClosure& PackComposition::FrozenClosure(LeaseRow& row) const noexcept {
@@ -3655,11 +3637,6 @@ const ContainerWorldInstallViewV1* PackComposition::DefinitionView(
         closure.rootOwnerIndex >= closure.ownerStore->owners.size()) return nullptr;
     const auto& snapshot = closure.ownerStore->owners[closure.rootOwnerIndex].snapshot;
     return snapshot.definitionBody != nullptr ? &snapshot.definitionView : nullptr;
-}
-
-std::size_t PackComposition::SliceCapacity(PackLeaseSlice slice) const noexcept {
-    return slice == PackLeaseSlice::Playable ? playableCapacity_
-                                             : sharedCapacity_;
 }
 
 std::size_t& PackComposition::SliceOccupied(PackLeaseSlice slice) const noexcept {
@@ -3690,7 +3667,7 @@ VnResult PackComposition::SnapshotFrozenClosure(
     if (published_ == nullptr) {
         return VN_CONTENT_NOT_LOADED;
     }
-    if (maxPacks_ == 0 || published_->playbackStore == nullptr) {
+    if (published_->playbackStore == nullptr) {
         return VN_BACKPRESSURE;
     }
     std::size_t rootIndex = published_->owners.size();
@@ -3728,10 +3705,6 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
     if (leaseTokensExhausted_) {
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
-    if (SliceOccupied(slice) >= SliceCapacity(slice)) {
-        return VN_BACKPRESSURE;
-    }
-    if (!PrepareLeaseStorage()) return VN_BACKPRESSURE;
     std::size_t availableIndex = leases_.size();
     for (std::size_t i = 0; i < leases_.size(); ++i) {
         if (leases_[i].state == LeaseState::Free && !originalLeaseRecords_[i].active) {
@@ -3739,7 +3712,8 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
             break;
         }
     }
-    if (availableIndex == leases_.size()) {
+    if (availableIndex == leases_.size() &&
+        (availableIndex == UINT32_MAX || !PrepareLeaseStorage(static_cast<std::uint32_t>(availableIndex + 1)))) {
         return VN_BACKPRESSURE;
     }
     LeaseRow& available = leases_[availableIndex];
@@ -3898,8 +3872,7 @@ VnResult PackComposition::RetagLiveLease(const PackPartitionLease& lease,
             episode.handle != original || !SameFullOriginalLease(episode.lease, lease) ||
             episode.phase != OriginalLeasePhase::Live)) return VN_IN_USE;
         if (!episode.active && original != nullptr) return VN_STALE_HANDLE;
-        if (SliceOccupied(PackLeaseSlice::Playable) >=
-            SliceCapacity(PackLeaseSlice::Playable)) {
+        if (refuseRetagForTests) {
             ++retagBackpressureCountForTests_;
             return VN_BACKPRESSURE;
         }

@@ -201,7 +201,7 @@ TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     const auto catalog = BuildGameplayCatalog(kActionId);
     GameplayCatalogImage gameplay;
     ASSERT_EQ(VN_OK, ParseGameplayCatalog(catalog.data(), catalog.size(), &gameplay));
-    PackComposition composition(1);
+    PackComposition composition{};
     PackComposition::CandidateOwner initOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(initImage, kInitHandle,
                                                   &initOwner));

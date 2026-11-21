@@ -310,8 +310,10 @@ TEST(PackLogicRoundtrip, EmptyContentPacksCarryNoRuntimeCargo) {
     EXPECT_EQ(registryBefore, engine->registry.Count());
 
     VnPackHandle overflow = 0;
-    EXPECT_EQ(VN_NO_PACK, LoadPack(firstPath, &overflow));
-    EXPECT_EQ(2u, engine->packs.LoadedCount());
+    ASSERT_EQ(VN_OK, LoadPack(firstPath, &overflow));
+    EXPECT_EQ(3u, engine->packs.LoadedCount());
+    EXPECT_NE(first, overflow);
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(overflow));
     EXPECT_EQ(registryBefore, engine->registry.Count());
 
     const harken::PackLogicRecord* firstRecord =
