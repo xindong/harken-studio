@@ -86055,8 +86055,9 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         const bool nativeTarget = planned.step->opcode == harken::ActionOpcodeV1::Reset ||
             planned.step->opcode == harken::ActionOpcodeV1::PostAction;
         if (planned.step->opcode == harken::ActionOpcodeV1::Play) {
-            if (plan->deferredPreparedCount >= engine.actionDeferredScratch.size()) {
-                plan->result = VN_BACKPRESSURE; abandonPrepared(); return false;
+            if (plan->deferredPreparedCount == UINT32_MAX ||
+                !engine.actionDeferredScratch.ConstructThrough(plan->deferredPreparedCount + 1u)) {
+                plan->result = VN_OUT_OF_MEMORY; abandonPrepared(); return false;
             }
             auto& scratch = engine.actionDeferredScratch[plan->deferredPreparedCount++];
             if (scratch.originalPackLease.Valid()) {
@@ -86097,9 +86098,9 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 return false;
             }
             if (recordCount == 0) {
-                if (plan->deferredPreparedCount >=
-                    engine.actionDeferredScratch.size()) {
-                    plan->result = VN_BACKPRESSURE;
+                if (plan->deferredPreparedCount == UINT32_MAX ||
+                !engine.actionDeferredScratch.ConstructThrough(plan->deferredPreparedCount + 1u)) {
+                    plan->result = VN_OUT_OF_MEMORY;
                     abandonPrepared();
                     return false;
                 }
@@ -86113,9 +86114,9 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             engine.actionDeferredScratch[recordStart].targetPackLease = targetPackLease;
             targetPackLease = {};
         } else {
-            if (plan->deferredPreparedCount >=
-                engine.actionDeferredScratch.size()) {
-                plan->result = VN_BACKPRESSURE;
+            if (plan->deferredPreparedCount == UINT32_MAX ||
+                !engine.actionDeferredScratch.ConstructThrough(plan->deferredPreparedCount + 1u)) {
+                plan->result = VN_OUT_OF_MEMORY;
                 if (!nativeTarget && targetPackLease.leaseToken != 0 &&
                     engine.ReleasePackIdentityLease(targetPackLease) != VN_OK)
                     engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
@@ -86203,7 +86204,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                 harken::ActionDeferredRecordPrepareStatus::Prepared) {
                 plan->result = prepared.status ==
                                        harken::ActionDeferredRecordPrepareStatus::Capacity
-                                   ? VN_BACKPRESSURE
+                                   ? VN_OUT_OF_MEMORY
                                    : VN_DEVICE_ERROR;
                 abandonPrepared();
                 return false;
@@ -104126,9 +104127,9 @@ bool CaptureDeferredActionStopRoots(
             plan.result = VN_CAPABILITY_UNAVAILABLE;
             return false;
         }
-        if (plan.deferredPreparedCount >=
-            engine.actionDeferredScratch.size()) {
-            plan.result = VN_BACKPRESSURE;
+        if (plan.deferredPreparedCount == UINT32_MAX ||
+                !engine.actionDeferredScratch.ConstructThrough(plan.deferredPreparedCount + 1u)) {
+            plan.result = VN_OUT_OF_MEMORY;
             return false;
         }
         auto& scratch =

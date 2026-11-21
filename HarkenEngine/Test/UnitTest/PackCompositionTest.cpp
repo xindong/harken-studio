@@ -20032,9 +20032,9 @@ TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLeas
 static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, bool fault) {
     OriginalDeferredOperationFixture fixture(opcode);
     auto& engine = *fixture.session.Engine();
-    // A deliberate zero staging capacity exercises the pre-record exit. It
-    // neither clears a live cap nor supplies replacement ownership evidence.
-    engine.actionDeferredScratch.clear();
+    // Refuse the first scratch page before the deferred record exists.
+    ASSERT_EQ(0u, engine.actionDeferredScratch.size());
+    engine.actionDeferredScratch.SetCommitPageLimitForTests(0);
     struct Prefix { PackPartitionLease lease{}; PackResourceClosureToken resource = 0;
         unsigned calls = 0; bool fault = false; PackPartitionLease definition{};
         unsigned definitionCalls = 0; } prefix;
@@ -20056,7 +20056,7 @@ static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, 
         if (state.fault) EXPECT_EQ(VN_OK, actual.packs.ReleaseResourceClosure(resource));
     };
     engine.originalPackResourceAcquiredContextForTest = &prefix;
-    EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE, fixture.PostOperation());
+    EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_OUT_OF_MEMORY, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     ASSERT_EQ(opcode == ActionOpcodeV1::Stop ? 0u : 1u, prefix.calls);

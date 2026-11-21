@@ -609,7 +609,8 @@ TEST(ActionFiringApi, EngineTeardownReturnsItsDeferredPairLoansBeforeReceivers) 
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&input, &config));
     auto storage = std::make_unique<harken::Engine>(config);
     auto& engine = *storage;
-    auto& scratch = engine.actionDeferredScratch.front();
+    ASSERT_TRUE(engine.actionDeferredScratch.ConstructThrough(1));
+    auto& scratch = engine.actionDeferredScratch[0];
     harken::ActionDeferredRecord record{};
     record.firing = UINT64_C(0x0000000100000001);
     record.ownerCancellationEpoch = 1;
@@ -18188,8 +18189,7 @@ TEST(ActionFiringApi, PostCommitsOneImmediateSetValueAndRetainsItsResult) {
     harkentest::EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
-    EXPECT_EQ(engine->config.maxDeferredIntents,
-              engine->actionDeferredRecords.Capacity());
+    EXPECT_EQ(0u, engine->actionDeferredRecords.Capacity());
     CanonicalActionWorld image;
     const harken::WorldInstallResult installed =
         harken::InstallContainerWorldV1(*engine, image.world);

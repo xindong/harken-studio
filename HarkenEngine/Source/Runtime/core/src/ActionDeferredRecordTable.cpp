@@ -17,12 +17,11 @@ bool DeferredPrecedes(const DeferredIntent& a, std::uint32_t aSlot,
 }
 }
 
-bool ActionDeferredRecordTable::Reset(std::uint32_t capacity) {
-    if (capacity == 0 || preparedPairLoans_ != 0) {
+bool ActionDeferredRecordTable::Reset() {
+    if (memguard::IsAudioTagged() || preparedPairLoans_ != 0) {
         return false;
     }
-    StableRowStorage<Row> rows;
-    if (!rows.Reserve(capacity)) return false;
+    GrowingRowStorage<Row> rows;
     rows_.Swap(rows);
     preparedCount_ = 0;
     liveCount_ = 0;
@@ -57,9 +56,11 @@ ActionDeferredRecordPrepareResult ActionDeferredRecordTable::Prepare(
         record.lastRowFrame > record.deadlineFrame) {
         return {ActionDeferredRecordPrepareStatus::Invalid, {}};
     }
-    if (!rows_.ConstructThrough(rows_.Capacity()))
-        return {ActionDeferredRecordPrepareStatus::Capacity, {}};
-    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
+    const auto count = rows_.size();
+    for (std::uint32_t slot = 0; slot < UINT32_MAX; ++slot) {
+        if (slot == count && !rows_.ConstructThrough(slot + 1u, [this](std::uint32_t required) noexcept {
+                return prepareRows_ == nullptr || prepareRows_(preparationContext_, required);
+            })) return {ActionDeferredRecordPrepareStatus::Capacity, {}};
         Row& row = rows_[slot];
         if (row.state != ActionDeferredRecordState::Free) {
             continue;
@@ -735,7 +736,7 @@ ActionDeferredRecordState ActionDeferredRecordTable::State(
 
 bool ActionDeferredRecordTable::SetFreeGenerationForTests(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    if (slot >= rows_.Capacity() || generation == 0 ||
+    if (slot == UINT32_MAX || generation == 0 ||
         !rows_.ConstructThrough(slot + 1u) ||
         rows_[slot].state != ActionDeferredRecordState::Free) {
         return false;

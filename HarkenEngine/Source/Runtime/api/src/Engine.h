@@ -7123,8 +7123,6 @@ public:
           actionFixedSelectionCommitInputs(1),
           actionQueueResetScratch(1),
            actionQueueCheckpointResetScratch(1),
-           actionDeferredScratch(resolved.maxDeferredIntents),
-           originalDeferredPackHolders(resolved.maxDeferredIntents),
           variableControlInstances(resolved.maxContainerInstances),
           // A bounded diagnostic budget, independent of playback admission.
           ledger(resolved.voiceCapacity.Logical(),
@@ -7313,6 +7311,9 @@ public:
         (void)originalPlayableResolver;
         const bool originalDecisionResolver = decisions.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalSingleDecisionBaseline);
+        actionDeferredRecords.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            return static_cast<Engine*>(context)->originalDeferredPackHolders.ConstructThrough(required);
+        });
         const bool originalOccurrenceResolvers = timelineOccurrences.RegisterOriginalSingleOwnerResolvers(
             this, &ResolveOriginalSingleOccurrenceBaseline, &ResolveOriginalSingleOccurrenceCommit);
         const bool originalOccurrenceStorageResolver = timelineOccurrences.RegisterOriginalStorageBaselineResolver(
@@ -7555,7 +7556,7 @@ public:
             !actionFirings.Reset() ||
             !actionSeeks.Reset() ||
             !streamSeekHandoffs.Reset(resolved.maxStreams) ||
-            !actionDeferredRecords.Reset(resolved.maxDeferredIntents) ||
+            !actionDeferredRecords.Reset() ||
             !actionCooldowns.Reset(resolved.maxActionCooldownRows) ||
             !selectionMemory.Reset(selectionConfig) ||
             !variables.NoteEmitterCreated(emitters.DefaultState()) ||
@@ -13981,8 +13982,8 @@ public:
     // The first Stop/Reset lease waits here until actual root capture allocates its record.
     // A failed native Return retains the same cap until joined shutdown.
     EngineOriginalPackIdentityLease originalDeferredTargetPreparation;
-    std::vector<EngineActionDeferredScratch> actionDeferredScratch;
-    std::vector<EngineOriginalDeferredPackHolder> originalDeferredPackHolders;
+    GrowingRowStorage<EngineActionDeferredScratch> actionDeferredScratch;
+    GrowingRowStorage<EngineOriginalDeferredPackHolder> originalDeferredPackHolders;
     // Stable backing. Native tables outlive every genuine cap and bundle.
     GrowingRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
     GrowingRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
