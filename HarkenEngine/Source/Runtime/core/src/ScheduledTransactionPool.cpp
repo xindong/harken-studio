@@ -2970,12 +2970,14 @@ ScheduledTransactionPool::CapturePendingEventStorageDemand() const noexcept {
 
 void ScheduledTransactionPool::AttachPendingEventStorage(
     PendingEventStorageRegistration& registration, void* context,
-    PendingEventStorageRegistration::Prepare prepare) const noexcept {
+    PendingEventStorageRegistration::Prepare prepare,
+    PendingEventStorageRegistration::PrepareTransactions prepareTransactions) const noexcept {
     assert(!memguard::IsAudioTagged() && Valid() && prepare != nullptr);
     registration.Detach();
     registration.owner_ = this;
     registration.context_ = context;
     registration.prepare_ = prepare;
+    registration.prepareTransactions_ = prepareTransactions;
     registration.next_ = pendingEventStorage_;
     if (pendingEventStorage_ != nullptr) pendingEventStorage_->previous_ = &registration;
     pendingEventStorage_ = &registration;
@@ -3286,19 +3288,12 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         pageHeaders_[p].plan03GroupCount = 0;
     }
 
-    transactions_.assign(config.maxScheduledTransactions, TransactionRecord{});
+    GrowingRowStorage<TransactionRecord> transactions;
+    GrowingRowStorage<PreparedTransactionClaim> claims;
+    transactions_.Swap(transactions);
+    preparedTransactionClaims_.Swap(claims);
     freeTransactions_.clear();
-    freeTransactions_.reserve(config.maxScheduledTransactions);
-    for (std::uint32_t i = config.maxScheduledTransactions; i > 0; --i) {
-        freeTransactions_.push_back(i - 1);
-    }
-    preparedTransactionClaims_.assign(
-        config.maxScheduledTransactions, PreparedTransactionClaim{});
     freePreparedTransactionClaims_.clear();
-    freePreparedTransactionClaims_.reserve(config.maxScheduledTransactions);
-    for (std::uint32_t i = config.maxScheduledTransactions; i > 0; --i) {
-        freePreparedTransactionClaims_.push_back(i - 1);
-    }
     StableRowStorage<UnplacedCreditRow, std::size_t> creditStorage;
     StableRowStorage<PreparedPlan03GroupSlice, std::size_t> preparedGroupStorage;
     StableRowStorage<CommittedPlan03GroupSlice, std::size_t> committedGroupStorage;
@@ -3348,6 +3343,45 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     return true;
 }
 
+bool ScheduledTransactionPool::PrepareTransactionSlots(
+    std::size_t transactions, std::size_t claims, bool accepted) noexcept {
+    const auto prepare = [&](auto& rows, auto& free, std::uint64_t held, std::size_t additional) noexcept {
+        const auto live = rows.size() - free.size();
+        const auto limit = config_.maxScheduledTransactions;
+        if (live > limit || held > limit - live || additional > limit - live - held) return false;
+        const auto required = static_cast<std::uint32_t>(live + held + additional);
+        const auto previous = rows.size();
+        if (required <= previous) return true;
+        if (accepted || memguard::IsAudioTagged()) return false;
+        try {
+            if (free.capacity() < required) {
+                const auto doubled = static_cast<std::size_t>(std::min<std::uint64_t>(
+                    limit, 2ull * free.capacity()));
+                free.reserve(std::max<std::size_t>(required, doubled));
+            }
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
+        if constexpr (std::is_same_v<std::remove_reference_t<decltype(rows)>, GrowingRowStorage<TransactionRecord>>) {
+            // A failed later event reservation can still leave this slot at the
+            // top of the free stack. Prepare every reader before publishing it.
+            for (auto* registration = pendingEventStorage_; registration != nullptr; registration = registration->next_) {
+                if (registration->prepareTransactions_ != nullptr &&
+                    !registration->prepareTransactions_(registration->context_, required)) return false;
+            }
+        }
+        if (!rows.ConstructThrough(required)) {
+            detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
+        for (auto end = required; end > previous; --end) free.push_back(end - 1u);
+        return true;
+    };
+    return prepare(transactions_, freeTransactions_, unplacedTransactions_, transactions) &&
+        prepare(preparedTransactionClaims_, freePreparedTransactionClaims_, unplacedPreparedClaims_, claims);
+}
+
 bool ScheduledTransactionPool::PreparePrivateMaterializationBacking(
     const UnplacedBatchCreditRequest& request) noexcept {
     std::size_t transactions = request.transactions;
@@ -3385,9 +3419,6 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
              request.preparedClaims == 0)) ||
         request.frameBatches > request.events ||
         nextUnplacedCreditGeneration_ == UINT64_MAX) return false;
-    if (unplacedTransactions_ + request.transactions > freeTransactions_.size() ||
-        unplacedPreparedClaims_ + request.preparedClaims >
-            freePreparedTransactionClaims_.size()) return false;
     const auto ingress = static_cast<std::uint64_t>(ingressThisQuantum_) +
         preparedIngressThisQuantum_ + unplacedIngressThisQuantum_ +
         request.transactions;
@@ -3408,7 +3439,8 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
             pagePlan03GroupRowStates_.size()) return false;
     std::size_t slot = 0;
     while (slot < unplacedCredits_.size() && unplacedCredits_[slot].active) ++slot;
-    if (slot == unplacedCredits_.Capacity() ||
+    if (!PrepareTransactionSlots(request.transactions, request.preparedClaims) ||
+        slot == unplacedCredits_.Capacity() ||
         !unplacedCredits_.ConstructThrough(slot + 1u) ||
         !PreparePrivateMaterializationBacking(request) ||
         !PrepareEventStorage(request.events) || !PrepareGroupStorage(request.groupHeaders)) return false;
@@ -4381,10 +4413,9 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pageBatchOccupiedCount_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxFrameBatchesPerQuantum,
                       pageBatchRows_.Capacity()) ||
-        transactions_.size() != config_.maxScheduledTransactions ||
-        freeTransactions_.capacity() < config_.maxScheduledTransactions ||
-        preparedTransactionClaims_.size() !=
-            config_.maxScheduledTransactions ||
+        transactions_.size() > config_.maxScheduledTransactions ||
+        freeTransactions_.capacity() < transactions_.size() ||
+        preparedTransactionClaims_.size() > config_.maxScheduledTransactions ||
         unplacedCredits_.Capacity() !=
             static_cast<std::size_t>(config_.maxScheduledTransactions) + groupRows ||
         privatePreparedGroups_.Capacity() != groupRows ||
@@ -4393,8 +4424,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         privateCohortRequests_.Capacity() !=
             config_.maxScheduledTransactions ||
         privateCohortGroups_.Capacity() != groupRows ||
-        freePreparedTransactionClaims_.capacity() <
-            config_.maxScheduledTransactions ||
+        freePreparedTransactionClaims_.capacity() < preparedTransactionClaims_.size() ||
         scratchEventPage_.size() != config_.maxTransactionEvents ||
         scratchEventFrame_.size() != config_.maxTransactionEvents ||
         refusalCounts_.size() !=
@@ -4548,21 +4578,21 @@ bool ScheduledTransactionPool::ResetForEpoch(
     plan03ArmTableEstablishedByPrepared_ = false;
 
     std::fill(transactions_.begin(), transactions_.end(), TransactionRecord{});
-    freeTransactions_.resize(config_.maxScheduledTransactions);
+    freeTransactions_.resize(transactions_.size());
     for (std::uint32_t index = 0;
-         index < config_.maxScheduledTransactions; ++index) {
+         index < transactions_.size(); ++index) {
         freeTransactions_[index] =
-            config_.maxScheduledTransactions - index - 1;
+            transactions_.size() - index - 1;
     }
     std::fill(preparedTransactionClaims_.begin(),
               preparedTransactionClaims_.end(),
               PreparedTransactionClaim{});
     freePreparedTransactionClaims_.resize(
-        config_.maxScheduledTransactions);
+        preparedTransactionClaims_.size());
     for (std::uint32_t index = 0;
-         index < config_.maxScheduledTransactions; ++index) {
+         index < preparedTransactionClaims_.size(); ++index) {
         freePreparedTransactionClaims_[index] =
-            config_.maxScheduledTransactions - index - 1;
+            preparedTransactionClaims_.size() - index - 1;
     }
     for (auto& credit : unplacedCredits_) credit = {};
     unplacedTransactions_ = 0;
@@ -4906,7 +4936,7 @@ ReserveResult ScheduledTransactionPool::Reserve(
         config_.maxIngressTransactionsPerQuantum) {
         return refuse(ReserveRefusal::IngressRateExceeded);
     }
-    if (freeTransactions_.size() <= unplacedTransactions_) {
+    if (AvailableTransactionSlots() <= unplacedTransactions_) {
         return refuse(ReserveRefusal::PoolFull);
     }
     if (nextCommitSerial_ == UINT64_MAX) {
@@ -4983,6 +5013,7 @@ ReserveResult ScheduledTransactionPool::Reserve(
     const auto globalBudget = CheckUnplacedPageBudget(
         request.eventCount, reservedNewBatches);
     if (globalBudget != ReserveRefusal::None) return refuse(globalBudget);
+    if (!PrepareTransactionSlots(1u, 0u)) return refuse(ReserveRefusal::PoolFull);
     if (!PrepareEventStorage(request.eventCount))
         return refuse(ReserveRefusal::PageEventCapacity);
 
@@ -5922,8 +5953,8 @@ ReserveRefusal ScheduledTransactionPool::PreflightSingleEventTransactions(
                 occupiedIngress) {
         return ReserveRefusal::IngressRateExceeded;
     }
-    if (unplacedTransactions_ > freeTransactions_.size() ||
-        additionalTransactionCount > freeTransactions_.size() - unplacedTransactions_) {
+    if (unplacedTransactions_ > AvailableTransactionSlots() ||
+        additionalTransactionCount > AvailableTransactionSlots() - unplacedTransactions_) {
         return ReserveRefusal::PoolFull;
     }
     const std::uint32_t occupiedEvents =
@@ -5972,8 +6003,8 @@ ScheduledTransactionPool::PreflightSingleEventTransactionBatch(
                                occupiedIngress) {
         return ReserveRefusal::IngressRateExceeded;
     }
-    if (unplacedTransactions_ > freeTransactions_.size() ||
-        transactionCount > freeTransactions_.size() - unplacedTransactions_) {
+    if (unplacedTransactions_ > AvailableTransactionSlots() ||
+        transactionCount > AvailableTransactionSlots() - unplacedTransactions_) {
         return ReserveRefusal::PoolFull;
     }
 
@@ -6084,8 +6115,8 @@ ReserveRefusal ScheduledTransactionPool::PreflightTransactionBatch(
                            occupiedIngress) {
         return ReserveRefusal::IngressRateExceeded;
     }
-    if (unplacedTransactions_ > freeTransactions_.size() ||
-        requestCount > freeTransactions_.size() - unplacedTransactions_) {
+    if (unplacedTransactions_ > AvailableTransactionSlots() ||
+        requestCount > AvailableTransactionSlots() - unplacedTransactions_) {
         return ReserveRefusal::PoolFull;
     }
 
@@ -6274,7 +6305,7 @@ ReserveRefusal ScheduledTransactionPool::PrepareTransactionBatchImpl(
                 return ReserveRefusal::EmptyTransaction;
         }
     }
-    if (freePreparedTransactionClaims_.size() <= unplacedPreparedClaims_) {
+    if (!PrepareTransactionSlots(requestCount, 1u, consumeAcceptedBacking)) {
         refusalCounts_[static_cast<std::size_t>(ReserveRefusal::PoolFull)] += 1;
         return ReserveRefusal::PoolFull;
     }

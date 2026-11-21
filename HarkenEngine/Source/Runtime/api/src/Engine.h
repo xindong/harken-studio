@@ -7347,8 +7347,10 @@ public:
         timelinePoolConfig.scheduleHorizonFrames =
             resolved.scheduleHorizonFrames;
         timelinePoolConfig.publishLeadQuanta = resolved.publishLeadQuanta;
-        timelinePoolConfig.maxScheduledTransactions =
-            resolved.maxScheduledTransactions;
+        // Every transaction must own at least one event in the scheduling window.
+        timelinePoolConfig.maxScheduledTransactions = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            UINT32_MAX, (resolved.scheduleHorizonFrames / resolved.blockFrames) *
+                static_cast<std::uint64_t>(resolved.maxEventsPerQuantum)));
         timelinePoolConfig.maxTransactionSpanFrames =
             resolved.maxTransactionSpanFrames;
         timelinePoolConfig.maxIngressTransactionsPerQuantum =

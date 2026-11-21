@@ -1653,7 +1653,11 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     finalizer.SetPendingEventCommitPageLimitForTest(0);
     EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
     EXPECT_FALSE(pendingCredit.Valid());
-    EXPECT_EQ(emptyFinalizerBytes, finalizer.StorageBytes());
+    // A failed first commit may retain its segment directory for the next try.
+    const auto failedFinalizerBytes = finalizer.StorageBytes();
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
+    EXPECT_EQ(failedFinalizerBytes, finalizer.StorageBytes());
     finalizer.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
     ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
     EXPECT_GT(finalizer.StorageBytes(), emptyFinalizerBytes);
@@ -1671,8 +1675,12 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit(
         {1, 1, additionalPageRows, 1, 0}, &pendingCredit));
     EXPECT_FALSE(pendingCredit.Valid());
+    const auto retainedFinalizerBytes = finalizer.StorageBytes();
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit(
+        {1, 1, additionalPageRows, 1, 0}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
     ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
-    EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
+    EXPECT_EQ(retainedFinalizerBytes, finalizer.StorageBytes());
     ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
     finalizer.SetPendingEventCommitPageLimitForTest(0);
     EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &pendingCredit));

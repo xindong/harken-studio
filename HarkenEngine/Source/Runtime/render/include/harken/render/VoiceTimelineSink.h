@@ -121,7 +121,8 @@ public:
                            Plan03PageGroupView{});
         currentSlices_.assign(pageGroups_.size(),
                               Plan03ScratchDecisionState{});
-        authoredStopFences_.assign(pool.MaxScheduledTransactions(), nullptr);
+        // An execution pass decodes at most two pages. Each fence comes from a decoded event.
+        authoredStopFences_.assign(2ull * pool.MaxEventsPerQuantum(), nullptr);
         if (!frontier_.Attach(decisions, pool) ||
             !laneFrontier_.Attach(decisions, pool, true)) return false;
         return immediate_.AttachFrontier(laneFrontier_, pool);

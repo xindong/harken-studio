@@ -6176,23 +6176,21 @@ void ExpectTransitionContinuationCapacityExhaustion(
     std::vector<harken::PreparedDecisionReservation> preparedDecisions;
     std::vector<harken::PreparedPlan03GroupSlice> preparedGroupSlices;
     if (exhaustion == ContinuationCapacityExhaustion::Transaction) {
-        const std::uint64_t occupiedFrame =
-            engine->timelinePool.WindowStartFrame() +
-            3u * engine->config.blockFrames;
-        std::uint64_t transactionId = 1;
-        for (std::uint32_t batch = 0; batch < 2; ++batch) {
-            const std::uint32_t batchCount = batch == 0 ? 128u : 127u;
-            for (std::uint32_t index = 0; index < batchCount; ++index) {
-                ASSERT_EQ(harken::ReserveStatus::Committed,
-                          ReserveActionPreparationTransaction(
-                              *engine, transactionId++, occupiedFrame)
-                              .status);
-            }
-            AdvanceActionPreparationQuantum(*engine);
+        // One accepted transaction remains possible; preparing the rest of the
+        // successor must roll back if a new page cannot be allocated.
+        auto& pool = engine->timelinePool;
+        ASSERT_TRUE(pool.PrepareAvailableTransactionsForTests(1));
+        pool.SetTransactionCommitPageLimitForTests(0);
+        while (pool.PrepareAvailableTransactionsForTests(pool.TransactionSlotCount() + 1u)) {}
+        const auto occupiedFrame = pool.WindowStartFrame() + 3u * engine->config.blockFrames;
+        for (std::uint32_t index = 1; index < pool.TransactionSlotCount(); ++index) {
+            ASSERT_EQ(harken::ReserveStatus::Committed,
+                ReserveActionPreparationTransaction(*engine, index, occupiedFrame).status);
         }
-        ASSERT_EQ(engine->timelinePool.MaxScheduledTransactions() - 1u,
-                  engine->timelinePool.LiveTransactionCount());
-        ASSERT_EQ(0u, engine->timelinePool.IngressThisQuantum());
+        AdvanceActionPreparationQuantum(*engine);
+        AdvanceActionPreparationQuantum(*engine);
+        ASSERT_EQ(pool.TransactionSlotCount() - 1u, pool.LiveTransactionCount());
+        ASSERT_EQ(0u, pool.IngressThisQuantum());
     } else if (exhaustion == ContinuationCapacityExhaustion::Ingress) {
         constexpr std::uint32_t occupiedCount = 127;
         const std::uint64_t targetFrame =
@@ -6365,9 +6363,10 @@ void ExpectTransitionContinuationCapacityExhaustion(
 
     ExpectPublicActionPreparationRefusal(
         *engine, image.actions[9].actionStableId, emitter,
-        VN_BACKPRESSURE, before);
+        exhaustion == ContinuationCapacityExhaustion::Transaction ? VN_OUT_OF_MEMORY : VN_BACKPRESSURE, before);
 
     if (exhaustion == ContinuationCapacityExhaustion::Transaction) {
+        engine->timelinePool.SetTransactionCommitPageLimitForTests(SIZE_MAX);
         for (std::uint32_t advance = 0;
              advance < 2 && engine->timelinePool.LiveTransactionCount() != 0;
              ++advance) {
@@ -65303,7 +65302,7 @@ TEST(ActionFiringApi, DelayedCompositeUsesOwnCompletionRecordUnderPressure) {
 }
 
 TEST(ActionFiringApi,
-     PreparationMatrixScheduledTransactionCapacityReturnsBackpressure) {
+     PreparationMatrixScheduledTransactionsGrowAcrossQuanta) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(1, 64, 48000));
@@ -65335,13 +65334,29 @@ TEST(ActionFiringApi,
         }
         AdvanceActionPreparationQuantum(*engine);
     }
-    ASSERT_EQ(engine->timelinePool.MaxScheduledTransactions(),
+    ASSERT_EQ(256u,
               engine->timelinePool.LiveTransactionCount());
     ASSERT_EQ(0u, engine->timelinePool.IngressThisQuantum());
-    const auto before = CaptureActionPreparationOwners(*engine);
-
-    ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(50), 0, VN_BACKPRESSURE, before);
+    VnPostActionDesc desc = ValidPostDesc();
+    desc.actionId = harkentest::ObjectId(50);
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    EXPECT_NE(0u, firing);
+    EXPECT_GT(engine->timelinePool.LiveTransactionCount(), 256u);
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    bool heard = false;
+    for (unsigned block = 0; block < 32; ++block) {
+        engine->nullBackend.Pump(1);
+        heard |= harkentest::Peak(engine->nullBackend.LastBlock(),
+            engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()) > harkentest::kSilenceFloor;
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_TRUE(heard);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
 TEST(ActionFiringApi,

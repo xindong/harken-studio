@@ -5003,6 +5003,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     struct StoragePreparation {
         unsigned calls = 0;
         bool allowed = true;
+        std::uint32_t readerSlots = 0;
     } storage;
     const auto& preparations = storage.calls;
     pool.AttachPendingEventStorage(pendingStorage, &storage,
@@ -5010,6 +5011,10 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
             auto& state = *static_cast<StoragePreparation*>(context);
             ++state.calls;
             return state.allowed;
+        }, [](void* context, std::uint32_t rows) noexcept {
+            auto& state = *static_cast<StoragePreparation*>(context);
+            state.readerSlots = rows;
+            return true;
         });
     harken::TimelineArmTable arms(1);
     harken::UnplacedBatchCredit credit{};
@@ -5018,7 +5023,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
         harken::detail::ScheduledTransactionPoolCancelTestAccess::SetEventDirectoryCommitPageLimit(
             pool, storageIndex, 0);
     ASSERT_GT(preparations, 0u);
-    const auto preparationsAtAcceptance = preparations;
+
     storage.allowed = false;
     ScheduledEventInput event{};
     event.executeFrame = 210;
@@ -5038,6 +5043,12 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     std::uint32_t page = 0;
     ASSERT_TRUE(pool.PageForFrame(210, &page));
 
+    auto competing = request;
+    competing.transactionId = 12;
+    ASSERT_EQ(ReserveRefusal::PageEventCapacity,
+        pool.Reserve(competing, PrePublishLatePolicy::Refuse).refusal);
+    ASSERT_EQ(2u, storage.readerSlots);
+    const auto preparationsAtAcceptance = preparations;
     unsigned preparationsAfterRefusals = 0;
     {
         ScheduledTransactionPool::PrivateMaterializationTransaction lease;
@@ -5091,6 +5102,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     std::array<ConsumedEvent, 1> consumed{};
     ASSERT_EQ(1u, pool.ConsumePageRt(2, consumed.data(), consumed.size()));
     EXPECT_EQ(13u, consumed[0].transactionId);
+    EXPECT_LT(consumed[0].txnSlot, storage.readerSlots);
 }
 
 TEST(ScheduledTransactionPool, PrivateCommitRejectsLostGroupBeforeTransactionPublication) {

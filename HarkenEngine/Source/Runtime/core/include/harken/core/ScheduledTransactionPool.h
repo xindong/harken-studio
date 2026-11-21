@@ -1349,6 +1349,7 @@ public:
     class PendingEventStorageRegistration {
     public:
         using Prepare = bool (*)(void*, PendingEventStorageDemand) noexcept;
+        using PrepareTransactions = bool (*)(void*, std::uint32_t) noexcept;
         PendingEventStorageRegistration() = default;
         ~PendingEventStorageRegistration() { Detach(); }
         PendingEventStorageRegistration(const PendingEventStorageRegistration&) = delete;
@@ -1361,11 +1362,13 @@ public:
         PendingEventStorageRegistration* next_ = nullptr;
         void* context_ = nullptr;
         Prepare prepare_ = nullptr;
+        PrepareTransactions prepareTransactions_ = nullptr;
     };
     // Control-only. Prepare this existing demand before attaching a consumer.
     PendingEventStorageDemand CapturePendingEventStorageDemand() const noexcept;
     void AttachPendingEventStorage(PendingEventStorageRegistration& registration,
-        void* context, PendingEventStorageRegistration::Prepare prepare) const noexcept;
+        void* context, PendingEventStorageRegistration::Prepare prepare,
+        PendingEventStorageRegistration::PrepareTransactions prepareTransactions = nullptr) const noexcept;
     class CurrentSliceStorageRegistration {
     public:
         using Prepare = bool (*)(void*, std::size_t) noexcept;
@@ -1426,8 +1429,12 @@ public:
     std::uint32_t MaxEventsPerQuantum() const {
         return config_.maxEventsPerQuantum;
     }
-    std::uint32_t MaxScheduledTransactions() const {
-        return config_.maxScheduledTransactions;
+    std::uint32_t TransactionSlotCount() const noexcept { return transactions_.size(); }
+    bool PrepareAvailableTransactionsForTests(std::uint32_t count) noexcept {
+        return PrepareTransactionSlots(count, 0u);
+    }
+    void SetTransactionCommitPageLimitForTests(std::size_t pages) noexcept {
+        transactions_.SetCommitPageLimitForTests(pages);
     }
     std::uint32_t MaxCurrentSlicesPerQuantum() const {
         return currentSliceStorageCapacity_;
@@ -2668,9 +2675,13 @@ private:
     std::vector<std::uint32_t> pageBatchOccupiedCount_;
     StableRowStorage<FrameBatchRow, std::size_t> pageBatchRows_;
 
-    std::vector<TransactionRecord> transactions_;
+    bool PrepareTransactionSlots(std::size_t transactions, std::size_t claims, bool accepted = false) noexcept;
+    std::uint64_t AvailableTransactionSlots() const noexcept {
+        return config_.maxScheduledTransactions - (transactions_.size() - freeTransactions_.size());
+    }
+    GrowingRowStorage<TransactionRecord> transactions_;
     std::vector<std::uint32_t> freeTransactions_; // stack of free slot indices
-    std::vector<PreparedTransactionClaim> preparedTransactionClaims_;
+    GrowingRowStorage<PreparedTransactionClaim> preparedTransactionClaims_;
     std::vector<std::uint32_t> freePreparedTransactionClaims_;
 
     struct UnplacedCreditRow {

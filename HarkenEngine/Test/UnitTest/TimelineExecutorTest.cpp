@@ -2312,42 +2312,12 @@ TEST(TimelineExecutor, TransientRefusalStopsItsDueClass) {
         engine->playableInstances.Acquire(harken::PlayableKind::Segment, 0);
     const std::uint64_t ownerEpoch =
         engine->playableInstances.Classify(owner).scheduleEpoch;
-    std::vector<harken::EventTemplate> events(258);
-    std::vector<harken::ProgramView> programs(258);
+    std::array<harken::EventTemplate, 2> events{};
+    std::array<harken::ProgramView, 2> programs{};
     harken::PostInput input{};
     input.transportEpoch = engine->timelinePool.Epoch();
-    for (std::uint32_t index = 0; index < 128; ++index) {
-        events[index].logicCommitSequence = index + 1u;
-        programs[index].ownerInstance = owner;
-        programs[index].ownerInstanceScheduleEpoch = ownerEpoch;
-        programs[index].transactionId = index + 1u;
-        programs[index].entryAnchorFrame = 8192u;
-        programs[index].events = &events[index];
-        programs[index].eventCount = 1;
-        input.logicCommitSequence = index + 1u;
-        ASSERT_EQ(engine->timelinePlanner.PostPlay(programs[index], input).status,
-                  harken::PostStatus::Reserved)
-            << index;
-    }
-    engine->nullBackend.Pump(1);
-    engine->timelineService->Service();
-    for (std::uint32_t index = 128; index < 256; ++index) {
-        events[index].logicCommitSequence = index + 1u;
-        programs[index].ownerInstance = owner;
-        programs[index].ownerInstanceScheduleEpoch = ownerEpoch;
-        programs[index].transactionId = index + 1u;
-        programs[index].entryAnchorFrame = 8448u;
-        programs[index].events = &events[index];
-        programs[index].eventCount = 1;
-        input.logicCommitSequence = index + 1u;
-        ASSERT_EQ(engine->timelinePlanner.PostPlay(programs[index], input).status,
-                  harken::PostStatus::Reserved)
-            << index;
-    }
-    ASSERT_EQ(engine->timelinePool.LiveTransactionCount(), 256u);
-
     const std::uint64_t dueFrame = engine->timelinePool.WindowEndFrame();
-    for (std::uint32_t index = 256; index < programs.size(); ++index) {
+    for (std::uint32_t index = 0; index < programs.size(); ++index) {
         events[index].logicCommitSequence = index + 1u;
         programs[index].ownerInstance = owner;
         programs[index].ownerInstanceScheduleEpoch = ownerEpoch;
@@ -2359,6 +2329,7 @@ TEST(TimelineExecutor, TransientRefusalStopsItsDueClass) {
         ASSERT_EQ(engine->timelinePlanner.PostPlay(programs[index], input).status,
                   harken::PostStatus::Deferred);
     }
+    engine->timelinePool.SetTransactionCommitPageLimitForTests(0);
     const std::uint64_t refusalsBefore =
         engine->timelinePool.RefusalCount(harken::ReserveRefusal::PoolFull);
 
@@ -2370,6 +2341,11 @@ TEST(TimelineExecutor, TransientRefusalStopsItsDueClass) {
                   refusalsBefore,
               1u);
     EXPECT_EQ(engine->timelineDeferred.Count(), 2u);
+    engine->timelinePool.SetTransactionCommitPageLimitForTests(SIZE_MAX);
+    engine->nullBackend.Pump(1);
+    engine->timelineService->Service();
+    EXPECT_EQ(engine->timelineDeferred.Count(), 0u);
+    EXPECT_EQ(engine->timelinePool.LiveTransactionCount(), 2u);
 }
 
 TEST(TimelineExecutor, SupersededRegistryWaitsForArmLeaseAndFence) {
