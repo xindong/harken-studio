@@ -86,21 +86,27 @@ namespace Harken.Unity.Editor
             {
                 if (string.IsNullOrWhiteSpace(directory)) return Fail(VnResult.VN_CAPABILITY_UNAVAILABLE, "No Pack directory is selected.");
                 string full = Path.GetFullPath(directory);
-                var names = CandidateFiles(full).ToList();
+                var source = PackSource.FromDirectory(full, language);
+                var names = CandidateFiles(full, source.IsResidentDirectory).ToList();
                 if (!string.IsNullOrEmpty(language) && PackDirectorySource.ValidLanguage(language) && Directory.Exists(Path.Combine(full, language)))
-                    names.AddRange(CandidateFiles(Path.Combine(full, language)));
+                    names.AddRange(CandidateFiles(Path.Combine(full, language), source.IsResidentDirectory));
                 var resources = HarkenEditorResources.FromDirectory(Path.GetDirectoryName(full) ?? full, full);
-                return RefreshCore(PackSource.FromDirectory(full, language), names, full + "|" + (language ?? ""), full, resources);
+                return RefreshCore(source, names, full + "|" + (language ?? ""), full, resources);
             }
             catch (Exception ex) { return Fail(VnResult.VN_PACK_PROVIDER_FAILED, ex.Message); }
         }
 
-        private static IEnumerable<string> CandidateFiles(string directory)
+        private static IEnumerable<string> CandidateFiles(string directory, bool resident)
         {
             foreach (string path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 string name = Path.GetFileNameWithoutExtension(path);
                 if (name == "Init" || !PackCompanion.IsName(name)) continue;
+                if (resident)
+                {
+                    if (path.EndsWith(".hrp", StringComparison.Ordinal)) yield return name;
+                    continue;
+                }
                 if (path.EndsWith(".bytes", StringComparison.Ordinal)) yield return name;
                 else if (path.EndsWith(".json", StringComparison.Ordinal))
                 {

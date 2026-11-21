@@ -22,6 +22,7 @@ namespace Harken
     {
         internal readonly string Root;
         internal readonly string Language;
+        internal bool IsResidentDirectory => resident;
 
         internal PackDirectorySource(string root, string language, bool? residentLayout = null)
         {
