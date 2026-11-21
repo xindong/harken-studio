@@ -432,7 +432,8 @@
           ],
           "VnDeviceMode": [
             "VN_DEVICE_REAL",
-            "VN_DEVICE_NULL"
+            "VN_DEVICE_NULL",
+            "VN_DEVICE_REAL_BACKGROUND"
           ],
           "VnDynamicCapabilityFlags": [
             "VN_DYNAMIC_CAP_CONTROL_USES_BINDING",
@@ -1464,7 +1465,7 @@
         "VN_ABI_VERSION_MINOR": {
           "edition": "core",
           "type": "u32",
-          "value": 3
+          "value": 4
         },
         "VN_ATTENUATION_MAX_CURVE_POINTS": {
           "edition": "core",
@@ -2237,7 +2238,8 @@
           "edition": "core",
           "values": {
             "VN_DEVICE_NULL": 1,
-            "VN_DEVICE_REAL": 0
+            "VN_DEVICE_REAL": 0,
+            "VN_DEVICE_REAL_BACKGROUND": 2
           }
         },
         "VnDynamicCapabilityFlags": {
@@ -27047,7 +27049,7 @@
       }
     }
   },
-  "contractSha256": "c48d7af3b2fd2eab0218782f6030fb390594f7411647350e849338180e3c7072",
+  "contractSha256": "9c35e3d96ebadcb193fdb0c8735d0cea22f02dc679a651b1010635e7ab1592e8",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

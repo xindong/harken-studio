@@ -790,6 +790,13 @@ VnResult DeviceBackend::Prepare(
         rateObservation.knownFields |=
             kDeviceRateQueriedDefaultEndpointKnown;
     }
+#if defined(_WIN32)
+    if (g_deviceBackendTestState && !endpointObservation && g_deviceBackendTestState->querySucceeds &&
+        g_deviceBackendTestState->querySampleRate) {
+        rateObservation.queriedDefaultEndpointRate = g_deviceBackendTestState->querySampleRate;
+        rateObservation.knownFields |= kDeviceRateQueriedDefaultEndpointKnown;
+    }
+#endif
     m_rateObservation = rateObservation;
     if (DeviceStartFaultForTests() == DeviceStartFault::BeforeBackend) {
         throw std::bad_alloc{};
@@ -978,6 +985,18 @@ VnResult DeviceBackend::Prepare(
             return VN_DEVICE_ERROR;
         }
     }
+#if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
+    // Fixed formats can use the existing default client without another activation.
+    if (!endpointObservation && !openPlan.defaultFailed && impl->context.backend == ma_backend_wasapi) {
+        auto* client = static_cast<IAudioClient*>(impl->device.wasapi.pAudioClientPlayback);
+        WAVEFORMATEX* format = nullptr;
+        if (client && SUCCEEDED(client->GetMixFormat(&format)) && format && format->nSamplesPerSec) {
+            m_rateObservation.queriedDefaultEndpointRate = format->nSamplesPerSec;
+            m_rateObservation.knownFields |= kDeviceRateQueriedDefaultEndpointKnown;
+        }
+        CoTaskMemFree(format);
+    }
+#endif
     impl->deviceReady = true;
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
     if (SupportsGameOutput(impl->device, config)) {

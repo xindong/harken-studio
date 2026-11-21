@@ -294,7 +294,8 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         return VN_INVALID_ARG;
     }
     if (config->deviceMode != VN_DEVICE_REAL &&
-        config->deviceMode != VN_DEVICE_NULL) {
+        config->deviceMode != VN_DEVICE_NULL &&
+        config->deviceMode != VN_DEVICE_REAL_BACKGROUND) {
         return VN_INVALID_CONFIG;
     }
 

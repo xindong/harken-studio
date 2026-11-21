@@ -6845,6 +6845,7 @@ VnResult StartRealDevice(Engine& engine,
 }
 
 VnResult StopRealDevice(Engine& engine) {
+    if (engine.gameOutputStartup.OwnsDevice()) return engine.gameOutputStartup.Stop();
     // Revoke the public render transaction first. A callback already admitted
     // may finish, while any later callback writes silence. Disable then closes
     // worker batch admission; StopCallback synchronously joins callback exit
@@ -53841,7 +53842,7 @@ void ServicePendingImmediateEntries(
         bool awaitingApply = false;
         bool invalidArm = false;
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
-        bool onlyRelativeSounds = engine.device.UsesGameOutput();
+        bool onlyRelativeSounds = !engine.gameOutputStartup.Opening() && engine.device.UsesGameOutput();
 #endif
         for (harken::Engine::PlayableCohortCursor occupiedCursor{};
              auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
@@ -73953,7 +73954,7 @@ void TimelineServiceCoordinator::Service() {
 #if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
     // A pending relative Sound has no fixed start until the audio thread
     // acknowledges its arm. Keep empty pages writable through that wait.
-    if (engine_.device.UsesGameOutput() && requiredPublicationFrame == 0 &&
+    if (!engine_.gameOutputStartup.Opening() && engine_.device.UsesGameOutput() && requiredPublicationFrame == 0 &&
         blockingFrame == UINT64_MAX && !engine_.runtimeTransportResetActive &&
         engine_.timelinePool.LiveTransactionCount() == 0 &&
         engine_.timelineDeferred.Count() == 0 && engine_.timelineDeferred.PreparedCount() == 0 &&
@@ -111573,7 +111574,13 @@ VnResult Vn_Init(const VnConfig* config) {
     // checks. Later opens use observations only and never enter this resolver.
     harken::DeviceQueryResult initialDeviceQuery{};
     const harken::DeviceQueryResult* initialEndpointObservation = nullptr;
-    if (!baseResolution.nullDevice &&
+    bool fixedDeviceFormat = false;
+#if defined(_WIN32)
+    fixedDeviceFormat = !baseResolution.nullDevice &&
+        config->structSize == sizeof(VnConfig) && config->sampleRate != 0 &&
+        config->mixChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT && config->deviceChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT;
+#endif
+    if (!baseResolution.nullDevice && !fixedDeviceFormat &&
         harken::QueryDefaultDeviceFormat(&initialDeviceQuery)) {
         initialEndpointObservation = &initialDeviceQuery;
     }
@@ -111658,6 +111665,18 @@ VnResult Vn_Init(const VnConfig* config) {
     engine->traceOrigin.requested.logUserData = nullptr;
     engine->traceOrigin.resolvedSampleRate = resolved.mixRate.SampleRate();
     engine->traceOrigin.resolvedDeviceLayout = resolved.deviceChannelLayout;
+#if defined(_WIN32)
+    if (config->deviceMode == VN_DEVICE_REAL_BACKGROUND && resolved.renderWorkerCount == 0) {
+        engine->suspended = true;
+        try {
+            engine->gameOutputStartup.Begin(engine->device, engine->mixer, engine->config, initialEndpointObservation);
+        } catch (...) {
+            engineOwner.reset();
+            harken::memguard::Uninstall();
+            return VN_DEVICE_ERROR;
+        }
+    } else
+#endif
     if (!resolved.nullDevice) {
         // Real device: build and start the platform's shared-mode backend.
         // Any failure — including a build with no real backend — unwinds init
@@ -111680,8 +111699,7 @@ VnResult Vn_Init(const VnConfig* config) {
             return VN_DEVICE_ERROR;
         }
     }
-    // Publish only after the complete device/worker transaction and callback
-    // render admission commit succeed.
+    // Background output publishes a suspended engine for content preparation.
     harken::Engine* published = engine;
     const VnResult monitorInit = harken::monitor::OnEngineInit(published);
     if (monitorInit != VN_OK) {
@@ -111711,6 +111729,7 @@ VnResult Vn_Suspend(void) {
         return VN_NOT_INITIALIZED;
     }
     if (engine->suspended) {
+        if (engine->gameOutputStartup.Opening()) return engine->gameOutputStartup.Stop();
         return VN_OK;
     }
 
@@ -111739,6 +111758,15 @@ VnResult Vn_Resume(void) {
     }
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
+    }
+    if (engine->gameOutputStartup.Opening()) {
+        engine->suspended = false;
+        const auto ready = engine->gameOutputStartup.Finish(engine->device);
+        if (ready != VN_OK) {
+            engine->suspended = true;
+            if (ready != VN_IN_USE) engine->gameOutputStartup.Stop();
+        }
+        return ready;
     }
     if (!engine->suspended) {
         if (engine->config.nullDevice ||

@@ -635,8 +635,7 @@ namespace Harken
                 return new PackStartupResult(VnResult.VN_INVALID_ARG);
             if (source.IsDirectory)
             {
-                VnResult local = StartLocal(source, ref config, out PackBootstrapSession ready, cancellation);
-                return new PackStartupResult(local, ready);
+                return await StartDirectoryLevelAsync(source, config, null, cancellation);
             }
             int thread = Environment.CurrentManagedThreadId;
             CompanionCapture captured = await source.CaptureAsync(null, default, null, cancellation);
@@ -645,6 +644,58 @@ namespace Harken
             if (captured.Result != VnResult.VN_OK) return new PackStartupResult(captured.Result);
             VnResult result = StartCaptured(source, captured.Input, ref config, out PackBootstrapSession session, cancellation);
             return new PackStartupResult(result, session);
+        }
+
+        /// <summary>Opens output and prepares the first level. On success the session can play
+        /// immediately. Release Preparation when the level unloads.</summary>
+        public static Task<PackStartupResult> StartLevelAsync(PackSource source, VnConfig config,
+            string[] actionNames, CancellationToken cancellation = default)
+        {
+            if (source == null || !source.IsDirectory || actionNames == null || actionNames.Length == 0)
+                return Task.FromResult(new PackStartupResult(VnResult.VN_INVALID_ARG));
+            return StartDirectoryLevelAsync(source, config, actionNames, cancellation);
+        }
+
+        private static async Task<PackStartupResult> StartDirectoryLevelAsync(PackSource source, VnConfig config,
+            string[] names, CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            bool background = config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL_BACKGROUND;
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            if (config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL && PackSource.HasControlContext)
+            {
+                if (HarkenEngine.TryGetAbi(out var abi) && abi.minor >= 4)
+                {
+                    config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_REAL_BACKGROUND;
+                    background = true;
+                }
+            }
+#endif
+            VnResult result = StartLocal(source, ref config, out var session, cancellation);
+            if (result != VnResult.VN_OK) return new PackStartupResult(result);
+            ActionPreparation preparation = null;
+            try
+            {
+                if (names != null) result = session.PrepareActions(names, session.ProjectId, out preparation);
+                if (result == VnResult.VN_OK && background)
+                {
+                    while ((result = HarkenEngine.Resume()) == VnResult.VN_IN_USE)
+                    {
+                        if (PackSource.HasControlContext) await Task.Yield();
+                        else Thread.Sleep(1);
+                        cancellation.ThrowIfCancellationRequested();
+                    }
+                }
+                cancellation.ThrowIfCancellationRequested();
+                if (result != VnResult.VN_OK) return new PackStartupResult(result);
+                var ready = new PackStartupResult(result, session, preparation);
+                session = null;
+                return ready;
+            }
+            finally
+            {
+                if (session != null) { preparation?.Release(); session.Shutdown(); }
+            }
         }
 
         internal static VnResult StartCaptured(PackSource source, CompanionInput init, ref VnConfig config,

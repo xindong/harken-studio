@@ -10,6 +10,10 @@
 
 Harken 是一套游戏音频中间件。声音设计师在 Harken Studio 中编排声音与播放逻辑，并导出为 Pack；本包在 Unity 游戏中加载这些 Pack，并通过 Harken 引擎播放，游戏代码按名称触发声音，而不必直接处理音频文件。
 
+## 在 Windows 游戏启动时准备首关声音
+
+如果游戏自行管理音频，可以在 Unity 主线程调用 `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)`。传入平台 Pack 目录创建的 `PackSource` 和首关需要的 Action 名称。支持后台打开设备的 Windows Runtime 会同时准备这些声音。返回 `VN_OK` 后即可播放。退出关卡时调用 `Preparation.Release()`，结束音频会话时调用 `Session.Shutdown()`。使用默认音频组件的场景仍由组件负责启动和关闭。
+
 ## 功能特性
 
 - 在项目设置中选择 Pack 目录即可启动引擎，也可以在代码中以目录、字节或自定义来源启动。

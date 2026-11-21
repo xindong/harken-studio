@@ -9,7 +9,9 @@ namespace Harken
     {
         public VnResult Result { get; }
         public PackBootstrapSession Session { get; }
-        internal PackStartupResult(VnResult result, PackBootstrapSession session = null) { Result = result; Session = session; }
+        public ActionPreparation Preparation { get; }
+        internal PackStartupResult(VnResult result, PackBootstrapSession session = null, ActionPreparation preparation = null)
+        { Result = result; Session = session; Preparation = preparation; }
     }
 
     public readonly struct ActionPreparationResult

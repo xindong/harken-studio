@@ -163,7 +163,11 @@ enum {
 /* Values for VnConfig.deviceMode. */
 enum {
     VN_DEVICE_REAL = 0, /* real audio device output */
-    VN_DEVICE_NULL = 1  /* headless: blocks are pumped by the host/test clock */
+    VN_DEVICE_NULL = 1, /* headless: blocks are pumped by the host/test clock */
+    /* Windows game startup. Prepare content after Init, then call Resume before
+     * publishing readiness. Resume returns VN_IN_USE while the endpoint opens.
+     * Other platforms and parallel render configurations open synchronously. */
+    VN_DEVICE_REAL_BACKGROUND = 2
 };
 
 /* Notification record; the full definition appears after VnVoiceHandle
@@ -205,7 +209,7 @@ typedef struct VnConfig {
                               * 0 = 256 */
     uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
     uint32_t arenaBytes;     /* per-block bump arena size; 0 = 2097152 */
-    uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
+    uint32_t deviceMode;     /* One of the VN_DEVICE_* initialization modes. */
     uint32_t reserved0;      /* keeps 8-byte alignment for future fields */
     VnNotificationCallback onNotification; /* notification callback, or NULL
                                              * for none */
@@ -1314,7 +1318,7 @@ typedef void (*VnPackByteReleaseFn)(
     VnPackByteSpan span);
 
 #define VN_ABI_VERSION_MAJOR 1u
-#define VN_ABI_VERSION_MINOR 3u
+#define VN_ABI_VERSION_MINOR 4u
 
 typedef struct VnAbiVersionInfo {
     uint32_t structSize;

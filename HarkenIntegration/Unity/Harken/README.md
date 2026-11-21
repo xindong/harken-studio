@@ -10,6 +10,10 @@ Documentation: ONLINE_DOCUMENTATION_URL_PENDING
 
 Harken is a game-audio middleware. Sound designers author sounds and playback logic in Harken Studio and export them as Packs; this package loads those Packs in a Unity game and plays them through the Harken engine, so game code triggers sounds by name instead of handling audio files directly.
 
+## Prepare first-level audio on Windows
+
+Games that own the audio session can call `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)` on the Unity main thread. Create the source from the platform Pack directory and pass the Action names needed for the first level. Supported Windows runtimes open the output while preparing these sounds. On `VN_OK` the game can play them immediately. Call `Preparation.Release()` when leaving the level and `Session.Shutdown()` when ending the session. Scenes using the default audio component let that component own startup and shutdown.
+
 ## Features
 
 - Start the engine from Project Settings with a selected Pack directory, or from code with directory, byte or custom sources.

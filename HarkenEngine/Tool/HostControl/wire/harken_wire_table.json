@@ -12629,7 +12629,8 @@
         "backing": "u32",
         "values": {
           "VN_DEVICE_REAL": 0,
-          "VN_DEVICE_NULL": 1
+          "VN_DEVICE_NULL": 1,
+          "VN_DEVICE_REAL_BACKGROUND": 2
         }
       },
       "VnPcmLayout": {
@@ -13421,7 +13422,7 @@
       },
       "VN_ABI_VERSION_MINOR": {
         "type": "u32",
-        "value": 3
+        "value": 4
       },
       "VN_EMITTER_CREATE_STATE_ONLY": {
         "type": "u32",
