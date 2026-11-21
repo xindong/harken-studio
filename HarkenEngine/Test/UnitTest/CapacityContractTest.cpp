@@ -416,7 +416,7 @@ TEST(StableBackingPreparation, SplitCheckpointAllowanceSurvivesClearAndPreserves
 }
 
 TEST(EnginePlayablePartitionStorage, RealStorageLoansLeaveNativeProgressAndFenceIndependent) {
-    PartitionPool pool(1);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{2, 7};
     PartitionPool::ReservationInput original;
     PartitionPool::OriginalStoragePin baseline, loan;
@@ -452,7 +452,7 @@ TEST(EnginePlayablePartitionStorage, RealStorageLoansLeaveNativeProgressAndFence
 }
 
 TEST(EnginePlayablePartitionStorage, ActualMoveReturnAndForeignReceiverDoNotMintOrLeak) {
-    PartitionPool first(1), second(1);
+    PartitionPool first, second;
     const harken::EnginePlayableServiceToken owner{0, 1};
     PartitionPool::OriginalStoragePin a, b, loan, otherLoan;
     const auto at = first.Reserve(owner, nullptr, &a);
@@ -479,7 +479,7 @@ TEST(EnginePlayablePartitionStorage, ActualMoveReturnAndForeignReceiverDoNotMint
 }
 
 TEST(EnginePlayablePartitionStorage, LastTrueFactoryMarkerEndsWithoutWrapOrRegrant) {
-    PartitionPool pool(1);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
     harken::detail::EnginePlayablePartitionTestAccess::SeedFreeStorageIssuer(pool, UINT64_MAX - 1u);
     PartitionPool::OriginalStoragePin original, foreign, refused;
@@ -500,7 +500,7 @@ TEST(EnginePlayablePartitionStorage, LastTrueFactoryMarkerEndsWithoutWrapOrRegra
 }
 
 TEST(EnginePlayablePartitionProof, ActualHeldSlotBlocksMutatorsAndReceiptReplacement) {
-    PartitionPool pool(2);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken firstOwner{0, 1}, secondOwner{1, 1};
     PartitionPool::ReservationInput first, second, duplicate;
     const auto firstToken = pool.Reserve(firstOwner, &first);
@@ -555,7 +555,7 @@ TEST(EnginePlayablePartitionProof, ActualHeldSlotBlocksMutatorsAndReceiptReplace
 }
 
 TEST(EnginePlayablePartitionProof, GenuineForeignAndChangedOriginalOwnerRefuseAndReleasePrefix) {
-    PartitionPool pool(2), foreign(1);
+    PartitionPool pool, foreign;
     const harken::EnginePlayableServiceToken firstOwner{0, 1}, secondOwner{1, 1}, replacement{2, 1};
     PartitionPool::ReservationInput first, second, foreignInput;
     const auto firstToken = pool.Reserve(firstOwner, &first);
@@ -588,8 +588,9 @@ TEST(EnginePlayablePartitionProof, GenuineForeignAndChangedOriginalOwnerRefuseAn
 }
 
 TEST(EnginePlayablePartitionProof, ActualCancelReuseAndMaxQuarantineRejectOldFactoryIssuance) {
-    PartitionPool pool(2);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
+    ASSERT_TRUE(pool.PrepareStorage(1));
     harken::detail::EnginePlayablePartitionTestAccess::SeedFreeGeneration(pool, 0, UINT64_MAX);
     PartitionPool::ReservationInput exhausted, prior, fresh;
     const auto exhaustedToken = pool.Reserve(owner, &exhausted);
@@ -612,7 +613,7 @@ TEST(EnginePlayablePartitionProof, ActualCancelReuseAndMaxQuarantineRejectOldFac
 }
 
 TEST(EnginePlayablePartitionProof, ConsumedIssuanceNeverRegrantsAndPublishedFenceRemainsStrict) {
-    PartitionPool pool(1);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
     PartitionPool::ReservationInput original;
     const auto token = pool.Reserve(owner, &original);
@@ -1256,12 +1257,12 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
     EXPECT_EQ(32u, layout.continuousStride);
 
     EXPECT_EQ(resolved.voiceCapacity.Logical(), resolved.maxPlayableInstances);
-    EXPECT_EQ(81'920u, layout.memberCount);
-    EXPECT_EQ(65'536u, layout.pairedCount);
-    EXPECT_EQ(65'536u, layout.currentEventCount);
-    EXPECT_EQ(49'152u, layout.initialProgramCount);
-    EXPECT_EQ(32'768u, layout.endpointCount);
-    EXPECT_EQ(16'384u, layout.continuousCount);
+    EXPECT_EQ(81'920u, layout.MemberBase(resolved.maxPlayableInstances));
+    EXPECT_EQ(65'536u, layout.PairedBase(resolved.maxPlayableInstances));
+    EXPECT_EQ(65'536u, layout.CurrentEventBase(resolved.maxPlayableInstances));
+    EXPECT_EQ(49'152u, layout.InitialProgramBase(resolved.maxPlayableInstances));
+    EXPECT_EQ(32'768u, layout.EndpointBase(resolved.maxPlayableInstances));
+    EXPECT_EQ(16'384u, layout.ContinuousBase(resolved.maxPlayableInstances));
 
     EXPECT_EQ(64u, layout.PackedDiscreteTransitionOffset(96u));
     EXPECT_EQ(127u, layout.PackedDiscreteTransitionOffset(159u));
@@ -1297,23 +1298,22 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         static_cast<std::uint64_t>(engine->playableServices.Capacity()) *
         engine->immediateActionLane.EventsPerAttempt() * sizeof(harken::ImmediateLanePrivateEntryResultCell)));
     const harken::PlayableStorageLayout& layout = engine->playableStorage;
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableStarts.size());
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableServices.Capacity());
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playablePartitions.Capacity());
+    EXPECT_EQ(0u, engine->playableStarts.size());
+    EXPECT_EQ(0u, engine->playableServices.Capacity());
+    EXPECT_EQ(0u, engine->playablePartitions.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->queueInstances.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->variableControlInstances.Capacity());
 
-    EXPECT_EQ(layout.memberCount + harken::QueueProgramBankCapacity(engine->config) *
-        harken::EngineQueueProgramBankBody::kProgramCapacity, engine->playableMemberRecords.size());
+    EXPECT_EQ(0u, engine->playableMemberRecords.size());
     EXPECT_EQ(0u, engine->playableMemberRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->playableMemberRecords.RequestedBytes());
-    EXPECT_EQ(layout.memberCount, engine->memberRelations.Capacity());
+    EXPECT_EQ(0u, engine->memberRelations.Capacity());
     EXPECT_EQ(0u, engine->memberRelations.ConstructedCount());
     EXPECT_EQ(0u, engine->memberRelations.RequestedBytes());
     EXPECT_EQ(0u, engine->occupiedMemberRelations);
     EXPECT_EQ(0u, engine->sourceTerminals.Capacity());
 
-    EXPECT_EQ(layout.initialProgramCount, engine->memberProgramRecords.size());
+    EXPECT_EQ(0u, engine->memberProgramRecords.size());
     EXPECT_EQ(0u, engine->memberProgramRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->memberProgramRecords.RequestedBytes());
 
@@ -1372,7 +1372,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
 
     testing::Test::RecordProperty("removed_prebuilt_initial_continuous_arm_bytes",
-        std::to_string(layout.continuousCount * continuousBytesPerSlot));
+        std::to_string(layout.ContinuousBase(engine->config.maxPlayableInstances) * continuousBytesPerSlot));
     testing::Test::RecordProperty("initial_arm_owner_bytes", std::to_string(sizeof(harken::EngineVariableInitialArms)));
     testing::Test::RecordProperty("removed_prebuilt_queue_timing_leaf_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->config.maxCompositeCompletionOwners) *
@@ -1380,30 +1380,30 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("private_reanchor_proof_bytes",
         std::to_string(sizeof(harken::CompositeCompletionOwnerPool::PrivateReanchorProof)));
     testing::Test::RecordProperty("removed_prebuilt_continuous_cut_bytes", std::to_string(
-        layout.continuousCount * (sizeof(harken::EnginePlayableMemberReference) +
+        layout.ContinuousBase(engine->config.maxPlayableInstances) * (sizeof(harken::EnginePlayableMemberReference) +
             2u * sizeof(harken::WeightSegmentV1) + sizeof(harken::TimelineArmToken) + sizeof(std::uint8_t))));
     testing::Test::RecordProperty("removed_prebuilt_member_weight_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->config.maxPlayableInstances) *
         (layout.knownLeaves + layout.liveRows) * weightBytesPerSlot));
     testing::Test::RecordProperty("seven_family_capacity_bytes", "0");
     testing::Test::RecordProperty("removed_successor_fact_capacity_bytes",
-        std::to_string(layout.endpointCount * removedSuccessorBytesPerSlot));
+        std::to_string(layout.EndpointBase(engine->config.maxPlayableInstances) * removedSuccessorBytesPerSlot));
     testing::Test::RecordProperty("removed_prebuilt_member_bytes",
-        std::to_string(layout.memberCount * removedMemberBytesPerSlot));
+        std::to_string(layout.MemberBase(engine->config.maxPlayableInstances) * removedMemberBytesPerSlot));
     testing::Test::RecordProperty("removed_prebuilt_source_fact_bytes", std::to_string(
-        layout.pairedCount * removedPairedBytesPerSlot + layout.endpointCount * sizeof(harken::OccurrenceToken)));
+        layout.PairedBase(engine->config.maxPlayableInstances) * removedPairedBytesPerSlot + layout.EndpointBase(engine->config.maxPlayableInstances) * sizeof(harken::OccurrenceToken)));
     testing::Test::RecordProperty("playable_member_record_bytes", std::to_string(sizeof(harken::EnginePlayableMemberRecord)));
     testing::Test::RecordProperty("removed_prebuilt_program_bytes", std::to_string(
-        layout.currentEventCount * currentEventBytesPerSlot +
-        layout.initialProgramCount * initialProgramBytesPerSlot));
+        layout.CurrentEventBase(engine->config.maxPlayableInstances) * currentEventBytesPerSlot +
+        layout.InitialProgramBase(engine->config.maxPlayableInstances) * initialProgramBytesPerSlot));
     testing::Test::RecordProperty("member_program_record_bytes", std::to_string(sizeof(harken::EngineMemberProgramRecord)));
     testing::Test::RecordProperty("removed_prebuilt_control_program_bytes", std::to_string(
-        layout.continuousCount * (currentEventBytesPerSlot + initialProgramBytesPerSlot)));
+        layout.ContinuousBase(engine->config.maxPlayableInstances) * (currentEventBytesPerSlot + initialProgramBytesPerSlot)));
     testing::Test::RecordProperty("control_program_record_bytes", std::to_string(sizeof(harken::EngineControlProgramRecord)));
     testing::Test::RecordProperty("removed_prebuilt_member_reference_bytes",
-        std::to_string(layout.memberCount * removedReferenceBytesPerSlot));
+        std::to_string(layout.MemberBase(engine->config.maxPlayableInstances) * removedReferenceBytesPerSlot));
     testing::Test::RecordProperty("member_relation_bytes", std::to_string(sizeof(harken::EnginePlayableMemberRelation)));
-    testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(StorageBytes(engine->playableStarts)));
+    testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(engine->playableStarts.RequestedBytes()));
     testing::Test::RecordProperty("service_capacity_bytes", std::to_string(engine->playableServices.RequestedBytes()));
     testing::Test::RecordProperty("partition_capacity_bytes", std::to_string(engine->playablePartitions.StorageBytes()));
     testing::Test::RecordProperty("published_empty_page_stamp_bytes",
@@ -1524,7 +1524,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("monitor_selection_pool_capacity",
         std::to_string(engine->ledger.MonitorSelectionCapacity()));
     testing::Test::RecordProperty("removed_successor_selection_bytes",
-        std::to_string(layout.endpointCount * sizeof(harken::EngineMonitorSelection)));
+        std::to_string(layout.EndpointBase(engine->config.maxPlayableInstances) * sizeof(harken::EngineMonitorSelection)));
     testing::Test::RecordProperty("source_terminal_row_bytes", std::to_string(sizeof(harken::SourceTerminalRecord)));
     testing::Test::RecordProperty("timeline_arm_row_bytes", std::to_string(sizeof(harken::TimelineArmTable::Row)));
     testing::Test::RecordProperty("authored_control_metadata_row_bytes",
@@ -1580,7 +1580,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("variable_weight_owner_bytes", std::to_string(sizeof(harken::VariableWeightControlIdentity)));
     testing::Test::RecordProperty("authored_stop_identity_bytes", std::to_string(sizeof(harken::AuthoredStopOperationIdentity)));
     testing::Test::RecordProperty("frontier_event_family_capacity_increase_bytes",
-        std::to_string((layout.pairedCount + layout.currentEventCount + layout.continuousCount) * frontierEventBytes));
+        std::to_string((layout.PairedBase(engine->config.maxPlayableInstances) + layout.CurrentEventBase(engine->config.maxPlayableInstances) + layout.ContinuousBase(engine->config.maxPlayableInstances)) * frontierEventBytes));
 
     const auto emptyFinalizerBytes = finalizer.StorageBytes();
     harken::UnplacedBatchCredit pendingCredit{};

@@ -2019,6 +2019,20 @@ struct CanonicalActionWorld {
             harken::ComputeCurrentWorldFingerprintV4(world);
     }
 
+    void MakeNestedQueueWithNaturalEndTransition() {
+        MakeImmediateNestedQueueVariableControlPlayAction();
+        EnableImmediateVariableControlTransition(256, 192);
+        containers[2].transitionProgramIndex = 0;
+        containers[2].curves = containers[3].curves;
+        containers[2].curveCount = containers[3].curveCount;
+        containers[3].transitionProgramIndex = UINT32_MAX;
+        containers[3].curves = nullptr;
+        containers[3].curveCount = 0;
+        transition.ownerContainerStableId = containers[2].containerStableId;
+        transitionRules[0].sourceExit = harken::TransitionSourceExitV1::NaturalEnd;
+        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(world);
+    }
+
     void MakeImmediateRandomToVariableControlPlayAction() {
         MakeImmediateVariableControlPlayAction();
         nestedVariableControlChild = {};
@@ -4969,7 +4983,7 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     ASSERT_EQ(64u, row->scheduleLeafCount);
     ASSERT_EQ(64u, row->QueuePayload().queueCurrentScheduleLeafCount);
     ASSERT_LT(row->scheduleStorageBase,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     ASSERT_EQ(ActionScheduleCapacityWorld::kSound,
               engine->ReadPlayableMember(
                   row->scheduleStorageBase).leaf.stableId);
@@ -4982,7 +4996,7 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     ASSERT_TRUE(row->QueueFiling().queueTransition.Valid());
     ASSERT_TRUE(row->QueueFiling().queueArmGroup.Valid());
     ASSERT_LE(row->scheduleStorageBase + 64u,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     ASSERT_FALSE(row->queueArrivalDecision.Valid());
     ASSERT_TRUE(engine->playableInstances.Classify(started.instance).live);
     for (std::uint32_t index = 0; index < 64; ++index) {
@@ -5025,7 +5039,7 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     ASSERT_EQ(64u, row->scheduleLeafCount);
     ASSERT_EQ(64u, row->QueuePayload().queueCurrentScheduleLeafCount);
     ASSERT_LT(row->scheduleStorageBase,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     EXPECT_EQ(ActionScheduleCapacityWorld::kSound,
               engine->ReadPlayableMember(
                   row->scheduleStorageBase).leaf.stableId);
@@ -5254,7 +5268,7 @@ void ExpectScheduleCapacityVariableControlTransitionCompletes(
     ASSERT_EQ(63u, row->variableControlDiscreteMemberCount);
     ASSERT_EQ(63u, row->scheduleLeafCount);
     ASSERT_LT(row->scheduleStorageBase,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     EXPECT_EQ(ActionScheduleCapacityWorld::kSound,
               engine->ReadPlayableMember(
                   row->scheduleStorageBase).leaf.stableId);
@@ -6450,7 +6464,7 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
-        std::vector<float> samples(4096, 0.25f);
+        std::vector<float> samples(refusedStorage == 16u ? 1024u : 4096u, 0.25f);
         const auto pcm = harkentest::MonoDesc(samples, 48000);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
@@ -6462,7 +6476,8 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         if (refusedStorage == 23u) image.MakeImmediateSequenceContainerPlayAction();
         else if ((refusedStorage >= 18u && refusedStorage <= 20u) || refusedStorage == 22u)
             image.MakeImmediateMixedVariableControlPlayAction();
-        else if (refusedStorage == 3u || refusedStorage == 15u || refusedStorage == 16u)
+        else if (refusedStorage == 16u) image.MakeNestedQueueWithNaturalEndTransition();
+        else if (refusedStorage == 3u || refusedStorage == 15u)
             image.MakeImmediateVariableControlPlayAction();
         else image.MakeImmediateSequenceQueuePlayAction();
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
@@ -16527,7 +16542,8 @@ TEST(ActionFiringApi,
     refuseBacking(engine->initialFrontierRequests);
     refuseBacking(engine->pendingVariableLeafSources);
     refuseBacking(engine->pendingVariableFutureSources);
-    refuseBacking(engine->pendingVariableFutureNodes);
+    // A delayed Random container does not need a queued successor.
+    engine->pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
     refuseBacking(engine->originalPlayableLifetimeHolders);
     refuseBacking(engine->playableInstances);
     refuseBacking(engine->originalSingleCurrentHolders);
@@ -19444,7 +19460,7 @@ TEST(ActionFiringApi,
         row->scheduleStorageBase +
         row->variableControlContinuousMemberOffset;
     ASSERT_LT(continuousSlot,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     ASSERT_EQ(row->variableControlContinuousMemberCount, row->VariablePayload().variableControlMemberWeights.size());
     ASSERT_FALSE(row->VariablePayload().variableControlMemberWeights.empty());
     EXPECT_EQ(CanonicalActionWorld::kSecondSound,
@@ -20128,7 +20144,7 @@ TEST(ActionFiringApi,
     const std::size_t continuousSlot =
         row->scheduleStorageBase +
         row->variableControlContinuousMemberOffset;
-    ASSERT_LT(continuousSlot, engine->playableStorage.memberCount);
+    ASSERT_LT(continuousSlot, engine->PlayableMemberCount());
     EXPECT_EQ(CanonicalActionWorld::kFirstSound,
               engine->ReadPlayableMember(discreteSlot).leaf.stableId);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound,
@@ -20584,7 +20600,7 @@ TEST(ActionFiringApi,
     EXPECT_TRUE(row->variableControlContinuousArmGroup.Valid());
     const std::size_t continuousSlot = row->scheduleStorageBase +
         row->variableControlContinuousMemberOffset;
-    ASSERT_LT(continuousSlot, engine->playableStorage.memberCount);
+    ASSERT_LT(continuousSlot, engine->PlayableMemberCount());
     EXPECT_EQ(CanonicalActionWorld::kSecondSound,
               engine->ReadPlayableMember(continuousSlot).leaf.stableId);
     const harken::VariableControlInstanceToken control =
@@ -20705,7 +20721,7 @@ void ExpectImmediateVariableControlCompositePlayCompletes(bool segmentChild) {
     ASSERT_EQ(2u, row->scheduleLeafCount);
     ASSERT_EQ(2u, row->variableControlDiscreteMemberCount);
     const std::size_t base = row->scheduleStorageBase;
-    ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine->PlayableMemberCount());
     bool observedFirstLeaf = false;
     bool observedSecondLeaf = false;
     for (std::uint32_t index = 0; index < row->scheduleLeafCount; ++index) {
@@ -22141,7 +22157,7 @@ void ExpectImmediateNestedQueueActionBatch(NestedQueueBatchCase testCase, bool o
                 fault.externalSlot = edge.logicalSlot + 1u;
                 ASSERT_LT(fault.externalSlot, current.playableStorage.MemberBase(scratch.row->partition.slot) +
                     current.playableStorage.memberStride);
-                ASSERT_LT(fault.externalSlot, current.playableStorage.memberCount);
+                ASSERT_LT(fault.externalSlot, current.PlayableMemberCount());
                 ASSERT_FALSE(current.ReadPlayableMemberReference(fault.externalSlot).service.Valid());
                 ASSERT_TRUE(current.SetPlayableMemberReference(fault.externalSlot, edge.reference));
             } else {
@@ -22415,17 +22431,7 @@ static void CheckNestedQueueCancellationPostscanRace(
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
     CanonicalActionWorld image(engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
-    image.MakeImmediateNestedQueueVariableControlPlayAction();
-    image.EnableImmediateVariableControlTransition(256, 192);
-    image.containers[2].transitionProgramIndex = 0;
-    image.containers[2].curves = image.containers[3].curves;
-    image.containers[2].curveCount = image.containers[3].curveCount;
-    image.containers[3].transitionProgramIndex = UINT32_MAX;
-    image.containers[3].curves = nullptr;
-    image.containers[3].curveCount = 0;
-    image.transition.ownerContainerStableId = image.containers[2].containerStableId;
-    image.transitionRules[0].sourceExit = harken::TransitionSourceExitV1::NaturalEnd;
-    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    image.MakeNestedQueueWithNaturalEndTransition();
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
     if (wrap) {
         for (std::uint32_t block = 0; block < engine->timelinePool.PageCount() - 18u; ++block) {
@@ -24107,8 +24113,8 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
 #if defined(_DEBUG) && defined(_MSC_VER)
         ASSERT_TRUE(harken::memguard::IsArmed());
 #endif
-        EXPECT_EQ(playableCapacity, engine->playableServices.Capacity());
-        EXPECT_EQ(playableCapacity, engine->playablePartitions.Capacity());
+        EXPECT_EQ(0u, engine->playableServices.size());
+        EXPECT_EQ(0u, engine->playablePartitions.Capacity());
         EXPECT_EQ(modeCapacity, engine->queueInstances.Capacity());
         EXPECT_EQ(modeCapacity, engine->variableControlInstances.Capacity());
     }
@@ -24227,7 +24233,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         EXPECT_EQ(outerContainer, originalFuture->OriginalParent());
         EXPECT_EQ(futureView.scheduleEpoch, originalFuture->OriginalScheduleEpoch());
     }
-    ASSERT_TRUE(engine->acceptedPendingVariableGroups.IsConstructed(row->identity.slot));
+    ASSERT_TRUE((row->identity.slot < engine->acceptedPendingVariableGroups.size()));
     auto& capturedGroup = engine->acceptedPendingVariableGroups[row->identity.slot];
     ASSERT_EQ(engine, capturedGroup.engine);
     EXPECT_EQ(deferred ? 0u : 1u, capturedGroup.futureSourceCount);
@@ -25597,7 +25603,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         EXPECT_EQ(partitionsBeforeRecheck, engine->playablePartitions.OccupiedCount());
     }
     if (playableCapacity != 0) {
-        std::array<VnActionFiringHandle, 16> accepted{};
+        std::vector<VnActionFiringHandle> accepted(modeCapacity + 1u);
         std::uint32_t acceptedCount = 0;
         bool refused = false;
         for (auto& handle : accepted) {
@@ -25605,7 +25611,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             const auto partitionsBefore = engine->playablePartitions.OccupiedCount();
             const auto posted = Vn_PostAction(&desc, &handle);
             if (posted != VN_OK) {
-                EXPECT_EQ(VN_NO_VOICE, posted);
+                EXPECT_EQ(VN_NO_VOICE, posted)
+                    << "accepted=" << acceptedCount << " runtime fault at "
+                    << (engine->runtimeFault.file ? engine->runtimeFault.file : "") << ":" << engine->runtimeFault.line;
                 EXPECT_EQ(0u, handle);
                 ExpectActionPreparationOwnersUnchanged(*engine, before);
                 EXPECT_EQ(partitionsBefore, engine->playablePartitions.OccupiedCount());
@@ -25616,19 +25624,27 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             ++acceptedCount;
         }
         ASSERT_TRUE(refused);
-        if (playableCapacity < modeCapacity) {
-            constexpr std::uint32_t instancesPerInitialFrontier = 4;
-            EXPECT_EQ(acceptedCount * instancesPerInitialFrontier, engine->playableInstances.LiveCount());
-            EXPECT_GT(engine->playableInstances.LiveCount(), playableCapacity);
-            EXPECT_EQ(playableCapacity, engine->playablePartitions.OccupiedCount());
-            EXPECT_LT(engine->queueInstances.LiveCount(), modeCapacity);
-        } else {
-            EXPECT_EQ(modeCapacity, acceptedCount);
-            EXPECT_EQ(modeCapacity, engine->variableControlInstances.LiveCount());
-            EXPECT_EQ(modeCapacity, engine->queueInstances.LiveCount());
-            EXPECT_LT(engine->playableInstances.LiveCount(), playableCapacity);
+        EXPECT_EQ(modeCapacity, acceptedCount);
+        EXPECT_EQ(acceptedCount, engine->variableControlInstances.LiveCount());
+        EXPECT_EQ(acceptedCount, engine->queueInstances.LiveCount());
+        EXPECT_EQ(4u * acceptedCount, engine->playableInstances.LiveCount());
+        if (playableCapacity < modeCapacity)
+            EXPECT_GT(engine->playablePartitions.OccupiedCount(), playableCapacity);
+        for (std::uint32_t index = 0; index < acceptedCount; ++index) {
+            VnActionFiringInfo info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(accepted[index], &info));
+            EXPECT_NE(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
         }
-        EXPECT_LT(engine->voices.ActiveCount(), config.maxVoices);
+        bool audible = false;
+        for (std::uint32_t block = 0; !audible && block < 16; ++block) {
+            storage.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto* samples = engine->nullBackend.LastBlock();
+            audible = std::any_of(samples, samples + config.blockFrames * engine->nullBackend.Channels(),
+                [](float sample) { return std::abs(sample) > 0.01f; });
+        }
+        EXPECT_TRUE(audible);
         for (std::uint32_t index = 0; index < acceptedCount; ++index)
             ASSERT_EQ(VN_OK, Vn_StopActionFiring(accepted[index], 0));
         for (std::uint32_t block = 0; block < 128 &&
@@ -27951,7 +27967,7 @@ void CheckInitialOuterVariableControlSelectionProducer(bool outerSequence, bool 
                                                 : CanonicalActionWorld::kSecondSound,
                           row->leaf.stableId);
             } else {
-                ASSERT_LT(row->scheduleStorageBase, engine.playableStorage.memberCount);
+                ASSERT_LT(row->scheduleStorageBase, engine.PlayableMemberCount());
                 const auto& member = engine.ReadPlayableMemberReference(row->scheduleStorageBase);
                 ASSERT_TRUE(member.service.Valid());
                 ASSERT_NE(0u, member.leaf);
@@ -27959,7 +27975,7 @@ void CheckInitialOuterVariableControlSelectionProducer(bool outerSequence, bool 
                 std::size_t leafSlot = 0;
                 ASSERT_TRUE(engine.ResolvePlayableMember(member, &resourceOwner, &leafSlot));
                 ASSERT_NE(nullptr, resourceOwner);
-                ASSERT_LT(leafSlot, engine.playableStorage.memberCount);
+                ASSERT_LT(leafSlot, engine.PlayableMemberCount());
                 EXPECT_EQ(expectedOrdinal == 7u ? CanonicalActionWorld::kFirstSound
                                                 : CanonicalActionWorld::kSecondSound,
                           engine.ReadPlayableMember(leafSlot).leaf.stableId);
@@ -43042,7 +43058,7 @@ std::string CaptureImmediateQueueContinuationState(harken::Engine& engine,
         for (std::uint32_t leaf = 0; leaf < row.scheduleLeafCount; ++leaf) {
             if (!row.partition.Valid()) break;
             const auto slot = engine.playableStorage.MemberBase(row.partition.slot) + leaf;
-            if (slot >= engine.playableStorage.memberCount) break;
+            if (slot >= engine.PlayableMemberCount()) break;
             if (engine.timelineArms.Observe(engine.ReadPlayableMember(slot).arm, &arm))
                 message << " memberArm[" << leaf << "]=" << static_cast<unsigned>(arm.state);
         }
@@ -43174,7 +43190,7 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool segmentChild) {
     EXPECT_EQ(2u, composite.leafCount);
     EXPECT_EQ(composite.absoluteLogicalCompleteFrame, initialRow->QueuePayload().queueCompletionFrame);
     const std::size_t base = initialRow->scheduleStorageBase;
-    ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine->PlayableMemberCount());
     bool observedFirstLeaf = false;
     bool observedSecondLeaf = false;
     for (std::uint32_t index = 0; index < initialRow->scheduleLeafCount;
@@ -43867,7 +43883,7 @@ TEST(ActionFiringApi,
     const auto savedSuccessorArm = row->QueueFiling().queueSuccessorArm;
     const auto savedSuccessorRender = row->QueuePayload().queueSuccessorRenderHandle;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
-    ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine->PlayableMemberCount());
     const std::array<harken::TimelineArmToken, 2> currentArms{
         engine->ReadPlayableMember(base).arm, engine->ReadPlayableMember(base + 1u).arm};
     const std::array<std::uint64_t, 2> currentRenders{
@@ -44261,7 +44277,7 @@ std::string StaggeredCurrentActualCleanupDiagnostic(harken::Engine& engine, VnAc
         const auto currentCount = std::max(row.scheduleLeafCount, (row.HasFeatureArrays() ? row.QueuePayload().queueCurrentScheduleLeafCount : 0u));
         for (std::uint32_t leaf = 0; leaf < currentCount; ++leaf) {
             const auto slot = static_cast<std::size_t>(row.scheduleStorageBase) + leaf;
-            if (slot >= engine.playableStorage.memberCount) break;
+            if (slot >= engine.PlayableMemberCount()) break;
             const auto token = engine.ReadPlayableMember(slot).arm;
             out << "\nactualCurrentArm[" << leaf << "]=" << token.slot << ":" << token.generation
                 << "/" << token.renderSlot << ":" << token.renderGeneration;
@@ -44361,7 +44377,7 @@ void ExpectOriginalStaggeredCurrentManifestFaultRejected(std::uint32_t fault) {
     const auto savedQueue = row->queueInstance;
     const auto savedComposite = row->QueuePayload().queueCurrentCompositeOwner;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
-    ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine->PlayableMemberCount());
     std::array<harken::EngineTimelineVoiceInstallIdentity, 3> originalInstalls{};
     const std::array<std::uint64_t, 3> originalRenders{
         engine->ReadPlayableMember(base).render,
@@ -44463,7 +44479,7 @@ void CheckDirectStaggeredCurrentPublicationRefusal(std::uint32_t refusedPublicat
     const auto originalQueue = row->queueInstance;
     const auto originalComposite = row->QueuePayload().queueCurrentCompositeOwner;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
-    ASSERT_LT(base + 1u, engine.playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine.PlayableMemberCount());
     struct Observation {
         VnActionFiringHandle firing = 0;
         harken::EnginePlayableServiceReference service{};
@@ -47601,7 +47617,7 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                 if (!service.InvocationValid() || service.Invocation().actionFiring != firings[index]) continue;
                 sourceWaitTrace << " service=" << service.identity.slot << " phase=" << static_cast<unsigned>(service.phase)
                     << " entry=" << service.frontierEntry.Valid() << " start=" << service.startFrame;
-                if (engine.acceptedPendingVariableGroups.IsConstructed(service.identity.slot)) {
+                if ((service.identity.slot < engine.acceptedPendingVariableGroups.size())) {
                     const auto& group = engine.acceptedPendingVariableGroups[service.identity.slot];
                     sourceWaitTrace << " groupEmpty=" << group.Empty() << " leaves=" << group.leafCount
                         << " retirement=" << static_cast<unsigned>(group.leafRetirement)
@@ -66280,7 +66296,7 @@ TEST(ActionFiringApi, PreinitPageFutureATwoGraphsSamePage) {
         ASSERT_EQ(1u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
         std::size_t targetSlot = SIZE_MAX;
         for (std::size_t slot = 0;
-             slot < engine->playableStorage.memberCount; ++slot) {
+             slot < engine->PlayableMemberCount(); ++slot) {
             const auto& member = engine->ReadPlayableMember(slot).completion;
             if (member.leafInstance != graph.targetLeaf ||
                 member.leafEpoch != graph.targetEpoch)
@@ -66289,10 +66305,10 @@ TEST(ActionFiringApi, PreinitPageFutureATwoGraphsSamePage) {
             targetSlot = slot;
         }
         ASSERT_NE(SIZE_MAX, targetSlot);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
         const auto expectedSound = index == 0u
             ? CanonicalActionWorld::kSecondSound : kThirdSound;
         ASSERT_EQ(expectedSound, engine->ReadPlayableMember(targetSlot).voice.Facts().soundId);
@@ -66847,7 +66863,7 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsTwoPages) {
             ASSERT_EQ(1u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
             std::size_t targetSlot = SIZE_MAX;
             for (std::size_t slot = 0;
-                 slot < engine->playableStorage.memberCount; ++slot) {
+                 slot < engine->PlayableMemberCount(); ++slot) {
                 const auto& member = engine->ReadPlayableMember(slot).completion;
                 if (member.leafInstance != graph.targetLeaf ||
                     member.leafEpoch != graph.targetEpoch)
@@ -66856,10 +66872,10 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsTwoPages) {
                 targetSlot = slot;
             }
             ASSERT_NE(SIZE_MAX, targetSlot);
-            ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-            ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-            ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-            ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
+            ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+            ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+            ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+            ASSERT_LT(targetSlot, engine->PlayableMemberCount());
             const auto expectedSound = index == 0u
                 ? CanonicalActionWorld::kSecondSound : kThirdSound;
             ASSERT_EQ(expectedSound, engine->ReadPlayableMember(targetSlot).voice.Facts().soundId);
@@ -67518,7 +67534,7 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
         ASSERT_EQ(1u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
         std::size_t targetSlot = SIZE_MAX;
         for (std::size_t slot = 0;
-             slot < engine->playableStorage.memberCount; ++slot) {
+             slot < engine->PlayableMemberCount(); ++slot) {
             const auto& member = engine->ReadPlayableMember(slot).completion;
             if (member.leafInstance != graph.targetLeaf ||
                 member.leafEpoch != graph.targetEpoch)
@@ -67527,10 +67543,10 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
             targetSlot = slot;
         }
         ASSERT_NE(SIZE_MAX, targetSlot);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
         const auto expectedSound = targetSounds[index];
             ASSERT_EQ(expectedSound, engine->ReadPlayableMember(targetSlot).voice.Facts().soundId);
         ASSERT_EQ(expectedSound, engine->ReadPlayableMember(targetSlot).leaf.stableId);
@@ -69043,7 +69059,7 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
         ASSERT_EQ(1u, row->VariablePayload().variableControlDiscreteRetargetTargetMemberCount);
         std::size_t targetSlot = SIZE_MAX;
         for (std::size_t slot = 0;
-             slot < engine->playableStorage.memberCount; ++slot) {
+             slot < engine->PlayableMemberCount(); ++slot) {
             const auto& member = engine->ReadPlayableMember(slot).completion;
             if (member.leafInstance != graph.targetLeaf ||
                 member.leafEpoch != graph.targetEpoch) continue;
@@ -69051,10 +69067,10 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
             targetSlot = slot;
         }
         ASSERT_NE(SIZE_MAX, targetSlot);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
-        ASSERT_LT(targetSlot, engine->playableStorage.memberCount);
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
+        ASSERT_LT(targetSlot, engine->PlayableMemberCount());
         ASSERT_EQ(targetSounds[index],
             engine->ReadPlayableMember(targetSlot).voice.Facts().soundId);
         ASSERT_EQ(targetSounds[index],
@@ -71175,7 +71191,7 @@ static void CheckGenericInitialQueuePublishRefusalPreservesOriginalZeroWork(
     observation.refused = refusedPublication;
     observation.holdOriginalReader = holdOriginalReader;
     const auto base = row->scheduleStorageBase;
-    ASSERT_LT(base + 1u, engine.playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine.PlayableMemberCount());
     for (std::size_t index = 0; index < observation.arms.size(); ++index) {
         observation.arms[index] = engine.ReadPlayableMember(base + index).arm;
         ASSERT_TRUE(observation.arms[index].Valid());
@@ -71631,7 +71647,7 @@ static void CheckNativeQueueOriginalHoldersAcrossTrueAckAndOldProgress(bool term
     const auto savedSuccessorArm = row->QueueFiling().queueSuccessorArm;
     const auto savedSuccessorRender = row->QueuePayload().queueSuccessorRenderHandle;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
-    ASSERT_LT(base + 1u, engine->playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine->PlayableMemberCount());
     const std::array<harken::TimelineArmToken, 2> currentArms{
         engine->ReadPlayableMember(base).arm, engine->ReadPlayableMember(base + 1u).arm};
     const std::array<std::uint64_t, 2> currentRenders{
@@ -72108,7 +72124,7 @@ static void CheckNativeQueueOriginalLoansDuringRealPrivatePublicationRefusal(std
     const auto originalQueue = row->queueInstance;
     const auto originalComposite = row->QueuePayload().queueCurrentCompositeOwner;
     const auto base = static_cast<std::size_t>(row->scheduleStorageBase);
-    ASSERT_LT(base + 1u, engine.playableStorage.memberCount);
+    ASSERT_LT(base + 1u, engine.PlayableMemberCount());
     struct Observation {
         VnActionFiringHandle firing = 0;
         harken::EnginePlayableServiceReference service{};

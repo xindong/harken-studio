@@ -53,7 +53,7 @@ namespace {
 std::vector<VnMonitorStreamFactV1> ReadStreamObservations(VnMonitorSessionHandle session);
 
 TEST(PlayableServicePartition, IndependentOwnersKeepOneStableLeaseEach) {
-    harken::EnginePlayablePartitionPool pool(2);
+    harken::EnginePlayablePartitionPool pool;
     const harken::EnginePlayableServiceToken first{9, 3};
     const harken::EnginePlayableServiceToken second{2, 7};
     const auto a = pool.Reserve(first);
@@ -65,7 +65,12 @@ TEST(PlayableServicePartition, IndependentOwnersKeepOneStableLeaseEach) {
     EXPECT_TRUE(pool.Owns(a, first));
     EXPECT_FALSE(pool.Owns(a, second));
     EXPECT_FALSE(pool.Reserve(first).Valid());
-    EXPECT_FALSE(pool.Reserve({4, 8}).Valid());
+    const harken::EnginePlayableServiceToken third{4, 8};
+    const auto additional = pool.Reserve(third);
+    ASSERT_TRUE(additional.Valid());
+    EXPECT_TRUE(pool.Owns(a, first));
+    EXPECT_TRUE(pool.Owns(b, second));
+    ASSERT_TRUE(pool.Cancel(additional, third));
     EXPECT_EQ(2u, pool.OccupiedCount());
     ASSERT_TRUE(pool.Cancel(a, first));
     const harken::EnginePlayableServiceToken reused{9, 4};
@@ -82,7 +87,7 @@ TEST(PlayableServicePartition, IndependentOwnersKeepOneStableLeaseEach) {
 }
 
 TEST(PlayableServicePartition, CommittedLeaseWaitsForStrictlyLaterCompletion) {
-    harken::EnginePlayablePartitionPool pool(1);
+    harken::EnginePlayablePartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
     const auto token = pool.Reserve(owner);
     ASSERT_TRUE(pool.Commit(token, owner));
@@ -91,7 +96,12 @@ TEST(PlayableServicePartition, CommittedLeaseWaitsForStrictlyLaterCompletion) {
     ASSERT_TRUE(pool.BeginRetirement(token, owner, 90));
     EXPECT_FALSE(pool.Release(token, owner, 89));
     EXPECT_FALSE(pool.Release(token, owner, 90));
-    EXPECT_FALSE(pool.Reserve({0, 2}).Valid());
+    const harken::EnginePlayableServiceToken other{0, 2};
+    const auto next = pool.Reserve(other);
+    ASSERT_TRUE(next.Valid());
+    EXPECT_NE(token.slot, next.slot);
+    EXPECT_TRUE(pool.Owns(token, owner));
+    ASSERT_TRUE(pool.Cancel(next, other));
     ASSERT_TRUE(pool.Release(token, owner, 91));
     EXPECT_EQ(0u, pool.OccupiedCount());
     EXPECT_TRUE(pool.Reserve({0, 2}).Valid());
@@ -6385,7 +6395,7 @@ TEST(PlayableStart,
     const std::size_t continuousSlot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
     ASSERT_LT(continuousSlot,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     const VnVoiceHandle continuousRender =
         engine->ReadPlayableMember(continuousSlot).render;
     const harken::VoiceRenderContext* continuousVoice =
@@ -8925,7 +8935,7 @@ TEST(PlayableStart,
     const std::size_t continuousSlot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
     ASSERT_LT(continuousSlot,
-              engine->playableStorage.memberCount);
+              engine->PlayableMemberCount());
     EXPECT_EQ(continuousRender,
               engine->ReadPlayableMember(continuousSlot).render);
     EXPECT_EQ(continuousArm.slot,
@@ -10561,7 +10571,7 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t slot =
         row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
-    ASSERT_LT(slot, engine->playableStorage.memberCount);
+    ASSERT_LT(slot, engine->PlayableMemberCount());
     const VnVoiceHandle render =
         engine->ReadPlayableMember(slot).render;
     const harken::VoiceRenderContext* voice = engine->voices.Resolve(render);
@@ -21984,7 +21994,7 @@ TEST(PlayableStart, StreamedMusicTransitionPreparesSelectableBoundariesAndRefuse
 
 TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
     for (const auto workers : {0u, 2u}) for (const bool starve : {false, true}) for (const bool viaAction : {false, true}) {
-        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " starve=" << starve);
+        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " starve=" << starve << " viaAction=" << viaAction);
         auto config = harkentest::MakeNullConfig(viaAction ? 32 : 4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
@@ -22058,6 +22068,7 @@ TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
         bool sawFuture = false;
         std::vector<float> output;
         for (unsigned block = 0; block < 96; ++block) {
+            if (!starve) engine.streams.SyncServe();
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
             if (viaAction) {
@@ -22649,7 +22660,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
         pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
             resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
-        pool.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
+        pool.initialImmediateLaneOwnerGates = resolved.maxPlayableInstances;
         pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         const auto voicesBefore = engine.voices.AvailableSlotCount();
@@ -23444,7 +23455,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
             pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
                 resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
-            pool.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
+            pool.initialImmediateLaneOwnerGates = resolved.maxPlayableInstances;
             pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
             ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         }
@@ -24567,7 +24578,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
         pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
             resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
-        pool.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
+        pool.initialImmediateLaneOwnerGates = resolved.maxPlayableInstances;
         pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         const auto voicesBefore = engine.voices.AvailableSlotCount();

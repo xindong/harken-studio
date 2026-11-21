@@ -1022,7 +1022,7 @@ TEST(ScheduledTransactionPool, PrivateLaneTransferProofReservedSpansRequireAllFo
     config.maxPlan03GroupHeadersPerPage = 4;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 4;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{4};
@@ -1159,7 +1159,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntriesRetainActualFactorySourcesAndOr
     config.maxPlan03GroupHeadersPerPage = 6;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 6;
-    config.maxImmediateLaneOwnerGates = 6;
+    config.initialImmediateLaneOwnerGates = 6;
     config.maxImmediateLaneDecisionGates = 6;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     ASSERT_TRUE(foreignPool.Reset(config, 0, kEpoch));
@@ -1351,7 +1351,7 @@ TEST(ScheduledTransactionPool, AcceptedPrivateEntryRequiresNestedControllersAndO
         config.maxPlan03GroupHeadersPerPage = 8;
         config.maxArmsPerGroup = 2;
         config.maxImmediateLaneGroupRows = 8;
-        config.maxImmediateLaneOwnerGates = 5;
+        config.initialImmediateLaneOwnerGates = 5;
         config.maxImmediateLaneDecisionGates = 8;
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
@@ -1651,7 +1651,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         config.maxPlan03GroupHeadersPerPage = 6;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 6;
-        config.maxImmediateLaneOwnerGates = 6;
+        config.initialImmediateLaneOwnerGates = 6;
         config.maxImmediateLaneDecisionGates = 6;
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
@@ -2411,7 +2411,7 @@ struct MixedTimeGroupHarness {
         config.maxPlan03GroupHeadersPerPage = 4;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 4;
-        config.maxImmediateLaneOwnerGates = 4;
+        config.initialImmediateLaneOwnerGates = 4;
         config.maxImmediateLaneDecisionGates = 4;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         ASSERT_TRUE(lane.Reset({2, 2, 1, 100, false, maxGroups}));
@@ -2893,7 +2893,7 @@ TEST(ScheduledTransactionPool, MixedTimePinnedCrossSliceFuturePrecedesSlidUnrela
     config.maxPlan03GroupHeadersPerPage = 3;
     config.maxArmsPerGroup = 2;
     config.maxImmediateLaneGroupRows = 3;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
@@ -3117,7 +3117,7 @@ TEST(ScheduledTransactionPool, NativeDisposalReportsPartialSuccessBeforeSlotReus
     config.maxPlan03GroupHeadersPerPage = 2;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 2;
+    config.initialImmediateLaneOwnerGates = 2;
     config.maxImmediateLaneDecisionGates = 2;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(1);
@@ -3236,7 +3236,7 @@ TEST(ScheduledTransactionPool, OriginalQueueGroupScopePreservesIssuedInputsAfter
     config.maxPlan03GroupHeadersPerPage = 1;
     config.maxArmsPerGroup = 2;
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 1;
+    config.initialImmediateLaneOwnerGates = 1;
     config.maxImmediateLaneDecisionGates = 1;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(2);
@@ -3303,7 +3303,7 @@ TEST(ScheduledTransactionPool, PrivateLaneTransferProofMaximumGenerationIsRealAn
     config.maxPlan03GroupHeadersPerPage = 1;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 2;
+    config.initialImmediateLaneOwnerGates = 2;
     config.maxImmediateLaneDecisionGates = 2;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(1);

@@ -640,7 +640,7 @@ TEST(DecisionGroup, PrivateImmediateCohortCapacityRefusalReclaimsUnpublishedPref
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
     config.maxArmsPerGroup = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::TimelineArmTable arms(2);
@@ -862,7 +862,7 @@ TEST(DecisionGroup, ImmediateLaneGroupIdentitySurvivesAnchorRebaseAndSharesEntry
     laneHarness.ReserveDecisions(2);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -937,7 +937,7 @@ TEST(DecisionGroup, ImmediateLaneFutureMemberBlocksAppliedEntryDetachUntilRetire
     laneHarness.ReserveDecisions(2);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -1009,7 +1009,7 @@ TEST(DecisionGroup, ImmediateLaneFrontierCancellationRetainsScopeReasonAndClaimO
     laneHarness.ReserveDecisions(2);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -1097,7 +1097,7 @@ struct PrivateLaneTransferHarness {
     void Prepare(std::uint32_t rows = 3) {
         auto config = MakePoolConfig();
         config.maxImmediateLaneGroupRows = rows;
-        config.maxImmediateLaneOwnerGates = 4;
+        config.initialImmediateLaneOwnerGates = 4;
         config.maxImmediateLaneDecisionGates = 4;
         ASSERT_TRUE(pool.Reset(config, 0, 9));
         for (std::uint32_t index = 0; index < decisionsByGroup.size(); ++index)
@@ -1235,7 +1235,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofRejectsForeignFactoryScopesAndDuplic
     harken::ScheduledTransactionPool foreign;
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 4;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(foreign.Reset(config, 0, 9));
     EXPECT_FALSE(foreign.ProvePrivateImmediateLaneGroupTransfer(state.originals[1],
@@ -1479,7 +1479,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofConsumeLeavesRealPrivateGroupForNorm
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(1));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -1641,7 +1641,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofFactoryMemberGeometryAllowsReordered
     harken::DecisionTable decisions(1, 2);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::DecisionToken decision{};
@@ -1739,7 +1739,7 @@ TEST(DecisionGroup, PrivateImmediateLaneExactCancelRetainsReaderAndRetriesRemain
     harken::ScheduledTransactionPool pool;
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 3;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::TimelineArmTable arms(2);
@@ -1809,7 +1809,7 @@ TEST(DecisionGroup, ImmediateLaneGroupReaderFencePreventsEarlyReuse) {
     laneHarness.ReserveDecisions(1);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -1865,7 +1865,7 @@ TEST(DecisionGroup, ImmediateLaneGroupRejectsDuplicateMemberIndexWithoutUsingRow
     harken::TimelineArmTable arms(3);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 16;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::TimelineSemanticTarget target{};
@@ -1897,7 +1897,7 @@ TEST(DecisionGroup, ImmediateLaneBackingSurvivesCompetitionRetryAndOwnerRelease)
     harken::TimelineArmTable arms(2);
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 8;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 16;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     EXPECT_EQ(0u, pool.ImmediateLaneRowStorageBytes());
@@ -4673,7 +4673,7 @@ TEST(DecisionGroup, OriginalQueueFuturePinPermitsRealOldPublicationApplyAndGreat
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(1));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -4753,7 +4753,7 @@ TEST(DecisionGroup, OriginalQueueFutureForeignEmptyRawAndNonemptyRefusalPreserve
     harken::ScheduledTransactionPool foreign;
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 3;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(foreign.Reset(config, 0, 9));
     EXPECT_FALSE(foreign.ConsumePrivateImmediateLaneGroupTransfer(std::move(state.proofs[1]), &empty));
@@ -4795,7 +4795,7 @@ TEST(DecisionGroup, OriginalQueueFutureLifetimeSurvivesParentReturnAndRefusedPoo
     EXPECT_TRUE(first.Valid());
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 3;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     EXPECT_FALSE(state.pool.Reset(config, 0, 10));
     EXPECT_FALSE(state.pool.CanResetForEpoch(0, 10));
@@ -4840,7 +4840,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastNativeGenerationReturnsThenUsesSecond
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(2));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     ASSERT_TRUE(OriginalGroupAccess::SeedFreeGeneration(pool, 0, UINT32_MAX - 1u));
@@ -4909,7 +4909,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastMarkerConsumesReturnsAndDoesNotPoison
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(2));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     ASSERT_TRUE(OriginalGroupAccess::SeedLastMarkerPrerequisite(pool));
@@ -5044,7 +5044,7 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(2));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     std::array<harken::Plan03GroupSliceInput, 2> inputs{};
@@ -5223,7 +5223,7 @@ TEST(DecisionGroup, NativeOriginalBaselineRetirementWaitsForOldApplyAndEveryTrue
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(1));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -5338,7 +5338,7 @@ TEST(DecisionGroup, NativeOriginalMemberBlocksPrimaryRetirementUntilItsTrueLoanO
                 ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(2));
                 auto config = MakePoolConfig();
                 config.maxImmediateLaneGroupRows = 2;
-                config.maxImmediateLaneOwnerGates = 4;
+                config.initialImmediateLaneOwnerGates = 4;
                 config.maxImmediateLaneDecisionGates = 4;
                 ASSERT_TRUE(pool.Reset(config, 0, 9));
                 const std::uint32_t primaryIndex = primaryFirst ? 0u : 1u;
@@ -6013,7 +6013,7 @@ TEST(DecisionGroup, OriginalQueueForeignLoanAllowsGenuinePlacementProofReanchorA
     ASSERT_NO_FATAL_FAILURE(laneHarness.ReserveDecisions(1));
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::Plan03GroupSliceInput input{};
@@ -6142,7 +6142,7 @@ struct GenuineOriginalGroupClockHarness {
     void Prepare(bool sharedPrimary, bool pinGroups = true) {
         auto config = MakePoolConfig();
         config.maxImmediateLaneGroupRows = 6;
-        config.maxImmediateLaneOwnerGates = 8;
+        config.initialImmediateLaneOwnerGates = 8;
         config.maxImmediateLaneDecisionGates = 8;
         ASSERT_TRUE(pool.Reset(config, 0, 9));
         count = sharedPrimary ? 3u : 4u;
@@ -6706,7 +6706,7 @@ struct NativeGroupOriginFixture {
         auto config = MakePoolConfig();
         config.maxPlan03GroupHeadersPerPage = 3;
         config.maxImmediateLaneGroupRows = 2;
-        config.maxImmediateLaneOwnerGates = 4;
+        config.initialImmediateLaneOwnerGates = 4;
         config.maxImmediateLaneDecisionGates = 4;
         return config;
     }
@@ -7157,7 +7157,7 @@ TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionRead
     harken::ScheduledTransactionPool pool;
     auto config = MakePoolConfig();
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::TimelineArmTable arms(1);

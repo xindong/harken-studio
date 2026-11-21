@@ -75,6 +75,7 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/AudioSliceLease.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/StableRowStorage.h"
 
 #include <array>
@@ -1244,6 +1245,9 @@ public:
     bool PrepareImmediateLaneBacking(std::uint32_t groupCount, std::uint64_t totalMembers,
         ImmediateLaneBackingPreparation* out) noexcept;
     // Attach before preparing rows; the producer callback must not re-enter this pool.
+    bool PrepareImmediateLaneOwnerGates(std::uint32_t count) noexcept {
+        return immediateLaneOwnerGates_.ConstructThrough(count);
+    }
     bool AttachImmediateLaneRowStoragePreparation(void* context,
         bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
     void DetachImmediateLaneRowStoragePreparation() noexcept {
@@ -1321,7 +1325,7 @@ public:
         std::uint32_t maxPlan03GroupHeadersPerPage = 0;
         std::uint32_t maxArmsPerGroup = 0;
         std::uint32_t maxImmediateLaneGroupRows = 0;
-        std::uint32_t maxImmediateLaneOwnerGates = 0;
+        std::uint32_t initialImmediateLaneOwnerGates = 0;
         std::uint32_t maxImmediateLaneDecisionGates = 0;
     };
 
@@ -2248,7 +2252,7 @@ private:
         std::atomic<std::uint64_t> ownerGeneration{0};
         // High bit invalidates, next six bits retain reasons, low bits count
         // audio claims. One word gives cancellation and claim one linearization point.
-        std::atomic<std::uint32_t> state{0};
+        mutable std::atomic<std::uint32_t> state{0};
         std::uint32_t references = 0; // Logic thread only.
     };
     struct InitialSoundQueueCompanionAssociation {
@@ -2653,7 +2657,7 @@ private:
     void* immediateLaneRowStorageContext_ = nullptr;
     bool (*prepareImmediateLaneRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     StableRowStorage<LaneGroupRow> immediateLaneGroups_;
-    std::unique_ptr<LaneFrontierGate[]> immediateLaneOwnerGates_;
+    GrowingRowStorage<LaneFrontierGate> immediateLaneOwnerGates_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;
     const TimelineArmTable* plan03ArmTable_ = nullptr;
     bool plan03ArmTableEstablishedByPrepared_ = false;

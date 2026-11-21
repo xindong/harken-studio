@@ -1239,7 +1239,11 @@ public:
         EnginePlayableServiceToken owner_{};
     };
 
-    explicit EnginePlayablePartitionPool(std::uint32_t capacity) : slots_(capacity) {}
+    explicit EnginePlayablePartitionPool(std::uint32_t memberStride = 1) noexcept
+        : maxAddressableRows_(UINT32_MAX / std::max(1u, memberStride)) {}
+    bool PrepareStorage(std::uint32_t count) noexcept {
+        return count <= maxAddressableRows_ && slots_.ConstructThrough(count);
+    }
     ~EnginePlayablePartitionPool() {
         for (const auto& slot : slots_) assert(slot.originalStorageLoans == 0);
     }
@@ -1256,40 +1260,44 @@ public:
         for (const auto& slot : slots_) {
             if (slot.occupied && slot.owner == owner) return {};
         }
-        for (std::size_t offset = 0; offset < slots_.size(); ++offset) {
-            const auto index = (next_ + offset) % slots_.size();
-            auto& slot = slots_[index];
-            if (slot.occupied || slot.quarantined) continue;
-            slot.owner = owner;
-            slot.occupied = true;
-            slot.committed = false;
-            slot.published = false;
-            slot.retiring = false;
-            slot.retirementSequence = 0;
-            slot.commitHeld = false;
-            slot.preparingCommitOwned = true;
-            slot.originalOwner = owner;
-            assert(slot.originalStorageLoans == 0);
-            slot.originalStorageMarker = original == nullptr ? 0 : ++nextOriginalStorageMarker_;
-            slot.originalStorageLoans = original == nullptr ? 0 : 1;
-            next_ = (index + 1u) % slots_.size();
-            const EnginePlayablePartitionToken token{static_cast<std::uint32_t>(index), slot.generation};
-            if (output != nullptr) {
-                output->pool_ = this;
-                output->token_ = token;
-                output->owner_ = owner;
-            }
-            if (original != nullptr) {
-                original->pool_ = this;
-                original->slot_ = &slot;
-                original->token_ = token;
-                original->owner_ = owner;
-                original->marker_ = slot.originalStorageMarker;
-                original->baseline_ = true;
-            }
-            return token;
+        const auto count = slots_.size();
+        auto index = next_;
+        for (std::uint32_t visited = 0; visited < count; ++visited) {
+            const auto& candidate = slots_[index];
+            if (!candidate.occupied && !candidate.quarantined) break;
+            index = (index + 1u) % count;
+            if (visited + 1u == count) index = count;
         }
-        return {};
+        if (index == count && (count == UINT32_MAX || !PrepareStorage(count + 1u))) return {};
+        auto& slot = slots_[index];
+        slot.owner = owner;
+        slot.occupied = true;
+        slot.committed = false;
+        slot.published = false;
+        slot.retiring = false;
+        slot.retirementSequence = 0;
+        slot.commitHeld = false;
+        slot.preparingCommitOwned = true;
+        slot.originalOwner = owner;
+        assert(slot.originalStorageLoans == 0);
+        slot.originalStorageMarker = original == nullptr ? 0 : ++nextOriginalStorageMarker_;
+        slot.originalStorageLoans = original == nullptr ? 0 : 1;
+        next_ = (index + 1u) % slots_.size();
+        const EnginePlayablePartitionToken token{static_cast<std::uint32_t>(index), slot.generation};
+        if (output != nullptr) {
+            output->pool_ = this;
+            output->token_ = token;
+            output->owner_ = owner;
+        }
+        if (original != nullptr) {
+            original->pool_ = this;
+            original->slot_ = &slot;
+            original->token_ = token;
+            original->owner_ = owner;
+            original->marker_ = slot.originalStorageMarker;
+            original->baseline_ = true;
+        }
+        return token;
     }
 
     bool BorrowOriginalStorage(const OriginalStoragePin& original,
@@ -1443,7 +1451,7 @@ public:
     }
 
     std::uint32_t Capacity() const noexcept { return static_cast<std::uint32_t>(slots_.size()); }
-    std::size_t StorageBytes() const noexcept { return slots_.capacity() * sizeof(Slot); }
+    std::size_t StorageBytes() const noexcept { return slots_.RequestedBytes(); }
 
 private:
     friend struct detail::EnginePlayablePartitionTestAccess;
@@ -1478,7 +1486,8 @@ private:
         if (slot.generation == UINT64_MAX) slot.quarantined = true;
         else ++slot.generation;
     }
-    std::vector<Slot> slots_;
+    const std::uint32_t maxAddressableRows_;
+    GrowingRowStorage<Slot> slots_;
     std::size_t next_ = 0;
     std::uint64_t nextOriginalStorageMarker_ = 0;
 };
@@ -3550,19 +3559,7 @@ struct PlayableStorageLayout {
           initialProgramStride(
               CheckedStride(1u, knownLeaves, 1u, liveRows)),
           endpointStride(knownLeaves),
-          continuousStride(liveRows),
-          memberCount(CheckedCount(config.maxPlayableInstances,
-                                   memberStride)),
-          pairedCount(CheckedCount(config.maxPlayableInstances,
-                                   pairedStride)),
-          currentEventCount(CheckedCount(config.maxPlayableInstances,
-                                         currentEventStride)),
-          initialProgramCount(CheckedCount(config.maxPlayableInstances,
-                                           initialProgramStride)),
-          endpointCount(CheckedCount(config.maxPlayableInstances,
-                                     endpointStride)),
-          continuousCount(CheckedCount(config.maxPlayableInstances,
-                                       continuousStride)) {}
+          continuousStride(liveRows) {}
 
     std::size_t MemberBase(std::size_t rowIndex) const noexcept {
         return rowIndex * memberStride;
@@ -3596,12 +3593,6 @@ struct PlayableStorageLayout {
     const std::uint32_t initialProgramStride;
     const std::uint32_t endpointStride;
     const std::uint32_t continuousStride;
-    const std::size_t memberCount;
-    const std::size_t pairedCount;
-    const std::size_t currentEventCount;
-    const std::size_t initialProgramCount;
-    const std::size_t endpointCount;
-    const std::size_t continuousCount;
 
 private:
     static std::uint32_t CheckedStride(
@@ -3617,14 +3608,6 @@ private:
         return static_cast<std::uint32_t>(value);
     }
 
-    static std::size_t CheckedCount(std::uint32_t rows,
-                                    std::uint32_t stride) {
-        if (stride != 0 &&
-            rows > std::numeric_limits<std::size_t>::max() / stride) {
-            throw harken::detail::LogicPreparationFailure{};
-        }
-        return static_cast<std::size_t>(rows) * stride;
-    }
 };
 
 class TimelineServiceCoordinator {
@@ -6001,7 +5984,7 @@ struct EngineHandleGenerationFloors {
 
 struct Engine {
     // Outlives every preparation that holds physical relation backing.
-    StableRowStorage<EnginePlayableMemberRelation> memberRelations;
+    GrowingRowStorage<EnginePlayableMemberRelation> memberRelations;
     std::uint32_t freeMemberRelation = UINT32_MAX;
     std::uint32_t occupiedMemberRelations = 0;
     enum class OriginalPlayableServicePackDuty : std::uint8_t {
@@ -6134,7 +6117,7 @@ struct Engine {
         VoiceLedger::BackingPreparation nativeLedgerBacking;
         VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
-        StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
+        StableStoragePreparation nativeMemberBacking;
         StableStoragePreparation nativeRelationBacking;
         StableSlotStorage<EngineQueueProgramBank>::Preparation nativeProgramBacking;
         EngineQueueScheduleStorage::Preparation nativeScheduleBacking;
@@ -6247,9 +6230,10 @@ struct Engine {
         StableStoragePreparation instances;
         StableStoragePreparation services;
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
-        StableSlotStorage<EngineMemberProgramRecord>::Preparation memberPrograms;
-        StableSlotStorage<EnginePlayableMemberRecord>::Preparation members;
+        StableStoragePreparation memberPrograms;
+        StableStoragePreparation members;
         StableStoragePreparation relations;
+        StableStoragePreparation queueFutures;
         StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
         EngineQueueScheduleStorage::Preparation queueSchedules;
         QueueInstanceTable::BackingPreparation queues;
@@ -6268,9 +6252,10 @@ struct Engine {
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
-        StableSlotStorage<EngineMemberProgramRecord>::PreparedUse memberPrograms;
-        StableSlotStorage<EnginePlayableMemberRecord>::PreparedUse members;
+        StableStoragePreparedUse memberPrograms;
+        StableStoragePreparedUse members;
         StableStoragePreparedUse relations;
+        StableStoragePreparedUse queueFutures;
         StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
         EngineQueueScheduleStorage::PreparedUse queueSchedules;
         QueueInstanceTable::BackingUse queues;
@@ -6291,11 +6276,12 @@ struct Engine {
               laneGroups(engine.timelinePool, backing == nullptr ? nullptr : &backing->laneGroups),
               actionPlays(backing == nullptr ? StableSlotStorage<EngineActionPlayScratch>::PreparedUse{}
                   : backing->actionPlays.Use()),
-              memberPrograms(backing == nullptr ? StableSlotStorage<EngineMemberProgramRecord>::PreparedUse{}
+              memberPrograms(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->memberPrograms.Use()),
-              members(backing == nullptr ? StableSlotStorage<EnginePlayableMemberRecord>::PreparedUse{}
+              members(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->members.Use()),
               relations(backing == nullptr ? StableStoragePreparedUse{} : backing->relations.Use()),
+              queueFutures(backing == nullptr ? StableStoragePreparedUse{} : backing->queueFutures.Use()),
               queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
                   : backing->queueBanks.Use()),
               queueSchedules(backing == nullptr ? EngineQueueScheduleStorage::PreparedUse{}
@@ -7122,8 +7108,8 @@ public:
                      auto& engine = *static_cast<Engine*>(context);
                      return engine.pendingStarts.Emplace(slot) && engine.parkRecords.Emplace(slot);
                  }, this, handleFloors.voice),
-          playablePartitions(resolved.maxPlayableInstances),
-           actionPlayAttemptTokens(1),
+           playablePartitions(playableStorage.memberStride),
+          actionPlayAttemptTokens(1),
            initialPendingVariableOwnerScratch(1),
            initialQueueEntryDecisionOwnersScratch(
                resolved.maxPlayableInstances),
@@ -7137,7 +7123,6 @@ public:
               resolved.maxTransactionEvents,
               resolved.maxKnownScheduleLeaves * 4u)),
           decisionRetirements(decisions.Capacity()),
-          playableStarts(resolved.maxPlayableInstances),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -7272,25 +7257,16 @@ public:
             [](void* context, const ConsumedCurrentSlice& consumed) noexcept {
                 return static_cast<VariableServiceV1*>(context)->ConsumeNativeReadCutCalendar(consumed);
             });
-        for (std::size_t index = 0; index < playableStarts.size(); ++index) {
-            playableStarts[index].slot = static_cast<std::uint32_t>(index);
-        }
-        if (!originalPlayableServiceLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
-            !authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
+        if (!authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
             !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
-            !queueFutureRecords.Reserve(resolved.maxPlayableInstances) ||
             !pendingVariableLeafSources.Reserve(timelineArms.Capacity()) ||
             !pendingVariableFutureSources.Reserve(timelineArms.Capacity()) ||
-            !playableServices.Reserve(resolved.maxPlayableInstances) ||
             !timelineStartScratch.starts.Reserve(kMaxKnownScheduleLeaves) ||
             !timelineStartScratch.transactions.Reserve(2u * kMaxKnownScheduleLeaves + 2u) ||
             !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
-            !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity) ||
-            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw harken::detail::LogicPreparationFailure{};
+            !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity)) throw harken::detail::LogicPreparationFailure{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
-        const auto playableMemberCapacity = static_cast<std::uint64_t>(playableStorage.memberCount) +
-            static_cast<std::uint64_t>(queueBankCapacity) * EngineQueueProgramBankBody::kProgramCapacity;
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
             resolved.maxKnownScheduleLeaves * 4u);
         if (playSlotCapacity > UINT32_MAX || queueBankCapacity > UINT32_MAX ||
@@ -7300,12 +7276,7 @@ public:
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw harken::detail::LogicPreparationFailure{};
-        if (playableMemberCapacity > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
-            playableStorage.continuousCount > UINT32_MAX ||
-            !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
-            !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
-            !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
-            !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
+        if (!variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw harken::detail::LogicPreparationFailure{};
@@ -7376,7 +7347,6 @@ public:
             static_cast<std::uint32_t>(
                 (laneHorizonQuanta + resolved.maxDeferredIntents) *
                 groupsPerBucket);
-        timelinePoolConfig.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
         timelinePoolConfig.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
         if (laneAttempts > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
@@ -7432,13 +7402,6 @@ public:
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
             });
         mixer.InitializeVariableSliceConsumptionStorage();
-        if (!initialQueueTimingMembersScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueTransitionTimingProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueConditionalTimingProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueCurrentCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueSuccessorCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !actionQueueReplacementScratch.Reserve(resolved.maxPlayableInstances))
-            throw harken::detail::LogicPreparationFailure{};
         if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
             !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
             !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
@@ -7466,7 +7429,6 @@ public:
         if (timelinePool.MaxArmsPerGroup() == 0)
             throw harken::detail::LogicPreparationFailure{};
         if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw harken::detail::LogicPreparationFailure{};
-        if (!pendingVariableFutureNodes.Reserve(resolved.maxPlayableInstances)) throw harken::detail::LogicPreparationFailure{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxPlan03GroupHeadersPerPage;
@@ -8712,7 +8674,7 @@ public:
             batch = &storage.initialSelectionBatch;
         } else {
             auto* prepared = PreparedPendingVariableGroupFor(storage);
-            if (prepared == nullptr || !acceptedPendingVariableGroups.IsConstructed(row->identity.slot)) return nullptr;
+            if (prepared == nullptr || (row->identity.slot >= acceptedPendingVariableGroups.size())) return nullptr;
             auto& accepted = acceptedPendingVariableGroups[row->identity.slot];
             const bool hasPrepared = !prepared->Empty();
             const bool hasAccepted = !accepted.Empty();
@@ -9584,7 +9546,7 @@ public:
             scratch.row == nullptr || !scratch.row->InvocationValid() ||
             scratch.storage.phase != EngineFrontierAttemptPhase::Preparing) return false;
         auto& row = *scratch.row;
-        if (!acceptedPendingVariableGroups.Emplace(row.identity.slot) ||
+        if (!acceptedPendingVariableGroups.ConstructThrough(row.identity.slot + 1u) ||
             !acceptedPendingVariableGroups[row.identity.slot].Empty()) return false;
         if (scratch.variableControlNestedVariableControlCount > scratch.variableControlNestedServices.size()) return false;
         std::uint32_t nestedSideCount = 0;
@@ -9710,7 +9672,7 @@ public:
             prepared->reference.owner != scratch.row->ownerInstance ||
             prepared->reference.epoch != scratch.row->ownerEpoch ||
             prepared->reference.invocationGeneration != scratch.row->invocationGeneration ||
-            !acceptedPendingVariableGroups.IsConstructed(scratch.row->identity.slot)) return false;
+            (scratch.row->identity.slot >= acceptedPendingVariableGroups.size())) return false;
         auto& accepted = acceptedPendingVariableGroups[scratch.row->identity.slot];
         if (!accepted.Empty() || prepared->initialSelectionBatch.ReplacementPending() ||
             !CanMovePendingVariableGroupSources(*prepared)) return false;
@@ -9760,7 +9722,7 @@ public:
                 !ClosePendingOrdinarySelection(ordinary)) return false;
         }
         if (row.identity.slot >= playableServices.size()) return false;
-        if (!acceptedPendingVariableGroups.IsConstructed(row.identity.slot)) return true;
+        if ((row.identity.slot >= acceptedPendingVariableGroups.size())) return true;
         auto& holder = acceptedPendingVariableGroups[row.identity.slot];
         if (holder.Empty()) return true;
         return holder.reference.token == row.identity && holder.reference.owner == row.ownerInstance &&
@@ -9843,7 +9805,7 @@ public:
             row.controlLifecycle != PlayableControlLifecycle::Preparing ||
             row.pendingImmediateTimeDomain != ImmediateLaneTimeDomain::RelativeToAnchor ||
             (row.Invocation().actionTerminalReason != ActionTerminalReason::None && !retirementAbort) ||
-            !acceptedPendingVariableGroups.IsConstructed(row.identity.slot)) return nullptr;
+            (row.identity.slot >= acceptedPendingVariableGroups.size())) return nullptr;
         auto& group = acceptedPendingVariableGroups[row.identity.slot];
         const auto& original = scratch.storage.originalPendingVariableProducer;
         const auto service = group.service.FactoryReference();
@@ -12454,13 +12416,12 @@ public:
     }
 
     bool PrepareQueueInstanceHolders(std::uint32_t count) noexcept {
-        const auto workspaces = std::min(count, config.maxPlayableInstances);
-        return initialQueueTimingMembersScratch.ConstructThrough(workspaces) &&
-            initialQueueTransitionTimingProofsScratch.ConstructThrough(workspaces) &&
-            initialQueueConditionalTimingProofsScratch.ConstructThrough(workspaces) &&
-            initialQueueCurrentCompositeProofsScratch.ConstructThrough(workspaces) &&
-            initialQueueSuccessorCompositeProofsScratch.ConstructThrough(workspaces) &&
-            actionQueueReplacementScratch.ConstructThrough(workspaces) &&
+        return initialQueueTimingMembersScratch.ConstructThrough(count) &&
+            initialQueueTransitionTimingProofsScratch.ConstructThrough(count) &&
+            initialQueueConditionalTimingProofsScratch.ConstructThrough(count) &&
+            initialQueueCurrentCompositeProofsScratch.ConstructThrough(count) &&
+            initialQueueSuccessorCompositeProofsScratch.ConstructThrough(count) &&
+            actionQueueReplacementScratch.ConstructThrough(count) &&
             originalQueueLifetimeHolders.ConstructThrough(count) &&
             originalQueueFactoryLifetimeHolders.ConstructThrough(count) &&
             (queueInstances.originalConditionalCapacity_ == 0 ||
@@ -13799,6 +13760,15 @@ public:
     };
     std::vector<MonitorPlaybackEvent> monitorPlaybackEvents;
     const PlayableStorageLayout playableStorage;
+    std::size_t PlayableMemberCount() const noexcept {
+        return playableStorage.MemberBase(playablePartitions.Capacity());
+    }
+    std::size_t PlayablePairedCount() const noexcept {
+        return playableStorage.PairedBase(playablePartitions.Capacity());
+    }
+    std::size_t PlayableEndpointCount() const noexcept {
+        return playableStorage.EndpointBase(playablePartitions.Capacity());
+    }
     ResampleTables tables;
     MultirateResampleTables multirateTables;
     BiquadTrigTable biquadTrig;
@@ -13942,15 +13912,15 @@ public:
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
-    StableRowStorage<EngineInitialQueueTimingMember>
+    GrowingRowStorage<EngineInitialQueueTimingMember>
         initialQueueTimingMembersScratch;
-    StableRowStorage<TransitionInstancePool::PrivateTimingProof>
+    GrowingRowStorage<TransitionInstancePool::PrivateTimingProof>
         initialQueueTransitionTimingProofsScratch;
-    StableRowStorage<QueueInstanceTable::PrivateConditionalTimingProof>
+    GrowingRowStorage<QueueInstanceTable::PrivateConditionalTimingProof>
         initialQueueConditionalTimingProofsScratch;
-    StableRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
+    GrowingRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueCurrentCompositeProofsScratch;
-    StableRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
+    GrowingRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueSuccessorCompositeProofsScratch;
     StableRowStorage<EngineInitialQueueTimingProgram>
         initialQueueTimingProgramsScratch;
@@ -13974,27 +13944,37 @@ public:
         attempt.active = active;
     }
     StableRowStorage<EngineQueueContinuationRecord> queueContinuationRecords;
-    StableRowStorage<EngineQueueFutureRecord> queueFutureRecords;
+    GrowingRowStorage<EngineQueueFutureRecord> queueFutureRecords;
+    static bool QueueFutureReusable(const EngineQueueFutureRecord& record) noexcept {
+        return !record.occupied && record.generation != UINT64_MAX &&
+            !record.coordinatorReservation.Valid() && !record.coordinator.Valid() &&
+            !record.coordinatorArmGroup.Valid() && !record.primaryGroup.Exact() &&
+            !record.prerequisiteMemberPin.Valid() && !record.parentPin.Valid() &&
+            !record.sourceTransitionBinding.Valid() && !record.bindingArmPinEntry.Valid();
+    }
+    bool PrepareQueueFutureBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        return queueFutureRecords.PrepareBacking(count, UnavailableRows(queueFutureRecords, QueueFutureReusable), out);
+    }
     void (*voiceCommandBatchPublishHookForTest)(Engine&, void*) = nullptr;
     void* voiceCommandBatchPublishHookContextForTest = nullptr;
     void (*immediateEntryAfterPublishHookForTest)(Engine&, void*) = nullptr;
     void* immediateEntryAfterPublishContextForTest = nullptr;
-    StableRowStorage<EngineActionQueueReplacementScratch>
+    GrowingRowStorage<EngineActionQueueReplacementScratch>
         actionQueueReplacementScratch;
     // Tokens and descriptor pins must be destroyed before their owning tables.
     std::vector<EngineDecisionRetirement> decisionRetirements;
-    std::vector<EnginePlayableStartRow> playableStarts;
-    StableRowStorage<EnginePlayableServiceRow> playableServices;
+    GrowingRowStorage<EnginePlayableStartRow> playableStarts;
+    GrowingRowStorage<EnginePlayableServiceRow> playableServices;
     std::vector<EngineScheduleSourceServiceWork> scheduleSourceSettlementWork;
     std::vector<EnginePlayableServiceReference> scheduleSourcePublicationWork;
     EngineScheduleSourceServicePhase scheduleSourceServicePhase = EngineScheduleSourceServicePhase::Idle;
     std::uint64_t scheduleSourceObservedAudioSequence = 0;
-    StableSlotStorage<EngineMemberProgramRecord> memberProgramRecords;
+    GrowingRowStorage<EngineMemberProgramRecord> memberProgramRecords;
     std::uint32_t retiredMemberProgramCount = 0;
-    StableSlotStorage<EnginePlayableMemberRecord> playableMemberRecords;
+    GrowingRowStorage<EnginePlayableMemberRecord> playableMemberRecords;
 
     EnginePlayableServiceRow* MemberRelationOwner(std::size_t logicalSlot) noexcept {
-        if (logicalSlot >= playableStorage.memberCount || playableStorage.memberStride == 0) return nullptr;
+        if (logicalSlot >= PlayableMemberCount() || playableStorage.memberStride == 0) return nullptr;
         const auto partition = static_cast<std::uint32_t>(logicalSlot / playableStorage.memberStride);
         const auto token = playablePartitions.CaptureOwner(partition);
         if (!token.Valid() || token.slot >= playableServices.size()) return nullptr;
@@ -14044,7 +14024,7 @@ public:
     bool PrepareMemberRelationBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
         const auto previous = memberRelations.ConstructedCount();
         const bool prepared = memberRelations.PrepareBacking(
-            std::min(count, memberRelations.Capacity()), occupiedMemberRelations, out,
+            count, occupiedMemberRelations, out,
             [&](std::uint32_t required) noexcept {
                 return required <= previous || AllowNativeBackingAllocation();
             });
@@ -14069,8 +14049,8 @@ public:
         while (row.memberRelationHead != UINT32_MAX) RemoveMemberRelation(row, &row.memberRelationHead);
     }
     void ClearPlayableMemberReferences(std::size_t base, std::size_t count) noexcept {
-        if (count == 0 || base >= playableStorage.memberCount) return;
-        const auto end = base + std::min(count, playableStorage.memberCount - base);
+        if (count == 0 || base >= PlayableMemberCount()) return;
+        const auto end = base + std::min(count, PlayableMemberCount() - base);
         while (base < end) {
             const auto partitionBase = base - base % playableStorage.memberStride;
             const auto limit = std::min(end, partitionBase + playableStorage.memberStride);
@@ -14099,7 +14079,7 @@ public:
             target.ownerEpoch != reference.service.epoch || target.invocationGeneration != reference.service.invocationGeneration ||
             target.partition.generation != reference.partitionGeneration) return false;
         if (!existing) {
-            if (occupiedMemberRelations == memberRelations.Capacity()) return false;
+            if (occupiedMemberRelations == UINT32_MAX) return false;
             const auto previous = memberRelations.ConstructedCount();
             if (!memberRelations.ConstructThrough(occupiedMemberRelations + 1u,
                     [&](std::uint32_t required) noexcept {
@@ -14173,18 +14153,17 @@ public:
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
         return !record.occupied && record.generation != UINT64_MAX;
     }
-    bool PreparePlayableMemberRecord(std::uint32_t slot) noexcept {
-        // Prepare the observation page before constructing a reusable record.
-        // A failed page preparation must not leave a falsely ready record.
-        return memberOnsets.Prepare({1, slot, 0}) && playableMemberRecords.Emplace(slot);
+    bool PrepareMemberOnsets(std::uint32_t required) noexcept {
+        for (auto slot = playableMemberRecords.size(); slot < required; ++slot)
+            if (!memberOnsets.Prepare({1, slot, 0})) return false;
+        return true;
     }
-    bool PreparePlayableMemberBacking(std::uint32_t count,
-        StableSlotStorage<EnginePlayableMemberRecord>::Preparation* out) noexcept {
-        return playableMemberRecords.PrepareBacking(count, 0, PlayableMemberReusable,
-            [this](std::uint32_t slot) noexcept { return PreparePlayableMemberRecord(slot); }, out);
+    bool PreparePlayableMemberBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        return playableMemberRecords.PrepareBacking(count, UnavailableRows(playableMemberRecords, PlayableMemberReusable),
+            out, [this](std::uint32_t required) noexcept { return PrepareMemberOnsets(required); });
     }
     EnginePlayableMemberRecord* FindPlayableMember(EnginePlayableMemberToken token) noexcept {
-        if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
+        if (!token.Valid() || token.slot >= playableMemberRecords.size()) return nullptr;
         auto& record = playableMemberRecords[token.slot];
         return record.occupied && record.generation == token.generation ? &record : nullptr;
     }
@@ -14199,7 +14178,7 @@ public:
             record->render == source.render ? record : nullptr;
     }
     bool SetPlayableMemberSource(EnginePlayableMemberRecord& record, SourceTerminalToken source) noexcept {
-        const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(record), record.generation};
+        const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(&record), record.generation};
         if (FindPlayableMember(token) != &record ||
             (source.Valid() && source.slot >= sourcePlayableMembers.size())) {
             RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
@@ -14237,7 +14216,7 @@ public:
             record->physicalSlot == playableStorage.MemberBase(row.partition.slot) + offset ? record : nullptr;
     }
     EnginePlayableMemberRecord* FindPlayableMember(std::size_t physicalSlot) noexcept {
-        if (physicalSlot >= playableStorage.memberCount || playableStorage.memberStride == 0) return nullptr;
+        if (physicalSlot >= PlayableMemberCount() || playableStorage.memberStride == 0) return nullptr;
         const auto partition = static_cast<std::uint32_t>(physicalSlot / playableStorage.memberStride);
         const auto owner = playablePartitions.CaptureOwner(partition);
         if (!owner.Valid() || owner.slot >= playableServices.size()) return nullptr;
@@ -14255,21 +14234,28 @@ public:
         assert(record != nullptr);
         return *record;
     }
+    template<class Rows, class Reusable>
+    static std::uint32_t UnavailableRows(const Rows& rows, Reusable reusable) noexcept {
+        return static_cast<std::uint32_t>(rows.size() - std::count_if(rows.begin(), rows.end(), reusable));
+    }
+    template<class T, class Reusable, class Prepare>
+    static T* AcquireReusableRow(GrowingRowStorage<T>& rows, Reusable reusable, Prepare prepare) noexcept {
+        const auto available = std::find_if(rows.begin(), rows.end(), reusable);
+        const auto slot = static_cast<std::uint32_t>(available - rows.begin());
+        // Other accepted work must keep its promised free rows, even when this
+        // acquisition reuses a hole below the last occupied row.
+        const auto needed = rows.HeldRows() != 0 && !rows.PreparedUseActive()
+            ? UnavailableRows(rows, reusable) : slot;
+        if (needed == UINT32_MAX || !rows.ConstructThrough(needed + 1u, prepare)) return nullptr;
+        return rows.TryAt(slot);
+    }
     EnginePlayableMemberToken AcquirePlayableMemberRecord() noexcept {
-        for (std::uint32_t slot = 0; slot < playableMemberRecords.size(); ++slot) {
-            if (!playableMemberRecords.IsConstructed(slot)) {
-                if (playableMemberRecords.PreparedUseActive()) continue;
-                if (!PreparePlayableMemberRecord(slot)) return {};
-            }
-            auto& record = playableMemberRecords[slot];
-            if (!PlayableMemberReusable(record)) continue;
-            if (!playableMemberRecords.ProtectBackingForAcquire(slot, PlayableMemberReusable,
-                    [this](std::uint32_t next) noexcept { return PreparePlayableMemberRecord(next); })) return {};
-            record.occupied = true;
-            ++record.generation;
-            return {slot, record.generation};
-        }
-        return {};
+        auto* record = AcquireReusableRow(playableMemberRecords, PlayableMemberReusable,
+            [this](std::uint32_t required) noexcept { return PrepareMemberOnsets(required); });
+        if (record == nullptr) return {};
+        record->occupied = true;
+        ++record->generation;
+        return {playableMemberRecords.IndexOf(record), record->generation};
     }
     static void RecyclePlayableMember(EnginePlayableMemberRecord& record) noexcept {
         if (record.primaryOwned || record.programOwners != 0) return;
@@ -14408,15 +14394,14 @@ public:
         return !record.occupied && record.generation != UINT64_MAX;
     }
     bool PrepareMemberProgramBacking(std::uint32_t count,
-        StableSlotStorage<EngineMemberProgramRecord>::Preparation* out) noexcept {
-        return memberProgramRecords.PrepareBacking(count, 0, MemberProgramReusable,
-            [this](std::uint32_t slot) noexcept { return memberProgramRecords.Emplace(slot); }, out);
+        StableStoragePreparation* out) noexcept {
+        return memberProgramRecords.PrepareBacking(count, UnavailableRows(memberProgramRecords, MemberProgramReusable), out);
     }
     EngineMemberProgramRecord* FindMemberProgram(const EnginePlayableServiceRow& row,
         std::uint32_t offset) noexcept {
         if (offset >= row.memberPrograms.size()) return nullptr;
         const auto token = row.memberPrograms[offset];
-        if (!token.Valid() || !memberProgramRecords.IsConstructed(token.slot)) return nullptr;
+        if (!token.Valid() || token.slot >= memberProgramRecords.size()) return nullptr;
         auto& record = memberProgramRecords[token.slot];
         const auto& reference = record.member;
         return record.occupied && record.directoryOwned && record.generation == token.generation &&
@@ -14442,25 +14427,17 @@ public:
         }
         auto* member = FindPlayableMember(row, reference.memberOffset);
         if (member == nullptr || member->programOwners == UINT32_MAX) return nullptr;
-        for (std::uint32_t slot = 0; slot < memberProgramRecords.size(); ++slot) {
-            if (!memberProgramRecords.IsConstructed(slot)) {
-                if (memberProgramRecords.PreparedUseActive()) continue;
-                if (!memberProgramRecords.Emplace(slot)) return nullptr;
-            }
-            auto& record = memberProgramRecords[slot];
-            if (!MemberProgramReusable(record)) continue;
-            if (!memberProgramRecords.ProtectBackingForAcquire(slot, MemberProgramReusable,
-                    [this](std::uint32_t next) noexcept { return memberProgramRecords.Emplace(next); })) return nullptr;
-            record.member = reference;
-            record.memberToken = row.members[reference.memberOffset];
-            ++member->programOwners;
-            record.directoryOwned = true;
-            record.occupied = true;
-            ++record.generation;
-            token = {slot, record.generation};
-            return &record;
-        }
-        return nullptr;
+        auto* record = AcquireReusableRow(memberProgramRecords, MemberProgramReusable,
+            [](std::uint32_t) noexcept { return true; });
+        if (record == nullptr) return nullptr;
+        record->member = reference;
+        record->memberToken = row.members[reference.memberOffset];
+        ++member->programOwners;
+        record->directoryOwned = true;
+        record->occupied = true;
+        ++record->generation;
+        token = {memberProgramRecords.IndexOf(record), record->generation};
+        return record;
     }
     EngineMemberProgramRecord* ResolveMemberProgram(const EnginePlayableMemberReference& reference) noexcept {
         EnginePlayableServiceRow* owner = nullptr;
@@ -14650,14 +14627,18 @@ public:
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
                  pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
-                 pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
-                 pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()))) &&
+                 pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()))) &&
             (!needsContainerState || spatial.PrepareVoiceStorage(config.voiceCapacity.Render())) &&
             PreparePlayablePublicationStorage(needsContainerState, independentRoots);
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required,
                                             bool requireQueueTiming = true) noexcept {
-        if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required)) return false;
+        const auto previousStarts = playableStarts.size();
+        if (!playableStarts.ConstructThrough(required)) return false;
+        for (auto slot = previousStarts; slot < required; ++slot) playableStarts[slot].slot = slot;
+        if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required) ||
+            !playablePartitions.PrepareStorage(required) ||
+            !timelinePool.PrepareImmediateLaneOwnerGates(required)) return false;
         if (!requireQueueTiming) return true;
         // One service contributes one selected future. Its source and successor
         // programs contain at most Start/Envelope or Envelope/Stop events.
@@ -14675,7 +14656,7 @@ public:
     EnginePlayableServiceRow* PrepareFreePlayableService(bool requireQueueTiming = true) noexcept {
         const auto free = std::find_if(playableServices.begin(), playableServices.end(), PlayableServiceReusable);
         const auto slot = free == playableServices.end() ? playableServices.size() : free->identity.slot;
-        if (slot >= playableServices.Capacity()) return nullptr;
+        if (slot == UINT32_MAX) return nullptr;
         const auto previous = playableServices.size();
         if (!playableServices.ConstructThrough(slot + 1u,
                 [this, requireQueueTiming](std::uint32_t required) noexcept {
@@ -14698,8 +14679,12 @@ public:
             out->Release();
             return false;
         }
-        for (auto& row : playableServices)
-            if (!PrepareMemberProgramDirectory(row) || !PreparePlayableMemberDirectory(row)) return false;
+        for (auto& row : playableServices) {
+            if (!PrepareMemberProgramDirectory(row) || !PreparePlayableMemberDirectory(row)) {
+                out->Release();
+                return false;
+            }
+        }
         return true;
     }
     struct PlayableServiceWorkFamily {};
@@ -14816,7 +14801,7 @@ public:
     EnginePlayableServiceRow* NextOccupiedPlayableCohortService(
         ActionFiringHandle root, PlayableCohortCursor* cursor) noexcept {
         // Exhaustion is sticky, even if a callback later inserts another row.
-        if (cursor == nullptr || cursor->nextSlot >= playableServices.Capacity()) return nullptr;
+        if (cursor == nullptr || cursor->nextSlot == UINT32_MAX) return nullptr;
         auto slot = playableCohortBuckets_[PlayableCohortBucket(root)].head;
         if (cursor->previous.Valid() && cursor->previous.slot < playableServices.size()) {
             const auto& previous = playableServices[cursor->previous.slot];
@@ -14836,7 +14821,7 @@ public:
             }
             slot = row.cohortNext_;
         }
-        cursor->nextSlot = playableServices.Capacity();
+        cursor->nextSlot = UINT32_MAX;
         return nullptr;
     }
 private:
@@ -14890,11 +14875,11 @@ private:
     }
 public:
     // Production Current borrowing remains closed while this seed is collecting.
-    StableRowStorage<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
+    GrowingRowStorage<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
     StableRowStorage<OriginalPendingVariableQueueNativeOrigin> pendingVariableQueueNativeOrigins;
     StableSlotStorage<OriginalPendingOrdinarySelectionHolder> pendingOrdinarySelections;
     StableSlotStorage<OriginalPendingVariableGroupHolder> preparedPendingVariableGroups;
-    StableSlotStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
+    GrowingRowStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
     bool pendingVariableGroupReplacementActive = false;
     bool deferRegisteredPendingVariableSelectionReplacementForTest = false;
     bool deferPendingImmediateEntriesForTest = false;
@@ -14908,7 +14893,7 @@ public:
         return pendingVariableQueueNativeOrigins.PrepareBacking(
             std::min(count, pendingVariableQueueNativeOrigins.Capacity()), occupied, out);
     }
-    StableRowStorage<OriginalPendingVariableFutureNode> pendingVariableFutureNodes;
+    GrowingRowStorage<OriginalPendingVariableFutureNode> pendingVariableFutureNodes;
     void (*pendingVariableGroupPlacementHookForTest)(Engine&, EngineActionPlayScratch&,
         EngineImmediateEntryAttempt&, const PrivateImmediateLanePlacementProof&,
         VariableReadCutReader, void*) noexcept = nullptr;
@@ -14988,7 +14973,7 @@ public:
     }
 
     bool ResolvePlayableMemberSlot(std::size_t logicalSlot, std::size_t* physicalSlot) noexcept {
-        if (physicalSlot == nullptr || logicalSlot >= playableStorage.memberCount) return false;
+        if (physicalSlot == nullptr || logicalSlot >= PlayableMemberCount()) return false;
         const auto& reference = ReadPlayableMemberReference(logicalSlot);
         if (!reference.service.token.Valid()) {
             *physicalSlot = logicalSlot;
@@ -15051,15 +15036,15 @@ public:
         if (offset > (std::numeric_limits<std::size_t>::max)() - row.scheduleStorageBase) return nullptr;
         std::size_t slot = 0;
         if (!ResolvePlayableMemberSlot(row.scheduleStorageBase + offset, &slot) ||
-            slot >= playableStorage.memberCount || !ReadPlayableMember(slot).voice.Valid()) return nullptr;
+            slot >= PlayableMemberCount() || !ReadPlayableMember(slot).voice.Valid()) return nullptr;
         return &ReadPlayableMember(slot).voice;
     }
 
     template <std::size_t Capacity>
     bool ResolvePlayableMemberSlots(std::size_t logicalBase, std::size_t count,
                                    std::array<std::size_t, Capacity>& physicalSlots) noexcept {
-        if (count > Capacity || logicalBase > playableStorage.memberCount ||
-            count > playableStorage.memberCount - logicalBase) return false;
+        if (count > Capacity || logicalBase > PlayableMemberCount() ||
+            count > PlayableMemberCount() - logicalBase) return false;
         for (std::size_t index = 0; index < count; ++index) {
             if (!ResolvePlayableMemberSlot(logicalBase + index, &physicalSlots[index])) return false;
         }
@@ -15070,7 +15055,7 @@ public:
                                        std::size_t logicalSlot,
                                        EnginePlayableMemberReference* output) noexcept {
         if (output == nullptr || !playablePartitions.Owns(service.partition, service.identity) ||
-            logicalSlot >= playableStorage.memberCount) return false;
+            logicalSlot >= PlayableMemberCount()) return false;
         if (ReadPlayableMemberReference(logicalSlot).service.token.Valid()) {
             EnginePlayableServiceRow* owner = nullptr;
             std::size_t physicalSlot = 0;
@@ -15117,11 +15102,11 @@ public:
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
 
     EnginePlayableMemberRecord* FindPlayableMemberOnset(std::uint32_t recordSlot) noexcept {
-        if (!playableMemberRecords.IsConstructed(recordSlot)) return nullptr;
+        if (recordSlot >= playableMemberRecords.size()) return nullptr;
         auto& record = playableMemberRecords[recordSlot];
         if (!record.occupied || !record.primaryOwned || !record.service.Valid() ||
             record.service.slot >= playableServices.size() ||
-            record.physicalSlot >= playableStorage.memberCount) return nullptr;
+            record.physicalSlot >= PlayableMemberCount()) return nullptr;
         auto& row = playableServices[record.service.slot];
         const auto base = playableStorage.MemberBase(row.partition.slot);
         if (record.physicalSlot < base) return nullptr;
@@ -15143,7 +15128,7 @@ public:
     void RefreshPlayableMemberOnset(std::size_t slot) noexcept {
         const auto* record = FindPlayableMember(slot);
         if (record == nullptr) return;
-        const auto recordSlot = playableMemberRecords.IndexOf(*record);
+        const auto recordSlot = playableMemberRecords.IndexOf(record);
         const auto identity = PlayableMemberOnsetIdentity(recordSlot, *record);
         if (!identity.Valid()) return;
         const auto& member = record->completion;
@@ -15159,7 +15144,7 @@ public:
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
         const auto* record = FindPlayableMember(slot);
         if (record == nullptr) return;
-        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(*record), *record);
+        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(record), *record);
         if (previous.Valid()) {
             const bool removed = memberOnsets.SetMembership(previous, RuntimeActivitySet::Active,
                 false, [&](MemberOnsetIdentity current) noexcept {

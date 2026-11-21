@@ -47,13 +47,8 @@ auto StorageIdentity(const harken::StableRowStorage<T, Index>& rows) {
 
 inline auto CapturePlayableStorage(const harken::Engine& engine) {
     return std::array{
-        StorageIdentity(engine.playableStarts),
         StorageIdentity(engine.initialFrontierEvents),
         StorageIdentity(engine.initialFrontierRequests),
-        StorageIdentity(engine.playableServices),
-        StorageIdentity(engine.memberRelations),
-        StorageIdentity(engine.playableMemberRecords),
-        StorageIdentity(engine.memberProgramRecords),
         StorageIdentity(engine.variableControlRetargetPrograms),
         StorageIdentity(engine.queueProgramBanks)};
 }
@@ -87,7 +82,16 @@ public:
     void CheckStorage() {
         if (!enabled_) return;
         EXPECT_EQ(backing_, CapturePlayableStorage(engine_));
-        EXPECT_LE(engine_.playablePartitions.OccupiedCount(), engine_.config.maxPlayableInstances);
+        if (firstStart_ != nullptr) EXPECT_EQ(firstStart_, engine_.playableStarts.TryAt(0));
+        if (firstService_ != nullptr) EXPECT_EQ(firstService_, engine_.playableServices.TryAt(0));
+        if (memberRelationsBase_ != nullptr) EXPECT_EQ(memberRelationsBase_, engine_.memberRelations.TryAt(0));
+        memberRelationsBase_ = engine_.memberRelations.TryAt(0);
+        if (playableMemberRecordsBase_ != nullptr) EXPECT_EQ(playableMemberRecordsBase_, engine_.playableMemberRecords.TryAt(0));
+        playableMemberRecordsBase_ = engine_.playableMemberRecords.TryAt(0);
+        if (memberProgramRecordsBase_ != nullptr) EXPECT_EQ(memberProgramRecordsBase_, engine_.memberProgramRecords.TryAt(0));
+        memberProgramRecordsBase_ = engine_.memberProgramRecords.TryAt(0);
+        firstStart_ = engine_.playableStarts.TryAt(0);
+        firstService_ = engine_.playableServices.TryAt(0);
         peakPartitions_ = std::max(peakPartitions_, engine_.playablePartitions.OccupiedCount());
         std::uint32_t services = 0;
         for (const auto& row : engine_.playableServices) {
@@ -138,7 +142,12 @@ private:
         total.reallocationBytes += value.reallocationBytes;
     }
     harken::Engine& engine_;
+    const harken::EnginePlayableStartRow* firstStart_ = nullptr;
+    const harken::EnginePlayableServiceRow* firstService_ = nullptr;
     bool enabled_;
+    const void* memberRelationsBase_ = nullptr;
+    const void* playableMemberRecordsBase_ = nullptr;
+    const void* memberProgramRecordsBase_ = nullptr;
     decltype(CapturePlayableStorage(std::declval<const harken::Engine&>())) backing_;
     bool available_ = true;
     std::uint32_t operations_ = 0;

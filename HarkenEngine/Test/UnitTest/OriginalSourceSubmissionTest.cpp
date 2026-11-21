@@ -2724,6 +2724,7 @@ struct GenuineInitialSingleClockHarness {
         owner.invocation = episode.parent;
         owner.invocationEpoch = root.scheduleEpoch;
         owner.serviceSlot = 0;
+        ASSERT_TRUE(engine.timelinePool.PrepareImmediateLaneOwnerGates(owner.serviceSlot + 1u));
         owner.serviceGeneration = 1;
         payload.kind = harken::TimelineEventKind::Start;
         payload.target.subjectId = kSound;
@@ -4257,6 +4258,7 @@ struct HiddenBoundNativeFuture {
         actualOwner.child = actualOwner.invocation = old.episode.parent;
         actualOwner.childEpoch = actualOwner.invocationEpoch = rootInfo.scheduleEpoch;
         actualOwner.serviceSlot = 0;
+        ASSERT_TRUE(engine.timelinePool.PrepareImmediateLaneOwnerGates(actualOwner.serviceSlot + 1u));
         actualOwner.serviceGeneration = 1;
         std::array<const harken::TimelineProgramView*, 2> controller{};
         for (std::uint32_t i = 0; i < controller.size(); ++i) {
@@ -4613,6 +4615,7 @@ struct HiddenBoundNativeFuture {
         actualOwner.child = actualOwner.invocation = old.episode.parent;
         actualOwner.childEpoch = actualOwner.invocationEpoch = rootInfo.scheduleEpoch;
         actualOwner.serviceSlot = 0; actualOwner.serviceGeneration = 1;
+        ASSERT_TRUE(engine.timelinePool.PrepareImmediateLaneOwnerGates(actualOwner.serviceSlot + 1u));
         harken::PrivateSelectedQueueFutureSpanPool::ConditionalBacking body;
         ASSERT_TRUE(read.Capture(&body));
         for (std::uint32_t i = 0; i < 2; ++i) {
@@ -6649,6 +6652,7 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
     currentIdentity.child = currentIdentity.invocation = future.old.episode.parent;
     currentIdentity.childEpoch = currentIdentity.invocationEpoch = rootEpoch;
     currentIdentity.serviceSlot = 0;
+    ASSERT_TRUE(engine.timelinePool.PrepareImmediateLaneOwnerGates(currentIdentity.serviceSlot + 1u));
     currentIdentity.serviceGeneration = 1;
     const harken::FrontierEntryReceiptRef selectedEntry{future.token[0], 7, currentIdentity};
     if (publishSelected) {
@@ -7427,6 +7431,7 @@ struct GenuineScopedC0SourceFixture : GenuineInitialSingleClockHarness {
         owner.invocation = episode.parent;
         owner.invocationEpoch = root.scheduleEpoch;
         owner.serviceSlot = 0;
+        ASSERT_TRUE(engine.timelinePool.PrepareImmediateLaneOwnerGates(owner.serviceSlot + 1u));
         owner.serviceGeneration = 1;
         auto queueOwner = owner;
         if (independentAdmission) {
@@ -7441,6 +7446,7 @@ struct GenuineScopedC0SourceFixture : GenuineInitialSingleClockHarness {
             queueOwner.invocation = independentAdmissionRoot;
             queueOwner.invocationEpoch = admission.scheduleEpoch;
             queueOwner.serviceSlot = 1;
+            ASSERT_TRUE(engine.timelinePool.PrepareImmediateLaneOwnerGates(queueOwner.serviceSlot + 1u));
         }
         payload.kind = harken::TimelineEventKind::Start;
         payload.target.subjectId = kSound;
@@ -9164,7 +9170,7 @@ harken::ScheduledTransactionPool::Config NativeJointForeignConfig() {
     config.maxFrameBatchesPerQuantum = 4; config.maxEventsPerQuantum = 8;
     config.maxTransactionEvents = 4; config.maxCurrentSlicesPerQuantum = 4;
     config.maxPlan03GroupHeadersPerPage = 4; config.maxArmsPerGroup = 4;
-    config.maxImmediateLaneGroupRows = 2; config.maxImmediateLaneOwnerGates = 4;
+    config.maxImmediateLaneGroupRows = 2; config.initialImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     return config;
 }

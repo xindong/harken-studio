@@ -20947,7 +20947,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
     auto& engine = *session.Engine();
     ASSERT_EQ(workers, engine.voices.RenderWorkerCount());
     ::testing::Test::RecordProperty("member_completion_bytes", std::to_string(sizeof(VariableControlMemberCompletion)));
-    ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.playableStorage.memberCount));
+    ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.PlayableMemberCount()));
     if (entry == ContainerMatrixEntry::PackAction) {
         ImageBuilder builder(kPackKindCanonicalContent);
         builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
@@ -22200,7 +22200,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 const auto& heard = actual.heard[checkedPropertyVoices++];
                 if (laterControl ? heard.subject == harkentest::ObjectId(2300u) : heard.subject >= harkentest::ObjectId(2302u)) continue;
                 bool found = false;
-                for (std::size_t slot = 0; slot < engine.playableStorage.memberCount; ++slot) {
+                for (std::size_t slot = 0; slot < engine.PlayableMemberCount(); ++slot) {
                     const auto& arm = engine.ReadPlayableMember(slot).arm;
                     if (arm.slot != heard.token.slot || arm.generation != heard.token.generation) continue;
                     EXPECT_FLOAT_EQ(-6.0f, engine.ReadPlayableMember(slot).voice.Facts().volumeDb);
