@@ -3539,9 +3539,11 @@ TEST(DecisionGroup, InvalidatedUnstartedMemberIsExcludedUnlessSliceClaimed) {
     harken::TimelineArmTable arms(1);
     harken::VoicePool voices(config, &tables, &multirateTables, &biquadTrig,
                             effects, routes, &arms);
-    harken::DecisionTable decisions(1, 1);
+    harken::DecisionTable decisions(33, 1);
     harken::DecisionToken decision{};
+    for (unsigned i = 0; i < 32; ++i) ASSERT_TRUE(decisions.Reserve(MakeRequest(2 + i), &decision));
     ASSERT_TRUE(decisions.Reserve(MakeRequest(), &decision));
+    ASSERT_EQ(32u, decision.slot);
     harken::DecisionCommitPayload payload{};
     payload.pages = {1, 1};
     payload.armGroup = {1, 1};
@@ -3594,7 +3596,8 @@ TEST(DecisionGroup, InvalidatedUnstartedMemberIsExcludedUnlessSliceClaimed) {
     ASSERT_TRUE(arms.RequestCancel(arm));
     EXPECT_TRUE(sink.AdmitQuantum(0));
 
-    const harken::Plan03ScratchDecisionState unclaimed{decision.generation, false};
+    EXPECT_TRUE(sink.AdmitQuantum(1));
+    const harken::Plan03ScratchDecisionState unclaimed{decision, false};
     std::vector<std::uint32_t> controlTargets(voices.Capacity());
     const auto renderSlot = static_cast<std::uint32_t>(render);
     const auto renderGeneration = static_cast<std::uint32_t>(render >> 32);

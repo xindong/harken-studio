@@ -77,7 +77,7 @@ struct VariableTimelineStartAuthority {
 };
 
 struct Plan03ScratchDecisionState {
-    std::uint32_t generation = 0;
+    DecisionToken decision{};
     bool currentSliceClaimed = false;
 };
 

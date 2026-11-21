@@ -119,7 +119,7 @@ public:
         pool_ = &pool;
         pageGroups_.assign(pool.MaxPlan03GroupHeadersPerPage(),
                            Plan03PageGroupView{});
-        currentSlices_.assign(decisions.Capacity(),
+        currentSlices_.assign(pageGroups_.size(),
                               Plan03ScratchDecisionState{});
         authoredStopFences_.assign(pool.MaxScheduledTransactions(), nullptr);
         if (!frontier_.Attach(decisions, pool) ||
@@ -190,8 +190,6 @@ public:
             arenaCapacityRefused_ = !admitted;
             return admitted;
         }
-        std::fill(currentSlices_.begin(), currentSlices_.end(),
-                  Plan03ScratchDecisionState{});
         const std::size_t count = pool_->CapturePlan03PageGroupsRt(
             quantumIndex, pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) {
@@ -200,24 +198,32 @@ public:
         for (std::size_t index = 0; index < count; ++index) {
             const Plan03PageGroupView& view = pageGroups_[index];
             if (!view.identity.decision.Valid() || view.lease == nullptr ||
-                view.identity.decision.slot >= currentSlices_.size()) {
+                view.identity.decision.slot >= decisions_->Capacity()) {
                 return false;
             }
-            Plan03ScratchDecisionState& state =
-                currentSlices_[view.identity.decision.slot];
-            if (state.generation != 0 &&
-                state.generation != view.identity.decision.generation) {
-                return false;
+            currentSlices_[index] = {view.identity.decision,
+                view.lease->Capture().state == AudioSliceState::SliceClaimed};
+        }
+        // Multiple slices of one decision contribute a single claim for this quantum.
+        std::sort(currentSlices_.begin(), currentSlices_.begin() + count,
+            [](const auto& a, const auto& b) { return a.decision.slot < b.decision.slot; });
+        std::uint32_t decisionsInPage = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto slice = currentSlices_[i];
+            if (decisionsInPage != 0) {
+                auto& previous = currentSlices_[decisionsInPage - 1u];
+                if (previous.decision.slot == slice.decision.slot) {
+                    if (previous.decision.generation != slice.decision.generation) return false;
+                    previous.currentSliceClaimed |= slice.currentSliceClaimed;
+                    continue;
+                }
             }
-            state.generation = view.identity.decision.generation;
-            state.currentSliceClaimed =
-                state.currentSliceClaimed ||
-                view.lease->Capture().state == AudioSliceState::SliceClaimed;
+            currentSlices_[decisionsInPage++] = slice;
         }
         const bool admitted = immediate_.AdmitQuantum(
             arenaAvailableBytes_, blockFrames_, decisions_,
             currentSlices_.data(),
-            static_cast<std::uint32_t>(currentSlices_.size()));
+            decisionsInPage);
         arenaCapacityRefused_ = !admitted;
         return admitted;
     }
