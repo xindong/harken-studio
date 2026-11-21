@@ -2216,9 +2216,12 @@ TEST(CanonicalPackSetActivate, NamedPostRejectsSupersededSetAndMismatchedContent
     // Retire content, then load the same Action ID in a new set.
     members.resize(1);
     ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    uint64_t firing = 99;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
     members.push_back(Member(contentId, false, &content));
     ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
-    uint64_t firing = 99;
+    firing = 99;
     EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
     EXPECT_EQ(0u, firing);
     post.initHandle = report.initHandle;
