@@ -1672,6 +1672,12 @@
       {
         "wire": "u32"
       }
+    ],
+    "Vn_VisitResidentPackDirectoryV1": [
+      {
+        "wire": "desc",
+        "type": "VnResidentPackVisitDescV1"
+      }
     ]
   },
   "bindingOverloads": [

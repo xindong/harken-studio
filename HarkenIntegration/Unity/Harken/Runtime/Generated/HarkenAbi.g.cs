@@ -1214,6 +1214,24 @@ namespace Harken
             Off(f, "VnStreamSourceInfoV1", "state", Marshal.OffsetOf<VnStreamSourceInfoV1>("state"), 4);
             Off(f, "VnStreamSourceInfoV1", "result", Marshal.OffsetOf<VnStreamSourceInfoV1>("result"), 8);
             Off(f, "VnStreamSourceInfoV1", "reserved0", Marshal.OffsetOf<VnStreamSourceInfoV1>("reserved0"), 12);
+            Size(f, "VnResidentPackRowV1", Marshal.SizeOf<VnResidentPackRowV1>(), 192);
+            Off(f, "VnResidentPackRowV1", "facts", Marshal.OffsetOf<VnResidentPackRowV1>("facts"), 0);
+            Off(f, "VnResidentPackRowV1", "provider", Marshal.OffsetOf<VnResidentPackRowV1>("provider"), 112);
+            Off(f, "VnResidentPackRowV1", "byteCount", Marshal.OffsetOf<VnResidentPackRowV1>("byteCount"), 184);
+            Size(f, "VnResidentPackVisitDescV1", Marshal.SizeOf<VnResidentPackVisitDescV1>(), 112);
+            Off(f, "VnResidentPackVisitDescV1", "structSize", Marshal.OffsetOf<VnResidentPackVisitDescV1>("structSize"), 0);
+            Off(f, "VnResidentPackVisitDescV1", "memberCount", Marshal.OffsetOf<VnResidentPackVisitDescV1>("memberCount"), 4);
+            Off(f, "VnResidentPackVisitDescV1", "utf8Directory", Marshal.OffsetOf<VnResidentPackVisitDescV1>("utf8Directory"), 8);
+            Off(f, "VnResidentPackVisitDescV1", "utf8Names", Marshal.OffsetOf<VnResidentPackVisitDescV1>("utf8Names"), 16);
+            Off(f, "VnResidentPackVisitDescV1", "initVolumeId", Marshal.OffsetOf<VnResidentPackVisitDescV1>("initVolumeId"), 24);
+            Off(f, "VnResidentPackVisitDescV1", "initFileId", Marshal.OffsetOf<VnResidentPackVisitDescV1>("initFileId"), 32);
+            Off(f, "VnResidentPackVisitDescV1", "initFileSize", Marshal.OffsetOf<VnResidentPackVisitDescV1>("initFileSize"), 40);
+            Off(f, "VnResidentPackVisitDescV1", "initWriteTime", Marshal.OffsetOf<VnResidentPackVisitDescV1>("initWriteTime"), 48);
+            Off(f, "VnResidentPackVisitDescV1", "initChangeTime", Marshal.OffsetOf<VnResidentPackVisitDescV1>("initChangeTime"), 56);
+            Off(f, "VnResidentPackVisitDescV1", "maxInputBytes", Marshal.OffsetOf<VnResidentPackVisitDescV1>("maxInputBytes"), 64);
+            Off(f, "VnResidentPackVisitDescV1", "init", Marshal.OffsetOf<VnResidentPackVisitDescV1>("init"), 72);
+            Off(f, "VnResidentPackVisitDescV1", "userData", Marshal.OffsetOf<VnResidentPackVisitDescV1>("userData"), 96);
+            Off(f, "VnResidentPackVisitDescV1", "visit", Marshal.OffsetOf<VnResidentPackVisitDescV1>("visit"), 104);
             return f;
         }
 

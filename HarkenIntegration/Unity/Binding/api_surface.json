@@ -277,6 +277,7 @@
       "rationale": "The embedding host owns lifecycle, preparation, resource bytes and callback lifetime.",
       "consumer_contract": "HarkenEngine lifecycle, PackBootstrap/Packs and HarkenCallbacks.",
       "entries": [
+        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs::preprocessor-order:d308dc0acafb85378ff1692a93a3396f9c8b462d1d6fa17c8eb7348d456dd0b0",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/CurrentWorld.cs/Harken.CurrentWorld::public static class CurrentWorld [ordered-members:c774f72f6b7d0618f54f9b8b1262d31c7d59dfcd1311b09bd1418deea3dccf95]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/CurrentWorld.cs/Harken.CurrentWorld::public static unsafe VnResult Load ( string path , out CurrentWorldLoadReport report )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/CurrentWorld.cs/Harken.CurrentWorldLoadReport::public readonly VnCurrentWorldLoadStatus Status",
@@ -299,6 +300,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnConfig DefaultConfig ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Init ( in VnConfig config )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Resume ( )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult SetHostOutputMute ( uint mute01 , uint fadeMs )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Suspend ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Term ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Update ( )",
@@ -331,8 +333,8 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.ActionPreparationResult::public VnResult Result { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.ActionPreparationResult::public readonly struct ActionPreparationResult [ordered-members:4657a2ed1db10d3c779f1a79d4251a5aefa92a2a4e25d7caae2b4e1edc1cc141]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackBootstrapSession::public async Task < ActionPreparationResult > PrepareActionsAsync ( string [ ] names , string projectId , CancellationToken cancellation = default )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackBootstrapSession::public async Task < VnResult > SetLanguageAsync ( string language , CancellationToken cancellation = default )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackBootstrapSession::public async Task < ActionPreparationResult > RefreshActionAsync ( string name , string projectId , CancellationToken cancellation = default )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackBootstrapSession::public async Task < VnResult > SetLanguageAsync ( string language , CancellationToken cancellation = default )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession [ordered-members:f2504b20bd14b42fecfbe1c925cee23b25ae879c312e31571ff254cb701788d8]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public PackBootstrapSession Session { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrapAsync.cs/Harken.PackStartupResult::public VnResult Result { get ; }",
@@ -424,9 +426,11 @@
         "native:Vn_InspectInitPack",
         "native:Vn_LoadCurrentWorld",
         "native:Vn_LoadPack",
+        "native:Vn_QueryActionPlaybackReadiness",
         "native:Vn_QueryStreamSource",
         "native:Vn_ReplacePack",
         "native:Vn_Resume",
+        "native:Vn_SetHostOutputMute",
         "native:Vn_Suspend",
         "native:Vn_Term",
         "native:Vn_UnloadCanonicalPackSetV1",
@@ -434,10 +438,7 @@
         "native:Vn_UnloadPackEx",
         "native:Vn_UnregisterStreamFile",
         "native:Vn_Update",
-        "native:Vn_QueryActionPlaybackReadiness",
-        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs::preprocessor-order:d308dc0acafb85378ff1692a93a3396f9c8b462d1d6fa17c8eb7348d456dd0b0",
-        "native:Vn_SetHostOutputMute",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult SetHostOutputMute ( uint mute01 , uint fadeMs )"
+        "native:Vn_VisitResidentPackDirectoryV1"
       ]
     },
     "runtime-mix": {
@@ -1942,7 +1943,10 @@
       "VnRemoteClientSnapshot": "tool-types",
       "VnRemoteClientTarget": "tool-types",
       "VnRemoteClientVoice": "tool-types",
-      "VnRemoteOperation": "tool-types"
+      "VnRemoteOperation": "tool-types",
+      "VnResidentPackVisitDescV1": "required-types",
+      "VnResidentPackRowV1": "tool-types",
+      "VnResidentPackVisitorFn": "required-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",

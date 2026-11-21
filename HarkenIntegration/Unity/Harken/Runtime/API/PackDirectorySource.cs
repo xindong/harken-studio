@@ -12,6 +12,9 @@ namespace Harken
         internal byte[] Json;
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
+        internal VnCanonicalPackSetMemberV1 BatchProvider;
+        internal int BatchLength;
+        internal int ByteCount => Bytes?.Length ?? BatchLength;
         internal ulong SourceRevision;
         internal PackDirectorySource.ResidentSelection Selection;
     }
@@ -189,6 +192,7 @@ namespace Harken
         {
             private readonly ulong device, inode, length, modified, modifiedNs, changed, changedNs;
             internal ulong Length => length;
+            internal ulong[] BatchIdentity(long changeTime) => new[] { device, inode, length, modified, (ulong)changeTime };
             private FileIdentity(ulong device, ulong inode, ulong length, ulong modified,
                 ulong modifiedNs = 0, ulong changed = 0, ulong changedNs = 0)
             {

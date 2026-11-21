@@ -486,6 +486,9 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_CommitStreamSource", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_CommitStreamSource(ulong request);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_VisitResidentPackDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_VisitResidentPackDirectoryV1(in VnResidentPackVisitDescV1 desc);
+
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_MonitorGetEventSessionStatusV2(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus);

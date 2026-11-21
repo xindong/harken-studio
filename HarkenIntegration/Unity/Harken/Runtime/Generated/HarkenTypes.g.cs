@@ -815,6 +815,9 @@ namespace Harken
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void VnByteSourceReleaseFn(IntPtr userData);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate VnResult VnResidentPackVisitorFn(IntPtr userData, IntPtr rows, uint memberCount);
+
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
     public partial struct VnObjectId
@@ -2419,6 +2422,32 @@ namespace Harken
     public uint state;
     public int result;
     public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnResidentPackRowV1
+    {
+    public VnPackInspectReportV1 facts;
+    public VnCanonicalPackSetMemberV1 provider;
+    public ulong byteCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnResidentPackVisitDescV1
+    {
+    public uint structSize;
+    public uint memberCount;
+    public IntPtr utf8Directory;
+    public IntPtr utf8Names;
+    public ulong initVolumeId;
+    public ulong initFileId;
+    public ulong initFileSize;
+    public ulong initWriteTime;
+    public ulong initChangeTime;
+    public ulong maxInputBytes;
+    public VnPackByteSpan init;
+    public IntPtr userData;
+    public IntPtr visit;
     }
 
 }
