@@ -2240,6 +2240,7 @@ TEST(CanonicalPackSetActivate, NamedPostRejectsSupersededSetAndMismatchedContent
     ++post.keyCapacity;
     ASSERT_EQ(VN_OK, Vn_PostNamedResidentActionV1(&post, &firing));
     ASSERT_NE(0u, firing);
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
     for (unsigned i = 0; i < 4; ++i) {
         session.Engine()->nullBackend.Pump(4);
         ASSERT_EQ(VN_OK, Vn_Update());

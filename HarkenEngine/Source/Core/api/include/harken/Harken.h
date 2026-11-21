@@ -1642,13 +1642,13 @@ VnResult Vn_ActivateResidentPackDirectoryV1(
     const VnResidentDirectoryActivationV1* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
 
-/* Local Windows directory activation. Names are distinct, NUL-terminated UTF-16
- * Action names. On success each caller-owned 129-byte slot contains one ASCII
+/* Local Windows directory activation. Directory and LF-separated distinct Action names are UTF-16
+ * spans. Lengths are code units, excluding any terminator. On success each caller-owned 129-byte slot contains one ASCII
  * name in input order. Directory/member file checks are identical to V1.
  * directory.utf8Directory and directory.utf8Names must both be null.
  * All borrowed inputs and outputs are synchronous; no pointer is retained. */
 VnResult Vn_ActivateNamedResidentDirectoryV1(const VnResidentDirectoryActivationV1* desc,
-    const uint16_t* directory, const uint16_t* const* names, uint32_t count,
+    const uint16_t* directory, uint32_t directoryUnits, const uint16_t* names, uint32_t nameUnits,
     void* keys, uint32_t keyCapacity, VnCanonicalPackSetActivationReportV1* outReport);
 
 typedef struct VnNamedResidentPostV1 {

@@ -1695,10 +1695,13 @@
         "type": "VnResidentDirectoryActivationV1"
       },
       {
-        "wire": "utf16string"
+        "wire": "utf16buf"
       },
       {
-        "wire": "utf16names"
+        "wire": "u32"
+      },
+      {
+        "wire": "utf16buf"
       },
       {
         "wire": "u32"
