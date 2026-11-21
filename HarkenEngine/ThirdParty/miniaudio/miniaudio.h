@@ -42337,7 +42337,9 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
             }
         }
 
-        if (pConfig->deviceType == ma_device_type_playback || pConfig->deviceType == ma_device_type_duplex) {
+        /* WASAPI already read the opened endpoint's name during activation. */
+        if ((pConfig->deviceType == ma_device_type_playback || pConfig->deviceType == ma_device_type_duplex) &&
+            !(pDevice->pContext->backend == ma_backend_wasapi && pDevice->playback.name[0] != '\0')) {
             result = ma_device_get_info(pDevice, ma_device_type_playback, &deviceInfo);
             if (result == MA_SUCCESS) {
                 ma_strncpy_s(pDevice->playback.name, sizeof(pDevice->playback.name), deviceInfo.name, (size_t)-1);
@@ -42484,10 +42486,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
             }
         }
         if (pDevice->type == ma_device_type_playback || pDevice->type == ma_device_type_duplex) {
-            char name[MA_MAX_DEVICE_NAME_LENGTH + 1];
-            ma_device_get_name(pDevice, ma_device_type_playback, name, sizeof(name), NULL);
-
-            ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "  %s (%s)\n", name, "Playback");
+            ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "  %s (%s)\n", pDevice->playback.name, "Playback");
             ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "    Format:      %s -> %s\n", ma_get_format_name(pDevice->playback.format), ma_get_format_name(pDevice->playback.internalFormat));
             ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "    Channels:    %d -> %d\n", pDevice->playback.channels, pDevice->playback.internalChannels);
             ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "    Sample Rate: %d -> %d\n", pDevice->sampleRate, pDevice->playback.internalSampleRate);
