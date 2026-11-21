@@ -25,6 +25,10 @@ size_t hv_tables_bytes(const HvTables* tables);
 HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes,
     enum HvResult* result);
+/* Build a wide setup without engine pointers. Bind its transform tables before playback. */
+HvSetup* hv_setup_prepare_wide(HvMemory memory, size_t budget,
+    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes);
+void hv_setup_bind_tables(HvSetup* setup, const HvTables* tables);
 /* Preserve the original per-resource allocation shape under a shared Pack budget. */
 HvSetup* hv_setup_create_compact(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes,
