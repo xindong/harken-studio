@@ -55961,11 +55961,8 @@ bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
         QueueSignalEntryPublication signal{};
         return CaptureQueueSignalEntryPublication(engine, *signalOwner, &signal) && signal.activation == activation;
     }
-    auto& participants = engine.initialQueueCoordinatorParticipantsScratch;
-    std::uint32_t participantCount = 0;
-    if (!engine.decisions.CopyCommittedParticipants(entry.coordinator, participants.data(),
-            static_cast<std::uint32_t>(participants.size()), &participantCount) ||
-        participantCount != descriptor.expectedMemberCount) return false;
+    const auto participantCount = coordinator.participantCount;
+    if (participantCount != descriptor.expectedMemberCount) return false;
     auto& groups = engine.timelineGroupCaptureScratch;
     const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
     if (groupCount > groups.size()) return false;
@@ -55992,11 +55989,14 @@ bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
     }
     if (memberCount != participantCount) return false;
     for (std::uint32_t p = 0; p < participantCount; ++p) {
-        const auto& participant = participants[p];
-        if (participant.kind != harken::DecisionParticipantKind::Subdecision) return false;
-        for (std::uint32_t prior = 0; prior < p; ++prior)
-            if (participants[prior].slot == participant.slot &&
-                participants[prior].generation == participant.generation) return false;
+        harken::DecisionParticipantRef participant{};
+        if (!engine.decisions.CaptureCommittedParticipant(entry.coordinator, p, &participant) ||
+            participant.kind != harken::DecisionParticipantKind::Subdecision) return false;
+        for (std::uint32_t prior = 0; prior < p; ++prior) {
+            harken::DecisionParticipantRef previous{};
+            if (!engine.decisions.CaptureCommittedParticipant(entry.coordinator, prior, &previous) ||
+                (previous.slot == participant.slot && previous.generation == participant.generation)) return false;
+        }
         std::uint32_t matches = 0;
         for (std::size_t i = 0; i < groupCount; ++i) {
             const auto& member = groups[i];
@@ -89097,8 +89097,7 @@ harken::DecisionToken InitialQueueOwnerToken(harken::Engine& engine,
 bool PrepareQueueEntryDecisionCore(
     harken::Engine& engine, VnActionFiringHandle root,
     harken::EnginePlayableServiceRow& row, std::uint16_t sliceCount,
-    std::span<harken::EngineInitialQueueEntryDecisionOwner> owners,
-    std::uint32_t& ownerCount) noexcept {
+    auto&& owners, std::uint32_t& ownerCount) noexcept {
     if (!row.queueTimingPending) return true;
     if (root == 0 || sliceCount == 0 ||
         !row.identity.Valid() || !row.InvocationValid() ||
@@ -90868,10 +90867,10 @@ bool ValidatePreparedInitialQueueCurrentComposite(
 
 bool MatchesPreparedDirectDelayedQueueCurrentCore(
     harken::Engine& engine, VnActionFiringHandle root,
-    std::span<const harken::EngineInitialQueueEntryDecisionOwner> owners,
+    const auto& owners, std::uint32_t ownerCount,
     harken::EngineActionPlayScratch& scratch,
     const harken::EnginePlayableServiceRow& row) noexcept {
-    if (scratch.row != &row || scratch.queueFutureExecution ||
+    if (ownerCount > owners.size() || scratch.row != &row || scratch.queueFutureExecution ||
         !scratch.instance.Valid() || scratch.instance.Handle() != row.ownerInstance ||
         scratch.instance.ScheduleEpoch() != row.ownerEpoch ||
         !scratch.queueInstance.Valid() ||
@@ -90884,7 +90883,7 @@ bool MatchesPreparedDirectDelayedQueueCurrentCore(
         return false;
     std::uint32_t ownerMatches = 0u;
     for (std::uint32_t index = 0;
-         index < owners.size(); ++index) {
+         index < ownerCount; ++index) {
         const auto& owner = owners[index];
         if (owner.borrowedCurrent != nullptr || !owner.reservation.Valid() ||
             owner.root != root || owner.service != row.identity ||
@@ -90933,7 +90932,7 @@ bool MatchesPreparedDirectDelayedCurrentMembers(
     if (plan.engine == nullptr) return false;
     const auto& engine = *plan.engine;
     return MatchesPreparedDirectDelayedQueueCurrentCore(*plan.engine, plan.rootHandle,
-        {engine.initialQueueEntryDecisionOwnersScratch.data(), engine.initialQueueEntryDecisionOwnerCount},
+        engine.initialQueueEntryDecisionOwnersScratch, engine.initialQueueEntryDecisionOwnerCount,
         scratch, row);
 }
 
@@ -90984,7 +90983,7 @@ bool QueuePreparationEntry::PrepareDecision(harken::EngineActionPlayScratch& scr
         context.root != RootHandle() || context.attemptGeneration != replacementAttempt_->generation) return false;
     auto count = context.owner.root == 0 ? 0u : 1u;
     return PrepareQueueEntryDecisionCore(*replacementEngine_, RootHandle(), row, slices,
-        {&context.owner, 1u}, count);
+        std::span(&context.owner, 1u), count);
 }
 
 bool QueuePreparationEntry::PrepareAncestorWeights(const harken::EngineActionPlayScratch& scratch,
@@ -91047,7 +91046,7 @@ bool QueuePreparationEntry::MatchesDirectDelayedCurrent(harken::EngineActionPlay
     if (initial_ != nullptr) return MatchesPreparedDirectDelayedCurrentMembers(*initial_, scratch, row);
     auto* queue = ReplacementQueue(scratch, row);
     return queue != nullptr && MatchesPreparedDirectDelayedQueueCurrentCore(*replacementEngine_, RootHandle(),
-        {&queue->entryDecision.owner, 1u}, scratch, row);
+        std::span(&queue->entryDecision.owner, 1u), 1u, scratch, row);
 }
 
 class PreparedImmediateQueueSuccessorSelection {

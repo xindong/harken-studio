@@ -7111,10 +7111,6 @@ public:
            playablePartitions(playableStorage.memberStride),
           actionPlayAttemptTokens(1),
            initialPendingVariableOwnerScratch(1),
-           initialQueueEntryDecisionOwnersScratch(
-               resolved.maxPlayableInstances),
-           initialQueueCoordinatorParticipantsScratch(
-               resolved.maxPlayableInstances),
           actionPlayFrameScratch(resolved.commandQueueDepth),
           initialLaneDemandEventQuantaScratch(std::max(
               resolved.maxTransactionEvents,
@@ -13899,8 +13895,7 @@ public:
     EngineActionPlayScratch::NativeVoiceSide ordinarySingleVoiceBacking;
     std::vector<EngineFrontierAttemptToken> actionPlayAttemptTokens;
     std::vector<OriginalPendingVariableGroupHolder*> initialPendingVariableOwnerScratch;
-    std::vector<EngineInitialQueueEntryDecisionOwner>
-        initialQueueEntryDecisionOwnersScratch;
+    GrowingRowStorage<EngineInitialQueueEntryDecisionOwner> initialQueueEntryDecisionOwnersScratch;
     std::vector<DecisionParticipantRef>
         initialQueueCoordinatorParticipantsScratch;
     std::uint32_t initialQueueEntryDecisionOwnerCount = 0;
@@ -14638,7 +14633,17 @@ public:
         for (auto slot = previousStarts; slot < required; ++slot) playableStarts[slot].slot = slot;
         if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required) ||
             !playablePartitions.PrepareStorage(required) ||
-            !timelinePool.PrepareImmediateLaneOwnerGates(required)) return false;
+            !timelinePool.PrepareImmediateLaneOwnerGates(required) ||
+            !initialQueueEntryDecisionOwnersScratch.ConstructThrough(required)) return false;
+        if (initialQueueCoordinatorParticipantsScratch.size() < required) {
+            if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
+            try {
+                initialQueueCoordinatorParticipantsScratch.resize(required);
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+                return false;
+            }
+        }
         if (!requireQueueTiming) return true;
         // One service contributes one selected future. Its source and successor
         // programs contain at most Start/Envelope or Envelope/Stop events.
