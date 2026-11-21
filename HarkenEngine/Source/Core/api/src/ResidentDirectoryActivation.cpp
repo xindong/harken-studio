@@ -1,4 +1,4 @@
-#include <harken/Harken.h>
+#include "ResidentPackDirectory.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -99,7 +99,7 @@ extern "C" VnResult Vn_ActivateResidentPackDirectoryV1(
     auto visit = desc->directory;
     visit.visit = Activate;
     visit.userData = &state;
-    const auto result = Vn_VisitResidentPackDirectoryV1(&visit);
+    const auto result = harken::VisitDirectoryForActivation(&visit);
     if (result == VN_OK) *outReport = state.report;
     return result;
 }

@@ -1,4 +1,5 @@
 #include "ResidentPackDirectory.h"
+#include "harken/media/VorbisSetupBatch.h"
 #include "harken/media/PackLogicImage.h"
 #include <harken/Harken.h>
 
@@ -300,7 +301,7 @@ bool harken::TakeResidentDirectoryImage(const VnPackLoadDesc& source, const VnPa
 #endif
 }
 
-static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepImages, bool allowParallel, bool& submitted) {
+static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepImages, bool allowParallel, bool& submitted, bool warm = false) {
   if (!desc || desc->structSize != sizeof(*desc) || !desc->memberCount ||
       !desc->utf8Directory || !desc->utf8Names || !desc->visit ||
       !desc->maxInputBytes || desc->init.structSize != sizeof(VnPackByteSpan) ||
@@ -347,6 +348,7 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
     if (keepImages) harken::detail::DecodeResize(images, count, retained);
     std::vector<Owner> owners(count);
     std::vector<Row> rows(count);
+    harken::VorbisSetupBatch setupBatch;
     auto prepareRange = [&](uint32_t begin, uint32_t endIndex, std::wstring_view rest,
                             const harken::detail::PackDecodeBudget& laneBudget,
                             harken::detail::PackDecodeCharge& rawBytes) -> VnResult {
@@ -420,6 +422,12 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
         status = BindingFacts(req, initImage, row.facts, laneBudget, keepImages ? images[j] : scratch);
         if (status != VN_OK)
           return status;
+        if (warm) {
+          for (const auto& media : images[j].media) {
+            if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT)
+              setupBatch.Prepare(std::span<const uint8_t>(owner.bytes).subspan(media.blobOffset, media.blobBytes), rawBytes);
+          }
+        }
         row.byteCount = owner.bytes.size();
         auto &p = row.provider;
         p.structSize = sizeof p;
@@ -488,6 +496,7 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
     if (!MarkerClear(directory))
       return VN_PACK_STALE_REVISION;
     VisitScope scope(owners, images, rows);
+    harken::VorbisSetupBatch::Scope setupScope(warm ? &setupBatch : nullptr);
     submitted = true;
     return desc->visit(desc->userData, rows.data(), count);
   } catch (const std::bad_alloc &) {
@@ -507,4 +516,13 @@ extern "C" VnResult Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDes
     // Admit tight inputs using one temporary image at a time. The visitor has not run yet.
     return VisitDirectory(desc, false, false, submitted);
   return result;
+}
+
+VnResult harken::VisitDirectoryForActivation(const VnResidentPackVisitDescV1* desc) {
+  if (desc && desc->memberCount >= 8) {
+    bool submitted = false;
+    const auto result = VisitDirectory(desc, true, true, submitted, true);
+    if (result != VN_PACK_RESIDENT_CAPACITY || submitted) return result;
+  }
+  return Vn_VisitResidentPackDirectoryV1(desc);
 }

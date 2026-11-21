@@ -1,4 +1,5 @@
 #include "harken/media/VorbisDecoder.h"
+#include "harken/media/VorbisSetupBatch.h"
 #include "harken/media/PackFormat.h"
 #include "../../../../ThirdParty/vorbis-decoder/decoder.h"
 #include <algorithm>
@@ -190,6 +191,48 @@ bool ValidatePositions(const VorbisMedia& media, const HvSetup* setup) noexcept 
     return seek == media.seek.size() && loopStart && loopEnd && lengthValid;
 }
 }
+thread_local VorbisSetupBatch* VorbisSetupBatch::current = nullptr;
+VorbisSetupBatch::Scope::Scope(VorbisSetupBatch* batch) noexcept : previous_(current) { current = batch; }
+VorbisSetupBatch::Scope::~Scope() { current = previous_; }
+VorbisSetupBatch::~VorbisSetupBatch() {
+    for (auto& entry : entries_) hv_setup_destroy(entry.setup);
+}
+void VorbisSetupBatch::Prepare(std::span<const std::uint8_t> blob, detail::PackDecodeCharge& retained) {
+    if (blob.size() < sizeof(HkPackVorbisHeader)) return;
+    const auto ident = LoadLE32(blob.data() + offsetof(HkPackVorbisHeader, identificationBytes));
+    const auto setup = LoadLE32(blob.data() + offsetof(HkPackVorbisHeader, setupBytes));
+    if (ident != 30 || setup < 7 || setup > 65535 ||
+        std::uint64_t(ident) + setup > blob.size() - sizeof(HkPackVorbisHeader)) return;
+    const auto headers = blob.subspan(sizeof(HkPackVorbisHeader), ident + setup);
+    Entry* reserved = nullptr;
+    {
+        std::lock_guard lock(mutex_);
+        for (auto& entry : entries_) {
+            if (entry.headers.empty()) { reserved = &entry; break; }
+            if (entry.headers.size() == headers.size() &&
+                std::memcmp(entry.headers.data(), headers.data(), headers.size()) == 0) return;
+        }
+        if (!reserved) return;
+        reserved->headers = headers;
+    }
+    const auto& budget = retained.Budget();
+    // Larger setups remain eligible for ordinary admission with the engine budget.
+    constexpr std::uint64_t maxSpeculativeBytes = 1024 * 1024;
+    const auto available = static_cast<size_t>(std::min(maxSpeculativeBytes, budget->limit - budget->live));
+    reserved->setup = hv_setup_prepare_wide(Memory(), available, headers.data(), ident, headers.data() + ident, setup);
+    if (reserved->setup) retained.Add(hv_setup_bytes(reserved->setup));
+}
+HvSetup* VorbisSetupBatch::Take(const VorbisMedia& media, size_t budget, const HvTables* tables) noexcept {
+    for (auto& entry : entries_) {
+        if (!entry.setup || hv_setup_peak_bytes(entry.setup) > budget ||
+            entry.headers.size() != std::size_t(media.identBytes) + media.setupBytes ||
+            std::memcmp(entry.headers.data(), media.ident, media.identBytes) ||
+            std::memcmp(entry.headers.data() + media.identBytes, media.setup, media.setupBytes)) continue;
+        hv_setup_bind_tables(entry.setup, tables);
+        return std::exchange(entry.setup, nullptr);
+    }
+    return nullptr;
+}
 VorbisPrepareResult InspectResidentVorbis(const VorbisMedia& media, std::size_t budget) noexcept {
     const auto result = hv_inspect_packets(Memory(), budget, media.ident, media.identBytes,
         media.setup, media.setupBytes, [](const HvSetup* layout, const void* context) -> int {
@@ -247,8 +290,12 @@ std::shared_ptr<const VorbisSettings> VorbisSettingsCache::Prepare(const VorbisM
         settings->headers_.insert(settings->headers_.end(), media.setup, media.setup + media.setupBytes);
         HvResult status;
         const auto createSetup = compactCodebooks_ ? hv_setup_create_compact : hv_setup_create;
-        settings->setup_ = createSetup(Memory(), budget - sizeof(VorbisSettings) - headerBytes,
-            tables_.get(), media.ident, media.identBytes, media.setup, media.setupBytes, &status);
+        const auto remaining = budget - sizeof(VorbisSettings) - headerBytes;
+        if (!compactCodebooks_ && VorbisSetupBatch::current)
+            settings->setup_ = VorbisSetupBatch::current->Take(media, remaining, tables_.get());
+        if (!settings->setup_)
+            settings->setup_ = createSetup(Memory(), remaining, tables_.get(),
+                media.ident, media.identBytes, media.setup, media.setupBytes, &status);
         if (!settings->setup_) {
             result = status == HV_UNSUPPORTED ? VorbisPrepareResult::Unsupported :
                 status == HV_MEMORY ? VorbisPrepareResult::OutOfMemory : VorbisPrepareResult::Invalid;

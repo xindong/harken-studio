@@ -120,7 +120,7 @@ static int hv_header(HvSetup* s, vorbis_comment* comment, const uint8_t* bytes, 
     return vorbis_synthesis_headerin(&s->allocator, &s->info, comment, &packet);
 }
 static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables* tables,
-    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result, unsigned compact, int* limitHit) {
+    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result, unsigned compact, int* limitHit, int prepareWide) {
     HvSetup* s; codec_setup_info* ci; vorbis_comment comment; int i;
     static const uint8_t emptyComment[] = {3,'v','o','r','b','i','s',0,0,0,0,0,0,0,0,1};
     if (!result) return NULL;
@@ -150,7 +150,7 @@ static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables*
     }
     vorbis_comment_clear(&s->allocator, &comment);
     ci = (codec_setup_info*)s->info.codec_setup;
-    if (!tables) {
+    if (!tables && !prepareWide) {
         /* Header unpacking checks mapping, floor, residue and mode references.
            Check every Huffman tree, including books unused by the current modes. */
         for (i = 0; i < ci->books; ++i)
@@ -168,7 +168,7 @@ static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables*
         int index = ov_ilog(ci->blocksizes[i]) - 7;
         if (index < 0 || index >= 8) goto fail;
         s->backend.window[i] = index;
-        s->transform[i][0] = (void*)&tables->mdct[index];
+        s->transform[i][0] = tables ? (void*)&tables->mdct[index] : NULL;
         s->backend.transform[i] = s->transform[i];
     }
     s->backend.flr = hv_callocate(&s->allocator, ci->floors, sizeof(*s->backend.flr));
@@ -185,22 +185,33 @@ static HvSetup* hv_setup_attempt(HvMemory memory, size_t budget, const HvTables*
 fail:
     hv_setup_destroy(s); return NULL;
 }
+HvSetup* hv_setup_prepare_wide(HvMemory memory, size_t budget,
+    const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes) {
+    int limitHit = 0;
+    enum HvResult result;
+    return hv_setup_attempt(memory, budget, NULL, ident, identBytes,
+        setup, setupBytes, &result, 0, &limitHit, 1);
+}
+void hv_setup_bind_tables(HvSetup* s, const HvTables* tables) {
+    for (int i = 0; i < 2; ++i)
+        s->transform[i][0] = (void*)&tables->mdct[s->backend.window[i]];
+}
 HvSetup* hv_setup_create_compact(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
     int limitHit = 0;
     if (!tables) { if (result) *result = HV_INVALID; return NULL; }
     return hv_setup_attempt(memory, budget, tables, ident, identBytes, setup, setupBytes,
-                            result, 1, &limitHit);
+                            result, 1, &limitHit, 0);
 }
 HvSetup* hv_setup_create(HvMemory memory, size_t budget, const HvTables* tables,
     const uint8_t* ident, size_t identBytes, const uint8_t* setup, size_t setupBytes, enum HvResult* result) {
     int limitHit = 0;
     if (!tables) { if (result) *result = HV_INVALID; return NULL; }
     HvSetup* decoded = hv_setup_attempt(memory, budget, tables, ident, identBytes,
-        setup, setupBytes, result, 0, &limitHit);
+        setup, setupBytes, result, 0, &limitHit, 0);
     if (!decoded && limitHit)
         decoded = hv_setup_attempt(memory, budget, tables, ident, identBytes,
-            setup, setupBytes, result, 1, &limitHit);
+            setup, setupBytes, result, 1, &limitHit, 0);
     return decoded;
 }
 enum HvResult hv_inspect_packets(HvMemory memory, size_t budget,
@@ -210,7 +221,7 @@ enum HvResult hv_inspect_packets(HvMemory memory, size_t budget,
     enum HvResult result;
     if (!validate) return HV_INVALID;
     HvSetup* layout = hv_setup_attempt(memory, budget, NULL, ident, identBytes,
-        header, headerBytes, &result, 0, &limitHit);
+        header, headerBytes, &result, 0, &limitHit, 0);
     if (layout) {
         result = validate(layout, context) ? HV_OK : HV_INVALID;
         hv_setup_destroy(layout);
