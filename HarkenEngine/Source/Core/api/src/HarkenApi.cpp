@@ -130317,6 +130317,10 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
                     upgraded = out->residentUpgrades.Add(engine, final, soundId, reference);
             });
         if (upgraded != VN_OK) return upgraded;
+        if (engine.config.maxPackResourceBytes != 0 &&
+            !engine.packs.FitsResidentMediaBudget(out->storage, engine.config.maxPackResourceBytes,
+                                                out->residentUpgrades.charge.Bytes()))
+            return VN_PACK_RESIDENT_CAPACITY;
     }
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         auto& member = out->members[i];

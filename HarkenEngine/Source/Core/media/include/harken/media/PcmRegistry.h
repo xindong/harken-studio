@@ -93,6 +93,13 @@ public:
     class PackReference {
     public:
         bool Valid() const noexcept { return entry_ != nullptr; }
+        struct ResidentCost {
+            const void* resource = nullptr;
+            std::uint64_t privateBytes = 0;
+            const void* settings = nullptr;
+            std::uint64_t settingsBytes = 0;
+        };
+        ResidentCost Cost() const noexcept;
         // True when the backing does not borrow a Pack byte buffer.
         bool OwnsSamples() const noexcept {
             return entry_ != nullptr &&
