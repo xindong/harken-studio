@@ -47190,6 +47190,21 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         }
         harken::ImmediateLaneObservation observation{};
         if (!engine.immediateActionLane.Observe(attempt.lane, &observation)) continue;
+        if (observation.committed && !observation.missed && !observation.cancelled) {
+            for (harken::Engine::PlayableCohortCursor cursor{};
+                 auto* row = engine.NextOccupiedPlayableCohortService(attempt.root, &cursor);) {
+                if (row->phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+                    !row->pendingImmediateEntry || row->immediateLane.slot != attempt.lane.slot ||
+                    row->immediateLane.generation != attempt.lane.generation) continue;
+                harken::TimelineArmObservation start{};
+                if (!engine.timelineArms.Observe(row->arm, &start) || start.startedBlockSequence == 0 ||
+                    start.startedBlockSequence > observedAudioSequence || start.actualStartFrame == UINT64_MAX) continue;
+                row->startFrame = start.actualStartFrame;
+                row->pendingImmediateEntry = false;
+                row->phase = harken::EnginePlayableStartPhase::Filed;
+                RebasePendingImmediateStopIntents(engine, *row);
+            }
+        }
         const bool registered = observation.committed && engine.immediateActionLane.HasRegisteredEntries(
             attempt.lane.slot, attempt.lane.generation);
         if (registered && (!observation.complete ||
@@ -53208,7 +53223,8 @@ bool OnlyWaitingRelativeSounds(harken::Engine& engine) noexcept {
 
 void ServicePendingImmediateEntries(
     harken::Engine& engine,
-    std::uint64_t* requiredPublicationFrame) noexcept {
+    std::uint64_t* requiredPublicationFrame,
+    harken::EnginePlayableServiceRow* preparedSound = nullptr) noexcept {
     const std::uint64_t blockFrames = engine.config.blockFrames;
     if (blockFrames == 0) return;
     const auto serviceByToken = [&](harken::EnginePlayableServiceToken token)
@@ -53254,7 +53270,8 @@ void ServicePendingImmediateEntries(
         return ResolveInitialMemberProgram(engine, bases.member + leaf);
     };
     for (std::uint32_t serviceCursor = 0;
-         auto* service = NextPendingImmediateEntryService(engine, &serviceCursor);) {
+         auto* service = preparedSound != nullptr ? (serviceCursor++ == 0 ? preparedSound : nullptr)
+                                                 : NextPendingImmediateEntryService(engine, &serviceCursor);) {
         auto& row = *service;
         // A completed entry can leave this conservative work set until the next service.
         if (!row.pendingImmediateEntry) {
@@ -53902,7 +53919,7 @@ void ServicePendingImmediateEntries(
                 }
             }
         }
-        if (awaitingApply) {  continue; }
+        if (awaitingApply && preparedSound == nullptr) continue;
         if (invalidArm) {
             for (harken::Engine::PlayableCohortCursor occupiedCursor{};
                  auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
@@ -53932,6 +53949,11 @@ void ServicePendingImmediateEntries(
             }
         }
 #endif
+        if (preparedSound != nullptr) {
+            const auto rendered = engine.mixer.BlocksRendered();
+            if (rendered > UINT64_MAX / blockFrames) continue;
+            admittedFrame = rendered * blockFrames;
+        }
         if (admittedFrame > UINT64_MAX - (blockFrames - 1u)) continue;
         std::uint64_t startFrame =
             ((admittedFrame + blockFrames - 1u) / blockFrames) * blockFrames;
@@ -54915,7 +54937,7 @@ void ServicePendingImmediateEntries(
                     if (!ResolvePendingImmediateLeafFrame(member, *program, startFrame,
                             &memberBase, &actual)) { filingFailed = true; break; }
                     if (!engine.timelineArms.BindPendingImmediateStart(
-                            program->armToken, actual, actual)) {
+                            program->armToken, actual, actual, preparedSound != nullptr)) {
                         filingFailed = true;
                         break;
                     }
@@ -55412,7 +55434,7 @@ void ServicePendingImmediateEntries(
                 engine.forceImmediateQueueArmPublishFailureAtForTest = UINT32_MAX;
                 return false;
             }
-            return engine.timelineArms.Publish(token);
+            return preparedSound != nullptr || engine.timelineArms.Publish(token);
         };
         if (!filingFailed) {
             ApplyInitialQueueSuccessorStartMirrors(engine, *attempt,
@@ -55515,7 +55537,7 @@ void ServicePendingImmediateEntries(
             if (engine.forceImmediateQueuePostC0PublishFailureForTest == 2u) {
                 engine.forceImmediateQueuePostC0PublishFailureForTest = 0;
                 filingFailed = true;
-            } else if (!engine.immediateActionLane.Publish(attempt->lane))
+            } else if (!engine.immediateActionLane.Publish(attempt->lane, preparedSound != nullptr))
                 filingFailed = true;
         }
         if (!filingFailed && ordinarySelection && !selectionPublication->Apply()) {
@@ -55764,13 +55786,15 @@ void ServicePendingImmediateEntries(
                 engine.ReflectOriginalQueueFiling(member);
                 member.immediateLane = attempt->lane;
                 member.queueInitialCohortEntryFrame = startFrame;
-                member.pendingImmediateEntry = false;
-                member.phase = harken::EnginePlayableStartPhase::Filed;
-                RebasePendingImmediateStopIntents(engine, member);
+                if (preparedSound == nullptr) {
+                    member.pendingImmediateEntry = false;
+                    member.phase = harken::EnginePlayableStartPhase::Filed;
+                    RebasePendingImmediateStopIntents(engine, member);
+                }
             }
         }
     }
-    DischargeInitialQueueTimingGates(engine);
+    if (preparedSound == nullptr) DischargeInitialQueueTimingGates(engine);
 }
 
 bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
@@ -107886,6 +107910,22 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
                 engine.runtimeRecreateRequired = true;
                 return;
             }
+        }
+    }
+    if (!engine.deferPendingImmediateEntriesForTest && ownersCommitted && plan->playCommandsReserved && plan->stepCount == 1 &&
+        plan->firingCount == 1 && plan->preparedPlayCount == 1 && plan->deferredCount == 0 &&
+        !plan->materializingDeferred) {
+        auto* play = FindImmediateActionPlay(*plan, 0);
+        auto* row = play != nullptr ? play->row : nullptr;
+        if (row != nullptr && row->phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
+            row->pendingImmediateEntry && row->root.kind == harken::PlayableKindV1::Sound &&
+            row->pendingImmediateTimeDomain == harken::ImmediateLaneTimeDomain::RelativeToAnchor &&
+            row->event.frameOffsetFromEntry == 0 && row->pendingImmediateFixedEntryFrame == 0 &&
+            !row->parentService.Valid() && !row->pendingCancellationIntent && row->capturedVoice.Valid() &&
+            !row->capturedVoice.Facts().streamed && row->capturedVoice.Input().bindings.empty() &&
+            row->schedule.eventCount == 1 && play->voiceStartCount == 1) {
+            std::uint64_t publicationFrame = 0;
+            ServicePendingImmediateEntries(engine, &publicationFrame, row);
         }
     }
     if (plan->playCommandsReserved) {
