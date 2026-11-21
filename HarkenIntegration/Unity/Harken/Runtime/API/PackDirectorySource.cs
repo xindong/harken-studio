@@ -188,8 +188,14 @@ namespace Harken
                 string path;
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    var buffer = new StringBuilder(32768);
+                    const int maxPathChars = 32768;
+                    var buffer = new StringBuilder(Math.Min(maxPathChars, Math.Max(260, stream.Name.Length + 16)));
                     uint count = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, (uint)buffer.Capacity, 0);
+                    if (count >= buffer.Capacity && count <= maxPathChars)
+                    {
+                        buffer = new StringBuilder((int)count);
+                        count = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, count, 0);
+                    }
                     if (count == 0 || count >= buffer.Capacity) throw new IOException("Cannot resolve Pack file identity.");
                     path = buffer.ToString();
                 }
