@@ -261,7 +261,6 @@ struct EngineConfig {
     std::uint32_t maxTransitionInstances = 32;
     std::uint32_t maxCompositeCompletionOwners = 256;
     std::uint32_t maxContainerInstances = 256;
-    std::uint32_t maxQueueCheckpoints = 256;
     std::uint32_t maxQueueChildren = 64;
     std::uint32_t maxPendingSelectionDeltasTotal = 512;
     std::uint32_t maxPendingSelectionDeltasGlobalPerRow = 512;
@@ -353,7 +352,6 @@ inline constexpr std::uint32_t kMaxPlayableInstances = 2u * (1u << 14);
 inline constexpr std::uint32_t kMaxKnownScheduleLeaves = 64;
 inline constexpr std::uint32_t kMaxCompositeCompletionOwners = 16384;
 inline constexpr std::uint32_t kMaxContainerInstances = 16384;
-inline constexpr std::uint32_t kMaxQueueCheckpoints = 65536;
 inline constexpr std::uint32_t kMaxQueueChildren = 1024;
 
 // Validates the caller-provided config and resolves zeros to defaults.

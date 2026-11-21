@@ -7093,7 +7093,6 @@ public:
               resolved.topologyPlanPoolCapacity,
               ProjectGenerationInstallAckIdentityV1{}),
           projectGenerationInstallAckRing(resolved.topologyPlanPoolCapacity),
-          queueCheckpoints(resolved.maxQueueCheckpoints),
           dynamicRoutes(resolved),
           dynamicRouteCaptureScratch(
               resolved.dynamicRouteCapacity == 0
@@ -7552,12 +7551,9 @@ public:
                 kMaxCompositeCompletionOwners ||
             resolved.maxContainerInstances == 0 ||
             resolved.maxContainerInstances > kMaxContainerInstances ||
-            resolved.maxQueueCheckpoints == 0 ||
-            resolved.maxQueueCheckpoints > kMaxQueueCheckpoints ||
             resolved.maxQueueChildren == 0 ||
             resolved.maxQueueChildren > kMaxQueueChildren ||
             !queueInstances.Valid() ||
-            !queueCheckpoints.Valid() ||
             !actionFirings.Reset() ||
             !actionSeeks.Reset() ||
             !streamSeekHandoffs.Reset(resolved.maxStreams) ||
@@ -13513,7 +13509,7 @@ public:
             if (checkpointOwner != nullptr) {
                 borrower = NativeBackingTokenFor(*checkpointOwner);
                 if (!borrower.Valid() || !checkpointOwner->queueRolesBorrowed ||
-                    !checkpointOwner->queueCheckpointBacking.Split(1, 0, &checkpoint)) return false;
+                    !checkpointOwner->queueCheckpointBacking.Split(1, &checkpoint)) return false;
             } else if (!queueCheckpoints.PrepareBacking(1, &checkpoint)) return false;
         }
         const auto returnCheckpoint = [&]() noexcept {
@@ -13568,6 +13564,9 @@ public:
             key.world != create.world || key.containerStableId != create.containerStableId ||
             key.programSemanticFingerprint != create.programSemanticFingerprint || key.resetEpoch != create.resetEpoch ||
             key.emitterSlot != create.emitterSlot || key.emitterGeneration != create.emitterGeneration) return false;
+        // An emitter can disappear while its last queued sound is still finishing.
+        if (key.emitterSlot != UINT32_MAX && !emitters.IsLive(
+                (static_cast<std::uint64_t>(key.emitterGeneration) << 32) | key.emitterSlot)) return true;
         const auto use = factory.checkpointBacking_.Use();
         return queueCheckpoints.Store(key, image);
     }

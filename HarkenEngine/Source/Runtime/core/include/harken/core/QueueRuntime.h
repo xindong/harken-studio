@@ -14,6 +14,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/StableSlotStorage.h"
 
 #include <atomic>
@@ -42,7 +43,6 @@ struct ImmediateLaneBucket;
 struct Engine;
 
 inline constexpr std::uint32_t kMaxQueueInstancesHard = 16384;
-inline constexpr std::uint32_t kMaxQueueCheckpointRowsHard = 65536;
 inline constexpr std::uint32_t kMaxQueueAvoidHistoryHard = 64;
 
 struct QueueInstanceToken {
@@ -259,17 +259,12 @@ private:
 class QueueCheckpointTable {
     struct Row;
 public:
-    explicit QueueCheckpointTable(std::uint32_t capacity);
-
-    bool Valid() const noexcept { return capacity_ != 0; }
-    std::uint32_t Capacity() const noexcept { return capacity_; }
-    using BackingPreparation = StableSlotStorage<Row>::Preparation;
-    using BackingUse = StableSlotStorage<Row>::PreparedUse;
+    using BackingPreparation = StableStoragePreparation;
+    using BackingUse = StableStoragePreparedUse;
     bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
     std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
-    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
@@ -287,6 +282,7 @@ public:
         LogicCommitSequence sequence) noexcept;
     QueueResetStatusV1 CancelPreparedReset(
         PreparedQueueCheckpointResetV1* prepared) noexcept;
+    void RetireEmitter(std::uint32_t slot, std::uint32_t generation) noexcept;
     void ClearWorld(WorldGeneration world) noexcept;
     void ClearAll() noexcept;
 
@@ -298,8 +294,7 @@ private:
         QueueCheckpointImage image{};
     };
 
-    StableSlotStorage<Row> rows_;
-    std::uint32_t capacity_ = 0;
+    GrowingRowStorage<Row> rows_;
 };
 
 struct QueueInstanceCreateRequest {

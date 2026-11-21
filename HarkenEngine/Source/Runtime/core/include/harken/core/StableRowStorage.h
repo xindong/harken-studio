@@ -94,6 +94,21 @@ public:
     bool Valid() const noexcept { return state_ != nullptr; }
     std::uint32_t ReservedRows() const noexcept { return count_; }
     StableStoragePreparedUse Use() const noexcept { return StableStoragePreparedUse(state_); }
+    bool Split(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        if (memguard::IsAudioTagged() || !Valid() || out == nullptr || out->Valid() || count > count_) return false;
+        out->state_ = state_;
+        out->count_ = count;
+        count_ -= count;
+        return true;
+    }
+    bool ReturnTo(StableStoragePreparation* parent) noexcept {
+        if (memguard::IsAudioTagged() || !Valid() || parent == nullptr || parent == this ||
+            parent->state_ != state_ || count_ > UINT32_MAX - parent->count_) return false;
+        parent->count_ += count_;
+        state_ = nullptr;
+        count_ = 0;
+        return true;
+    }
     void Release() noexcept {
         if (state_ != nullptr) {
             assert(!memguard::IsAudioTagged() && state_->heldRows >= count_);

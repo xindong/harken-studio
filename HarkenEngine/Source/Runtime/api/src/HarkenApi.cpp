@@ -64399,7 +64399,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             nativeBindingRows > UINT32_MAX ||
             !params.PrepareBindingBacking(static_cast<std::uint32_t>(nativeBindingRows), &nativeCandidate->bindings)) return shortage();
         for (std::uint32_t ordinal = 0; ordinal < producerCount; ++ordinal)
-            if (!nativeCandidate->checkpoints.Split(profiles[ordinal].Q, 0, &queueCandidate[ordinal].checkpoints))
+            if (!nativeCandidate->checkpoints.Split(profiles[ordinal].Q, &queueCandidate[ordinal].checkpoints))
                 return false;
         if (!preparing && single == nullptr && !MatchesPrivateImmediateVcProducerChain(*this, attempt, true)) return false;
         token = firstToken();
@@ -121270,6 +121270,7 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
     }
     engine->spatial.NoteEmitterDestroyed(handle);
     (void)engine->actionCooldowns.RemoveEmitter(handle);
+    engine->queueCheckpoints.RetireEmitter(static_cast<std::uint32_t>(handle), static_cast<std::uint32_t>(handle >> 32));
     engine->selectionMemory.RetireEmitter(
         static_cast<std::uint32_t>(handle),
         static_cast<std::uint32_t>(handle >> 32));

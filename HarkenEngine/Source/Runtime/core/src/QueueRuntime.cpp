@@ -141,14 +141,11 @@ bool QueueInstanceTable::ValidateProjection(const ConditionalQueuePrepareRequest
     return true;
 }
 
-QueueCheckpointTable::QueueCheckpointTable(std::uint32_t capacity)
-    : capacity_(capacity != 0 && capacity <= kMaxQueueCheckpointRowsHard &&
-          rows_.Reserve(capacity) ? capacity : 0) {}
-
 bool QueueCheckpointTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
-    return rows_.PrepareBacking(count, 0,
-        [](const Row& row) noexcept { return !row.live && !row.resetReserved; },
-        [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); }, out);
+    const auto occupied = std::count_if(rows_.begin(), rows_.end(), [](const Row& row) {
+        return row.live || row.resetReserved;
+    });
+    return rows_.PrepareBacking(count, static_cast<std::uint32_t>(occupied), out);
 }
 
 QueueInstanceTable::~QueueInstanceTable() {
@@ -246,27 +243,19 @@ bool QueueCheckpointTable::Store(
         !image.replayCurrent) {
         return false;
     }
+    Row* freeRow = nullptr;
+    std::uint32_t occupied = 0;
     for (auto& row : rows_) {
         if (row.live && SameCheckpointKey(row.key, key)) {
             if (row.resetReserved) return false;
             row.image = image;
             return true;
         }
+        if (row.live || row.resetReserved) ++occupied;
+        else if (freeRow == nullptr) freeRow = &row;
     }
-    Row* freeRow = nullptr;
-    const auto available = [](const Row& row) noexcept { return !row.live && !row.resetReserved; };
-    const auto construct = [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); };
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        if (!rows_.IsConstructed(slot)) {
-            if (rows_.PreparedUseActive()) continue;
-            if (!construct(slot)) return false;
-        }
-        if (!available(rows_[slot])) continue;
-        if (!rows_.ProtectBackingForAcquire(slot, available, construct)) return false;
-        freeRow = &rows_[slot];
-        break;
-    }
-    if (freeRow == nullptr) return false;
+    if (occupied == UINT32_MAX || !rows_.ConstructThrough(occupied + 1u)) return false;
+    if (freeRow == nullptr) freeRow = &rows_[occupied];
     freeRow->key = key;
     freeRow->image = image;
     freeRow->live = true;
@@ -310,7 +299,7 @@ QueueResetStatusV1 QueueCheckpointTable::PrepareReset(
         if (row.resetReserved) return QueueResetStatusV1::Backpressure;
         row.resetReserved = true;
         out->owner_ = this;
-        out->slot_ = rows_.IndexOf(row);
+        out->slot_ = rows_.IndexOf(&row);
         out->prepared_ = true;
         return QueueResetStatusV1::Ok;
     }
@@ -333,9 +322,9 @@ QueueResetStatusV1 QueueCheckpointTable::CommitPreparedReset(
         prepared->idempotent_ = false;
         return QueueResetStatusV1::Ok;
     }
-    if (!rows_.IsConstructed(prepared->slot_)) return QueueResetStatusV1::NotFound;
+    if (prepared->slot_ >= rows_.size()) return QueueResetStatusV1::NotFound;
     Row& row = rows_[prepared->slot_];
-    if (!row.live || !row.resetReserved) {
+    if (!row.resetReserved) {
         return QueueResetStatusV1::NotFound;
     }
     row = {};
@@ -357,9 +346,9 @@ QueueResetStatusV1 QueueCheckpointTable::CancelPreparedReset(
         prepared->idempotent_ = false;
         return QueueResetStatusV1::Ok;
     }
-    if (!rows_.IsConstructed(prepared->slot_)) return QueueResetStatusV1::NotFound;
+    if (prepared->slot_ >= rows_.size()) return QueueResetStatusV1::NotFound;
     Row& row = rows_[prepared->slot_];
-    if (!row.live || !row.resetReserved) {
+    if (!row.resetReserved) {
         return QueueResetStatusV1::NotFound;
     }
     row.resetReserved = false;
@@ -367,6 +356,16 @@ QueueResetStatusV1 QueueCheckpointTable::CancelPreparedReset(
     prepared->slot_ = UINT32_MAX;
     prepared->prepared_ = false;
     return QueueResetStatusV1::Ok;
+}
+
+void QueueCheckpointTable::RetireEmitter(std::uint32_t slot, std::uint32_t generation) noexcept {
+    if (slot == UINT32_MAX || generation == 0) return;
+    for (auto& row : rows_) {
+        if (row.live && row.key.emitterSlot == slot && row.key.emitterGeneration == generation) {
+            // A pending reset still owns its slot until commit or cancellation.
+            row.live = false;
+        }
+    }
 }
 
 void QueueCheckpointTable::ClearWorld(WorldGeneration world) noexcept {

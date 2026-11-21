@@ -470,10 +470,9 @@ TEST(QueueRuntime, PreparedRootStorageWaitsForAudioReadsBeforeReuse) {
 TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
     harken::QueueInstanceTable queues(harken::kMaxQueueInstancesHard,
         harken::kMaxQueueInstancesHard);
-    harken::QueueCheckpointTable checkpoints(harken::kMaxQueueCheckpointRowsHard);
+    harken::QueueCheckpointTable checkpoints;
     harken::PrivateSelectedQueueFutureSpanPool selected(harken::kMaxQueueInstancesHard);
     EXPECT_TRUE(queues.Valid());
-    EXPECT_TRUE(checkpoints.Valid());
     EXPECT_EQ(0u, queues.ConstructedRowCount());
     EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
     EXPECT_EQ(0u, checkpoints.ConstructedRowCount());
@@ -2560,7 +2559,7 @@ TEST(QueueRuntime,
 }
 
 TEST(QueueRuntime, PreparedCheckpointBackingSurvivesCompetitionAndAudioRefusesGrowth) {
-    harken::QueueCheckpointTable checkpoints(4);
+    harken::QueueCheckpointTable checkpoints;
     harken::QueueCheckpointKey key{};
     key.world = 7;
     key.containerStableId = harkentest::ObjectId(13);
@@ -2601,7 +2600,7 @@ TEST(QueueRuntime, PreparedCheckpointBackingSurvivesCompetitionAndAudioRefusesGr
 }
 
 TEST(QueueRuntime, CheckpointStoresOnlyExplicitEffectiveStateAndClearsAtEnd) {
-    harken::QueueCheckpointTable checkpoints(1);
+    harken::QueueCheckpointTable checkpoints;
     harken::QueueCheckpointKey key{};
     key.world = 7;
     key.containerStableId = harkentest::ObjectId(13);
@@ -2633,14 +2632,15 @@ TEST(QueueRuntime, CheckpointStoresOnlyExplicitEffectiveStateAndClearsAtEnd) {
     captured.effective.version = 71;
     EXPECT_FALSE(checkpoints.Load(other, &captured));
     EXPECT_EQ(71u, captured.effective.version);
-    EXPECT_FALSE(checkpoints.Store(other, image));
+    ASSERT_TRUE(checkpoints.Store(other, image));
+    EXPECT_TRUE(checkpoints.Clear(other));
     EXPECT_TRUE(checkpoints.Clear(key));
     EXPECT_FALSE(checkpoints.Load(key, &captured));
     EXPECT_EQ(0u, checkpoints.LiveCount());
 }
 
 TEST(QueueRuntime, PreparedCheckpointResetStaysHiddenUntilCommitOrCancel) {
-    harken::QueueCheckpointTable checkpoints(1);
+    harken::QueueCheckpointTable checkpoints;
     harken::QueueCheckpointKey key{};
     key.world = 7;
     key.containerStableId = harkentest::ObjectId(13);
@@ -2905,11 +2905,23 @@ TEST(QueueRuntime,
     EXPECT_FALSE(snapshot.resetPending);
 }
 
-TEST(QueueRuntime, InvalidCheckpointCapacityFailsClosed) {
-    EXPECT_FALSE(harken::QueueCheckpointTable(0).Valid());
-    EXPECT_FALSE(harken::QueueCheckpointTable(
-                     harken::kMaxQueueCheckpointRowsHard + 1u)
-                     .Valid());
+TEST(QueueRuntime, RetiredEmitterDropsItsCheckpointWithoutReusingAPendingReset) {
+    harken::QueueCheckpointTable table;
+    harken::QueueCheckpointKey key{1, harkentest::ObjectId(2), 3, 1, 9, 1};
+    auto next = key;
+    ++next.emitterGeneration;
+    harken::QueueCheckpointImage state{};
+    state.effective.version = 1;
+    state.replayCurrent = true;
+    ASSERT_TRUE(table.Store(key, state));
+    harken::PreparedQueueCheckpointResetV1 pending;
+    ASSERT_EQ(harken::QueueResetStatusV1::Ok, table.PrepareReset(key, &pending));
+    table.RetireEmitter(key.emitterSlot, key.emitterGeneration);
+    EXPECT_FALSE(table.Load(key, &state));
+    ASSERT_TRUE(table.Store(next, state));
+    EXPECT_EQ(harken::QueueResetStatusV1::Ok, table.CommitPreparedReset(&pending, 1));
+    EXPECT_TRUE(table.Load(next, &state));
+    EXPECT_EQ(1u, table.LiveCount());
 }
 
 TEST(QueueRuntime, SequenceOnceAdvancesInCompiledOrderAndStopsAtEnd) {
