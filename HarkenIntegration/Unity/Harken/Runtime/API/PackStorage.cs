@@ -59,7 +59,7 @@ namespace Harken
             }
         }
 
-        private static byte[] ReadExactly(Stream stream, int length)
+        internal static byte[] ReadExactly(Stream stream, int length)
         {
             var bytes = new byte[length];
             int offset = 0;

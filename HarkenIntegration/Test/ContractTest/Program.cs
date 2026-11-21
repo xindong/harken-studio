@@ -44,6 +44,7 @@ namespace Harken.Test
             }
             bool requireNative = false;
             string companionRoot = null;
+            string archiveRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -52,17 +53,23 @@ namespace Harken.Test
                     requireNative = true;
                     continue;
                 }
+                if (arg == "--archive-root" && i + 1 < args.Length)
+                {
+                    archiveRoot = args[++i];
+                    continue;
+                }
                 if (arg == "--companion-root" && i + 1 < args.Length)
                 {
                     companionRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--companion-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--companion-root path | --archive-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
+            if (archiveRoot != null) return ArchivePublicationContract.Run(archiveRoot) ? 0 : 1;
             if (companionRoot != null) return RepositoryPublicationContract.Run(companionRoot) ? 0 : 1;
 
             Console.WriteLine("== Harken C# binding gates ==");
