@@ -164,6 +164,7 @@ public:
 
     bool Prepared() const { return m_impl != nullptr; }
     bool Running() const;
+    bool UsesGameOutput() const noexcept;
     DeviceRateObservation RateObservation() const noexcept {
         return m_rateObservation;
     }
