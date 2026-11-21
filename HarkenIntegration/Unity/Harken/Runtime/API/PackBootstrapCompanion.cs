@@ -200,6 +200,9 @@ namespace Harken
                         if (current != VnResult.VN_OK) return current;
                     }
                     cancellation.ThrowIfCancellationRequested();
+                    VnResult locked = companionSource.LockPublication(initSelection, changes.Values, out var guards);
+                    if (locked != VnResult.VN_OK) return locked;
+                    using var held = guards;
                     VnResult result = CommitCompanions(nextPacks, nextNames, changes);
                     if (result != VnResult.VN_OK) return result;
                 }
@@ -246,11 +249,7 @@ namespace Harken
             }
             GameplayNames.Table names = PrepareNames(nextNames, changes, nameRevision);
             mutationPhase = MutationPhase.ApplyingNative;
-            VnResult result = companionSource.LockPublication(initSelection, changes.Values, out var guards);
-            if (result != VnResult.VN_OK) return result;
-            VnCanonicalPackSetActivationReportV1 report;
-            VnCanonicalPackSetMemberResultV1[] rows;
-            using (guards) result = CompanionNative.Activate(members, InitPack, SetRevision, out report, out rows);
+            VnResult result = CompanionNative.Activate(members, InitPack, SetRevision, out var report, out var rows);
             if (result != VnResult.VN_OK) return result;
             for (int i = 0; i < owners.Length; ++i)
             {
@@ -474,7 +473,7 @@ namespace Harken
             session = null;
             cancellation.ThrowIfCancellationRequested();
             string archive = Path.Combine(source.Root, PackArchive.FileName);
-            if (File.Exists(archive) && !File.Exists(Path.Combine(source.Root, "Init.bytes")) &&
+            if (File.Exists(archive) && !File.Exists(Path.Combine(source.Root, "Init.hrp")) && !File.Exists(Path.Combine(source.Root, "Init.bytes")) &&
                 !File.Exists(Path.Combine(source.Root, "Init.json")))
             {
                 if (File.Exists(Path.Combine(source.Root, ".harken-pack-publishing")))

@@ -85,6 +85,9 @@ namespace Harken
                     if (valid != VnResult.VN_OK) return valid;
                 }
                 operationToken.ThrowIfCancellationRequested();
+                VnResult locked = source.LockPublication(initSelection, captures, out var guards);
+                if (locked != VnResult.VN_OK) return locked;
+                using var held = guards;
                 if (changes.Count != 0)
                 {
                     VnResult result = CommitCompanions(nextPacks, nextNames, changes);
