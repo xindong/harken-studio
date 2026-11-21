@@ -1678,6 +1678,16 @@
         "wire": "desc",
         "type": "VnResidentPackVisitDescV1"
       }
+    ],
+    "Vn_ActivateResidentPackDirectoryV1": [
+      {
+        "wire": "desc",
+        "type": "VnResidentDirectoryActivationV1"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnCanonicalPackSetActivationReportV1"
+      }
     ]
   },
   "bindingOverloads": [

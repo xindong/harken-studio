@@ -3950,6 +3950,40 @@ static_assert(offsetof(VnResidentPackVisitDescV1, userData) == 96,
 static_assert(offsetof(VnResidentPackVisitDescV1, visit) == 104,
               "wire table offset drift: VnResidentPackVisitDescV1.visit");
 
+static_assert(sizeof(VnResidentDirectoryMemberV1) == 56,
+              "wire table size drift: VnResidentDirectoryMemberV1");
+static_assert(offsetof(VnResidentDirectoryMemberV1, packStableId) == 0,
+              "wire table offset drift: VnResidentDirectoryMemberV1.packStableId");
+static_assert(offsetof(VnResidentDirectoryMemberV1, rootActionId) == 8,
+              "wire table offset drift: VnResidentDirectoryMemberV1.rootActionId");
+static_assert(offsetof(VnResidentDirectoryMemberV1, contentHash) == 24,
+              "wire table offset drift: VnResidentDirectoryMemberV1.contentHash");
+static_assert(offsetof(VnResidentDirectoryMemberV1, byteCount) == 32,
+              "wire table offset drift: VnResidentDirectoryMemberV1.byteCount");
+static_assert(offsetof(VnResidentDirectoryMemberV1, executionFingerprint) == 40,
+              "wire table offset drift: VnResidentDirectoryMemberV1.executionFingerprint");
+static_assert(offsetof(VnResidentDirectoryMemberV1, handle) == 48,
+              "wire table offset drift: VnResidentDirectoryMemberV1.handle");
+
+static_assert(sizeof(VnResidentDirectoryActivationV1) == 168,
+              "wire table size drift: VnResidentDirectoryActivationV1");
+static_assert(offsetof(VnResidentDirectoryActivationV1, structSize) == 0,
+              "wire table offset drift: VnResidentDirectoryActivationV1.structSize");
+static_assert(offsetof(VnResidentDirectoryActivationV1, rowCapacity) == 4,
+              "wire table offset drift: VnResidentDirectoryActivationV1.rowCapacity");
+static_assert(offsetof(VnResidentDirectoryActivationV1, directory) == 8,
+              "wire table offset drift: VnResidentDirectoryActivationV1.directory");
+static_assert(offsetof(VnResidentDirectoryActivationV1, initStableId) == 120,
+              "wire table offset drift: VnResidentDirectoryActivationV1.initStableId");
+static_assert(offsetof(VnResidentDirectoryActivationV1, initHandle) == 128,
+              "wire table offset drift: VnResidentDirectoryActivationV1.initHandle");
+static_assert(offsetof(VnResidentDirectoryActivationV1, baseSetRevision) == 136,
+              "wire table offset drift: VnResidentDirectoryActivationV1.baseSetRevision");
+static_assert(offsetof(VnResidentDirectoryActivationV1, projectId) == 144,
+              "wire table offset drift: VnResidentDirectoryActivationV1.projectId");
+static_assert(offsetof(VnResidentDirectoryActivationV1, rows) == 160,
+              "wire table offset drift: VnResidentDirectoryActivationV1.rows");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H
