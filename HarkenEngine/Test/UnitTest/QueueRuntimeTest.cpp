@@ -468,10 +468,10 @@ TEST(QueueRuntime, PreparedRootStorageWaitsForAudioReadsBeforeReuse) {
 #endif
 
 TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
-    harken::QueueInstanceTable queues(harken::kMaxQueueInstancesHard,
-        harken::kMaxQueueInstancesHard);
+    harken::QueueInstanceTable queues(16384u,
+        16384u);
     harken::QueueCheckpointTable checkpoints;
-    harken::PrivateSelectedQueueFutureSpanPool selected(harken::kMaxQueueInstancesHard);
+    harken::PrivateSelectedQueueFutureSpanPool selected(16384u);
     EXPECT_TRUE(queues.Valid());
     EXPECT_EQ(0u, queues.ConstructedRowCount());
     EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
@@ -482,7 +482,7 @@ TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
     EXPECT_EQ(0u, checkpoints.RowCommittedBytes());
     EXPECT_EQ(0u, selected.RowCommittedBytes());
     harken::QueueInstanceSnapshot snapshot;
-    EXPECT_FALSE(queues.Capture({harken::kMaxQueueInstancesHard - 1u, 1}, &snapshot));
+    EXPECT_FALSE(queues.Capture({16384u - 1u, 1}, &snapshot));
     queues.ApplyDue(19);
     checkpoints.ClearAll();
     EXPECT_EQ(0u, queues.LiveCount());
@@ -544,8 +544,7 @@ TEST(QueueRuntime, FailedBackingPreparationRetainsOnlyConstructedPrefixAndCanRet
     EXPECT_FALSE(queues.PrepareBacking(16, 4, &refused));
     EXPECT_FALSE(refused.instances.Valid());
     EXPECT_FALSE(refused.conditionals.Valid());
-    EXPECT_GT(queues.ConstructedRowCount(), 0u);
-    EXPECT_LT(queues.ConstructedRowCount(), 16u);
+    EXPECT_EQ(0u, queues.ConstructedRowCount());
     EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
     EXPECT_EQ(0u, queues.LiveCount());
     queues.SetRowCommitPageLimitForTests(SIZE_MAX);
@@ -5740,7 +5739,7 @@ struct PrivateSelectedQueueFutureSpanTestAccess {
         pool.rows_[slot].loans = count;
     }
     static void GenerationLimit(PrivateSelectedQueueFutureSpanPool& pool) {
-        ASSERT_TRUE(pool.rows_.Emplace(0));
+        ASSERT_TRUE(pool.rows_.ConstructThrough(1));
         pool.rows_[0].generation = UINT32_MAX;
     }
 };

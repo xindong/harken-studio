@@ -717,15 +717,15 @@ VariableControlInstanceStatus VariableControlInstanceTable::AcquireInternal(
         request.programSemanticFingerprint == 0) {
         return VariableControlInstanceStatus::Invalid;
     }
-    const auto occupied = OccupiedRows();
-    if (occupied == limit_ || (!entries_.PreparedUseActive() && entries_.HeldRows() >= limit_ - occupied))
-        return VariableControlInstanceStatus::Capacity;
-    if (!entries_.ConstructThrough(occupied + 1u)) {
+    const auto first = entries_.FindFreeSlot(limit_, [](const Entry& entry) {
+        return entry.state.load(std::memory_order_acquire) == SlotState::Free;
+    }, [this](std::uint32_t count) noexcept {
+        if (entries_.ConstructThrough(count)) return true;
         if (!entries_.PreparedUseActive() && !memguard::IsAudioTagged())
             detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
-        return VariableControlInstanceStatus::Capacity;
-    }
-    for (std::uint32_t slot = 0; slot < entries_.ConstructedCount(); ++slot) {
+        return false;
+    });
+    for (auto slot = first; slot < entries_.ConstructedCount(); ++slot) {
         Entry& entry = entries_[slot];
         SlotState expected = SlotState::Free;
         if (!entry.state.compare_exchange_strong(

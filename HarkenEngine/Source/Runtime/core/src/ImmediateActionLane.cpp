@@ -5732,7 +5732,7 @@ bool ImmediateActionLane::FinishDiscardedConditionalWithdrawal(std::uint32_t slo
 }
 
 OriginalConditionalReplacementBatch::OriginalConditionalReplacementBatch(std::uint32_t capacity)
-    : members_(capacity == 0 ? nullptr : new Member[capacity]), capacity_(capacity) {}
+    : capacity_(capacity) {}
 
 OriginalConditionalReplacementBatch::~OriginalConditionalReplacementBatch() {
     const bool closed = Close();
@@ -5775,7 +5775,8 @@ bool OriginalConditionalReplacementBatch::PrepareScope(QueueInstanceTable& queue
     QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept {
     if (queues_ != nullptr || count_ != 0 || generation_ == UINT64_MAX || scope == nullptr ||
         !scope->Valid() ||
-        scope->MatchedCount() == 0 || scope->MatchedCount() > capacity_) return false;
+        scope->MatchedCount() == 0 || scope->MatchedCount() > capacity_ ||
+        !members_.ConstructThrough(scope->MatchedCount())) return false;
     for (std::uint32_t i = 0; i < scope->MatchedCount(); ++i) {
         QueueInstanceToken token{};
         QueueInstanceSnapshot snapshot{};
@@ -5955,6 +5956,7 @@ bool OriginalConditionalReplacementBatch::AttachContinuationMember(QueueContinua
     QueueContinuationLane* replacement, PreparedQueueConditionalReplacementV1* conditional,
     QueueContinuationLane* withdrawalHead,
     const OriginalImmediateLaneConditionalProjection* nativeWithdrawalHead) noexcept {
+    if (!members_.ConstructThrough(count_ + 1u)) return false;
     OriginalImmediateLaneAttemptLifetimePin pin;
     if (!original.originalLane_.Borrow(&pin)) return false;
     std::uint64_t expected = 0;
@@ -6116,6 +6118,7 @@ bool OriginalConditionalReplacementBatch::AttachPageWithdrawal(QueuePageConditio
 
 bool OriginalConditionalReplacementBatch::AttachPageMember(QueuePageConditionalReceiver& original,
     PreparedQueueConditionalReplacementV1* conditional, QueuePageConditionalReceiver* head) noexcept {
+    if (!members_.ConstructThrough(count_ + 1u)) return false;
     std::uint64_t expected = 0;
     if (!original.admission_.compare_exchange_strong(expected, QueuePageConditionalReceiver::kChanging,
             std::memory_order_acq_rel, std::memory_order_acquire)) return false;
@@ -6192,6 +6195,7 @@ bool OriginalConditionalReplacementBatch::Attach(
         (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
         !original.withdrawalOwner_ || !original.Valid() ||
         !queues_->MatchesOriginalConditionalFutureReservation(original.conditional_)) return false;
+    if (!members_.ConstructThrough(count_ + 1u)) return false;
     const auto queue = original.conditional_.Token();
     bool matched = false;
     for (std::uint32_t i = 0; i < scope_.MatchedCount(); ++i) {

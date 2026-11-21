@@ -1617,7 +1617,7 @@ struct EnginePlayableStartRow {
     std::uint32_t serviceCount = 0;
     EnginePlayableServiceToken rootService{};
     bool quarantined = false;
-    ActionFiringHandle deferredControlOwner = 0;
+    ActionFiringHandle deferredTreeOwner = 0;
     VnEmitterHandle invocationEmitter = 0;
     ActionFiringHandle actionFiring = 0;
     std::uint32_t actionExecutionOrdinal = UINT32_MAX;
@@ -7086,7 +7086,7 @@ public:
           timelineArms(TimelineArmCapacity(resolved)),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
           initialRootActivationPublicationProofs(resolved.maxDecisionRows),
-          queueInstances(resolved.maxContainerInstances, originalConditionalCapacity),
+          queueInstances(UINT32_MAX, originalConditionalCapacity),
           topologyPlans(resolved.topologyPlanPoolCapacity, resolved.maxBuses,
                         resolved.busSendSlotsPerBus),
           preparedTopologyPlans(resolved.topologyPlanPoolCapacity,
@@ -7431,16 +7431,11 @@ public:
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
             });
         mixer.InitializeVariableSliceConsumptionStorage();
-        if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
-            !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
-            !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
+        if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()))
             throw harken::detail::LogicPreparationFailure{};
-        if (queueInstances.originalConditionalCapacity_ != 0) {
-            if (!originalQueueConditionalHolders.Reserve(queueInstances.Capacity()) ||
-                !originalQueueReplacementHolders.Reserve(queueInstances.Capacity()))
-                throw harken::detail::LogicPreparationFailure{};
+        if (queueInstances.SupportsOriginalConditionals()) {
             originalQueueReplacementSpans =
-                std::make_unique<PrivateSelectedQueueFutureSpanPool>(queueInstances.Capacity());
+                std::make_unique<PrivateSelectedQueueFutureSpanPool>(UINT32_MAX);
             originalQueueReplacementBatch =
                 std::make_unique<OriginalConditionalReplacementBatch>(queueInstances.originalConditionalCapacity_);
             const bool registered = queueInstances.RegisterOriginalConditionalOwner(this,
@@ -8278,11 +8273,14 @@ public:
     using DeferredTreeWidths = std::multiset<std::uint32_t>;
     DeferredTreeWidths deferredTreeWidths;
     std::uint32_t borrowedTreeWidth = 0;
-    ActionFiringHandle preparingDeferredControlOwner = 0;
+    ActionFiringHandle preparingDeferredTreeOwner = 0;
     struct DeferredTreeBacking final : ActionTreeBacking {
         StableSlotStorage<EngineActionPlayScratch>::Preparation attempts;
         StableStoragePreparation variableControls;
         std::uint32_t controlCount = 0;
+        QueueInstanceTable::BackingPreparation queues;
+        std::uint32_t queueCount = 0;
+        std::uint32_t conditionalCount = 0;
         DeferredTreeWidths* widths = nullptr;
         DeferredTreeWidths::iterator widthEntry;
         std::uint32_t width = 0;
@@ -8290,8 +8288,12 @@ public:
         ~DeferredTreeBacking() override {
             if (widths != nullptr) widths->erase(widthEntry);
         }
-        bool Include(std::uint32_t additional, std::uint32_t rows, std::uint32_t controls) noexcept {
-            if (additional > UINT32_MAX - count || controls > UINT32_MAX - controlCount) return false;
+        bool Include(std::uint32_t additional, std::uint32_t rows, std::uint32_t controls,
+                     std::uint32_t queueRows, std::uint32_t conditionalRows) noexcept {
+            if (additional > UINT32_MAX - count || controls > UINT32_MAX - controlCount ||
+                queueRows > UINT32_MAX - queueCount || conditionalRows > UINT32_MAX - conditionalCount) return false;
+            queueCount += queueRows;
+            conditionalCount += conditionalRows;
             controlCount += controls;
             count += additional;
             width = std::max(width, rows);
@@ -8330,6 +8332,8 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (backing.queueCount != 0 && !queueInstances.PrepareBacking(backing.queueCount,
+                backing.conditionalCount, &backing.queues)) return false;
         if (backing.controlCount != 0 && !variableControlInstances.PrepareBacking(
                 backing.controlCount, &backing.variableControls)) return false;
         const auto width = std::max(RequiredDeferredTreeWidth(), backing.width);
@@ -8354,10 +8358,10 @@ public:
         const ActionFiringHandle previousOwner;
         BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner) noexcept
             : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
-              controlOwner(engine.preparingDeferredControlOwner), previousOwner(controlOwner) {
+              controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
             if (held) {
                 active = held->width;
-                controlOwner = held->controlCount != 0 ? owner : 0;
+                controlOwner = held->controlCount != 0 || held->queueCount != 0 ? owner : 0;
             }
         }
         BorrowedTree(const BorrowedTree&) = delete;
@@ -8369,11 +8373,17 @@ public:
     BorrowedTree UseDeferredTrees(ActionFiringHandle firing, ActionFiringHandle controlOwner) noexcept {
         return {*this, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing)), controlOwner};
     }
+    const DeferredTreeBacking* DeferredBackingFor(const EnginePlayableServiceRow* service) const noexcept {
+        const auto owner = service && service->InvocationValid() ? service->Invocation().deferredTreeOwner : 0;
+        return owner ? static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(owner)) : nullptr;
+    }
+    QueueInstanceTable::BackingUse UseDeferredQueueRows(const EnginePlayableServiceRow* service) const noexcept {
+        const auto* backing = DeferredBackingFor(service);
+        return QueueInstanceTable::BackingUse(backing ? &backing->queues : nullptr);
+    }
     VariableControlInstanceStatus PrepareVariableControlInstance(const EnginePlayableServiceRow& service,
         const VariableControlInstanceCreateRequest& request, PreparedVariableControlInstance* result) noexcept {
-        const auto owner = service.InvocationValid() ? service.Invocation().deferredControlOwner : 0;
-        const auto* backing = owner == 0 ? nullptr :
-            static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(owner));
+        const auto* backing = DeferredBackingFor(&service);
         auto use = backing ? backing->variableControls.Use() : StableStoragePreparedUse{};
         return variableControlInstances.PrepareAcquire(request, result);
     }
@@ -8571,7 +8581,7 @@ public:
         ++invocation.serviceCount;
         if (rootService) {
             invocation.rootService = row.identity;
-            invocation.deferredControlOwner = preparingDeferredControlOwner;
+            invocation.deferredTreeOwner = preparingDeferredTreeOwner;
         }
         row.partition = partition;
         row.ownerInstance = owner;
@@ -10821,7 +10831,7 @@ public:
             (void)sourceReturned;
             bank.chain.following = nullptr;
         }
-        if (originalQueueReplacementHolders.data() != nullptr)
+        if (originalQueueReplacementHolders.size() != 0)
             for (std::uint32_t i = 0; i < originalQueueReplacementHolders.size(); ++i) {
                 auto& holder = originalQueueReplacementHolders[i];
                 if (holder.phase == OriginalQueueReplacementHolder::Phase::Empty) continue;
@@ -10893,7 +10903,7 @@ public:
         for (auto& original : originalOccurrencePreparations) original.original_.Release();
         // Pool backing outlives the genuine conditional group-loan returns.
         queueInstances.EndOriginalConditionalsForQuiescentOwnerTeardown();
-        if (originalQueueConditionalHolders.data() != nullptr)
+        if (originalQueueConditionalHolders.size() != 0)
             for (std::uint32_t index = 0; index < originalQueueConditionalHolders.size(); ++index)
                 assert(queueInstances.OriginalConditionalOwnerEmpty(
                     originalQueueConditionalHolders[index].baseline,
@@ -11564,7 +11574,7 @@ public:
     }
     bool RecordInitialSoundQueueCohortFromPreparedFactories(EngineImmediateEntryAttempt& attempt,
         EngineActionPlayScratch& sound, EngineActionPlayScratch& queue) noexcept {
-        if (originalQueueConditionalHolders.size() == 0 || attempt.soundQueueCohort.receiver_ != nullptr ||
+        if (!queueInstances.SupportsOriginalConditionals() || attempt.soundQueueCohort.receiver_ != nullptr ||
             !attempt.active || !attempt.lane.Valid() || attempt.root == 0 ||
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
             !sound.prepared || !queue.prepared || !sound.instance.Valid() || !queue.instance.Valid() ||
@@ -12541,7 +12551,8 @@ public:
     }
 
     bool PrepareQueueInstanceHolders(std::uint32_t count) noexcept {
-        return initialQueueTimingMembersScratch.ConstructThrough(count) &&
+        return queueResetSelectionWords.ConstructThrough(count / 64u + (count % 64u != 0)) &&
+            initialQueueTimingMembersScratch.ConstructThrough(count) &&
             initialQueueTransitionTimingProofsScratch.ConstructThrough(count) &&
             initialQueueConditionalTimingProofsScratch.ConstructThrough(count) &&
             initialQueueCurrentCompositeProofsScratch.ConstructThrough(count) &&
@@ -12549,7 +12560,7 @@ public:
             actionQueueReplacementScratch.ConstructThrough(count) &&
             originalQueueLifetimeHolders.ConstructThrough(count) &&
             originalQueueFactoryLifetimeHolders.ConstructThrough(count) &&
-            (queueInstances.originalConditionalCapacity_ == 0 ||
+            (!queueInstances.SupportsOriginalConditionals() ||
                 (originalQueueConditionalHolders.ConstructThrough(count) &&
                  originalQueueReplacementHolders.ConstructThrough(count)));
     }
@@ -13240,6 +13251,8 @@ public:
         if (!queueInstances.OriginalConditionalOwnerEmpty(holder.baseline, holder.clock) ||
             !queueInstances.IsOriginalLifetimePinFor(parent, queue)) return false;
         // No post-prepare fallible tail: the real factory writes the stable cap.
+        const auto* service = originalQueueFactoryLifetimeHolders[queue.slot].service_;
+        auto queueUse = UseDeferredQueueRows(service ? service->service_ : nullptr);
         if (!queueInstances.PrepareConditional(queue, request, out, parent, &holder.baseline)) return false;
         if (issued != nullptr) *issued = &holder.baseline;
         return true;
@@ -13545,6 +13558,7 @@ public:
         QueueInstanceTable::OriginalLifetimePin original;
         auto observedCreate = create;
         observedCreate.monitorIdentity = CaptureMonitorOwner(create.rootInstance);
+        auto queueUse = UseDeferredQueueRows(service == nullptr ? nullptr : service->service_);
         if (!queueInstances.PrepareAcquire(observedCreate, prepared, &original)) {
             returnCheckpoint();
             return false;
@@ -13970,14 +13984,14 @@ public:
     // Fixed, producer-only storage. Copy/reset of service or scratch rows cannot
     // move these native loans. Destruction precedes Pool, Queue table, and banks.
     StableSlotStorage<OriginalQueueBankHolder> originalQueueBankHolders;
-    StableRowStorage<QueueInstanceTable::OriginalLifetimePin> originalQueueLifetimeHolders;
-    StableRowStorage<OriginalQueueFactoryLifetimeHolder> originalQueueFactoryLifetimeHolders;
+    GrowingRowStorage<QueueInstanceTable::OriginalLifetimePin> originalQueueLifetimeHolders;
+    GrowingRowStorage<OriginalQueueFactoryLifetimeHolder> originalQueueFactoryLifetimeHolders;
     void (*originalQueueFactoryLifetimeHookForTest)(Engine&,
         const OriginalQueueFactoryLifetimeHolder&, void*) = nullptr;
     void* originalQueueFactoryLifetimeContextForTest = nullptr;
-    StableRowStorage<OriginalQueueConditionalHolder> originalQueueConditionalHolders;
+    GrowingRowStorage<OriginalQueueConditionalHolder> originalQueueConditionalHolders;
     std::unique_ptr<PrivateSelectedQueueFutureSpanPool> originalQueueReplacementSpans;
-    StableRowStorage<OriginalQueueReplacementHolder> originalQueueReplacementHolders;
+    GrowingRowStorage<OriginalQueueReplacementHolder> originalQueueReplacementHolders;
     std::unique_ptr<OriginalConditionalReplacementBatch> originalQueueReplacementBatch;
     std::uint32_t originalQueueReplacementAbandonCount = 0;
     std::uint32_t originalQueueReplacementCount = 0;
@@ -14039,6 +14053,7 @@ public:
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
+    GrowingRowStorage<std::uint64_t> queueResetSelectionWords;
     GrowingRowStorage<EngineInitialQueueTimingMember>
         initialQueueTimingMembersScratch;
     GrowingRowStorage<TransitionInstancePool::PrivateTimingProof>

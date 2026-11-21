@@ -6575,7 +6575,7 @@ TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCan
         engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        const bool allocationRefused = refusedStorage == 14u ||
+        const bool allocationRefused = (refusedStorage >= 7u && refusedStorage <= 12u) || refusedStorage == 14u ||
             (refusedStorage >= 17u && refusedStorage <= 22u);
         ASSERT_EQ(allocationRefused ? VN_OUT_OF_MEMORY :
             (refusedStorage <= 3u || refusedStorage == 15u || refusedStorage == 16u)
@@ -24168,7 +24168,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
 #endif
         EXPECT_EQ(0u, engine->playableServices.size());
         EXPECT_EQ(0u, engine->playablePartitions.Capacity());
-        EXPECT_EQ(modeCapacity, engine->queueInstances.Capacity());
+        EXPECT_EQ(0u, engine->queueInstances.ConstructedRowCount());
         EXPECT_EQ(0u, engine->variableControlInstances.ConstructedCount());
     }
     const auto Vn_PostAction = [&](const VnPostActionDesc* post, VnActionFiringHandle* handle) {
@@ -25656,7 +25656,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         EXPECT_EQ(partitionsBeforeRecheck, engine->playablePartitions.OccupiedCount());
     }
     if (playableCapacity != 0) {
-        std::vector<VnActionFiringHandle> accepted(modeCapacity + 1u);
+        // Each nested queue holds one current and one successor voice.
+        const auto voicePairs = config.maxVoices / 2u;
+        std::vector<VnActionFiringHandle> accepted(voicePairs + 1u);
         std::uint32_t acceptedCount = 0;
         bool refused = false;
         for (auto& handle : accepted) {
@@ -25677,7 +25679,8 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             ++acceptedCount;
         }
         ASSERT_TRUE(refused);
-        EXPECT_EQ(modeCapacity, acceptedCount);
+        EXPECT_EQ(voicePairs, acceptedCount);
+        if (modeCapacity < voicePairs) EXPECT_GT(acceptedCount, modeCapacity);
         EXPECT_EQ(acceptedCount, engine->variableControlInstances.LiveCount());
         EXPECT_EQ(acceptedCount, engine->queueInstances.LiveCount());
         EXPECT_EQ(4u * acceptedCount, engine->playableInstances.LiveCount());
@@ -37963,7 +37966,7 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanDoesNotMaskNativeSour
     ASSERT_NE(nullptr, probe.ordinary);
     ASSERT_TRUE(probe.ordinaryReader.Valid());
     EXPECT_FALSE(engine.originalInitialSingleQueueOriginProducerEnabled);
-    EXPECT_NE(nullptr, engine.originalQueueConditionalHolders.data());
+    EXPECT_TRUE(engine.queueInstances.SupportsOriginalConditionals());
     // This real Lane result cannot explain the distinct Source reader refusal.
     ASSERT_TRUE(engine.immediateActionLane.ObserveOriginalUnpublishedStorageOnlyRetention(
         probe.attempt->originalLaneLifetime, probe.handle, probe.root, blocks));
@@ -64998,7 +65001,7 @@ TEST(ActionFiringApi,
 }
 
 TEST(ActionFiringApi,
-     PreparationMatrixQueueInstanceCapacityReturnsNoVoice) {
+     PreparationMatrixQueueInstancesGrowAndRecoverFromAllocationFailure) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(4, 64, 48000));
@@ -65033,17 +65036,27 @@ TEST(ActionFiringApi,
     request.initial.version = 1;
     request.resetEpoch = engine->transportEpochOwner.Current();
     request.emitterSlot = UINT32_MAX;
-    std::vector<harken::PreparedQueueInstanceV1> occupied(
-        engine->queueInstances.Capacity());
-    for (auto& prepared : occupied) {
-        ASSERT_TRUE(engine->queueInstances.PrepareAcquire(request,
-                                                          &prepared));
+    std::vector<harken::PreparedQueueInstanceV1> occupied;
+    const auto count = engine->config.maxContainerInstances + 1u;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        harken::PreparedQueueInstanceV1 prepared;
+        ASSERT_TRUE(engine->queueInstances.PrepareAcquire(request, &prepared));
+        occupied.push_back(std::move(prepared));
+    }
+    engine->queueInstances.SetRowCommitPageLimitForTests(0);
+    for (;;) {
+        harken::PreparedQueueInstanceV1 prepared;
+        if (!engine->queueInstances.PrepareAcquire(request, &prepared)) break;
+        occupied.push_back(std::move(prepared));
     }
     const auto before = CaptureActionPreparationOwners(*engine);
-
-    ExpectPublicActionPreparationRefusal(
-        *engine, harkentest::ObjectId(50), emitter, VN_NO_VOICE, before);
-
+    ExpectPublicActionPreparationRefusal(*engine, harkentest::ObjectId(50), emitter, VN_OUT_OF_MEMORY, before);
+    engine->queueInstances.SetRowCommitPageLimitForTests(SIZE_MAX);
+    VnPostActionDesc post = ValidPostDesc();
+    post.actionId = harkentest::ObjectId(50);
+    post.emitter = emitter;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     for (auto& prepared : occupied) {
         EXPECT_TRUE(engine->queueInstances.CancelPreparedAcquire(
             &prepared));

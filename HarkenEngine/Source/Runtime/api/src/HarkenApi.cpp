@@ -31039,7 +31039,7 @@ struct PreparedQueueContinuationTree {
                  harken::PlayableInstanceHandle parent, const WorldView& world) noexcept {
         if (row.parentService.Valid() && row.variableControlNestedQueueSuccessorInstance != 0) return true;
         auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0,
-            row.InvocationValid() ? row.Invocation().deferredControlOwner : 0);
+            row.InvocationValid() ? row.Invocation().deferredTreeOwner : 0);
         scratch = AcquireFrontierAttempt(engine);
         if (scratch == nullptr) return false;
         const auto kind = child.playable.kind == harken::PlayableKindV1::Sound ? harken::PlayableKind::Sound :
@@ -33366,6 +33366,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
     }
     harken::PreparedQueueConditionalV1 preparedConditional;
     auto& original = starts.QueueBank()->chain.original;
+    auto queueUse = engine.UseDeferredQueueRows(&row);
     bool conditionalReady = false;
     if (row.QueuePayload().queuePreparingFollowing != nullptr) {
         harken::QueueInstanceTable::ContinuationSourceBinding source;
@@ -37656,7 +37657,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessor(
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame) noexcept {
     auto trees = engine.UseDeferredTrees(row.InvocationValid() ? row.Invocation().actionFiring : 0,
-        row.InvocationValid() ? row.Invocation().deferredControlOwner : 0);
+        row.InvocationValid() ? row.Invocation().deferredTreeOwner : 0);
     std::uint64_t continuationFrame = QueueEarliestContinuationFrame(engine);
     harken::LogicCommitSequence deferredTicket = 0;
     for (std::uint32_t attempt = 0;
@@ -86979,7 +86980,7 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
                 if (width > UINT32_MAX) return VN_OUT_OF_MEMORY;
                 if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
                 if (!trees->Include(result.profile.preparationTrees, static_cast<std::uint32_t>(width),
-                        result.profile.variableControls))
+                        result.profile.variableControls, result.profile.queueRows, result.profile.conditionalRows))
                     return VN_BACKPRESSURE;
             }
             return VN_OK;
@@ -89562,7 +89563,7 @@ bool PrepareQueueConditionalWithOriginal(
     harken::Engine& engine, harken::EngineActionPlayScratch& scratch,
     harken::EnginePlayableServiceRow& row,
     const harken::ConditionalQueuePrepareRequest& request) noexcept {
-    const bool initial = engine.originalQueueConditionalHolders.Capacity() != 0 &&
+    const bool initial = engine.queueInstances.SupportsOriginalConditionals() &&
         scratch.row == &row && !scratch.variableControl && !scratch.variableControlCommitted &&
         !scratch.queueFutureExecution && scratch.queueFutureCanonicalCurrent == nullptr &&
         !row.variableControlIndependentFrontier && row.queueTimingPending &&
@@ -103010,6 +103011,7 @@ bool PrepareNativeQueueMusicTransition(harken::Engine& engine,
     filing.queueDecision = {};
     harken::PreparedQueueConditionalV1 prepared;
     harken::ConditionalQueueVersionToken conditional;
+    auto queueUse = engine.UseDeferredQueueRows(&row);
     if (!engine.queueInstances.PrepareConditional(row.queueInstance, candidate.request, &prepared,
         engine.originalQueueLifetimeHolders[row.queueInstance.slot], &candidate.exit->queueChain.original)) return false;
     if (!engine.queueInstances.CommitPreparedConditional(&prepared, &conditional)) {
@@ -103046,6 +103048,7 @@ bool PrepareFollowingNativeQueueMusicTransition(harken::Engine& engine,
     auto* exit = candidate.exit.get();
     harken::PreparedQueueConditionalV1 prepared;
     harken::ConditionalQueueVersionToken conditional;
+    auto queueUse = engine.UseDeferredQueueRows(&row);
     if (!engine.queueInstances.PrepareFollowingConditional(row.queueInstance, candidate.request,
             predecessor.queueChain.original, proof, &prepared,
             engine.originalQueueLifetimeHolders[row.queueInstance.slot], &exit->queueChain.original)) return false;
@@ -105389,7 +105392,7 @@ bool CaptureOriginalPlainActionManifest(ImmediateActionPlan& plan,
 bool OriginalInitialSingleQueueOriginRouteEligible(ImmediateActionPlan& plan,
     std::uint32_t preparedCount) noexcept {
     if (plan.engine == nullptr || !plan.engine->originalInitialSingleQueueOriginProducerEnabled ||
-        plan.engine->originalQueueConditionalHolders.Capacity() == 0 || plan.materializingDeferred ||
+        !plan.engine->queueInstances.SupportsOriginalConditionals() || plan.materializingDeferred ||
         plan.stopCount != 0 || plan.variableWriteCount != 0 || plan.deferredCount != 0 ||
         plan.selectionResetCount != 0 || plan.queueResetCount != 0 || plan.queueReplacementCount != 0)
         return false;
@@ -105446,7 +105449,7 @@ bool ImmediateOrdinaryLeafBatchEligible(const ImmediateActionPlan& plan) noexcep
 }
 
 bool InitialSoundSequenceQueueRouteEligible(const ImmediateActionPlan& plan) noexcept {
-    if (plan.engine == nullptr || plan.engine->originalQueueConditionalHolders.Capacity() == 0 ||
+    if (plan.engine == nullptr || !plan.engine->queueInstances.SupportsOriginalConditionals() ||
         plan.engine->packComposition.Authority() == harken::PackAuthorityMode::Pack ||
         plan.targetPackLease.leaseToken != 0 || plan.postedActionLease != nullptr ||
         plan.stepCount != 2 || plan.playCount != 2 || plan.firingCount != 1 ||
@@ -110909,7 +110912,8 @@ bool ReserveImmediateActionQueueReplacements(
         : plan->materializingDeferred
         ? harken::PreparedQueueReplacementOrder(engine.actionFiringPlanScratch[0].prepared)
         : harken::PreparedQueueReplacementOrder(plan->originalSingleIssue);
-    std::array<std::uint64_t, (harken::kMaxQueueInstancesHard + 63u) / 64u> selectedQueues{};
+    auto& selectedQueues = engine.queueResetSelectionWords;
+    std::fill(selectedQueues.begin(), selectedQueues.end(), UINT64_C(0));
     std::uint32_t selectedSpanCount = 0;
     for (const auto& row : engine.playableServices) {
         if (!row.queueMode || !row.queueInstance.Valid() || !row.queueContinuationPrepared ||
@@ -112680,7 +112684,7 @@ VnResult Vn_Init(const VnConfig* config) {
         // g_engine stays null (it was null on entry).
         // Native Queue replacement retains the original conditional while its
         // Current keeps playing. Reserve that ownership storage at normal Init.
-        std::uint32_t originalConditionalRows = resolved.maxContainerInstances;
+        std::uint32_t originalConditionalRows = UINT32_MAX;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         harken::detail::TimelineCapacityOverrideForTest originalCapacity{};
         if (harken::detail::ReadTimelineCapacityOverrideForTest(&originalCapacity) ==

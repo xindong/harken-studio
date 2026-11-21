@@ -25694,6 +25694,21 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             while (controls.Acquire(request, &token) == VariableControlInstanceStatus::Ok)
                 competing.push_back(token);
         }
+        std::vector<QueueInstanceToken> competingQueues;
+        if (scenario >= 5) {
+            QueueInstanceCreateRequest request{};
+            request.world = 1;
+            request.rootInstance = 1;
+            request.containerStableId = ContainerMatrixWorld::kRoot;
+            request.programSemanticFingerprint = 1;
+            request.childCount = 1;
+            request.initial.version = 1;
+            request.emitterSlot = UINT32_MAX;
+            engine.queueInstances.SetRowCommitPageLimitForTests(0);
+            engine.queueInstances.SetConditionalRowCommitPageLimitForTests(0);
+            QueueInstanceToken token{};
+            while (engine.queueInstances.Acquire(request, &token)) competingQueues.push_back(token);
+        }
         struct ResetFault {
             ~ResetFault() { detail::DisarmLogicAllocFaultForTests(); }
         } resetFault;
@@ -25731,6 +25746,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
+        for (auto token : competingQueues) EXPECT_TRUE(engine.queueInstances.Release(token));
         for (auto token : competing) EXPECT_TRUE(engine.variableControlInstances.Release(token));
         if (scenario <= 2) referenceStart[scenario] = onsets[0];
         else EXPECT_EQ(referenceStart[trackRoot ? 2u : 1u], onsets[0]);

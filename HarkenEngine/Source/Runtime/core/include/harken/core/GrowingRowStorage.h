@@ -35,6 +35,29 @@ public:
         return ConstructThrough(count, [](std::uint32_t) noexcept { return true; });
     }
 
+    // Reuse the first free identity. Only outstanding promises require counting
+    // the remaining live rows before granting storage to a different producer.
+    template<class Available, class Prepare>
+    std::uint32_t FindFreeSlot(std::uint32_t limit, Available&& available, Prepare&& prepare) noexcept {
+        const auto size = ConstructedCount();
+        std::uint32_t slot = 0;
+        while (slot < size && !available((*this)[slot])) ++slot;
+        if (slot >= limit) return UINT32_MAX;
+        auto required = slot + 1u;
+        if (!PreparedUseActive() && HeldRows() != 0) {
+            std::uint64_t free = 0;
+            for (auto next = slot; next < size; ++next) {
+                if (available((*this)[next]) && ++free > HeldRows()) return slot;
+            }
+            const auto occupied = size - static_cast<std::uint32_t>(free);
+            if (HeldRows() >= limit - occupied) return UINT32_MAX;
+            required = occupied + 1u;
+        } else if (slot < size) {
+            return slot;
+        }
+        return prepare(required) ? slot : UINT32_MAX;
+    }
+
     template<class PrepareDependencies>
     bool PrepareBacking(std::uint32_t count, std::uint32_t occupiedPrefix,
         StableStoragePreparation* out, PrepareDependencies&& prepare) noexcept {

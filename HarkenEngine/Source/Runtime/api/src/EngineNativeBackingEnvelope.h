@@ -95,6 +95,8 @@ struct Profile {
     std::uint32_t controlSides = 0;
     std::uint32_t transitionRows = 0;
     std::uint32_t variableControls = 0;
+    std::uint32_t queueRows = 0;
+    std::uint32_t conditionalRows = 0;
     bool mayExposeMusic = false;
     std::uint32_t selectionCount = 0;
     VoiceColumns voice{};
@@ -258,6 +260,8 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     a.profile.transitionRows = SaturatingAdd(a.profile.transitionRows, b.profile.transitionRows, UINT32_MAX, a.flags);
     a.profile.mayExposeMusic |= b.profile.mayExposeMusic;
     a.profile.variableControls = SaturatingAdd(a.profile.variableControls, b.profile.variableControls, UINT32_MAX, a.flags);
+    a.profile.queueRows = SaturatingAdd(a.profile.queueRows, b.profile.queueRows, UINT32_MAX, a.flags);
+    a.profile.conditionalRows = SaturatingAdd(a.profile.conditionalRows, b.profile.conditionalRows, UINT32_MAX, a.flags);
     a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
         kControlSideCapacity, a.flags);
     a.profile.voice.Include(b.profile.voice);
@@ -292,6 +296,8 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.transitionRows = std::max(a.profile.transitionRows, b.profile.transitionRows);
     a.profile.mayExposeMusic |= b.profile.mayExposeMusic;
     a.profile.variableControls = std::max(a.profile.variableControls, b.profile.variableControls);
+    a.profile.queueRows = std::max(a.profile.queueRows, b.profile.queueRows);
+    a.profile.conditionalRows = std::max(a.profile.conditionalRows, b.profile.conditionalRows);
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
     a.profile.queue.Include(b.profile.queue);
@@ -692,6 +698,8 @@ private:
                         dynamic.profile.transitionRows, UINT32_MAX, result.flags);
                     result.profile.variableControls = SaturatingAdd(result.profile.variableControls,
                         dynamic.profile.variableControls, UINT32_MAX, result.flags);
+                    result.profile.queueRows = SaturatingAdd(result.profile.queueRows, dynamic.profile.queueRows, UINT32_MAX, result.flags);
+                    result.profile.conditionalRows = SaturatingAdd(result.profile.conditionalRows, dynamic.profile.conditionalRows, UINT32_MAX, result.flags);
                     result.profile.mayExposeMusic |= dynamic.profile.mayExposeMusic;
                 }
             } else {
@@ -827,6 +835,8 @@ private:
             std::uint32_t futureTrees = 0;
             std::uint32_t futureTransitions = 0;
             std::uint32_t futureControls = 0;
+            std::uint32_t futureQueueRows = 0;
+            std::uint32_t futureConditionalRows = 0;
             bool canTransition = false;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
                 const bool possible = program.mode == ContainerModeV1::SequenceQueue
@@ -837,6 +847,8 @@ private:
                 canTransition |= program.transitionProgramIndex != UINT32_MAX || current.profile.mayExposeMusic;
                 futureTransitions = std::max(futureTransitions, next.profile.transitionRows);
                 futureControls = std::max(futureControls, next.profile.variableControls);
+                futureQueueRows = std::max(futureQueueRows, next.profile.queueRows);
+                futureConditionalRows = std::max(futureConditionalRows, next.profile.conditionalRows);
                 capacity = std::max(capacity, next.profile.current);
                 futureInstances = std::max(futureInstances, next.profile.instanceRows);
                 if (limits_.includeDynamicInstanceRows)
@@ -845,9 +857,16 @@ private:
                     next.profile.current, UINT32_MAX, current.flags));
                 current.flags |= next.flags;
             }
+            current.profile.queueRows = SaturatingAdd(current.profile.queueRows, 1u, UINT32_MAX, current.flags);
+            // The initial and following continuations can hold distinct conditional records.
+            const bool wraps = CanWrap(program);
+            const auto conditions = wraps || program.childCount > 2 ? 2u : program.childCount - 1u;
+            current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, conditions, UINT32_MAX, current.flags);
             targetCapacity = std::max(targetCapacity, capacity);
             AddFuture(current, capacity, limits_);
             current.profile.variableControls = SaturatingAdd(current.profile.variableControls, futureControls, UINT32_MAX, current.flags);
+            current.profile.queueRows = SaturatingAdd(current.profile.queueRows, futureQueueRows, UINT32_MAX, current.flags);
+            current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, futureConditionalRows, UINT32_MAX, current.flags);
             current.profile.transitionRows = SaturatingAdd(current.profile.transitionRows, futureTransitions, UINT32_MAX, current.flags);
             // Current and following chains can overlap their replacements.
             if (canTransition) current.profile.transitionRows = SaturatingAdd(current.profile.transitionRows, 4u, UINT32_MAX, current.flags);
