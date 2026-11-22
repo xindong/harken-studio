@@ -46,8 +46,8 @@ jobs:
       - name: Check Integration source contracts before compilation
         run: |
           python .scripts/check_integration_version.py
-          python HarkenIntegration/Unity/Binding/check_unity_integration_contract.py
-          python HarkenIntegration/Unity/Binding/test_check_unity_integration_contract.py -v
+          python HarkenIntegration/Test/Package/check_unity_integration_contract.py
+          python HarkenIntegration/Test/Package/test_check_unity_integration_contract.py -v
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -74,8 +74,8 @@ jobs:
         env:
           HARKEN_ABI_MANIFEST: ${{ github.workspace }}/.temp/engine-install/share/HarkenEngine/harken_abi_manifest.json
         run: |
-          python HarkenIntegration/Unity/Binding/gen_binding.py --manifest "$HARKEN_ABI_MANIFEST" --check
-          python HarkenIntegration/Unity/Binding/test_managed_generation_policy.py
+          python HarkenIntegration/Unity/Binding/generate_binding.py --manifest "$HARKEN_ABI_MANIFEST" --check
+          python HarkenIntegration/Test/Binding/test_binding_policy.py
 
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -118,10 +118,10 @@ jobs:
         run: python3 .scripts/check_integration_version.py
 
       - name: Check Unity Integration source contract
-        run: python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py
+        run: python3 HarkenIntegration/Test/Package/check_unity_integration_contract.py
 
       - name: Test Unity Integration source contract
-        run: python3 HarkenIntegration/Unity/Binding/test_check_unity_integration_contract.py -v
+        run: python3 HarkenIntegration/Test/Package/test_check_unity_integration_contract.py -v
 
       - name: Install macOS build deps
         run: brew install ninja
@@ -140,7 +140,7 @@ jobs:
         run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install
 
       - name: Check generated binding against the installed ABI manifest
-        run: python3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest .temp/engine-install/share/HarkenEngine/harken_abi_manifest.json --check
+        run: python3 HarkenIntegration/Unity/Binding/generate_binding.py --manifest .temp/engine-install/share/HarkenEngine/harken_abi_manifest.json --check
 
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4

@@ -105,7 +105,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_generated_binding_must_not_project_the_preview_surface(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            binding = integration / "Runtime/Generated/HarkenNative.g.cs"
+            binding = integration / "Runtime/Generated/HarkenNative.cs"
             binding.write_text(
                 binding.read_text(encoding="utf-8") + "\n// VnPreview_PumpNullMixer\n",
                 encoding="utf-8",
