@@ -1,25 +1,20 @@
-#include "Widgets/Monitor/MonitorPanelKeys.h"
+#include "Core/WorkspaceWindowTypes.h"
 
 #include <gtest/gtest.h>
 
 #include <QSet>
-#include <QStringList>
 
 using namespace VNX;
 
-namespace {
-
-QSet<QString> toSet(const QStringList& values)
+TEST(MonitorPanelModule, WorkspacePanelKeysAreUnique)
 {
-    return QSet<QString>(values.begin(), values.end());
-}
-
-}
-
-TEST(MonitorPanelModule, PanelKeysAreUnique)
-{
-    const QStringList typeIds = monitorPanelTypeIds();
-    const QStringList docks = monitorPanelDockObjectNames();
-    EXPECT_EQ(toSet(typeIds).size(), typeIds.size());
-    EXPECT_EQ(toSet(docks).size(), docks.size());
+    QSet<QString> typeIds;
+    QSet<QString> docks;
+    const auto descriptors = defaultWorkspaceWindowDescriptors();
+    for (const auto& descriptor : descriptors) {
+        typeIds.insert(descriptor.typeId);
+        docks.insert(descriptor.dockObjectName);
+    }
+    EXPECT_EQ(typeIds.size(), descriptors.size());
+    EXPECT_EQ(docks.size(), descriptors.size());
 }

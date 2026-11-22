@@ -43,7 +43,7 @@ public:
     void restoreParams(const QVariantMap& params);
 
     MonitorCursorReject lockCurrentRow();
-    MonitorCursorReject lockExecuteFrameForTest(std::optional<qint64> executeFrame);
+
 
 private:
     void rebuildVisibleRows();

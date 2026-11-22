@@ -316,33 +316,27 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
 
 QStringList ipcKnownPanelObjectNames()
 {
-    return {
-        QStringLiteral("Explorer"),
-        QStringLiteral("ProjectSettingsPanel"),
-        QStringLiteral("PreferencesPanel"),
-        QStringLiteral("RemoteConnectPanel"),
-        QStringLiteral("InspectorPanel"),
-        QStringLiteral("BlueprintPanel"),
-        QStringLiteral("ControlPanel"),
-        QStringLiteral("PublisherPanel"),
-        QStringLiteral("LogPanel"),
-        QStringLiteral("MeterPanel"),
-        QStringLiteral("MonitorPerformanceDock"),
-        QStringLiteral("MonitorDock"),
-        QStringLiteral("MonitorVoicesDock"),
-        QStringLiteral("MonitorPlayablesDock"),
-        QStringLiteral("MonitorEffectsDock"),
-        QStringLiteral("MonitorBusesDock"),
-        QStringLiteral("MonitorDspTimelineDock"),
-        QStringLiteral("MonitorLineageDock"),
-        QStringLiteral("MonitorTapSelectDock"),
-        QStringLiteral("MonitorWaveformDock"),
-        QStringLiteral("MonitorScopeDock"),
-        QStringLiteral("MonitorSpectrumDock"),
-        QStringLiteral("MonitorRecordingDock"),
-        QStringLiteral("MonitorSessionCompareDock"),
-        QStringLiteral("MonitorCapturePlanBar"),
-    };
+    static const QStringList names = [] {
+        QStringList panels{
+            QStringLiteral("Explorer"),
+            QStringLiteral("ProjectSettingsPanel"),
+            QStringLiteral("PreferencesPanel"),
+            QStringLiteral("RemoteConnectPanel"),
+            QStringLiteral("InspectorPanel"),
+            QStringLiteral("BlueprintPanel"),
+            QStringLiteral("ControlPanel"),
+            QStringLiteral("PublisherPanel"),
+            QStringLiteral("LogPanel"),
+            QStringLiteral("MeterPanel"),
+            QStringLiteral("MonitorCapturePlanBar"),
+        };
+        for (const auto& descriptor : defaultWorkspaceWindowDescriptors()) {
+            if (descriptor.isMonitorPanel())
+                panels.append(descriptor.dockObjectName);
+        }
+        return panels;
+    }();
+    return names;
 }
 
 QString ipcKnownPanelObjectNameFromWidget(const QWidget* widget)

@@ -12,10 +12,6 @@ add_library(harken_editor_dialogs STATIC
     ColorEditorDialog.h
     RemoteConnectPanel.cpp
     RemoteConnectPanel.h
-    NewProjectDialog.cpp
-    NewProjectDialog.h
-    TemplateChooserWidget.cpp
-    TemplateChooserWidget.h
     Settings/SettingsPage.cpp
     Settings/SettingsPage.h
     Settings/SettingsPanel.cpp

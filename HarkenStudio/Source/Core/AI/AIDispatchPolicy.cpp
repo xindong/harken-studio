@@ -9,7 +9,6 @@
 #include <QUuid>
 
 #include <algorithm>
-#include <utility>
 
 namespace VNX {
 namespace {
@@ -44,7 +43,6 @@ AIDispatchPolicy::Decision denied(const QString& code, const QString& message)
 }
 
 AIDispatchPolicy::AIDispatchPolicy()
-    : clock_([]() { return QDateTime::currentMSecsSinceEpoch(); })
 {
     for (const auto& entry : AICommandCatalog::all())
         catalog_.insert(entry.cmd, entry);
@@ -56,16 +54,6 @@ AIDispatchPolicy::AIDispatchPolicy(const QList<AICommandSpec>& catalog)
     catalog_.clear();
     for (const auto& entry : catalog)
         catalog_.insert(entry.cmd, entry);
-}
-
-void AIDispatchPolicy::setClockForTesting(Clock clock)
-{
-    clock_ = std::move(clock);
-}
-
-qint64 AIDispatchPolicy::nowMs() const
-{
-    return clock_ ? clock_() : QDateTime::currentMSecsSinceEpoch();
 }
 
 void AIDispatchPolicy::pruneExpired(qint64 now)
@@ -99,7 +87,7 @@ QByteArray AIDispatchPolicy::bindingFor(const Request& request) const
 AIDispatchPolicy::Decision AIDispatchPolicy::evaluate(const Request& request,
                                                        bool consumeGrant)
 {
-    const qint64 now = nowMs();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     pruneExpired(now);
     const auto it = catalog_.constFind(request.cmd);
     const AICommandSpec* spec = it == catalog_.constEnd() ? nullptr : &it.value();
@@ -152,7 +140,7 @@ AIDispatchPolicy::Decision AIDispatchPolicy::evaluate(const Request& request,
 
 QString AIDispatchPolicy::issueGrant(const Request& request, int ttlMs)
 {
-    const qint64 now = nowMs();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     pruneExpired(now);
     const QString grantId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     grants_.insert(grantId, Grant{
@@ -164,13 +152,13 @@ QString AIDispatchPolicy::issueGrant(const Request& request, int ttlMs)
 
 void AIDispatchPolicy::revokeGrant(const QString& grantId)
 {
-    pruneExpired(nowMs());
+    pruneExpired(QDateTime::currentMSecsSinceEpoch());
     grants_.remove(grantId);
 }
 
 void AIDispatchPolicy::revokeRequest(const QString& requestId)
 {
-    pruneExpired(nowMs());
+    pruneExpired(QDateTime::currentMSecsSinceEpoch());
     for (auto it = grants_.begin(); it != grants_.end();)
     {
         if (it->requestId == requestId)

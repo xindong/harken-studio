@@ -42,10 +42,7 @@ void runtimePublishMeterPeaks();
 int runtimeActiveVoiceCount();
 void runtimeDrainEndedPlaybacks(std::vector<uint64_t>& out);
 void runtimeDrainStudioNotifications(std::vector<EngineNotification>& out);
-void runtimeInjectNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp);
-void runtimeInvalidateNotificationsForTest();
+
 void runtimeMasterMeterPeak(float& l, float& r);
 bool runtimeBusMeterPeak(harkenstudio::ObjectId busId, float& l, float& r);
 float runtimeAudioCpuPercent();

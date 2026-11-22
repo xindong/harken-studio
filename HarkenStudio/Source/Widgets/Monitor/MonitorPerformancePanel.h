@@ -62,7 +62,7 @@ public:
     void restoreParams(const QVariantMap& params);
 
     MonitorCursorReject lockFromChartX(int logicalX);
-    bool advanceLiveForTest(qint64 executeFrame);
+
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

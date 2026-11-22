@@ -64,15 +64,6 @@ public:
             func(panel);
         }
     }
-    
-    static PanelId findByKey(const QString& key) {
-        for (const auto& panel : panels) {
-            if (key == panel.key) {
-                return panel.id;
-            }
-        }
-        return PanelId::Count;
-    }
 };
 
 class AppSettings : public QObject
@@ -106,23 +97,6 @@ public:
     QString language() const;
     void setLanguage(const QString& code);
 
-    [[deprecated("Use PanelId overload instead")]]
-    int panelFontSize(const QString& panelKey) const;
-    [[deprecated("Use PanelId overload instead")]]
-    void setPanelFontSize(const QString& panelKey, int size);
-    [[deprecated("Use PanelId overload instead")]]
-    int effectiveFontSize(const QString& panelKey) const;
-
-    [[deprecated("Use PanelId::Assistant instead")]]
-    static constexpr const char* PANEL_ASSISTANT = "assistant";
-    [[deprecated("Use PanelId::Explorer instead")]]
-    static constexpr const char* PANEL_EXPLORER = "explorer";
-    [[deprecated("Use PanelId::Inspector instead")]]
-    static constexpr const char* PANEL_INSPECTOR = "inspector";
-    [[deprecated("Use PanelId::Log instead")]]
-    static constexpr const char* PANEL_LOG = "log";
-    [[deprecated("Use PanelId::NodeGraph instead")]]
-    static constexpr const char* PANEL_NODE_GRAPH = "node_graph";
 
     static constexpr int DEFAULT_GLOBAL_SCALE = 100;
     static constexpr std::array<int, 11> GLOBAL_SCALE_PRESETS{
@@ -135,9 +109,6 @@ public:
 
     static int defaultFontSize(PanelId panelId);
     
-    [[deprecated("Use PanelId overload instead")]]
-    static int defaultFontSize(const QString& panelKey);
-
     void resetToDefaults();
     void save();
 

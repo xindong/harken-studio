@@ -274,7 +274,6 @@ public:
     static void addRecentProject(const QString& path);
 
 private slots:
-    void onNewProject();
     void onOpenProject();
     void onNewProjectViaHub();
     void onOpenProjectViaHub();

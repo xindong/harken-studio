@@ -84,7 +84,6 @@
 #include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "Widgets/Blueprint/BlueprintPanel.h"
-#include "Dialogs/NewProjectDialog.h"
 #include "Dialogs/AboutDialog.h"
 #include "Widgets/Assistant/AssistantPanel.h"
 #include "Widgets/Publisher/PublisherPanel.h"
@@ -97,7 +96,6 @@
 #include "Monitor/MonitorHostContext.h"
 #include "Monitor/MonitorPerformanceLiveHost.h"
 #include "Widgets/Monitor/MonitorPanel.h"
-#include "Widgets/Monitor/MonitorPanelKeys.h"
 #include "Widgets/Monitor/MonitorPerformancePanel.h"
 #include "Widgets/Monitor/MonitorBusesPanel.h"
 #include "Widgets/Monitor/MonitorBusesSource.h"
@@ -163,7 +161,6 @@
 #include <QSize>
 #include <QList>
 #include <memory>
-#include <QStandardPaths>
 #include <QScreen>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -4302,34 +4299,6 @@ bool MainWindow::createProjectFromConfig(
     setStatusMessage(tr("New project created: %1").arg(currentProjectPath_));
     LogPanel::logInfo(LogCategory::File, tr("New project created: %1").arg(currentProjectPath_));
     return true;
-}
-
-void MainWindow::onNewProject()
-{
-    if (!maybeSave())
-        return;
-
-    VNX::NewProjectDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    const auto dlgResult = dlg.result();
-    const QString projectName = dlgResult.projectName;
-
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Project Location"),
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
-    if (dir.isEmpty())
-        return;
-
-    saveProjectLayout();
-
-    ProjectConfig config;
-    config.name = projectName;
-    config.location = dir;
-    config.templateId   = dlgResult.templateId;
-    config.templateData = dlgResult.templateData.toJson();
-
-    createProjectFromConfig(config);
 }
 
 void MainWindow::onOpenProject()

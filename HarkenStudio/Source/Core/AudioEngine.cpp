@@ -1240,16 +1240,6 @@ void AudioEngine::updateRuntimeServiceInterval()
         runtimeServiceTimer_->setInterval(runtimeServiceIntervalMs(*session_));
 }
 
-void AudioEngine::consumeRuntimeNotificationsForTest()
-{
-    consumeRuntimeNotifications();
-}
-
-void AudioEngine::emitLogMessageForTest(int level, const QString& message)
-{
-    emit logMessage(level, message);
-}
-
 void AudioEngine::consumeRuntimeNotifications()
 {
     std::vector<Bridge::EngineNotification> notifications;

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <QStringList>
-
 #include <cstdint>
 
 namespace VNX {
@@ -19,9 +17,5 @@ inline constexpr std::uint64_t kMonitorCursorContributorScope = 12;
 inline constexpr std::uint64_t kMonitorCursorContributorSpectrum = 13;
 inline constexpr std::uint64_t kMonitorCursorContributorRecording = 15;
 inline constexpr std::uint64_t kMonitorCursorContributorSessionCompare = 16;
-
-QStringList monitorPanelTypeIds();
-QStringList monitorPanelTitles();
-QStringList monitorPanelDockObjectNames();
 
 } // namespace VNX

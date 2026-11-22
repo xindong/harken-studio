@@ -41,7 +41,7 @@ public:
     void restoreParams(const QVariantMap& params);
 
     MonitorCursorReject lockCurrentRow();
-    MonitorCursorReject lockExecuteFrameForTest(std::optional<qint64> executeFrame);
+
 
     int visibleRowCount() const;
     const MonitorVoicesRow* visibleRowAt(int row) const;

@@ -1009,20 +1009,6 @@ void runtimeDrainStudioNotifications(std::vector<EngineNotification>& out)
     g_runtime.pendingNotifications.clear();
 }
 
-void runtimeInjectNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp)
-{
-    enqueueStudioNotification(type, voiceHandle, blockTimestamp);
-}
-
-void runtimeInvalidateNotificationsForTest()
-{
-    QMutexLocker lock(&g_runtime.notificationMutex);
-    ++g_runtime.notificationGeneration;
-    g_runtime.pendingNotifications.clear();
-}
-
 void runtimePublishMeterPeaks()
 {
     VnPreviewChannelPeaksV1 peaks{};

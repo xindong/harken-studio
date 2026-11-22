@@ -1610,57 +1610,6 @@ QLabel[aboutRole="value"] {
 }
 
 /* ==========================================================================
-   Project template semantic roles
-   ========================================================================== */
-
-QLabel[templateRole="sectionTitle"],
-QLabel[templateRole="cardTitle"] {
-    background-color: transparent;
-    border: none;
-    color: @textTitle@;
-    font-weight: @emphasisWeight@;
-}
-
-QLabel[templateRole="cardDescription"] {
-    background-color: transparent;
-    border: none;
-    color: @textSecondary@;
-    @captionFont@
-    font-weight: @regularWeight@;
-}
-
-QLabel[templateRole="error"] {
-    color: @error@;
-    font-weight: @emphasisWeight@;
-}
-
-QPushButton[templateRole="card"] {
-    background-color: @bgSecondary@;
-    color: @textPrimary@;
-    border: @borderWidth@px solid @borderSecondary@;
-    padding: 0px;
-    text-align: center;
-    min-width: @cardMinimumWidth@px;
-    min-height: @cardMinimumHeight@px;
-}
-
-QPushButton[templateRole="card"]:hover {
-    background-overlay: @hoverOverlay@;
-    border-color: @accent@;
-}
-
-QPushButton[templateRole="card"]:checked {
-    background-color: @bgSelected@;
-    border: @accentBorderWidth@px solid @accent@;
-    color: @brightText@;
-    font-weight: @emphasisWeight@;
-}
-
-QPushButton[templateRole="card"]:disabled {
-    color: @textDisabled@;
-}
-
-/* ==========================================================================
    Drop zone semantic roles
    ========================================================================== */
 
@@ -1806,8 +1755,6 @@ QLabel[textRole]:disabled,
 QWidget#listHead QLabel:disabled,
 QLabel[bindingUnit]:disabled,
 QLabel[settingsRole="subtitle"]:disabled,
-QLabel[templateRole="sectionTitle"]:disabled,
-QLabel[templateRole="cardTitle"]:disabled,
 QLabel[nodeContentRole="label"]:disabled,
 QLabel[nodeContentRole="value"]:disabled,
 QLabel[roValue="true"]:disabled { color: @textDisabled@; }

@@ -258,13 +258,6 @@ MonitorCursorReject MonitorPerformancePanel::lockFromChartX(int logicalX)
     return cursorModel().lockTo(frameFromLogicalX(logicalX));
 }
 
-bool MonitorPerformancePanel::advanceLiveForTest(qint64 executeFrame)
-{
-    if (paused_)
-        return false;
-    return cursorModel().advanceLive(executeFrame);
-}
-
 bool MonitorPerformancePanel::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched != chart_)

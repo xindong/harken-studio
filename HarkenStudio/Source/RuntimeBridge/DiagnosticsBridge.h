@@ -379,14 +379,6 @@ constexpr uint8_t kExecErrorDomainUnclassified = 5;
 
 void pollEngineNotifications(std::vector<EngineNotification>& out);
 
-// Test hook. Copies type / voiceHandle / blockTimestamp / generation,
-// then hops to the UI thread. ENDED / STOPPED_BY_FADE stay on the
-// existing drain path and are not queued here. Shutdown increments
-// the generation and discards undelivered items.
-void injectRuntimeNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp);
-void invalidateRuntimeNotificationsForTest();
 
 } // namespace Bridge
 } // namespace HarkenEditor

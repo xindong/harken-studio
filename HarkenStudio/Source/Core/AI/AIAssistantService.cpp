@@ -22,9 +22,8 @@ namespace VNX {
 namespace {
 constexpr int kMaximumResponseBytes = 65536;
 constexpr int kMaximumErrorCharacters = 4096;
-// Guards a single malformed/exploding model response (parallel tool_calls in one
-// turn), not overall task length, so it stays small; the per-turn work budget is
-// governed by the injectable maxToolExecutions_/maxModelRounds_ members instead.
+constexpr int kMaximumToolExecutions = 100;
+constexpr int kMaximumModelRounds = 100;
 constexpr int kMaximumCallsPerResponse = 8;
 constexpr int kMaximumToolResultBytes = 16384;
 constexpr int kMaximumAggregateResultBytes = 65536;
@@ -440,8 +439,7 @@ AIAssistantService::AIAssistantService(IPCServer* ipc, QObject* parent)
           return Harken::Platform::SecretStore::load(service, account);
       }),
       durableMemoryRetriever_(
-          std::make_shared<DeterministicAIDurableMemoryRetriever>()),
-      clock_([]() { return QDateTime::currentMSecsSinceEpoch(); })
+          std::make_shared<DeterministicAIDurableMemoryRetriever>())
 {
 }
 AIAssistantService::~AIAssistantService() { teardownActiveTurn(); }
@@ -459,12 +457,6 @@ void AIAssistantService::setUnrestrictedMode(bool enabled) { unrestrictedMode_ =
 bool AIAssistantService::unrestrictedMode() const { return unrestrictedMode_; }
 void AIAssistantService::setSecretLoader(SecretLoader loader) { secretLoader_ = std::move(loader); }
 void AIAssistantService::setSettingsValueLoaderForTesting(SettingsValueLoader loader) { configStore_.setValueLoaderForTesting(std::move(loader)); }
-void AIAssistantService::setClockForTesting(Clock clock) { clock_ = std::move(clock); }
-void AIAssistantService::setExecutionLimitsForTesting(int maxToolExecutions, int maxModelRounds)
-{
-    maxToolExecutions_ = maxToolExecutions;
-    maxModelRounds_ = maxModelRounds;
-}
 void AIAssistantService::setConversationStore(
     std::shared_ptr<IAIConversationStore> store)
 {
@@ -531,7 +523,7 @@ void AIAssistantService::setConversationScope(const QString& scope)
                     AIServiceDiagnostic{sessions.code, sessions.message});
             }
 
-            const qint64 now = qMax<qint64>(1, nowMs());
+            const qint64 now = qMax<qint64>(1, QDateTime::currentMSecsSinceEpoch());
             AIConversationSessionRecord initial;
             initial.id =
                 QString::fromLatin1(kDefaultConversationSessionId);
@@ -608,7 +600,6 @@ QStringList AIAssistantService::lastUsedDurableMemoryIds() const
 {
     return lastUsedDurableMemoryIds_;
 }
-qint64 AIAssistantService::nowMs() const { return clock_ ? clock_() : QDateTime::currentMSecsSinceEpoch(); }
 void AIAssistantService::emitStepEvent(AIStepPhase phase, const QString& command,
                                        const QString& requestId)
 {
@@ -616,7 +607,7 @@ void AIAssistantService::emitStepEvent(AIStepPhase phase, const QString& command
     if (id.isEmpty())
         return;
     emit stepEventReady(AIStepEvent{phase, id, command, modelRounds_,
-                                    static_cast<int>(activeTools_.size()), maxToolExecutions_,
+                                    static_cast<int>(activeTools_.size()), kMaximumToolExecutions,
                                     toolExecutions_});
 }
 IPCServer::IPCDispatchContext AIAssistantService::makeAIDispatchContext(
@@ -638,7 +629,7 @@ void AIAssistantService::resetTurnRuntime(TurnState nextState)
     pendingMemoryMutation_.reset();
     toolExecutions_ = modelRounds_ = aggregateResultBytes_ = 0;
     turnDeadlineMs_ = nextState == TurnState::AwaitingModel
-        ? nowMs() + kWholeTurnTimeoutMs
+        ? QDateTime::currentMSecsSinceEpoch() + kWholeTurnTimeoutMs
         : 0;
     confirmationWaitStartedMs_ = 0;
     legacyOneShot_ = false;
@@ -746,7 +737,7 @@ void AIAssistantService::submitModelRound()
 {
     if (turnState_ == TurnState::Idle || !provider_)
         return;
-    if (nowMs() >= turnDeadlineMs_ || modelRounds_ >= maxModelRounds_)
+    if (QDateTime::currentMSecsSinceEpoch() >= turnDeadlineMs_ || modelRounds_ >= kMaximumModelRounds)
     {
         requestForcedSummary();
         return;
@@ -785,7 +776,7 @@ void AIAssistantService::submitModelRound()
     request.maxTokens = activeMaxTokens_;
     request.timeoutMs = qMin(
         activeTimeoutMs_,
-        static_cast<int>(qMax<qint64>(1, turnDeadlineMs_ - nowMs())));
+        static_cast<int>(qMax<qint64>(1, turnDeadlineMs_ - QDateTime::currentMSecsSinceEpoch())));
 
     try
     {
@@ -911,7 +902,7 @@ void AIAssistantService::createConversationSession()
     session.id = QUuid::createUuid()
         .toString(QUuid::WithoutBraces).toLower();
     session.title = QStringLiteral("New Conversation");
-    session.createdAtMs = qMax<qint64>(1, nowMs());
+    session.createdAtMs = qMax<qint64>(1, QDateTime::currentMSecsSinceEpoch());
     session.updatedAtMs = session.createdAtMs;
 
     AIConversationSessionCatalog next;
@@ -1147,7 +1138,7 @@ void AIAssistantService::processToolQueue()
 {
     while (turnState_ == TurnState::RunningTools && !toolQueue_.isEmpty())
     {
-        if (nowMs() >= turnDeadlineMs_ || toolExecutions_ >= maxToolExecutions_)
+        if (QDateTime::currentMSecsSinceEpoch() >= turnDeadlineMs_ || toolExecutions_ >= kMaximumToolExecutions)
         {
             requestForcedSummary();
             return;
@@ -1175,14 +1166,14 @@ void AIAssistantService::processToolQueue()
             {
                 const IPCServer::IPCDispatchContext context = makeAIDispatchContext(
                     activeRequestId_, activePermissionProfile_);
-                confirmationWaitStartedMs_ = nowMs();
+                confirmationWaitStartedMs_ = QDateTime::currentMSecsSinceEpoch();
                 pendingConfirmation_ = {
                     call,
                     envelope,
                     activePermissionProfile_,
                     ipc_ ? ipc_->aiBindingFor(call.name, call.arguments, context)
                          : QByteArray{},
-                    nowMs() + kConfirmationTimeoutMs};
+                    QDateTime::currentMSecsSinceEpoch() + kConfirmationTimeoutMs};
                 turnState_ = TurnState::AwaitingConfirmation;
                 emitStepEvent(AIStepPhase::ConfirmationWaiting, call.name);
                 emit confirmationRequired(activeRequestId_, envelope);
@@ -1726,7 +1717,7 @@ void AIAssistantService::resolveConfirmation(const QString& requestId, bool appr
 
     const PendingConfirmation pending = pendingConfirmation_;
     pendingConfirmation_ = {};
-    const qint64 now = nowMs();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (confirmationWaitStartedMs_ > 0)
     {
         turnDeadlineMs_ += qMax<qint64>(0, now - confirmationWaitStartedMs_);
@@ -2036,7 +2027,7 @@ void AIAssistantService::updateActiveConversationMetadata(
             }
 
             found->updatedAtMs =
-                qMax(found->updatedAtMs, nowMs());
+                qMax(found->updatedAtMs, QDateTime::currentMSecsSinceEpoch());
             if (found->title
                 == QLatin1String("New Conversation"))
             {

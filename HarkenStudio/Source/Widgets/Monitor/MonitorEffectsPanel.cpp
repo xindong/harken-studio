@@ -132,13 +132,6 @@ MonitorCursorReject MonitorEffectsPanel::lockCurrentRow()
     return lockRow(table_->currentIndex().row());
 }
 
-MonitorCursorReject MonitorEffectsPanel::lockExecuteFrameForTest(std::optional<qint64> executeFrame)
-{
-    if (!executeFrame.has_value())
-        return MonitorCursorReject::HistoryUnavailable;
-    return cursorModel().lockTo(*executeFrame);
-}
-
 void MonitorEffectsPanel::rebuildVisibleRows()
 {
     const auto projection = Monitor::projectEffectRows(snapshot_, cursorModel().snapshot().executeFrame);

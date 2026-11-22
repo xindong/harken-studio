@@ -164,14 +164,6 @@ MonitorCursorReject MonitorVoicesPanel::lockCurrentRow()
     return lockRow(current.row());
 }
 
-MonitorCursorReject MonitorVoicesPanel::lockExecuteFrameForTest(
-    std::optional<qint64> executeFrame)
-{
-    if (!executeFrame.has_value())
-        return MonitorCursorReject::HistoryUnavailable;
-    return cursorModel().lockTo(*executeFrame);
-}
-
 int MonitorVoicesPanel::visibleRowCount() const
 {
     return model_ ? model_->rowCount() : 0;

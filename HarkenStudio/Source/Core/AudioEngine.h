@@ -334,9 +334,9 @@ public:
                       const QString& errorType, const QString& message);
     QVector<ExecError> recentExecErrors(int maxCount, int domainFilter ) const;
     void clearExecErrors(int domainFilter );
-    void consumeRuntimeNotificationsForTest();
+
     void serviceRuntime();
-    void emitLogMessageForTest(int level, const QString& message);
+
     const std::vector<HarkenEditor::Bridge::PlaybackPathObservation>& playbackPaths() const {
         return playbackPaths_;
     }

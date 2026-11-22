@@ -799,18 +799,6 @@ void pollEngineNotifications(std::vector<EngineNotification>& out)
         out.push_back(std::move(item));
 }
 
-void injectRuntimeNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp)
-{
-    Detail::runtimeInjectNotificationForTest(type, voiceHandle, blockTimestamp);
-}
-
-void invalidateRuntimeNotificationsForTest()
-{
-    Detail::runtimeInvalidateNotificationsForTest();
-}
-
 bool findModulatorPreset(const QString& name, ModulatorPresetDesc& out)
 {
     Q_UNUSED(name);

@@ -9,7 +9,7 @@
 #include "NamedLayoutStore.h"
 #include "WorkspaceDockFactory.h"
 #include "../Widgets/LogPanel/LogPanel.h"
-#include "../Widgets/Monitor/MonitorPanelKeys.h"
+#include "WorkspaceWindowTypes.h"
 
 #include <DockManager.h>
 #include <DockWidget.h>
@@ -389,10 +389,10 @@ ads::CDockWidget* LayoutController::dockForWindow(const QString& typeId) const
 
 void LayoutController::hideMonitorDocks()
 {
-    const QStringList typeIds = monitorPanelTypeIds();
-    for (const QString& typeId : typeIds) {
-        if (typeId == QLatin1String("Monitor")) continue;
-        if (ads::CDockWidget* dock = dockForWindow(typeId))
+    for (const auto& descriptor : defaultWorkspaceWindowDescriptors()) {
+        if (!descriptor.isMonitorPanel() || descriptor.typeId == QLatin1String("Monitor"))
+            continue;
+        if (ads::CDockWidget* dock = dockForWindow(descriptor.typeId))
             dock->toggleView(false);
     }
 }
