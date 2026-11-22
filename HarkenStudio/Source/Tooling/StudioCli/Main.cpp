@@ -1,6 +1,5 @@
 #include "StudioSession.h"
 #include "SavedProjectBuild.h"
-#include "ResourceWorker.h"
 #include "Shell.h"
 #include "CommandHelp.h"
 #include "Core/IPC/StudioInstanceTransport.h"
@@ -18,7 +17,6 @@
 
 #include <csignal>
 #include <cstdio>
-#include <cstring>
 
 #ifdef Q_OS_WIN
 #include <fcntl.h>
@@ -217,8 +215,6 @@ bool loadJson(const QCommandLineParser& parser, QJsonDocument* document, QString
 
 int main(int argc, char* argv[])
 {
-    if (argc == 2 && std::strcmp(argv[1], "--resource-worker") == 0)
-        return Harkenizer::runResourceWorker();
 #ifdef Q_OS_WIN
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);

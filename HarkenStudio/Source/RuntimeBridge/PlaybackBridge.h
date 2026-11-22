@@ -259,7 +259,6 @@ public:
                               float ux, float uy, float uz);
 
     // -- packs / prepare --
-    bool loadPack(const QString& path, EngineResult* outResult = nullptr);
     bool loadCanonicalPack(const QString& path, const QByteArray& bytes,
                            uint64_t packStableId, uint32_t packKind,
                            EngineResult* outResult = nullptr);

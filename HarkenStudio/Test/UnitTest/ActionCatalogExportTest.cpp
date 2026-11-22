@@ -31,10 +31,6 @@
 #include <utility>
 #include <vector>
 
-#ifndef HARKEN_STUDIO_CLI_PATH
-#error "HARKEN_STUDIO_CLI_PATH must point at the Studio CLI executable"
-#endif
-
 using namespace VNX;
 
 namespace {
@@ -116,7 +112,6 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         auto& manager = ProjectManager::instance();
         if (manager.isProjectOpen())
             manager.closeProject();

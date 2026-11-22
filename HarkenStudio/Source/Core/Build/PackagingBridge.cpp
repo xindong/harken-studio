@@ -1,7 +1,7 @@
 #include "Core/Build/PackagingBridge.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
 #include "Utils/AudioFileReader.h"
-#include "Tooling/Harkenizer/ResourceCompilerClient.h"
+#include "Tooling/Harkenizer/BuildIdentity.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
@@ -671,75 +671,6 @@ AudioFileInfoData audioFileInfo(const QString& path)
     ma_decoder_uninit(&decoder);
     return out;
 }
-
-bool encodePackVorbis(const std::vector<float>&, int, int,
-                      const PackVorbisEncodeSettings&,
-                      std::vector<uint8_t>& outData,
-                      PackCodecMetadata& outMetadata,
-                      std::vector<uint8_t>* outSharedCodebook)
-{
-    outData.clear();
-    outMetadata = {};
-    if (outSharedCodebook)
-        outSharedCodebook->clear();
-    return false;
-}
-
-bool encodePackOpus(const std::vector<float>&, int, int,
-                    std::vector<uint8_t>& outData,
-                    PackCodecMetadata& outMetadata)
-{
-    outData.clear();
-    outMetadata = {};
-    return false;
-}
-
-void applyLoopRegion(PackCodecMetadata& metadata,
-                     uint64_t loopStartFrame,
-                     uint64_t loopEndFrame)
-{
-    Q_UNUSED(metadata);
-    Q_UNUSED(loopStartFrame);
-    Q_UNUSED(loopEndFrame);
-}
-
-QString packCodecName(uint16_t codecId)
-{
-    return codecId == 0 ? QStringLiteral("PCMFloat") : QStringLiteral("Unavailable");
-}
-
-QString packCodecContainerName(uint16_t containerId)
-{
-    return containerId == 0 ? QStringLiteral("PackF32Planar") : QStringLiteral("Unavailable");
-}
-
-PackCodecFlagsView decodePackCodecFlags(uint32_t flags)
-{
-    PackCodecFlagsView view;
-    view.fullDecodeFallback = flags == 0;
-    return view;
-}
-
-bool parsePackCodecMetadataSection(const QByteArray&, std::vector<PackCodecEntryInfo>& out,
-                                   QString* error)
-{
-    out.clear();
-    if (error)
-        *error = QStringLiteral("Legacy CODC metadata is unavailable for .pack artifacts");
-    return false;
-}
-
-bool parsePackCodecCodebookSection(const QByteArray&, std::vector<PackCodecCodebookInfo>& out,
-                                   QString* error)
-{
-    out.clear();
-    if (error)
-        *error = QStringLiteral("Legacy CDBK metadata is unavailable for .pack artifacts");
-    return false;
-}
-
-bool isPackCodecMetadataSection(uint32_t) { return false; }
-bool isPackCodecCodebookSection(uint32_t) { return false; }
 
 struct PackBuildSession::Impl
 {
@@ -1461,16 +1392,6 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
         entries->push_back(std::move(entry));
     }
     return impl_->appendEffectPresetEntries(entries);
-}
-
-bool PackBuildSession::buildToFile(const QString& outputPath)
-{
-    std::vector<CanonicalPackEntry> entries;
-    if (!buildEntries(&entries)) return false;
-    const auto kind = impl_->initPack ? HK_PACK_KIND_RESIDENT
-                                     : HK_PACK_KIND_CONTENT;
-    return writeCanonicalPackFile(outputPath, static_cast<CanonicalPackKind>(kind),
-                                  entries, &impl_->lastError);
 }
 
 QString PackBuildSession::inputFingerprint()

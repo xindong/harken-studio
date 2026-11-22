@@ -699,27 +699,6 @@ void registerSystemActions(ActionManager& mgr,
         mgr.registerAction(def);
     }
 
-    {
-        ActionDef def;
-        def.id = "set_preferred_format";
-        def.displayName = "Set Preferred Format";
-        def.category = "system";
-        def.paramSchema = QJsonObject{{"sample_rate", "int"}, {"buffer_size", "int"}};
-        def.undoable = false;
-        def.handler = [](const QJsonObject& args) -> ActionResult {
-            int sampleRate = args.value("sample_rate").toInt(0);
-            int bufferSize = args.value("buffer_size").toInt(0);
-            if (sampleRate <= 0 && bufferSize <= 0)
-                return {false, {}, "INVALID_ARGS", "Provide sample_rate or buffer_size"};
-            return {true, QJsonObject{
-                {"sample_rate", sampleRate > 0 ? sampleRate : 48000},
-                {"buffer_size", bufferSize > 0 ? bufferSize : 256},
-                {"note", "Format preference recorded. Restart output to apply."}
-            }};
-        };
-        mgr.registerAction(def);
-    }
-
 
     {
         ActionDef def;

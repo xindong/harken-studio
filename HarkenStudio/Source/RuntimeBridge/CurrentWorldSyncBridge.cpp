@@ -20,8 +20,6 @@ struct PreparedProjectGenerationHold {
     Detail::RuntimePreparedProject prepared;
     CurrentWorldSyncToken token;
     VnPreviewProjectDescV1 view{};
-    VnPreviewProjectDescV2 volumeView{};
-    VnPreviewProjectDescV3 sendView{};
     VnPreviewProjectDescV4 effectView{};
     std::vector<std::uint8_t> body;
     std::vector<VnPreviewBusV1> buses;
@@ -394,22 +392,18 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.view.ownerId = ownerId;
     hold.view.ownerBaseRevision = ownerBaseRevision;
     hold.view.ownerRevision = token.authoringRevision;
-    hold.volumeView.base = hold.view;
-    hold.volumeView.base.structSize = sizeof(hold.volumeView);
-    hold.volumeView.busVolumes = hold.volumes.data();
-    hold.volumeView.busVolumeCount = static_cast<std::uint32_t>(hold.volumes.size());
+    hold.effectView.base.base.base = hold.view;
+    hold.effectView.base.base.busVolumes = hold.volumes.data();
+    hold.effectView.base.base.busVolumeCount = static_cast<std::uint32_t>(hold.volumes.size());
     if (artifact.profile) {
-        hold.volumeView.profileVintage = artifact.profile->vintage;
-        hold.volumeView.renderSampleRateHz = artifact.profile->sampleRate;
-        hold.volumeView.mixLayout = artifact.profile->mixLayout;
-        hold.volumeView.deviceLayout = artifact.profile->deviceLayout;
-        hold.volumeView.runtimeCapabilityMask = artifact.profile->capabilityMask;
+        hold.effectView.base.base.profileVintage = artifact.profile->vintage;
+        hold.effectView.base.base.renderSampleRateHz = artifact.profile->sampleRate;
+        hold.effectView.base.base.mixLayout = artifact.profile->mixLayout;
+        hold.effectView.base.base.deviceLayout = artifact.profile->deviceLayout;
+        hold.effectView.base.base.runtimeCapabilityMask = artifact.profile->capabilityMask;
     }
-    hold.sendView.base = hold.volumeView;
-    hold.sendView.base.base.structSize = sizeof(hold.sendView);
-    hold.sendView.busSendLevelsDb = hold.sendLevelsDb.data();
-    hold.sendView.busSendLevelCount = static_cast<std::uint32_t>(hold.sendLevelsDb.size());
-    hold.effectView.base = hold.sendView;
+    hold.effectView.base.busSendLevelsDb = hold.sendLevelsDb.data();
+    hold.effectView.base.busSendLevelCount = static_cast<std::uint32_t>(hold.sendLevelsDb.size());
     hold.effectView.base.base.base.structSize = sizeof(hold.effectView);
     hold.effectView.busEffects = hold.effects.data();
     hold.effectView.busEffectCount = static_cast<std::uint32_t>(hold.effects.size());

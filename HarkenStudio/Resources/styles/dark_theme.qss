@@ -2103,8 +2103,7 @@ QWidget#MonitorLineagePanel,
 QWidget#MonitorTapSelectPanel,
 QWidget#MonitorWaveformPanel,
 QWidget#MonitorScopePanel,
-QWidget#MonitorSpectrumPanel,
-QWidget#MonitorPlaceholderPage {
+QWidget#MonitorSpectrumPanel {
     background-color: @bgPrimary@;
     color: @textPrimary@;
 }
@@ -2117,8 +2116,7 @@ QLabel#MonitorLineageGap,
 QLabel#MonitorTapSelectGap,
 QLabel#MonitorWaveformGap,
 QLabel#MonitorScopeGap,
-QLabel#MonitorSpectrumGap,
-QLabel#MonitorPlaceholderMessage {
+QLabel#MonitorSpectrumGap {
     color: @textSecondary@;
 }
 QLabel#MonitorPerformanceCursor {

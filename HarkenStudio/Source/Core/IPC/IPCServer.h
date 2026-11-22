@@ -203,22 +203,7 @@ private:
     QJsonObject handleSaveModulatorUserPreset(const QJsonObject& args);
     QJsonObject handleDeleteModulatorUserPreset(const QJsonObject& args);
 
-    QJsonObject handleGetStreamStatus(const QJsonObject& args);
-    QJsonObject handleGetStreamPosition(const QJsonObject& args);
-
-    QJsonObject handleListCodecs(const QJsonObject& args);
-    QJsonObject handleGetCodecInfo(const QJsonObject& args);
-    QJsonObject handleGetStreamDeviceInfo(const QJsonObject& args);
-    QJsonObject handleGetStreamDeviceCount(const QJsonObject& args);
-
-    QJsonObject handleGetPackMetrics(const QJsonObject& args);
-    QJsonObject handleGetPackLoadHistory(const QJsonObject& args);
-    QJsonObject handleGetActionRouting(const QJsonObject& args);
     QJsonObject handleSetPackRoutingPriority(const QJsonObject& args);
-    QJsonObject handleResolveActionPacks(const QJsonObject& args);
-    QJsonObject handleValidateMultipackCollisions(const QJsonObject& args);
-    QJsonObject handleGetCodecCapabilities(const QJsonObject& args);
-
     QJsonObject handleSetListener(const QJsonObject& args);
     QJsonObject handleGet3DScene(const QJsonObject& args);
 
@@ -267,11 +252,8 @@ private:
     QJsonObject handleGetObjectAudioStatus(const QJsonObject& args);
     QJsonObject handleSetSpatialFallbackPolicy(const QJsonObject& args);
 
-    QJsonObject handleGetMemoryBudgetStatus(const QJsonObject& args);
     QJsonObject handleSetMemoryBudgetLimit(const QJsonObject& args);
     QJsonObject handleSetListenerOutputBus(const QJsonObject& args);
-    QJsonObject handleGetListenerOutputBus(const QJsonObject& args);
-
     QJsonObject handleSwitchView(const QJsonObject& args);
     QJsonObject handleGetCurrentLayout(const QJsonObject& args);
     QJsonObject handleGetLayoutState(const QJsonObject& args);

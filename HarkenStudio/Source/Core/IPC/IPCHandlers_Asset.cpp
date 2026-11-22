@@ -74,69 +74,6 @@ bool readPod(const QByteArray& bytes, qsizetype offset, T& out)
     return true;
 }
 
-QJsonObject packCodecFlagsJson(uint32_t flags)
-{
-    const Bridge::PackCodecFlagsView v = Bridge::decodePackCodecFlags(flags);
-    return QJsonObject{
-        {QStringLiteral("fullDecodeFallback"), v.fullDecodeFallback},
-        {QStringLiteral("compressedResident"), v.compressedResident},
-        {QStringLiteral("hasPacketTable"), v.hasPacketTable},
-        {QStringLiteral("hasSeekTable"), v.hasSeekTable},
-        {QStringLiteral("hasSharedCodebook"), v.hasSharedCodebook},
-        {QStringLiteral("loopEnabled"), v.loopEnabled},
-        {QStringLiteral("vorbisVbrQuality"), v.vorbisVbrQuality},
-        {QStringLiteral("vorbisManagedBitrate"), v.vorbisManagedBitrate}
-    };
-}
-
-QJsonArray inspectPackCodecMetadataSection(const QByteArray& payload, QString* error)
-{
-    QJsonArray entries;
-    std::vector<Bridge::PackCodecEntryInfo> infos;
-    Bridge::parsePackCodecMetadataSection(payload, infos, error);
-
-    for (const auto& entry : infos) {
-        entries.append(QJsonObject{
-            {QStringLiteral("sourceID"), static_cast<qint64>(entry.sourceId)},
-            {QStringLiteral("codecID"), static_cast<int>(entry.codecId)},
-            {QStringLiteral("codecName"), Bridge::packCodecName(entry.codecId)},
-            {QStringLiteral("containerID"), static_cast<int>(entry.containerId)},
-            {QStringLiteral("containerName"), Bridge::packCodecContainerName(entry.containerId)},
-            {QStringLiteral("channels"), static_cast<int>(entry.channels)},
-            {QStringLiteral("sampleRate"), static_cast<int>(entry.sampleRate)},
-            {QStringLiteral("channelLayoutMask"), QStringLiteral("0x%1").arg(entry.channelLayoutMask, 8, 16, QChar('0'))},
-            {QStringLiteral("frameCount"), static_cast<double>(entry.frameCount)},
-            {QStringLiteral("loopStartFrame"), static_cast<double>(entry.loopStartFrame)},
-            {QStringLiteral("loopEndFrame"), static_cast<double>(entry.loopEndFrame)},
-            {QStringLiteral("packetTableOffset"), static_cast<int>(entry.packetTableOffset)},
-            {QStringLiteral("packetTableCount"), static_cast<int>(entry.packetTableCount)},
-            {QStringLiteral("seekTableOffset"), static_cast<int>(entry.seekTableOffset)},
-            {QStringLiteral("seekTableCount"), static_cast<int>(entry.seekTableCount)},
-            {QStringLiteral("codebookID"), static_cast<qint64>(entry.codebookId)},
-            {QStringLiteral("codebookHash"), QStringLiteral("0x%1").arg(entry.codebookHash, 8, 16, QChar('0'))},
-            {QStringLiteral("decodeAllocBytes"), static_cast<int>(entry.decodeAllocBytes)},
-            {QStringLiteral("flags"), packCodecFlagsJson(entry.flags)}
-        });
-    }
-    return entries;
-}
-
-QJsonArray inspectPackCodecCodebookSection(const QByteArray& payload, QString* error)
-{
-    QJsonArray entries;
-    std::vector<Bridge::PackCodecCodebookInfo> infos;
-    Bridge::parsePackCodecCodebookSection(payload, infos, error);
-
-    for (const auto& entry : infos) {
-        entries.append(QJsonObject{
-            {QStringLiteral("codebookID"), static_cast<qint64>(entry.codebookId)},
-            {QStringLiteral("codebookHash"), QStringLiteral("0x%1").arg(entry.codebookHash, 8, 16, QChar('0'))},
-            {QStringLiteral("offset"), static_cast<int>(entry.offset)},
-            {QStringLiteral("size"), static_cast<int>(entry.size)}
-        });
-    }
-    return entries;
-}
 
 }
 

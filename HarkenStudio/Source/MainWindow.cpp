@@ -109,7 +109,6 @@
 #include "Widgets/Meter/MeterPanel.h"
 #include "Widgets/Monitor/MonitorRecordingPanel.h"
 #include "Widgets/Monitor/MonitorSessionComparePanel.h"
-#include "Widgets/Monitor/MonitorPlaceholderPage.h"
 #include "Widgets/Monitor/MonitorScopePanel.h"
 #include "Widgets/Monitor/MonitorScopeSource.h"
 #include "Widgets/Monitor/MonitorTapSelectPanel.h"
@@ -1915,34 +1914,6 @@ void MainWindow::registerWorkspaceSingletonFactories()
                 panel->applyState(Monitor::projectCompareUi(input));
             }
         }
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorStreaming"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Streaming"), QStringLiteral("G11"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorMemory"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Memory"), QStringLiteral("P6-5"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorGameModulate"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Game Modulate"), QStringLiteral("G6"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorEmitters"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Emitters"), QStringLiteral("G5"));
-        },
-        {},
-        {}
     });
 }
 

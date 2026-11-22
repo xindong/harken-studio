@@ -138,10 +138,8 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         for relative, target in (
             ("Harkenizer/ResourceCompiler/ResourceCompiler.cpp", "harkenizer_resource_compiler"),
             ("Harkenizer/Core/ProjectPackBuildService.cpp", "harkenizer_core"),
-            ("Harkenizer/ResourceCompilerClient.cpp", "harkenizer_compiler_client"),
             ("StudioCli/Main.cpp", "harken_studio_cli"),
             ("StudioCli/SavedProjectBuild.cpp", "harken_studio_cli"),
-            ("StudioCli/ResourceWorker.cpp", "harken_studio_cli"),
         ):
             with self.subTest(source=relative):
                 source = "HarkenStudio/Source/Tooling/" + relative

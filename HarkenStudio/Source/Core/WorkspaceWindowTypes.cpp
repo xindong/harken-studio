@@ -310,46 +310,6 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             MaterializationPolicy::OnDemand,
             ClosePolicy::Hide,
             AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorStreaming"),
-            QStringLiteral("Streaming"),
-            QStringLiteral("MonitorStreamingDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorMemory"),
-            QStringLiteral("Memory"),
-            QStringLiteral("MonitorMemoryDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorGameModulate"),
-            QStringLiteral("Game Modulate"),
-            QStringLiteral("MonitorGameModulateDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorEmitters"),
-            QStringLiteral("Emitters"),
-            QStringLiteral("MonitorEmittersDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
         }
     };
 }
@@ -381,10 +341,6 @@ QStringList ipcKnownPanelObjectNames()
         QStringLiteral("MonitorSpectrumDock"),
         QStringLiteral("MonitorRecordingDock"),
         QStringLiteral("MonitorSessionCompareDock"),
-        QStringLiteral("MonitorStreamingDock"),
-        QStringLiteral("MonitorMemoryDock"),
-        QStringLiteral("MonitorGameModulateDock"),
-        QStringLiteral("MonitorEmittersDock"),
         QStringLiteral("MonitorCapturePlanBar"),
     };
 }

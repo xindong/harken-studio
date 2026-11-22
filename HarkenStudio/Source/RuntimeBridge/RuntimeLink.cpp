@@ -179,7 +179,7 @@ bool activatePackSet(std::unordered_map<QString, LoadedPack> desired, EngineResu
     std::vector<LoadedPack*> packs;
     for (auto& [path, pack] : desired) {
         Q_UNUSED(path);
-        if (pack.stableId != 0) packs.push_back(&pack);
+        packs.push_back(&pack);
     }
     std::sort(packs.begin(), packs.end(), [](const auto* a, const auto* b) {
         if (a->kind != b->kind) return a->kind == VN_CANONICAL_PACK_SET_MEMBER_INIT;
@@ -188,34 +188,39 @@ bool activatePackSet(std::unordered_map<QString, LoadedPack> desired, EngineResu
     if (outResult) *outResult = VN_CONTENT_NOT_LOADED;
     if (packs.empty() || packs.front()->kind != VN_CANONICAL_PACK_SET_MEMBER_INIT)
         return false;
-    std::vector<VnCanonicalPackSetMemberV1> members(packs.size());
+    std::vector<VnCanonicalPackSetMemberV2> members(packs.size());
     std::vector<VnCanonicalPackSetMemberResultV1> results(packs.size());
     for (size_t i = 0; i < packs.size(); ++i) {
         auto& member = members[i];
         member.structSize = sizeof(member);
-        member.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
-        member.packStableId = packs[i]->stableId;
-        member.expectedHandle = packs[i]->handle;
-        member.packKind = packs[i]->kind;
-        member.providerUserData = packs[i];
-        member.provide = provideLoadedPack;
-        member.release = [](void*, uint64_t, VnPackByteSpan) {};
+        member.operation = packs[i]->handle ? VN_PACK_MEMBER_KEEP : VN_PACK_MEMBER_CONTENT;
+        auto& source = member.source;
+        source.structSize = sizeof(source);
+        source.packStableId = packs[i]->stableId;
+        source.expectedHandle = packs[i]->handle;
+        source.packKind = packs[i]->kind;
+        if (member.operation == VN_PACK_MEMBER_CONTENT) {
+            source.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
+            source.providerUserData = packs[i];
+            source.provide = provideLoadedPack;
+            source.release = [](void*, uint64_t, VnPackByteSpan) {};
+        }
         results[i].structSize = sizeof(results[i]);
     }
-    VnCanonicalPackSetActivationDescV1 desc{};
+    VnCanonicalPackSetActivationDescV2 desc{};
     desc.structSize = sizeof(desc);
     desc.expectedCurrentInitHandle = g_runtime.initPackHandle;
     desc.baseSetRevision = g_runtime.packSetRevision;
     desc.setRevision = g_runtime.packSetRevision + 1;
     desc.memberCount = static_cast<uint32_t>(members.size());
-    desc.memberStructSize = sizeof(VnCanonicalPackSetMemberV1);
+    desc.memberStructSize = sizeof(VnCanonicalPackSetMemberV2);
     desc.members = members.data();
     desc.outputMemberCapacity = static_cast<uint32_t>(results.size());
     desc.outputMemberStructSize = sizeof(VnCanonicalPackSetMemberResultV1);
     desc.outputMembers = results.data();
     VnCanonicalPackSetActivationReportV1 report{};
     report.structSize = sizeof(report);
-    const auto result = Vn_ActivateCanonicalPackSetV1(&desc, &report);
+    const auto result = Vn_ActivateCanonicalPackSetV2(&desc, &report);
     if (outResult) *outResult = result;
     if (result != VN_OK) {
         qWarning() << "[PlaybackRoute] pack set activation failed: result=" << result;
@@ -1520,39 +1525,6 @@ bool runtimeStopRawPcm(uint64_t playbackHandle, uint32_t fadeMs)
     return false;
 }
 
-bool runtimeLoadPack(const QString& path, EngineResult* outResult)
-{
-    if (outResult) *outResult = VN_INVALID_ARG;
-    if (path.isEmpty() || !QFileInfo::exists(path))
-        return false;
-    if (outResult) *outResult = VN_DEVICE_ERROR;
-    if (!ensureRuntimeStarted())
-        return false;
-
-    const QString normalized = QFileInfo(path).absoluteFilePath();
-    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end()) {
-        if (outResult) *outResult = VN_OK;
-        return true;
-    }
-
-    if (outResult) *outResult = VN_INVALID_ARG;
-    const QByteArray utf8 = normalized.toUtf8();
-    VnPackDesc desc{};
-    desc.structSize = sizeof(VnPackDesc);
-    desc.utf8Path = utf8.constData();
-    VnPackHandle handle = 0;
-    const VnResult result = Vn_LoadPack(&desc, &handle);
-    if (outResult) *outResult = result == VN_OK && handle == 0 ? VN_DEVICE_ERROR : result;
-    if (result != VN_OK || handle == 0)
-    {
-        qWarning() << "[PlaybackRoute] runtime pack load failed:"
-                   << normalized << "result=" << static_cast<int>(result);
-        return false;
-    }
-    g_runtime.loadedPacksByPath[normalized] = LoadedPack{handle};
-    return true;
-}
-
 bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
                               uint64_t packStableId, uint32_t packKind,
                               EngineResult* outResult)
@@ -1610,24 +1582,14 @@ bool runtimeUnloadPack(const QString& path, EngineResult* outResult)
             qWarning() << "[PlaybackRoute] pack set unload failed: result=" << result;
             return false;
         }
-        std::erase_if(g_runtime.loadedPacksByPath,
-            [](const auto& entry) { return entry.second.stableId != 0; });
+        g_runtime.loadedPacksByPath.clear();
         g_runtime.initPackHandle = 0;
         g_runtime.packSetRevision = 0;
         return true;
     }
-    if (it->second.stableId != 0) {
-        auto desired = g_runtime.loadedPacksByPath;
-        desired.erase(normalized);
-        return activatePackSet(std::move(desired), outResult);
-    }
-    const VnResult result = Vn_UnloadPack(it->second.handle);
-    if (outResult) *outResult = result == VN_STALE_HANDLE ? VN_OK : result;
-    if (result == VN_OK || result == VN_STALE_HANDLE) {
-        g_runtime.loadedPacksByPath.erase(it);
-        return true;
-    }
-    return false;
+    auto desired = g_runtime.loadedPacksByPath;
+    desired.erase(normalized);
+    return activatePackSet(std::move(desired), outResult);
 }
 
 bool runtimeSetListenerTransform(VnVec3 position, VnVec3 forward, VnVec3 up)
@@ -2186,28 +2148,6 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
         return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
     return static_cast<RuntimeProjectGenerationPrepareStatus>(
         VnPreview_PrepareProject(&view, &out.handle));
-}
-
-RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
-    const VnPreviewProjectDescV2& view, RuntimePreparedProject& out)
-{
-    if (out.Valid())
-        return RuntimeProjectGenerationPrepareStatus::InvalidView;
-    if (!runtimeIsActive())
-        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
-    return static_cast<RuntimeProjectGenerationPrepareStatus>(
-        VnPreview_PrepareProjectV2(&view, &out.handle));
-}
-
-RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
-    const VnPreviewProjectDescV3& view, RuntimePreparedProject& out)
-{
-    if (out.Valid())
-        return RuntimeProjectGenerationPrepareStatus::InvalidView;
-    if (!runtimeIsActive())
-        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
-    return static_cast<RuntimeProjectGenerationPrepareStatus>(
-        VnPreview_PrepareProjectV3(&view, &out.handle));
 }
 
 RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(

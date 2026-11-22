@@ -936,28 +936,17 @@ bool AudioEngine::loadPack(const QString& path, Bridge::EngineResult* result)
         return false;
     }
 
+    if (result) *result = Bridge::kEngineInvalidArg;
     QFile file(QFileInfo(path).absoluteFilePath());
-    if (file.open(QIODevice::ReadOnly)) {
-        const QByteArray bytes = file.readAll();
-        harkenstudiobuild::PackFileHeader header{};
-        if (file.error() == QFileDevice::NoError
-            && bytes.size() >= harkenstudiobuild::kPackBytes<HkPackFileHeader>
-            && harkenstudiobuild::ReadPackFileHeader(
-                reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
-            && header.headerBytes == harkenstudiobuild::kPackBytes<HkPackFileHeader>
-            && (header.packKind == HK_PACK_KIND_INIT
-                || header.packKind == HK_PACK_KIND_CANONICAL_CONTENT)) {
-            harkenstudiobuild::PackCanonicalImage image;
-            if (harkenstudiobuild::ParsePackCanonicalImage(
-                    reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
-                != harkenstudiobuild::kPackOk) {
-                if (result) *result = Bridge::kEngineInvalidArg;
-                return false;
-            }
-            return session_->loadCanonicalPack(path, bytes, image.packStableId, image.packKind, result);
-        }
-    }
-    return session_->loadPack(path, result);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray bytes = file.readAll();
+    harkenstudiobuild::PackCanonicalImage image;
+    if (file.error() != QFileDevice::NoError
+        || harkenstudiobuild::ParsePackCanonicalImage(
+            reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
+            != harkenstudiobuild::kPackOk)
+        return false;
+    return session_->loadCanonicalPack(path, bytes, image.packStableId, image.packKind, result);
 }
 
 bool AudioEngine::unloadPack(const QString& path, Bridge::EngineResult* result)

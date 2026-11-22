@@ -2198,53 +2198,6 @@ void registerProjectActions(ActionManager& mgr,
         mgr.registerAction(def);
     }
 
-    {
-        ActionDef def;
-        def.id = "create_pack";
-        def.displayName = "Create Pack";
-        def.category = "project";
-        def.undoable = false;
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager)
-                return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
-
-            Q_UNUSED(args);
-            return {false, {}, "ACTION_DEPRECATED",
-                    "create_pack is no longer supported; use create_item with the desired ProjectItem type instead"};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "rename_pack";
-        def.displayName = "Rename Pack";
-        def.category = "project";
-        def.undoable = false;
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            Q_UNUSED(projectManager);
-            Q_UNUSED(args);
-            return {false, {}, "ACTION_DEPRECATED",
-                    "rename_pack is no longer supported; rename the underlying ProjectItem instead"};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "delete_pack";
-        def.displayName = "Delete Pack";
-        def.category = "project";
-        def.undoable = false;
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            Q_UNUSED(projectManager);
-            Q_UNUSED(args);
-            return {false, {}, "ACTION_DEPRECATED",
-                    "delete_pack is no longer supported; delete the underlying ProjectItem instead"};
-        };
-        mgr.registerAction(def);
-    }
-
     for (const QString& command : {QStringLiteral("create_folder"),
              QStringLiteral("rename_folder"), QStringLiteral("delete_folder"),
              QStringLiteral("move_folder"), QStringLiteral("get_folder_info"),
@@ -2984,20 +2937,6 @@ void registerProjectActions(ActionManager& mgr,
             projectManager->setPackExportSelectedPlatformsInternal(newValue);
 
             return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "set_target_platforms";
-        def.displayName = "Set Target Platforms";
-        def.category = "project";
-        def.undoable = false;
-        def.paramSchema = QJsonObject{{"platforms", "array"}};
-        def.handler = [](const QJsonObject&) -> ActionResult {
-            return {false, {}, "UNSUPPORTED_PLATFORM_FORMAT",
-                    "Base platform lists are no longer supported"};
         };
         mgr.registerAction(def);
     }

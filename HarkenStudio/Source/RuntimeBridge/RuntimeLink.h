@@ -72,7 +72,6 @@ void runtimeRegisterActionName(const QString& name, harkenstudio::ObjectId actio
 void runtimeUnregisterActionName(harkenstudio::ObjectId actionId);
 void runtimeClearActionNames();
 
-bool runtimeLoadPack(const QString& path, EngineResult* outResult = nullptr);
 bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
                               uint64_t packStableId, uint32_t packKind,
                               EngineResult* outResult = nullptr);

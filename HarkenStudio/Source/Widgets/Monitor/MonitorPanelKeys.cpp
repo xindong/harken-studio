@@ -19,10 +19,6 @@ QStringList monitorPanelTypeIds()
         QStringLiteral("MonitorSpectrum"),
         QStringLiteral("MonitorRecording"),
         QStringLiteral("MonitorSessionCompare"),
-        QStringLiteral("MonitorStreaming"),
-        QStringLiteral("MonitorMemory"),
-        QStringLiteral("MonitorGameModulate"),
-        QStringLiteral("MonitorEmitters"),
     };
 }
 
@@ -43,10 +39,6 @@ QStringList monitorPanelTitles()
         QStringLiteral("Spectrum"),
         QStringLiteral("Recording"),
         QStringLiteral("Session Compare"),
-        QStringLiteral("Streaming"),
-        QStringLiteral("Memory"),
-        QStringLiteral("Game Modulate"),
-        QStringLiteral("Emitters"),
     };
 }
 
@@ -67,10 +59,6 @@ QStringList monitorPanelDockObjectNames()
         QStringLiteral("MonitorSpectrumDock"),
         QStringLiteral("MonitorRecordingDock"),
         QStringLiteral("MonitorSessionCompareDock"),
-        QStringLiteral("MonitorStreamingDock"),
-        QStringLiteral("MonitorMemoryDock"),
-        QStringLiteral("MonitorGameModulateDock"),
-        QStringLiteral("MonitorEmittersDock"),
     };
 }
 

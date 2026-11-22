@@ -64,7 +64,7 @@ namespace Bridge = HarkenEditor::Bridge;
 static bool buildPackResources(Bridge::PackBuildSession& builder, const QString& outputPath,
                                const ProjectPackExporter::ExportOptions& options,
                                ProjectPackExporter::ExportResult& result,
-                               std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr)
+                               std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries)
 {
     if (options.snapshot) builder.setMediaCache(options.snapshot->mediaCache);
     if (options.resourceReuse) {
@@ -76,17 +76,14 @@ static bool buildPackResources(Bridge::PackBuildSession& builder, const QString&
         result.reusedResources = !options.forceReexport && !options.resourceReuse->path.isEmpty()
             && result.resourceFingerprint == options.resourceReuse->fingerprint;
     }
-    if (!result.reusedResources) {
-        const bool built = resourceEntries ? builder.buildEntries(resourceEntries) : builder.buildToFile(outputPath);
-        if (!built) {
-            result.error = builder.lastError();
-            return false;
-        }
+    if (!result.reusedResources && !builder.buildEntries(&resourceEntries)) {
+        result.error = builder.lastError();
+        return false;
     }
     result.warnings += builder.warnings();
     result.success = true;
     result.outputPath = result.reusedResources ? options.resourceReuse->path : outputPath;
-    result.fileSize = resourceEntries && !result.reusedResources ? 0 : QFileInfo(result.outputPath).size();
+    result.fileSize = result.reusedResources ? QFileInfo(result.outputPath).size() : 0;
     return true;
 }
 
@@ -698,7 +695,7 @@ ProjectPackExporter::ExportResult
 ProjectPackExporter::ExportInitPack(const ProjectData& project,
                                      const QString& outputPath,
                                      const ExportOptions& options,
-                                     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
+                                     std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries)
 {
     if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
@@ -757,9 +754,9 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
                                       const QString& actionName,
                                       const QString& outputPath,
                                       const ExportOptions& options,
+                                      std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries,
                                       const std::set<uint32_t>* sharedMediaIds,
-                                      const std::set<uint32_t>* sharedObjectIds,
-                                      std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
+                                      const std::set<uint32_t>* sharedObjectIds)
 {
     if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
         ExportResult failure;
@@ -776,7 +773,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
             prepared.buildContext = createBuildContext(prepared.snapshot->project);
             prepared.buildPlan.reset();
         }
-        return ExportActionPack(prepared.snapshot->project, actionName, outputPath, prepared, sharedMediaIds, sharedObjectIds, resourceEntries);
+        return ExportActionPack(prepared.snapshot->project, actionName, outputPath, prepared, resourceEntries, sharedMediaIds, sharedObjectIds);
     }
 
     const auto platformActivity = ProjectPlatformActivity::acquire();
@@ -825,7 +822,7 @@ ProjectPackExporter::ExportActionPack(const ProjectData& project,
     }
 
     return exportSingleActionPack(project, *matches.front(), outputPath, options,
-                                  sharedMediaIds, sharedObjectIds, resourceEntries);
+                                  resourceEntries, sharedMediaIds, sharedObjectIds);
 }
 
 
@@ -835,9 +832,9 @@ ProjectPackExporter::exportSingleActionPack(
     const ProjectItem& action,
     const QString& outputPath,
     const ExportOptions& options,
+    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries,
     const std::set<uint32_t>* sharedMediaIds,
-    const std::set<uint32_t>* sharedObjectIds,
-    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries)
+    const std::set<uint32_t>* sharedObjectIds)
 {
     emit progressChanged(10, QStringLiteral("Collecting Action dependencies..."));
     ExportResult result;
@@ -947,106 +944,6 @@ ProjectPackExporter::exportSingleActionPack(
     }
 
     emit progressChanged(100, QStringLiteral("Action pack exported."));
-    return result;
-}
-
-
-ProjectPackExporter::ExportResult
-ProjectPackExporter::ExportSharedPack(const ProjectData& project,
-                                      const QString& outputPath,
-                                      const ExportOptions& options,
-                                      const std::set<uint32_t>& sharedMedia,
-                                      const std::set<uint32_t>& sharedObjects)
-{
-    if (PathUtils::isProtectedPackOutputPath(outputPath, project.projectPath)) {
-        ExportResult failure;
-        failure.error = PathUtils::packBuildOutputLocationError();
-        return failure;
-    }
-    if (!options.snapshot || &project != &options.snapshot->project || !options.buildContext
-        || options.buildContext->project != &project) {
-        ExportOptions prepared = options;
-        ExportResult failure;
-        if (!prepared.snapshot) prepared.snapshot = ProjectBuildSnapshot::capture(project, &failure.error);
-        if (!prepared.snapshot) return failure;
-        if (!prepared.buildContext || prepared.buildContext->project != &prepared.snapshot->project) {
-            prepared.buildContext = createBuildContext(prepared.snapshot->project);
-            prepared.buildPlan.reset();
-        }
-        return ExportSharedPack(prepared.snapshot->project, outputPath, prepared, sharedMedia, sharedObjects);
-    }
-
-    const auto platformActivity = ProjectPlatformActivity::acquire();
-    ExportResult result;
-    if (!options.buildContext->validatePlayback(&result.error)) return result;
-    if (!isSupportedExportPlatform(project, options.platform, &result.error))
-        return result;
-
-    const auto effectiveGroups = buildFieldGroupEffectiveSnapshot(
-        project, toFieldGroupScope(exportPlatformOf(options)));
-    if (!effectiveGroups.ok()) {
-        result.error = effectiveGroups.diagnostics.front().message;
-        return result;
-    }
-    Bridge::PackBuildSession builder;
-
-    std::set<uint32_t> visitedObjects;
-    std::set<uint32_t> requiredMedia = sharedMedia;
-    std::function<void(const ProjectItem*)> collectSharedRoots =
-        [&](const ProjectItem* item) {
-            if (!item)
-                return;
-            if (sharedObjects.count(item->objectID))
-            {
-                CollectContentInputsFromItem(item, builder, visitedObjects, requiredMedia,
-                                             project, exportPlatformOf(options),
-                                             exportLanguageOf(options));
-                return;
-            }
-            for (const auto& child : item->children)
-                collectSharedRoots(child.get());
-        };
-    for (const auto* binding : project.allFileBindings())
-        if (binding && binding->rootItem)
-            collectSharedRoots(binding->rootItem.get());
-    std::set<harkenstudio::ObjectId> sharedObjectRuntimeIds;
-    for (uint32_t objectId : visitedObjects) {
-        const ProjectItem* item = findItemByAuthoringHandleInProject(
-            const_cast<ProjectData*>(&project), objectId);
-        if (item && !harkenstudio::IsNull(item->runtimeId()))
-            sharedObjectRuntimeIds.insert(item->runtimeId());
-    }
-    if (!CollectTypedBindings(project, builder, &sharedObjectRuntimeIds, &result.error, options.buildContext.get()))
-        return result;
-
-    emit progressChanged(10, "Collecting shared content...");
-    MediaCollectionStats mediaStats;
-    if (!CollectMedia(project, builder, requiredMedia, nullptr,
-                      options, &mediaStats, &result.error))
-    {
-        ApplyMediaCollectionStats(result, mediaStats);
-        result.canceled = result.error == QStringLiteral("Export canceled");
-        return result;
-    }
-    ApplyMediaCollectionStats(result, mediaStats);
-    result.objectCount = static_cast<int>(visitedObjects.size());
-    result.mediaCount = static_cast<int>(requiredMedia.size());
-
-    emit progressChanged(90, "Writing shared pack...");
-
-    if (!builder.buildToFile(outputPath))
-    {
-        result.error = builder.lastError();
-        return result;
-    }
-    result.warnings += builder.warnings();
-
-    QFileInfo fi(outputPath);
-    result.success    = true;
-    result.outputPath = outputPath;
-    result.fileSize   = fi.size();
-
-    emit progressChanged(100, "Shared pack exported.");
     return result;
 }
 

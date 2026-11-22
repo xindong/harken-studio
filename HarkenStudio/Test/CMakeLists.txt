@@ -171,17 +171,6 @@ endif()
 target_compile_definitions(harken_studio_tests PRIVATE
     HARKEN_PROJECT_INSTANCE_PROCESS_PATH="$<TARGET_FILE:harken_project_instance_process>")
 add_dependencies(harken_studio_tests harken_project_instance_process)
-add_executable(harken_resource_compiler_process UnitTest/ResourceCompilerProcess.cpp)
-target_link_libraries(harken_resource_compiler_process PRIVATE harkenizer_compiler_client Qt6::Core)
-target_link_libraries(harken_studio_tests PRIVATE harkenizer_compiler_client)
-target_compile_definitions(harken_studio_tests PRIVATE
-    HARKEN_RESOURCE_COMPILER_PROCESS_PATH="$<TARGET_FILE:harken_resource_compiler_process>")
-add_dependencies(harken_studio_tests harken_resource_compiler_process)
-if(WIN32)
-    add_custom_command(TARGET harken_resource_compiler_process POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:Qt6::Core>" "$<TARGET_FILE_DIR:harken_resource_compiler_process>")
-endif()
 harken_publish_studio_schema(harken_studio_tests)
 
 target_compile_definitions(harken_studio_tests PRIVATE

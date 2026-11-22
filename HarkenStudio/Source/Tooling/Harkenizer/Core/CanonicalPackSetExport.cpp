@@ -2809,7 +2809,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         if (meta.packKind == HK_PACK_KIND_INIT) {
             std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
-            unit = exporter.ExportInitPack(project, path, resourceOptions, &entries);
+            unit = exporter.ExportInitPack(project, path, resourceOptions, entries);
             if (!unit.success) return unit;
             meta.resourceFingerprint = unit.resourceFingerprint;
             if (!appendResources(unit, std::move(entries))) {
@@ -2829,9 +2829,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
                 auto member = contentOpts.buildContext
                     ? exporter.exportSingleActionPack(
-                        project, *action, path, contentOpts, nullptr, nullptr, &entries)
+                        project, *action, path, contentOpts, entries)
                     : exporter.ExportActionPack(
-                        project, action->name, path, contentOpts, nullptr, nullptr, &entries);
+                        project, action->name, path, contentOpts, entries);
                 if (!member.success) return member;
                 for (const auto& [soundId, revision] : member.soundContentRevisions) {
                     const auto [found, inserted] = meta.soundContentRevisions.emplace(soundId, revision);

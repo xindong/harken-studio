@@ -11,7 +11,7 @@ namespace VNX {
 struct AICommandSpec
 {
     enum class Effect { Query, EditorState, ProjectState, RuntimeState, External };
-    enum class Availability { Enabled, Disabled, InternalOnly, TestOnly, Retired };
+    enum class Availability { Enabled, Disabled, InternalOnly, TestOnly };
     using Confirmation = AIConfirmationPolicy;
     enum class ChangeSupport { None, Preview, ChangeSet };
     enum class Source { ActionManager, CommandHandler };

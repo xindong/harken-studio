@@ -25,7 +25,6 @@ target_link_libraries(harken_studio_build_pipeline PUBLIC
 target_link_libraries(harken_studio_build_pipeline PRIVATE
     harken_studio_media_decode
     harkenizer_resource_compiler
-    harkenizer_compiler_client
     vorbisfile
 )
 

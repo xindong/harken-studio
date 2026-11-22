@@ -60,12 +60,6 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
     const VnPreviewProjectDescV1& view,
     RuntimePreparedProject& out);
 RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
-    const VnPreviewProjectDescV2& view,
-    RuntimePreparedProject& out);
-RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
-    const VnPreviewProjectDescV3& view,
-    RuntimePreparedProject& out);
-RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
     const VnPreviewProjectDescV4& view,
     RuntimePreparedProject& out);
 RuntimeProjectGenerationCommitStatus runtimeCommitPreparedProjectGeneration(

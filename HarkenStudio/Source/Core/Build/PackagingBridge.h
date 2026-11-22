@@ -84,113 +84,6 @@ struct AudioFileInfoData
 AudioFileInfoData audioFileInfo(const QString& path);
 
 //==============================================================================
-// Pack codec side-table inspection.
-//
-// Read-only parsing of the pack container's codec metadata (CODC) and shared
-// codebook (CDBK) sections for the asset inspector. The section payloads are
-// raw bytes read by the editor's own container walk (the container layout is
-// a frozen wire format); the record layouts, versions, and identity strings
-// live inside the bridge.
-//==============================================================================
-
-struct PackCodecEntryInfo
-{
-    uint32_t sourceId = 0;
-    uint16_t codecId = 0;
-    uint16_t containerId = 0;
-    uint16_t channels = 0;
-    uint32_t sampleRate = 0;
-    uint32_t channelLayoutMask = 0;
-    uint64_t frameCount = 0;
-    uint64_t loopStartFrame = 0;
-    uint64_t loopEndFrame = 0;
-    uint32_t packetTableOffset = 0;
-    uint32_t packetTableCount = 0;
-    uint32_t seekTableOffset = 0;
-    uint32_t seekTableCount = 0;
-    uint32_t codebookId = 0;
-    uint32_t codebookHash = 0;
-    uint32_t decodeAllocBytes = 0;
-    uint32_t flags = 0;
-};
-
-struct PackCodecCodebookInfo
-{
-    uint32_t codebookId = 0;
-    uint32_t codebookHash = 0;
-    uint32_t offset = 0;
-    uint32_t size = 0;
-};
-
-struct PackCodecFlagsView
-{
-    bool fullDecodeFallback = false;
-    bool compressedResident = false;
-    bool hasPacketTable = false;
-    bool hasSeekTable = false;
-    bool hasSharedCodebook = false;
-    bool loopEnabled = false;
-    bool vorbisVbrQuality = false;
-    bool vorbisManagedBitrate = false;
-};
-
-QString packCodecName(uint16_t codecId);            // display identity, incl. persisted codec strings
-QString packCodecContainerName(uint16_t containerId);
-PackCodecFlagsView decodePackCodecFlags(uint32_t flags);
-bool parsePackCodecMetadataSection(const QByteArray& payload,
-                                   std::vector<PackCodecEntryInfo>& out,
-                                   QString* error);
-bool parsePackCodecCodebookSection(const QByteArray& payload,
-                                   std::vector<PackCodecCodebookInfo>& out,
-                                   QString* error);
-bool isPackCodecMetadataSection(uint32_t chunkFourcc);   // codec metadata section id
-bool isPackCodecCodebookSection(uint32_t chunkFourcc);   // shared codebook section id
-
-//==============================================================================
-// Pack codec conversion.
-//==============================================================================
-
-/// Opaque per-media codec metadata produced by the pack encoders. The blob is
-/// the runtime's fixed-size codec metadata record; the named fields mirror
-/// the few values editor logic needs to read (loop validation, shared
-/// codebook identity) without exposing the record layout.
-struct PackCodecMetadata
-{
-    std::vector<uint8_t> entryBlob;
-    uint64_t frameCount = 0;
-    uint32_t codebookId = 0;
-    uint32_t codebookHash = 0;
-    bool isValid() const { return !entryBlob.empty(); }
-};
-
-struct PackVorbisEncodeSettings
-{
-    bool managedBitrate = false; // false: VBR quality mode
-    float vbrQuality = 0.6f;     // 0..1, VBR mode only
-    uint32_t averageBitrate = 0; // managed mode; required non-zero
-    uint32_t minBitrate = 0;     // managed mode; 0 = unconstrained
-    uint32_t maxBitrate = 0;     // managed mode; 0 = unconstrained
-};
-
-bool encodePackVorbis(const std::vector<float>& interleaved,
-                      int channels, int sampleRate,
-                      const PackVorbisEncodeSettings& settings,
-                      std::vector<uint8_t>& outData,
-                      PackCodecMetadata& outMetadata,
-                      std::vector<uint8_t>* outSharedCodebook = nullptr);
-
-bool encodePackOpus(const std::vector<float>& interleaved,
-                    int channels, int sampleRate,
-                    std::vector<uint8_t>& outData,
-                    PackCodecMetadata& outMetadata);
-
-/// Stamp a loop region onto already-produced codec metadata. The caller
-/// validates the region against frameCount before calling.
-void applyLoopRegion(PackCodecMetadata& metadata,
-                     uint64_t loopStartFrame,
-                     uint64_t loopEndFrame);
-
-//==============================================================================
 // Pack building -- editor-owned mirrors of the pack build inputs plus a
 // build session that owns the runtime pack builder behind a pimpl.
 //==============================================================================
@@ -324,10 +217,6 @@ struct PackMediaDesc
     uint32_t sampleRate = 0;
     uint16_t channels = 0;
     PackMediaFormat format = PackMediaFormat::Pcm16;
-    // Empty blob => the bridge synthesizes a full-decode-fallback metadata
-    // entry from the format/channels/sampleRate above.
-    PackCodecMetadata codecMetadata;
-    std::vector<uint8_t> sharedCodebook;
 };
 
 bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revision);
@@ -356,7 +245,6 @@ public:
     void addMedia(const PackMediaDesc& media);
     void addWarning(const QString& warning);
 
-    bool buildToFile(const QString& outputPath);
     QString inputFingerprint();
 
     enum class CanonicalPackKind : uint32_t { Init = 2, CanonicalContent = 3 };

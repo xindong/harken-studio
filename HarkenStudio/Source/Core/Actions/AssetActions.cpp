@@ -504,20 +504,6 @@ void registerAssetActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "set_platform_profile";
-        def.displayName = "Set Platform Profile";
-        def.category = "asset";
-        def.paramSchema = QJsonObject{{"platform", "string"}, {"default_config", "object"}};
-        def.undoable = false;
-        def.handler = [](const QJsonObject&) -> ActionResult {
-            return {false, {}, "PLATFORM_INSTANCES_REQUIRED",
-                    "Use set_project_platform_profile with platform_id and profile; global platform profiles are no longer editable"};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
         def.id = "cleanup_cache";
         def.displayName = "Cleanup Cache";
         def.category = "asset";

@@ -164,21 +164,15 @@ public:
     ExportResult ExportInitPack(const ProjectData& project,
                                  const QString& outputPath,
                                  const ExportOptions& options,
-                                 std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr);
+                                 std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries);
 
     ExportResult ExportActionPack(const ProjectData& project,
                                   const QString& actionName,
                                   const QString& outputPath,
                                   const ExportOptions& options,
+                                  std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries,
                                   const std::set<uint32_t>* sharedMediaIds = nullptr,
-                                  const std::set<uint32_t>* sharedObjectIds = nullptr,
-                                  std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr);
-
-    ExportResult ExportSharedPack(const ProjectData& project,
-                                  const QString& outputPath,
-                                  const ExportOptions& options,
-                                  const std::set<uint32_t>& sharedMedia,
-                                  const std::set<uint32_t>& sharedObjects);
+                                  const std::set<uint32_t>* sharedObjectIds = nullptr);
 
     static QString platformOutputDir(const QString& baseDir,
                                      const ProjectPlatform& platform);
@@ -290,9 +284,9 @@ private:
         const ProjectItem& action,
         const QString& outputPath,
         const ExportOptions& options,
+        std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries,
         const std::set<uint32_t>* sharedMediaIds = nullptr,
-        const std::set<uint32_t>* sharedObjectIds = nullptr,
-        std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr);
+        const std::set<uint32_t>* sharedObjectIds = nullptr);
 
     void CollectContentInputsFromItem(const ProjectItem* item,
                                       HarkenEditor::Bridge::PackBuildSession& builder,

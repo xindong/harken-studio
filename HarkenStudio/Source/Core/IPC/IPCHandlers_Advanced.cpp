@@ -31,69 +31,6 @@ void IPCServer::registerAdvancedHandlers()
         return successResponse(r);
     };
 
-    const auto unavailable = [this](const QString& message) {
-        return errorResponse("UNAVAILABLE", message);
-    };
-
-    commandHandlers_["set_clock_pll"] = [this, unavailable](const QJsonObject& args) {
-        if (!engine_) return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine is not available");
-        bool enabled = args["enabled"].toBool(false);
-        if (Bridge::setClockPll(enabled) != Bridge::IpcQueryStatus::Ok)
-            return unavailable("Clock PLL is not available in the current runtime bridge");
-        return successResponse(QJsonObject{{"action", enabled ? "pll_enabled" : "pll_disabled"}});
-    };
-
-    commandHandlers_["get_clock_sync_status"] = [this, unavailable](const QJsonObject&) {
-        if (!engine_) return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine is not available");
-        Bridge::ClockSyncStatus st;
-        if (Bridge::clockSyncStatus(st) != Bridge::IpcQueryStatus::Ok)
-            return unavailable("Clock sync status is not available in the current runtime bridge");
-        QJsonObject r;
-        r["actual_sample_rate"] = st.actualSampleRate;
-        r["drift_ppm"] = st.driftPpm;
-        r["sync_status"] = "NoSync";
-        return successResponse(r);
-    };
-
-    commandHandlers_["link_get_status"] = [this](const QJsonObject&) {
-        return successResponse(QJsonObject{
-            {"connected", false},
-            {"client_ip", QString()},
-            {"latency_ms", 0.0},
-            {"status", QStringLiteral("retired")},
-            {"message", QStringLiteral("HarkenLink is retired; live-connect is a future runtime-wire plan")}
-        });
-    };
-
-    commandHandlers_["link_post_action"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink action posting is retired");
-    };
-    commandHandlers_["link_set_property"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink property updates are retired");
-    };
-    commandHandlers_["link_mute_bus"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink bus mute is retired");
-    };
-    commandHandlers_["link_solo_bus"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink bus solo is retired");
-    };
-    commandHandlers_["link_stop_all"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink stop-all is retired");
-    };
-    commandHandlers_["link_pause_engine"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink pause is retired");
-    };
-    commandHandlers_["link_resume_engine"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink resume is retired");
-    };
-
-    commandHandlers_["link_capture_start"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink capture is retired");
-    };
-    commandHandlers_["link_capture_stop"] = [unavailable](const QJsonObject&) {
-        return unavailable("HarkenLink capture is retired");
-    };
-
     const auto execErrorDomain = [](const QJsonObject& args) -> std::optional<int> {
         if (!args.contains("domain")) return -1;
         const QStringList domains{"Music", "Stop", "Lifecycle", "Dispatch", "Gate"};

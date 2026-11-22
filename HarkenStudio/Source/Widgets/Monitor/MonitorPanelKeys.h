@@ -19,10 +19,6 @@ inline constexpr std::uint64_t kMonitorCursorContributorScope = 12;
 inline constexpr std::uint64_t kMonitorCursorContributorSpectrum = 13;
 inline constexpr std::uint64_t kMonitorCursorContributorRecording = 15;
 inline constexpr std::uint64_t kMonitorCursorContributorSessionCompare = 16;
-inline constexpr std::uint64_t kMonitorCursorContributorStreaming = 17;
-inline constexpr std::uint64_t kMonitorCursorContributorMemory = 18;
-inline constexpr std::uint64_t kMonitorCursorContributorGameModulate = 19;
-inline constexpr std::uint64_t kMonitorCursorContributorEmitters = 20;
 
 QStringList monitorPanelTypeIds();
 QStringList monitorPanelTitles();
