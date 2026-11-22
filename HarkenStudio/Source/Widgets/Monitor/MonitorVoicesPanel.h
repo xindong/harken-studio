@@ -42,7 +42,6 @@ public:
 
     MonitorCursorReject lockCurrentRow();
 
-
     int visibleRowCount() const;
     const MonitorVoicesRow* visibleRowAt(int row) const;
     const MonitorVoicesRow* selectedRow() const;

@@ -44,7 +44,6 @@ public:
 
     MonitorCursorReject lockCurrentRow();
 
-
 private:
     void rebuildVisibleRows();
     void syncCursorRetainedWindow();

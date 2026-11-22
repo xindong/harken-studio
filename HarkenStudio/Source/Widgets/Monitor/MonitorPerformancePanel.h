@@ -63,7 +63,6 @@ public:
 
     MonitorCursorReject lockFromChartX(int logicalX);
 
-
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 

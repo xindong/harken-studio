@@ -334,9 +334,7 @@ public:
                       const QString& errorType, const QString& message);
     QVector<ExecError> recentExecErrors(int maxCount, int domainFilter ) const;
     void clearExecErrors(int domainFilter );
-
     void serviceRuntime();
-
     const std::vector<harken::studio::bridge::PlaybackPathObservation>& playbackPaths() const {
         return playbackPaths_;
     }
