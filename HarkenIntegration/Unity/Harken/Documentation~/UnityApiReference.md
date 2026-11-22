@@ -142,7 +142,6 @@ for `IsPreparationComplete` does not retry failed requests.
 | **GeneratedPacks directory** | The single directory selection used by Auto Start. Editor and Player resolve it according to the rules below. There is no implicit `StreamingAssets/Audio/GeneratedPacks` fallback. |
 | **Platform Name** | Select a direct child of the configured root, or match the selected platform directory's basename. The legacy Platform Id control is hidden; when an ID was saved, use **Clear legacy platform selection** on this page before companion directory startup. |
 | **Language / Init Pack** | Select the publication language and its matching Init Pack. |
-| **Max Simultaneous Playbacks** | Limits the `PlayAction` slots managed by `HarkenAudioSystem` as well as native firing capacity. An exhausted managed slot refuses with `VN_NO_ACTION`. |
 
 In the Editor, relative paths start at the Unity project root and the selected
 directory must be inside that project. Desktop Players resolve relative paths
@@ -161,8 +160,8 @@ before the next session. See the package README for the full Player-export and
 Android packaging contract. `HarkenProjectSettings.Load()` returns the project
 asset when present; its relevant read-only properties are `PackDirectory`,
 `PlayerExports`, `PlatformId`, `PlatformName`, `Language`, `InitPack`,
-`SuppressUnityAudio`, `MaxVoices`,
-and `MaxActionFirings`.
+`SuppressUnityAudio` and `MaxVoices`. The SDK grows its playback records as needed.
+Old project assets with a playback count do not require migration.
 Emitter Variable storage grows on demand. The old serialized
 `emitterVariableSlots` setting is ignored and requires no asset migration.
 `HarkenProjectSettings` also exposes the default capacity constants. Its

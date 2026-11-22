@@ -183,7 +183,6 @@ namespace Harken.Unity.Tests
         {
             using (var fixture = new Fixture())
             {
-                HarkenProjectSettings.ActiveForStartup().SetMaxActionFirings(2);
                 Set(fixture.Action, "stopFadeMs", 5000U);
                 fixture.Start();
                 var other = fixture.Source.AddComponent<HarkenAction>();
@@ -243,11 +242,10 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator DeferredCleanupRemainsBoundedByNativeFiringSlots()
+        public IEnumerator DeferredCleanupRetainsPreviousFiringsWhileAcceptingNewPlayback()
         {
             using (var fixture = new Fixture())
             {
-                HarkenProjectSettings.ActiveForStartup().SetMaxActionFirings(2);
                 fixture.Start(true);
                 var other = fixture.Source.AddComponent<HarkenAction>();
                 Set(other, "runtime", fixture.Runtime);
@@ -271,13 +269,12 @@ namespace Harken.Unity.Tests
                 Assert.That(second.Query(out _), Is.EqualTo(VnResult.VN_OK));
                 fixture.Action.enabled = true;
                 Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
-                LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: Action .*VN_NO_ACTION"));
-                Assert.That(fixture.Action.Play(), Is.EqualTo(VnResult.VN_NO_ACTION));
+                Assert.That(fixture.Action.Play(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Action.Firing.Handle, Is.Not.EqualTo(first.Handle));
                 fixture.Action.enabled = false;
-                Assert.That(PendingCleanup(fixture.Runtime), Is.EqualTo(2));
+                Assert.That(PendingCleanup(fixture.Runtime), Is.EqualTo(3));
                 Assert.That(first.Query(out _), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(second.Query(out _), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(fixture.Action.LastResult, Is.EqualTo(VnResult.VN_NO_ACTION));
                 Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(PendingCleanup(fixture.Runtime), Is.Zero);
             }

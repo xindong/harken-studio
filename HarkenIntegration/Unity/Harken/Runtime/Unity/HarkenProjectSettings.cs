@@ -14,8 +14,6 @@ namespace Harken.Unity
     {
         public const string ResourceName = "HarkenProjectSettings";
         public const uint DefaultMaxVoices = 256;
-        public const uint DefaultMaxActionFirings = 256;
-        public const uint UnlimitedActionFirings = 256;
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
 
         [SerializeField] private bool enableCommunicationInBuilds = true;
@@ -26,7 +24,6 @@ namespace Harken.Unity
         [SerializeField, Min(0)] private int remoteDiscoveryPort;
         [SerializeField] private string remoteApplicationName = string.Empty;
         [SerializeField] private uint maxVoices = DefaultMaxVoices;
-        [SerializeField] private uint maxActionFirings = DefaultMaxActionFirings;
         [SerializeField] private string language = string.Empty;
         [SerializeField] private string packPlatformId = string.Empty;
         [SerializeField] private string packPlatform = string.Empty;
@@ -39,7 +36,6 @@ namespace Harken.Unity
 
         public bool EnableCommunicationInBuilds => enableCommunicationInBuilds;
         public uint MaxVoices => NonZero(maxVoices, DefaultMaxVoices);
-        public uint MaxActionFirings => maxActionFirings != 0 ? maxActionFirings : UnlimitedActionFirings;
         public string Language => language ?? string.Empty;
         public string PlatformId => packPlatformId ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
@@ -74,7 +70,6 @@ namespace Harken.Unity
 
         internal void SetPackDirectory(string value) => packDirectory = value ?? string.Empty;
         internal void SetMaxVoices(uint value) => maxVoices = value;
-        internal void SetMaxActionFirings(uint value) => maxActionFirings = value;
         internal void SetSuppressUnityAudio(bool value) => suppressUnityAudio = value;
         internal void SetLanguage(string value) => language = value ?? string.Empty;
         internal void SetInitPack(string value) => initPack = value ?? string.Empty;
@@ -96,7 +91,6 @@ namespace Harken.Unity
                 config.commandQueueDepth = Math.Max(config.commandQueueDepth, config.maxVoices);
                 config.maxControlCommandsPerQuantum = Math.Max(config.maxControlCommandsPerQuantum, config.maxVoices);
             }
-            config.maxActionFirings = settings.MaxActionFirings;
         }
 
         internal static bool TryResolvePackDirectory(out string fullPath, out string error)
