@@ -101,6 +101,12 @@ inline constexpr std::uint32_t kSpatialScalarKindWidth = 0;
 inline constexpr std::uint32_t kSpatialScalarKindSpatializationMix = 1;
 inline constexpr std::uint32_t kEffectActionBypass = 0;
 inline constexpr std::uint32_t kEffectActionReset = 1;
+struct CapturedStopTarget {
+    VnVoiceHandle render;
+    std::uint32_t fadeMs;
+    bool operator==(const CapturedStopTarget&) const noexcept = default;
+};
+
 inline constexpr std::uint32_t kStopModeCapturedGroup = 2;
 inline constexpr std::uint32_t kStopModeOrdinary = 0;
 inline constexpr std::uint32_t kStopModeStreamPark = 1;
@@ -1355,24 +1361,21 @@ public:
         return UINT32_MAX;
     }
 
-    bool PublishGroupStop(std::uint32_t slot, std::vector<VnVoiceHandle>&& targets,
-                          std::uint32_t fadeMs) {
+    bool PublishGroupStop(std::uint32_t slot, std::vector<CapturedStopTarget>&& targets) {
         // Consecutive identical fades in the same raw publication position
         // share one pending command. A later cut or a new fade keeps its order.
         if (m_lastGroupStop < m_groupStops.size()) {
             const auto& last = m_groupStops[m_lastGroupStop];
             if (last.frontier != 0 && last.frontier == PublishedHead() &&
-                last.fadeMs == fadeMs && last.targets == targets) return true;
+                last.targets == targets) return true;
         }
         auto& group = m_groupStops[slot];
         group.targets = std::move(targets);
-        group.fadeMs = fadeMs;
         group.frontier = PublishedHead() + 1;
         CommandRecord stop{};
         stop.opcode = kOpcodeStop;
         stop.payload.stop.mode = kStopModeCapturedGroup;
         stop.payload.stop.handle = slot;
-        stop.payload.stop.fadeMs = fadeMs;
         stop.payload.stop.parkRequestSequence = group.frontier;
         if (!TryPush(stop)) {
             group = {};
@@ -1383,12 +1386,12 @@ public:
         return true;
     }
 
-    std::span<const VnVoiceHandle> GroupStopTargets(const CommandRecord& stop) const {
+    std::span<const CapturedStopTarget> GroupStopTargets(const CommandRecord& stop) const {
         const auto slot = stop.payload.stop.handle;
         if (slot >= m_groupStops.size()) return {};
         const auto& group = m_groupStops[slot];
         return group.frontier != 0 && group.frontier == stop.payload.stop.parkRequestSequence
-            ? std::span<const VnVoiceHandle>{group.targets} : std::span<const VnVoiceHandle>{};
+            ? std::span<const CapturedStopTarget>{group.targets} : std::span<const CapturedStopTarget>{};
     }
 
     bool TryPush(CommandRecord record) {
@@ -2025,8 +2028,7 @@ private:
     std::uint64_t m_nextSourcePublication = 0;
     const TimelineArmTable* const m_controlReceiver;
     struct GroupStop {
-        std::uint32_t fadeMs = 0;
-        std::vector<VnVoiceHandle> targets;
+        std::vector<CapturedStopTarget> targets;
         std::uint64_t frontier = 0;
     };
     std::vector<GroupStop> m_groupStops;

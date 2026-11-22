@@ -1457,8 +1457,8 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
             break;
         case kOpcodeStop:
             if (command.payload.stop.mode == kStopModeCapturedGroup) {
-                for (const auto render : m_commands.GroupStopTargets(command))
-                    m_voices.ApplyStop(render, command.payload.stop.fadeMs, 0,
+                for (const auto& target : m_commands.GroupStopTargets(command))
+                    m_voices.ApplyStop(target.render, target.fadeMs, 0,
                                        m_notifications, blockIndex);
                 break;
             }
