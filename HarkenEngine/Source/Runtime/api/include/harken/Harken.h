@@ -412,9 +412,9 @@ typedef struct VnConfig {
     uint32_t reserved11;                   /* keeps 8-byte alignment; must be 0 */
     uint64_t maxCatalogBytes;              /* catalog payload budget; 0 = 4 MiB */
     uint64_t maxResidentDefinitionBytes;   /* loaded partition-body budget;
-                                            * 0 = 32 MiB */
+                                            * 0 = no explicit byte limit */
     uint64_t maxCompositeIndexBytes;       /* published identity-index budget;
-                                            * 0 = 2 MiB */
+                                            * 0 = no explicit byte limit */
     uint64_t maxPackDecodeStagingBytes;    /* encoded Pack + decode staging;
                                             * 0 = 64 MiB */
     uint64_t maxPackResourceBytes;         /* resident resource budget;

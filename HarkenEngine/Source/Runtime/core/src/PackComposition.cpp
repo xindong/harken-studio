@@ -3078,8 +3078,11 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
         }
         candidate.bindingManifest.attachments.push_back(attachment);
     }
-    candidate.definitionBytes = image.partitionBody.size() +
-        candidate.voiceBindings->size() * sizeof(PackVoiceBinding);
+    std::uint64_t bindingBytes = 0;
+    if (!CheckedMulU64(candidate.voiceBindings->size(), sizeof(PackVoiceBinding), &bindingBytes) ||
+        !CheckedAddU64(image.partitionBody.size(), bindingBytes, &candidate.definitionBytes)) {
+        return VN_PACK_RESIDENT_CAPACITY;
+    }
     candidate.variablePolicyOverlays = image.variablePolicyOverlays;
     candidate.hasVariablePolicyOverlay = image.hasVariablePolicyOverlay;
     candidate.variableRequirements = image.variableRequirements;

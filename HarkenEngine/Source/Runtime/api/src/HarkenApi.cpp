@@ -129775,8 +129775,11 @@ VnResult PrepareCanonicalOwners(
         }
         std::uint64_t definitionBytes = 0;
         for (const auto& owner : owners) {
-            definitionBytes += owner.definitionBytes;
-            if (definitionBytes > engine.config.maxResidentDefinitionBytes) {
+            if (!CheckedAddU64(definitionBytes, owner.definitionBytes, &definitionBytes)) {
+                return VN_PACK_RESIDENT_CAPACITY;
+            }
+            if (engine.config.maxResidentDefinitionBytes != 0 &&
+                definitionBytes > engine.config.maxResidentDefinitionBytes) {
                 engine.packComposition.NoteRefusal(
                     definitionBytes, engine.config.maxResidentDefinitionBytes,
                     VN_PACK_RESIDENT_CAPACITY);
@@ -129802,11 +129805,18 @@ VnResult PrepareCanonicalOwners(
         for (const auto& owner : next->owners) {
             if (!engine.PrepareQueueSelectionStorage(owner.view)) return VN_BACKPRESSURE;
         }
-        const std::uint64_t indexBytes =
-            next->index.size() * sizeof(PackComposition::IdentityIndexEntry) +
-            next->signalRelations.size() * sizeof(SignalRelationV1) +
-            next->signalReceivers.size() * sizeof(SignalReceiverV1);
-        if (indexBytes > engine.config.maxCompositeIndexBytes) {
+        std::uint64_t indexBytes = 0;
+        const auto addIndexRows = [&](const auto& rows) {
+            std::uint64_t bytes = 0;
+            return CheckedMulU64(rows.size(), sizeof(rows[0]), &bytes) &&
+                   CheckedAddU64(indexBytes, bytes, &indexBytes);
+        };
+        if (!addIndexRows(next->index) || !addIndexRows(next->signalRelations) ||
+            !addIndexRows(next->signalReceivers)) {
+            return VN_PACK_RESIDENT_CAPACITY;
+        }
+        if (engine.config.maxCompositeIndexBytes != 0 &&
+            indexBytes > engine.config.maxCompositeIndexBytes) {
             engine.packComposition.NoteRefusal(
                 indexBytes, engine.config.maxCompositeIndexBytes,
                 VN_PACK_RESIDENT_CAPACITY);
@@ -133173,7 +133183,7 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     if (desc->packStableId != 0 && desc->packStableId != image.packStableId) {
         return VN_UNKNOWN_ID;
     }
-    if (image.hasPartition &&
+    if (image.hasPartition && engine.config.maxResidentDefinitionBytes != 0 &&
         image.partitionBody.size() >
             engine.config.maxResidentDefinitionBytes) {
         engine.packComposition.NoteRefusal(

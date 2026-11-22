@@ -278,8 +278,8 @@ struct EngineConfig {
     std::uint32_t maxArmsPerGroup = 128;
     std::uint32_t maxCatalogEntries = 65536;
     std::uint64_t maxCatalogBytes = 4ull * 1024ull * 1024ull;
-    std::uint64_t maxResidentDefinitionBytes = 32ull * 1024ull * 1024ull;
-    std::uint64_t maxCompositeIndexBytes = 2ull * 1024ull * 1024ull;
+    std::uint64_t maxResidentDefinitionBytes = 0;
+    std::uint64_t maxCompositeIndexBytes = 0;
     std::uint64_t maxPackDecodeStagingBytes = 64ull * 1024ull * 1024ull;
     std::uint64_t maxPackResourceBytes = 0;
     std::uint64_t maxPackReplacementPeakBytes = 96ull * 1024ull * 1024ull;
