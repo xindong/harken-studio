@@ -40,8 +40,6 @@ add_library(harken_studio_core STATIC
     Component.h
     ReentrancyGuard.h
     NumericFormat.h
-    FileSystemWatcher.cpp
-    FileSystemWatcher.h
     FileWatcher.cpp
     FileWatcher.h
     IPCBinaryProtocol.h
@@ -51,8 +49,6 @@ add_library(harken_studio_core STATIC
     RuntimeSyncCoordinator.cpp
     RuntimeSyncCoordinator.h
     RuntimeCapabilityTypes.h
-    RuntimeContainerLowering.cpp
-    RuntimeContainerLowering.h
     ISettingsStorage.h
     PhysicalFolderOperations.cpp
     PhysicalFolderOperations.h
@@ -91,8 +87,6 @@ add_library(harken_studio_core STATIC
     QSettingsStorage.h
     SceneObject.h
     ItemPropertySchema.h
-    VariableImpactSemantics.cpp
-    VariableImpactSemantics.h
     VariableRangeEditing.cpp
     VariableRangeEditing.h
     BindingEditing.cpp
@@ -214,8 +208,6 @@ add_library(harken_editor_foundation STATIC
     ContextInfoService.h
     HelpCatalog.cpp
     HelpCatalog.h
-    LanguageManager.cpp
-    LanguageManager.h
     SchemaCompatibilityProbe.cpp
     SchemaCompatibilityProbe.h
     NamedLayoutStore.cpp
@@ -275,8 +267,6 @@ add_library(harken_editor_foundation STATIC
     FramelessChrome.h
     DialogManager.cpp
     DialogManager.h
-    EditorShellRegistry.cpp
-    EditorShellRegistry.h
     EditorBootstrap.cpp
     EditorBootstrap.h
     ../Utils/SvgIconEngine.cpp

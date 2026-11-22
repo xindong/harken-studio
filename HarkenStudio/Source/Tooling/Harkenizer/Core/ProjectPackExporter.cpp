@@ -23,7 +23,6 @@
 #include "Components/VAction.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/PathUtils.h"
-#include "AssetPipeline/WaveformCache.h"
 
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectPlatformActivity.h"
@@ -31,7 +30,6 @@
 #include "Components/VBus.h"
 #include "Core/Build/PackagingBridge.h"
 #include "ActionStepUtils.h"
-#include <QFile>
 #include <QFileInfo>
 #include <QDir>
 #include <QDebug>
@@ -42,7 +40,6 @@
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QSet>
-#include <QDataStream>
 
 #include <algorithm>
 #include <limits>
@@ -1879,183 +1876,6 @@ QJsonArray ProjectPackExporter::FindUnusedAssetsJson(const ProjectData& project)
         arr.append(obj);
     }
     return arr;
-}
-
-
-QString ProjectPackExporter::ResolveAudioFilePath(const ProjectData& project,
-                                                   uint32_t sourceID,
-                                                   const QString& AudioSourcesDir,
-                                                   const MediaBuildSnapshot* media)
-{
-    const auto captured = media ? MediaBuildSnapshot{} : AssetRegistry::instance().buildSnapshot(
-        QFileInfo(project.projectPath).absolutePath(), project.platforms);
-    if (!media) media = &captured;
-    const auto asset = media->assets.constFind(sourceID);
-    const AssetInfo* assetInfo = asset == media->assets.cend() ? nullptr : &*asset;
-    if (assetInfo && !assetInfo->absolutePath.isEmpty())
-        return assetInfo->absolutePath;
-    if (assetInfo && !assetInfo->relativePath.isEmpty())
-        return AudioSourcesDir + "/" + assetInfo->relativePath;
-
-    for (const auto& as : project.audioSources) {
-        if (as.sourceID == sourceID)
-            return AudioSourcesDir + "/" + as.relativePath;
-    }
-
-    return {};
-}
-
-bool ProjectPackExporter::WriteHarkenPeakFile(const QString& outputPath,
-                                              const WaveformPeakData& data)
-{
-    if (!data.isValid())
-        return false;
-
-    QFile file(outputPath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        qWarning() << "[PackExporter] Failed to create .harkenpeak file:" << outputPath;
-        return false;
-    }
-
-    QDataStream out(&file);
-    out.setByteOrder(QDataStream::LittleEndian);
-    out.setFloatingPointPrecision(QDataStream::SinglePrecision);
-
-    out.writeRawData("VPEK", 4);
-    out << static_cast<uint16_t>(2);
-    out << static_cast<uint16_t>(1);
-    out << static_cast<uint32_t>(data.sampleRate);
-    out << static_cast<uint32_t>(data.numPeaks);
-
-    double durationSec = data.durationSec;
-    if (durationSec <= 0.0 && data.sampleRate > 0)
-        durationSec = static_cast<double>(data.numPeaks) * data.samplesPerPeak / data.sampleRate;
-    out.setFloatingPointPrecision(QDataStream::DoublePrecision);
-    out << durationSec;
-    out.setFloatingPointPrecision(QDataStream::SinglePrecision);
-
-    uint32_t ch0Floats = data.numPeaks * 2;
-    for (uint32_t i = 0; i < ch0Floats && i < data.peaks.size(); ++i)
-        out << data.peaks[i];
-
-    file.close();
-    return true;
-}
-
-int ProjectPackExporter::GenerateHarkenPeakFiles(const ProjectData& project,
-                                                 const QString& outputDir)
-{
-    QString projectDir = QFileInfo(project.projectPath).absolutePath();
-    QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectDir);
-    int filesWritten = 0;
-
-    struct ActionPeakInfo {
-        QString actionName;
-        std::vector<uint32_t> sourceIDs;
-    };
-    std::vector<ActionPeakInfo> actionPeaks;
-
-    QHash<uint32_t, const ProjectItem*> objectLookup;
-    std::function<void(const ProjectItem*)> buildLookup = [&](const ProjectItem* item) {
-        if (!item) return;
-        if (item->objectID != 0)
-            objectLookup[item->objectID] = item;
-        for (const auto& child : item->children)
-            buildLookup(child.get());
-    };
-    for (const auto* binding : project.allFileBindings()) {
-        if (binding && binding->rootItem)
-            buildLookup(binding->rootItem.get());
-    }
-
-    std::function<void(const ProjectItem*, std::vector<uint32_t>&)> collectSourceIDs;
-    collectSourceIDs = [&](const ProjectItem* item, std::vector<uint32_t>& ids) {
-        if (!item) return;
-        if (item->type == ProjectItem::Type::Sound) {
-            const uint32_t sourceId = SoundSourceEditing::activeSourceId(
-                *item, ProjectPlatformId{}, {});
-            if (sourceId != 0)
-                ids.push_back(sourceId);
-        }
-        for (const auto& child : item->children)
-            collectSourceIDs(child.get(), ids);
-    };
-
-    for (const auto* binding : project.allFileBindings()) {
-        if (!binding || !binding->rootItem) continue;
-        const auto* wu = binding;
-        std::function<void(const ProjectItem*)> scanActions = [&](const ProjectItem* item) {
-            if (!item) return;
-            auto* actionComp = item->comp<VAction>();
-            if (item->type == ProjectItem::Type::Action && actionComp &&
-                !actionComp->steps.empty())
-            {
-                ActionPeakInfo info;
-                info.actionName = item->name;
-
-                for (const auto& action : actionComp->steps) {
-                    if (action.type != VActionStep::Type::Play &&
-                        action.type != VActionStep::Type::PostAction)
-                        continue;
-
-                    auto it = objectLookup.find(action.targetObjectID);
-                    if (it != objectLookup.end())
-                        collectSourceIDs(it.value(), info.sourceIDs);
-                }
-
-                if (!info.sourceIDs.empty())
-                    actionPeaks.push_back(std::move(info));
-            }
-            for (const auto& child : item->children)
-                scanActions(child.get());
-        };
-        scanActions(wu->rootItem.get());
-    }
-
-    QDir dir(outputDir);
-    if (!dir.exists())
-        dir.mkpath(".");
-
-    for (const auto& ep : actionPeaks) {
-        bool written = false;
-        for (uint32_t sourceID : ep.sourceIDs) {
-            QString audioPath = ResolveAudioFilePath(project, sourceID, AudioSourcesDir);
-            if (audioPath.isEmpty() || !QFileInfo::exists(audioPath))
-                continue;
-
-            WaveformPeakData peakData;
-
-            if (!WaveformCache::load(audioPath, peakData)) {
-                if (!WaveformCache::generate(audioPath)) {
-                    qDebug() << "[PackExporter] HarkenPeak: failed to generate .vkd for"
-                             << audioPath;
-                    continue;
-                }
-                if (!WaveformCache::load(audioPath, peakData)) {
-                    qDebug() << "[PackExporter] HarkenPeak: failed to load .vkd after generate for"
-                             << audioPath;
-                    continue;
-                }
-            }
-
-            if (!peakData.isValid())
-                continue;
-
-            QString peakPath = dir.filePath(ep.actionName + ".harkenpeak");
-            if (WriteHarkenPeakFile(peakPath, peakData)) {
-                ++filesWritten;
-                written = true;
-                break;
-            }
-        }
-
-        if (!written) {
-            qDebug() << "[PackExporter] HarkenPeak: no valid waveform data for action"
-                     << ep.actionName;
-        }
-    }
-
-    return filesWritten;
 }
 
 }

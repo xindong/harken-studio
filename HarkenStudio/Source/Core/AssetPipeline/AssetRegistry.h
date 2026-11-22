@@ -104,8 +104,6 @@ public:
 
     void markAllCommitted();
 
-    void cleanupOrphaned(const QList<QString>& files);
-
 signals:
     void sourceFoldersChanged();
 

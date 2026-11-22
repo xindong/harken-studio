@@ -37,7 +37,6 @@
 #include "Core/AI/AIDurableMemoryStore.h"
 #include "Core/AI/OpenAICompatibleLLMProvider.h"
 #include "Core/PanelInstanceRegistry.h"
-#include "Core/EditorShellRegistry.h"
 #include "Core/LayoutController.h"
 #include "Core/WindowPlacement.h"
 #include "Core/BuiltinLayouts.h"
@@ -165,7 +164,6 @@
 #include <QScreen>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QRegularExpression>
 #include <QDir>
 #include <QDateTime>
@@ -4301,66 +4299,6 @@ void MainWindow::initEmptyProject()
 
     setProjectModified(false);
     updateWindowTitle();
-}
-
-bool MainWindow::createProjectFromConfig(
-    const ProjectConfig& config,
-    std::function<void(StartupPhase)> startupProgress)
-{
-    if (projectOpenInProgress_)
-        return false;
-    auto channelConfigKey = [](AudioChannelConfig c) -> QString {
-        switch (c) {
-            case AudioChannelConfig::Mono:         return QStringLiteral("mono");
-            case AudioChannelConfig::Stereo_2_0:   return QStringLiteral("stereo");
-            case AudioChannelConfig::Surround_5_1: return QStringLiteral("5_1");
-            case AudioChannelConfig::Surround_7_1: return QStringLiteral("7_1");
-            case AudioChannelConfig::Atmos_7_1_4:  return QStringLiteral("atmos_7_1_4");
-        }
-        return QStringLiteral("stereo");
-    };
-    QJsonArray platforms;
-    for (const auto& p : config.platforms) platforms.append(p.toJson());
-
-    QJsonObject args{
-        {"name",             config.name},
-        {"location",         config.location},
-        {"sample_rate",      config.sampleRate},
-        {"channel_config",   channelConfigKey(config.channelConfig)},
-        {"platforms", platforms},
-        {"template_id",      config.templateId},
-        {"template_data",    config.templateData},
-    };
-
-    auto res = ActionManager::instance().execute(
-        QStringLiteral("create_project"), args, ActionSource::GUI);
-    if (!res.success)
-    {
-        QMessageBox::warning(this, tr("Error"), tr("Failed to create project \"%1\"").arg(config.name));
-        LogPanel::logError(LogCategory::File, tr("Failed to create new project: %1").arg(config.name));
-        return false;
-    }
-
-    ProjectData* pmProject = ProjectManager::instance().currentProject();
-    if (pmProject)
-        currentProjectPath_ = pmProject->projectPath;
-
-    projectExplorer_->newProject(pmProject ? pmProject->name : config.name);
-
-    UndoRedoManager::instance().clearHistory();
-
-    setProjectModified(false);
-    updateWindowTitle();
-    addRecentProject(currentProjectPath_);
-
-    loadProjectLayout();
-
-    if (startupProgress)
-        startupProgress(StartupPhase::RestoringWorkspace);
-
-    setStatusMessage(tr("New project created: %1").arg(currentProjectPath_));
-    LogPanel::logInfo(LogCategory::File, tr("New project created: %1").arg(currentProjectPath_));
-    return true;
 }
 
 void MainWindow::onOpenProject()

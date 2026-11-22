@@ -723,32 +723,6 @@ void AssetRegistry::markAllCommitted()
     uncommittedIDs_.clear();
 }
 
-void AssetRegistry::cleanupOrphaned(const QList<QString>& files)
-{
-    // Holds mutex_ for the whole pass; look up assets_ / pathToID_ directly
-    // because the public accessors lock the same non-recursive mutex.
-    QMutexLocker lock(&mutex_);
-    for (const QString& relativePath : files) {
-        QString absPath = PathUtils::toAbsolutePath(relativePath,
-                                                     PathUtils::getAudioSourcesDir(projectRoot_));
-        if (PathUtils::moveToTrash(projectRoot_, absPath, relativePath)) {
-            qDebug() << "Moved orphaned file to trash:" << absPath;
-        }
-
-        const QString normalized = PathUtils::normalizeToUnix(relativePath);
-        auto pathIt = pathToID_.find(normalized);
-        if (pathIt != pathToID_.end()) {
-            const uint32_t sourceID = pathIt.value();
-            auto assetIt = assets_.find(sourceID);
-            if (assetIt != assets_.end()) {
-                assets_.erase(assetIt);
-            }
-            pathToID_.erase(pathIt);
-            uncommittedIDs_.remove(sourceID);
-        }
-    }
-}
-
 void AssetRegistry::updatePathIndex(const AssetInfo& info)
 {
     QString normalized = PathUtils::normalizeToUnix(info.relativePath);

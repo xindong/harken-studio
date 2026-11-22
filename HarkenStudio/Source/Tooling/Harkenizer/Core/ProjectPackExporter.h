@@ -33,9 +33,7 @@ namespace harken::studio {
     struct PackBuildPlan;
     struct CanonicalPackSetExportRequest;
     struct PackBuildContext;
-    struct WaveformPeakData;
     struct ProjectBuildSnapshot;
-    struct MediaBuildSnapshot;
     class PackMediaPreparation;
     class PackBuildState;
 }
@@ -197,10 +195,6 @@ public:
                                               const PackExportSelection& selection,
                                               QString* errorOut = nullptr);
 
-    int GenerateHarkenPeakFiles(const ProjectData& project,
-                               const QString& outputDir);
-
-
     struct ValidationIssue
     {
         enum Severity { Error, Warning, Info };
@@ -331,14 +325,6 @@ private:
                               PackBuildContext* buildContext = nullptr);
     void CollectReferencedMedia(const ProjectData& project,
                                  std::set<uint32_t>& referencedMedia);
-
-    static QString ResolveAudioFilePath(const ProjectData& project,
-                                        uint32_t sourceID,
-                                        const QString& audioSourcesDir,
-                                        const MediaBuildSnapshot* media = nullptr);
-
-    static bool WriteHarkenPeakFile(const QString& outputPath,
-                                   const struct WaveformPeakData& data);
 
     static uint32_t FNVHash(const QString& str);
 
