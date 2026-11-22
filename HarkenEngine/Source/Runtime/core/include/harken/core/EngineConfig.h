@@ -170,7 +170,7 @@ struct EngineConfig {
     std::uint64_t topologyPlanPoolBytes = 0;
     std::uint64_t preparedTopologyPlanPoolBytes = 0;
     std::uint32_t streamRingFrames = 16384;
-    std::uint32_t maxStreams = 16;
+    std::uint32_t maxStreams = 0; // Zero grows stream slots as playback needs them.
     std::uint32_t prebufferMs = 100;
     std::uint32_t starvationCooldownBlocks = 32;
     // Playback-management capacities. Every field defaults to

@@ -398,6 +398,51 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
+TEST(StreamPlayback, DefaultSeventeenthStreamMixesWhileAllEarlierStreamsContinue) {
+    EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    StreamSpec spec{};
+    spec.sampleRate = kRate;
+    spec.channelCount = 2;
+    spec.chunkFrames = 256;
+    constexpr std::uint32_t frames = 32768;
+    std::vector<float> source(frames * 2u);
+    const auto bed = harkentest::ObjectId(79001);
+    const auto accent = harkentest::ObjectId(79002);
+    spec.soundId = bed;
+    std::fill_n(source.begin(), frames, 1.0f / 64.0f);
+    const auto bedPath = TempPath("stream_seventeen_bed.stream");
+    WriteFileBytes(bedPath, BuildStreamBytes(spec, source));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(bed, bedPath.c_str()));
+    spec.soundId = accent;
+    std::fill_n(source.begin(), frames, 0.0f);
+    std::fill(source.begin() + frames, source.end(), 0.125f);
+    const auto accentPath = TempPath("stream_seventeen_accent.stream");
+    WriteFileBytes(accentPath, BuildStreamBytes(spec, source));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(accent, accentPath.c_str()));
+    auto play = MakePlayDesc(bed);
+    std::array<VnVoiceHandle, 17> handles{};
+    for (std::uint32_t i = 0; i < 16; ++i)
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles[i])) << i;
+    engine.streams.SyncServe();
+    engine.nullBackend.Pump(2);
+    play.soundId = accent;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles.back()));
+    for (std::uint32_t block = 0; block < 8; ++block) {
+        engine.streams.SyncServe();
+        engine.nullBackend.Pump(1);
+        if (block == 0) continue;
+        const auto* mixed = engine.nullBackend.LastBlock();
+        for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
+            ASSERT_NEAR(0.25f, mixed[2 * i], 1e-5f) << block << ":" << i;
+            ASSERT_NEAR(0.125f, mixed[2 * i + 1], 1e-5f) << block << ":" << i;
+        }
+    }
+    EXPECT_EQ(17u, engine.voices.ActiveCount());
+    for (auto voice : handles) EXPECT_NE(0u, harkentest::RenderHandle(&engine, voice));
+}
+
 TEST(StreamPlayback, NoStreamRefusalIsSideEffectFreeAndOrdered) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/4,
