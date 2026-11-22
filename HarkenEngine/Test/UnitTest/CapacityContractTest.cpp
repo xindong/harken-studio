@@ -1118,11 +1118,11 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     for (auto& row : engine.playableServices) row.actionPrepared = false;
 }
 
-TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective) {
+TEST(CapacityContract, AutomaticVoiceCapacityAndExplicitLimits) {
     VnConfig config = MakeNullConfig();
     harken::EngineConfig resolved;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.voiceCapacity.Render());
+    EXPECT_EQ(harken::VoiceCapacityModel::kMaxRenderVoices, resolved.voiceCapacity.Render());
     EXPECT_EQ(0u, resolved.maxActions);
 
     config.maxVoices = 128;

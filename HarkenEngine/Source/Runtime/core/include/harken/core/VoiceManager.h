@@ -7,7 +7,8 @@
 #include <harken/Harken.h>
 
 #include <cstdint>
-#include <vector>
+#include <span>
+#include "harken/core/StableRowStorage.h"
 
 namespace harken {
 
@@ -70,7 +71,8 @@ public:
         VnVoiceHandle victimRenderHandle = 0;
     };
 
-    VoiceManager(std::uint32_t renderCapacity, std::uint32_t logicalCapacity);
+    VoiceManager(std::uint32_t renderCapacity, std::uint32_t logicalCapacity, std::uint32_t initialRender = UINT32_MAX);
+    bool PrepareRenderSlots(std::uint32_t count) noexcept;
 
     Decision Decide(const RenderRequest& request, bool parkingEnabled,
                     bool virtualCapacityAvailable, double parkThresholdDb,
@@ -86,13 +88,13 @@ public:
     void ClearRequests();
     bool AddRequest(const RenderRequest& request);
     void SortRequests();
-    const std::vector<RenderRequest>& Requests() const { return m_requests; }
+    std::span<const RenderRequest> Requests() const { return {m_requests.data(), m_requestCount}; }
 
     void ClearCandidates();
     bool AddCandidate(const LiveCandidate& candidate);
     void SortParkCandidates();
-    const std::vector<LiveCandidate>& Candidates() const {
-        return m_candidates;
+    std::span<const LiveCandidate> Candidates() const {
+        return {m_candidates.data(), m_candidateCount};
     }
 
     bool PublishClaim(VnVoiceHandle victimRenderHandle,
@@ -114,9 +116,12 @@ private:
         VnVoiceHandle publicClaimant = 0;
     };
 
-    std::vector<Claim> m_claims;
-    std::vector<RenderRequest> m_requests;
-    std::vector<LiveCandidate> m_candidates;
+    StableRowStorage<Claim> m_claims;
+    std::uint32_t m_virtualCapacity;
+    StableRowStorage<RenderRequest> m_requests;
+    std::uint32_t m_requestCount = 0;
+    StableRowStorage<LiveCandidate> m_candidates;
+    std::uint32_t m_candidateCount = 0;
 };
 
 } // namespace harken

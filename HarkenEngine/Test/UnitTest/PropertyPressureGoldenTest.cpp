@@ -714,7 +714,7 @@ TEST(PropertyPressureGolden, ConfigCapacityEstimateIsInformationalAndNotRuntimeP
         std::uint32_t queueDepth;
         std::uint64_t estimate;
         std::uint32_t resolvedQueueDepth;
-    } cases[] = {{0, 0, 1538, 256}, {8, 4, 50, 4}, {1024, 256, 6146, 256}};
+    } cases[] = {{0, 0, 98306, 256}, {8, 4, 50, 4}, {1024, 256, 6146, 256}};
     for (const auto& test : cases) {
         SCOPED_TRACE(test.voices);
         LogCodeSink sink;

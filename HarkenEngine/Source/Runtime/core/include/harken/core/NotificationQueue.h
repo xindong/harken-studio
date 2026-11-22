@@ -43,6 +43,8 @@
 #include <harken/Harken.h>
 
 #include <atomic>
+#include <bit>
+#include "harken/core/AllocGuard.h"
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -71,6 +73,33 @@ public:
         m_slots = std::make_unique<Slot[]>(cap);
         m_capacity = cap;
         m_mask = cap - 1;
+    }
+
+    // Sole logic producer and consumer only. Audio-facing queues keep their
+    // fixed storage. Preserve unread sequence order when crossing a power of two.
+    bool GrowOnLogicThread(std::uint32_t depth) noexcept {
+        if (depth <= m_capacity) return true;
+        if (m_quantumBudgetEnabled || memguard::IsAudioTagged()) return false;
+        const auto capacity = std::bit_ceil(depth);
+        try {
+            auto next = std::make_unique<Slot[]>(capacity);
+            const auto write = m_write.load(std::memory_order_relaxed);
+            const auto read = m_read.load(std::memory_order_relaxed);
+            const auto first = write - read >= m_capacity ? write - m_capacity + 1 : read;
+            for (auto i = first; i < write; ++i)
+                for (unsigned word = 0; word < 3; ++word)
+                    next[i & (capacity - 1)].words[word].store(
+                        m_slots[i & m_mask].words[word].load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+            m_dropped += first - read;
+            m_read.store(first, std::memory_order_relaxed);
+            m_slots = std::move(next);
+            m_capacity = capacity;
+            m_mask = capacity - 1;
+            return true;
+        } catch (const std::bad_alloc&) {
+            return false;
+        }
     }
 
     std::uint32_t Capacity() const { return m_capacity; }

@@ -13,7 +13,7 @@ namespace Harken.Unity
     public sealed class HarkenProjectSettings : ScriptableObject
     {
         public const string ResourceName = "HarkenProjectSettings";
-        public const uint DefaultMaxVoices = 256;
+        public const uint DefaultMaxVoices = 0;
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
 
         [SerializeField] private bool enableCommunicationInBuilds = true;
@@ -35,7 +35,7 @@ namespace Harken.Unity
         private static HarkenProjectSettings transient;
 
         public bool EnableCommunicationInBuilds => enableCommunicationInBuilds;
-        public uint MaxVoices => NonZero(maxVoices, DefaultMaxVoices);
+        public uint MaxVoices => maxVoices;
         public string Language => language ?? string.Empty;
         public string PlatformId => packPlatformId ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
@@ -86,7 +86,7 @@ namespace Harken.Unity
             HarkenProjectSettings settings = ActiveForStartup();
             config.maxVoices = settings.MaxVoices;
             // A single emitter stop can address every render voice atomically.
-            if (config.maxVoices > DefaultMaxVoices)
+            if (config.maxVoices > 256u)
             {
                 config.commandQueueDepth = Math.Max(config.commandQueueDepth, config.maxVoices);
                 config.maxControlCommandsPerQuantum = Math.Max(config.maxControlCommandsPerQuantum, config.maxVoices);
@@ -264,7 +264,6 @@ namespace Harken.Unity
                 projectName);
         }
 
-        private static uint NonZero(uint value, uint fallback) => value != 0 ? value : fallback;
 
         private static bool PathsEqual(string left, string right)
         {

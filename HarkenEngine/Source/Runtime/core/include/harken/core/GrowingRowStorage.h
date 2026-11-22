@@ -15,6 +15,12 @@ template<class T>
 class GrowingRowStorage {
 public:
     GrowingRowStorage() = default;
+    // Call before first use when adjacent elements form indivisible spans.
+    void AlignSegments(std::uint32_t span) noexcept {
+        assert(constructed_ == 0 && baseRows_ == 0 && std::has_single_bit(span));
+        baseRows_ = span;
+        baseShift_ = std::countr_zero(span);
+    }
     GrowingRowStorage(const GrowingRowStorage&) = delete;
     GrowingRowStorage& operator=(const GrowingRowStorage&) = delete;
     ~GrowingRowStorage() {
@@ -210,11 +216,11 @@ private:
     bool ConstructUnheldThrough(std::uint32_t count, PrepareDependencies&& prepare) noexcept {
         if (count <= constructed_) return true;
         if (memguard::IsAudioTagged() || growth_.preparedUsers != 0 || !prepare(count)) return false;
-        if (baseRows_ == 0) {
+        if (pageBytes_ == 0) {
             pageBytes_ = detail::StablePageReservation::SystemPageBytes();
             if (pageBytes_ == 0) return false;
-            baseRows_ = std::bit_floor(static_cast<std::uint32_t>(
-                std::max<std::size_t>(1u, std::min<std::size_t>(UINT32_MAX, pageBytes_ / sizeof(T)))));
+            baseRows_ = std::max(baseRows_, std::bit_floor(static_cast<std::uint32_t>(
+                std::max<std::size_t>(1u, std::min<std::size_t>(UINT32_MAX, pageBytes_ / sizeof(T))))));
             baseShift_ = std::countr_zero(baseRows_);
         }
         auto cursor = ConstructedCount();

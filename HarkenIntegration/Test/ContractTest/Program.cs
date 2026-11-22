@@ -453,7 +453,7 @@ namespace Harken.Test
                 config.maxCatalogEntries == 50000 &&
                 config.maxActions == 0 &&
                 config.maxCatalogBytes == 15200088 &&
-                config.maxResidentDefinitionBytes == (8UL << 20);
+                config.maxResidentDefinitionBytes == 0;
 
             VnConfig catalogCountLow = HarkenEngine.DefaultConfig();
             catalogCountLow.maxCatalogEntries = 49999;

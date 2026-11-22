@@ -329,11 +329,6 @@ namespace Harken
                 config.maxCatalogBytes =
                     inspection.RecommendedCatalogBytes;
             }
-            if (config.maxResidentDefinitionBytes == 0)
-            {
-                config.maxResidentDefinitionBytes =
-                    inspection.RecommendedResidentDefinitionBytes;
-            }
             return VnResult.VN_OK;
         }
 
