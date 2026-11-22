@@ -27,6 +27,8 @@ namespace harken {
 
 namespace detail {
 
+class PackDecodeCharge;
+
 struct PcmSampleDeleter {
     PcmSampleDeleter() noexcept = default;
     PcmSampleDeleter(const PcmSampleDeleter&) = delete;
@@ -175,7 +177,8 @@ public:
     private:
         friend class PCMRegistry;
         VnResult PrepareStorage();
-        VnResult Store(const float* samples, std::size_t count);
+        VnResult Append(const float* samples, std::size_t count, detail::PackDecodeCharge* staging);
+        VnResult Store(const float* samples, std::size_t count, detail::PackDecodeCharge* staging);
         void PrepareSampleView() noexcept;
         void MoveCompleted(PreparedPackSamples* out) noexcept;
         VnSoundId m_soundId{};
@@ -326,7 +329,8 @@ public:
 
     // Copy-policy input only. A nonempty output is refused without changing it.
     VnResult PreparePackSamples(VnSoundId soundId, const VnPCMDesc* desc,
-                               PreparedPackSamples* out, PcmLoopRegion loop = {});
+                               PreparedPackSamples* out, PcmLoopRegion loop = {},
+                               detail::PackDecodeCharge* staging = nullptr);
     // Shape validation does not access the descriptor's sample pointers.
     VnResult BeginPackSamples(VnSoundId soundId, const VnPCMDesc* shape,
                              PackSampleBuilder* out, PcmLoopRegion loop = {},

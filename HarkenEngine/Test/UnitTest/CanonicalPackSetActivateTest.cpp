@@ -3480,7 +3480,8 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
                                             bool streamed, const std::vector<float>& samples,
                                             std::uint64_t providerId = 0, bool leadingMedia = false,
                                             std::uint64_t encodedRevision = 0,
-                                            const std::vector<std::uint8_t>* encoded = nullptr) {
+                                            const std::vector<std::uint8_t>* encoded = nullptr,
+                                            std::size_t leadingFrames = 4096, float leadingSample = 0.125f) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
@@ -3551,7 +3552,7 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
     image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
         DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     // An unrelated media blob ahead of the Sound's moves its file offset.
-    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(4096, 0.125f));
+    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(leadingFrames, leadingSample));
     if (providerId == 0) {
         if (encoded) image.AddVorbis(kSound, *encoded, frames, 2);
         else image.AddMedia(kSound, samples, {}, 2);
@@ -3571,7 +3572,8 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
 
 // Content pack carrying only the stereo media; its Sound is defined by a
 // member that declares a required content edge to this pack.
-std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples) {
+std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples,
+                                             VnSoundId sound = kSound) {
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
     std::uint64_t size = 0;
@@ -3582,7 +3584,7 @@ std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector
     image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
     image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
         DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
-    image.AddMedia(kSound, samples, {}, 2);
+    image.AddMedia(sound, samples, {}, 2);
     return image.Build();
 }
 
@@ -3729,6 +3731,78 @@ TEST(CanonicalPackSetActivate, ExplicitResidentMediaBudgetRejectsProviderSetAtom
     ASSERT_EQ(VN_OK, Activate(members, report));
     EXPECT_EQ(1u, report.resultSetRevision);
     EXPECT_TRUE(PackAdmissionOpenForInit(session.Engine(), report.initHandle));
+}
+
+TEST(CanonicalPackSetActivate, ProviderMixedPcmCopyUsesSharedStagingWhileEncodedPackIsLive) {
+    using namespace packstream;
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+    constexpr std::size_t frames = 512 * 1024;
+    constexpr auto floatBytes = frames * sizeof(float);
+    for (const bool compact : {false, true}) {
+        Provider init{Build(true, PackId("Init"))};
+        Provider content{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+            0, true, fingerprint, &fixture.media, frames, compact ? 0.125f : 0.1f)};
+        // This allowance accommodates the compact copy plus parser/codec scratch,
+        // but cannot hold the original Pack and a full Float32 copy together.
+        for (const bool ample : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "compact=" << compact << ", ample=" << ample);
+            auto config = StreamConfig();
+            config.maxPackDecodeStagingBytes = content.bytes.size() +
+                (ample ? 2 * floatBytes : 3 * floatBytes / 4);
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            VnCanonicalPackSetActivationReportV1 report{};
+            std::vector<VnCanonicalPackSetMemberV2> members{
+                Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+            init.reads = init.releases = content.reads = content.releases = 0;
+            const auto result = Activate(members, report);
+            EXPECT_EQ(1u, init.reads);
+            EXPECT_EQ(1u, content.reads);
+            EXPECT_EQ(init.reads, init.releases);
+            EXPECT_EQ(content.reads, content.releases);
+            if (!compact && !ample) {
+                EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+                EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+                EXPECT_EQ(0u, session.Engine()->registry.CookieOf(kSound));
+            } else {
+                ASSERT_EQ(VN_OK, result);
+                EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
+                EXPECT_NE(0u, session.Engine()->registry.CookieOf(kSound));
+            }
+        }
+    }
+}
+
+TEST(CanonicalPackSetActivate, ProviderMixedPcmCopyRemainsChargedWhenReadingNextMember) {
+    using namespace packstream;
+    constexpr std::size_t frames = 512 * 1024;
+    constexpr auto floatBytes = frames * sizeof(float);
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    Provider init{Build(true, PackId("Init"))};
+    Provider mixed{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+        0, true, harken::Fnv1a64(fixture.media.data(), fixture.media.size()), &fixture.media, frames, 0.1f)};
+    const auto nextId = PackId("next-media");
+    Provider next{BuildMediaProvider(nextId, std::vector<float>(frames + frames / 2, 0.25f),
+        harkentest::ObjectId(8401))};
+    // The mixed member fits during preparation, and the next source fits on its
+    // own. Keeping the prepared PCM alive across the two reads exceeds the limit.
+    for (const bool ample : {false, true}) {
+        SCOPED_TRACE(ample);
+        auto config = StreamConfig();
+        config.maxPackDecodeStagingBytes = next.bytes.size() + (ample ? 2 * floatBytes : 3 * floatBytes / 4);
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        std::vector<VnCanonicalPackSetMemberV2> members{Member(PackId("Init"), true, &init),
+            Member(PathSet::ContentId(), false, &mixed), Member(nextId, false, &next)};
+        VnCanonicalPackSetActivationReportV1 report{};
+        next.reads = next.releases = 0;
+        const auto result = Activate(members, report);
+        EXPECT_EQ(1u, next.reads);
+        EXPECT_EQ(next.reads, next.releases);
+        EXPECT_EQ(ample ? VN_OK : VN_PACK_RESIDENT_CAPACITY, result);
+        EXPECT_EQ(ample ? 3u : 0u, session.Engine()->packs.LoadedCount());
+    }
 }
 
 TEST(CanonicalPackSetActivate, ProviderVorbisRejectsWrongTrimWithoutReplacingLiveMedia) {
