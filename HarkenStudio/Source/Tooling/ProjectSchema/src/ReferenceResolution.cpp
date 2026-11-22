@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <utility>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 using harkenreferenceslots::kReferenceSlotCount;
@@ -19,12 +19,12 @@ constexpr std::uint32_t kDepthMargin = 16;
 
 struct ResolveCtx {
     const std::map<StableId,
-                   std::array<std::optional<harkenstudio::ObjectId>,
+                   std::array<std::optional<harken::studio::types::ObjectId>,
                               kReferenceSlotCount>>* refValues;
 };
 
-bool SlotValueCallback(void* ctx, harkenstudio::ObjectId objectId, ReferenceSlot slot,
-                       harkenstudio::ObjectId* outValue) {
+bool SlotValueCallback(void* ctx, harken::studio::types::ObjectId objectId, ReferenceSlot slot,
+                       harken::studio::types::ObjectId* outValue) {
     const auto* c = static_cast<const ResolveCtx*>(ctx);
     const auto it = c->refValues->find(objectId);
     if (it == c->refValues->end()) {
@@ -52,8 +52,8 @@ ReferenceResolutionContext::ReferenceResolutionContext(
     : depthCeiling_(depthCeiling) {
     for (const ContentObject& obj : project.objects) {
         const Chassis& c = obj.chassis();
-        std::array<std::optional<harkenstudio::ObjectId>, kReferenceSlotCount> values{};
-        if (c.outputBusRef != harkenstudio::ObjectId{}) {
+        std::array<std::optional<harken::studio::types::ObjectId>, kReferenceSlotCount> values{};
+        if (c.outputBusRef != harken::studio::types::ObjectId{}) {
             values[static_cast<std::size_t>(ReferenceSlot::OutputBus)] =
                 c.outputBusRef;
         }
@@ -217,4 +217,4 @@ ReferenceResolutionResult BuildReferenceResolution(
         static_cast<std::uint32_t>(project.objects.size()) + kDepthMargin);
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

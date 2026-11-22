@@ -1,7 +1,7 @@
 #include "EditorCommandRegistration.h"
 #include "IPC/IPCServer.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void registerTemplateActions(ActionManager& manager, ProjectManager* project);
 

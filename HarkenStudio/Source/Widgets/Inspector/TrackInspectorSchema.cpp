@@ -3,7 +3,7 @@
 #include "ContentObjectSchemaRows.h"
 #include "Core/Components/VTrack.h"
 
-namespace VNX {
+namespace harken::studio {
 
 #if defined(__clang__)
 #  pragma clang diagnostic push

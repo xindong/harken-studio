@@ -12,7 +12,7 @@
 
 #include <algorithm>
 
-namespace VNX::AuthoringPolicy {
+namespace harken::studio::AuthoringPolicy {
 namespace {
 
 TimelineValidation validateDependencies(const ProjectItem& item,

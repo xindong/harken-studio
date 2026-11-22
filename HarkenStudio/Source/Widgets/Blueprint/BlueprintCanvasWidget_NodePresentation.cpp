@@ -9,7 +9,7 @@
 #include "Core/SoundSourceEditing.h"
 #include "Core/ThemeManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void BlueprintCanvasWidget::refreshNodeWaveforms_(uint32_t sourceID)
 {

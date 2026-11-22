@@ -1,6 +1,6 @@
 #include "MonitorTapBinding.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool tapRegistryPublished()
@@ -26,4 +26,4 @@ TapBindingProjection projectTapSelectFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

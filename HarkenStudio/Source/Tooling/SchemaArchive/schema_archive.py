@@ -392,7 +392,7 @@ def validate_pack_source(source: dict[str, Any]) -> None:
         "generated.pack-manifest", "generated.pack-companion"
     ):
         raise ValueError("Pack contract must describe a Pack publication format")
-    companion = metadata["formatId"] == "generated.pack-companion"
+    pack_metadata = metadata["formatId"] == "generated.pack-companion"
     version = metadata.get("formatVersion")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise ValueError("Pack contract needs a positive formatVersion")
@@ -400,9 +400,9 @@ def validate_pack_source(source: dict[str, Any]) -> None:
         raise ValueError("Pack contract must use generated-json validation")
     locator = metadata.get("versionLocator")
     version_key = locator.removeprefix("json:$.") if isinstance(locator, str) else None
-    if companion and version_key not in ("schemaVersion", "packMetadataVersion"):
-        raise ValueError("Pack companion contract must use json:$.packMetadataVersion")
-    if not companion and locator != "json:$.schema_version":
+    if pack_metadata and version_key not in ("schemaVersion", "packMetadataVersion"):
+        raise ValueError("Pack metadata contract must use json:$.packMetadataVersion")
+    if not pack_metadata and locator != "json:$.schema_version":
         raise ValueError("Pack contract must use json:$.schema_version")
     if metadata.get("rebuildPolicy") != "rebuild":
         raise ValueError("Pack contract must be rebuildable")
@@ -415,14 +415,14 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     schema = {key: value for key, value in source.items() if key != "x-harken-format"}
     if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema" or schema.get("type") != "object":
         raise ValueError("Pack contract needs a JSON object schema")
-    if companion and "schema_version" in schema.get("properties", {}):
-        raise ValueError("Pack companions must not embed a schema_version")
-    if not companion and schema.get("properties", {}).get("schema_version", {}).get("const") != version:
+    if pack_metadata and "schema_version" in schema.get("properties", {}):
+        raise ValueError("Pack metadata must not embed a schema_version")
+    if not pack_metadata and schema.get("properties", {}).get("schema_version", {}).get("const") != version:
         raise ValueError("Pack contract schema_version does not match formatVersion")
     definitions = schema.get("$defs", {})
     if not isinstance(definitions, dict):
         raise ValueError("Pack definitions must be an object")
-    if companion and definitions.get(version_key, {}).get("const") != version:
+    if pack_metadata and definitions.get(version_key, {}).get("const") != version:
         raise ValueError(f"Pack {version_key} does not match formatVersion")
     for name, definition in definitions.items():
         validate_schema_language(definition, f"Pack.$defs.{name}")
@@ -577,7 +577,7 @@ def generated_project_header(source: dict[str, Any], versions: list[int]) -> byt
     lines = [
         "#pragma once",
         "",
-        "namespace VNX::ProjectSchema {",
+        "namespace harken::studio::ProjectSchema {",
         "",
         "inline constexpr int kProjectSchemaVersion = HARKEN_PROJECT_SCHEMA_VERSION;",
         "inline constexpr int kProjectSchemaVersions[] = {"
@@ -813,15 +813,15 @@ def generated_rule_call(rule: dict[str, Any]) -> str:
                 for key, value in sorted(mappings.items())
             ) + "}"
             values.append(
-                "VNX::ProjectSchemaReferenceRule{"
-                f"VNX::ProjectSchemaReferenceKind::{kinds[item['kind']]}, "
+                "harken::studio::ProjectSchemaReferenceRule{"
+                f"harken::studio::ProjectSchemaReferenceKind::{kinds[item['kind']]}, "
                 f"{cpp_qstring_list(item['path'])}, "
                 f"{cpp_qstring_list(item.get('targetTypes', []))}, "
                 f"{'true' if item.get('allowNull', False) else 'false'}, "
                 f"{cpp_qstring(item.get('selectorField', ''))}, {mapping_cpp}"
                 "}"
             )
-        return "executor.referencesResolve(QList<VNX::ProjectSchemaReferenceRule>{" + ", ".join(values) + "});"
+        return "executor.referencesResolve(QList<harken::studio::ProjectSchemaReferenceRule>{" + ", ".join(values) + "});"
     if name == "acyclic":
         return f"executor.acyclic({cpp_qstring_list(rule['reference'])});"
     if name == "singleton":
@@ -847,7 +847,7 @@ def generated_validator_registry(
 #include <QStringList>
 #include <QStringView>
 
-namespace VNX::GeneratedSchemaRegistry {
+namespace harken::studio::GeneratedSchemaRegistry {
 
 bool supportsProjectVersion(int version);
 bool supportsPackVersion(int version);
@@ -860,7 +860,7 @@ bool validatePackMetadata(int version,
                           const QString& relativePath,
                           QStringList& errors);
 bool validateProjectRules(int version,
-                          VNX::ProjectSchemaRuleExecutor& executor,
+                          harken::studio::ProjectSchemaRuleExecutor& executor,
                           QStringList& errors);
 
 }
@@ -1138,7 +1138,7 @@ private:
 #include <cmath>
 #include <initializer_list>
 
-namespace VNX::GeneratedSchemaRegistry {{
+namespace harken::studio::GeneratedSchemaRegistry {{
 
 namespace {{
 
@@ -1190,7 +1190,7 @@ bool validatePackMetadata(int version,
 }}
 
 bool validateProjectRules(int version,
-                          VNX::ProjectSchemaRuleExecutor& executor,
+                          harken::studio::ProjectSchemaRuleExecutor& executor,
                           QStringList& errors)
 {{
     switch (version) {{
@@ -1251,7 +1251,7 @@ def build_bundle(schema_root: Path | None = None) -> dict[str, Any]:
     manifest["snapshotHash"] = snapshot_hash(manifest)
     installed["build.json"] = canonical_bytes(manifest)
     generated[GENERATED_BUILD_HEADER] = (
-        "#pragma once\n\nnamespace VNX::SchemaBuild {\n\n"
+        "#pragma once\n\nnamespace harken::studio::SchemaBuild {\n\n"
         f'inline constexpr char kSnapshotHash[] = "{manifest["snapshotHash"]}";\n'
         "\n}\n"
     ).encode("ascii")

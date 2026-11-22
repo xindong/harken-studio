@@ -15,7 +15,7 @@
 
 class QPainter;
 
-namespace VNX {
+namespace harken::studio {
 
 enum class CurveAxisBound { None, XMin, XMax, YMin, YMax };
 

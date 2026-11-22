@@ -25,18 +25,18 @@ void ensureApp()
 
 constexpr float kMaxDistance = 100.0f;
 
-VNX::CurvePointDef makePoint(float distance, float value)
+harken::studio::CurvePointDef makePoint(float distance, float value)
 {
-    VNX::CurvePointDef p;
+    harken::studio::CurvePointDef p;
     p.x = distance;
     p.value = value;
     return p;
 }
 
-std::unique_ptr<VNX::CurveCanvas> makeCanvas()
+std::unique_ptr<harken::studio::CurveCanvas> makeCanvas()
 {
     ensureApp();
-    auto canvas = std::make_unique<VNX::CurveCanvas>();
+    auto canvas = std::make_unique<harken::studio::CurveCanvas>();
     canvas->setXDomain(0.0f, kMaxDistance);
     canvas->setCurve({makePoint(0.0f, 0.0f),
                       makePoint(50.0f, -40.0f),
@@ -44,7 +44,7 @@ std::unique_ptr<VNX::CurveCanvas> makeCanvas()
     return canvas;
 }
 
-QDialog* openPointEditor(VNX::CurveCanvas& canvas, int index)
+QDialog* openPointEditor(harken::studio::CurveCanvas& canvas, int index)
 {
     canvas.resize(420, 300);
     canvas.show();
@@ -72,9 +72,9 @@ TEST(AttenuationCurvePointCoordinate, AcceptingUnchangedRoundedValuesPreservesPr
 TEST(CurveCanvasSelection, PresetsOnlyChangeThePrimaryPointsRightSegment)
 {
     ensureApp();
-    for (const auto preset : VNX::kCurvePresets) {
+    for (const auto preset : harken::studio::kCurvePresets) {
         SCOPED_TRACE(static_cast<int>(preset));
-        VNX::CurveCanvas canvas;
+        harken::studio::CurveCanvas canvas;
         canvas.setXDomain(0.0f, 100.0f);
         canvas.setCurve({{0.0f, 0.0f}, {25.0f, -40.0f}, {60.0f, -10.0f}, {100.0f, -96.0f}});
         canvas.setSelectedPointIndices({0, 1, 3}, 1);
@@ -82,7 +82,7 @@ TEST(CurveCanvasSelection, PresetsOnlyChangeThePrimaryPointsRightSegment)
         const auto handles = canvas.curveHandles();
         const auto selection = canvas.selectedPointIndices();
         int edits = 0;
-        QObject::connect(&canvas, &VNX::CurveCanvas::curveEdited, &canvas,
+        QObject::connect(&canvas, &harken::studio::CurveCanvas::curveEdited, &canvas,
             [&edits] { ++edits; });
         ASSERT_TRUE(canvas.applySelectedCurvePreset(preset));
         EXPECT_EQ(canvas.curve(), points);
@@ -108,7 +108,7 @@ TEST(CurveCanvasSelection, PresetsOnlyChangeThePrimaryPointsRightSegment)
 TEST(CurveCanvasSelection, ContextMenuTargetsTheClickedAnchorAndItsRightSegment)
 {
     ensureApp();
-    VNX::CurveCanvas canvas;
+    harken::studio::CurveCanvas canvas;
     canvas.setXDomain(0.0f, 100.0f);
     canvas.resize(600, 400);
     canvas.show();
@@ -133,7 +133,7 @@ TEST(CurveCanvasSelection, ContextMenuTargetsTheClickedAnchorAndItsRightSegment)
                 EXPECT_NE(presets, nullptr);
                 if (presets) {
                     for (auto* action : presets->actions()) {
-                        if (action->data().toInt() == static_cast<int>(VNX::CurvePreset::QuadraticEaseOut)) {
+                        if (action->data().toInt() == static_cast<int>(harken::studio::CurvePreset::QuadraticEaseOut)) {
                             action->trigger();
                             inspected = true;
                             break;
@@ -166,7 +166,7 @@ TEST(CurveCanvasDomain, CoordinateEditingPreservesOrderingAtDifferentScales)
     for (const float span : {100.0f, 0.01f, 0.0001f}) {
         for (const bool pinned : {false, true}) {
             SCOPED_TRACE(::testing::Message() << span << ", pinned=" << pinned);
-            VNX::CurveCanvas canvas;
+            harken::studio::CurveCanvas canvas;
             auto profile = canvas.profile();
             profile.endpointsFollowDomain = pinned;
             canvas.setProfile(profile);
@@ -211,7 +211,7 @@ TEST(CurveCanvasDomain, ClippedPointsCanBeSeparatedAfterRangeContraction)
 TEST(CurveCanvasDomain, RenderingIsBoundedNearFloatingPointIntegerLimits)
 {
     ensureApp();
-    VNX::CurveCanvas canvas;
+    harken::studio::CurveCanvas canvas;
     canvas.resize(420, 300);
     auto profile = canvas.profile();
     profile.discretePreview = true;

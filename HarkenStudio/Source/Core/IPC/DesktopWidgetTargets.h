@@ -7,7 +7,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 QString desktopWidgetId(QWidget* widget);
 QList<QWidget*> desktopWidgets();

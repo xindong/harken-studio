@@ -11,7 +11,7 @@
 #include <QGridLayout>
 #include "../../Core/ThemeManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class CollapsibleSection : public QWidget
 {

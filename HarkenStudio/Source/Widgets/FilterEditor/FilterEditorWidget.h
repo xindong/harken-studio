@@ -8,7 +8,7 @@
 
 class QStackedWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class FilterResponseCanvas;
 class PropertyEditorEngine;

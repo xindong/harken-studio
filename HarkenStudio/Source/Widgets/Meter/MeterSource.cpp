@@ -6,10 +6,10 @@
 #include <algorithm>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-namespace Monitoring = HarkenEditor::Bridge::Monitoring;
+namespace Monitoring = harken::studio::bridge::Monitoring;
 
 }
 
@@ -19,7 +19,7 @@ struct MeterSource::Capture {
     uint64_t generation = 0;
     uint64_t nextTapId = 1;
     bool planDirty = false;
-    std::vector<HarkenEditor::Bridge::MeterCaptureRequest> requests;
+    std::vector<harken::studio::bridge::MeterCaptureRequest> requests;
     std::vector<MeterSource*> consumers;
     std::vector<uint8_t> buffer = std::vector<uint8_t>(262144);
 
@@ -47,7 +47,7 @@ struct MeterSource::Capture {
     int32_t apply()
     {
         Monitor::MonitorEffectiveCapturePlan plan{};
-        const auto result = HarkenEditor::Bridge::applyMeterCapture(session, lease, requests, plan);
+        const auto result = harken::studio::bridge::applyMeterCapture(session, lease, requests, plan);
         planDirty = result == Monitor::kInUse;
         if (result == Monitor::kOk) {
             generation = plan.capturePlanGeneration;
@@ -55,8 +55,8 @@ struct MeterSource::Capture {
         return result;
     }
 
-    int32_t add(MeterSource* consumer, harkenstudio::ObjectId bus,
-                HarkenEditor::Bridge::MeterMeasurement measurement)
+    int32_t add(MeterSource* consumer, harken::studio::types::ObjectId bus,
+                harken::studio::bridge::MeterMeasurement measurement)
     {
         if (session == 0) {
             Monitor::MonitorSessionDesc desc{};
@@ -166,8 +166,8 @@ struct MeterSource::Capture {
             }
             if (record.header.capturePlanGeneration != generation)
                 continue;
-            HarkenEditor::Bridge::MeterMeasurementFrame frame;
-            if (!HarkenEditor::Bridge::decodeMeterMeasurement(record.header, record.payload, frame))
+            harken::studio::bridge::MeterMeasurementFrame frame;
+            if (!harken::studio::bridge::decodeMeterMeasurement(record.header, record.payload, frame))
                 continue;
             if (frame.invalidated) {
                 const auto removed = std::erase_if(requests, [&](const auto& request) {
@@ -212,7 +212,7 @@ MeterSource::Capture& MeterSource::capture()
 
 MeterSource::~MeterSource() { stop(); }
 
-bool MeterSource::start(harkenstudio::ObjectId bus, HarkenEditor::Bridge::MeterMeasurement measurement)
+bool MeterSource::start(harken::studio::types::ObjectId bus, harken::studio::bridge::MeterMeasurement measurement)
 {
     result_ = capture().add(this, bus, measurement);
     if (result_ != Monitor::kOk)

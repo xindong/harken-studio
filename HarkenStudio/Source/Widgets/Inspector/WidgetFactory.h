@@ -7,7 +7,7 @@
 #include <QMap>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 class WidgetFactory
 {

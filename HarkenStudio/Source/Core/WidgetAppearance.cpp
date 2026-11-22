@@ -17,7 +17,7 @@
 #include <tuple>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 enum Edge { Left, Top, Right, Bottom };

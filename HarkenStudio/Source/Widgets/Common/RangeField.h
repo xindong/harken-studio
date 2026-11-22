@@ -6,7 +6,7 @@
 class QDoubleSpinBox;
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 // Paired low/high numeric editor for a single declared domain (a Variable's
 // range). The pair is one value: it reports both bounds together so the owner

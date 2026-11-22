@@ -12,7 +12,7 @@
 class QLineEdit;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 // Segmented row whose segments are not all constants: one of them owns a
 // numeric sub-range of the field's domain and edits in place (double-click, or

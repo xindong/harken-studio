@@ -8,7 +8,7 @@
 #include <QJsonArray>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 bool commandSupportedByHost(CommandHost host, const QString& name, bool requiresDesktop)
 {
     if (host == CommandHost::Cli && requiresDesktop) return false;

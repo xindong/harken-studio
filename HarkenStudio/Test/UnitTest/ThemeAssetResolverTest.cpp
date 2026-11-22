@@ -68,9 +68,9 @@ bool writePackage(const QString& themesRoot,
                      assets);
 }
 
-std::unique_ptr<VNX::ISettingsStorage> memoryStorage()
+std::unique_ptr<harken::studio::ISettingsStorage> memoryStorage()
 {
-    return std::make_unique<VNX::MemorySettingsStorage>();
+    return std::make_unique<harken::studio::MemorySettingsStorage>();
 }
 
 }
@@ -85,7 +85,7 @@ TEST(ThemeAssetResolver, ReloadSeparatesCacheAndKeepsOldHandleAlive)
     const QString imagePath = QDir(root.path()).filePath(
         QStringLiteral("reload/cap.png"));
     ASSERT_TRUE(writeImage(imagePath, Qt::red));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.reload")).ok());
     const auto oldSnapshot = manager.snapshot();
     const auto oldResource = manager.assetResolver().resolveImage(
@@ -131,7 +131,7 @@ TEST(ThemeAssetResolver, RasterTintPreservesPixelCoverageAndDevicePixelRatio)
         for (int x = 3; x < 18; ++x)
             source.setPixelColor(x, y, QColor(255, 255, 255, (x + y) % 2 ? 96 : 255));
     ASSERT_TRUE(source.save(root.filePath(QStringLiteral("raster/mask.png"))));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.raster")).ok());
     const QColor tint(QStringLiteral("#307090"));
     for (const qreal ratio : {1.0, 2.0})
@@ -140,10 +140,10 @@ TEST(ThemeAssetResolver, RasterTintPreservesPixelCoverageAndDevicePixelRatio)
         const int extent = qRound(source.width() / ratio);
         const auto plain = manager.assetResolver().resolveImage(
             manager.snapshot(), QStringLiteral("meter.peak.cap"),
-            VNX::ThemeAssetVariant{QSize(extent, extent), ratio});
+            harken::studio::ThemeAssetVariant{QSize(extent, extent), ratio});
         const auto colored = manager.assetResolver().resolveImage(
             manager.snapshot(), QStringLiteral("meter.peak.cap"),
-            VNX::ThemeAssetVariant{QSize(extent, extent), ratio, 0, tint});
+            harken::studio::ThemeAssetVariant{QSize(extent, extent), ratio, 0, tint});
         ASSERT_TRUE(plain.ok());
         ASSERT_TRUE(colored.ok());
         const auto& before = plain.resource->image;
@@ -170,12 +170,12 @@ TEST(ThemeAssetResolver, SvgTintAlphaComposesWithAssetOpacityInImagesAndExported
           <rect x="8" width="8" height="8" fill="currentColor" fill-opacity="0.5"/>
           <rect x="16" width="8" height="8" fill="#ff0000"/>
         </svg>)svg"));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.svg")).ok());
     for (int alpha : {0, 64, 128, 255}) {
         const QColor tint(48, 112, 160, alpha);
         const auto resolved = manager.assetResolver().resolveImage(manager.snapshot(),
-            QStringLiteral("meter.peak.cap"), VNX::ThemeAssetVariant{QSize(24, 8), 1.0, 0, tint});
+            QStringLiteral("meter.peak.cap"), harken::studio::ThemeAssetVariant{QSize(24, 8), 1.0, 0, tint});
         ASSERT_TRUE(resolved.ok());
         const auto& image = resolved.resource->image;
         EXPECT_NEAR(image.pixelColor(4, 4).alpha(), alpha, 1);
@@ -202,45 +202,45 @@ TEST(ThemeAssetResolver, RejectsRuntimePathEscape)
     ASSERT_TRUE(QDir().mkpath(packageRoot));
     ASSERT_TRUE(writeImage(QDir(root.path()).filePath(
         QStringLiteral("outside.png")), Qt::red));
-    VNX::ThemeSnapshot snapshotValue = VNX::createBuiltinDarkTheme();
+    harken::studio::ThemeSnapshot snapshotValue = harken::studio::createBuiltinDarkTheme();
     snapshotValue.generation = 42;
-    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(snapshotValue);
-    VNX::ThemeAssetMapDto assets;
-    VNX::ThemeAssetDto asset;
+    const auto snapshot = std::make_shared<const harken::studio::ThemeSnapshot>(snapshotValue);
+    harken::studio::ThemeAssetMapDto assets;
+    harken::studio::ThemeAssetDto asset;
     asset.sources.append({QStringLiteral("theme.test/../outside.png"), 1.0});
     assets.assets.insert(QStringLiteral("audition.play"), asset);
-    VNX::ThemeAssetResolver resolver;
+    harken::studio::ThemeAssetResolver resolver;
     resolver.registerSnapshot(snapshot, assets,
                               {{QStringLiteral("theme.test"), packageRoot}});
 
     const auto result = resolver.resolveImage(
         snapshot, QStringLiteral("audition.play"),
-        VNX::ThemeAssetVariant{QSize(20, 20)});
+        harken::studio::ThemeAssetVariant{QSize(20, 20)});
 
     ASSERT_FALSE(result.diagnostics.isEmpty());
     EXPECT_EQ(result.diagnostics.front().code,
-              VNX::ThemePackageErrorCode::PathEscape);
+              harken::studio::ThemePackageErrorCode::PathEscape);
 }
 
 TEST(ThemeAssetResolver, CreatesQtIconOnlyOnGuiThread)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
 
     const auto result = manager.assetResolver().resolveIcon(
         manager.snapshot(), QStringLiteral("audition.play"),
-        VNX::ThemeAssetVariant{QSize(20, 20), 1.0, 0, Qt::cyan});
+        harken::studio::ThemeAssetVariant{QSize(20, 20), 1.0, 0, Qt::cyan});
 
     ASSERT_TRUE(result.ok());
     EXPECT_FALSE(result.icon.isNull());
 
     const auto snapshot = manager.snapshot();
-    std::optional<VNX::ThemeIconResolution> workerResult;
+    std::optional<harken::studio::ThemeIconResolution> workerResult;
     std::thread worker([&] {
         workerResult = manager.assetResolver().resolveIcon(
             snapshot, QStringLiteral("audition.play"),
-            VNX::ThemeAssetVariant{QSize(20, 20), 1.0, 0, Qt::cyan});
+            harken::studio::ThemeAssetVariant{QSize(20, 20), 1.0, 0, Qt::cyan});
     });
     worker.join();
 

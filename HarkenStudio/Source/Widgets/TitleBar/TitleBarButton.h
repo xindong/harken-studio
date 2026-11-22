@@ -3,7 +3,7 @@
 #include <QColor>
 #include <QAbstractButton>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class TitleBarButtonKind {
     Minimize,

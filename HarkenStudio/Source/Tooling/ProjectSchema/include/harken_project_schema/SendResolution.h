@@ -9,7 +9,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The merged sends of one clip occurrence, in the order the winning entries were
 // first seen along the chain. sends holds at most kMaxVoiceSendSlots entries, one
@@ -47,6 +47,6 @@ struct SendResolutionResult {
 SendResolutionResult BuildSendResolution(const CanonicalProject& project,
                                          const NormalizedFacts& facts);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_SEND_RESOLUTION_H

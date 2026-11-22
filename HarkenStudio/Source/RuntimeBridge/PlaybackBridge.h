@@ -26,8 +26,8 @@
 #include <string>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 enum class EngineDeviceMode : uint8_t {
     Real,
@@ -44,7 +44,7 @@ enum class EngineDeviceMode : uint8_t {
 //==============================================================================
 
 using EngineResult = uint32_t;               // mirrors the legacy result width
-inline constexpr harkenstudio::ObjectId kEngineMasterBusId = harkenstudio::kMasterBusObjectId;
+inline constexpr harken::studio::types::ObjectId kEngineMasterBusId = harken::studio::types::kMasterBusObjectId;
 inline constexpr EngineResult kEngineOk      = 0;
 inline constexpr EngineResult kEngineInvalidArg =
     static_cast<EngineResult>(-100);
@@ -100,8 +100,8 @@ enum class BusTopologyOperation : uint8_t {
 };
 
 struct RuntimeBusDefinition {
-    harkenstudio::ObjectId id{};
-    harkenstudio::ObjectId parentId = {};
+    harken::studio::types::ObjectId id{};
+    harken::studio::types::ObjectId parentId = {};
     QString name;
     float volumeDb = 0.0f;
     bool mute = false;
@@ -110,16 +110,16 @@ struct RuntimeBusDefinition {
 };
 
 struct RuntimeBusSendDefinition {
-    harkenstudio::ObjectId sourceId = {};
-    harkenstudio::ObjectId targetId = {};
+    harken::studio::types::ObjectId sourceId = {};
+    harken::studio::types::ObjectId targetId = {};
     float levelDb = 0.0f;
 };
 
 struct BusTopologyFailure {
     BusTopologyOperation operation = BusTopologyOperation::None;
     EngineResult result = kEngineOk;
-    harkenstudio::ObjectId busId = {};
-    harkenstudio::ObjectId relatedBusId = {};
+    harken::studio::types::ObjectId busId = {};
+    harken::studio::types::ObjectId relatedBusId = {};
     QString busName;
 };
 
@@ -241,7 +241,7 @@ public:
     EngineResult releaseActionSeek(uint64_t operationId);
     uint64_t playByName(const QString& name);
     uint64_t playByName3D(const QString& name, float x, float y, float z);
-    bool hasActionProgram(harkenstudio::ObjectId actionId) const;
+    bool hasActionProgram(harken::studio::types::ObjectId actionId) const;
     EngineResult stopPlayback(uint64_t handle, float fadeMs);
     bool stopAll(float fadeMs);
     bool hasCurrentWorldPlayableConsumers() const;
@@ -253,7 +253,7 @@ public:
     void setVoiceSpatMixByName(const QString& soundName, float mix);
     void setVoiceDistanceScaleByName(const QString& soundName, float scale);
     void setVoiceSendsByName(const QString& soundName,
-                             const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends);
+                             const std::vector<std::pair<harken::studio::types::ObjectId, float>>& sends);
     bool setListenerTransform(float px, float py, float pz,
                               float fx, float fy, float fz,
                               float ux, float uy, float uz);
@@ -270,7 +270,7 @@ public:
     void clearPreparedMedia();   // preparer clear, else media-registry clear
 
     struct RawPcmSliceRegistration {
-        harkenstudio::ObjectId soundId = {};
+        harken::studio::types::ObjectId soundId = {};
         uint32_t channels = 0;
         uint32_t sampleRate = 0;
         uint64_t startFrame = 0;
@@ -280,34 +280,34 @@ public:
         bool loops = false;
         EngineResult result = kEngineOk;
     };
-    harkenstudio::ObjectId mintRawPcmSoundId();
-    RawPcmSliceRegistration registerRawPcmSlice(harkenstudio::ObjectId soundId,
+    harken::studio::types::ObjectId mintRawPcmSoundId();
+    RawPcmSliceRegistration registerRawPcmSlice(harken::studio::types::ObjectId soundId,
                                                 const QString& absolutePath,
                                                 uint64_t startFrame,
                                                 uint64_t frameCount,
                                                 bool loops = false);
-    RawPcmSliceRegistration registerRawPcmSlice(harkenstudio::ObjectId soundId,
+    RawPcmSliceRegistration registerRawPcmSlice(harken::studio::types::ObjectId soundId,
                                                 std::vector<float> interleaved,
                                                 int channels, int sampleRate,
                                                 uint64_t startFrame, uint64_t frameCount,
                                                 bool loops = false);
-    RawPcmSliceRegistration relocateRawPcmSlice(harkenstudio::ObjectId soundId,
+    RawPcmSliceRegistration relocateRawPcmSlice(harken::studio::types::ObjectId soundId,
                                                 uint64_t startFrame);
-    EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);
-    uint64_t playRawPcm(harkenstudio::ObjectId soundId, bool loops,
+    EngineResult unregisterRawPcm(harken::studio::types::ObjectId soundId);
+    uint64_t playRawPcm(harken::studio::types::ObjectId soundId, bool loops,
                         EngineResult* outResult = nullptr);
     bool stopRawPcm(uint64_t playbackHandle, uint32_t fadeMs = 0);
 
     // -- buses / mixer --
-    void setBusMuteById(harkenstudio::ObjectId busId, bool mute);
-    void setBusSoloById(harkenstudio::ObjectId busId, bool solo);
+    void setBusMuteById(harken::studio::types::ObjectId busId, bool mute);
+    void setBusSoloById(harken::studio::types::ObjectId busId, bool solo);
     // Returns false without writing l/r when the snapshot has no peak for the
     // canonical Bus identity. Never falls back to master.
-    bool busMeterPeakById(harkenstudio::ObjectId busId, float& l, float& r) const;
-    void setBusVolumeDbById(harkenstudio::ObjectId busId, float db);
-    void setBusOutputVolumeDbById(harkenstudio::ObjectId busId, float db);
-    float busVolumeDbById(harkenstudio::ObjectId busId) const;
-    void setBusPanById(harkenstudio::ObjectId busId, float pan);
+    bool busMeterPeakById(harken::studio::types::ObjectId busId, float& l, float& r) const;
+    void setBusVolumeDbById(harken::studio::types::ObjectId busId, float db);
+    void setBusOutputVolumeDbById(harken::studio::types::ObjectId busId, float db);
+    float busVolumeDbById(harken::studio::types::ObjectId busId) const;
+    void setBusPanById(harken::studio::types::ObjectId busId, float pan);
     void synchronizeBusTopology(
         const std::vector<RuntimeBusDefinition>& buses,
         const std::vector<RuntimeBusSendDefinition>& sends);
@@ -319,9 +319,9 @@ public:
         const std::vector<RuntimeBusSendDefinition>& sends);
     BusTopologyState busTopologyState() const;
     BusTopologyFailure busTopologyFailure() const;
-    void renameBus(harkenstudio::ObjectId busId, const QString& newName);
-    std::vector<harkenstudio::ObjectId> runtimeBusIds() const;
-    void setMixerVolume(harkenstudio::ObjectId busId, float volumeDb);
+    void renameBus(harken::studio::types::ObjectId busId, const QString& newName);
+    std::vector<harken::studio::types::ObjectId> runtimeBusIds() const;
+    void setMixerVolume(harken::studio::types::ObjectId busId, float volumeDb);
 
     // -- spatial --
     uint32_t addListener();
@@ -364,5 +364,5 @@ bool findModulatorPreset(const QString& name, ModulatorPresetDesc& out);
 bool saveModulatorUserPreset(const ModulatorPresetDesc& desc);
 bool deleteModulatorUserPreset(uint8_t modulatorType, const QString& name);
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

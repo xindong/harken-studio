@@ -57,20 +57,20 @@ struct ReferenceSlotSource {
     // The explicit value authored on one object for one slot. False means the
     // object declares nothing here, which is what lets resolution continue
     // upward. Never guesses.
-    bool (*slotValue)(void* ctx, harkenstudio::ObjectId objectId, ReferenceSlot slot,
-                      harkenstudio::ObjectId* outValue) = nullptr;
+    bool (*slotValue)(void* ctx, harken::studio::types::ObjectId objectId, ReferenceSlot slot,
+                      harken::studio::types::ObjectId* outValue) = nullptr;
 
     // Ancestors in the placement chain — the Track or Segment an object is
     // arranged on. False means the index is past the end of the chain.
-    bool (*placementAncestor)(void* ctx, harkenstudio::ObjectId subjectId,
+    bool (*placementAncestor)(void* ctx, harken::studio::types::ObjectId subjectId,
                               std::uint32_t index,
-                              harkenstudio::ObjectId* outObjectId) = nullptr;
+                              harken::studio::types::ObjectId* outObjectId) = nullptr;
 
     // Ancestors in the organizational chain — the AudioLayer an object is
     // filed under.
-    bool (*organizationalAncestor)(void* ctx, harkenstudio::ObjectId subjectId,
+    bool (*organizationalAncestor)(void* ctx, harken::studio::types::ObjectId subjectId,
                                    std::uint32_t index,
-                                   harkenstudio::ObjectId* outObjectId) = nullptr;
+                                   harken::studio::types::ObjectId* outObjectId) = nullptr;
 
     // The slot's project-level default. False means the slot has no default,
     // in which case an object inheriting nothing resolves to nothing and the
@@ -78,7 +78,7 @@ struct ReferenceSlotSource {
     // than from a table in this library, so no engine or project constant has
     // to be written into the rule.
     bool (*slotDefault)(void* ctx, ReferenceSlot slot,
-                        harkenstudio::ObjectId* outValue) = nullptr;
+                        harken::studio::types::ObjectId* outValue) = nullptr;
 };
 
 // One level that supplied a value. Levels that supplied nothing produce no
@@ -88,11 +88,11 @@ struct ReferenceSlotCandidate {
     ResolutionLevel level = ResolutionLevel::SlotDefault;
     // The object that authored the value. 0 for the slot default, which is not
     // authored on any object.
-    harkenstudio::ObjectId sourceObjectId{};
+    harken::studio::types::ObjectId sourceObjectId{};
     // Distance up the chain: 1 is the nearest ancestor. 0 for the subject
     // itself and for the slot default.
     std::uint32_t ancestorDepth = 0;
-    harkenstudio::ObjectId value{};
+    harken::studio::types::ObjectId value{};
     // Exactly one candidate is the winner; the rest were shadowed by it.
     bool winner = false;
 };
@@ -114,9 +114,9 @@ struct ReferenceSlotResolution {
     ResolutionOutcome outcome = ResolutionOutcome::Unresolved;
     // Winner, meaningful only when outcome is Resolved.
     ResolutionLevel level = ResolutionLevel::SlotDefault;
-    harkenstudio::ObjectId sourceObjectId{};
+    harken::studio::types::ObjectId sourceObjectId{};
     std::uint32_t ancestorDepth = 0;
-    harkenstudio::ObjectId value{};
+    harken::studio::types::ObjectId value{};
     // How far each chain was actually walked. This is what distinguishes "the
     // organizational chain held nothing" from "the organizational chain was
     // never consulted", a difference an explain report must not blur.
@@ -134,7 +134,7 @@ struct ReferenceSlotResolution {
 // come from a caller-supplied source that this library cannot inspect: without
 // a bound, a cyclic implementation would walk forever. Exceeding it is a
 // deterministic refusal.
-ReferenceSlotResolution ResolveReferenceSlot(harkenstudio::ObjectId subjectId,
+ReferenceSlotResolution ResolveReferenceSlot(harken::studio::types::ObjectId subjectId,
                                              ReferenceSlot slot,
                                              const ReferenceSlotSource& source,
                                              std::uint32_t depthCeiling);

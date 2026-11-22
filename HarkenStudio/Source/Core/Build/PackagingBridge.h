@@ -34,8 +34,8 @@ namespace harkenizer::resourcecompiler {
 class MediaCache;
 }
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 //==============================================================================
 // Frozen legacy-contract accessors.
@@ -94,14 +94,14 @@ enum class PackMediaFormat : uint8_t { Pcm16, PcmFloat, Adpcm, Vorbis };
 
 struct PackEffectPreset
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     uint32_t type = 0;
     std::vector<float> parameters;
 };
 
 struct PackBusEffect
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     uint32_t type = 0;
     bool bypass = false;
     std::vector<float> parameters;
@@ -109,10 +109,10 @@ struct PackBusEffect
 
 struct PackBus
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     // A root bus may parent to itself or to 0; the bridge normalizes both
     // spellings to the runtime master bus when emitting the manifest.
-    harkenstudio::ObjectId parentId = {};
+    harken::studio::types::ObjectId parentId = {};
     QString name;
     float volume = 0.0f;
     float outputBusVolume = 0.0f;
@@ -123,8 +123,8 @@ struct PackBus
 
 struct PackBusSend
 {
-    harkenstudio::ObjectId fromBusId = {};
-    harkenstudio::ObjectId toBusId = {};
+    harken::studio::types::ObjectId fromBusId = {};
+    harken::studio::types::ObjectId toBusId = {};
     float levelDb = 0.0f;
 };
 
@@ -172,16 +172,16 @@ struct PackModulator
 
 struct PackMeterWiring
 {
-    harkenstudio::ObjectId busId = {};
-    harkenstudio::ObjectId variableId = {};
+    harken::studio::types::ObjectId busId = {};
+    harken::studio::types::ObjectId variableId = {};
     uint32_t attackMs = 0;
     uint32_t releaseMs = 0;
 };
 
 struct PackParameterBinding
 {
-    harkenstudio::ObjectId id{};
-    harkenstudio::ObjectId variableId = {};
+    harken::studio::types::ObjectId id{};
+    harken::studio::types::ObjectId variableId = {};
     uint8_t scope = 0; // runtime target-scope ordinal (0 voice, 1 bus)
     uint32_t target = 0;
     uint32_t transitionMs = 0;
@@ -197,14 +197,14 @@ struct PackParameterBinding
 
 struct PackBindingAttachment
 {
-    harkenstudio::ObjectId bindingId{};
+    harken::studio::types::ObjectId bindingId{};
     uint8_t scope = 0; // runtime target-scope ordinal (0 voice, 1 bus)
-    harkenstudio::ObjectId objectId = {};
+    harken::studio::types::ObjectId objectId = {};
 };
 
 struct PackMediaDesc
 {
-    harkenstudio::ObjectId sourceId = {}; // new .pack entry id (runtime stable sound id)
+    harken::studio::types::ObjectId sourceId = {}; // new .pack entry id (runtime stable sound id)
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
     QString sourcePath;
     std::shared_ptr<const std::vector<float>> interleavedSamples;
@@ -235,10 +235,10 @@ public:
 
     void addBus(const PackBus& bus);
     void addBusSend(const PackBusSend& send);
-    void addModulatorBinding(harkenstudio::ObjectId targetObjectId, const PackModulator& modulator);
+    void addModulatorBinding(harken::studio::types::ObjectId targetObjectId, const PackModulator& modulator);
     void addAttenuation(const PackAttenuation& attenuation);
     void addEffectPreset(const PackEffectPreset& preset);
-    void addDiscreteVariable(harkenstudio::ObjectId variableId);
+    void addDiscreteVariable(harken::studio::types::ObjectId variableId);
     void addMeterWiring(const PackMeterWiring& wiring);
     void addBinding(const PackParameterBinding& binding);
     void addBindingAttachment(const PackBindingAttachment& attachment);
@@ -253,7 +253,7 @@ public:
     {
         uint32_t kind = 0;
         uint32_t vintage = 1;
-        harkenstudio::ObjectId id{};
+        harken::studio::types::ObjectId id{};
         uint64_t relationOrdinal = 0;
         std::vector<uint8_t> payload;
         std::shared_ptr<const std::vector<float>> media;
@@ -299,5 +299,5 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

@@ -14,7 +14,7 @@
 #include <QThreadPool>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -13,7 +13,7 @@
 #include <array>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ThemeColorScheme
 {
@@ -896,4 +896,4 @@ using ThemeSnapshotPtr = std::shared_ptr<const ThemeSnapshot>;
 
 }
 
-Q_DECLARE_METATYPE(VNX::ThemeSnapshotPtr)
+Q_DECLARE_METATYPE(harken::studio::ThemeSnapshotPtr)

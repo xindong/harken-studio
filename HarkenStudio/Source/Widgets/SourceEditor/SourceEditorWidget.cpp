@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -358,7 +358,7 @@ void SourceEditorWidget::clearSource()
     bindSource(0);
 }
 
-void SourceEditorWidget::setAuditionManager(HarkenEditor::AuditionManager* audition)
+void SourceEditorWidget::setAuditionManager(harken::studio::AuditionManager* audition)
 {
     if (audition_ == audition)
         return;
@@ -367,7 +367,7 @@ void SourceEditorWidget::setAuditionManager(HarkenEditor::AuditionManager* audit
     audition_ = audition;
     if (!audition_)
         return;
-    connect(audition_, &HarkenEditor::AuditionManager::auditionStateChanged,
+    connect(audition_, &harken::studio::AuditionManager::auditionStateChanged,
             this, [this](uint32_t playingId, int state) {
         if (playingId == 0 || playingId != auditionPlayingId_ || state != 0)
             return;
@@ -375,7 +375,7 @@ void SourceEditorWidget::setAuditionManager(HarkenEditor::AuditionManager* audit
         if (previewPlaybackHandle_ == 0)
             return;
         previewPlaybackHandle_ = 0;
-        if (previewSoundId_ != harkenstudio::ObjectId{}) {
+        if (previewSoundId_ != harken::studio::types::ObjectId{}) {
             AudioEngine::instance().unregisterRawPcm(previewSoundId_);
             previewSoundId_ = {};
         }
@@ -468,9 +468,9 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         stopPreviewPlayhead();
         return false;
     }
-    if (previewSoundId_ == harkenstudio::ObjectId{})
+    if (previewSoundId_ == harken::studio::types::ObjectId{})
         previewSoundId_ = engine.mintRawPcmSoundId();
-    if (previewSoundId_ == harkenstudio::ObjectId{}) {
+    if (previewSoundId_ == harken::studio::types::ObjectId{}) {
         stopPreviewPlayhead();
         return false;
     }
@@ -481,7 +481,7 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         previewPlaybackHandle_ = 0;
     }
 
-    auto registrationResult = HarkenEditor::Bridge::kEngineOk;
+    auto registrationResult = harken::studio::bridge::kEngineOk;
     if (const SoundSourceDef* source = boundSource()) {
         bool prepareSource = !preparedSource_ || *preparedSource_ != *source
             || preparedSourcePath_ != asset->absolutePath
@@ -489,11 +489,11 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
         if (!prepareSource) {
             registrationResult = engine.relocateRawPcmSlice(
                 previewSoundId_, slice->startFrame).result;
-            prepareSource = registrationResult == HarkenEditor::Bridge::kEngineUnknownId
-                || registrationResult == HarkenEditor::Bridge::kEngineNotInit;
+            prepareSource = registrationResult == harken::studio::bridge::kEngineUnknownId
+                || registrationResult == harken::studio::bridge::kEngineNotInit;
             if (prepareSource) {
                 previewSoundId_ = engine.mintRawPcmSoundId();
-                if (previewSoundId_ == harkenstudio::ObjectId{}) {
+                if (previewSoundId_ == harken::studio::types::ObjectId{}) {
                     stopPreviewPlayhead();
                     return false;
                 }
@@ -503,7 +503,7 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
             std::vector<float> samples;
             int channels = 0;
             int sampleRate = 0;
-            if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(
+            if (!harken::studio::bridge::decodeAudioFileInterleaved(
                     asset->absolutePath, samples, channels, sampleRate)
                 || channels <= 0 || sampleRate <= 0
                 || samples.size() % static_cast<size_t>(channels) != 0) {
@@ -516,7 +516,7 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
             registrationResult = engine.registerRawPcmSlice(
                 previewSoundId_, std::move(samples), channels, sampleRate,
                 slice->windowStartFrame, slice->windowFrameCount, slice->loops).result;
-            if (registrationResult == HarkenEditor::Bridge::kEngineOk) {
+            if (registrationResult == harken::studio::bridge::kEngineOk) {
                 preparedSource_ = *source;
                 preparedSourcePath_ = asset->absolutePath;
                 preparedSourceContentHash_ = asset->contentHash;
@@ -527,13 +527,13 @@ bool SourceEditorWidget::startPreviewPlayhead(uint64_t startFrame)
             previewSoundId_, asset->absolutePath, slice->windowStartFrame,
             slice->windowFrameCount, slice->loops).result;
     }
-    if (registrationResult != HarkenEditor::Bridge::kEngineOk) {
+    if (registrationResult != harken::studio::bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
 
     const auto relocated = engine.relocateRawPcmSlice(previewSoundId_, slice->startFrame);
-    if (relocated.result != HarkenEditor::Bridge::kEngineOk) {
+    if (relocated.result != harken::studio::bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
@@ -562,7 +562,7 @@ void SourceEditorWidget::stopPreviewPlayhead()
         engine.stopRawPcm(previewPlaybackHandle_, 0);
         previewPlaybackHandle_ = 0;
     }
-    if (previewSoundId_ != harkenstudio::ObjectId{}) {
+    if (previewSoundId_ != harken::studio::types::ObjectId{}) {
         engine.unregisterRawPcm(previewSoundId_);
         previewSoundId_ = {};
     }

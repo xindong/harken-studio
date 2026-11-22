@@ -5,7 +5,7 @@
 
 #include <QCoreApplication>
 
-namespace VNX {
+namespace harken::studio {
 
 QString assetDisplayName(const AssetInfo& asset)
 {
@@ -32,7 +32,7 @@ QStringList assetFolderSegments(const AssetInfo& asset)
 
 QString assetTooltip(const AssetInfo& asset)
 {
-    QString tooltip = QCoreApplication::translate("VNX::ProjectExplorer", "Source: %1")
+    QString tooltip = QCoreApplication::translate("harken::studio::ProjectExplorer", "Source: %1")
                           .arg(assetDisplayPath(asset));
     tooltip += QStringLiteral("\nFormat: ") + asset.metadata.originalFormat;
     tooltip += QStringLiteral("\nDuration: ")

@@ -6,7 +6,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class ObjectRefNavigation final : public QObject
 {
@@ -19,8 +19,8 @@ public:
     static void navigate(QWidget* source, RefDomain domain, uint32_t id);
 
 signals:
-    void locateRequested(VNX::RefDomain domain, uint32_t id);
-    void navigateRequested(VNX::RefDomain domain, uint32_t id);
+    void locateRequested(harken::studio::RefDomain domain, uint32_t id);
+    void navigateRequested(harken::studio::RefDomain domain, uint32_t id);
 
 private:
     static ObjectRefNavigation* forWidget(QWidget* source);

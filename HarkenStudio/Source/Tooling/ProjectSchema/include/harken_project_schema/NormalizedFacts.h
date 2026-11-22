@@ -20,7 +20,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The normalized time facts of one Segment.
 struct SegmentNormalization {
@@ -59,6 +59,6 @@ struct NormalizedFacts {
     std::vector<TrackNormalization> tracks;
 };
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_NORMALIZED_FACTS_H

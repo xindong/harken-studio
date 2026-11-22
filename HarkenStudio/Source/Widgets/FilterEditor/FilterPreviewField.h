@@ -3,7 +3,7 @@
 #include "Core/FilterSemantics.h"
 #include "Widgets/Common/PreviewField.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class FilterPreviewField final : public PreviewField
 {

@@ -2,7 +2,7 @@
 
 #include <QHash>
 
-namespace VNX {
+namespace harken::studio {
 namespace EditorLaunchMap {
 
 namespace {

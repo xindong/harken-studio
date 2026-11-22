@@ -17,7 +17,7 @@
 #include "BusRouteGraph.h"
 #include "Components/VBus.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class TransactionalUndoCommand : public UndoCommand
 {
@@ -142,9 +142,9 @@ public:
     Scene3DCommand(
         ObjectType objectType,
         int objectId,
-        const HarkenEditor::Vec3& oldPosition,
-        const HarkenEditor::Vec3& newPosition,
-        std::function<void(ObjectType, int, const HarkenEditor::Vec3&)> applyFn,
+        const harken::studio::Vec3& oldPosition,
+        const harken::studio::Vec3& newPosition,
+        std::function<void(ObjectType, int, const harken::studio::Vec3&)> applyFn,
         const QString& text = QString(),
         UndoCommand* parent = nullptr
     );
@@ -158,9 +158,9 @@ public:
 private:
     ObjectType objectType_;
     int objectId_;
-    HarkenEditor::Vec3 oldPosition_;
-    HarkenEditor::Vec3 newPosition_;
-    std::function<void(ObjectType, int, const HarkenEditor::Vec3&)> applyFn_;
+    harken::studio::Vec3 oldPosition_;
+    harken::studio::Vec3 newPosition_;
+    std::function<void(ObjectType, int, const harken::studio::Vec3&)> applyFn_;
 };
 
 class DeleteProjectItemCommand : public UndoCommand

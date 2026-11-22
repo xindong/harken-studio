@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 enum class RemoteConnectionState { Disconnected, Connecting, Handshaking, Connected, Failed };
 enum class RemoteEventCaptureState { Idle, Starting, Capturing, Stopping, Stopped, Failed };
@@ -62,7 +62,7 @@ struct RemoteTarget
 
 struct RemoteCatalogEntry
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     quint32 kind = 0;
 };
 
@@ -110,10 +110,10 @@ public:
     void setCaptureEnabled(bool enabled);
     void startEventCapture();
     void stopEventCapture();
-    void postAction(harkenstudio::ObjectId actionId);
+    void postAction(harken::studio::types::ObjectId actionId);
     void stopPlayback(quint64 playbackHandle);
     void stopAll();
-    void setParameter(harkenstudio::ObjectId variableId, float value);
+    void setParameter(harken::studio::types::ObjectId variableId, float value);
 
 signals:
     void stateChanged();

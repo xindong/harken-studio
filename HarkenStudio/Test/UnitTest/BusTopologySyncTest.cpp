@@ -9,17 +9,17 @@
 
 namespace {
 
-using HarkenEditor::Bridge::BusTopologyState;
-using HarkenEditor::Bridge::RuntimeBusDefinition;
-using HarkenEditor::Bridge::RuntimeBusSendDefinition;
-using HarkenEditor::Bridge::kEngineOk;
-using HarkenEditor::Bridge::Detail::BusTopologyBackend;
-using HarkenEditor::Bridge::Detail::BusTopologySync;
+using harken::studio::bridge::BusTopologyState;
+using harken::studio::bridge::RuntimeBusDefinition;
+using harken::studio::bridge::RuntimeBusSendDefinition;
+using harken::studio::bridge::kEngineOk;
+using harken::studio::bridge::Detail::BusTopologyBackend;
+using harken::studio::bridge::Detail::BusTopologySync;
 
 struct FakeBackend {
     std::vector<std::string> calls;
-    std::vector<harkenstudio::ObjectId> snapshotBusIds;
-    std::vector<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> snapshotSends;
+    std::vector<harken::studio::types::ObjectId> snapshotBusIds;
+    std::vector<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>> snapshotSends;
 
     BusTopologyBackend Make() {
         BusTopologyBackend backend;
@@ -64,12 +64,12 @@ TEST(BusTopologySync, PreservesIdsAboveUint32AcrossTopologyAndSends) {
     sync.Pump();
 
     ASSERT_EQ(sync.State(), BusTopologyState::Ready);
-    const std::vector<harkenstudio::ObjectId> expectedIds{
+    const std::vector<harken::studio::types::ObjectId> expectedIds{
         harkentest::StudioObjectId(parentId), harkentest::StudioObjectId(childId)};
     EXPECT_TRUE(std::is_permutation(fake.snapshotBusIds.begin(), fake.snapshotBusIds.end(),
                                     expectedIds.begin(), expectedIds.end()));
     EXPECT_EQ(fake.snapshotSends,
-              (std::vector<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>>{
+              (std::vector<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>>{
                   {harkentest::StudioObjectId(childId), harkentest::StudioObjectId(parentId)}}));
 }
 

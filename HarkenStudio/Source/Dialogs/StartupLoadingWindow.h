@@ -10,7 +10,7 @@ class QLabel;
 class QProgressBar;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class StartupRenderer;
 

@@ -30,8 +30,8 @@
 #include <cstdint>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 //==============================================================================
 // Plugins. The old-runtime plugin-host command surface is gone; this listing
@@ -80,5 +80,5 @@ struct FileCompareResult {
 bool compareFiles(const QString& referencePath, const QString& candidatePath,
                   FileCompareResult& out);
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

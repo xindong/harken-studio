@@ -5,7 +5,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 class TreeExpansionWidget : public QTreeWidget
 {

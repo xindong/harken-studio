@@ -10,7 +10,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QJsonValue canonicalValue(const QJsonValue& value)

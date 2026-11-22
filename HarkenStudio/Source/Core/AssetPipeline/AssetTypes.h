@@ -14,7 +14,7 @@
 
 #include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr uint32_t kMediaCacheArtifactVersion = 4;
 
@@ -225,8 +225,8 @@ struct ConversionParameters {
             case Codec::PCM_Float: return QStringLiteral("PCM_Float");
             case Codec::ADPCM:     return QStringLiteral("ADPCM");
             case Codec::Vorbis:    return QStringLiteral("Vorbis");
-            case Codec::HarkenPackVorbis: return HarkenEditor::Bridge::packVorbisCodecName();
-            case Codec::HarkenPackOpus: return HarkenEditor::Bridge::packOpusCodecName();
+            case Codec::HarkenPackVorbis: return harken::studio::bridge::packVorbisCodecName();
+            case Codec::HarkenPackOpus: return harken::studio::bridge::packOpusCodecName();
             default:               return QStringLiteral("Unknown");
         }
     }
@@ -235,8 +235,8 @@ struct ConversionParameters {
         if (s == QStringLiteral("PCM_Float")) return Codec::PCM_Float;
         if (s == QStringLiteral("ADPCM"))     return Codec::ADPCM;
         if (s == QStringLiteral("Vorbis"))    return Codec::Vorbis;
-        if (s == HarkenEditor::Bridge::packVorbisCodecName()) return Codec::HarkenPackVorbis;
-        if (s == HarkenEditor::Bridge::packOpusCodecName()) return Codec::HarkenPackOpus;
+        if (s == harken::studio::bridge::packVorbisCodecName()) return Codec::HarkenPackVorbis;
+        if (s == harken::studio::bridge::packOpusCodecName()) return Codec::HarkenPackOpus;
         return Codec::PCM_Float;
     }
 };
@@ -454,9 +454,9 @@ inline MediaStatus mediaStatusFromString(const QString& s) {
 
 }
 
-inline size_t qHash(VNX::Platform key, size_t seed = 0) {
+inline size_t qHash(harken::studio::Platform key, size_t seed = 0) {
     return qHash(static_cast<uint8_t>(key), seed);
 }
 
-Q_DECLARE_METATYPE(VNX::MediaStatus)
-Q_DECLARE_METATYPE(VNX::Platform)
+Q_DECLARE_METATYPE(harken::studio::MediaStatus)
+Q_DECLARE_METATYPE(harken::studio::Platform)

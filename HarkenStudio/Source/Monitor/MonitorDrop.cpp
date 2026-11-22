@@ -5,7 +5,7 @@
 #include <map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -139,4 +139,4 @@ MonitorDropProjection projectDrop(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

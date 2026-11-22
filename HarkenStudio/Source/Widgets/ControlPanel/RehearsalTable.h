@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class VariableRehearsalRow;

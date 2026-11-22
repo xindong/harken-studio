@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 SpectrogramHistory::SpectrogramHistory(uint32_t sampleRate, uint32_t fftSize, int capacity)
     : sampleRate_(sampleRate)

@@ -3,7 +3,7 @@
 
 #include "Widgets/Inspector/InspectorCustomizationRegistry.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ObjectRefFieldDrawer : public IFieldDrawer
 {

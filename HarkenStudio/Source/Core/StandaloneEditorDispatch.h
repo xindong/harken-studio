@@ -2,7 +2,7 @@
 
 #include "ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 
 enum class StandaloneEditorPushReason
 {
@@ -16,4 +16,4 @@ struct StandaloneEditorDispatch {
     static bool shouldHide(StandaloneEditorPushReason reason);
 };
 
-} // namespace VNX
+} // namespace harken::studio

@@ -10,7 +10,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class ContextInfoService : public QObject
 {
@@ -37,7 +37,7 @@ public:
     void clearTopic();
 
 signals:
-    void topicChanged(const VNX::ContextTopic& topic);
+    void topicChanged(const harken::studio::ContextTopic& topic);
     void lockedChanged(bool locked);
 
 protected:

@@ -19,28 +19,28 @@ ControlPanel::ControlPanel(QWidget* parent)
 {
     setupUI();
 
-    auto& manager = VNX::ProjectManager::instance();
-    connect(&manager, &VNX::ProjectManager::projectClosed, this,
+    auto& manager = harken::studio::ProjectManager::instance();
+    connect(&manager, &harken::studio::ProjectManager::projectClosed, this,
             [this] {
         setItem(nullptr);
         setPinned(false);
     });
-    connect(&manager, &VNX::ProjectManager::itemCreated,
+    connect(&manager, &harken::studio::ProjectManager::itemCreated,
             this, &ControlPanel::scheduleVariableRefresh);
-    connect(&manager, &VNX::ProjectManager::itemDeleted,
+    connect(&manager, &harken::studio::ProjectManager::itemDeleted,
             this, &ControlPanel::scheduleVariableRefresh);
-    connect(&manager, &VNX::ProjectManager::itemMoved,
+    connect(&manager, &harken::studio::ProjectManager::itemMoved,
             this, &ControlPanel::scheduleVariableRefresh);
-    connect(&manager, &VNX::ProjectManager::itemRenamed,
+    connect(&manager, &harken::studio::ProjectManager::itemRenamed,
             this, &ControlPanel::scheduleVariableRefresh);
-    connect(&manager, &VNX::ProjectManager::itemPropertyChanged,
+    connect(&manager, &harken::studio::ProjectManager::itemPropertyChanged,
             this, &ControlPanel::scheduleVariableRefresh);
-    connect(&VNX::PlatformContextService::instance(),
-            &VNX::PlatformContextService::contextChanged,
+    connect(&harken::studio::PlatformContextService::instance(),
+            &harken::studio::PlatformContextService::contextChanged,
             this, &ControlPanel::scheduleVariableRefresh);
 }
 
-void ControlPanel::setItem(VNX::ProjectItem* item)
+void ControlPanel::setItem(harken::studio::ProjectItem* item)
 {
     selectedItemId_ = item ? item->guid : QUuid();
     if (pinned_) return;
@@ -48,9 +48,9 @@ void ControlPanel::setItem(VNX::ProjectItem* item)
     refreshVariables();
 }
 
-VNX::ProjectItem* ControlPanel::boundItem() const
+harken::studio::ProjectItem* ControlPanel::boundItem() const
 {
-    return VNX::ProjectManager::instance().findItemByGuid(boundItemId_);
+    return harken::studio::ProjectManager::instance().findItemByGuid(boundItemId_);
 }
 
 void ControlPanel::setPinned(bool pinned)
@@ -74,7 +74,7 @@ QVariantMap ControlPanel::snapshotState() const
 
 void ControlPanel::restoreState(const QVariantMap& state)
 {
-    const auto* item = VNX::ProjectManager::instance().findItemByGuid(
+    const auto* item = harken::studio::ProjectManager::instance().findItemByGuid(
         QUuid(state.value(QStringLiteral("pinnedObjectGuid")).toString()));
     boundItemId_ = item ? item->guid : selectedItemId_;
     const bool pinned = item != nullptr;
@@ -87,7 +87,7 @@ void ControlPanel::restoreState(const QVariantMap& state)
 
 QSize ControlPanel::sizeHint() const
 {
-    const auto& metrics = VNX::ThemeManager::instance().metrics();
+    const auto& metrics = harken::studio::ThemeManager::instance().metrics();
     return minimumSizeHint().expandedTo(QSize(metrics.dialog.wideWidth, metrics.panel.minimumHeight));
 }
 
@@ -117,7 +117,7 @@ void ControlPanel::scheduleVariableRefresh()
 
 void ControlPanel::refreshVariables()
 {
-    auto& manager = VNX::ProjectManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
     const auto* item = boundItem();
     if (!item && !boundItemId_.isNull()) {
         boundItemId_ = QUuid();
@@ -126,9 +126,9 @@ void ControlPanel::refreshVariables()
             return;
         }
     }
-    const auto dependencies = VNX::VariableConsumerSemantics::dependenciesForAudition(
+    const auto dependencies = harken::studio::VariableConsumerSemantics::dependenciesForAudition(
         manager.currentProject(), item,
-        VNX::toFieldGroupGuid(VNX::PlatformContextService::instance().context().primary));
+        harken::studio::toFieldGroupGuid(harken::studio::PlatformContextService::instance().context().primary));
     variableTable_->setVariables(dependencies.variables);
     bindingTable_->setConsumers(dependencies.consumers);
     updateGeometry();
@@ -142,13 +142,13 @@ void ControlPanel::setupUI()
     setAttribute(Qt::WA_StyledBackground);
 
     auto* root = new QGridLayout(this);
-    VNX::ThemeLayout::margins(root, VNX::ThemeLayout::Space::Panel);
-    VNX::ThemeLayout::horizontalSpacing(root, VNX::ThemeLayout::Space::Section);
+    harken::studio::ThemeLayout::margins(root, harken::studio::ThemeLayout::Space::Panel);
+    harken::studio::ThemeLayout::horizontalSpacing(root, harken::studio::ThemeLayout::Space::Section);
     root->setColumnStretch(0, 1);
     root->setColumnStretch(1, 1);
 
-    variableTable_ = new VNX::RehearsalTable(this);
-    bindingTable_ = new VNX::VariableBindingTable(this);
+    variableTable_ = new harken::studio::RehearsalTable(this);
+    bindingTable_ = new harken::studio::VariableBindingTable(this);
     root->addWidget(variableTable_, 0, 0);
     root->addWidget(bindingTable_, 0, 1);
 }

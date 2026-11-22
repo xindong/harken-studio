@@ -19,7 +19,7 @@
 #include <windowsx.h>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 #ifdef Q_OS_WIN

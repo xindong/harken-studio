@@ -3,7 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectLocation ProjectLocator::locate(const QString& inputPath)
 {

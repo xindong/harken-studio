@@ -16,7 +16,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
                                    int occupiedSlots, QWidget* parent)

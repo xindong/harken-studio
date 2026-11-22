@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 
 static const char* kDBINames[LMDBService::DBI_COUNT] = {
     "object",

@@ -10,7 +10,7 @@
 #include <set>
 #include <utility>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 // A diagnostic under construction. The free helpers below fill the fields a code
@@ -94,7 +94,7 @@ std::uint32_t NonCanonicalAbsentField(
     if (absent(PlayablePropertyIdV1::OutputBusVolume) &&
         std::bit_cast<std::uint32_t>(payload.outputBusVolume) != 0) return 6;
     if (absent(PlayablePropertyIdV1::OutputBusRef) &&
-        payload.outputBusRef != harkenstudio::ObjectId{}) return 7;
+        payload.outputBusRef != harken::studio::types::ObjectId{}) return 7;
     if (absent(PlayablePropertyIdV1::Sends) && !payload.sends.empty()) return 8;
     if (absent(PlayablePropertyIdV1::SpatialPanning) &&
         std::bit_cast<std::uint32_t>(payload.spatial.panning) != 0) return 9;
@@ -106,7 +106,7 @@ std::uint32_t NonCanonicalAbsentField(
         std::bit_cast<std::uint32_t>(
             payload.spatial.attenuationDistanceScaling) != 0x3f800000u) return 12;
     if (absent(PlayablePropertyIdV1::SpatialAttenuationRef) &&
-        payload.spatial.attenuationRef != harkenstudio::ObjectId{}) return 14;
+        payload.spatial.attenuationRef != harken::studio::types::ObjectId{}) return 14;
     if (absent(PlayablePropertyIdV1::SignalGraph) &&
         (!payload.signalGraph.nodes.empty() ||
          !payload.signalGraph.edges.empty())) return 16;
@@ -1249,4 +1249,4 @@ FrontEndResult CompileFrontEnd(const ProjectInput& input,
     return CompileFrontEndImpl(input, resolutionDepthCeiling);
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

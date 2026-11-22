@@ -19,8 +19,8 @@
 #include <cstdint>
 #include <cstring>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 namespace {
 
@@ -100,7 +100,7 @@ void mapSnapshotToDebugBuses(const VnSnapshot& snapshot,
     {
         DebugBusData d;
         const auto rawId = fromNative(snapshot.busIds[i]);
-        if (!harkenstudio::IsNull(rawId))
+        if (!harken::studio::types::IsNull(rawId))
         {
             d.busId = rawId;
             d.busIdAvailable = kAvailable;
@@ -210,7 +210,7 @@ bool mapSnapshotToRenderPlan(const VnSnapshot& snapshot, RenderPlanInfo& out)
     for (uint32_t i = 0; i < count; ++i)
     {
         const auto rawId = fromNative(snapshot.busIds[i]);
-        if (harkenstudio::IsNull(rawId))
+        if (harken::studio::types::IsNull(rawId))
             continue;
         if (live >= 64u)
             return false;
@@ -387,5 +387,5 @@ IpcQueryStatus listActiveModulatorChains(std::vector<ActiveModulatorChainInfo>& 
     return unavailableStatus();
 }
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

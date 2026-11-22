@@ -8,7 +8,7 @@
 #include <cmath>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace EffectChainSemantics {
 
 static_assert(static_cast<uint32_t>(EffectType::FeedbackDelay) == HK_PACK_EFFECT_FEEDBACK_DELAY
@@ -173,11 +173,11 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
 bool EffectChainLedger::replace(std::vector<EffectEntry> entries)
 {
     if (entries.size() > kCapacity) return false;
-    std::set<harkenstudio::ObjectId> identities;
+    std::set<harken::studio::types::ObjectId> identities;
     for (const EffectEntry& entry : entries) {
         if (!entry.typed) return false;
         if (!EffectChainSemantics::validate(entry)) return false;
-        if (harkenstudio::IsNull(entry.runtimeId())
+        if (harken::studio::types::IsNull(entry.runtimeId())
             || !identities.insert(entry.runtimeId()).second)
             return false;
     }

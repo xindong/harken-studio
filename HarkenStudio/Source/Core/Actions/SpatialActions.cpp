@@ -14,11 +14,11 @@
 #include <algorithm>
 #include <vector>
 
-namespace VNX { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
-namespace VNX { ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID); }
-namespace VNX { uint32_t itemShortID(const ProjectItem* item); }
+namespace harken::studio { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
+namespace harken::studio { ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID); }
+namespace harken::studio { uint32_t itemShortID(const ProjectItem* item); }
 
-namespace VNX {
+namespace harken::studio {
 
 
 static ActionResult engineNotAvailable()
@@ -887,8 +887,8 @@ void registerSpatialActions(ActionManager& mgr,
             const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
             const auto previous = locator ? PlayablePropertyAuthoringV1::readProperty(
                 *item, *locator, propertyId, std::nullopt) : std::nullopt;
-            const harkenstudio::ObjectId stableId = AttenuationStore::runtimeId(*project, *attenuation);
-            if (!previous || harkenstudio::IsNull(stableId))
+            const harken::studio::types::ObjectId stableId = AttenuationStore::runtimeId(*project, *attenuation);
+            if (!previous || harken::studio::types::IsNull(stableId))
                 return {false, {}, "INVALID_STATE", "Attenuation binding has no canonical identity"};
             const uint32_t capObjectID = item->objectID;
             const PlayablePropertyStateV1 bound{true, objectIdString(stableId)};

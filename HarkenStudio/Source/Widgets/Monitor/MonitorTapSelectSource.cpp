@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorTapSelectPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorTapSelectSource::attach(MonitorTapSelectPanel* panel,
                                     MonitorCursorModel* sharedCursor)
@@ -29,4 +29,4 @@ void MonitorTapSelectSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

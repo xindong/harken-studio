@@ -6,7 +6,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class ToolTip
 {

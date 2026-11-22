@@ -14,7 +14,7 @@
 #include <QEvent>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

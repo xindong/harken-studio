@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 struct BusSendState
 {

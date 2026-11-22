@@ -4,7 +4,7 @@
 
 #include <QList>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ColorPaletteDescriptor
 {

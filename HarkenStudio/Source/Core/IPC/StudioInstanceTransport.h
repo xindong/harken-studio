@@ -6,7 +6,7 @@
 #include <functional>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class IPCServer;
 
@@ -25,7 +25,7 @@ private:
 
 }
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 
 class StudioInstanceClient {
 public:

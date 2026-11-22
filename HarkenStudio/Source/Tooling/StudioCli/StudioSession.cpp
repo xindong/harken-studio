@@ -24,7 +24,7 @@
 #include <QThread>
 #include <QTimer>
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 
 QJsonObject failure(const QString& code, const QString& message)
 {
@@ -38,10 +38,10 @@ bool succeeded(const QJsonObject& response)
 }
 
 struct StudioSession::State {
-    VNX::ProjectManager& project = VNX::ProjectManager::instance();
-    VNX::AudioEngine& engine = VNX::AudioEngine::instance();
-    HarkenEditor::AuditionManager audition{&engine};
-    VNX::IPCServer dispatcher{&engine, nullptr, VNX::CommandHost::Cli};
+    harken::studio::ProjectManager& project = harken::studio::ProjectManager::instance();
+    harken::studio::AudioEngine& engine = harken::studio::AudioEngine::instance();
+    harken::studio::AuditionManager audition{&engine};
+    harken::studio::IPCServer dispatcher{&engine, nullptr, harken::studio::CommandHost::Cli};
 };
 
 StudioSession::StudioSession(const QString& instanceId, int timeoutMs, std::function<bool()> canceled)
@@ -52,17 +52,17 @@ StudioSession::StudioSession(const QString& instanceId, int timeoutMs, std::func
         return;
     }
     state_ = std::make_unique<State>();
-    QObject::connect(&state_->project, &VNX::ProjectManager::errorOccurred,
+    QObject::connect(&state_->project, &harken::studio::ProjectManager::errorOccurred,
         &state_->dispatcher, [](const QString& message) { qWarning().noquote() << message; });
-    QObject::connect(&state_->project, &VNX::ProjectManager::warningOccurred,
+    QObject::connect(&state_->project, &harken::studio::ProjectManager::warningOccurred,
         &state_->dispatcher, [](const QString& message) { qWarning().noquote() << message; });
     state_->dispatcher.setProjectManager(&state_->project);
-    state_->dispatcher.setAppState(VNX::IPCServer::AppState::Ready);
-    VNX::registerEditorCommands({&state_->engine, &state_->project,
+    state_->dispatcher.setAppState(harken::studio::IPCServer::AppState::Ready);
+    harken::studio::registerEditorCommands({&state_->engine, &state_->project,
         &state_->dispatcher, &state_->audition});
 }
 
-StudioSession::StudioSession(VNX::IPCServer& dispatcher, int timeoutMs, std::function<bool()> canceled)
+StudioSession::StudioSession(harken::studio::IPCServer& dispatcher, int timeoutMs, std::function<bool()> canceled)
     : desktopDispatcher_(&dispatcher), timeoutMs_(timeoutMs), canceled_(std::move(canceled))
 {
 }
@@ -72,7 +72,7 @@ StudioSession::~StudioSession()
     if (!state_) return;
     state_->dispatcher.waitForPendingOperations();
     QCoreApplication::sendPostedEvents(&state_->dispatcher, QEvent::MetaCall);
-    VNX::RemoteSession::instance().shutdown();
+    harken::studio::RemoteSession::instance().shutdown();
     if (state_->project.isProjectOpen()) state_->project.closeProject();
     state_->engine.shutdown();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -84,17 +84,17 @@ QJsonObject StudioSession::open(const QString& path, int timeoutMs, const std::f
         {{QStringLiteral("path"), path}}, timeoutMs, canceled);
     if (path.trimmed().isEmpty())
         return failure(QStringLiteral("INVALID_ARGS"), QStringLiteral("Project path is required."));
-    const auto location = VNX::ProjectLocator::locate(path);
+    const auto location = harken::studio::ProjectLocator::locate(path);
     if (!location.ok())
-        return failure(VNX::projectIssueCode(location.issue), QStringLiteral("Cannot locate a unique Harken project: %1").arg(path));
-    auto acquisition = VNX::ProjectInstance::acquire(location.projectFilePath,
-        VNX::ProjectInstance::ActivationPolicy::Deny);
-    if (acquisition.status != VNX::ProjectInstance::Status::Acquired)
+        return failure(harken::studio::projectIssueCode(location.issue), QStringLiteral("Cannot locate a unique Harken project: %1").arg(path));
+    auto acquisition = harken::studio::ProjectInstance::acquire(location.projectFilePath,
+        harken::studio::ProjectInstance::ActivationPolicy::Deny);
+    if (acquisition.status != harken::studio::ProjectInstance::Status::Acquired)
         return failure(QStringLiteral("PROJECT_IN_USE"), acquisition.error);
     QString error;
-    if (!VNX::SchemaArchive::instance().verifyBuildSnapshot(&error))
+    if (!harken::studio::SchemaArchive::instance().verifyBuildSnapshot(&error))
         return failure(QStringLiteral("SCHEMA_UNAVAILABLE"), error);
-    auto prepared = VNX::ProjectManager::prepareProject(location.projectFilePath, false, {}, {}, canceled);
+    auto prepared = harken::studio::ProjectManager::prepareProject(location.projectFilePath, false, {}, {}, canceled);
     if (canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted while opening the project."));
     if (!prepared.project)
         return failure(QStringLiteral("OPEN_PROJECT_FAILED"), prepared.error);
@@ -136,13 +136,13 @@ QJsonObject StudioSession::validate(const QString& name, const QJsonObject& args
         if (!succeeded(description)) return description;
         schema = description.value(QStringLiteral("result")).toObject().value(QStringLiteral("inputSchema")).toObject();
     } else {
-        schema = VNX::commandInputSchema(name);
+        schema = harken::studio::commandInputSchema(name);
     }
     if (schema.isEmpty())
         return failure(QStringLiteral("COMMAND_CONTRACT_MISSING"),
             QStringLiteral("Command '%1' has no argument contract.").arg(name));
     QString error;
-    if (!VNX::validateCommandArguments(args, schema, &error)) {
+    if (!harken::studio::validateCommandArguments(args, schema, &error)) {
         auto response = failure(QStringLiteral("INVALID_ARGUMENTS"), error);
         response.insert(QStringLiteral("command"), name);
         response.insert(QStringLiteral("suggestion"),
@@ -160,9 +160,9 @@ QJsonObject StudioSession::dispatchDesktop(const QString& name, const QJsonObjec
     if (canceled && canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
     if (!desktopDispatcher_)
         return failure(QStringLiteral("SESSION_CLOSED"), QStringLiteral("The Studio command session has ended."));
-    VNX::IPCServer::IPCDispatchContext context;
-    context.source = VNX::ActionSource::IPC;
-    context.origin = VNX::IPCServer::DispatchOrigin::CLI;
+    harken::studio::IPCServer::IPCDispatchContext context;
+    context.source = harken::studio::ActionSource::IPC;
+    context.origin = harken::studio::IPCServer::DispatchOrigin::CLI;
     context.expectedProjectSession = expectedProjectSession;
     return desktopDispatcher_->dispatchCommand(name, args, context);
 }
@@ -213,10 +213,10 @@ QJsonObject StudioSession::executeOnce(const QString& name, const QJsonObject& a
     if (!succeeded(settled)) return settled;
     if (name == QStringLiteral("open_project"))
         return open(args.value(QStringLiteral("path")).toString(), timeoutMs, canceled);
-    std::shared_ptr<VNX::ProjectInstance> creationInstance;
+    std::shared_ptr<harken::studio::ProjectInstance> creationInstance;
     if (name == QStringLiteral("create_project")) {
         QString schemaError;
-        if (!VNX::SchemaArchive::instance().verifyBuildSnapshot(&schemaError))
+        if (!harken::studio::SchemaArchive::instance().verifyBuildSnapshot(&schemaError))
             return failure(QStringLiteral("SCHEMA_UNAVAILABLE"), schemaError);
         const QString projectName = args.value(QStringLiteral("name")).toString();
         const QString location = args.value(QStringLiteral("location")).toString();
@@ -228,15 +228,15 @@ QJsonObject StudioSession::executeOnce(const QString& name, const QJsonObject& a
         const QString root = QDir(location).filePath(projectName);
         if (QFileInfo::exists(root))
             return failure(QStringLiteral("PROJECT_EXISTS"), QStringLiteral("The project directory already exists: %1").arg(root));
-        auto acquisition = VNX::ProjectInstance::acquire(QDir(root).filePath(projectName + QStringLiteral(".hsp")),
-            VNX::ProjectInstance::ActivationPolicy::Deny);
-        if (acquisition.status != VNX::ProjectInstance::Status::Acquired)
+        auto acquisition = harken::studio::ProjectInstance::acquire(QDir(root).filePath(projectName + QStringLiteral(".hsp")),
+            harken::studio::ProjectInstance::ActivationPolicy::Deny);
+        if (acquisition.status != harken::studio::ProjectInstance::Status::Acquired)
             return failure(QStringLiteral("PROJECT_IN_USE"), acquisition.error);
         creationInstance = std::move(acquisition.instance);
     }
-    VNX::IPCServer::IPCDispatchContext context;
-    context.source = VNX::ActionSource::IPC;
-    context.origin = VNX::IPCServer::DispatchOrigin::IPC;
+    harken::studio::IPCServer::IPCDispatchContext context;
+    context.source = harken::studio::ActionSource::IPC;
+    context.origin = harken::studio::IPCServer::DispatchOrigin::IPC;
     context.expectedProjectSession = expectedProjectSession;
     auto response = state_->dispatcher.dispatchCommand(name, args, context);
     if (name == QStringLiteral("close_project") && succeeded(response)) {
@@ -262,7 +262,7 @@ QJsonObject StudioSession::executeOnce(const QString& name, const QJsonObject& a
             return !succeeded(response)
                 && response.value(QStringLiteral("result")).toObject()
                     .value(QStringLiteral("runtime_result")).toInteger()
-                    == static_cast<qint32>(HarkenEditor::Bridge::kEngineBackpressure);
+                    == static_cast<qint32>(harken::studio::bridge::kEngineBackpressure);
         };
         if (backpressured()) {
             QEventLoop loop;
@@ -307,9 +307,9 @@ QJsonObject StudioSession::finishOperation(QJsonObject response, int timeoutMs,
         return failure(QStringLiteral("ASYNC_PROTOCOL_REQUIRED"), QStringLiteral("The command has no discoverable completion query."));
     QElapsedTimer timer;
     timer.start();
-    VNX::IPCServer::IPCDispatchContext context;
-    context.source = VNX::ActionSource::IPC;
-    context.origin = VNX::IPCServer::DispatchOrigin::IPC;
+    harken::studio::IPCServer::IPCDispatchContext context;
+    context.source = harken::studio::ActionSource::IPC;
+    context.origin = harken::studio::IPCServer::DispatchOrigin::IPC;
     const auto unfinished = [&](QJsonObject error) {
         if (isAttached()) {
             error.insert(QStringLiteral("result"), result);

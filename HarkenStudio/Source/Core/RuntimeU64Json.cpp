@@ -4,7 +4,7 @@
 
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 bool parseRuntimeU64DecimalStringV1(const QJsonValue& value,
                                     uint64_t* result) noexcept

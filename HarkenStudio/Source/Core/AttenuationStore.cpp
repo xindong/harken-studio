@@ -15,7 +15,7 @@
 #include <memory>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -150,9 +150,9 @@ const VAttenuation* AttenuationStore::findByGuid(const ProjectData* project, con
     return findByGuid(const_cast<ProjectData*>(project), guid);
 }
 
-ProjectItem* AttenuationStore::findItemByStableId(ProjectData* project, harkenstudio::ObjectId stableId)
+ProjectItem* AttenuationStore::findItemByStableId(ProjectData* project, harken::studio::types::ObjectId stableId)
 {
-    if (!project || harkenstudio::IsNull(stableId))
+    if (!project || harken::studio::types::IsNull(stableId))
         return nullptr;
     for (auto& binding : project->attenuationItems)
     {
@@ -164,18 +164,18 @@ ProjectItem* AttenuationStore::findItemByStableId(ProjectData* project, harkenst
     return nullptr;
 }
 
-const ProjectItem* AttenuationStore::findItemByStableId(const ProjectData* project, harkenstudio::ObjectId stableId)
+const ProjectItem* AttenuationStore::findItemByStableId(const ProjectData* project, harken::studio::types::ObjectId stableId)
 {
     return findItemByStableId(const_cast<ProjectData*>(project), stableId);
 }
 
-VAttenuation* AttenuationStore::findByStableId(ProjectData* project, harkenstudio::ObjectId stableId)
+VAttenuation* AttenuationStore::findByStableId(ProjectData* project, harken::studio::types::ObjectId stableId)
 {
     auto* comp = attenuationComponent(findItemByStableId(project, stableId));
     return comp;
 }
 
-const VAttenuation* AttenuationStore::findByStableId(const ProjectData* project, harkenstudio::ObjectId stableId)
+const VAttenuation* AttenuationStore::findByStableId(const ProjectData* project, harken::studio::types::ObjectId stableId)
 {
     return findByStableId(const_cast<ProjectData*>(project), stableId);
 }
@@ -208,18 +208,18 @@ bool AttenuationStore::syncToRuntime(const ProjectData& project, const VAttenuat
 bool AttenuationStore::syncToRuntime(const ProjectData& project, const AttenuationSnapshot& def)
 {
     const auto* authored = findByGuid(&project, def.guid);
-    const harkenstudio::ObjectId id = authored ? runtimeId(project, *authored) : harkenstudio::ObjectId{};
-    if (harkenstudio::IsNull(id))
+    const harken::studio::types::ObjectId id = authored ? runtimeId(project, *authored) : harken::studio::types::ObjectId{};
+    if (harken::studio::types::IsNull(id))
         return false;
 
-    HarkenEditor::Bridge::PackAttenuation att;
+    harken::studio::bridge::PackAttenuation att;
     att.id = id;
     att.maxDistance = def.maxDistance;
     for (const auto& dimension : def.dimensions)
     {
         if (dimension.curve.isEmpty() || dimension.type != AttenuationDimension::Volume)
             continue;
-        HarkenEditor::Bridge::PackAttenuation::Slot slot;
+        harken::studio::bridge::PackAttenuation::Slot slot;
         slot.slot = static_cast<uint8_t>(dimension.type);
         slot.points.reserve(static_cast<size_t>(dimension.curve.size()));
         for (const auto& p : dimension.curve)
@@ -229,7 +229,7 @@ bool AttenuationStore::syncToRuntime(const ProjectData& project, const Attenuati
             slot.handles.push_back({h.h1x, h.h1y, h.h2x, h.h2y});
         att.curveSlots.push_back(std::move(slot));
     }
-    return HarkenEditor::Bridge::syncAttenuation(att);
+    return harken::studio::bridge::syncAttenuation(att);
 }
 
 VAttenuation* AttenuationStore::create(ProjectData* project,
@@ -345,7 +345,7 @@ std::vector<AttenuationReference> AttenuationStore::references(
         return out;
     }
     const auto attenuationGuid = toFieldGroupGuid(attenuation.guid);
-    if (harkenprojectschema::IsNull(attenuationGuid)) {
+    if (harken::studio::project_schema::IsNull(attenuationGuid)) {
         fail(QStringLiteral("Attenuation reference inspection requires a persistent GUID."));
         return out;
     }
@@ -356,7 +356,7 @@ std::vector<AttenuationReference> AttenuationStore::references(
     }
     const auto* master = project->busses.empty() ? nullptr : project->busses.front().rootItem.get();
     const FieldGroupResolver resolver(view.definitions,
-        master ? toFieldGroupGuid(master->guid) : harkenprojectschema::AuthoringGuid{});
+        master ? toFieldGroupGuid(master->guid) : harken::studio::project_schema::AuthoringGuid{});
     if (!resolver.ok()) {
         const auto& diagnostic = resolver.diagnostics().front();
         fail(QStringLiteral("Cannot inspect Attenuation references: invalid field group state (%1, %2).")
@@ -365,9 +365,9 @@ std::vector<AttenuationReference> AttenuationStore::references(
                                        static_cast<qsizetype>(diagnostic.field.size()))));
         return out;
     }
-    std::map<harkenprojectschema::AuthoringGuid, bool> roots;
+    std::map<harken::studio::project_schema::AuthoringGuid, bool> roots;
     for (const auto& definition : view.definitions)
-        roots.emplace(definition.guid, harkenprojectschema::IsNull(definition.parentGuid));
+        roots.emplace(definition.guid, harken::studio::project_schema::IsNull(definition.parentGuid));
     const auto references = [attenuationGuid](
         const GroupState<SpatialRatingFieldGroup>& state, bool root) {
         return (state.mode == FieldGroupMode::Local

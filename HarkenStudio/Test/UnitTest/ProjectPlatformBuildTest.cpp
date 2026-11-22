@@ -44,7 +44,7 @@
 #include <vector>
 
 namespace {
-using namespace VNX;
+using namespace harken::studio;
 namespace Platforms = ProjectPlatformSemantics;
 
 QByteArray bytes(const QString& path)
@@ -88,19 +88,19 @@ StudioCliResult runStudioCli(const QStringList& arguments)
         process.readAllStandardOutput(), process.readAllStandardError()};
 }
 
-QVector<harkenstudiobuild::PackTocEntry> mediaEntries(const QString& path)
+QVector<harken::studio::build::PackTocEntry> mediaEntries(const QString& path)
 {
-    QVector<harkenstudiobuild::PackTocEntry> result;
+    QVector<harken::studio::build::PackTocEntry> result;
     const auto content = bytes(path);
-    if (content.size() < static_cast<qsizetype>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) return result;
+    if (content.size() < static_cast<qsizetype>(harken::studio::build::kPackBytes<HkPackFileHeader>)) return result;
     const auto* data = reinterpret_cast<const uint8_t*>(content.constData());
-    harkenstudiobuild::PackFileHeader header;
-    if (!harkenstudiobuild::ReadPackFileHeader(data, &header)) return result;
+    harken::studio::build::PackFileHeader header;
+    if (!harken::studio::build::ReadPackFileHeader(data, &header)) return result;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
-            data + header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+        const auto entry = harken::studio::build::ReadPackDirectoryEntry(
+            data + header.directoryOffset + i * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
         if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA)
-            result.append(harkenstudiobuild::ReadPackMedia(data + entry.offset));
+            result.append(harken::studio::build::ReadPackMedia(data + entry.offset));
     }
     return result;
 }
@@ -462,10 +462,10 @@ TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases
     ASSERT_TRUE(ledger.ensure(low)->properties.setValue(
         harkenplayableproperties::PlayablePropertyIdV1::Volume, -6.0f));
     sound->platformOverrides = ledger;
-    EXPECT_TRUE(container->comp<VNX::VSelection>()->selections.shared.setOccurrenceRows({{child->guid, 0, 50}}));
-    container->comp<VNX::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
-    container->comp<VNX::VSelection>()->selections.editTable(low).entries.front().occurrences.front().weight = 25;
-    const auto selectionsJson = container->comp<VNX::VSelection>()->selections.toJson();
+    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.shared.setOccurrenceRows({{child->guid, 0, 50}}));
+    container->comp<harken::studio::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
+    container->comp<harken::studio::VSelection>()->selections.editTable(low).entries.front().occurrences.front().weight = 25;
+    const auto selectionsJson = container->comp<harken::studio::VSelection>()->selections.toJson();
     Clip clip;
     clip.clipGuid = QUuid::createUuid();
     clip.targetGuid = container->guid;
@@ -493,7 +493,7 @@ TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases
     EXPECT_EQ(sound->platformOverrides, ledger);
     EXPECT_EQ(sound->comp<VSound>()->toJson(), soundJson);
     EXPECT_EQ(track->comp<VTrack>()->toJson(), trackJson);
-    EXPECT_EQ(container->comp<VNX::VSelection>()->selections.toJson(), selectionsJson);
+    EXPECT_EQ(container->comp<harken::studio::VSelection>()->selections.toJson(), selectionsJson);
 }
 
 TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedPairs)

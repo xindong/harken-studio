@@ -14,7 +14,7 @@
 #include <limits>
 #include <utility>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 namespace {
 
 constexpr qint64 kSnapshotExpiryMs = 2000;
@@ -665,9 +665,9 @@ void RemoteConnection::setCaptureEnabled(bool enabled)
     }
 }
 
-void RemoteConnection::postAction(harkenstudio::ObjectId actionId)
+void RemoteConnection::postAction(harken::studio::types::ObjectId actionId)
 {
-    if (harkenstudio::IsNull(actionId))
+    if (harken::studio::types::IsNull(actionId))
         return;
     VnRemoteClientRequest request{};
     request.operation = VN_REMOTE_OPERATION_POST_ACTION;
@@ -693,9 +693,9 @@ void RemoteConnection::stopAll()
     impl_->command(request, tr("Stop all remote playback"));
 }
 
-void RemoteConnection::setParameter(harkenstudio::ObjectId variableId, float value)
+void RemoteConnection::setParameter(harken::studio::types::ObjectId variableId, float value)
 {
-    if (harkenstudio::IsNull(variableId) || !std::isfinite(value))
+    if (harken::studio::types::IsNull(variableId) || !std::isfinite(value))
         return;
     VnRemoteClientRequest request{};
     request.operation = VN_REMOTE_OPERATION_SET_GLOBAL_VARIABLE;

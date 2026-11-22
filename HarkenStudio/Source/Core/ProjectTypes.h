@@ -38,7 +38,7 @@
 #include "FieldGroups.h"
 #include "Utils/ObjectId.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 struct MediaFileRef
@@ -95,7 +95,7 @@ enum class ProjectItemType {
     Effect = 10
 };
 
-using SendMode = harkenprojectschema::SendMode;
+using SendMode = harken::studio::project_schema::SendMode;
 
 inline QJsonObject sendModeVolumesJson(const std::map<SendMode, float>& volumes)
 {
@@ -532,7 +532,7 @@ struct ProjectItem
     QString sourcePath;
     uint32_t sourceID = 0;
     uint32_t objectID = 0;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
+    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(guid); }
 
     QUuid    guid;
     QJsonObject documentHeader;

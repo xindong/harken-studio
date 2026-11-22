@@ -8,9 +8,9 @@
 
 namespace HarkenTest {
 
-inline harkenstudio::ObjectId fixtureRuntimeStableId(VNX::ProjectData&)
+inline harken::studio::types::ObjectId fixtureRuntimeStableId(harken::studio::ProjectData&)
 {
-    return VNX::createObjectId();
+    return harken::studio::createObjectId();
 }
 
 }

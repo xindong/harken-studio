@@ -6,7 +6,7 @@
 
 #include <QAction>
 
-namespace VNX {
+namespace harken::studio {
 
 SearchField::SearchField(QWidget* parent)
     : QLineEdit(parent)

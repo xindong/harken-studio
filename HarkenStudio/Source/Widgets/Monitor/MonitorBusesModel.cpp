@@ -1,7 +1,7 @@
 #include "Monitor/MonitorBusesModel.h"
 #include "Utils/ObjectId.h"
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorBusesModel::MonitorBusesModel(QObject* parent)
     : QAbstractTableModel(parent)
@@ -123,4 +123,4 @@ QString MonitorBusesModel::soloText(const Monitor::BusMonitorRow& row)
         .arg(row.solo01);
 }
 
-} // namespace VNX
+} // namespace harken::studio

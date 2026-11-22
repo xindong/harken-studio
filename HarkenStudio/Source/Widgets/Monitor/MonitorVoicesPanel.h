@@ -15,7 +15,7 @@ class QLabel;
 class QLineEdit;
 class QTableView;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorVoicesPanel : public QWidget
 {
@@ -75,4 +75,4 @@ private:
     QString filterObject_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

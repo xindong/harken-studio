@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <span>
 
-namespace VNX {
+namespace harken::studio {
 
 class SpectrogramHistory
 {

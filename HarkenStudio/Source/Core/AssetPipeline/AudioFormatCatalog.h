@@ -2,7 +2,7 @@
 
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 class AudioFormatCatalog
 {

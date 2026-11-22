@@ -15,7 +15,7 @@ class QLabel;
 class QMimeData;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class ObjectRefWidget : public QWidget
 {

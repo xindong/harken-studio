@@ -2,7 +2,7 @@
 
 #include "ThemeMetricsDerivation.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 template<typename... Values>

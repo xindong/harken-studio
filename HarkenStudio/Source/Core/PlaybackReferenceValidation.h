@@ -3,7 +3,7 @@
 #include <QString>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 struct ProjectData;

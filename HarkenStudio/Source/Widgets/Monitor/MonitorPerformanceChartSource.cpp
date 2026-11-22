@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr uint64_t kStreamIds[] = {101, 102, 103, 104, 105};
@@ -111,4 +111,4 @@ void MonitorPerformanceChartSource::pushToPanel() const
         panel_->applyChartModel(model_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

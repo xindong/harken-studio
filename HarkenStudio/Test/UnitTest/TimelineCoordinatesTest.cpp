@@ -4,7 +4,7 @@
 
 #include <limits>
 
-using namespace VNX;
+using namespace harken::studio;
 
 TEST(TimelineCoordinates, ConversionRejectsOverflowWithoutWrapping)
 {

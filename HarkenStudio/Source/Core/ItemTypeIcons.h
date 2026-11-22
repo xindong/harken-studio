@@ -6,7 +6,7 @@
 #include <QColor>
 #include <QIcon>
 
-namespace VNX {
+namespace harken::studio {
 
 QIcon iconForItemType(ProjectItem::Type type);
 QIcon iconForItemType(ProjectItem::Type type, const QColor& tint);

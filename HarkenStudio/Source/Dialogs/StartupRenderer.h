@@ -11,7 +11,7 @@
 #include <atomic>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class StartupRenderer final : public QObject
 {

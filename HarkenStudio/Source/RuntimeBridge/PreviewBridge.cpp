@@ -5,14 +5,14 @@
 #include <harken/Harken.h>
 #include <harken/HarkenDevelopment.h>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 static_assert(kEngineNoVariable == static_cast<EngineResult>(VN_NO_VARIABLE));
 static_assert(kEngineStaleHandle == static_cast<EngineResult>(VN_STALE_HANDLE));
 static_assert(kPreviewPlayableSegment == VN_PREVIEW_PLAYABLE_KIND_SEGMENT);
 static_assert(kPreviewBackpressure == VN_PREVIEW_BACKPRESSURE);
 
-int32_t playPreviewPlayable(uint32_t kind, harkenstudio::ObjectId id,
+int32_t playPreviewPlayable(uint32_t kind, harken::studio::types::ObjectId id,
                             uint64_t emitter, uint64_t& handle)
 {
     VnPreviewPlayPlayableDescV2 desc{};
@@ -23,7 +23,7 @@ int32_t playPreviewPlayable(uint32_t kind, harkenstudio::ObjectId id,
     return VnPreview_PlayPlayable(&desc, &handle);
 }
 
-int32_t resetPreviewPlayable(uint32_t kind, harkenstudio::ObjectId id, uint64_t emitter)
+int32_t resetPreviewPlayable(uint32_t kind, harken::studio::types::ObjectId id, uint64_t emitter)
 {
     VnPreviewResetPlayableDescV2 desc{};
     desc.structSize = sizeof(desc);
@@ -74,7 +74,7 @@ VariableWriteState queryVariableWriteState(const VariableTicket& ticket)
         ? VariableWriteState::Applied : VariableWriteState::Unavailable;
 }
 
-EngineResult writePreviewVariable(harkenstudio::ObjectId id, float value,
+EngineResult writePreviewVariable(harken::studio::types::ObjectId id, float value,
                                   uint64_t emitter, VariableTicket& ticket)
 {
     VnVariableWriteV1 write{};
@@ -92,7 +92,7 @@ EngineResult writePreviewVariable(harkenstudio::ObjectId id, float value,
     return static_cast<EngineResult>(result);
 }
 
-EngineResult setPreviewBinding(harkenstudio::ObjectId id,
+EngineResult setPreviewBinding(harken::studio::types::ObjectId id,
                                const PreviewBindingDefinition& definition)
 {
     if (definition.pointCount > VN_CURVE_MAX_POINTS)
@@ -118,19 +118,19 @@ EngineResult setPreviewBinding(harkenstudio::ObjectId id,
     return static_cast<EngineResult>(result);
 }
 
-EngineResult attachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudio::ObjectId object)
+EngineResult attachPreviewBinding(harken::studio::types::ObjectId id, uint32_t scope, harken::studio::types::ObjectId object)
 {
     VnBindingAttachDesc desc{sizeof(VnBindingAttachDesc), scope, toNative(object)};
     return static_cast<EngineResult>(Vn_AttachBinding(toNative(id), &desc));
 }
 
-void detachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudio::ObjectId object)
+void detachPreviewBinding(harken::studio::types::ObjectId id, uint32_t scope, harken::studio::types::ObjectId object)
 {
     VnBindingAttachDesc desc{sizeof(VnBindingAttachDesc), scope, toNative(object)};
     Vn_DetachBinding(toNative(id), &desc);
 }
 
-void removePreviewBinding(harkenstudio::ObjectId id) { Vn_UnregisterBinding(toNative(id)); }
+void removePreviewBinding(harken::studio::types::ObjectId id) { Vn_UnregisterBinding(toNative(id)); }
 
 EngineResult setPreviewVoiceEffectChain(uint64_t voice,
     const std::vector<PreviewVoiceEffectEntry>& chain)
@@ -144,12 +144,12 @@ EngineResult refreshPreviewVoiceBindings(uint64_t voice)
 }
 
 EngineResult setPreviewVoiceProperty(uint64_t voice, uint8_t property, float value,
-                                     harkenstudio::ObjectId sendBus)
+                                     harken::studio::types::ObjectId sendBus)
 {
     return Detail::runtimeSetPreviewVoiceProperty(voice, property, value, sendBus);
 }
 
-EngineResult setPreviewVoiceEffect(uint64_t voice, harkenstudio::ObjectId effectId,
+EngineResult setPreviewVoiceEffect(uint64_t voice, harken::studio::types::ObjectId effectId,
     uint32_t effectType, const std::vector<float>& parameters, bool bypass)
 {
     return Detail::runtimeSetPreviewVoiceEffect(voice, effectId, effectType, parameters, bypass);
@@ -160,22 +160,22 @@ bool currentWorldBusAdmissionIsOpen(uint64_t generation)
     return Detail::runtimeCurrentWorldBusAdmissionIsOpen(generation);
 }
 
-EngineResult setCurrentWorldBusMute(harkenstudio::ObjectId bus, bool mute, uint32_t fadeMs)
+EngineResult setCurrentWorldBusMute(harken::studio::types::ObjectId bus, bool mute, uint32_t fadeMs)
 {
     return Detail::runtimeSetBusMute(bus, mute, fadeMs);
 }
 
-EngineResult setCurrentWorldBusSolo(harkenstudio::ObjectId bus, bool solo, uint32_t fadeMs)
+EngineResult setCurrentWorldBusSolo(harken::studio::types::ObjectId bus, bool solo, uint32_t fadeMs)
 {
     return Detail::runtimeSetBusSolo(bus, solo, fadeMs);
 }
 
-EngineResult setCurrentWorldBusOutputVolume(harkenstudio::ObjectId bus, float db, uint32_t fadeMs)
+EngineResult setCurrentWorldBusOutputVolume(harken::studio::types::ObjectId bus, float db, uint32_t fadeMs)
 {
     return Detail::runtimeSetBusOutputVolume(bus, db, fadeMs);
 }
 
-uint64_t registeredSoundRevision(harkenstudio::ObjectId sound)
+uint64_t registeredSoundRevision(harken::studio::types::ObjectId sound)
 {
     return Detail::runtimeRegisteredSoundRevision(sound);
 }

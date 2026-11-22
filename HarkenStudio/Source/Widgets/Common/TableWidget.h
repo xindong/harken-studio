@@ -23,7 +23,7 @@ class QScrollArea;
 class QTableView;
 class QVBoxLayout;
 
-namespace VNX {
+namespace harken::studio {
 
 class ListFooter;
 class ProportionalTreeWidget;

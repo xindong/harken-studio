@@ -6,7 +6,7 @@
 #include "Core/BindingSemantics.h"
 #include "Core/ExternalEditorSelection.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class BindingAddMenu;
 
@@ -32,7 +32,7 @@ private:
     void activate();
     void refreshPresentation();
     BindingAddress addressFor(const ProjectItem* item) const;
-    void showEditor(harkenstudio::ObjectId bindingId = {});
+    void showEditor(harken::studio::types::ObjectId bindingId = {});
 
     BindingAddress address_;
     ProjectItem* item_ = nullptr;

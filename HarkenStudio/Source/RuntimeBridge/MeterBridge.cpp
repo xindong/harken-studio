@@ -9,10 +9,10 @@
 #include <cmath>
 #include <limits>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 int32_t applyMeterCapture(uint64_t session, uint64_t lease, std::span<const MeterCaptureRequest> requests,
-                         VNX::Monitor::MonitorEffectiveCapturePlan& accepted)
+                         harken::studio::Monitor::MonitorEffectiveCapturePlan& accepted)
 {
     VnSnapshot snapshot{};
     snapshot.structSize = sizeof(snapshot);
@@ -81,7 +81,7 @@ int32_t applyMeterCapture(uint64_t session, uint64_t lease, std::span<const Mete
     return applied;
 }
 
-bool decodeMeterMeasurement(const VNX::Monitor::MonitorRecordHeader& header,
+bool decodeMeterMeasurement(const harken::studio::Monitor::MonitorRecordHeader& header,
                             std::span<const uint8_t> payload,
                             MeterMeasurementFrame& frame)
 {

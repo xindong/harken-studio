@@ -7,7 +7,7 @@
 
 #include <limits>
 
-namespace Edit = VNX::ActionStepEditing;
+namespace Edit = harken::studio::ActionStepEditing;
 
 TEST(ActionStepEditing, MaxObjectIdIsPreserved)
 {

@@ -5,7 +5,7 @@
 #include <QJsonObject>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 class JsonSettingsStorage : public ISettingsStorage {
 public:

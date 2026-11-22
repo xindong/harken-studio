@@ -6,7 +6,7 @@
 #include <QVBoxLayout>
 #include <initializer_list>
 
-namespace VNX {
+namespace harken::studio {
 
 class BaseDialog : public QDialog
 {

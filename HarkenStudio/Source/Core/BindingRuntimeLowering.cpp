@@ -17,7 +17,7 @@
 #include <set>
 #include <unordered_set>
 
-namespace VNX {
+namespace harken::studio {
 namespace BindingRuntimeLoweringSemantics {
 namespace {
 
@@ -53,7 +53,7 @@ bool bindingShapedUntypedHasIllegalTransitionMs(const ParameterBindingDef& sourc
     if (!raw.isDouble())
         return true;
     const double ms = raw.toDouble();
-    return !std::isfinite(ms) || std::trunc(ms) != ms || ms < 0.0 || ms > harkenstudiobuild::kMaxBindingTransitionMs;
+    return !std::isfinite(ms) || std::trunc(ms) != ms || ms < 0.0 || ms > harken::studio::build::kMaxBindingTransitionMs;
 }
 
 const ProjectItem* findByGuid(const ProjectData& project, const QUuid& guid)
@@ -83,14 +83,14 @@ void collectAncestorBindings(const ProjectItem& leaf,
                              std::vector<const ParameterBindingDef*>* out)
 {
     if (!out) return;
-    std::set<harkenstudio::ObjectId> seen;
+    std::set<harken::studio::types::ObjectId> seen;
     for (const ProjectItem* ancestor = &leaf; ancestor; ancestor = ancestor->parent) {
         if (!isContentHost(ancestor->type))
             continue;
         const auto* mix = ancestor->comp<VMixNode>();
         if (!mix) continue;
         for (const ParameterBindingDef& source : mix->bindings.entries()) {
-            if (!source.typed || harkenstudio::IsNull(source.runtimeId())
+            if (!source.typed || harken::studio::types::IsNull(source.runtimeId())
                 || source.address.hostClass != hostClass)
                 continue;
             if (!seen.insert(source.runtimeId()).second)
@@ -121,7 +121,7 @@ const VVariable* variableOf(const ProjectData& project, const QUuid& variableId)
         ? item->comp<VVariable>() : nullptr;
 }
 
-harkenstudio::ObjectId attachmentObjectId(const ProjectItem& host)
+harken::studio::types::ObjectId attachmentObjectId(const ProjectItem& host)
 {
     return host.runtimeId();
 }
@@ -141,12 +141,12 @@ BindingLowerStatus appendLoweredBinding(const ProjectData& project,
         return BindingLowerStatus::Skip;
     }
     const auto targetId = BindingContractSemantics::engineTargetId(source.address);
-    if (!harkenstudiobuild::IsValidBindingTransitionMs(source.transitionMs)
+    if (!harken::studio::build::IsValidBindingTransitionMs(source.transitionMs)
         || (source.transitionMs != 0
             && targetId
             && !BindingContractSemantics::supportsTransition(source.address)))
         return BindingLowerStatus::Fail;
-    if (harkenstudio::IsNull(source.runtimeId())
+    if (harken::studio::types::IsNull(source.runtimeId())
         || source.variable.isNull() || source.curve.size() < 2
         || !targetId)
         return BindingLowerStatus::Skip;
@@ -154,9 +154,9 @@ BindingLowerStatus appendLoweredBinding(const ProjectData& project,
     const ProjectItem* variableItem = findByGuid(project, source.variable);
     const auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
     if (!variableItem || variableItem->type != ProjectItem::Type::Variable
-        || harkenstudio::IsNull(variableItem->runtimeId()) || !variable)
+        || harken::studio::types::IsNull(variableItem->runtimeId()) || !variable)
         return BindingLowerStatus::Skip;
-    if (harkenstudio::IsNull(host.runtimeId()))
+    if (harken::studio::types::IsNull(host.runtimeId()))
         return BindingLowerStatus::Skip;
 
     BindingRuntimeProgram program;
@@ -182,8 +182,8 @@ BindingLowerStatus appendLoweredBinding(const ProjectData& project,
 BindingRuntimeLowering lowerProject(const ProjectData& project)
 {
     BindingRuntimeLowering lowering;
-    std::unordered_set<harkenstudio::ObjectId> seenPrograms;
-    std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> seenAttachments;
+    std::unordered_set<harken::studio::types::ObjectId> seenPrograms;
+    std::set<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>> seenAttachments;
     const auto apply = [&](const ProjectItem& item, const ParameterBindingDef& source) {
         if (lowering.failed)
             return;
@@ -245,11 +245,11 @@ bool sameAttachment(const BindingRuntimeAttachment& a,
 PreviewBindingSyncState reconcilePreviewSync(
     const BindingRuntimeLowering& desired,
     const PreviewBindingSyncState& previous,
-    const std::vector<harkenstudio::ObjectId>& registeredOk,
+    const std::vector<harken::studio::types::ObjectId>& registeredOk,
     const std::vector<BindingRuntimeAttachment>& attachedOk)
 {
-    auto hasId = [](const std::vector<harkenstudio::ObjectId>& ids, harkenstudio::ObjectId id) {
-        for (harkenstudio::ObjectId candidate : ids) {
+    auto hasId = [](const std::vector<harken::studio::types::ObjectId>& ids, harken::studio::types::ObjectId id) {
+        for (harken::studio::types::ObjectId candidate : ids) {
             if (candidate == id)
                 return true;
         }

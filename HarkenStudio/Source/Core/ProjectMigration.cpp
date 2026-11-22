@@ -10,7 +10,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectMigrationWorkspace::ProjectMigrationWorkspace(
     QString sourceDirectory, QString stagingDirectory, QStringList writeSet,

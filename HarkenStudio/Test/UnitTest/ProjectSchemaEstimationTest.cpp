@@ -10,7 +10,7 @@
 
 #include <optional>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 ResourceInput OneSecondResident() {

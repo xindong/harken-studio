@@ -21,7 +21,7 @@ class QTcpServer;
 class QTcpSocket;
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class MainWindow;
 class AudioEngine;
@@ -35,7 +35,7 @@ class VQLEngine;
 class VBus;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 class IPCServer : public QObject
 {
@@ -343,7 +343,7 @@ private:
     QMetaObject::Connection desktopDestroyedConnection_;
     std::function<bool()> projectOpening_;
     std::function<bool(const QString&, QString*, bool*)> projectOpener_;
-    HarkenEditor::AuditionManager* audition_ = nullptr;
+    harken::studio::AuditionManager* audition_ = nullptr;
     AssetImporter* assetImporter_ = nullptr;
     AssetConverter* assetConverter_ = nullptr;
     QVector<QTcpSocket*> clients_;

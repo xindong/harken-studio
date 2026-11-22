@@ -1,6 +1,6 @@
 #include "AIPermissionModel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QString toId(AIPermissionMode mode)
 {

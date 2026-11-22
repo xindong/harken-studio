@@ -10,7 +10,7 @@ class QDragMoveEvent;
 class QDropEvent;
 class QMimeData;
 
-namespace VNX {
+namespace harken::studio {
 
 constexpr int kSourceIdRole = Qt::UserRole + 32;
 constexpr int kSourcePathRole = Qt::UserRole + 33;

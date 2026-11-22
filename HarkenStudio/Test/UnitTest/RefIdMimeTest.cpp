@@ -5,7 +5,7 @@
 #include <QApplication>
 #include <QMimeData>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

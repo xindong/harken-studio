@@ -4,8 +4,8 @@
 
 #include <gtest/gtest.h>
 
-using VNX::Monitor::decodePackedRecords;
-using VNX::Monitor::TestSupport::loadEditorFixture;
+using harken::studio::Monitor::decodePackedRecords;
+using harken::studio::Monitor::TestSupport::loadEditorFixture;
 
 TEST(MonitorDecoder, EveryFixtureDecodesToItsDeclaredOutcome)
 {

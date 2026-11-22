@@ -16,7 +16,7 @@
 #include <cstring>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 FileSystemWatcher::FileSystemWatcher(QObject* parent)
     : QObject(parent)

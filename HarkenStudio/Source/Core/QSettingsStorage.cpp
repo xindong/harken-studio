@@ -3,7 +3,7 @@
 #include "JsonSettingsStorage.h"
 #include "MemorySettingsStorage.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QSettingsStorage::QSettingsStorage(const QString& organization, const QString& application)
     : settings_(std::make_unique<QSettings>(QSettings::defaultFormat(),

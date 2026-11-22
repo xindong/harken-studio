@@ -16,7 +16,7 @@
 class QCheckBox;
 class QVBoxLayout;
 
-namespace VNX {
+namespace harken::studio {
 
 class TimeSeriesChart;
 class MonitorCaptureControlStrip;
@@ -93,4 +93,4 @@ private:
     bool trackingPress_ = false;
 };
 
-} // namespace VNX
+} // namespace harken::studio

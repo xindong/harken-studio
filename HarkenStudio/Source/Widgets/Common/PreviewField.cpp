@@ -6,7 +6,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 
-namespace VNX {
+namespace harken::studio {
 
 PreviewField::PreviewField(QWidget* parent)
     : QWidget(parent)

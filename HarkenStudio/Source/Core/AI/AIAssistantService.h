@@ -19,7 +19,7 @@
 #include <memory>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class IAIConversationStore;
 class AIDurableMemoryService;

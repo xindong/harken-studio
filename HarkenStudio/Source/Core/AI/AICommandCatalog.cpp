@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 AICommandSpec spec(const char* cmd, AICommandSpec::Availability availability,

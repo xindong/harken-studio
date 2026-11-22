@@ -6,7 +6,7 @@
 
 class QFontMetrics;
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr double kAmplitudeFloorDb = -96.0;
 

@@ -17,7 +17,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 
-namespace VNX {
+namespace harken::studio {
 
 ParameterControlHost::ParameterControlHost(
     const QString& name,

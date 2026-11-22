@@ -13,7 +13,7 @@
 #include <QTemporaryDir>
 
 namespace {
-using namespace VNX;
+using namespace harken::studio;
 namespace Platforms = ProjectPlatformSemantics;
 
 class ProjectPlatformCommand : public testing::Test

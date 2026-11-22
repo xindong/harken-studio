@@ -3,7 +3,7 @@
 
 #include <QAction>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -5,7 +5,7 @@
 #include <QList>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 struct NamedLayoutInfo
 {

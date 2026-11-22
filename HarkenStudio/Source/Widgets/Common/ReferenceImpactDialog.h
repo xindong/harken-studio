@@ -4,7 +4,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 bool confirmReferenceImpact(QWidget* parent, const QString& title,
                             const QString& summary, const QString& details,

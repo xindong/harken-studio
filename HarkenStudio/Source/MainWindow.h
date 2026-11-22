@@ -54,7 +54,7 @@
 namespace QWK { class WidgetWindowAgent; }
 #endif
 
-namespace VNX {
+namespace harken::studio {
     struct ProjectConfig;
     class ProjectExplorer;
     class Hierarchy;
@@ -95,12 +95,12 @@ namespace VNX {
 class ControlPanel;
 class QPushButton;
 
-namespace HarkenEditor {
+namespace harken::studio {
     class AuditionManager;
-    namespace Bridge { class RemoteConnection; }
+    namespace bridge { class RemoteConnection; }
 }
 
-namespace VNX {
+namespace harken::studio {
 
 namespace Monitor { class EventCaptureController; }
 
@@ -110,7 +110,7 @@ class MainWindow : public QMainWindow
 
 public:
     void showRemoteConnect();
-    HarkenEditor::Bridge::RemoteConnection* remoteConnection() const { return remoteConnection_; }
+    harken::studio::bridge::RemoteConnection* remoteConnection() const { return remoteConnection_; }
     Monitor::EventCaptureController* eventCaptureController() const { return eventCaptureController_; }
     enum class PreferredOpenArea { CentralTab, Float, RestoreSaved };
     enum class EditorOpenMode { Reuse, NewWindow };
@@ -185,7 +185,7 @@ public:
 
     IPCServer* ipcServer() const { return ipcServer_; }
 
-    HarkenEditor::AuditionManager* auditionManager() const { return auditionManager_; }
+    harken::studio::AuditionManager* auditionManager() const { return auditionManager_; }
     ProjectItem* auditionTarget() const;
 
     BlueprintCanvasWidget* blueprintCanvas() const { return blueprintCanvas_; }
@@ -245,7 +245,7 @@ public:
     QWidget* workspacePanelContent(const QString& typeId, int panelId) const;
     QList<QWidget*> workspacePanelContents(const QString& typeId) const;
     int lastFocusedWorkspacePanelId(const QString& typeId) const;
-    QList<VNX::DockInstanceSpec> workspaceWindowInstanceSpecs() const;
+    QList<harken::studio::DockInstanceSpec> workspaceWindowInstanceSpecs() const;
     QList<QVariantMap> workspaceWindowSummaries() const;
     bool setWorkspaceWindowVisible(const QString& selector, bool visible,
                                    QVariantMap* summary = nullptr);
@@ -453,7 +453,7 @@ private:
     AssistantPanel* assistantPanel_ = nullptr;
     QList<QPointer<QThread>> packExportThreads_;
 
-    HarkenEditor::AuditionManager* auditionManager_ = nullptr;
+    harken::studio::AuditionManager* auditionManager_ = nullptr;
     bool auditionStopRequested_ = false;
     PlaybackControls* playbackControls_ = nullptr;
     ControlPanel* controlPanel_ = nullptr;
@@ -473,7 +473,7 @@ private:
 
 
     QMenu* panelsSubMenu_ = nullptr;
-    HarkenEditor::Bridge::RemoteConnection* remoteConnection_ = nullptr;
+    harken::studio::bridge::RemoteConnection* remoteConnection_ = nullptr;
     Monitor::EventCaptureController* eventCaptureController_ = nullptr;
 
     MonitorPerformanceChartSource monitorPerformanceChartSource_;
@@ -499,7 +499,7 @@ private:
     qint64 lastInteractionTimeMs_ = 0;
 
 #ifdef HARKEN_HAS_QWINDOWKIT
-    VNX::TitleBarWidget*         m_titleBar{nullptr};
+    harken::studio::TitleBarWidget*         m_titleBar{nullptr};
     QWK::WidgetWindowAgent*      m_windowAgent{nullptr};
 #endif
 };

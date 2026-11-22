@@ -7,7 +7,7 @@
 
 class QNetworkReply;
 
-namespace VNX {
+namespace harken::studio {
 
 class OpenAICompatibleLLMProvider : public ILLMProvider
 {

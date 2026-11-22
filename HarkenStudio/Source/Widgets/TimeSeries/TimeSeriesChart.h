@@ -8,7 +8,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct TimeSeriesRenderColumn
 {
@@ -69,4 +69,4 @@ private:
     std::int64_t dragWindowStart_ = 0;
 };
 
-} // namespace VNX
+} // namespace harken::studio

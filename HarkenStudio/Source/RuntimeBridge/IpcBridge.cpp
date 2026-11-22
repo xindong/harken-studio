@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <cmath>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 namespace {
 
@@ -83,5 +83,5 @@ bool compareFiles(const QString& referencePath, const QString& candidatePath,
     return true;
 }
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

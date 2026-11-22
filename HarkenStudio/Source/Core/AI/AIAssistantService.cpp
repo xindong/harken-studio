@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 constexpr int kMaximumResponseBytes = 65536;
 constexpr int kMaximumErrorCharacters = 4096;

@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectFileBinding;
 struct ImportResult;

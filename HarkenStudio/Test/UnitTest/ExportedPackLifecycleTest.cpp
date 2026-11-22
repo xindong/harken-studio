@@ -253,11 +253,11 @@ uint32_t registerToneAsset(const QString& projectRoot,
                            float amplitude = kToneAmplitude)
 {
     std::vector<float> samples(kToneFrames, amplitude);
-    const QString audioRoot = VNX::PathUtils::getAudioSourcesDir(projectRoot);
+    const QString audioRoot = harken::studio::PathUtils::getAudioSourcesDir(projectRoot);
     const QString sourcePath = QDir(audioRoot).filePath(relativePath);
     writeWavF32(sourcePath, samples, kChannels, kSampleRate);
 
-    VNX::AssetInfo info;
+    harken::studio::AssetInfo info;
     info.relativePath = relativePath;
     info.absolutePath = sourcePath;
     info.sourceID = sourceId;
@@ -267,75 +267,75 @@ uint32_t registerToneAsset(const QString& projectRoot,
     info.metadata.totalSamples = kToneFrames;
     info.metadata.fileSize = static_cast<uint64_t>(QFileInfo(sourcePath).size());
     info.lastModified = 1;
-    EXPECT_TRUE(VNX::AssetRegistry::instance().registerAsset(info));
+    EXPECT_TRUE(harken::studio::AssetRegistry::instance().registerAsset(info));
     return info.sourceID;
 }
 
-std::shared_ptr<VNX::ProjectItem> makeItem(const QString& name,
-                                           VNX::ProjectItem::Type type,
+std::shared_ptr<harken::studio::ProjectItem> makeItem(const QString& name,
+                                           harken::studio::ProjectItem::Type type,
                                            uint32_t objectId)
 {
-    auto item = std::make_shared<VNX::ProjectItem>();
+    auto item = std::make_shared<harken::studio::ProjectItem>();
     item->name = name;
     item->type = type;
     item->objectID = objectId;
-    item->guid = VNX::authoringUuid(harkentest::StudioObjectId(objectId + kStableIdBias));
+    item->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(objectId + kStableIdBias));
     item->attachDefaultComponents();
     return item;
 }
 
-void addChild(const std::shared_ptr<VNX::ProjectItem>& parent,
-              const std::shared_ptr<VNX::ProjectItem>& child)
+void addChild(const std::shared_ptr<harken::studio::ProjectItem>& parent,
+              const std::shared_ptr<harken::studio::ProjectItem>& child)
 {
     child->parent = parent.get();
     parent->children.push_back(child);
 }
 
-void addBinding(std::vector<VNX::ProjectFileBinding>& bindings,
-                const std::shared_ptr<VNX::ProjectItem>& root)
+void addBinding(std::vector<harken::studio::ProjectFileBinding>& bindings,
+                const std::shared_ptr<harken::studio::ProjectItem>& root)
 {
-    VNX::ProjectFileBinding binding;
+    harken::studio::ProjectFileBinding binding;
     binding.rootItem = root;
     bindings.push_back(std::move(binding));
 }
 
-void addAudioSource(VNX::ProjectData& project, uint32_t sourceId)
+void addAudioSource(harken::studio::ProjectData& project, uint32_t sourceId)
 {
-    const VNX::AssetInfo* info = VNX::AssetRegistry::instance().getAsset(sourceId);
+    const harken::studio::AssetInfo* info = harken::studio::AssetRegistry::instance().getAsset(sourceId);
     ASSERT_NE(info, nullptr);
-    VNX::AudioSourceData source;
+    harken::studio::AudioSourceData source;
     source.sourceID = sourceId;
     source.relativePath = info->relativePath;
     source.language = QStringLiteral("SFX");
     project.audioSources.push_back(source);
 }
 
-void authorDefaultPlayableProperties(VNX::ProjectItem& item)
+void authorDefaultPlayableProperties(harken::studio::ProjectItem& item)
 {
-    const auto locator = VNX::PlayablePropertyAuthoringV1::definitionLocator(item);
+    const auto locator = harken::studio::PlayablePropertyAuthoringV1::definitionLocator(item);
     ASSERT_TRUE(locator.has_value());
     using Id = harkenplayableproperties::PlayablePropertyIdV1;
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
+    ASSERT_TRUE(harken::studio::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::Volume), QJsonValue(0.0), std::nullopt));
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
+    ASSERT_TRUE(harken::studio::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::Pitch), QJsonValue(0.0), std::nullopt));
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
+    ASSERT_TRUE(harken::studio::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::LoopCount), QJsonValue(1), std::nullopt));
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
+    ASSERT_TRUE(harken::studio::PlayablePropertyAuthoringV1::setOverride(
         item, *locator, static_cast<uint8_t>(Id::StreamingMode), QJsonValue(0), std::nullopt));
-    ASSERT_EQ(item.fieldGroups, VNX::DefinitionFieldGroups{});
+    ASSERT_EQ(item.fieldGroups, harken::studio::DefinitionFieldGroups{});
 }
 
-void attachPlayableSound(const std::shared_ptr<VNX::ProjectItem>& parent,
-                         const std::shared_ptr<VNX::ProjectItem>& sound,
+void attachPlayableSound(const std::shared_ptr<harken::studio::ProjectItem>& parent,
+                         const std::shared_ptr<harken::studio::ProjectItem>& sound,
                          uint32_t sourceId)
 {
     sound->sourceID = sourceId;
-    auto* audio = sound->comp<VNX::VAudio>();
+    auto* audio = sound->comp<harken::studio::VAudio>();
     audio->loopCount = 1;
     audio->streamingMode = 0;
-    auto* authored = sound->comp<VNX::VSound>();
-    VNX::SoundSourceDef source;
+    auto* authored = sound->comp<harken::studio::VSound>();
+    harken::studio::SoundSourceDef source;
     source.entryId = sound->guid;
     source.sourceId = sourceId;
     authored->sources.plain.entries = {source};
@@ -344,76 +344,76 @@ void attachPlayableSound(const std::shared_ptr<VNX::ProjectItem>& parent,
     addChild(parent, sound);
 }
 
-void attachContainerChild(const std::shared_ptr<VNX::ProjectItem>& container,
-                          const std::shared_ptr<VNX::ProjectItem>& child)
+void attachContainerChild(const std::shared_ptr<harken::studio::ProjectItem>& container,
+                          const std::shared_ptr<harken::studio::ProjectItem>& child)
 {
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(
+    ASSERT_TRUE(harken::studio::PlayablePropertyAuthoringV1::addContainerChildOccurrence(
         *container, child->guid));
 }
 
-void prepareContainer(const std::shared_ptr<VNX::ProjectItem>& container,
-                      VNX::SelectionMode mode,
-                      VNX::SelectionPlayType playType = VNX::SelectionPlayType::Single)
+void prepareContainer(const std::shared_ptr<harken::studio::ProjectItem>& container,
+                      harken::studio::SelectionMode mode,
+                      harken::studio::SelectionPlayType playType = harken::studio::SelectionPlayType::Single)
 {
     ASSERT_NO_FATAL_FAILURE(authorDefaultPlayableProperties(*container));
-    auto* selection = container->comp<VNX::VSelection>();
+    auto* selection = container->comp<harken::studio::VSelection>();
     selection->mode = mode;
     selection->playType = playType;
-    selection->matchResponse = VNX::VariableResponse::AtStart;
-    selection->blendResponse = VNX::VariableResponse::Live;
+    selection->matchResponse = harken::studio::VariableResponse::AtStart;
+    selection->blendResponse = harken::studio::VariableResponse::Live;
     const bool queueOrVariable =
         selection->isQueue()
-        || mode == VNX::SelectionMode::Match
-        || mode == VNX::SelectionMode::Blend;
+        || mode == harken::studio::SelectionMode::Match
+        || mode == harken::studio::SelectionMode::Blend;
     selection->behavior.memoryScope = queueOrVariable
-        ? VNX::SelectionMemoryScope::PerEmitter
-        : VNX::SelectionMemoryScope::Global;
+        ? harken::studio::SelectionMemoryScope::PerEmitter
+        : harken::studio::SelectionMemoryScope::Global;
 }
 
-void attachTrackClip(const std::shared_ptr<VNX::ProjectItem>& track,
-                     const std::shared_ptr<VNX::ProjectItem>& sound,
+void attachTrackClip(const std::shared_ptr<harken::studio::ProjectItem>& track,
+                     const std::shared_ptr<harken::studio::ProjectItem>& sound,
                      int64_t start = 0,
                      uint8_t clipOrdinal = 2)
 {
-    auto* timeline = track->comp<VNX::VTrack>();
+    auto* timeline = track->comp<harken::studio::VTrack>();
     ASSERT_NE(timeline, nullptr);
-    VNX::Clip clip;
+    harken::studio::Clip clip;
     clip.targetGuid = sound->guid;
     clip.start = start;
     clip.duration = 1000000;
-    clip.clipGuid = VNX::authoringUuid(harkentest::OffsetObjectId(track->runtimeId(), 500000 + clipOrdinal));
+    clip.clipGuid = harken::studio::authoringUuid(harkentest::OffsetObjectId(track->runtimeId(), 500000 + clipOrdinal));
     ASSERT_TRUE(timeline->clips.mintOccurrenceOrdinal(&clip));
     timeline->clips.items.push_back(clip);
 }
 
-void attachSecondTrackLeaf(const std::shared_ptr<VNX::ProjectItem>& track,
+void attachSecondTrackLeaf(const std::shared_ptr<harken::studio::ProjectItem>& track,
                            const QString& soundName,
                            uint32_t soundObjectId,
                            uint32_t sourceId)
 {
-    auto sound = makeItem(soundName, VNX::ProjectItem::Type::Sound, soundObjectId);
+    auto sound = makeItem(soundName, harken::studio::ProjectItem::Type::Sound, soundObjectId);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(track, sound, sourceId));
     ASSERT_NO_FATAL_FAILURE(attachTrackClip(track, sound, INT64_C(12000000), 3));
 }
 
-void makeTrackWithSound(const std::shared_ptr<VNX::ProjectItem>& parent,
+void makeTrackWithSound(const std::shared_ptr<harken::studio::ProjectItem>& parent,
                         const QString& trackName,
                         uint32_t trackObjectId,
                         const QString& soundName,
                         uint32_t soundObjectId,
                         uint32_t sourceId,
-                        std::shared_ptr<VNX::ProjectItem>* outTrack)
+                        std::shared_ptr<harken::studio::ProjectItem>* outTrack)
 {
-    auto track = makeItem(trackName, VNX::ProjectItem::Type::Track, trackObjectId);
+    auto track = makeItem(trackName, harken::studio::ProjectItem::Type::Track, trackObjectId);
     ASSERT_NO_FATAL_FAILURE(authorDefaultPlayableProperties(*track));
     addChild(parent, track);
-    auto sound = makeItem(soundName, VNX::ProjectItem::Type::Sound, soundObjectId);
+    auto sound = makeItem(soundName, harken::studio::ProjectItem::Type::Sound, soundObjectId);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(track, sound, sourceId));
     ASSERT_NO_FATAL_FAILURE(attachTrackClip(track, sound));
     *outTrack = std::move(track);
 }
 
-void makeSegmentWithSound(const std::shared_ptr<VNX::ProjectItem>& parent,
+void makeSegmentWithSound(const std::shared_ptr<harken::studio::ProjectItem>& parent,
                         const QString& segmentName,
                         uint32_t segmentObjectId,
                         const QString& trackName,
@@ -421,49 +421,49 @@ void makeSegmentWithSound(const std::shared_ptr<VNX::ProjectItem>& parent,
                         const QString& soundName,
                         uint32_t soundObjectId,
                         uint32_t sourceId,
-                        std::shared_ptr<VNX::ProjectItem>* outSegment)
+                        std::shared_ptr<harken::studio::ProjectItem>* outSegment)
 {
-    auto segment = makeItem(segmentName, VNX::ProjectItem::Type::Segment, segmentObjectId);
+    auto segment = makeItem(segmentName, harken::studio::ProjectItem::Type::Segment, segmentObjectId);
     ASSERT_NO_FATAL_FAILURE(authorDefaultPlayableProperties(*segment));
     addChild(parent, segment);
-    std::shared_ptr<VNX::ProjectItem> track;
+    std::shared_ptr<harken::studio::ProjectItem> track;
     ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(segment, trackName, trackObjectId, soundName,
                                                soundObjectId, sourceId, &track));
     *outSegment = std::move(segment);
 }
 
-VNX::VActionStep playStep(const VNX::ProjectItem& target, float delayMs = 0.0f)
+harken::studio::VActionStep playStep(const harken::studio::ProjectItem& target, float delayMs = 0.0f)
 {
-    VNX::VActionStep step;
-    step.type = VNX::VActionStep::Type::Play;
+    harken::studio::VActionStep step;
+    step.type = harken::studio::VActionStep::Type::Play;
     step.targetObjectID = target.objectID;
     step.targetName = target.name;
     step.delay = delayMs;
     return step;
 }
 
-std::shared_ptr<VNX::ProjectItem> makePlayAction(
-    const std::shared_ptr<VNX::ProjectItem>& actionsRoot,
+std::shared_ptr<harken::studio::ProjectItem> makePlayAction(
+    const std::shared_ptr<harken::studio::ProjectItem>& actionsRoot,
     const QString& name,
     uint32_t objectId,
-    const VNX::ProjectItem& target,
+    const harken::studio::ProjectItem& target,
     float delayMs = 0.0f)
 {
-    auto action = makeItem(name, VNX::ProjectItem::Type::Action, objectId);
-    action->comp<VNX::VAction>()->steps = {playStep(target, delayMs)};
+    auto action = makeItem(name, harken::studio::ProjectItem::Type::Action, objectId);
+    action->comp<harken::studio::VAction>()->steps = {playStep(target, delayMs)};
     addChild(actionsRoot, action);
     return action;
 }
 
-void authorDiscreteVariableControl(const std::shared_ptr<VNX::ProjectItem>& container,
-                                   const std::shared_ptr<VNX::ProjectItem>& variable,
-                                   const std::shared_ptr<VNX::ProjectItem>& silentChild,
-                                   const std::shared_ptr<VNX::ProjectItem>& audibleChild,
+void authorDiscreteVariableControl(const std::shared_ptr<harken::studio::ProjectItem>& container,
+                                   const std::shared_ptr<harken::studio::ProjectItem>& variable,
+                                   const std::shared_ptr<harken::studio::ProjectItem>& silentChild,
+                                   const std::shared_ptr<harken::studio::ProjectItem>& audibleChild,
                                    int silentValue,
                                    int audibleValue)
 {
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(container, VNX::SelectionMode::Match));
-    auto* selection = container->comp<VNX::VSelection>();
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(container, harken::studio::SelectionMode::Match));
+    auto* selection = container->comp<harken::studio::VSelection>();
     {
         auto grid = selection->matchGrid();
         ASSERT_TRUE(grid.addAxis(variable->guid));
@@ -475,18 +475,18 @@ void authorDiscreteVariableControl(const std::shared_ptr<VNX::ProjectItem>& cont
     }
 }
 
-void authorContinuousVariableControl(const std::shared_ptr<VNX::ProjectItem>& container,
-                                     const std::shared_ptr<VNX::ProjectItem>& variable,
-                                     const std::shared_ptr<VNX::ProjectItem>& silentChild,
-                                     const std::shared_ptr<VNX::ProjectItem>& audibleChild)
+void authorContinuousVariableControl(const std::shared_ptr<harken::studio::ProjectItem>& container,
+                                     const std::shared_ptr<harken::studio::ProjectItem>& variable,
+                                     const std::shared_ptr<harken::studio::ProjectItem>& silentChild,
+                                     const std::shared_ptr<harken::studio::ProjectItem>& audibleChild)
 {
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(container, VNX::SelectionMode::Blend));
-    auto* selection = container->comp<VNX::VSelection>();
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(container, harken::studio::SelectionMode::Blend));
+    auto* selection = container->comp<harken::studio::VSelection>();
     {
         auto mixing = selection->mixing();
         mixing.rows.push_back({variable->guid, {}});
-        mixing.rows.back().children.push_back(VNX::MixingChildDef::unity(silentChild->guid, 0.0f, 100.0f));
-        mixing.rows.back().children.push_back(VNX::MixingChildDef::unity(audibleChild->guid, 0.0f, 100.0f));
+        mixing.rows.back().children.push_back(harken::studio::MixingChildDef::unity(silentChild->guid, 0.0f, 100.0f));
+        mixing.rows.back().children.push_back(harken::studio::MixingChildDef::unity(audibleChild->guid, 0.0f, 100.0f));
         mixing.rows.front().children[0].points = {{0.0f, 1.0f}, {0.25f, 1.0f}, {0.75f, 0.0f}, {1.0f, 0.0f}};
         mixing.rows.front().children[1].points = {{0.0f, 0.0f}, {0.25f, 0.0f}, {0.75f, 1.0f}, {1.0f, 1.0f}};
         for (auto& child : mixing.rows.front().children) child.normalize();
@@ -494,7 +494,7 @@ void authorContinuousVariableControl(const std::shared_ptr<VNX::ProjectItem>& co
     }
 }
 
-void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
+void buildExportedPack(harken::studio::ProjectData& project, const QString& projectRoot)
 {
     project.name = QStringLiteral("ExportedPack");
     project.projectId = QString::fromLatin1(kExportedPackProjectId);
@@ -526,39 +526,39 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(addAudioSource(project, kSpatialNearFarSourceId));
 
     auto master = makeItem(QStringLiteral("MasterBus"),
-                           VNX::ProjectItem::Type::Bus,
+                           harken::studio::ProjectItem::Type::Bus,
                            kMasterBusObjectId);
-    master->guid = VNX::authoringUuid(harkentest::StudioObjectId(0x4d4153544552));
+    master->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(0x4d4153544552));
     addBinding(project.busses, master);
 
     auto layer = makeItem(QStringLiteral("Root"),
-                          VNX::ProjectItem::Type::Layer,
+                          harken::studio::ProjectItem::Type::Layer,
                           kRootLayerObjectId);
-    layer->fieldGroups = VNX::MakeRootFieldGroups(VNX::toFieldGroupGuid(master->guid));
+    layer->fieldGroups = harken::studio::MakeRootFieldGroups(harken::studio::toFieldGroupGuid(master->guid));
 
     auto sharedSound = makeItem(QStringLiteral("ExportedPackSharedSound"),
-                                VNX::ProjectItem::Type::Sound,
+                                harken::studio::ProjectItem::Type::Sound,
                                 kSharedSoundObjectId);
     auto contentSound = makeItem(QStringLiteral("ExportedPackImmediateSoundTarget"),
-                                 VNX::ProjectItem::Type::Sound,
+                                 harken::studio::ProjectItem::Type::Sound,
                                  kContentSoundObjectId);
     auto delayedSound = makeItem(QStringLiteral("ExportedPackDelayedSoundTarget"),
-                                 VNX::ProjectItem::Type::Sound,
+                                 harken::studio::ProjectItem::Type::Sound,
                                  kDelayedSoundObjectId);
     auto twoPlaySound = makeItem(QStringLiteral("ExportedPackTwoPlaySoundTarget"),
-                                 VNX::ProjectItem::Type::Sound,
+                                 harken::studio::ProjectItem::Type::Sound,
                                  kTwoPlaySoundObjectId);
     auto randomChild = makeItem(QStringLiteral("ExportedPackRandomChild"),
-                                VNX::ProjectItem::Type::Sound,
+                                harken::studio::ProjectItem::Type::Sound,
                                 kRandomChildSoundObjectId);
     auto sequenceChild = makeItem(QStringLiteral("ExportedPackSequenceChild"),
-                                  VNX::ProjectItem::Type::Sound,
+                                  harken::studio::ProjectItem::Type::Sound,
                                   kSequenceChildSoundObjectId);
     auto sequenceChildB = makeItem(QStringLiteral("ExportedPackSequenceChildB"),
-                                   VNX::ProjectItem::Type::Sound,
+                                   harken::studio::ProjectItem::Type::Sound,
                                    kSequenceChildBSoundObjectId);
     auto packBSound = makeItem(QStringLiteral("ExportedPackPackBSound"),
-                               VNX::ProjectItem::Type::Sound,
+                               harken::studio::ProjectItem::Type::Sound,
                                kPackBSoundObjectId);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(layer, contentSound, kContentSourceId));
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(layer, delayedSound, kDelayedSourceId));
@@ -566,25 +566,25 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(layer, packBSound, kPackBSourceId));
 
     auto randomContainer = makeItem(QStringLiteral("ExportedPackRandomContainer"),
-                                    VNX::ProjectItem::Type::Container,
+                                    harken::studio::ProjectItem::Type::Container,
                                     kRandomContainerObjectId);
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(randomContainer, VNX::SelectionMode::Random));
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(randomContainer, harken::studio::SelectionMode::Random));
     addChild(layer, randomContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(randomContainer, randomChild,
                                                 kRandomChildSourceId));
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(randomContainer, randomChild));
 
     auto nestedInnerChild = makeItem(QStringLiteral("ExportedPackNestedRandomChild"),
-                                     VNX::ProjectItem::Type::Sound,
+                                     harken::studio::ProjectItem::Type::Sound,
                                      kNestedRandomChildObjectId);
     auto nestedInner = makeItem(QStringLiteral("ExportedPackNestedRandomInner"),
-                                VNX::ProjectItem::Type::Container,
+                                harken::studio::ProjectItem::Type::Container,
                                 kNestedRandomInnerObjectId);
     auto nestedOuter = makeItem(QStringLiteral("ExportedPackNestedRandomOuter"),
-                                VNX::ProjectItem::Type::Container,
+                                harken::studio::ProjectItem::Type::Container,
                                 kNestedRandomOuterObjectId);
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(nestedInner, VNX::SelectionMode::Random));
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(nestedOuter, VNX::SelectionMode::Random));
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(nestedInner, harken::studio::SelectionMode::Random));
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(nestedOuter, harken::studio::SelectionMode::Random));
     addChild(layer, nestedOuter);
     addChild(nestedOuter, nestedInner);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(nestedInner, nestedInnerChild,
@@ -593,9 +593,9 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(nestedOuter, nestedInner));
 
     auto verticalContainer = makeItem(QStringLiteral("ExportedPackVerticalContainer"),
-                                      VNX::ProjectItem::Type::Container,
+                                      harken::studio::ProjectItem::Type::Container,
                                       kVerticalContainerObjectId);
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(verticalContainer, VNX::SelectionMode::Sequence));
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(verticalContainer, harken::studio::SelectionMode::Sequence));
     addChild(layer, verticalContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(verticalContainer, sequenceChild,
                                                 kSequenceChildSourceId));
@@ -605,35 +605,35 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(verticalContainer, sequenceChildB));
 
     auto queueSoundChild = makeItem(QStringLiteral("ExportedPackQueueSoundChild"),
-                                    VNX::ProjectItem::Type::Sound,
+                                    harken::studio::ProjectItem::Type::Sound,
                                     kQueueSoundChildObjectId);
     auto queueSoundContainer = makeItem(QStringLiteral("ExportedPackQueueSoundContainer"),
-                                        VNX::ProjectItem::Type::Container,
+                                        harken::studio::ProjectItem::Type::Container,
                                         kQueueSoundContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSoundContainer,
-                                             VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
-    queueSoundContainer->comp<VNX::VSelection>()->transitions.rules.front().exitTiming =
-        VNX::TransitionExitTiming::Immediate;
+                                             harken::studio::SelectionMode::Sequence, harken::studio::SelectionPlayType::Queue));
+    queueSoundContainer->comp<harken::studio::VSelection>()->transitions.rules.front().exitTiming =
+        harken::studio::TransitionExitTiming::Immediate;
     addChild(layer, queueSoundContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(queueSoundContainer, queueSoundChild,
                                                 kQueueSoundSourceId));
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(queueSoundContainer, queueSoundChild));
 
-    std::shared_ptr<VNX::ProjectItem> directTrack;
+    std::shared_ptr<harken::studio::ProjectItem> directTrack;
     ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(
         layer, QStringLiteral("ExportedPackDirectTrack"), kDirectTrackObjectId,
         QStringLiteral("ExportedPackDirectTrackSound"), kDirectTrackSoundObjectId,
         kDirectTrackSourceId, &directTrack));
 
     auto queueTrackContainer = makeItem(QStringLiteral("ExportedPackQueueTrackContainer"),
-                                        VNX::ProjectItem::Type::Container,
+                                        harken::studio::ProjectItem::Type::Container,
                                         kQueueTrackContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueTrackContainer,
-                                             VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
-    queueTrackContainer->comp<VNX::VSelection>()->transitions.rules.front().exitTiming =
-        VNX::TransitionExitTiming::Immediate;
+                                             harken::studio::SelectionMode::Sequence, harken::studio::SelectionPlayType::Queue));
+    queueTrackContainer->comp<harken::studio::VSelection>()->transitions.rules.front().exitTiming =
+        harken::studio::TransitionExitTiming::Immediate;
     addChild(layer, queueTrackContainer);
-    std::shared_ptr<VNX::ProjectItem> queueTrack;
+    std::shared_ptr<harken::studio::ProjectItem> queueTrack;
     ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(
         queueTrackContainer, QStringLiteral("ExportedPackQueueTrack"), kQueueTrackObjectId,
         QStringLiteral("ExportedPackQueueTrackSound"), kQueueTrackSoundObjectId,
@@ -643,7 +643,7 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         kQueueTrackSoundBObjectId, kQueueTrackSourceBId));
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(queueTrackContainer, queueTrack));
 
-    std::shared_ptr<VNX::ProjectItem> directSegment;
+    std::shared_ptr<harken::studio::ProjectItem> directSegment;
     ASSERT_NO_FATAL_FAILURE(makeSegmentWithSound(
         layer, QStringLiteral("ExportedPackDirectSegment"), kDirectSegmentObjectId,
         QStringLiteral("ExportedPackDirectSegmentTrack"), kDirectSegmentTrackObjectId,
@@ -651,23 +651,23 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         kDirectSegmentSourceId, &directSegment));
 
     auto queueSegmentContainer = makeItem(QStringLiteral("ExportedPackQueueSegmentContainer"),
-                                        VNX::ProjectItem::Type::Container,
+                                        harken::studio::ProjectItem::Type::Container,
                                         kQueueSegmentContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSegmentContainer,
-                                             VNX::SelectionMode::Sequence, VNX::SelectionPlayType::Queue));
-    queueSegmentContainer->comp<VNX::VSelection>()->transitions.rules.front().exitTiming =
-        VNX::TransitionExitTiming::Immediate;
+                                             harken::studio::SelectionMode::Sequence, harken::studio::SelectionPlayType::Queue));
+    queueSegmentContainer->comp<harken::studio::VSelection>()->transitions.rules.front().exitTiming =
+        harken::studio::TransitionExitTiming::Immediate;
     addChild(layer, queueSegmentContainer);
-    std::shared_ptr<VNX::ProjectItem> queueSegment;
+    std::shared_ptr<harken::studio::ProjectItem> queueSegment;
     ASSERT_NO_FATAL_FAILURE(makeSegmentWithSound(
         queueSegmentContainer, QStringLiteral("ExportedPackQueueSegment"), kQueueSegmentObjectId,
         QStringLiteral("ExportedPackQueueSegmentTrack"), kQueueSegmentTrackObjectId,
         QStringLiteral("ExportedPackQueueSegmentSound"), kQueueSegmentSoundObjectId,
         kQueueSegmentSourceId, &queueSegment));
     {
-        std::shared_ptr<VNX::ProjectItem> queueSegmentTrack;
+        std::shared_ptr<harken::studio::ProjectItem> queueSegmentTrack;
         for (const auto& child : queueSegment->children) {
-            if (child && child->type == VNX::ProjectItem::Type::Track) {
+            if (child && child->type == harken::studio::ProjectItem::Type::Track) {
                 queueSegmentTrack = child;
                 break;
             }
@@ -680,22 +680,22 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(queueSegmentContainer, queueSegment));
 
     auto sharedLeafContainer = makeItem(QStringLiteral("ExportedPackSharedLeafContainer"),
-                                        VNX::ProjectItem::Type::Container,
+                                        harken::studio::ProjectItem::Type::Container,
                                         kSharedLeafContainerObjectId);
-    ASSERT_NO_FATAL_FAILURE(prepareContainer(sharedLeafContainer, VNX::SelectionMode::Sequence));
+    ASSERT_NO_FATAL_FAILURE(prepareContainer(sharedLeafContainer, harken::studio::SelectionMode::Sequence));
     addChild(layer, sharedLeafContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(sharedLeafContainer, sharedSound,
                                                 kSharedSourceId));
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(sharedLeafContainer, sharedSound));
 
     auto discreteSilent = makeItem(QStringLiteral("ExportedPackDiscreteSilent"),
-                                   VNX::ProjectItem::Type::Sound,
+                                   harken::studio::ProjectItem::Type::Sound,
                                    kDiscreteSilentSoundObjectId);
     auto discreteAudible = makeItem(QStringLiteral("ExportedPackDiscreteAudible"),
-                                    VNX::ProjectItem::Type::Sound,
+                                    harken::studio::ProjectItem::Type::Sound,
                                     kDiscreteAudibleSoundObjectId);
     auto discreteContainer = makeItem(QStringLiteral("ExportedPackDiscreteContainer"),
-                                      VNX::ProjectItem::Type::Container,
+                                      harken::studio::ProjectItem::Type::Container,
                                       kDiscreteContainerObjectId);
     addChild(layer, discreteContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(discreteContainer, discreteSilent,
@@ -706,13 +706,13 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(discreteContainer, discreteAudible));
 
     auto continuousSilent = makeItem(QStringLiteral("ExportedPackContinuousSilent"),
-                                     VNX::ProjectItem::Type::Sound,
+                                     harken::studio::ProjectItem::Type::Sound,
                                      kContinuousSilentSoundObjectId);
     auto continuousAudible = makeItem(QStringLiteral("ExportedPackContinuousAudible"),
-                                      VNX::ProjectItem::Type::Sound,
+                                      harken::studio::ProjectItem::Type::Sound,
                                       kContinuousAudibleSoundObjectId);
     auto continuousContainer = makeItem(QStringLiteral("ExportedPackContinuousContainer"),
-                                        VNX::ProjectItem::Type::Container,
+                                        harken::studio::ProjectItem::Type::Container,
                                         kContinuousContainerObjectId);
     addChild(layer, continuousContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(continuousContainer, continuousSilent,
@@ -723,19 +723,19 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(continuousContainer, continuousAudible));
 
     auto initiallySilent = makeItem(QStringLiteral("ExportedPackInitiallySilent"),
-                                    VNX::ProjectItem::Type::Sound,
+                                    harken::studio::ProjectItem::Type::Sound,
                                     kInitiallySilentSoundObjectId);
     auto initiallyAudible = makeItem(QStringLiteral("ExportedPackInitiallyAudible"),
-                                     VNX::ProjectItem::Type::Sound,
+                                     harken::studio::ProjectItem::Type::Sound,
                                      kInitiallyAudibleSoundObjectId);
     auto initiallySilentContainer = makeItem(
         QStringLiteral("ExportedPackInitiallySilentContainer"),
-        VNX::ProjectItem::Type::Container,
+        harken::studio::ProjectItem::Type::Container,
         kInitiallySilentContainerObjectId);
     addChild(layer, initiallySilentContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(initiallySilentContainer, initiallySilent,
                                                 kInitiallySilentSourceId));
-    initiallySilent->comp<VNX::VAudio>()->loopCount = 16;
+    initiallySilent->comp<harken::studio::VAudio>()->loopCount = 16;
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(initiallySilentContainer, initiallyAudible,
                                                 kInitiallyAudibleSourceId));
     ASSERT_NO_FATAL_FAILURE(attachContainerChild(initiallySilentContainer, initiallySilent));
@@ -743,12 +743,12 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     addBinding(project.layers, layer);
 
     auto attenuation = makeItem(QStringLiteral("ExportedPackSpatialAttenuation"),
-                                VNX::ProjectItem::Type::Attenuation,
+                                harken::studio::ProjectItem::Type::Attenuation,
                                 kSpatialAttenuationObjectId);
-    auto* attenuationComp = attenuation->comp<VNX::VAttenuation>();
+    auto* attenuationComp = attenuation->comp<harken::studio::VAttenuation>();
     attenuationComp->maxDistance = kAtt04MaxDistance;
-    VNX::AttenuationDimensionDef volume;
-    volume.type = VNX::AttenuationDimension::Volume;
+    harken::studio::AttenuationDimensionDef volume;
+    volume.type = harken::studio::AttenuationDimension::Volume;
     // Default linear dB 0→-96 over maxDistance=40 only loses ~2.4 dB from
     // 1 m to 20 m (~1.95×), which fails ATT04's peak_near > peak_far * 2.
     // Keep both distances inside [min,max]; drop 18 dB by the far probe.
@@ -757,36 +757,36 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         {kAtt04FarDistance, kAtt04FarVolumeDb},
         {kAtt04MaxDistance, -96.0f},
     };
-    VNX::attenuationNormalizeCurve(volume.type, volume.curve, volume.handles);
+    harken::studio::attenuationNormalizeCurve(volume.type, volume.curve, volume.handles);
     attenuationComp->dimensions = {volume};
     addBinding(project.attenuationItems, attenuation);
 
     auto spatialSound = makeItem(QStringLiteral("ExportedPackSpatialNearFarSound"),
-                                 VNX::ProjectItem::Type::Sound,
+                                 harken::studio::ProjectItem::Type::Sound,
                                  kSpatialNearFarSoundObjectId);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(layer, spatialSound,
                                                 kSpatialNearFarSourceId));
-    VNX::SpatialRatingFieldGroup spatialRating;
+    harken::studio::SpatialRatingFieldGroup spatialRating;
     spatialRating.spatialIs3DEnabled = true;
-    spatialRating.spatialAttenuationRef = VNX::toFieldGroupGuid(attenuation->guid);
+    spatialRating.spatialAttenuationRef = harken::studio::toFieldGroupGuid(attenuation->guid);
     spatialSound->fieldGroups.spatialRating.shared = {
-        VNX::FieldGroupMode::Local, spatialRating};
+        harken::studio::FieldGroupMode::Local, spatialRating};
 
     auto stepVariable = makeItem(QStringLiteral("ExportedPackStepGlobal"),
-                                 VNX::ProjectItem::Type::Variable,
+                                 harken::studio::ProjectItem::Type::Variable,
                                  kStepVariableObjectId);
-    auto* stepComp = stepVariable->comp<VNX::VVariable>();
-    stepComp->kind = VNX::VariableKind::Step;
+    auto* stepComp = stepVariable->comp<harken::studio::VVariable>();
+    stepComp->kind = harken::studio::VariableKind::Step;
     stepComp->rangeMin = 0.0f;
     stepComp->rangeMax = 3.0f;
     stepComp->defaultValue = 1.0f;
     stepComp->normalizeDeclaration();
 
     auto smoothVariable = makeItem(QStringLiteral("ExportedPackSmoothGlobal"),
-                                   VNX::ProjectItem::Type::Variable,
+                                   harken::studio::ProjectItem::Type::Variable,
                                    kSmoothVariableObjectId);
-    auto* smoothComp = smoothVariable->comp<VNX::VVariable>();
-    smoothComp->kind = VNX::VariableKind::Smooth;
+    auto* smoothComp = smoothVariable->comp<harken::studio::VVariable>();
+    smoothComp->kind = harken::studio::VariableKind::Smooth;
     smoothComp->rangeMin = 0.0f;
     smoothComp->rangeMax = 1.0f;
     smoothComp->defaultValue = 0.9f;
@@ -798,22 +798,22 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         continuousContainer, smoothVariable, continuousSilent, continuousAudible));
     ASSERT_NO_FATAL_FAILURE(authorDiscreteVariableControl(
         initiallySilentContainer, stepVariable, initiallySilent, initiallyAudible, 1, 2));
-    initiallySilentContainer->comp<VNX::VSelection>()->matchResponse =
-        VNX::VariableResponse::Live;
-    auto& liveMatchTransition = initiallySilentContainer->comp<VNX::VSelection>()->transitions.rules.front();
-    liveMatchTransition.exitTiming = VNX::TransitionExitTiming::Immediate;
+    initiallySilentContainer->comp<harken::studio::VSelection>()->matchResponse =
+        harken::studio::VariableResponse::Live;
+    auto& liveMatchTransition = initiallySilentContainer->comp<harken::studio::VSelection>()->transitions.rules.front();
+    liveMatchTransition.exitTiming = harken::studio::TransitionExitTiming::Immediate;
     liveMatchTransition.sourceFadeOut.durationSeconds = 0.0f;
     liveMatchTransition.targetFadeIn.durationSeconds = 0.0f;
 
     auto variablesRoot = makeItem(QStringLiteral("Variables"),
-                                  VNX::ProjectItem::Type::None,
+                                  harken::studio::ProjectItem::Type::None,
                                   30);
     addChild(variablesRoot, stepVariable);
     addChild(variablesRoot, smoothVariable);
     addBinding(project.variables, variablesRoot);
 
     auto actionsRoot = makeItem(QStringLiteral("Actions"),
-                                VNX::ProjectItem::Type::None,
+                                harken::studio::ProjectItem::Type::None,
                                 20);
     auto immediateAction = makePlayAction(
         actionsRoot, QStringLiteral("ExportedPackImmediateSound"),
@@ -858,9 +858,9 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         actionsRoot, QStringLiteral("ExportedPackSharedLeafFromContentRoot"),
         kSharedLeafActionObjectId, *sharedLeafContainer);
     auto twoPlayAction = makeItem(QStringLiteral("ExportedPackTwoPlayStepsDifferentPacks"),
-                                  VNX::ProjectItem::Type::Action,
+                                  harken::studio::ProjectItem::Type::Action,
                                   kTwoPlayActionObjectId);
-    twoPlayAction->comp<VNX::VAction>()->steps = {
+    twoPlayAction->comp<harken::studio::VAction>()->steps = {
         playStep(*twoPlaySound),
         playStep(*sharedSound),
     };
@@ -880,7 +880,7 @@ QJsonArray readPublication(const QString& outputDir)
     QJsonArray packs;
     QStringList files;
     QString error;
-    EXPECT_TRUE(VNX::ReadPackPublication(outputDir, {}, {}, &packs, &files, &error))
+    EXPECT_TRUE(harken::studio::ReadPackPublication(outputDir, {}, {}, &packs, &files, &error))
         << error.toStdString();
     return packs;
 }
@@ -935,10 +935,10 @@ QByteArray packPathUtf8(const QString& exportedPackDir, const QJsonObject& pack)
     return QFileInfo(QDir(exportedPackDir).filePath(fileName)).absoluteFilePath().toUtf8();
 }
 
-void exportProjectPack(const VNX::ProjectData& project, const QString& outputDir)
+void exportProjectPack(const harken::studio::ProjectData& project, const QString& outputDir)
 {
-    VNX::ProjectPackExporter exporter;
-    VNX::ProjectPackExporter::ExportOptions opts;
+    harken::studio::ProjectPackExporter exporter;
+    harken::studio::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
     const auto result = exporter.ExportAllPacks(project, outputDir, opts);
     ASSERT_TRUE(result.success) << result.error.toStdString();
@@ -974,15 +974,15 @@ void rewriteContentTone(const QString& projectRoot, float amplitude)
     ASSERT_EQ(kContentSourceId,
               registerToneAsset(projectRoot, QStringLiteral("content.wav"),
                                 kContentSourceId, amplitude));
-    VNX::AssetInfo* info = VNX::AssetRegistry::instance().getAsset(kContentSourceId);
+    harken::studio::AssetInfo* info = harken::studio::AssetRegistry::instance().getAsset(kContentSourceId);
     ASSERT_NE(nullptr, info);
     ++info->lastModified;
-    HarkenEditor::Bridge::mediaRegistryUnregister(kContentSourceId);
-    HarkenEditor::Bridge::mediaRegistryRegister(kContentSourceId, info->absolutePath,
+    harken::studio::bridge::mediaRegistryUnregister(kContentSourceId);
+    harken::studio::bridge::mediaRegistryRegister(kContentSourceId, info->absolutePath,
                                                info->metadata.fileSize);
 }
 
-void exportProjectPackSuccessor(VNX::ProjectData& project,
+void exportProjectPackSuccessor(harken::studio::ProjectData& project,
                          const QString& projectRoot,
                          const QString& outputDir)
 {
@@ -993,7 +993,7 @@ void exportProjectPackSuccessor(VNX::ProjectData& project,
 }
 
 
-VnActionFiringHandle postGoldAction(harkenstudio::ObjectId actionId)
+VnActionFiringHandle postGoldAction(harken::studio::types::ObjectId actionId)
 {
     VnPostActionDesc post{};
     post.structSize = sizeof(post);
@@ -1026,10 +1026,10 @@ struct GoldJournalRecord {
 
 
 
-void prepareExportedPackProject(VNX::ProjectData& project, const QString& projectRoot)
+void prepareExportedPackProject(harken::studio::ProjectData& project, const QString& projectRoot)
 {
-    VNX::AssetRegistry::instance().clear();
-    VNX::AssetRegistry::instance().setProjectRoot(projectRoot);
+    harken::studio::AssetRegistry::instance().clear();
+    harken::studio::AssetRegistry::instance().setProjectRoot(projectRoot);
     ASSERT_EQ(kSharedSourceId,
               registerToneAsset(projectRoot, QStringLiteral("shared.wav"),
                                 kSharedSourceId));
@@ -1110,11 +1110,11 @@ protected:
 
     void TearDown() override
     {
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::AssetRegistry::instance().clear();
     }
 
     QTemporaryDir dir_;
-    VNX::ProjectData project_;
+    harken::studio::ProjectData project_;
 };
 
 
@@ -1129,9 +1129,9 @@ protected:
             QTemporaryDir sourceDir;
             ASSERT_TRUE(sourceDir.isValid());
             const auto clearAssets = qScopeGuard([]() {
-                VNX::AssetRegistry::instance().clear();
+                harken::studio::AssetRegistry::instance().clear();
             });
-            VNX::ProjectData project;
+            harken::studio::ProjectData project;
             ASSERT_NO_FATAL_FAILURE(prepareExportedPackProject(project, sourceDir.path()));
             ASSERT_NO_FATAL_FAILURE(exportProjectPack(project, preparedDir_->path()));
         }
@@ -1139,7 +1139,7 @@ protected:
 
     static void TearDownTestSuite()
     {
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::AssetRegistry::instance().clear();
         preparedDir_.reset();
     }
 
@@ -1165,9 +1165,9 @@ protected:
             QTemporaryDir sourceDir;
             ASSERT_TRUE(sourceDir.isValid());
             const auto clearAssets = qScopeGuard([]() {
-                VNX::AssetRegistry::instance().clear();
+                harken::studio::AssetRegistry::instance().clear();
             });
-            VNX::ProjectData project;
+            harken::studio::ProjectData project;
             ASSERT_NO_FATAL_FAILURE(prepareExportedPackProject(project, sourceDir.path()));
             ASSERT_NO_FATAL_FAILURE(exportProjectPack(project, preparedDir_->path()));
         }
@@ -1175,7 +1175,7 @@ protected:
 
     static void TearDownTestSuite()
     {
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::AssetRegistry::instance().clear();
         preparedDir_.reset();
     }
 
@@ -1404,33 +1404,33 @@ bool att06StageTree(const std::filesystem::path& src, const std::filesystem::pat
 bool att06ChoosePayload(const std::vector<uint8_t>& bytes, uint64_t* offset, uint64_t* size,
                         uint64_t* payloadChecksum, uint64_t* directoryChecksum)
 {
-    if (bytes.size() < harkenstudiobuild::kPackBytes<HkPackFileHeader>)
+    if (bytes.size() < harken::studio::build::kPackBytes<HkPackFileHeader>)
         return false;
-    harkenstudiobuild::PackFileHeader header;
-    if (!harkenstudiobuild::ReadPackFileHeader(bytes.data(), &header))
+    harken::studio::build::PackFileHeader header;
+    if (!harken::studio::build::ReadPackFileHeader(bytes.data(), &header))
         return false;
     if (header.fileBytes != bytes.size() ||
-        header.headerBytes != harkenstudiobuild::kPackBytes<HkPackFileHeader> ||
-        header.directoryOffset != harkenstudiobuild::kPackBytes<HkPackFileHeader>)
+        header.headerBytes != harken::studio::build::kPackBytes<HkPackFileHeader> ||
+        header.directoryOffset != harken::studio::build::kPackBytes<HkPackFileHeader>)
         return false;
     if (header.entryCount == 0 ||
         header.entryCount > (std::numeric_limits<uint64_t>::max() /
-                             harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>))
+                             harken::studio::build::kPackBytes<HkPackDirectoryEntry>))
         return false;
     const uint64_t dirBytes =
-        uint64_t(header.entryCount) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
+        uint64_t(header.entryCount) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>;
     if (header.directoryOffset > bytes.size() ||
         dirBytes > bytes.size() - header.directoryOffset)
         return false;
     const uint64_t dirEnd = header.directoryOffset + dirBytes;
-    *directoryChecksum = harkenstudiobuild::Fnv1a64(bytes.data() + header.directoryOffset,
+    *directoryChecksum = harken::studio::build::Fnv1a64(bytes.data() + header.directoryOffset,
                                         static_cast<size_t>(dirBytes));
     if (*directoryChecksum != header.directoryChecksum)
         return false;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
+        const auto entry = harken::studio::build::ReadPackDirectoryEntry(
             bytes.data() + header.directoryOffset +
-            size_t(i) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+            size_t(i) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
         if (entry.kind == HK_PACK_ENTRY_KIND_RETIRED_INIT_ROUTING_CATALOG)
             continue;
         if (entry.size == 0 || entry.offset < dirEnd ||
@@ -1519,11 +1519,11 @@ void att05PostSpatial(VnActionFiringHandle* firing)
 
 
 
-VNX::VAttenuation* att05Attenuation(VNX::ProjectData& project)
+harken::studio::VAttenuation* att05Attenuation(harken::studio::ProjectData& project)
 {
     for (auto& binding : project.attenuationItems) {
         if (binding.rootItem && binding.rootItem->objectID == kSpatialAttenuationObjectId)
-            return binding.rootItem->comp<VNX::VAttenuation>();
+            return binding.rootItem->comp<harken::studio::VAttenuation>();
     }
     return nullptr;
 }
@@ -1538,22 +1538,22 @@ std::vector<std::uint8_t> att05ReadFile(const QString& path)
 
 bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId target, int* removedCount)
 {
-    if (bytes->size() < harkenstudiobuild::kPackBytes<HkPackFileHeader>)
+    if (bytes->size() < harken::studio::build::kPackBytes<HkPackFileHeader>)
         return false;
-    harkenstudiobuild::PackFileHeader header;
-    if (!harkenstudiobuild::ReadPackFileHeader(bytes->data(), &header))
+    harken::studio::build::PackFileHeader header;
+    if (!harken::studio::build::ReadPackFileHeader(bytes->data(), &header))
         return false;
     const uint64_t directoryBytes =
-        static_cast<uint64_t>(header.entryCount) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
+        static_cast<uint64_t>(header.entryCount) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>;
     if (header.directoryOffset != header.headerBytes || header.entryCount == 0
         || header.directoryOffset + directoryBytes > bytes->size())
         return false;
     int found = -1;
     int attenuationCount = 0;
     for (uint32_t index = 0; index < header.entryCount; ++index) {
-        const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
+        const auto entry = harken::studio::build::ReadPackDirectoryEntry(
             bytes->data() + header.directoryOffset
-            + static_cast<size_t>(index) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+            + static_cast<size_t>(index) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
         if (entry.kind != HK_PACK_ENTRY_KIND_ATTENUATION)
             continue;
         ++attenuationCount;
@@ -1567,13 +1567,13 @@ bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId targ
         return false;
     auto* directory = bytes->data() + header.directoryOffset;
     const uint32_t tail = header.entryCount - static_cast<uint32_t>(found) - 1u;
-    std::memmove(directory + static_cast<size_t>(found) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>,
-                 directory + (static_cast<size_t>(found) + 1u) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>,
-                 static_cast<size_t>(tail) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+    std::memmove(directory + static_cast<size_t>(found) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>,
+                 directory + (static_cast<size_t>(found) + 1u) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>,
+                 static_cast<size_t>(tail) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
     header.entryCount -= 1u;
-    header.directoryChecksum = harkenstudiobuild::Fnv1a64(
-        directory, static_cast<size_t>(header.entryCount) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
-    harkenstudiobuild::SerializePackRow<HkPackFileHeader>(header, bytes->data());
+    header.directoryChecksum = harken::studio::build::Fnv1a64(
+        directory, static_cast<size_t>(header.entryCount) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
+    harken::studio::build::SerializePackRow<HkPackFileHeader>(header, bytes->data());
     *removedCount = attenuationCount;
     return true;
 }

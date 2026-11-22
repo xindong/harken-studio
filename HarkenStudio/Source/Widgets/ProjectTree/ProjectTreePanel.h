@@ -20,7 +20,7 @@
 #include "Widgets/ProjectTree/ProjectTreeWidget.h"
 #include "Widgets/Shared/ProjectItemMenuController.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectObjectLabels;
 

@@ -2,7 +2,7 @@
 #include "SegmentInspectorSchema.h"
 #include "ContentObjectSchemaRows.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const PropertySchema& segmentInspectorSchema()
 {

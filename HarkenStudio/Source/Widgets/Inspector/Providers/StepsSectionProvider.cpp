@@ -52,7 +52,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

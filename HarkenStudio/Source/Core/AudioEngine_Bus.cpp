@@ -4,16 +4,16 @@
 #include "RuntimeSyncCoordinator.h"
 #include "RuntimeBridge/PreviewBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
-using HarkenEditor::Bridge::EngineResult;
-using HarkenEditor::Bridge::kEngineBackpressure;
-using HarkenEditor::Bridge::kEngineDeviceError;
-using HarkenEditor::Bridge::kEngineNotInit;
-using HarkenEditor::Bridge::kEngineOk;
-using HarkenEditor::Bridge::kEngineUnknownId;
+using harken::studio::bridge::EngineResult;
+using harken::studio::bridge::kEngineBackpressure;
+using harken::studio::bridge::kEngineDeviceError;
+using harken::studio::bridge::kEngineNotInit;
+using harken::studio::bridge::kEngineOk;
+using harken::studio::bridge::kEngineUnknownId;
 
 bool overlayGenerationIsOpen()
 {
@@ -23,13 +23,13 @@ bool overlayGenerationIsOpen()
         || snapshot.worldGeneration == 0) {
         return false;
     }
-    return HarkenEditor::Bridge::currentWorldBusAdmissionIsOpen(
+    return harken::studio::bridge::currentWorldBusAdmissionIsOpen(
         snapshot.worldGeneration);
 }
 
-bool overlayBusIsConfirmed(harkenstudio::ObjectId busId)
+bool overlayBusIsConfirmed(harken::studio::types::ObjectId busId)
 {
-    if (harkenstudio::IsNull(busId))
+    if (harken::studio::types::IsNull(busId))
         return false;
     const auto ids = AudioEngine::instance().getRuntimeBusIds();
     return ids.contains(busId);
@@ -39,43 +39,43 @@ bool overlayBusIsConfirmed(harkenstudio::ObjectId busId)
 
 
 
-void AudioEngine::setBusVolumeDbById(harkenstudio::ObjectId busId, float db)
+void AudioEngine::setBusVolumeDbById(harken::studio::types::ObjectId busId, float db)
 {
     if (!session_) return;
     session_->setBusVolumeDbById(busId, db);
 }
 
-void AudioEngine::setBusOutputVolumeDbById(harkenstudio::ObjectId busId, float db)
+void AudioEngine::setBusOutputVolumeDbById(harken::studio::types::ObjectId busId, float db)
 {
     if (session_)
         session_->setBusOutputVolumeDbById(busId, db);
     (void)applyInstalledBusOutputVolumeOverlay(busId, db, 0);
 }
 
-float AudioEngine::getBusVolumeDbById(harkenstudio::ObjectId busId) const
+float AudioEngine::getBusVolumeDbById(harken::studio::types::ObjectId busId) const
 {
     return session_ ? session_->busVolumeDbById(busId) : 0.0f;
 }
 
-void AudioEngine::setBusPanById(harkenstudio::ObjectId busId, float pan)
+void AudioEngine::setBusPanById(harken::studio::types::ObjectId busId, float pan)
 {
     if (!session_) return;
     session_->setBusPanById(busId, pan);
 }
 
-void AudioEngine::setBusMuteById(harkenstudio::ObjectId busId, bool mute)
+void AudioEngine::setBusMuteById(harken::studio::types::ObjectId busId, bool mute)
 {
     if (!session_) return;
     session_->setBusMuteById(busId, mute);
 }
 
-void AudioEngine::setBusSoloById(harkenstudio::ObjectId busId, bool solo)
+void AudioEngine::setBusSoloById(harken::studio::types::ObjectId busId, bool solo)
 {
     if (!session_) return;
     session_->setBusSoloById(busId, solo);
 }
 
-EngineResult AudioEngine::applyInstalledBusMuteOverlay(harkenstudio::ObjectId busId, bool mute, uint32_t fadeMs)
+EngineResult AudioEngine::applyInstalledBusMuteOverlay(harken::studio::types::ObjectId busId, bool mute, uint32_t fadeMs)
 {
     overlayMutePendingIds_.remove(busId);
     if (!overlayGenerationIsOpen() || !overlayBusIsConfirmed(busId)) {
@@ -83,14 +83,14 @@ EngineResult AudioEngine::applyInstalledBusMuteOverlay(harkenstudio::ObjectId bu
         return kEngineNotInit;
     }
     const EngineResult result =
-        HarkenEditor::Bridge::setCurrentWorldBusMute(busId, mute, fadeMs);
+        harken::studio::bridge::setCurrentWorldBusMute(busId, mute, fadeMs);
     if (result == kEngineBackpressure || result == kEngineNotInit ||
         result == kEngineDeviceError)
         overlayMutePendingIds_.insert(busId);
     return result;
 }
 
-EngineResult AudioEngine::applyInstalledBusSoloOverlay(harkenstudio::ObjectId busId, bool solo, uint32_t fadeMs)
+EngineResult AudioEngine::applyInstalledBusSoloOverlay(harken::studio::types::ObjectId busId, bool solo, uint32_t fadeMs)
 {
     overlaySoloPendingIds_.remove(busId);
     if (!overlayGenerationIsOpen() || !overlayBusIsConfirmed(busId)) {
@@ -98,7 +98,7 @@ EngineResult AudioEngine::applyInstalledBusSoloOverlay(harkenstudio::ObjectId bu
         return kEngineNotInit;
     }
     const EngineResult result =
-        HarkenEditor::Bridge::setCurrentWorldBusSolo(busId, solo, fadeMs);
+        harken::studio::bridge::setCurrentWorldBusSolo(busId, solo, fadeMs);
     if (result == kEngineBackpressure || result == kEngineNotInit ||
         result == kEngineDeviceError)
         overlaySoloPendingIds_.insert(busId);
@@ -106,7 +106,7 @@ EngineResult AudioEngine::applyInstalledBusSoloOverlay(harkenstudio::ObjectId bu
 }
 
 EngineResult AudioEngine::applyInstalledBusOutputVolumeOverlay(
-    harkenstudio::ObjectId busId, float db, uint32_t fadeMs)
+    harken::studio::types::ObjectId busId, float db, uint32_t fadeMs)
 {
     overlayOutputVolumePendingValues_.remove(busId);
     if (!overlayGenerationIsOpen() || !overlayBusIsConfirmed(busId)) {
@@ -114,7 +114,7 @@ EngineResult AudioEngine::applyInstalledBusOutputVolumeOverlay(
         return kEngineNotInit;
     }
     const EngineResult result =
-        HarkenEditor::Bridge::setCurrentWorldBusOutputVolume(busId, db, fadeMs);
+        harken::studio::bridge::setCurrentWorldBusOutputVolume(busId, db, fadeMs);
     if (result == kEngineBackpressure || result == kEngineNotInit ||
         result == kEngineDeviceError)
         overlayOutputVolumePendingValues_.insert(busId, db);
@@ -127,78 +127,78 @@ void AudioEngine::applyPendingAuditionOverlay()
     overlaySoloPendingIds_.clear();
     overlayOutputVolumePendingValues_.clear();
     auto& overlay = ProjectManager::instance().auditionOverlay();
-    for (harkenstudio::ObjectId id : overlay.mutedIds())
+    for (harken::studio::types::ObjectId id : overlay.mutedIds())
         (void)applyInstalledBusMuteOverlay(id, true, 0);
-    for (harkenstudio::ObjectId id : overlay.soloedIds())
+    for (harken::studio::types::ObjectId id : overlay.soloedIds())
         (void)applyInstalledBusSoloOverlay(id, true, 0);
 }
 
 void AudioEngine::retryBackpressuredAuditionOverlay()
 {
     auto& overlay = ProjectManager::instance().auditionOverlay();
-    const QSet<harkenstudio::ObjectId> muteIds = overlay.mutedIds() + overlayMutePendingIds_;
-    const QSet<harkenstudio::ObjectId> soloIds = overlay.soloedIds() + overlaySoloPendingIds_;
+    const QSet<harken::studio::types::ObjectId> muteIds = overlay.mutedIds() + overlayMutePendingIds_;
+    const QSet<harken::studio::types::ObjectId> soloIds = overlay.soloedIds() + overlaySoloPendingIds_;
     const auto outputVolumeValues = overlayOutputVolumePendingValues_;
     overlayMutePendingIds_.clear();
     overlaySoloPendingIds_.clear();
     overlayOutputVolumePendingValues_.clear();
-    for (harkenstudio::ObjectId id : muteIds)
+    for (harken::studio::types::ObjectId id : muteIds)
         (void)applyInstalledBusMuteOverlay(id, overlay.isMuted(id), 0);
-    for (harkenstudio::ObjectId id : soloIds)
+    for (harken::studio::types::ObjectId id : soloIds)
         (void)applyInstalledBusSoloOverlay(id, overlay.isSoloed(id), 0);
     for (auto it = outputVolumeValues.cbegin(); it != outputVolumeValues.cend(); ++it) {
-        const harkenstudio::ObjectId id = it.key();
-        if (harkenstudio::IsNull(id))
+        const harken::studio::types::ObjectId id = it.key();
+        if (harken::studio::types::IsNull(id))
             continue;
         (void)applyInstalledBusOutputVolumeOverlay(id, it.value(), 0);
     }
 }
 
-HarkenEditor::Bridge::IpcQueryStatus AudioEngine::getBusMeterPeakById(
-    harkenstudio::ObjectId busId, float& peakL, float& peakR) const
+harken::studio::bridge::IpcQueryStatus AudioEngine::getBusMeterPeakById(
+    harken::studio::types::ObjectId busId, float& peakL, float& peakR) const
 {
     if (!session_)
-        return HarkenEditor::Bridge::IpcQueryStatus::NoEngine;
+        return harken::studio::bridge::IpcQueryStatus::NoEngine;
     if (!session_->busMeterPeakById(busId, peakL, peakR))
-        return HarkenEditor::Bridge::IpcQueryStatus::NotFound;
-    return HarkenEditor::Bridge::IpcQueryStatus::Ok;
+        return harken::studio::bridge::IpcQueryStatus::NotFound;
+    return harken::studio::bridge::IpcQueryStatus::Ok;
 }
 
 
 
 void AudioEngine::synchronizeBusTopology(
-    const std::vector<HarkenEditor::Bridge::RuntimeBusDefinition>& buses,
-    const std::vector<HarkenEditor::Bridge::RuntimeBusSendDefinition>& sends)
+    const std::vector<harken::studio::bridge::RuntimeBusDefinition>& buses,
+    const std::vector<harken::studio::bridge::RuntimeBusSendDefinition>& sends)
 {
     if (!session_) return;
     session_->synchronizeBusTopology(buses, sends);
 }
 
-HarkenEditor::Bridge::BusTopologyState AudioEngine::busTopologyState() const
+harken::studio::bridge::BusTopologyState AudioEngine::busTopologyState() const
 {
     return session_
         ? session_->busTopologyState()
-        : HarkenEditor::Bridge::BusTopologyState::Idle;
+        : harken::studio::bridge::BusTopologyState::Idle;
 }
 
-HarkenEditor::Bridge::BusTopologyFailure AudioEngine::busTopologyFailure() const
+harken::studio::bridge::BusTopologyFailure AudioEngine::busTopologyFailure() const
 {
     return session_
         ? session_->busTopologyFailure()
-        : HarkenEditor::Bridge::BusTopologyFailure{};
+        : harken::studio::bridge::BusTopologyFailure{};
 }
 
-void AudioEngine::renameBus(harkenstudio::ObjectId busId, const QString& newName)
+void AudioEngine::renameBus(harken::studio::types::ObjectId busId, const QString& newName)
 {
     if (!session_) return;
     session_->renameBus(busId, newName);
 }
 
-QList<harkenstudio::ObjectId> AudioEngine::getRuntimeBusIds() const
+QList<harken::studio::types::ObjectId> AudioEngine::getRuntimeBusIds() const
 {
-    QList<harkenstudio::ObjectId> out;
+    QList<harken::studio::types::ObjectId> out;
     if (!session_) return out;
-    for (harkenstudio::ObjectId id : session_->runtimeBusIds())
+    for (harken::studio::types::ObjectId id : session_->runtimeBusIds())
         out.append(id);
     return out;
 }
@@ -225,7 +225,7 @@ bool AudioEngine::busSendFilter(const QString& srcBusName, int32_t slot,
 
 
 
-void AudioEngine::setMixerVolume(harkenstudio::ObjectId busId, float volumeDb)
+void AudioEngine::setMixerVolume(harken::studio::types::ObjectId busId, float volumeDb)
 {
     if (!session_) return;
     session_->setMixerVolume(busId, volumeDb);

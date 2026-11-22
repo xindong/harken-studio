@@ -14,7 +14,7 @@
 #include <algorithm>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr int kClickSlopPx = 4;
@@ -341,4 +341,4 @@ qint64 MonitorPerformancePanel::frameFromLogicalX(int logicalX) const
     return columnSampleX(start, end, width, clamped);
 }
 
-} // namespace VNX
+} // namespace harken::studio

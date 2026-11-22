@@ -5,7 +5,7 @@
 #include "Dialogs/Settings/Pages/LayoutPage.h"
 #include "Dialogs/Settings/SettingsPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

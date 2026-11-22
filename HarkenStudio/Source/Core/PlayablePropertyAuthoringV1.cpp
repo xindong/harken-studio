@@ -21,7 +21,7 @@
 #include <limits>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using harkenplayableproperties::kPlayablePropertyRegistryV1;
@@ -123,7 +123,7 @@ QVariant canonicalValue(const JsonFieldV1& field)
     if (field.wire == PlayablePropertyWireV1::U32)
         return QVariant::fromValue(static_cast<uint32_t>(0));
     if (field.wire == PlayablePropertyWireV1::ObjectId)
-        return QVariant::fromValue(harkenstudio::ObjectId{});
+        return QVariant::fromValue(harken::studio::types::ObjectId{});
     return QVariant(0.0f);
 }
 
@@ -159,7 +159,7 @@ std::optional<QVariant> valueFromJson(const QJsonValue& value,
         return QVariant::fromValue(static_cast<uint32_t>(number));
     }
     if (field.wire == PlayablePropertyWireV1::ObjectId) {
-        harkenstudio::ObjectId id{};
+        harken::studio::types::ObjectId id{};
         if (!parseObjectIdJson(value, &id)) return std::nullopt;
         return QVariant::fromValue(id);
     }
@@ -177,7 +177,7 @@ QJsonValue valueToJson(const QVariant& value, const JsonFieldV1& field)
     if (field.wire == PlayablePropertyWireV1::U32)
         return QJsonValue(static_cast<qint64>(value.toUInt()));
     if (field.wire == PlayablePropertyWireV1::ObjectId)
-        return QJsonValue(objectIdString(value.value<harkenstudio::ObjectId>()));
+        return QJsonValue(objectIdString(value.value<harken::studio::types::ObjectId>()));
     return QJsonArray::fromVariantList(value.toList());
 }
 
@@ -188,7 +188,7 @@ PlayablePropertyOccurrenceValueV1 occurrenceValue(const QVariant& value,
     if (field.wire == PlayablePropertyWireV1::U8) return value.toBool();
     if (field.wire == PlayablePropertyWireV1::U32) return value.toUInt();
     if (field.wire == PlayablePropertyWireV1::ObjectId)
-        return value.value<harkenstudio::ObjectId>();
+        return value.value<harken::studio::types::ObjectId>();
     return QJsonArray::fromVariantList(value.toList());
 }
 
@@ -202,7 +202,7 @@ bool occurrenceValueMatchesWire(const PlayablePropertyOccurrenceValueV1& value,
     if (wire == PlayablePropertyWireV1::U32)
         return std::holds_alternative<uint32_t>(value);
     if (wire == PlayablePropertyWireV1::ObjectId)
-        return std::holds_alternative<harkenstudio::ObjectId>(value);
+        return std::holds_alternative<harken::studio::types::ObjectId>(value);
     return std::holds_alternative<QJsonArray>(value);
 }
 
@@ -221,7 +221,7 @@ std::optional<QJsonValue> occurrenceValueToJson(
     if (wire == PlayablePropertyWireV1::U32)
         return QJsonValue(static_cast<qint64>(std::get<uint32_t>(value)));
     if (wire == PlayablePropertyWireV1::ObjectId)
-        return QJsonValue(objectIdString(std::get<harkenstudio::ObjectId>(value)));
+        return QJsonValue(objectIdString(std::get<harken::studio::types::ObjectId>(value)));
     return QJsonValue(std::get<QJsonArray>(value));
 }
 
@@ -583,8 +583,8 @@ PlayablePropertyAuthoringV1::wireValueFromVariant(
     if (!field || !value.isValid()) return std::nullopt;
     QJsonValue json;
     if (field->wire == PlayablePropertyWireV1::ObjectId) {
-        if (!value.canConvert<harkenstudio::ObjectId>()) return std::nullopt;
-        json = objectIdString(value.value<harkenstudio::ObjectId>());
+        if (!value.canConvert<harken::studio::types::ObjectId>()) return std::nullopt;
+        json = objectIdString(value.value<harken::studio::types::ObjectId>());
     } else if (field->wire == PlayablePropertyWireV1::RowSpan) {
         if (!value.canConvert<QVariantList>()) return std::nullopt;
         json = QJsonArray::fromVariantList(value.toList());

@@ -9,7 +9,7 @@ class QHBoxLayout;
 class QEvent;
 class QResizeEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 class TitleBarWidget : public TitleBarBase {
     Q_OBJECT

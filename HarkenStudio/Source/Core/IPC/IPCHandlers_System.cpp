@@ -5,9 +5,8 @@
 #include <QThread>
 
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 VBus* IPCServer::resolveBusByName(const QString& rawName) const
 {
@@ -72,7 +71,7 @@ void IPCServer::registerSystemHandlers()
 
     registerDesktopHandler("get_remote_connection_status");
     commandHandlers_["get_monitor_filter"] = [this](const QJsonObject&) -> QJsonObject {
-        auto mask = Bridge::monitorGlobalFilterMask();
+        auto mask = bridge::monitorGlobalFilterMask();
         return successResponse(QJsonObject{
             {"global_filter", QString::number(mask, 16)},
             {"notification_type_count", 46}
@@ -160,7 +159,7 @@ void IPCServer::registerSystemHandlers()
     commandHandlers_["get_buffer_config"] = [this](const QJsonObject&) -> QJsonObject {
         if (!engine_) return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
         int32_t blockSize = engine_->getBufferSize();
-        int32_t sr = Bridge::mixerSampleRate();
+        int32_t sr = bridge::mixerSampleRate();
         return successResponse(QJsonObject{
             {"block_size", blockSize},
             {"sample_rate", sr}
@@ -361,12 +360,12 @@ QJsonObject IPCServer::handleSetListener(const QJsonObject& args)
     QJsonArray fwdArray = args["forward"].toArray();
     QJsonArray upArray = args["up"].toArray();
     
-    HarkenEditor::Vec3 pos(posArray.at(0).toDouble(), posArray.at(1).toDouble(), posArray.at(2).toDouble());
-    HarkenEditor::Vec3 forward(
+    harken::studio::Vec3 pos(posArray.at(0).toDouble(), posArray.at(1).toDouble(), posArray.at(2).toDouble());
+    harken::studio::Vec3 forward(
         fwdArray.size() > 0 ? fwdArray.at(0).toDouble() : 0.0,
         fwdArray.size() > 1 ? fwdArray.at(1).toDouble() : 0.0,
         fwdArray.size() > 2 ? fwdArray.at(2).toDouble() : -1.0);
-    HarkenEditor::Vec3 up(
+    harken::studio::Vec3 up(
         upArray.size() > 0 ? upArray.at(0).toDouble() : 0.0,
         upArray.size() > 1 ? upArray.at(1).toDouble() : 1.0,
         upArray.size() > 2 ? upArray.at(2).toDouble() : 0.0);
@@ -393,7 +392,7 @@ QJsonObject IPCServer::handleGet3DScene(const QJsonObject& args)
     
     QJsonArray objects;
     
-    HarkenEditor::Vec3 listenerPos = engine_->listenerPosition();
+    harken::studio::Vec3 listenerPos = engine_->listenerPosition();
     objects.append(QJsonObject{
         {"type", "listener"},
         {"position", QJsonArray{listenerPos.x, listenerPos.y, listenerPos.z}}
@@ -650,19 +649,19 @@ QJsonObject IPCServer::handleGetEngineSnapshot(const QJsonObject& args)
         for (const auto& v : voices)
         {
             QJsonObject vj;
-            vj["object_id"]    = Bridge::jsonIntIfAvailable(v.objectIDAvailable, static_cast<int>(v.objectID));
-            vj["bus_id"]       = Bridge::jsonStringIfAvailable(v.busIdAvailable, objectIdString(v.busId));
-            vj["priority"]     = Bridge::jsonIntIfAvailable(v.priorityAvailable, v.priority);
-            vj["state"]        = Bridge::jsonIntIfAvailable(v.stateAvailable, v.state);
-            vj["volume"]       = Bridge::jsonNumberIfAvailable(v.volumeAvailable, static_cast<double>(v.volume));
-            vj["pitch"]        = Bridge::jsonNumberIfAvailable(v.pitchAvailable, static_cast<double>(v.pitch));
-            vj["peak_level"]   = Bridge::jsonNumberIfAvailable(v.peakLevelAvailable, static_cast<double>(v.peakLevel));
-            vj["playing_id"]   = Bridge::isAvailable(v.playingIDAvailable)
+            vj["object_id"]    = bridge::jsonIntIfAvailable(v.objectIDAvailable, static_cast<int>(v.objectID));
+            vj["bus_id"]       = bridge::jsonStringIfAvailable(v.busIdAvailable, objectIdString(v.busId));
+            vj["priority"]     = bridge::jsonIntIfAvailable(v.priorityAvailable, v.priority);
+            vj["state"]        = bridge::jsonIntIfAvailable(v.stateAvailable, v.state);
+            vj["volume"]       = bridge::jsonNumberIfAvailable(v.volumeAvailable, static_cast<double>(v.volume));
+            vj["pitch"]        = bridge::jsonNumberIfAvailable(v.pitchAvailable, static_cast<double>(v.pitch));
+            vj["peak_level"]   = bridge::jsonNumberIfAvailable(v.peakLevelAvailable, static_cast<double>(v.peakLevel));
+            vj["playing_id"]   = bridge::isAvailable(v.playingIDAvailable)
                 ? QJsonValue(static_cast<qint64>(v.playingID)) : QJsonValue();
-            vj["container_id"] = Bridge::jsonIntIfAvailable(v.containerIdAvailable, v.containerId);
-            vj["is_muted"]     = Bridge::jsonBoolIfAvailable(v.isMutedAvailable, v.isMuted);
-            vj["hdr_gain_db"]  = Bridge::jsonNumberIfAvailable(v.hdrGainDbAvailable, static_cast<double>(v.hdrGainDb));
-            vj["insert_fx"]    = Bridge::jsonIntIfAvailable(v.insertEffectCountAvailable, static_cast<int>(v.insertEffectCount));
+            vj["container_id"] = bridge::jsonIntIfAvailable(v.containerIdAvailable, v.containerId);
+            vj["is_muted"]     = bridge::jsonBoolIfAvailable(v.isMutedAvailable, v.isMuted);
+            vj["hdr_gain_db"]  = bridge::jsonNumberIfAvailable(v.hdrGainDbAvailable, static_cast<double>(v.hdrGainDb));
+            vj["insert_fx"]    = bridge::jsonIntIfAvailable(v.insertEffectCountAvailable, static_cast<int>(v.insertEffectCount));
             voiceArr.append(vj);
         }
         result["voices"] = voiceArr;
@@ -675,21 +674,21 @@ QJsonObject IPCServer::handleGetEngineSnapshot(const QJsonObject& args)
         for (const auto& b : buses)
         {
             QJsonObject bj;
-            bj["bus_id"]        = Bridge::jsonStringIfAvailable(b.busIdAvailable, objectIdString(b.busId));
-            bj["name"]          = Bridge::jsonStringIfAvailable(b.nameAvailable, b.name);
-            bj["bus_type"]      = Bridge::jsonIntIfAvailable(b.busTypeAvailable, static_cast<int>(b.busType));
-            bj["volume"]        = Bridge::jsonNumberIfAvailable(b.volumeAvailable, static_cast<double>(b.volume));
-            bj["peak_l"]        = Bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakL));
-            bj["peak_r"]        = Bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakR));
-            bj["rms_l"]         = Bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsL));
-            bj["rms_r"]         = Bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsR));
-            bj["voice_count"]   = Bridge::jsonIntIfAvailable(b.voiceCountAvailable, static_cast<int>(b.voiceCount));
-            bj["cpu_pct"]       = Bridge::jsonNumberIfAvailable(b.cpuPctAvailable, static_cast<double>(b.cpuPct));
-            bj["muted"]         = Bridge::jsonBoolIfAvailable(b.mutedAvailable, b.muted);
-            bj["soloed"]        = Bridge::jsonBoolIfAvailable(b.soloedAvailable, b.soloed);
-            bj["hdr_enabled"]   = Bridge::jsonBoolIfAvailable(b.hdrEnabledAvailable, b.hdrEnabled);
-            bj["effect_count"]  = Bridge::jsonIntIfAvailable(b.effectCountAvailable, static_cast<int>(b.effectCount));
-            if (Bridge::isAvailable(b.parentBusIdAvailable))
+            bj["bus_id"]        = bridge::jsonStringIfAvailable(b.busIdAvailable, objectIdString(b.busId));
+            bj["name"]          = bridge::jsonStringIfAvailable(b.nameAvailable, b.name);
+            bj["bus_type"]      = bridge::jsonIntIfAvailable(b.busTypeAvailable, static_cast<int>(b.busType));
+            bj["volume"]        = bridge::jsonNumberIfAvailable(b.volumeAvailable, static_cast<double>(b.volume));
+            bj["peak_l"]        = bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakL));
+            bj["peak_r"]        = bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakR));
+            bj["rms_l"]         = bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsL));
+            bj["rms_r"]         = bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsR));
+            bj["voice_count"]   = bridge::jsonIntIfAvailable(b.voiceCountAvailable, static_cast<int>(b.voiceCount));
+            bj["cpu_pct"]       = bridge::jsonNumberIfAvailable(b.cpuPctAvailable, static_cast<double>(b.cpuPct));
+            bj["muted"]         = bridge::jsonBoolIfAvailable(b.mutedAvailable, b.muted);
+            bj["soloed"]        = bridge::jsonBoolIfAvailable(b.soloedAvailable, b.soloed);
+            bj["hdr_enabled"]   = bridge::jsonBoolIfAvailable(b.hdrEnabledAvailable, b.hdrEnabled);
+            bj["effect_count"]  = bridge::jsonIntIfAvailable(b.effectCountAvailable, static_cast<int>(b.effectCount));
+            if (bridge::isAvailable(b.parentBusIdAvailable))
                 bj["parent_bus_id"] = objectIdString(b.parentBusId);
             busArr.append(bj);
         }
@@ -715,19 +714,19 @@ QJsonObject IPCServer::handleGetActiveVoices(const QJsonObject& args)
     for (const auto& v : voices)
     {
         QJsonObject vj;
-        vj["object_id"]    = Bridge::jsonIntIfAvailable(v.objectIDAvailable, static_cast<int>(v.objectID));
-        vj["bus_id"]       = Bridge::jsonStringIfAvailable(v.busIdAvailable, objectIdString(v.busId));
-        vj["priority"]     = Bridge::jsonIntIfAvailable(v.priorityAvailable, v.priority);
-        vj["state"]        = Bridge::jsonIntIfAvailable(v.stateAvailable, v.state);
-        vj["volume"]       = Bridge::jsonNumberIfAvailable(v.volumeAvailable, static_cast<double>(v.volume));
-        vj["pitch"]        = Bridge::jsonNumberIfAvailable(v.pitchAvailable, static_cast<double>(v.pitch));
-        vj["peak_level"]   = Bridge::jsonNumberIfAvailable(v.peakLevelAvailable, static_cast<double>(v.peakLevel));
-        vj["playing_id"]   = Bridge::isAvailable(v.playingIDAvailable)
+        vj["object_id"]    = bridge::jsonIntIfAvailable(v.objectIDAvailable, static_cast<int>(v.objectID));
+        vj["bus_id"]       = bridge::jsonStringIfAvailable(v.busIdAvailable, objectIdString(v.busId));
+        vj["priority"]     = bridge::jsonIntIfAvailable(v.priorityAvailable, v.priority);
+        vj["state"]        = bridge::jsonIntIfAvailable(v.stateAvailable, v.state);
+        vj["volume"]       = bridge::jsonNumberIfAvailable(v.volumeAvailable, static_cast<double>(v.volume));
+        vj["pitch"]        = bridge::jsonNumberIfAvailable(v.pitchAvailable, static_cast<double>(v.pitch));
+        vj["peak_level"]   = bridge::jsonNumberIfAvailable(v.peakLevelAvailable, static_cast<double>(v.peakLevel));
+        vj["playing_id"]   = bridge::isAvailable(v.playingIDAvailable)
             ? QJsonValue(static_cast<qint64>(v.playingID)) : QJsonValue();
-        vj["container_id"]    = Bridge::jsonIntIfAvailable(v.containerIdAvailable, v.containerId);
-        vj["is_muted"]        = Bridge::jsonBoolIfAvailable(v.isMutedAvailable, v.isMuted);
-        vj["hdr_gain_db"]     = Bridge::jsonNumberIfAvailable(v.hdrGainDbAvailable, static_cast<double>(v.hdrGainDb));
-        vj["insert_fx"]       = Bridge::jsonIntIfAvailable(v.insertEffectCountAvailable, static_cast<int>(v.insertEffectCount));
+        vj["container_id"]    = bridge::jsonIntIfAvailable(v.containerIdAvailable, v.containerId);
+        vj["is_muted"]        = bridge::jsonBoolIfAvailable(v.isMutedAvailable, v.isMuted);
+        vj["hdr_gain_db"]     = bridge::jsonNumberIfAvailable(v.hdrGainDbAvailable, static_cast<double>(v.hdrGainDb));
+        vj["insert_fx"]       = bridge::jsonIntIfAvailable(v.insertEffectCountAvailable, static_cast<int>(v.insertEffectCount));
         arr.append(vj);
     }
 
@@ -769,9 +768,9 @@ QJsonObject IPCServer::handleGetVoiceNodeVirtualStates(const QJsonObject& args)
         QJsonArray nodes;
 
         result.append(QJsonObject{
-            {"voice_id",  Bridge::isAvailable(v.playingIDAvailable)
+            {"voice_id",  bridge::isAvailable(v.playingIDAvailable)
                 ? QJsonValue(static_cast<qint64>(v.playingID)) : QJsonValue()},
-            {"object_id", Bridge::jsonIntIfAvailable(v.objectIDAvailable, static_cast<int>(v.objectID))},
+            {"object_id", bridge::jsonIntIfAvailable(v.objectIDAvailable, static_cast<int>(v.objectID))},
             {"nodes",     nodes},
             {"note",      "per-node virtual states are unavailable (no runtime data source)"}
         });
@@ -846,7 +845,7 @@ QJsonObject IPCServer::handleGetVoiceMetadataChain(const QJsonObject& args)
         }
 
         QJsonObject voiceObj{
-            {"voice_id", Bridge::isAvailable(v.playingIDAvailable)
+            {"voice_id", bridge::isAvailable(v.playingIDAvailable)
                 ? QJsonValue(static_cast<qint64>(v.playingID)) : QJsonValue()},
             {"chain",    chainArr}
         };
@@ -881,21 +880,21 @@ QJsonObject IPCServer::handleGetBusInfo(const QJsonObject& args)
     for (const auto& b : buses)
     {
         QJsonObject bj;
-        bj["bus_id"]       = Bridge::jsonStringIfAvailable(b.busIdAvailable, objectIdString(b.busId));
-        bj["name"]         = Bridge::jsonStringIfAvailable(b.nameAvailable, b.name);
-        bj["bus_type"]     = Bridge::jsonIntIfAvailable(b.busTypeAvailable, static_cast<int>(b.busType));
-        bj["volume"]       = Bridge::jsonNumberIfAvailable(b.volumeAvailable, static_cast<double>(b.volume));
-        bj["peak_l"]       = Bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakL));
-        bj["peak_r"]       = Bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakR));
-        bj["rms_l"]        = Bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsL));
-        bj["rms_r"]        = Bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsR));
-        bj["voice_count"]  = Bridge::jsonIntIfAvailable(b.voiceCountAvailable, static_cast<int>(b.voiceCount));
-        bj["cpu_pct"]      = Bridge::jsonNumberIfAvailable(b.cpuPctAvailable, static_cast<double>(b.cpuPct));
-        bj["muted"]        = Bridge::jsonBoolIfAvailable(b.mutedAvailable, b.muted);
-        bj["soloed"]       = Bridge::jsonBoolIfAvailable(b.soloedAvailable, b.soloed);
-        bj["hdr_enabled"]  = Bridge::jsonBoolIfAvailable(b.hdrEnabledAvailable, b.hdrEnabled);
-        bj["effect_count"] = Bridge::jsonIntIfAvailable(b.effectCountAvailable, static_cast<int>(b.effectCount));
-        if (Bridge::isAvailable(b.parentBusIdAvailable))
+        bj["bus_id"]       = bridge::jsonStringIfAvailable(b.busIdAvailable, objectIdString(b.busId));
+        bj["name"]         = bridge::jsonStringIfAvailable(b.nameAvailable, b.name);
+        bj["bus_type"]     = bridge::jsonIntIfAvailable(b.busTypeAvailable, static_cast<int>(b.busType));
+        bj["volume"]       = bridge::jsonNumberIfAvailable(b.volumeAvailable, static_cast<double>(b.volume));
+        bj["peak_l"]       = bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakL));
+        bj["peak_r"]       = bridge::jsonNumberIfAvailable(b.peakAvailable, static_cast<double>(b.peakR));
+        bj["rms_l"]        = bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsL));
+        bj["rms_r"]        = bridge::jsonNumberIfAvailable(b.rmsAvailable, static_cast<double>(b.rmsR));
+        bj["voice_count"]  = bridge::jsonIntIfAvailable(b.voiceCountAvailable, static_cast<int>(b.voiceCount));
+        bj["cpu_pct"]      = bridge::jsonNumberIfAvailable(b.cpuPctAvailable, static_cast<double>(b.cpuPct));
+        bj["muted"]        = bridge::jsonBoolIfAvailable(b.mutedAvailable, b.muted);
+        bj["soloed"]       = bridge::jsonBoolIfAvailable(b.soloedAvailable, b.soloed);
+        bj["hdr_enabled"]  = bridge::jsonBoolIfAvailable(b.hdrEnabledAvailable, b.hdrEnabled);
+        bj["effect_count"] = bridge::jsonIntIfAvailable(b.effectCountAvailable, static_cast<int>(b.effectCount));
+        if (bridge::isAvailable(b.parentBusIdAvailable))
             bj["parent_bus_id"] = objectIdString(b.parentBusId);
         arr.append(bj);
     }
@@ -967,10 +966,10 @@ QJsonObject IPCServer::handleSetCpuBudgetConfig(const QJsonObject& args)
     if (!engine_)
         return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
 
-    const auto budgetStatus = Bridge::cpuBudgetManagerStatus();
-    if (budgetStatus == Bridge::IpcQueryStatus::NoEngine)
+    const auto budgetStatus = bridge::cpuBudgetManagerStatus();
+    if (budgetStatus == bridge::IpcQueryStatus::NoEngine)
         return errorResponse("ENGINE_NOT_INITIALIZED", "Engine not initialized");
-    if (budgetStatus != Bridge::IpcQueryStatus::Ok)
+    if (budgetStatus != bridge::IpcQueryStatus::Ok)
         return errorResponse("NOT_AVAILABLE", "MixerThread not available");
 
     float escalation = static_cast<float>(args.value("escalation_pct").toDouble(80.0));
@@ -1097,11 +1096,11 @@ QJsonObject IPCServer::handleListModulators(const QJsonObject& args)
 {
     if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");
 
-    std::vector<Bridge::ActiveModulatorInfo> active;
-    const auto status = Bridge::listActiveModulators(active);
-    if (status == Bridge::IpcQueryStatus::NoEngine)
+    std::vector<bridge::ActiveModulatorInfo> active;
+    const auto status = bridge::listActiveModulators(active);
+    if (status == bridge::IpcQueryStatus::NoEngine)
         return errorResponse("NOT_INIT", "HarkenSystem not available");
-    if (status != Bridge::IpcQueryStatus::Ok)
+    if (status != bridge::IpcQueryStatus::Ok)
         return errorResponse("NOT_INIT", "ModulatorManager not available");
 
     QJsonArray modulators;
@@ -1136,11 +1135,11 @@ QJsonObject IPCServer::handleListModulatorChains(const QJsonObject& )
 {
     if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");
 
-    std::vector<Bridge::ActiveModulatorChainInfo> active;
-    const auto status = Bridge::listActiveModulatorChains(active);
-    if (status == Bridge::IpcQueryStatus::NoEngine)
+    std::vector<bridge::ActiveModulatorChainInfo> active;
+    const auto status = bridge::listActiveModulatorChains(active);
+    if (status == bridge::IpcQueryStatus::NoEngine)
         return errorResponse("NOT_INIT", "HarkenSystem not available");
-    if (status != Bridge::IpcQueryStatus::Ok)
+    if (status != bridge::IpcQueryStatus::Ok)
         return errorResponse("NOT_INIT", "ModulatorChainManager not available");
 
     QJsonArray chains;
@@ -1200,7 +1199,7 @@ QJsonObject IPCServer::handleGetModulatorPresets(const QJsonObject& args)
     static const char* typeNames[] = { "lfo", "envelope", "time", "step" };
 
     QJsonArray presetsArr;
-    const auto presets = Bridge::listModulatorPresets(typeFilter);
+    const auto presets = bridge::listModulatorPresets(typeFilter);
     for (const auto& p : presets)
     {
         QJsonObject pObj;
@@ -1232,7 +1231,7 @@ QJsonObject IPCServer::handleGetModulatorPresets(const QJsonObject& args)
 
     QJsonObject result;
     result["count"] = presetsArr.size();
-    result["total_presets"] = static_cast<int>(Bridge::modulatorPresetTotalCount());
+    result["total_presets"] = static_cast<int>(bridge::modulatorPresetTotalCount());
     result["presets"] = presetsArr;
     return successResponse(result);
 }
@@ -1243,8 +1242,8 @@ QJsonObject IPCServer::handleApplyModulatorPreset(const QJsonObject& args)
     if (presetName.isEmpty())
         return errorResponse("INVALID_PARAM", "preset_name required");
 
-    Bridge::ModulatorPresetDesc preset;
-    if (!Bridge::findModulatorPreset(presetName, preset))
+    bridge::ModulatorPresetDesc preset;
+    if (!bridge::findModulatorPreset(presetName, preset))
         return errorResponse("NOT_FOUND",
             QString("Modulator preset '%1' not found").arg(presetName)
                 .toStdString().c_str());
@@ -1323,7 +1322,7 @@ QJsonObject IPCServer::handleSaveModulatorUserPreset(const QJsonObject& args)
         return errorResponse("INVALID_PARAM",
             "type required: lfo, envelope, time, step");
 
-    Bridge::ModulatorPresetDesc preset;
+    bridge::ModulatorPresetDesc preset;
     preset.name = presetName;
     preset.category = args["category"].toString("User");
     preset.modulatorType = modType;
@@ -1372,7 +1371,7 @@ QJsonObject IPCServer::handleSaveModulatorUserPreset(const QJsonObject& args)
     preset.bindMappedMin   = static_cast<float>(bindingObj["mapped_min"].toDouble(0.0));
     preset.bindMappedMax   = static_cast<float>(bindingObj["mapped_max"].toDouble(1.0));
 
-    if (!Bridge::saveModulatorUserPreset(preset))
+    if (!bridge::saveModulatorUserPreset(preset))
         return errorResponse("PRESET_FULL", "Max user presets reached for this modulator type");
 
     QJsonObject result;
@@ -1399,7 +1398,7 @@ QJsonObject IPCServer::handleDeleteModulatorUserPreset(const QJsonObject& args)
         return errorResponse("INVALID_PARAM",
             "type required: lfo, envelope, time, step");
 
-    if (!Bridge::deleteModulatorUserPreset(modType, presetName))
+    if (!bridge::deleteModulatorUserPreset(modType, presetName))
         return errorResponse("NOT_FOUND", "Preset not found or is a factory preset");
 
     QJsonObject result;
@@ -1415,7 +1414,7 @@ QJsonObject IPCServer::handleSetMemoryBudgetLimit(const QJsonObject& args)
     if (!engine_)
         return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
 
-    if (!Bridge::engineSessionActive())
+    if (!bridge::engineSessionActive())
         return errorResponse("ENGINE_NOT_INITIALIZED", "Engine not initialized");
 
     uint32_t category = static_cast<uint32_t>(args.value("category").toInt(-1));
@@ -1425,7 +1424,7 @@ QJsonObject IPCServer::handleSetMemoryBudgetLimit(const QJsonObject& args)
                              "0=General,1=Media,2=Streaming,3=DSP,4=Voice,5=Object,6=SpatialAudio,7=Debug");
     uint64_t maxBytes = static_cast<uint64_t>(maxBytesD);
 
-    if (engine_->setMemoryBudgetLimit(category, maxBytes) != HarkenEditor::Bridge::kEngineOk)
+    if (engine_->setMemoryBudgetLimit(category, maxBytes) != harken::studio::bridge::kEngineOk)
         return errorResponse("SET_FAILED", "Failed to set memory budget limit");
 
     return successResponse(QJsonObject{
@@ -1440,15 +1439,15 @@ QJsonObject IPCServer::handleSetListenerOutputBus(const QJsonObject& args)
     if (!engine_)
         return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
 
-    if (!Bridge::engineSessionActive())
+    if (!bridge::engineSessionActive())
         return errorResponse("ENGINE_NOT_INITIALIZED", "Engine not initialized");
 
     uint32_t listenerId = static_cast<uint32_t>(args.value("listener_id").toInt(-1));
-    harkenstudio::ObjectId busId{};
+    harken::studio::types::ObjectId busId{};
     if (!parseObjectIdJson(args.value("bus_id"), &busId))
         return errorResponse("INVALID_ARGS", "bus_id must be an object UUID");
 
-    if (engine_->setListenerOutputBus(listenerId, busId) != HarkenEditor::Bridge::kEngineOk)
+    if (engine_->setListenerOutputBus(listenerId, busId) != harken::studio::bridge::kEngineOk)
         return errorResponse("SET_FAILED", "Failed to set listener output bus");
 
     return successResponse(QJsonObject{

@@ -56,7 +56,7 @@ add_executable(harken_studio_tests
     UnitTest/AudioFormatDecodeTest.cpp
     UnitTest/MediaPoolRefreshTest.cpp
     UnitTest/FileWatcherTest.cpp
-    UnitTest/ProjectPackExporterManifestTest.cpp
+    UnitTest/ProjectPackExportTest.cpp
     UnitTest/ExportedPackLifecycleTest.cpp
     UnitTest/CanonicalBusSendSnapshotParserTest.cpp
     UnitTest/DebugHonestyMapperTest.cpp
@@ -270,7 +270,7 @@ set(_harken_editor_daily_suites
     ExportedPackLifecycle.*
     ExportedPackReadOnlyLifecycle.*
     ProjectPlatformBuild.*
-    EditorProjectPackExporterManifest.*
+    ProjectPackExport.*
     EditorProjectPackExporterSharedPack.*)
 list(JOIN _harken_editor_daily_suites ":" _harken_editor_daily_filter)
 set(_harken_editor_qualification_tests

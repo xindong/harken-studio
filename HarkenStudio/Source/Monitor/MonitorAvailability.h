@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorDropProjectionState
@@ -153,4 +153,4 @@ const MonitorAvailabilityLayerResult& availabilityLayer(
     MonitorAvailabilityLayer layer);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

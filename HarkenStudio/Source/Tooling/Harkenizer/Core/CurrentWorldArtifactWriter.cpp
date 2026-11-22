@@ -12,7 +12,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class QSaveCurrentWorldArtifactFile final : public CurrentWorldArtifactFile
@@ -66,7 +66,7 @@ void setError(QString* error, const QString& value)
 
 bool WriteCurrentWorldArtifactV1(
     const QString& targetPath,
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world,
+    const harken::studio::build::ContainerWorldInstallViewV1& world,
     QString* error)
 {
     if (targetPath.isEmpty()) {
@@ -74,7 +74,7 @@ bool WriteCurrentWorldArtifactV1(
         return false;
     }
     std::vector<std::uint8_t> bytes;
-    if (!harkenstudiobuild::EncodeCurrentWorldArtifactV1(world, bytes)
+    if (!harken::studio::build::EncodeCurrentWorldArtifactV1(world, bytes)
         || bytes.size() > static_cast<std::size_t>(
                std::numeric_limits<qint64>::max())) {
         setError(error, QStringLiteral("Current World artifact encoding failed"));

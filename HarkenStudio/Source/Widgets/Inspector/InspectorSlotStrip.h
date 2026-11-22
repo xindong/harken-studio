@@ -13,7 +13,7 @@
 
 class QHBoxLayout;
 
-namespace VNX {
+namespace harken::studio {
 
 class InspectorSlotStrip : public QWidget, public IFieldDecorator
 {

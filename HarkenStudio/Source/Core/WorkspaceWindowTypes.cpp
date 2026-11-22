@@ -4,7 +4,7 @@
 #include <QWidget>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 void WorkspaceWindowCatalog::registerWindow(WorkspaceWindowDescriptor descriptor)
 {

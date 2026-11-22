@@ -11,7 +11,7 @@
 
 #include <mutex>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 void ensureCacheLimit()

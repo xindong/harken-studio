@@ -5,7 +5,7 @@
 
 class QIODevice;
 
-namespace VNX {
+namespace harken::studio {
 
 bool writeCacheArtifact(const QString& path, const std::function<bool(QIODevice&)>& write);
 

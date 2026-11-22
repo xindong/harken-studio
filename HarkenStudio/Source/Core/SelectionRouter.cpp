@@ -36,7 +36,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 SelectionRouter::SelectionRouter(MainWindow* host)
     : QObject(host)
@@ -104,7 +104,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal, const QObje
                    item ? QList<ProjectItem*>{item} : QList<ProjectItem*>{}, source);
 }
 
-bool SelectionRouter::revealProjectObject(harkenstudio::ObjectId id)
+bool SelectionRouter::revealProjectObject(harken::studio::types::ObjectId id)
 {
     auto& manager = ProjectManager::instance();
     const auto index = ProjectObjectIndex::fromProject(manager.currentProject());
@@ -249,7 +249,7 @@ void SelectionRouter::selectCurve(const CurveSelection& selection)
         ProjectItem* host = ProjectManager::instance().findItemByGuid(selection.hostGuid);
         const auto* mix = BindingEditing::ledgerHost(host, selection.address);
         const ParameterBindingDef* binding = mix
-            ? (!harkenstudio::IsNull(selection.bindingStableId)
+            ? (!harken::studio::types::IsNull(selection.bindingStableId)
                    ? mix->bindings.find(selection.bindingStableId)
                    : mix->bindings.findFirst(selection.address))
             : nullptr;

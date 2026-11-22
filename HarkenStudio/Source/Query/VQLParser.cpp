@@ -1,7 +1,7 @@
 
 #include "VQLParser.h"
 
-namespace VNX {
+namespace harken::studio {
 
 static const VQLToken kEofToken = { VQLTokenType::Eof, {}, 0.0, false, 0, 0 };
 

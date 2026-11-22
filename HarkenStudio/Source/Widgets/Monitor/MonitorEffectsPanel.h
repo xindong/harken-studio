@@ -15,7 +15,7 @@
 class QLabel;
 class QTableView;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorEffectsPanel : public QWidget
 {
@@ -68,4 +68,4 @@ private:
     Monitor::MonitorEffectsTableState tableState_ = Monitor::MonitorEffectsTableState::UnsupportedLayout;
 };
 
-} // namespace VNX
+} // namespace harken::studio

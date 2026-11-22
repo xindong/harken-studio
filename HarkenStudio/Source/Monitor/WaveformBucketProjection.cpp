@@ -1,6 +1,6 @@
 #include "WaveformBucketProjection.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool waveformBucketsPublished()
@@ -20,4 +20,4 @@ WaveformBucketProjection projectWaveformFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

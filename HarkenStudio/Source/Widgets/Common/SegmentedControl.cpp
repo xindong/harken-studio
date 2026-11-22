@@ -7,7 +7,7 @@
 #include <QStylePainter>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class SegmentButton final : public QToolButton

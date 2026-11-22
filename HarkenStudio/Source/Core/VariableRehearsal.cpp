@@ -3,7 +3,7 @@
 
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 VariableRehearsal::VariableRehearsal(QObject* parent)
     : QObject(parent)

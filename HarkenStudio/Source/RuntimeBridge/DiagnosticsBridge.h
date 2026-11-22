@@ -27,8 +27,8 @@
 #include <cstdint>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 //==============================================================================
 // Query status vocabulary shared by the diagnostics and IPC surfaces.
@@ -72,7 +72,7 @@ struct VoiceStateBreakdown {
 
 struct VoiceInfoData {
     uint32_t objectID = 0;
-    harkenstudio::ObjectId busId = {};
+    harken::studio::types::ObjectId busId = {};
     int32_t  priority = 0;
     int32_t  state = 0;
     float    volume = 0.0f;
@@ -81,7 +81,7 @@ struct VoiceInfoData {
 
 struct DebugVoiceData {
     uint32_t objectID        = 0;
-    harkenstudio::ObjectId busId = {};
+    harken::studio::types::ObjectId busId = {};
     int32_t  priority        = 0;
     int32_t  state           = 0;
     float    volume          = 0.0f;
@@ -115,7 +115,7 @@ struct DebugVoiceData {
 };
 
 struct DebugBusData {
-    harkenstudio::ObjectId busId = {};
+    harken::studio::types::ObjectId busId = {};
     QString  name;
     uint8_t  busType     = 0;
     float    volume      = 0.0f;
@@ -129,7 +129,7 @@ struct DebugBusData {
     bool     soloed      = false;
     bool     hdrEnabled  = false;
     uint32_t effectCount = 0;
-    harkenstudio::ObjectId parentBusId = {};
+    harken::studio::types::ObjectId parentBusId = {};
     DebugValueAvailability busIdAvailable = DebugValueAvailability::Unavailable;
     DebugValueAvailability nameAvailable = DebugValueAvailability::Unavailable;
     DebugValueAvailability busTypeAvailable = DebugValueAvailability::Unavailable;
@@ -186,7 +186,7 @@ struct CpuBudgetState {
 };
 
 struct RenderPlanInfo {
-    harkenstudio::ObjectId busOrder[64] = {};
+    harken::studio::types::ObjectId busOrder[64] = {};
     uint32_t busCount       = 0;
     uint32_t standardBusEnd = 0;
     uint32_t receiveBusEnd      = 0;
@@ -297,13 +297,13 @@ bool getBusTopologyPlanCount(uint64_t& outCount);
 bool getVoiceMetadataChain(uint32_t voiceId, std::vector<DebugVoiceMetadataNode>& outChain);
 
 struct PlaybackPathRow {
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     uint32_t occurrenceOrdinal = UINT32_MAX;
     bool operator==(const PlaybackPathRow&) const = default;
 };
 
 struct PlaybackPathSend {
-    harkenstudio::ObjectId targetBusId{};
+    harken::studio::types::ObjectId targetBusId{};
     float levelDb = 0.0f;
     bool operator==(const PlaybackPathSend&) const = default;
 };
@@ -311,8 +311,8 @@ struct PlaybackPathSend {
 struct PlaybackPathObservation {
     uint64_t voiceInstance = 0;
     uint64_t worldGeneration = 0;
-    harkenstudio::ObjectId soundId = {};
-    harkenstudio::ObjectId outputBusId = {};
+    harken::studio::types::ObjectId soundId = {};
+    harken::studio::types::ObjectId outputBusId = {};
     std::vector<PlaybackPathRow> rows;
     std::vector<PlaybackPathSend> sends;
     bool operator==(const PlaybackPathObservation&) const = default;
@@ -380,5 +380,5 @@ constexpr uint8_t kExecErrorDomainUnclassified = 5;
 void pollEngineNotifications(std::vector<EngineNotification>& out);
 
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

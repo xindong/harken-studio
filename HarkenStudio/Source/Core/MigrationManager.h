@@ -11,7 +11,7 @@
 #include <functional>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;

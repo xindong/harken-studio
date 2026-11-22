@@ -4,9 +4,8 @@
 #include <optional>
 #include <climits>
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerAdvancedHandlers()
 {
@@ -20,8 +19,8 @@ void IPCServer::registerAdvancedHandlers()
         if (args.size() != 2 || refPath.isEmpty() || repPath.isEmpty())
             return errorResponse("INVALID_PARAM", "reference_path and candidate_path are required file paths");
 
-        Bridge::FileCompareResult result;
-        if (!Bridge::compareFiles(refPath, repPath, result))
+        bridge::FileCompareResult result;
+        if (!bridge::compareFiles(refPath, repPath, result))
             return errorResponse("COMPARE_FAILED", "Cannot read the reference or candidate file");
         QJsonObject r;
         r["identical"] = result.identical;

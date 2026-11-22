@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 struct MonitorRemoteAllowlistEntry
@@ -22,4 +22,4 @@ bool allowlistRejectsMutation(const char* name);
 std::vector<std::string> productionObserveAllowlistNames();
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -3,14 +3,14 @@
 #include <harken/ObjectId.h>
 #include <harken_studio/ObjectId.h>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
-inline constexpr VnObjectId toNative(harkenstudio::ObjectId id) noexcept
+inline constexpr VnObjectId toNative(harken::studio::types::ObjectId id) noexcept
 {
     return {id.high, id.low};
 }
 
-inline constexpr harkenstudio::ObjectId fromNative(VnObjectId id) noexcept
+inline constexpr harken::studio::types::ObjectId fromNative(VnObjectId id) noexcept
 {
     return {id.high, id.low};
 }

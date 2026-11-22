@@ -20,17 +20,17 @@
 
 namespace {
 
-class ValueChange : public VNX::UndoCommand
+class ValueChange : public harken::studio::UndoCommand
 {
 public:
-    ValueChange(int& value, int next, int mergeId = -1, VNX::UndoCommand* parent = nullptr)
+    ValueChange(int& value, int next, int mergeId = -1, harken::studio::UndoCommand* parent = nullptr)
         : UndoCommand(QString::number(next), parent), value_(value), before_(value),
           after_(next), mergeId_(mergeId) {}
 
     void undo() override { value_ = before_; }
     void redo() override { value_ = after_; }
     int id() const override { return mergeId_; }
-    bool mergeWith(const VNX::UndoCommand* other) override
+    bool mergeWith(const harken::studio::UndoCommand* other) override
     {
         const auto* change = dynamic_cast<const ValueChange*>(other);
         if (!change || &change->value_ != &value_) return false;
@@ -48,7 +48,7 @@ private:
 
 TEST(UndoHistoryTest, MergingPreservesSavedBoundaryAndReplaysCompleteChange)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     int value = 0;
     history.push(new ValueChange(value, 1, 10));
     history.push(new ValueChange(value, 2, 10));
@@ -71,7 +71,7 @@ TEST(UndoHistoryTest, MergingPreservesSavedBoundaryAndReplaysCompleteChange)
 
 TEST(UndoHistoryTest, NestedMacrosReplayChildrenInDependencyOrder)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     int value = 0;
     history.beginMacro(QStringLiteral("Outer"));
     history.push(new ValueChange(value, 1));
@@ -94,7 +94,7 @@ TEST(UndoHistoryTest, NestedMacrosReplayChildrenInDependencyOrder)
 
 TEST(UndoHistoryTest, BranchingDiscardsRedoAndInvalidatesUnreachableSave)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     int value = 0;
     history.push(new ValueChange(value, 1));
     history.push(new ValueChange(value, 2));
@@ -112,7 +112,7 @@ TEST(UndoHistoryTest, BranchingDiscardsRedoAndInvalidatesUnreachableSave)
 
 TEST(UndoHistoryTest, HistoryLimitRetainsWholeMacroAndReachableSave)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     history.setUndoLimit(2);
     int value = 0;
     history.push(new ValueChange(value, 1));
@@ -135,12 +135,12 @@ TEST(UndoHistoryTest, HistoryLimitRetainsWholeMacroAndReachableSave)
 TEST(UndoHistoryTest, ParentOwnsChildrenAndSupportsIndependentRemoval)
 {
     int destroyed = 0;
-    struct Tracked : VNX::UndoCommand {
-        Tracked(int& count, VNX::UndoCommand* parent) : UndoCommand(parent), count_(count) {}
+    struct Tracked : harken::studio::UndoCommand {
+        Tracked(int& count, harken::studio::UndoCommand* parent) : UndoCommand(parent), count_(count) {}
         ~Tracked() override { ++count_; }
         int& count_;
     };
-    auto parent = std::make_unique<VNX::UndoCommand>();
+    auto parent = std::make_unique<harken::studio::UndoCommand>();
     auto* removed = new Tracked(destroyed, parent.get());
     new Tracked(destroyed, parent.get());
     delete removed;
@@ -151,10 +151,10 @@ TEST(UndoHistoryTest, ParentOwnsChildrenAndSupportsIndependentRemoval)
 
 TEST(UndoHistoryTest, MergedOperationsNotifyObserversEvenAtSameHistoryIndex)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     int value = 0;
     QStringList observed;
-    QObject::connect(&history, &VNX::UndoStack::indexChanged, &history,
+    QObject::connect(&history, &harken::studio::UndoStack::indexChanged, &history,
         [&] { observed.append(history.undoText()); });
     history.push(new ValueChange(value, 1, 10));
     history.push(new ValueChange(value, 2, 10));
@@ -163,7 +163,7 @@ TEST(UndoHistoryTest, MergedOperationsNotifyObserversEvenAtSameHistoryIndex)
 
 TEST(UndoHistoryTest, ObsoleteHistoryEntryDoesNotReplayAndReleasesItsSlot)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     int value = 0;
     auto* change = new ValueChange(value, 1);
     history.push(change);
@@ -178,7 +178,7 @@ TEST(UndoHistoryTest, ObsoleteHistoryEntryDoesNotReplayAndReleasesItsSlot)
 
 TEST(UndoHistoryTest, ClearingEmptyHistoryDoesNotInventASavedState)
 {
-    VNX::UndoStack history;
+    harken::studio::UndoStack history;
     history.resetClean();
     history.clear();
     EXPECT_EQ(history.cleanIndex(), -1);
@@ -192,49 +192,49 @@ protected:
     {
         ASSERT_NE(qApp, nullptr);
         ASSERT_TRUE(directory_.isValid());
-        auto& project = VNX::ProjectManager::instance();
+        auto& project = harken::studio::ProjectManager::instance();
         ASSERT_TRUE(project.closeProject());
-        auto& actions = VNX::ActionManager::instance();
+        auto& actions = harken::studio::ActionManager::instance();
         actions.clearAllForTesting();
-        VNX::registerProjectActions(actions, &project);
-        VNX::ProjectConfig config;
+        harken::studio::registerProjectActions(actions, &project);
+        harken::studio::ProjectConfig config;
         config.name = QStringLiteral("EditTransaction");
         config.location = directory_.path();
         config.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Android")});
         ASSERT_TRUE(project.createProject(config));
-        item_ = project.createItem(project.getMasterBusItem(), QStringLiteral("Bus"), VNX::ProjectItem::Type::Bus);
+        item_ = project.createItem(project.getMasterBusItem(), QStringLiteral("Bus"), harken::studio::ProjectItem::Type::Bus);
         ASSERT_NE(item_, nullptr);
-        VNX::PlatformContextService::instance().setAll(true);
-        VNX::UndoRedoManager::instance().clearHistory();
+        harken::studio::PlatformContextService::instance().setAll(true);
+        harken::studio::UndoRedoManager::instance().clearHistory();
     }
 
     void TearDown() override
     {
-        VNX::PropertyEditSession::finishAllActive(false);
-        VNX::UndoRedoManager::instance().clear();
-        VNX::ProjectManager::instance().closeProject();
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::PropertyEditSession::finishAllActive(false);
+        harken::studio::UndoRedoManager::instance().clear();
+        harken::studio::ProjectManager::instance().closeProject();
+        harken::studio::ActionManager::instance().clearAllForTesting();
     }
 
-    VNX::ActionResult setField(const QString& field, double value,
-                              VNX::PlatformScope platform = std::nullopt)
+    harken::studio::ActionResult setField(const QString& field, double value,
+                              harken::studio::PlatformScope platform = std::nullopt)
     {
         QJsonObject args{{QStringLiteral("authoring_handle"), static_cast<qint64>(item_->objectID)},
             {QStringLiteral("property"), field}, {QStringLiteral("value"), value}};
         if (platform)
-            args.insert(QStringLiteral("platform_ids"), QJsonArray{VNX::ProjectPlatformSemantics::idString(*platform)});
-        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+            args.insert(QStringLiteral("platform_ids"), QJsonArray{harken::studio::ProjectPlatformSemantics::idString(*platform)});
+        return harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
     }
 
     QJsonObject authoredState() const
     {
-        return {{QStringLiteral("mixnode"), item_->comp<VNX::VMixNode>()->toJson()},
-            {QStringLiteral("definition"), VNX::PlayablePropertyAuthoringV1::definitionToJson(*item_)},
-            {QStringLiteral("platforms"), VNX::PlayablePropertyAuthoringV1::platformOverridesToJson(item_->platformOverrides)}};
+        return {{QStringLiteral("mixnode"), item_->comp<harken::studio::VMixNode>()->toJson()},
+            {QStringLiteral("definition"), harken::studio::PlayablePropertyAuthoringV1::definitionToJson(*item_)},
+            {QStringLiteral("platforms"), harken::studio::PlayablePropertyAuthoringV1::platformOverridesToJson(item_->platformOverrides)}};
     }
 
     QTemporaryDir directory_;
-    VNX::ProjectItem* item_ = nullptr;
+    harken::studio::ProjectItem* item_ = nullptr;
 };
 
 TEST_F(AuthoringEditTransactionTest, CancelledPreviewsRestoreValuesAndOverridePresenceWithoutHistory)
@@ -248,22 +248,22 @@ TEST_F(AuthoringEditTransactionTest, CancelledPreviewsRestoreValuesAndOverridePr
         SCOPED_TRACE(field.field.toStdString());
         ASSERT_TRUE(setField(field.field, field.base).success);
         ASSERT_TRUE(setField(field.field, field.overlay, windows).success);
-        VNX::UndoRedoManager::instance().clearHistory();
+        harken::studio::UndoRedoManager::instance().clearHistory();
         const auto before = authoredState();
-        for (const VNX::PlatformScope scope : {VNX::PlatformScope{}, VNX::PlatformScope{windows}, VNX::PlatformScope{android}}) {
+        for (const harken::studio::PlatformScope scope : {harken::studio::PlatformScope{}, harken::studio::PlatformScope{windows}, harken::studio::PlatformScope{android}}) {
             SCOPED_TRACE(scope ? scope->toString().toStdString() : "shared");
             const auto platforms = scope
-                ? std::optional<QVector<VNX::ProjectPlatformId>>(QVector<VNX::ProjectPlatformId>{*scope})
+                ? std::optional<QVector<harken::studio::ProjectPlatformId>>(QVector<harken::studio::ProjectPlatformId>{*scope})
                 : std::nullopt;
-            VNX::PropertyEditSession edit(item_, field.field,
-                scope == VNX::PlatformScope{windows} ? field.overlay : field.base, nullptr, platforms);
+            harken::studio::PropertyEditSession edit(item_, field.field,
+                scope == harken::studio::PlatformScope{windows} ? field.overlay : field.base, nullptr, platforms);
             edit.preview(field.preview);
             ASSERT_NE(authoredState(), before);
-            EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+            EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
             edit.cancel();
             EXPECT_EQ(authoredState(), before);
-            EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
-            EXPECT_FALSE(VNX::UndoRedoManager::instance().canRedo());
+            EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
+            EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canRedo());
         }
     }
 }
@@ -273,13 +273,13 @@ TEST_F(AuthoringEditTransactionTest, GraphGesturesCancelExactlyAndCommitMultiple
     const auto windows = HarkenTest::PlatformIds::Windows;
     ASSERT_TRUE(setField(QStringLiteral("filterLowShelfFrequency"), 400.0).success);
     ASSERT_TRUE(setField(QStringLiteral("filterLowShelfGain"), 6.0).success);
-    VNX::FilterEditorWidget editor;
+    harken::studio::FilterEditorWidget editor;
     editor.setAttribute(Qt::WA_DontShowOnScreen);
     editor.resize(720, 640);
     editor.bindItem(item_);
     editor.show();
     QApplication::processEvents();
-    auto* canvas = editor.findChild<VNX::FilterResponseCanvas*>();
+    auto* canvas = editor.findChild<harken::studio::FilterResponseCanvas*>();
     ASSERT_NE(canvas, nullptr);
     const auto mouse = [canvas](QEvent::Type type, const QPointF& point,
                                 Qt::MouseButton button, Qt::MouseButtons buttons) {
@@ -288,44 +288,44 @@ TEST_F(AuthoringEditTransactionTest, GraphGesturesCancelExactlyAndCommitMultiple
     };
     for (bool all : {true, false}) {
         SCOPED_TRACE(all);
-        if (all) VNX::PlatformContextService::instance().setAll(true);
+        if (all) harken::studio::PlatformContextService::instance().setAll(true);
         else {
             ASSERT_TRUE(setField(QStringLiteral("filterLowShelfFrequency"), 900.0, windows).success);
-            VNX::PlatformContextService::instance().setSelected({windows}, windows, false);
+            harken::studio::PlatformContextService::instance().setSelected({windows}, windows, false);
         }
         QApplication::processEvents();
         ASSERT_TRUE(canvas->isVisible());
-        VNX::UndoRedoManager::instance().clearHistory();
+        harken::studio::UndoRedoManager::instance().clearHistory();
         const auto before = authoredState();
-        const auto scope = all ? VNX::PlatformScope{} : VNX::PlatformScope{windows};
-        const auto original = VNX::FilterAuthoring::effectiveState(*item_, scope).sections[2];
+        const auto scope = all ? harken::studio::PlatformScope{} : harken::studio::PlatformScope{windows};
+        const auto original = harken::studio::FilterAuthoring::effectiveState(*item_, scope).sections[2];
         ASSERT_FALSE(canvas->renderData().points.isEmpty());
         const auto point = canvas->renderData().points.front().position;
         const auto moved = point + QPointF(35.0, -20.0);
         mouse(QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
         mouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
-        const auto preview = VNX::FilterAuthoring::effectiveState(*item_, scope).sections[2];
+        const auto preview = harken::studio::FilterAuthoring::effectiveState(*item_, scope).sections[2];
         ASSERT_NE(preview.frequency, original.frequency);
         ASSERT_NE(preview.gain, original.gain);
-        EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
         QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
         QApplication::sendEvent(canvas, &escape);
         mouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton, Qt::NoButton);
         EXPECT_EQ(authoredState(), before);
-        EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
         mouse(QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
         mouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton, Qt::NoButton);
         const auto after = authoredState();
         ASSERT_NE(after, before);
-        EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), 1);
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+        EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), 1);
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
         EXPECT_EQ(authoredState(), before);
-        EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().redo());
+        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().redo());
         EXPECT_EQ(authoredState(), after);
-        EXPECT_FALSE(VNX::UndoRedoManager::instance().canRedo());
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canRedo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
     }
 }
 

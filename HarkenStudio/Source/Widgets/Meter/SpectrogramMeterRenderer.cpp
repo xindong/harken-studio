@@ -5,7 +5,7 @@
 #include <QPainter>
 #include <QPen>
 
-namespace VNX {
+namespace harken::studio {
 
 SpectrogramMeterLayout SpectrogramMeterRenderer::layout(
     const QRect& bounds,

@@ -9,7 +9,7 @@
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace VNX {
+namespace harken::studio {
 
 struct AssetInfo;
 class PaneSection;

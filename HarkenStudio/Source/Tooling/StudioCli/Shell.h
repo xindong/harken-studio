@@ -5,9 +5,9 @@
 #include <csignal>
 #include <functional>
 
-namespace VNX { class IPCServer; }
+namespace harken::studio { class IPCServer; }
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 
 class StudioSession;
 
@@ -21,7 +21,7 @@ struct DesktopShellResult {
 bool prepareDesktopShellStdio(QString* error, bool requireInput = true);
 bool shellUsesJson();
 void writeShellResponse(QJsonObject response, bool json = true);
-DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json,
+DesktopShellResult runDesktopShell(harken::studio::IPCServer& dispatcher, bool json,
     const std::function<QJsonObject(ShellExitRequest)>& requestClose);
 
 int runShell(StudioSession& session, int timeoutMs, bool json,

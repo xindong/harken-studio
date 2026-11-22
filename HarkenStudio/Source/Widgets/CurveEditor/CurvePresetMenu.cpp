@@ -9,7 +9,7 @@
 
 #include <array>
 
-namespace VNX {
+namespace harken::studio {
 
 QMenu* addCurvePresetMenu(QMenu* parentMenu,
                          const CurvePointDef& a, const CurvePointDef& b,

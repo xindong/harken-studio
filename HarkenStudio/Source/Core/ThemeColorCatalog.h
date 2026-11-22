@@ -9,7 +9,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 using ThemeColorOverrides = QMap<QString, QColor>;
 using ColorPaletteCustomizations = QMap<QString, ThemeColorOverrides>;

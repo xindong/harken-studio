@@ -8,7 +8,7 @@ class QToolButton;
 class QMenu;
 class QAction;
 
-namespace VNX {
+namespace harken::studio {
 
 class BlueprintCanvasWidget;
 class BlueprintVisibilityMenu;

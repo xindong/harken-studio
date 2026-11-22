@@ -12,7 +12,7 @@
 #include "../Core/ThemeAssetCatalog.h"
 #include "../Core/ThemeManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class DragDropOverlay : public QWidget
 {

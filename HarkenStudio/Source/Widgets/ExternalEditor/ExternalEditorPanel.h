@@ -7,7 +7,7 @@
 
 class QScrollArea;
 
-namespace VNX {
+namespace harken::studio {
 
 class BindingFieldEditor;
 class CurveEditorWidget;

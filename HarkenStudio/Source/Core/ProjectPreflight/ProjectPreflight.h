@@ -4,7 +4,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectContractReadContext;
 

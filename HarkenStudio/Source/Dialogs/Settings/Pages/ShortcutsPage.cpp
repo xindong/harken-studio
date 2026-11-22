@@ -19,7 +19,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 
-namespace VNX {
+namespace harken::studio {
 
 ShortcutsPage::ShortcutsPage(QWidget* parent)
     : SettingsPage(parent)

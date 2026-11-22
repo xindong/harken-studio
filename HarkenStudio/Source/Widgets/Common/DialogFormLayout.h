@@ -4,7 +4,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class DialogFormLayout : public QGridLayout
 {

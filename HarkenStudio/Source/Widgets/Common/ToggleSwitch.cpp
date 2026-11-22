@@ -6,7 +6,7 @@
 #include <QMouseEvent>
 #include <QHBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 static constexpr int ANIMATION_DURATION_MS = 150;
 

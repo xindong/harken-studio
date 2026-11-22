@@ -15,7 +15,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 using fixtures::G;
@@ -72,8 +72,8 @@ std::optional<SegmentIR> BuildRoutingIr(const ProjectInput& input) {
 }
 
 TEST(ProjectSchemaSendResolution, WideOutputBusIdentityReachesProgram) {
-    constexpr harkenstudio::ObjectId kLowBus = harkentest::StudioObjectId(1);
-    constexpr harkenstudio::ObjectId kHighBus = harkentest::StudioObjectId(0x1'0000'0001ull);
+    constexpr harken::studio::types::ObjectId kLowBus = harkentest::StudioObjectId(1);
+    constexpr harken::studio::types::ObjectId kHighBus = harkentest::StudioObjectId(0x1'0000'0001ull);
     ProjectInput lowInput = SendWorld();
     lowInput.nodes[1].outputBusRef = harkentest::StudioObjectId(kLowBus);
     ProjectInput highInput = SendWorld();

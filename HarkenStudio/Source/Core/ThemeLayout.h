@@ -6,7 +6,7 @@
 #include <QBoxLayout>
 #include <QLayout>
 
-namespace VNX::ThemeLayout {
+namespace harken::studio::ThemeLayout {
 
 enum class Space { None, Tight, Control, Section, Panel };
 

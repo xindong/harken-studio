@@ -24,7 +24,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 const QStringList sizeUnits{"B", "KB", "MB", "GB"};

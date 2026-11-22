@@ -2,7 +2,7 @@
 
 #include "EditorCommandRegistration.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct DesktopEditorCommandContext {
     AudioEngine* engine = nullptr;
@@ -11,7 +11,7 @@ struct DesktopEditorCommandContext {
     MainWindow* window = nullptr;
     ProjectExplorer* explorer = nullptr;
     BlueprintCanvasWidget* blueprint = nullptr;
-    HarkenEditor::AuditionManager* audition = nullptr;
+    harken::studio::AuditionManager* audition = nullptr;
 };
 
 void registerDesktopEditorCommands(const DesktopEditorCommandContext& context);

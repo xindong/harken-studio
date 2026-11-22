@@ -7,7 +7,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorRemoteStatusStrip : public QWidget
 {
@@ -31,4 +31,4 @@ private:
     QString recordDeniedReason_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

@@ -43,7 +43,7 @@
 #include <QScreen>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 int sidebarWidth() { return ThemeManager::instance().metrics().panel.preferredWidth; }
@@ -194,12 +194,12 @@ void LayoutController::setWindowDockResolver(WindowDockResolver resolver)
     windowDockResolver_ = std::move(resolver);
 }
 
-void LayoutController::setInstanceSnapshotProvider(std::function<QList<VNX::DockInstanceSpec>()> provider)
+void LayoutController::setInstanceSnapshotProvider(std::function<QList<harken::studio::DockInstanceSpec>()> provider)
 {
     instanceSnapshotProvider_ = std::move(provider);
 }
 
-void LayoutController::setInstanceRestoreFactory(std::function<bool(const VNX::DockInstanceSpec&)> factory)
+void LayoutController::setInstanceRestoreFactory(std::function<bool(const harken::studio::DockInstanceSpec&)> factory)
 {
     instanceRestoreFactory_ = std::move(factory);
 }
@@ -959,13 +959,13 @@ void LayoutController::saveProjectLayout()
     }
 }
 
-void LayoutController::ensureDocksForSpecs(const QList<VNX::DockInstanceSpec>& specs)
+void LayoutController::ensureDocksForSpecs(const QList<harken::studio::DockInstanceSpec>& specs)
 {
     if (!instanceRestoreFactory_)
         return;
 
     QStringList dropped;
-    for (const VNX::DockInstanceSpec& spec : specs) {
+    for (const harken::studio::DockInstanceSpec& spec : specs) {
         const bool ok = instanceRestoreFactory_(spec);
         if (!ok)
             dropped.append(QStringLiteral("%1_%2").arg(spec.typeId).arg(spec.instanceId));
@@ -1101,7 +1101,7 @@ QJsonObject LayoutController::captureLayoutState() const
         json["dockState"] = QString::fromLatin1(dockManager_->saveState().toBase64());
     json["instances"] = workspaceWindowInstanceSpecsToJson(instanceSnapshotProvider_
                                         ? instanceSnapshotProvider_()
-                                        : QList<VNX::DockInstanceSpec>());
+                                        : QList<harken::studio::DockInstanceSpec>());
     if (singletonSnapshotProvider_)
         json["singletons"] = QJsonObject::fromVariantMap(singletonSnapshotProvider_());
     json["collapsedZones"] = collapsedZonesToJson();

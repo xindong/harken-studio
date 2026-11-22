@@ -9,7 +9,7 @@
 
 class QAction;
 
-namespace VNX {
+namespace harken::studio {
 
 class QtAdsWindowAdapter
 {

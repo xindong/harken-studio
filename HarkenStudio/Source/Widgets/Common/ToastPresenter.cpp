@@ -10,7 +10,7 @@
 #include <QPainter>
 #include <QPainterPath>
 
-namespace VNX {
+namespace harken::studio {
 
 ToastPresenter::ToastPresenter(QWidget* host)
     : QWidget(host)

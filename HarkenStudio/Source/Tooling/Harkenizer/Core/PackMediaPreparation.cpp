@@ -21,13 +21,13 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct PackMediaPreparation::Impl
 {
     struct Work
     {
-        harkenstudio::ObjectId soundId;
+        harken::studio::types::ObjectId soundId;
         SoundSourceDef source;
         double scheduleOffsetSec;
         std::promise<Result> result;
@@ -39,7 +39,7 @@ struct PackMediaPreparation::Impl
         std::vector<Work> items;
     };
 
-    using Key = std::pair<harkenstudio::ObjectId, QUuid>;
+    using Key = std::pair<harken::studio::types::ObjectId, QUuid>;
 
     MediaBuildSnapshot snapshot;
     std::shared_ptr<SoundSourceDerivative::MaterializationCache> cache;
@@ -163,7 +163,7 @@ struct PackMediaPreparation::Impl
         }
         if (!result.artifact)
             result.error = QStringLiteral("Derivative media failed for Sound %1: %2")
-                .arg(VNX::objectIdString(work.soundId)).arg(derivativeError);
+                .arg(harken::studio::objectIdString(work.soundId)).arg(derivativeError);
         return result;
     }
 
@@ -202,7 +202,7 @@ PackMediaPreparation::~PackMediaPreparation()
     stop();
 }
 
-void PackMediaPreparation::add(harkenstudio::ObjectId soundId, const SoundSourceDef& source,
+void PackMediaPreparation::add(harken::studio::types::ObjectId soundId, const SoundSourceDef& source,
                               double scheduleOffsetSec)
 {
     auto [found, inserted] = impl_->groupIndices.emplace(source.sourceId, impl_->groups.size());
@@ -222,7 +222,7 @@ void PackMediaPreparation::start()
 }
 
 PackMediaPreparation::Result PackMediaPreparation::take(
-    harkenstudio::ObjectId soundId, const QUuid& entryId,
+    harken::studio::types::ObjectId soundId, const QUuid& entryId,
     const std::function<bool()>& cancelCheck)
 {
     const auto canceled = [&] { return cancelCheck && cancelCheck(); };
@@ -237,7 +237,7 @@ PackMediaPreparation::Result PackMediaPreparation::take(
     if (found == impl_->results.end() || found->second.empty()) {
         Result result;
         result.error = QStringLiteral("Media preparation is missing for Sound %1")
-            .arg(VNX::objectIdString(soundId));
+            .arg(harken::studio::objectIdString(soundId));
         return result;
     }
     auto& future = found->second.front();

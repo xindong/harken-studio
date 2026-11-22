@@ -10,7 +10,7 @@
 #include "Core/ProjectManager.h"
 #include "Core/ShortcutManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

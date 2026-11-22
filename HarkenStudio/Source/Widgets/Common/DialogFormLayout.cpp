@@ -5,7 +5,7 @@
 
 #include <QLabel>
 
-namespace VNX {
+namespace harken::studio {
 
 DialogFormLayout::DialogFormLayout(QWidget* parent)
     : QGridLayout(parent)

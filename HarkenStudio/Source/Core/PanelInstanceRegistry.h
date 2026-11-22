@@ -14,7 +14,7 @@
 #include <QWidget>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 class PanelInstanceRegistry : public QObject
 {

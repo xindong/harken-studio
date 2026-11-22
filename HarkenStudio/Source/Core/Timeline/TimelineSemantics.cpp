@@ -17,7 +17,7 @@
 #include <limits>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool checkedDistance(int64_t high, int64_t low, int64_t* out)

@@ -8,7 +8,7 @@
 #include <QShowEvent>
 #include <QWindow>
 
-namespace VNX {
+namespace harken::studio {
 
 TitleBarBase::TitleBarBase(Qt::WindowFlags controls, QWidget* parent) : QWidget(parent) {
     setObjectName("TitleBarWidget");

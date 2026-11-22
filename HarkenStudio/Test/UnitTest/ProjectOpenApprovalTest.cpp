@@ -50,7 +50,7 @@ QJsonObject readObject(const QString& path)
 }
 
 QString writeProject(const QTemporaryDir& directory,
-                     int version = VNX::ProjectSchema::kProjectSchemaVersion)
+                     int version = harken::studio::ProjectSchema::kProjectSchemaVersion)
 {
     const QString projectPath = directory.filePath(QStringLiteral("Legacy/Legacy.hsp"));
     writeObject(projectPath, HarkenTest::projectRoot({
@@ -67,9 +67,9 @@ QString writeProject(const QTemporaryDir& directory,
             {QStringLiteral("parentRef"), QJsonObject{
                 {QStringLiteral("kind"), QStringLiteral("root")},
             }},
-            {version < VNX::ProjectSchema::kProjectSchemaVersion
+            {version < harken::studio::ProjectSchema::kProjectSchemaVersion
                  ? QStringLiteral("componentData") : QStringLiteral("components"),
-             version < VNX::ProjectSchema::kProjectSchemaVersion
+             version < harken::studio::ProjectSchema::kProjectSchemaVersion
                  ? QJsonObject{} : QJsonObject{{QStringLiteral("bus"), QJsonObject{}}}},
             {QStringLiteral("playableProperties"), QJsonObject{
                 {QStringLiteral("presence"), QStringLiteral("0000000000000000")},
@@ -91,29 +91,29 @@ QMap<QString, QByteArray> treeBytes(const QString& directory)
 
 struct FutureUpgrade
 {
-    VNX::MigrationManager migrations;
-    VNX::ProjectUpgradeManager manager{&migrations};
+    harken::studio::MigrationManager migrations;
+    harken::studio::ProjectUpgradeManager manager{&migrations};
 
     FutureUpgrade()
     {
-        VNX::ProjectMigrationStep step;
+        harken::studio::ProjectMigrationStep step;
         step.id = QStringLiteral("test-current-to-next");
-        step.fromSchema = VNX::ProjectSchema::kProjectSchemaVersion;
+        step.fromSchema = harken::studio::ProjectSchema::kProjectSchemaVersion;
         step.toSchema = step.fromSchema + 1;
         step.writeSet = {QStringLiteral("<all-documents>")};
-        step.transform = [](VNX::ProjectMigrationWorkspace& workspace, QStringList*, QString* error) {
+        step.transform = [](harken::studio::ProjectMigrationWorkspace& workspace, QStringList*, QString* error) {
             for (const QString& path : workspace.writeSet()) {
                 QJsonObject document;
                 if (!workspace.readObject(path, &document, error)) return false;
                 QJsonObject header = HarkenTest::projectHeader(document);
-                header.insert(QStringLiteral("schemaVersion"), VNX::ProjectSchema::kProjectSchemaVersion + 1);
+                header.insert(QStringLiteral("schemaVersion"), harken::studio::ProjectSchema::kProjectSchemaVersion + 1);
                 document.insert(QStringLiteral("harkenDocument"), header);
                 if (!workspace.writeObject(path, document, error)) return false;
             }
             return true;
         };
         EXPECT_TRUE(migrations.registerMigration(std::move(step)));
-        manager.setTargetSchemaForTesting(VNX::ProjectSchema::kProjectSchemaVersion + 1);
+        manager.setTargetSchemaForTesting(harken::studio::ProjectSchema::kProjectSchemaVersion + 1);
     }
 };
 
@@ -166,14 +166,14 @@ struct ModalResponder
 
 TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
 {
-    VNX::TestSupport::ensureApp();
+    harken::studio::TestSupport::ensureApp();
     QTemporaryDir directory;
     const QString path = writeProject(directory);
     FutureUpgrade future;
     const auto analysis = future.manager.analyze(path);
     ASSERT_TRUE(analysis.ok);
     ModalResponder responder(true);
-    const auto approved = VNX::confirmProjectOpen(analysis, nullptr);
+    const auto approved = harken::studio::confirmProjectOpen(analysis, nullptr);
     ASSERT_TRUE(approved.upgradeApproval);
     QJsonObject changed = readObject(path);
     QJsonObject content = HarkenTest::projectContent(changed);
@@ -188,31 +188,31 @@ TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
     EXPECT_FALSE(rejected.ok);
     EXPECT_EQ(treeBytes(directory.path()), before);
     QString error;
-    auto transaction = VNX::ProjectTransaction::begin(path, {QStringLiteral("Legacy.hsp")}, &error);
+    auto transaction = harken::studio::ProjectTransaction::begin(path, {QStringLiteral("Legacy.hsp")}, &error);
     ASSERT_NE(transaction, nullptr) << error.toStdString();
     transaction.reset();
-    ASSERT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
+    ASSERT_TRUE(harken::studio::ProjectTransaction::recoveryRequired(path));
     before = treeBytes(directory.path());
     const auto blocked = future.manager.analyzeForProjectOpen(path);
     EXPECT_FALSE(blocked.ok);
-    EXPECT_FALSE(VNX::confirmProjectOpen(blocked, nullptr).proceed);
+    EXPECT_FALSE(harken::studio::confirmProjectOpen(blocked, nullptr).proceed);
     EXPECT_FALSE(future.manager.execute(blocked).ok);
-    EXPECT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
+    EXPECT_TRUE(harken::studio::ProjectTransaction::recoveryRequired(path));
     EXPECT_EQ(treeBytes(directory.path()), before);
-    EXPECT_TRUE(VNX::ProjectTransaction::recover(path, &error)) << error.toStdString();
+    EXPECT_TRUE(harken::studio::ProjectTransaction::recover(path, &error)) << error.toStdString();
 }
 
 TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationConsistent)
 {
-    VNX::TestSupport::ensureApp();
+    harken::studio::TestSupport::ensureApp();
     if (runInChild()) return;
     QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QTemporaryDir directory{QStringLiteral(HARKEN_TEMP_DIR "/save-as-session-XXXXXX")};
     ASSERT_TRUE(directory.isValid());
     const QString path = writeProject(directory);
-    VNX::MainWindow window;
+    harken::studio::MainWindow window;
     ASSERT_TRUE(window.loadProject(path));
-    auto& projects = VNX::ProjectManager::instance();
+    auto& projects = harken::studio::ProjectManager::instance();
     auto* project = projects.currentProject();
     ASSERT_NE(project, nullptr);
     const QString originalName = project->name;
@@ -224,16 +224,16 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
     projects.startWatchingCurrentProject();
     ASSERT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{sourcePath});
     auto* pending = projects.createItem(nullptr, QStringLiteral("PendingAction"),
-                                        VNX::ProjectItem::Type::Action);
+                                        harken::studio::ProjectItem::Type::Action);
     ASSERT_NE(pending, nullptr);
     const auto originalFiles = treeBytes(QFileInfo(path).absolutePath());
-    auto& undo = VNX::UndoRedoManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
     ASSERT_FALSE(undo.isClean());
     const int undoCount = undo.undoStack()->count();
-    std::weak_ptr<VNX::ProjectInstance> originalInstance;
+    std::weak_ptr<harken::studio::ProjectInstance> originalInstance;
     {
-        auto acquisition = VNX::ProjectInstance::acquire(path);
-        ASSERT_EQ(acquisition.status, VNX::ProjectInstance::Status::Acquired);
+        auto acquisition = harken::studio::ProjectInstance::acquire(path);
+        ASSERT_EQ(acquisition.status, harken::studio::ProjectInstance::Status::Acquired);
         originalInstance = acquisition.instance;
     }
     const QString destination = directory.filePath(QStringLiteral("Destination/Copy.hsp"));
@@ -243,14 +243,14 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
     ASSERT_TRUE(blocker.open(QIODevice::WriteOnly));
     ASSERT_EQ(blocker.write("keep"), 4);
     blocker.close();
-    std::weak_ptr<VNX::ProjectInstance> targetInstance;
+    std::weak_ptr<harken::studio::ProjectInstance> targetInstance;
     QStringList failures;
-    QObject::connect(&projects, &VNX::ProjectManager::errorOccurred, &window,
+    QObject::connect(&projects, &harken::studio::ProjectManager::errorOccurred, &window,
                      [&](const QString& error) {
         failures.append(error);
         EXPECT_FALSE(projects.fileWatcher()->isWatching());
-        auto acquisition = VNX::ProjectInstance::acquire(destination);
-        EXPECT_EQ(acquisition.status, VNX::ProjectInstance::Status::Acquired);
+        auto acquisition = harken::studio::ProjectInstance::acquire(destination);
+        EXPECT_EQ(acquisition.status, harken::studio::ProjectInstance::Status::Acquired);
         targetInstance = acquisition.instance;
     });
     QTimer responder;
@@ -279,7 +279,7 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
     EXPECT_EQ(treeBytes(QFileInfo(path).absolutePath()), originalFiles);
     EXPECT_FALSE(QFileInfo::exists(destination));
     EXPECT_EQ(readBytes(obstruction), QByteArray("keep"));
-    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(destination));
+    EXPECT_FALSE(harken::studio::ProjectTransaction::recoveryRequired(destination));
 
     ASSERT_TRUE(QFile::remove(obstruction));
     const QString destinationSource = directory.filePath(
@@ -311,7 +311,7 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
     const auto pendingGuid = pending->guid;
     ASSERT_TRUE(projects.closeProject());
     ASSERT_TRUE(projects.loadProject(destination));
-    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] {
+    ASSERT_TRUE(harken::studio::TestSupport::spinUntil([&] {
         return projects.currentProject()
             && projects.currentProject()->projectPath == destination;
     }, 5000));
@@ -320,10 +320,10 @@ TEST(StudioProjectOpen, SaveAsKeepsTheActiveProjectSessionAndFileObservationCons
 
 TEST(StudioProjectOpen, CurrentGenerationOpenRetainsTransactionRecovery)
 {
-    VNX::TestSupport::ensureApp();
+    harken::studio::TestSupport::ensureApp();
     if (runInChild()) return;
     QTemporaryDir directory;
-    const QString path = writeProject(directory, VNX::ProjectSchema::kProjectSchemaVersion);
+    const QString path = writeProject(directory, harken::studio::ProjectSchema::kProjectSchemaVersion);
     const QByteArray original = readBytes(path);
     QJsonObject changed = readObject(path);
     QJsonObject content = HarkenTest::projectContent(changed);
@@ -334,38 +334,38 @@ TEST(StudioProjectOpen, CurrentGenerationOpenRetainsTransactionRecovery)
     const QString staging = directory.filePath(QStringLiteral("staging"));
     writeObject(QDir(staging).filePath(QStringLiteral("Legacy.hsp")), changed);
     QString error;
-    auto transaction = VNX::ProjectTransaction::begin(path, {QStringLiteral("Legacy.hsp")}, &error);
+    auto transaction = harken::studio::ProjectTransaction::begin(path, {QStringLiteral("Legacy.hsp")}, &error);
     ASSERT_NE(transaction, nullptr) << error.toStdString();
     ASSERT_TRUE(transaction->replaceFromDirectory(staging, &error)) << error.toStdString();
     transaction.reset();
-    ASSERT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
-    VNX::MainWindow window;
+    ASSERT_TRUE(harken::studio::ProjectTransaction::recoveryRequired(path));
+    harken::studio::MainWindow window;
     ModalResponder response(false);
     EXPECT_TRUE(window.loadProject(path));
     EXPECT_EQ(readBytes(path), original);
-    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(path));
+    EXPECT_FALSE(harken::studio::ProjectTransaction::recoveryRequired(path));
 }
 
 TEST(StudioProjectOpen, IpcPreservesRecoveryLockFailureWithAndWithoutWindow)
 {
-    VNX::TestSupport::ensureApp();
+    harken::studio::TestSupport::ensureApp();
     if (runInChild()) return;
     for (bool withWindow : {false, true}) {
         SCOPED_TRACE(withWindow);
         QTemporaryDir directory;
         const QString path = writeProject(directory);
         QString error;
-        auto transaction = VNX::ProjectTransaction::begin(
+        auto transaction = harken::studio::ProjectTransaction::begin(
             path, {QStringLiteral("Legacy.hsp")}, &error);
         ASSERT_NE(transaction, nullptr) << error.toStdString();
         const auto rollback = qScopeGuard([&]() { transaction->rollback(); });
-        ASSERT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
+        ASSERT_TRUE(harken::studio::ProjectTransaction::recoveryRequired(path));
         const auto original = treeBytes(directory.path());
-        std::unique_ptr<VNX::MainWindow> window;
+        std::unique_ptr<harken::studio::MainWindow> window;
         if (withWindow)
-            window = std::make_unique<VNX::MainWindow>();
-        VNX::IPCServer server(nullptr);
-        server.setProjectManager(&VNX::ProjectManager::instance());
+            window = std::make_unique<harken::studio::MainWindow>();
+        harken::studio::IPCServer server(nullptr);
+        server.setProjectManager(&harken::studio::ProjectManager::instance());
         server.setMainWindow(window.get());
         ModalResponder response(false);
         const auto result = server.dispatchCommand(QStringLiteral("open_project"), {
@@ -373,14 +373,14 @@ TEST(StudioProjectOpen, IpcPreservesRecoveryLockFailureWithAndWithoutWindow)
         });
         EXPECT_EQ(result.value(QStringLiteral("status")).toString(), QStringLiteral("error"));
         EXPECT_EQ(treeBytes(directory.path()), original);
-        EXPECT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
-        EXPECT_EQ(VNX::ProjectManager::instance().currentProject(), nullptr);
+        EXPECT_TRUE(harken::studio::ProjectTransaction::recoveryRequired(path));
+        EXPECT_EQ(harken::studio::ProjectManager::instance().currentProject(), nullptr);
     }
 }
 
 TEST(StudioProjectOpen, IpcWithoutWindowRecoversInterruptedCurrentProject)
 {
-    VNX::TestSupport::ensureApp();
+    harken::studio::TestSupport::ensureApp();
     if (runInChild()) return;
     QTemporaryDir directory;
     const QString path = writeProject(directory);
@@ -394,22 +394,22 @@ TEST(StudioProjectOpen, IpcWithoutWindowRecoversInterruptedCurrentProject)
     changed.insert(QStringLiteral("content"), content);
     writeObject(QDir(staging).filePath(QStringLiteral("Legacy.hsp")), changed);
     QString error;
-    auto transaction = VNX::ProjectTransaction::begin(path, {QStringLiteral("Legacy.hsp")}, &error);
+    auto transaction = harken::studio::ProjectTransaction::begin(path, {QStringLiteral("Legacy.hsp")}, &error);
     ASSERT_NE(transaction, nullptr) << error.toStdString();
     ASSERT_TRUE(transaction->replaceFromDirectory(staging, &error)) << error.toStdString();
     transaction.reset();
-    ASSERT_TRUE(VNX::ProjectTransaction::recoveryRequired(path));
-    ASSERT_FALSE(VNX::ProjectUpgradeManager().analyzeForProjectOpen(path).ok);
-    VNX::IPCServer server(nullptr);
-    server.setProjectManager(&VNX::ProjectManager::instance());
+    ASSERT_TRUE(harken::studio::ProjectTransaction::recoveryRequired(path));
+    ASSERT_FALSE(harken::studio::ProjectUpgradeManager().analyzeForProjectOpen(path).ok);
+    harken::studio::IPCServer server(nullptr);
+    server.setProjectManager(&harken::studio::ProjectManager::instance());
     const auto result = server.dispatchCommand(QStringLiteral("open_project"), {
         {QStringLiteral("path"), path},
     });
     EXPECT_EQ(result.value(QStringLiteral("status")).toString(), QStringLiteral("ok"))
         << QJsonDocument(result).toJson().toStdString();
     EXPECT_EQ(readBytes(path), original);
-    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(path));
-    EXPECT_NE(VNX::ProjectManager::instance().currentProject(), nullptr);
+    EXPECT_FALSE(harken::studio::ProjectTransaction::recoveryRequired(path));
+    EXPECT_NE(harken::studio::ProjectManager::instance().currentProject(), nullptr);
 }
 
 }

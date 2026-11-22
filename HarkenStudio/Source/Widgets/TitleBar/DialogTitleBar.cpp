@@ -3,7 +3,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 
-namespace VNX {
+namespace harken::studio {
 
 DialogTitleBar::DialogTitleBar(QWidget* parent)
     : TitleBarBase(Qt::WindowCloseButtonHint, parent) {

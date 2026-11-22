@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 void drawAxisCrosshairLines(QPainter& painter, const CurveStyle& style,
                            const QRectF& bounds, const QPointF& position,

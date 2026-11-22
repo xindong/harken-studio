@@ -12,7 +12,7 @@
 #include <variant>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 struct ProjectData;
@@ -197,12 +197,12 @@ struct VQLError
     }
 };
 
-inline uint32_t vqlFnv1a(const char* str) { return HarkenEditor::hashString(str); }
+inline uint32_t vqlFnv1a(const char* str) { return harken::studio::hashString(str); }
 
 inline uint32_t vqlFnv1a(const QString& s)
 {
     QByteArray utf8 = s.toUtf8();
-    return HarkenEditor::hashString(utf8.constData());
+    return harken::studio::hashString(utf8.constData());
 }
 
 }

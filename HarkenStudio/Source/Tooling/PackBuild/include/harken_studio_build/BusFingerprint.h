@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace harkenstudiobuild::busfingerprint {
+namespace harken::studio::build::busfingerprint {
 
 inline constexpr std::uint64_t kOffsetBasis = UINT64_C(14695981039346656037);
 inline constexpr std::uint64_t kPrime = UINT64_C(1099511628211);

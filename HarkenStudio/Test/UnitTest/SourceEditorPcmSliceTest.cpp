@@ -20,7 +20,7 @@
 #include <cmath>
 #include <vector>
 
-using namespace HarkenEditor::Bridge;
+using namespace harken::studio::bridge;
 
 namespace {
 
@@ -42,7 +42,7 @@ std::vector<float> takeMasterChannelPeaks()
 
 bool ensureFreshNullEngine()
 {
-    auto& engine = VNX::AudioEngine::instance();
+    auto& engine = harken::studio::AudioEngine::instance();
     if (engine.isInitialized())
         engine.shutdown();
     EngineSessionConfig config;
@@ -59,36 +59,36 @@ protected:
     {
         ASSERT_TRUE(directory_.isValid());
         ASSERT_TRUE(ensureFreshNullEngine());
-        engine_ = &VNX::AudioEngine::instance();
+        engine_ = &harken::studio::AudioEngine::instance();
     }
 
     void TearDown() override
     {
         engine_ = nullptr;
-        VNX::AudioEngine::instance().shutdown();
+        harken::studio::AudioEngine::instance().shutdown();
     }
 
     QTemporaryDir directory_;
-    VNX::AudioEngine* engine_ = nullptr;
+    harken::studio::AudioEngine* engine_ = nullptr;
 };
 
 }
 
 TEST_F(SourceEditorPcmSliceTest, MintsIndependentSoundUuids)
 {
-    const harkenstudio::ObjectId first = engine_->mintRawPcmSoundId();
-    const harkenstudio::ObjectId second = engine_->mintRawPcmSoundId();
-    EXPECT_FALSE(harkenstudio::IsNull(first));
-    EXPECT_FALSE(harkenstudio::IsNull(second));
+    const harken::studio::types::ObjectId first = engine_->mintRawPcmSoundId();
+    const harken::studio::types::ObjectId second = engine_->mintRawPcmSoundId();
+    EXPECT_FALSE(harken::studio::types::IsNull(first));
+    EXPECT_FALSE(harken::studio::types::IsNull(second));
     EXPECT_NE(first, second);
 }
 
 TEST_F(SourceEditorPcmSliceTest, RejectsSlicesOutsideDecodedBuffer)
 {
     const QString path = QDir(directory_.path()).filePath(QStringLiteral("reject.wav"));
-    ASSERT_TRUE(VNX::AssetConverter::writeFloatWav(path, std::vector<float>(8, 0.25f), 1, 48000));
+    ASSERT_TRUE(harken::studio::AssetConverter::writeFloatWav(path, std::vector<float>(8, 0.25f), 1, 48000));
 
-    const harkenstudio::ObjectId soundId = engine_->mintRawPcmSoundId();
+    const harken::studio::types::ObjectId soundId = engine_->mintRawPcmSoundId();
     ASSERT_EQ(engine_->registerRawPcmSlice(soundId, path, 0, 8).result, kEngineOk);
     ASSERT_EQ(engine_->unregisterRawPcm(soundId), kEngineOk);
     EXPECT_NE(engine_->registerRawPcmSlice(soundId, path, 8, 1).result, kEngineOk);
@@ -104,7 +104,7 @@ TEST_F(SourceEditorPcmSliceTest, MemoryAndFilePcmRenderIdenticallyAfterRelocatio
         samples.push_back(-static_cast<float>(frame) / 16384.0f);
     }
     const QString path = directory_.filePath(QStringLiteral("prepared.wav"));
-    ASSERT_TRUE(VNX::AssetConverter::writeFloatWav(path, samples, 2, 48000));
+    ASSERT_TRUE(harken::studio::AssetConverter::writeFloatWav(path, samples, 2, 48000));
 
     const auto capture = [&](bool memory, bool loops, std::vector<float>& output) {
         ASSERT_TRUE(ensureFreshNullEngine());
@@ -140,32 +140,32 @@ TEST_F(SourceEditorPcmSliceTest, MemoryAndFilePcmRenderIdenticallyAfterRelocatio
 
 TEST_F(SourceEditorPcmSliceTest, PreparedSourceRestartsImmediatelyAfterRuntimeReset)
 {
-    auto& projects = VNX::ProjectManager::instance();
-    VNX::ProjectConfig config;
+    auto& projects = harken::studio::ProjectManager::instance();
+    harken::studio::ProjectConfig config;
     config.name = QStringLiteral("SourcePreviewLifecycle");
     config.location = directory_.path();
     ASSERT_TRUE(projects.createProject(config));
     const auto closeProject = qScopeGuard([&] { EXPECT_TRUE(projects.closeProject()); });
     const QString path = QFileInfo(projects.currentProject()->projectPath).dir()
         .filePath(QStringLiteral("prepared.wav"));
-    ASSERT_TRUE(VNX::AssetConverter::writeFloatWav(
+    ASSERT_TRUE(harken::studio::AssetConverter::writeFloatWav(
         path, std::vector<float>(4096, 0.25f), 1, 48000));
 
-    auto& assets = VNX::AssetRegistry::instance();
-    VNX::AssetInfo asset;
+    auto& assets = harken::studio::AssetRegistry::instance();
+    harken::studio::AssetInfo asset;
     asset.sourceID = assets.allocateStableID();
     asset.absolutePath = path;
     asset.relativePath = QStringLiteral("prepared.wav");
-    asset.contentHash = VNX::AssetImporter::computeContentHash(path);
-    asset.metadata = VNX::AssetImporter().analyzeFile(path);
+    asset.contentHash = harken::studio::AssetImporter::computeContentHash(path);
+    asset.metadata = harken::studio::AssetImporter().analyzeFile(path);
     ASSERT_TRUE(assets.registerAsset(asset));
-    auto* layer = projects.createItem(nullptr, QStringLiteral("Layer"), VNX::ProjectItem::Type::Layer);
+    auto* layer = projects.createItem(nullptr, QStringLiteral("Layer"), harken::studio::ProjectItem::Type::Layer);
     ASSERT_NE(layer, nullptr);
-    auto* item = projects.createItem(layer, QStringLiteral("Sound"), VNX::ProjectItem::Type::Sound);
+    auto* item = projects.createItem(layer, QStringLiteral("Sound"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(item, nullptr);
-    auto* sound = item->comp<VNX::VSound>();
+    auto* sound = item->comp<harken::studio::VSound>();
     ASSERT_NE(sound, nullptr);
-    VNX::SoundSourceDef source;
+    harken::studio::SoundSourceDef source;
     source.entryId = QUuid::createUuid();
     source.sourceId = asset.sourceID;
     source.rangeContentHash = asset.contentHash;
@@ -173,7 +173,7 @@ TEST_F(SourceEditorPcmSliceTest, PreparedSourceRestartsImmediatelyAfterRuntimeRe
     sound->sources.plain.entries = {source};
     sound->sources.plain.active = source.entryId;
 
-    VNX::SourceEditorWidget editor;
+    harken::studio::SourceEditorWidget editor;
     editor.bindSource(asset.sourceID, item->guid, source.entryId);
     ASSERT_TRUE(editor.startPreviewPlayhead(512));
     engine_->clearRuntimeObjects();

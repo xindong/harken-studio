@@ -14,7 +14,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool readInt64(const QJsonValue& value, int64_t* out)

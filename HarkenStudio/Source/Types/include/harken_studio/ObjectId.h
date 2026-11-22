@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace harkenstudio {
+namespace harken::studio::types {
 
 struct ObjectId {
     std::uint64_t high = 0;
@@ -99,9 +99,9 @@ inline constexpr std::uint64_t HashObjectId(ObjectId id) noexcept
 
 }
 
-template<> struct std::hash<harkenstudio::ObjectId> {
-    std::size_t operator()(harkenstudio::ObjectId id) const noexcept
+template<> struct std::hash<harken::studio::types::ObjectId> {
+    std::size_t operator()(harken::studio::types::ObjectId id) const noexcept
     {
-        return static_cast<std::size_t>(harkenstudio::HashObjectId(id));
+        return static_cast<std::size_t>(harken::studio::types::HashObjectId(id));
     }
 };

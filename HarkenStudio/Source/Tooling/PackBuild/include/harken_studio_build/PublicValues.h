@@ -3,14 +3,14 @@
 #include <harken_studio/ObjectId.h>
 #include "BusFingerprint.h"
 
-namespace harkenstudiobuild {
-using harkenstudio::IsNull;
-using harkenstudio::ObjectIdBytes;
-using harkenstudio::ObjectIdFromBytes;
-using harkenstudio::ObjectIdString;
-using harkenstudio::ParseObjectId;
-using harkenstudio::FormatObjectId;
-using harkenstudio::HashObjectId;
-using harkenstudio::kNullObjectId;
-using harkenstudio::kMasterBusObjectId;
+namespace harken::studio::build {
+using harken::studio::types::IsNull;
+using harken::studio::types::ObjectIdBytes;
+using harken::studio::types::ObjectIdFromBytes;
+using harken::studio::types::ObjectIdString;
+using harken::studio::types::ParseObjectId;
+using harken::studio::types::FormatObjectId;
+using harken::studio::types::HashObjectId;
+using harken::studio::types::kNullObjectId;
+using harken::studio::types::kMasterBusObjectId;
 }

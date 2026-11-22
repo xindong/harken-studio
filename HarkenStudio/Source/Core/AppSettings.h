@@ -9,7 +9,7 @@
 
 #include "ISettingsStorage.h"
 
-namespace VNX {
+namespace harken::studio {
 
 // PanelId ordinals are not a stable persisted ABI. Appearance font
 // sizes are stored as PanelFontSize_<key> strings. Inserting or deleting

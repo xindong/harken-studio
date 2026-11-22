@@ -1,6 +1,6 @@
 #include "DspTimelineProjection.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool dspWallPublished()
@@ -32,4 +32,4 @@ DspTimelineProjection projectDspTimelineFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

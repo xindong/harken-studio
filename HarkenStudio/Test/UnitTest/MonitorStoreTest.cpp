@@ -7,11 +7,11 @@
 
 #include <utility>
 
-using VNX::Monitor::decodePackedRecords;
-using VNX::Monitor::MonitorDecodeBatch;
-using VNX::Monitor::MonitorStore;
-using VNX::Monitor::MonitorStoreBudget;
-using VNX::Monitor::TestSupport::loadEditorFixture;
+using harken::studio::Monitor::decodePackedRecords;
+using harken::studio::Monitor::MonitorDecodeBatch;
+using harken::studio::Monitor::MonitorStore;
+using harken::studio::Monitor::MonitorStoreBudget;
+using harken::studio::Monitor::TestSupport::loadEditorFixture;
 
 namespace {
 
@@ -19,9 +19,9 @@ void resetBudget()
 {
     MonitorStoreBudget::instance().resetForTests();
 }
-VNX::Monitor::MonitorCapabilities makeCaps(uint64_t sessionBytes, uint64_t processBytes)
+harken::studio::Monitor::MonitorCapabilities makeCaps(uint64_t sessionBytes, uint64_t processBytes)
 {
-    VNX::Monitor::MonitorCapabilities caps {};
+    harken::studio::Monitor::MonitorCapabilities caps {};
     caps.resolvedConsumerQueueBytes = sessionBytes;
     caps.hardConsumerQueueBytes = processBytes;
     return caps;

@@ -1,7 +1,7 @@
 
 #pragma once
 
-namespace VNX {
+namespace harken::studio {
 
 struct InspectorCustomization
 {

@@ -1,7 +1,7 @@
 
 #include "VQLLexer.h"
 
-namespace VNX {
+namespace harken::studio {
 
 VQLLexer::VQLLexer(const QString& source)
     : source_(source)

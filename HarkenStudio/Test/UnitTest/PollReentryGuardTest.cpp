@@ -4,7 +4,7 @@
 
 TEST(PollReentryGuard, ReentryIsBlocked)
 {
-    VNX::PollReentryGuard guard;
+    harken::studio::PollReentryGuard guard;
     int outerEntered = 0;
     int innerEntered = 0;
     EXPECT_TRUE(guard.run([&] {
@@ -17,7 +17,7 @@ TEST(PollReentryGuard, ReentryIsBlocked)
 
 TEST(PollReentryGuard, LeaveAllowsNextRun)
 {
-    VNX::PollReentryGuard guard;
+    harken::studio::PollReentryGuard guard;
     int ran = 0;
     EXPECT_TRUE(guard.run([&] { ++ran; }));
     EXPECT_TRUE(guard.run([&] { ++ran; }));

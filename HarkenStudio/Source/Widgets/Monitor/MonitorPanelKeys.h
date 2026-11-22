@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr std::uint64_t kMonitorCursorContributorVoices = 2;
 inline constexpr std::uint64_t kMonitorCursorContributorPerformance = 3;
@@ -18,4 +18,4 @@ inline constexpr std::uint64_t kMonitorCursorContributorSpectrum = 13;
 inline constexpr std::uint64_t kMonitorCursorContributorRecording = 15;
 inline constexpr std::uint64_t kMonitorCursorContributorSessionCompare = 16;
 
-} // namespace VNX
+} // namespace harken::studio

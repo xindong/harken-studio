@@ -7,17 +7,17 @@
 #include <QJsonValue>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 
-inline harkenstudio::ObjectId runtimeObjectId(const QUuid& uuid) noexcept
+inline harken::studio::types::ObjectId runtimeObjectId(const QUuid& uuid) noexcept
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     id.high = (uint64_t{uuid.data1} << 32) | (uint64_t{uuid.data2} << 16) | uuid.data3;
     for (const auto byte : uuid.data4) id.low = (id.low << 8) | byte;
     return id;
 }
 
-inline QUuid authoringUuid(harkenstudio::ObjectId id) noexcept
+inline QUuid authoringUuid(harken::studio::types::ObjectId id) noexcept
 {
     return QUuid(static_cast<uint32_t>(id.high >> 32),
         static_cast<uint16_t>(id.high >> 16), static_cast<uint16_t>(id.high),
@@ -27,26 +27,26 @@ inline QUuid authoringUuid(harkenstudio::ObjectId id) noexcept
         static_cast<uint8_t>(id.low >> 8), static_cast<uint8_t>(id.low));
 }
 
-inline QString objectIdString(harkenstudio::ObjectId id)
+inline QString objectIdString(harken::studio::types::ObjectId id)
 {
-    const auto text = harkenstudio::FormatObjectId(id);
+    const auto text = harken::studio::types::FormatObjectId(id);
     return QString::fromLatin1(text.data(), 36);
 }
 
-inline bool parseObjectIdJson(const QJsonValue& value, harkenstudio::ObjectId* id)
+inline bool parseObjectIdJson(const QJsonValue& value, harken::studio::types::ObjectId* id)
 {
     if (!value.isString()) return false;
-    return harkenstudio::ParseObjectId(value.toString().toStdString(), id);
+    return harken::studio::types::ParseObjectId(value.toString().toStdString(), id);
 }
 
-inline harkenstudio::ObjectId createObjectId()
+inline harken::studio::types::ObjectId createObjectId()
 {
     return runtimeObjectId(QUuid::createUuid());
 }
 
 }
 
-namespace harkenstudio {
+namespace harken::studio::types {
 
 inline size_t qHash(ObjectId id, size_t seed = 0) noexcept
 {
@@ -55,9 +55,9 @@ inline size_t qHash(ObjectId id, size_t seed = 0) noexcept
 
 inline QDebug operator<<(QDebug debug, ObjectId id)
 {
-    return debug << VNX::objectIdString(id);
+    return debug << harken::studio::objectIdString(id);
 }
 
 }
 
-Q_DECLARE_METATYPE(harkenstudio::ObjectId)
+Q_DECLARE_METATYPE(harken::studio::types::ObjectId)

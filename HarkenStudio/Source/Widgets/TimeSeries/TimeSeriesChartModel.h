@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class TimeSeriesStateKind
 {
@@ -125,4 +125,4 @@ std::vector<TimeSeriesEnvelopeColumn> buildTimeSeriesEnvelope(
     std::int64_t windowEnd,
     int logicalWidth);
 
-} // namespace VNX
+} // namespace harken::studio

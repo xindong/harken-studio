@@ -9,7 +9,7 @@
 #include <new>
 #include <QStringConverter>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -78,7 +78,7 @@ MonitorResult readPackedHeader(const uint8_t* p, MonitorRecordHeader* out)
     out->programSemanticFingerprint = readU64(p + o); o += 8;
     out->runtimeLineageFingerprint = readU64(p + o); o += 8;
     out->optionalSymbolFingerprint = readU64(p + o); o += 8;
-    out->stableId = harkenstudio::ObjectIdFromBytes(std::span<const uint8_t, 16>(p + o, 16)); o += 16;
+    out->stableId = harken::studio::types::ObjectIdFromBytes(std::span<const uint8_t, 16>(p + o, 16)); o += 16;
     out->instanceHandle = readU64(p + o); o += 8;
     out->instanceGeneration = readU64(p + o); o += 8;
     out->actionInstanceHandle = readU64(p + o); o += 8;
@@ -91,7 +91,7 @@ MonitorResult readPackedHeader(const uint8_t* p, MonitorRecordHeader* out)
     out->telemetry.structSize = sizeof(out->telemetry);
     out->telemetry.reserved0 = readU32(p + o); o += 4;
     out->telemetry.arrangingInstance = readU64(p + o); o += 8;
-    out->telemetry.clipId = harkenstudio::ObjectIdFromBytes(std::span<const uint8_t, 16>(p + o, 16)); o += 16;
+    out->telemetry.clipId = harken::studio::types::ObjectIdFromBytes(std::span<const uint8_t, 16>(p + o, 16)); o += 16;
     out->telemetry.loopIteration = readU32(p + o); o += 4;
     out->telemetry.occurrenceOrdinal = readU32(p + o); o += 4;
     out->telemetry.logicCommitSequence = readU64(p + o); o += 8;
@@ -452,8 +452,8 @@ bool decodeExecutionFact(const MonitorDecodedRecord& record, MonitorExecutionFac
     size_t offset = 0;
     const auto* bytes = record.payload.data();
     const auto visit = [&]<class T>(T& value) {
-        if constexpr (std::is_same_v<T, harkenstudio::ObjectId>) {
-            value = harkenstudio::ObjectIdFromBytes(std::span<const uint8_t, 16>(bytes + offset, 16));
+        if constexpr (std::is_same_v<T, harken::studio::types::ObjectId>) {
+            value = harken::studio::types::ObjectIdFromBytes(std::span<const uint8_t, 16>(bytes + offset, 16));
             offset += 16;
         } else {
             std::make_unsigned_t<T> bits = 0;
@@ -502,7 +502,7 @@ bool decodeExecutionFact(const MonitorDecodedRecord& record, MonitorExecutionFac
         if (fact.subjectNamespace != kMonitorSubjectAction || fields.stepOpcode > 4 || fields.stepTargetKind > 6 ||
             fields.reservedStep != 0 || fields.stepExecutionOrdinal == UINT32_MAX) return false;
     } else if (fields.stepIndex || fields.stepExecutionOrdinal || fields.stepOpcode || fields.reservedStep ||
-        fields.stepTargetKind || !harkenstudio::IsNull(fields.stepTargetId)) return false;
+        fields.stepTargetKind || !harken::studio::types::IsNull(fields.stepTargetId)) return false;
     if (variable) {
         if (fact.contentKind != kMonitorContentVariable || fields.variableScope > 1 || fields.variableOutcome > 7 ||
             (fields.variableOutcome == 0 && (!monitorFactHas(fact, kMonitorFactFieldResult) || fact.result == kOk))) return false;
@@ -617,4 +617,4 @@ bool decodeHostObjectSymbol(const MonitorDecodedRecord& record, MonitorHostObjec
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

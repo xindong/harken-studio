@@ -7,7 +7,7 @@
 #include <QJsonObject>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 namespace BindingEditing {
 
 namespace {
@@ -17,7 +17,7 @@ bool mintMissingIds(std::vector<ParameterBindingDef>* entries)
     if (!entries) return false;
     ProjectData* project = ProjectManager::instance().currentProject();
     for (ParameterBindingDef& binding : *entries) {
-        if (!binding.typed || !harkenstudio::IsNull(binding.runtimeId()))
+        if (!binding.typed || !harken::studio::types::IsNull(binding.runtimeId()))
             continue;
         if (!project) return false;
         binding.guid = QUuid::createUuid();
@@ -82,7 +82,7 @@ QJsonObject upsertArgs(const ProjectItem* item, const ParameterBindingDef& bindi
     return args;
 }
 
-QJsonObject removeArgs(const ProjectItem* item, harkenstudio::ObjectId runtimeStableId,
+QJsonObject removeArgs(const ProjectItem* item, harken::studio::types::ObjectId runtimeStableId,
                        const QString& text)
 {
     QJsonObject args = hostArgs(item, text);
@@ -170,7 +170,7 @@ bool upsert(ProjectItem* item, ParameterBindingDef binding,
 {
     auto* mix = ledgerHost(item, binding.address);
     if (!mix) return false;
-    if (harkenstudio::IsNull(binding.runtimeId())) {
+    if (harken::studio::types::IsNull(binding.runtimeId())) {
         ProjectData* project = ProjectManager::instance().currentProject();
         if (!project) return false;
         binding.guid = QUuid::createUuid();
@@ -183,7 +183,7 @@ bool upsert(ProjectItem* item, ParameterBindingDef binding,
     return apply(item, std::move(checked), address, originator);
 }
 
-bool remove(ProjectItem* item, harkenstudio::ObjectId runtimeStableId,
+bool remove(ProjectItem* item, harken::studio::types::ObjectId runtimeStableId,
             const QObject* originator)
 {
     auto* mix = ledgerHost(item, hostClassOf(item));

@@ -27,7 +27,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 struct EffectEditorPanel::Selection
 {

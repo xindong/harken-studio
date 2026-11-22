@@ -9,7 +9,7 @@
 
 #include <QSlider>
 
-namespace VNX {
+namespace harken::studio {
 
 RehearsalSlider::RehearsalSlider(QWidget* parent)
     : ParameterSlider(QString(), parent)

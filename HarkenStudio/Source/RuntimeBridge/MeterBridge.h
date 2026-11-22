@@ -5,12 +5,12 @@
 #include <span>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 enum class MeterMeasurement { Rms, Spectrum, LufsMomentary };
 
 struct MeterCaptureRequest {
-    harkenstudio::ObjectId bus;
+    harken::studio::types::ObjectId bus;
     MeterMeasurement measurement = MeterMeasurement::Spectrum;
     uint64_t tapId = 0;
 };
@@ -28,8 +28,8 @@ struct MeterMeasurementFrame {
 };
 
 int32_t applyMeterCapture(uint64_t session, uint64_t lease, std::span<const MeterCaptureRequest> requests,
-                         VNX::Monitor::MonitorEffectiveCapturePlan& accepted);
-bool decodeMeterMeasurement(const VNX::Monitor::MonitorRecordHeader& header,
+                         harken::studio::Monitor::MonitorEffectiveCapturePlan& accepted);
+bool decodeMeterMeasurement(const harken::studio::Monitor::MonitorRecordHeader& header,
                             std::span<const uint8_t> payload,
                             MeterMeasurementFrame& frame);
 

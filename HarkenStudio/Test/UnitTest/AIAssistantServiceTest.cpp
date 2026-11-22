@@ -8,7 +8,7 @@
 
 #include <QCoreApplication>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

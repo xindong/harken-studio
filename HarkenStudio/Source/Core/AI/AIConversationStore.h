@@ -3,7 +3,7 @@
 #include <QJsonArray>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 struct AIConversationLimits
 {

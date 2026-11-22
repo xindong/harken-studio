@@ -19,7 +19,7 @@
 
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectUpgradeManager::ProjectUpgradeManager(MigrationManager* migrationManager)
     : migrationManager_(migrationManager ? migrationManager : &MigrationManager::instance())

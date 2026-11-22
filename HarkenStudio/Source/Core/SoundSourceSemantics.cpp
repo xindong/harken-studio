@@ -16,7 +16,7 @@
 #include <limits>
 #include <tuple>
 
-namespace VNX::SoundSourceSemantics {
+namespace harken::studio::SoundSourceSemantics {
 
 namespace {
 
@@ -521,7 +521,7 @@ void applyFadeEnvelope(std::span<float> samples, uint32_t channels,
         first = std::max(first, startFrame);
         last = std::min(last, endFrame);
         if (first >= last) return;
-        harkenstudiobuild::Curve curve;
+        harken::studio::build::Curve curve;
         curve.pointCount = 2;
         for (int i = 0; i < 2; ++i)
             curve.points[i] = {fade.curve[i].x, fade.curve[i].value};

@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 MixingChildDef MixingChildDef::unity(const QUuid& target, float minimum, float maximum)
 {

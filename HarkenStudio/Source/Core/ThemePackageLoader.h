@@ -11,7 +11,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ThemePackageLoadLimits
 {

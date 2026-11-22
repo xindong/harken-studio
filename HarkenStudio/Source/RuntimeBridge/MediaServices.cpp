@@ -2,7 +2,7 @@
 
 #include <atomic>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 namespace {
 
 std::shared_ptr<MediaServices>& installedServices()

@@ -6,7 +6,7 @@
 #include "Widgets/Inspector/LayerInspectorSchema.h"
 #include "Widgets/Inspector/InspectorCustomization.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void InspectorPanelPrivate::setupLayerPage()
 {

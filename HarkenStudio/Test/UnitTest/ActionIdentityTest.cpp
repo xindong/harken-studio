@@ -14,7 +14,7 @@
 
 #include <QTemporaryDir>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 
@@ -69,15 +69,15 @@ TEST_F(ActionIdentityTest, ActionDuplicateStableIdsRefuse)
     ProjectItem* second = createAction(QStringLiteral("Play_Two"));
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
-    const harkenstudio::ObjectId firstId = first->runtimeId();
-    const harkenstudio::ObjectId secondId = second->runtimeId();
+    const harken::studio::types::ObjectId firstId = first->runtimeId();
+    const harken::studio::types::ObjectId secondId = second->runtimeId();
     ASSERT_NE(firstId, secondId);
-    second->guid = VNX::authoringUuid(harkentest::StudioObjectId(firstId));
+    second->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(firstId));
     QString error;
     EXPECT_FALSE(validateProjectObjectIdentities(*manager.currentProject(), &error));
     EXPECT_EQ(first->runtimeId(), firstId);
     EXPECT_EQ(second->runtimeId(), firstId);
-    second->guid = VNX::authoringUuid(harkentest::StudioObjectId(secondId));
+    second->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(secondId));
 }
 
 TEST_F(ActionIdentityTest, MissingPublishedActionIdRefuses)
@@ -85,13 +85,13 @@ TEST_F(ActionIdentityTest, MissingPublishedActionIdRefuses)
     auto& manager = ProjectManager::instance();
     ProjectItem* action = createAction(QStringLiteral("Play_Published"));
     ASSERT_NE(action, nullptr);
-    const harkenstudio::ObjectId publishedId = action->runtimeId();
-    ASSERT_NE(publishedId, harkenstudio::ObjectId{});
-    action->guid = VNX::authoringUuid(harkentest::StudioObjectId(0));
+    const harken::studio::types::ObjectId publishedId = action->runtimeId();
+    ASSERT_NE(publishedId, harken::studio::types::ObjectId{});
+    action->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(0));
     QString error;
     EXPECT_FALSE(validateProjectObjectIdentities(*manager.currentProject(), &error));
-    EXPECT_EQ(action->runtimeId(), harkenstudio::ObjectId{});
-    action->guid = VNX::authoringUuid(harkentest::StudioObjectId(publishedId));
+    EXPECT_EQ(action->runtimeId(), harken::studio::types::ObjectId{});
+    action->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(publishedId));
 }
 
 TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)

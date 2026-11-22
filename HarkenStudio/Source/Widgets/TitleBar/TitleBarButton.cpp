@@ -9,7 +9,7 @@
 #include <QStyle>
 #include <QStyleOptionButton>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -4,7 +4,7 @@
 #include <atomic>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectPlatformActivity : public QObject
 {

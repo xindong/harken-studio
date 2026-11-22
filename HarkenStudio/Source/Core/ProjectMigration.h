@@ -9,7 +9,7 @@
 #include <functional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectMigrationWorkspace
 {

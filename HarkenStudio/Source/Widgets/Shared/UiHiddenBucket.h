@@ -3,7 +3,7 @@
 
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 inline bool isUiHiddenBucket(const QString& folder)
 {

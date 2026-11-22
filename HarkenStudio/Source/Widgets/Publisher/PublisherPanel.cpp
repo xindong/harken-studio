@@ -61,7 +61,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -112,7 +112,7 @@ QString treeItemStateKey(const QTreeWidgetItem* item)
                 + QLatin1Char('|') + item->data(0, kLanguageRole).toString();
         case NodeKind::Action:
             return QStringLiteral("s:")
-                + objectIdString(item->data(0, kStableIdRole).value<harkenstudio::ObjectId>())
+                + objectIdString(item->data(0, kStableIdRole).value<harken::studio::types::ObjectId>())
                 + QLatin1Char('|') + item->data(0, kLanguageRole).toString();
         default:
             break;
@@ -804,7 +804,7 @@ void PublisherPanel::populateProjectPackTable()
         return;
     }
 
-    const QString ext = HarkenEditor::Bridge::packArtifactExtension();
+    const QString ext = harken::studio::bridge::packArtifactExtension();
     const auto& context = PlatformContextService::instance().context();
     const auto viewScope = currentWorldPlatformScope(context);
     const QStringList viewPlatforms = viewScope
@@ -1046,7 +1046,7 @@ void PublisherPanel::updateExportButton()
         for (QTreeWidgetItemIterator it(packTree_); *it && !partial; ++it) {
             const auto* item = *it;
             if (nodeKind(item) != NodeKind::Action) continue;
-            const auto id = item->data(0, kStableIdRole).value<harkenstudio::ObjectId>();
+            const auto id = item->data(0, kStableIdRole).value<harken::studio::types::ObjectId>();
             const auto language = item->data(0, kLanguageRole).toString();
             partial = std::any_of(platforms.begin(), platforms.end(), [&](const auto& platform) {
                 return !selection.includesActionPack(id, platform, language);
@@ -1120,13 +1120,13 @@ void PublisherPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, b
     if (!project || editPlatforms.isEmpty())
         return;
 
-    QSet<QPair<harkenstudio::ObjectId, QString>> targets;
+    QSet<QPair<harken::studio::types::ObjectId, QString>> targets;
     {
         const QScopedValueRollback guard(packTreeUpdating_, true);
         const auto collect = [&](auto&& self, QTreeWidgetItem* item) -> void {
             if (nodeKind(item) == NodeKind::Action) {
                 if (!item->flags().testFlag(Qt::ItemIsUserCheckable)) return;
-                targets.insert(qMakePair(item->data(0, kStableIdRole).value<harkenstudio::ObjectId>(),
+                targets.insert(qMakePair(item->data(0, kStableIdRole).value<harken::studio::types::ObjectId>(),
                                          item->data(0, kLanguageRole).toString()));
                 item->setCheckState(kColName, include ? Qt::Checked : Qt::Unchecked);
                 item->setData(kColName, TableTextRole,

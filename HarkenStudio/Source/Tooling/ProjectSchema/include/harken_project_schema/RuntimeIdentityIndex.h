@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 struct RuntimeIdentityIndexBuildRowV1 {
     std::uint64_t sourceHandle = 0;
@@ -67,6 +67,6 @@ struct RuntimeIdentityIndexBuildOutcomeV1 {
 RuntimeIdentityIndexBuildOutcomeV1 BuildRuntimeIdentityIndexV1(
     const std::vector<RuntimeIdentityIndexBuildRowV1>& rows);
 
-} // namespace harkenprojectschema
+} // namespace harken::studio::project_schema
 
 #endif // HARKEN_PROJECT_SCHEMA_RUNTIME_IDENTITY_INDEX_H

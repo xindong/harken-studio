@@ -9,7 +9,7 @@
 
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 class VAudio : public ReflectedComponent<VAudio>
 {
@@ -68,9 +68,9 @@ inline const PropertySchema& VAudio::schema()
               { .text="Infinite", .value=0 },
           },
           .aliases={"loopcount"},
-          .get=[](const VNX::IComponent* c) { return QVariant::fromValue(
+          .get=[](const harken::studio::IComponent* c) { return QVariant::fromValue(
               static_cast<qulonglong>(static_cast<const VAudio*>(c)->loopCount)); },
-          .set=[](VNX::IComponent* c, const QVariant& value) {
+          .set=[](harken::studio::IComponent* c, const QVariant& value) {
               bool ok = false;
               const qulonglong raw = value.toULongLong(&ok);
               if (!ok || raw > std::numeric_limits<uint32_t>::max()) return false;
@@ -85,7 +85,7 @@ inline const PropertySchema& VAudio::schema()
         { .field="priority", .jsonKey="Priority", .type=PropType::Int, .label="Priority",
           .section=PropertySection::PlaybackPriority, .min=0.0, .max=100.0, .def=50.0,
           .get=VNX_PROP_GETI(VAudio, priority), .set=VNX_PROP_SET_U8(VAudio, priority),
-          .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VAudio*>(c)->priority != 50; } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return static_cast<const VAudio*>(c)->priority != 50; } },
 
         { .field="overrideBits", .type=PropType::Int, .label="Override Bits", .section=PropertySection::Advanced,
           .flags={.serialize=false, .settableByName=false},

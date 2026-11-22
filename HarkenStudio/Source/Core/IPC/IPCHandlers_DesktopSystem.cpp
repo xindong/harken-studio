@@ -11,9 +11,8 @@
 #include <QThread>
 
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerDesktopSystemHandlers()
 {
@@ -56,7 +55,7 @@ void IPCServer::registerDesktopSystemHandlers()
         const auto target = remote->target();
         const auto snapshot = remote->snapshot();
         return successResponse(QJsonObject{
-            {"connected", remote->state() == Bridge::RemoteConnectionState::Connected},
+            {"connected", remote->state() == bridge::RemoteConnectionState::Connected},
             {"status", remote->statusText()}, {"application", target.application},
             {"address", target.address}, {"port", target.port},
             {"instance_id", target.instanceId}, {"engine_version", target.engineVersion},

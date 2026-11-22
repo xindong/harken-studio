@@ -9,7 +9,7 @@
 #include <cstring>
 #include <limits>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline constexpr std::uint64_t kMediaRevisionFnv1a64OffsetBasis = HK_PACK_FNV1A64_OFFSET_BASIS;
 inline constexpr std::uint64_t kMediaRevisionFnv1a64Prime = HK_PACK_FNV1A64_PRIME;
@@ -57,7 +57,7 @@ public:
         return hkPackFingerprintFinish(m_hash);
     }
 
-    void AddObjectId(harkenstudio::ObjectId value) noexcept {
+    void AddObjectId(harken::studio::types::ObjectId value) noexcept {
         const auto bytes = ObjectIdBytes(value);
         AddBytes(bytes.data(), bytes.size());
     }
@@ -156,6 +156,6 @@ inline bool ComputeMediaStreamContentRevisionV1(
     return true;
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_MEDIA_CONTENT_REVISION_H

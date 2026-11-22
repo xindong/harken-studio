@@ -1,7 +1,7 @@
 #include "MonitorRemoteStatus.h"
 #include "Monitor/MonitorTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -168,4 +168,4 @@ std::string recordDeniedReason(const MonitorRemoteStatusState& state)
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

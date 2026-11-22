@@ -2,18 +2,18 @@
 
 #include <memory>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 struct CompileTargetProfileV1;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 
 class CompileTargetProfileCatalog final
 {
 public:
-    static std::shared_ptr<const harkenprojectschema::CompileTargetProfileV1>
+    static std::shared_ptr<const harken::studio::project_schema::CompileTargetProfileV1>
     resolve(const ProjectData& project) noexcept;
 };
 

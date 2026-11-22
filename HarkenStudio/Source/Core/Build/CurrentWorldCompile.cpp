@@ -12,12 +12,12 @@
 #include <algorithm>
 #include <cmath>
 
-namespace HarkenEditor::Build {
+namespace harken::studio::build {
 
 CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
     CurrentWorldSyncRequestPtr replacement,
     const std::vector<CurrentWorldScalarUpdate>& updates,
-    Bridge::CurrentWorldSyncToken token)
+    bridge::CurrentWorldSyncToken token)
 {
     if (replacement) {
         request_ = std::move(replacement);
@@ -31,10 +31,10 @@ CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
     auto candidate = std::make_shared<CurrentWorldSyncRequest>(*request_);
     if (candidate->busResult
         && candidate->busResult->projectGeneration != token.authoringRevision) {
-        auto buses = std::make_shared<harkenbuscompiler::CompiledBusResultV1>(
+        auto buses = std::make_shared<harken::studio::bus_compiler::CompiledBusResultV1>(
             *candidate->busResult);
         buses->projectGeneration = token.authoringRevision;
-        buses->deterministicBytes = harkenbuscompiler::SerializeCompiledBusResultV1(*buses);
+        buses->deterministicBytes = harken::studio::bus_compiler::SerializeCompiledBusResultV1(*buses);
         candidate->busResult = std::move(buses);
     }
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
@@ -64,7 +64,7 @@ CurrentWorldSyncRequestPtr CurrentWorldRequestCache::update(
     return candidate;
 }
 
-void CurrentWorldRequestCache::acknowledgePublication(Bridge::CurrentWorldSyncToken token)
+void CurrentWorldRequestCache::acknowledgePublication(bridge::CurrentWorldSyncToken token)
 {
     if (!request_ || !(token == token_) || !request_->soundPreparation)
         return;
@@ -72,7 +72,7 @@ void CurrentWorldRequestCache::acknowledgePublication(Bridge::CurrentWorldSyncTo
     if (std::none_of(current.sounds.begin(), current.sounds.end(),
                      [](const auto& sound) { return !sound.samples.empty(); }))
         return;
-    auto preparation = std::make_shared<Bridge::CurrentWorldSoundPreparation>();
+    auto preparation = std::make_shared<bridge::CurrentWorldSoundPreparation>();
     preparation->sources = current.sources;
     preparation->contentRevisions = current.contentRevisions;
     preparation->sounds.reserve(current.sounds.size());
@@ -93,7 +93,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
     result.compileTargetProfile = request.compileTargetProfile;
     result.busResult = request.busResult;
     result.compileTargetProfileFingerprint = request.compileTargetProfile
-        ? harkenprojectschema::compileTargetProfileFingerprintV1(
+        ? harken::studio::project_schema::compileTargetProfileFingerprintV1(
               *request.compileTargetProfile)
         : 0;
     if (!result.identityIndex || !result.compileTargetProfile
@@ -112,7 +112,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
             }
         }
     }
-    const auto frontEnd = harkenprojectschema::CompileFrontEnd(request.project);
+    const auto frontEnd = harken::studio::project_schema::CompileFrontEnd(request.project);
     if (!frontEnd.ok() || !frontEnd.project)
         return result;
 
@@ -123,7 +123,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
             row.stableId);
         if (suppliedRevision != request.soundContentRevisions.end()) {
             if (suppliedRevision->second == 0) {
-                result.status = Bridge::CurrentWorldSyncStatus::MediaUnavailable;
+                result.status = bridge::CurrentWorldSyncStatus::MediaUnavailable;
                 result.relatedStableId = row.stableId;
                 return result;
             }
@@ -131,7 +131,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
             continue;
         }
         if (prepareForInstall) {
-            result.status = Bridge::CurrentWorldSyncStatus::MediaUnavailable;
+            result.status = bridge::CurrentWorldSyncStatus::MediaUnavailable;
             result.relatedStableId = row.stableId;
             return result;
         }
@@ -141,22 +141,22 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
                 return candidate.stableId == row.stableId;
             });
         if (source == request.soundSources.end() || source->sourceId == 0) {
-            result.status = Bridge::CurrentWorldSyncStatus::MediaUnavailable;
+            result.status = bridge::CurrentWorldSyncStatus::MediaUnavailable;
             result.relatedStableId = row.stableId;
             return result;
         }
-        const QString path = Bridge::mediaRegistryFindPath(source->sourceId);
+        const QString path = bridge::mediaRegistryFindPath(source->sourceId);
         std::vector<float> interleaved;
         int channelCount = 0;
         int sampleRate = 0;
         if (path.isEmpty()
-            || !Bridge::decodeAudioFileInterleaved(path, interleaved, channelCount,
+            || !bridge::decodeAudioFileInterleaved(path, interleaved, channelCount,
                                            sampleRate)
             || channelCount <= 0 || sampleRate <= 0
             || interleaved.empty()
             || interleaved.size() % static_cast<std::size_t>(channelCount)
                 != 0) {
-            result.status = Bridge::CurrentWorldSyncStatus::MediaUnavailable;
+            result.status = bridge::CurrentWorldSyncStatus::MediaUnavailable;
             result.relatedStableId = row.stableId;
             return result;
         }
@@ -168,12 +168,12 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
             channels[static_cast<std::size_t>(channel)] =
                 interleaved.data() + channel;
         }
-        if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
+        if (!harken::studio::build::ComputeMediaPcmContentRevisionV1(
                 static_cast<std::uint32_t>(sampleRate),
                 static_cast<std::uint32_t>(channelCount), frameCount,
                 channels.data(), static_cast<std::uint32_t>(channelCount),
                 &row.contentRevision)) {
-            result.status = Bridge::CurrentWorldSyncStatus::MediaUnavailable;
+            result.status = bridge::CurrentWorldSyncStatus::MediaUnavailable;
             result.relatedStableId = row.stableId;
             return result;
         }
@@ -186,47 +186,47 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
         request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders, request.duckingSends, request.includePreviewDucking);
     if (!compiled.ok() || !compiled.world) {
-        result.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+        result.status = bridge::CurrentWorldSyncStatus::CompileFailed;
         result.relatedStableId = compiled.relatedStableId;
         return result;
     }
-    result.status = Bridge::CurrentWorldSyncStatus::Ok;
+    result.status = bridge::CurrentWorldSyncStatus::Ok;
     result.world = std::move(compiled.world);
     if (prepareForInstall) {
-        result.projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
+        result.projection = harken::studio::bus_compiler::BuildPublishedBusProjectionV1(
             *request.busResult,
-            harkenbuscompiler::BusPublicationCapabilityVintageV1::
+            harken::studio::bus_compiler::BusPublicationCapabilityVintageV1::
                 TopologyVolumeSendAndEffectsNeutralOtherProperties);
-        if (!harkenstudiobuild::EncodeCurrentWorldPreviewBody(result.world->View(), result.body)) {
-            result.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+        if (!harken::studio::build::EncodeCurrentWorldPreviewBody(result.world->View(), result.body)) {
+            result.status = bridge::CurrentWorldSyncStatus::CompileFailed;
             result.world.reset();
         }
     }
     return result;
 }
 
-Bridge::CurrentWorldArtifactResult makeCurrentWorldArtifact(
+bridge::CurrentWorldArtifactResult makeCurrentWorldArtifact(
     const CurrentWorldSyncRequest& request, CurrentWorldCompileResult compiled)
 {
-    Bridge::CurrentWorldArtifactResult result;
+    bridge::CurrentWorldArtifactResult result;
     result.status = compiled.status;
     result.relatedStableId = compiled.relatedStableId;
     if (!compiled.ok())
         return result;
     if (!request.busResult) {
-        result.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+        result.status = bridge::CurrentWorldSyncStatus::CompileFailed;
         return result;
     }
     auto& artifact = result.artifact;
     auto projection = std::move(compiled.projection);
     artifact.body = std::move(compiled.body);
     if (artifact.body.empty()) {
-        projection = harkenbuscompiler::BuildPublishedBusProjectionV1(
+        projection = harken::studio::bus_compiler::BuildPublishedBusProjectionV1(
             *request.busResult,
-            harkenbuscompiler::BusPublicationCapabilityVintageV1::
+            harken::studio::bus_compiler::BusPublicationCapabilityVintageV1::
                 TopologyVolumeSendAndEffectsNeutralOtherProperties);
-        if (!harkenstudiobuild::EncodeCurrentWorldPreviewBody(compiled.world->View(), artifact.body)) {
-            result.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+        if (!harken::studio::build::EncodeCurrentWorldPreviewBody(compiled.world->View(), artifact.body)) {
+            result.status = bridge::CurrentWorldSyncStatus::CompileFailed;
             return result;
         }
     }
@@ -242,7 +242,7 @@ Bridge::CurrentWorldArtifactResult makeCurrentWorldArtifact(
             [&](const auto& candidate) { return candidate.effectId == effect.effectId; });
         artifact.effects.push_back({effect.busId, effect.effectId,
             compiledEffect == request.busResult->effects.end()
-                ? harkenstudio::ObjectId{} : compiledEffect->definitionGuid,
+                ? harken::studio::types::ObjectId{} : compiledEffect->definitionGuid,
             effect.slot, effect.effectType, effect.descriptorVintage, effect.flags,
             effect.parameterFirst, effect.parameterCount});
     }
@@ -251,11 +251,11 @@ Bridge::CurrentWorldArtifactResult makeCurrentWorldArtifact(
     artifact.voiceEffects = request.previewEffects;
     artifact.publishedBusFingerprint = projection.fingerprint;
     artifact.compileTargetProfileFingerprint = request.compileTargetProfile
-        ? harkenprojectschema::compileTargetProfileFingerprintV1(*request.compileTargetProfile)
+        ? harken::studio::project_schema::compileTargetProfileFingerprintV1(*request.compileTargetProfile)
         : 0;
     if (projection.compileTargetProfile) {
         const auto& profile = *projection.compileTargetProfile;
-        artifact.profile = Bridge::CurrentWorldArtifact::Profile{profile.vintage, profile.sampleRate,
+        artifact.profile = bridge::CurrentWorldArtifact::Profile{profile.vintage, profile.sampleRate,
             profile.mixLayout, profile.deviceLayout, profile.capabilityMask};
     }
     artifact.ownerBaseRevision = request.ownerBaseRevision;
@@ -263,13 +263,13 @@ Bridge::CurrentWorldArtifactResult makeCurrentWorldArtifact(
     return result;
 }
 
-Bridge::CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
-                                        Bridge::CurrentWorldSyncToken token)
+bridge::CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
+                                        bridge::CurrentWorldSyncToken token)
 {
     if (!request) {
-        Bridge::CurrentWorldSyncResult result;
+        bridge::CurrentWorldSyncResult result;
         result.token = token;
-        result.status = Bridge::CurrentWorldSyncStatus::InvalidProject;
+        result.status = bridge::CurrentWorldSyncStatus::InvalidProject;
         return result;
     }
     return submitCurrentWorld(token, [&request] {
@@ -277,12 +277,12 @@ Bridge::CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr reque
     });
 }
 
-Bridge::CurrentWorldSyncResult installCompiledCurrentWorld(
+bridge::CurrentWorldSyncResult installCompiledCurrentWorld(
     CurrentWorldSyncRequestPtr request, CurrentWorldCompileResult compiled,
-    Bridge::CurrentWorldSyncToken token)
+    bridge::CurrentWorldSyncToken token)
 {
     if (!request) {
-        Bridge::CurrentWorldSyncResult result;
+        bridge::CurrentWorldSyncResult result;
         result.token = token;
         result.status = compiled.status;
         result.relatedStableId = compiled.relatedStableId;
@@ -291,20 +291,20 @@ Bridge::CurrentWorldSyncResult installCompiledCurrentWorld(
     return submitCompiledCurrentWorld(makeCurrentWorldArtifact(*request, std::move(compiled)), token);
 }
 
-Bridge::CurrentWorldSyncResult clearCurrentWorld(Bridge::CurrentWorldSyncToken token)
+bridge::CurrentWorldSyncResult clearCurrentWorld(bridge::CurrentWorldSyncToken token)
 {
     return closeCurrentWorld(token, [] {
         CurrentWorldSyncRequest request;
-        request.busResult = std::make_shared<const harkenbuscompiler::CompiledBusResultV1>();
+        request.busResult = std::make_shared<const harken::studio::bus_compiler::CompiledBusResultV1>();
         CurrentWorldCompileResult compiled;
         auto world = harkencurrentworldcompiler::CompileCurrentWorldV1(
-            harkenprojectschema::CanonicalProject{}, {}, {}, {});
+            harken::studio::project_schema::CanonicalProject{}, {}, {}, {});
         if (!world.ok() || !world.world) {
-            Bridge::CurrentWorldArtifactResult failed;
-            failed.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+            bridge::CurrentWorldArtifactResult failed;
+            failed.status = bridge::CurrentWorldSyncStatus::CompileFailed;
             return failed;
         }
-        compiled.status = Bridge::CurrentWorldSyncStatus::Ok;
+        compiled.status = bridge::CurrentWorldSyncStatus::Ok;
         compiled.world = std::move(world.world);
         return makeCurrentWorldArtifact(request, std::move(compiled));
     });

@@ -24,18 +24,18 @@ int main(int argc, char* argv[])
     const QStringList arguments = app->arguments();
     if (arguments.size() < 2)
         return 2;
-    const auto result = VNX::ProjectInstance::acquire(arguments.at(1), denyActivation
-        ? VNX::ProjectInstance::ActivationPolicy::Deny : VNX::ProjectInstance::ActivationPolicy::Allow);
+    const auto result = harken::studio::ProjectInstance::acquire(arguments.at(1), denyActivation
+        ? harken::studio::ProjectInstance::ActivationPolicy::Deny : harken::studio::ProjectInstance::ActivationPolicy::Allow);
     QTextStream output(stdout);
-    if (result.status == VNX::ProjectInstance::Status::Forwarded) {
+    if (result.status == harken::studio::ProjectInstance::Status::Forwarded) {
         output << "forwarded" << Qt::endl;
         return 0;
     }
-    if (result.status == VNX::ProjectInstance::Status::Failed) {
+    if (result.status == harken::studio::ProjectInstance::Status::Failed) {
         output << "failed: " << result.error << Qt::endl;
         return 1;
     }
-    QObject::connect(result.instance.get(), &VNX::ProjectInstance::activationRequested,
+    QObject::connect(result.instance.get(), &harken::studio::ProjectInstance::activationRequested,
                      app.get(), [&output]() { output << "activated" << Qt::endl; });
     output << "acquired" << Qt::endl;
     if (arguments.contains(QStringLiteral("--unresponsive")))

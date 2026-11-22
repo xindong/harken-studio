@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorRemoteFace
@@ -74,4 +74,4 @@ std::string permissionDeniedReason(uint32_t mask);
 std::string recordDeniedReason(const MonitorRemoteStatusState& state);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

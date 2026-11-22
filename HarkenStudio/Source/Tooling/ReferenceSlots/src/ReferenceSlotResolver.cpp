@@ -3,11 +3,11 @@
 namespace harkenreferenceslots {
 namespace {
 
-using AncestorFn = bool (*)(void*, harkenstudio::ObjectId, std::uint32_t,
-                            harkenstudio::ObjectId*);
+using AncestorFn = bool (*)(void*, harken::studio::types::ObjectId, std::uint32_t,
+                            harken::studio::types::ObjectId*);
 
-bool ReadSlotValue(const ReferenceSlotSource& source, harkenstudio::ObjectId objectId,
-                   ReferenceSlot slot, harkenstudio::ObjectId* outValue) {
+bool ReadSlotValue(const ReferenceSlotSource& source, harken::studio::types::ObjectId objectId,
+                   ReferenceSlot slot, harken::studio::types::ObjectId* outValue) {
     if (source.slotValue == nullptr) {
         return false;
     }
@@ -18,18 +18,18 @@ bool ReadSlotValue(const ReferenceSlotSource& source, harkenstudio::ObjectId obj
 // value. Returns false only when the chain ran past the ceiling, which the
 // caller turns into a refusal: a truncated walk cannot support the claim that
 // no nearer value existed.
-bool WalkChain(AncestorFn ancestor, void* ctx, harkenstudio::ObjectId subjectId,
+bool WalkChain(AncestorFn ancestor, void* ctx, harken::studio::types::ObjectId subjectId,
                const ReferenceSlotSource& source, ReferenceSlot slot,
                std::uint32_t depthCeiling, std::uint32_t* outWalked,
-               bool* outFound, harkenstudio::ObjectId* outObjectId,
-               std::uint32_t* outDepth, harkenstudio::ObjectId* outValue) {
+               bool* outFound, harken::studio::types::ObjectId* outObjectId,
+               std::uint32_t* outDepth, harken::studio::types::ObjectId* outValue) {
     *outWalked = 0;
     *outFound = false;
     if (ancestor == nullptr) {
         return true;
     }
     for (std::uint32_t index = 0;; ++index) {
-        harkenstudio::ObjectId objectId{};
+        harken::studio::types::ObjectId objectId{};
         if (!ancestor(ctx, subjectId, index, &objectId)) {
             return true;
         }
@@ -40,7 +40,7 @@ bool WalkChain(AncestorFn ancestor, void* ctx, harkenstudio::ObjectId subjectId,
             return false;
         }
         *outWalked = index + 1;
-        harkenstudio::ObjectId value{};
+        harken::studio::types::ObjectId value{};
         if (!*outFound && ReadSlotValue(source, objectId, slot, &value)) {
             // Nearest wins, so the search for this chain's candidate stops at
             // the first authored value. The walk itself continues so the
@@ -54,8 +54,8 @@ bool WalkChain(AncestorFn ancestor, void* ctx, harkenstudio::ObjectId subjectId,
 }
 
 void Append(ReferenceSlotResolution* out, ResolutionLevel level,
-            harkenstudio::ObjectId sourceObjectId, std::uint32_t ancestorDepth,
-            harkenstudio::ObjectId value) {
+            harken::studio::types::ObjectId sourceObjectId, std::uint32_t ancestorDepth,
+            harken::studio::types::ObjectId value) {
     ReferenceSlotCandidate candidate;
     candidate.level = level;
     candidate.sourceObjectId = sourceObjectId;
@@ -76,7 +76,7 @@ const ReferenceSlotMeta* FindReferenceSlot(ReferenceSlot slot) {
 }
 
 ReferenceSlotResolution ResolveReferenceSlot(
-    harkenstudio::ObjectId subjectId, ReferenceSlot slot,
+    harken::studio::types::ObjectId subjectId, ReferenceSlot slot,
     const ReferenceSlotSource& source, std::uint32_t depthCeiling) {
     ReferenceSlotResolution result;
     if (FindReferenceSlot(slot) == nullptr) {
@@ -87,13 +87,13 @@ ReferenceSlotResolution ResolveReferenceSlot(
     }
 
     // The object's own override, which no chain can outrank.
-    harkenstudio::ObjectId ownValue{};
+    harken::studio::types::ObjectId ownValue{};
     const bool hasOwn = ReadSlotValue(source, subjectId, slot, &ownValue);
 
     bool placementFound = false;
-    harkenstudio::ObjectId placementObject{};
+    harken::studio::types::ObjectId placementObject{};
     std::uint32_t placementDepth = 0;
-    harkenstudio::ObjectId placementValue{};
+    harken::studio::types::ObjectId placementValue{};
     if (!WalkChain(source.placementAncestor, source.ctx, subjectId, source, slot,
                    depthCeiling, &result.placementDepthWalked, &placementFound,
                    &placementObject, &placementDepth, &placementValue)) {
@@ -102,9 +102,9 @@ ReferenceSlotResolution ResolveReferenceSlot(
     }
 
     bool organizationalFound = false;
-    harkenstudio::ObjectId organizationalObject{};
+    harken::studio::types::ObjectId organizationalObject{};
     std::uint32_t organizationalDepth = 0;
-    harkenstudio::ObjectId organizationalValue{};
+    harken::studio::types::ObjectId organizationalValue{};
     if (!WalkChain(source.organizationalAncestor, source.ctx, subjectId, source,
                    slot, depthCeiling, &result.organizationalDepthWalked,
                    &organizationalFound, &organizationalObject,
@@ -113,7 +113,7 @@ ReferenceSlotResolution ResolveReferenceSlot(
         return result;
     }
 
-    harkenstudio::ObjectId defaultValue{};
+    harken::studio::types::ObjectId defaultValue{};
     const bool hasDefault =
         source.slotDefault != nullptr &&
         source.slotDefault(source.ctx, slot, &defaultValue);

@@ -7,7 +7,7 @@
 class QEvent;
 class QPropertyAnimation;
 
-namespace VNX {
+namespace harken::studio {
 
 // Horizontal header whose section reordering reflows live: the dragged section
 // floats under the cursor while the sections it crosses slide out of its way,

@@ -10,7 +10,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class RuntimeSyncCoordinator final : public QObject
 {
@@ -22,8 +22,8 @@ public:
     using RuntimeEpoch = std::uint64_t;
     using SubmissionSerial = std::uint64_t;
     using SubmitCallback = std::function<
-        HarkenEditor::Bridge::CurrentWorldSyncResult(
-            HarkenEditor::Bridge::CurrentWorldSyncToken)>;
+        harken::studio::bridge::CurrentWorldSyncResult(
+            harken::studio::bridge::CurrentWorldSyncToken)>;
 
     enum class AllocationState
     {
@@ -39,7 +39,7 @@ public:
 
     struct PropertyMutation
     {
-        harkenstudio::ObjectId stableId{};
+        harken::studio::types::ObjectId stableId{};
         std::uint8_t propertyId = 0;
     };
 
@@ -84,8 +84,8 @@ public:
         RuntimeEpoch runtimeEpoch = 0;
         std::uint64_t worldGeneration = 0;
         SubmissionSerial submissionSerial = 0;
-        HarkenEditor::Bridge::CurrentWorldSyncStatus failure =
-            HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
+        harken::studio::bridge::CurrentWorldSyncStatus failure =
+            harken::studio::bridge::CurrentWorldSyncStatus::Ok;
     };
 
     explicit RuntimeSyncCoordinator(SubmitCallback submit, QObject* parent = nullptr);
@@ -104,10 +104,10 @@ public:
     void endSubmissionBatch();
     AllocationResult markCurrentWorldMutation();
     AllocationResult markCurrentWorldPropertyMutation(
-        harkenstudio::ObjectId stableId, std::uint8_t propertyId);
+        harken::studio::types::ObjectId stableId, std::uint8_t propertyId);
     [[nodiscard]] const MutationSet& submittedMutations() const noexcept;
     [[nodiscard]] bool isCurrentSubmission(
-        HarkenEditor::Bridge::CurrentWorldSyncToken token) const noexcept;
+        harken::studio::bridge::CurrentWorldSyncToken token) const noexcept;
     void flushPendingMutationNow();
     [[nodiscard]] bool hasOutstandingSubmission() const noexcept;
     [[nodiscard]] RevisionBarrierSnapshot barrier(
@@ -115,7 +115,7 @@ public:
     [[nodiscard]] std::optional<InstalledWorldIdentity> installedWorld() const noexcept;
     [[nodiscard]] bool hasInstalledWorld() const noexcept;
     void acceptCurrentWorldSyncResult(
-        const HarkenEditor::Bridge::CurrentWorldSyncResult& result);
+        const harken::studio::bridge::CurrentWorldSyncResult& result);
 
 signals:
     void barrierChanged();
@@ -132,9 +132,9 @@ private:
     RuntimeEpoch m_runtimeEpoch = 0;
     SubmissionSerial m_submissionSerial = 0;
     RevisionBarrierState m_barrierState = RevisionBarrierState::Pending;
-    HarkenEditor::Bridge::CurrentWorldSyncStatus m_failure =
-        HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
-    std::optional<HarkenEditor::Bridge::CurrentWorldSyncToken> m_outstandingToken;
+    harken::studio::bridge::CurrentWorldSyncStatus m_failure =
+        harken::studio::bridge::CurrentWorldSyncStatus::Ok;
+    std::optional<harken::studio::bridge::CurrentWorldSyncToken> m_outstandingToken;
     std::optional<InstalledWorldIdentity> m_installedIdentity;
     std::uint32_t m_submissionBatchDepth = 0;
     bool m_flushRequested = false;

@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 struct MonitorPerformanceLiveSample
@@ -96,4 +96,4 @@ private:
 };
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

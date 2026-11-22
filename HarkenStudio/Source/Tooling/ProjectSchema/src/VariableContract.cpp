@@ -13,17 +13,17 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 constexpr char kMagic[4] = {'V', 'N', 'V', 'C'};
 constexpr std::size_t kMinimumVariableBytesV1 =
     kVariableExecutionRecordBytesV1 + 4u * sizeof(std::uint32_t) +
     sizeof(std::int32_t) + 2u * sizeof(std::uint8_t) +
-    sizeof(std::uint16_t) + sizeof(harkenstudio::ObjectId) + sizeof(std::uint32_t) +
+    sizeof(std::uint16_t) + sizeof(harken::studio::types::ObjectId) + sizeof(std::uint32_t) +
     sizeof(std::uint64_t);
 constexpr std::size_t kMinimumLabelBytesV1 =
-    sizeof(std::int32_t) + sizeof(std::uint32_t) + sizeof(harkenstudio::ObjectId);
+    sizeof(std::int32_t) + sizeof(std::uint32_t) + sizeof(harken::studio::types::ObjectId);
 
 void WriteU8(std::vector<std::uint8_t>& out, std::uint8_t value) {
     out.push_back(value);
@@ -50,8 +50,8 @@ void WriteI32(std::vector<std::uint8_t>& out, std::int32_t value) {
     WriteU32(out, static_cast<std::uint32_t>(value));
 }
 
-void WriteObjectId(std::vector<std::uint8_t>& out, harkenstudio::ObjectId value) {
-    const auto bytes = harkenstudio::ObjectIdBytes(value);
+void WriteObjectId(std::vector<std::uint8_t>& out, harken::studio::types::ObjectId value) {
+    const auto bytes = harken::studio::types::ObjectIdBytes(value);
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
@@ -122,12 +122,12 @@ std::int32_t ReadI32(Cursor& c) {
     return static_cast<std::int32_t>(ReadU32(c));
 }
 
-harkenstudio::ObjectId ReadObjectId(Cursor& c) {
+harken::studio::types::ObjectId ReadObjectId(Cursor& c) {
     if (c.Remaining() < 16) {
         c.ok = false;
         return {};
     }
-    const auto value = harkenstudio::ObjectIdFromBytes(std::span<const std::uint8_t, 16>(c.p, 16));
+    const auto value = harken::studio::types::ObjectIdFromBytes(std::span<const std::uint8_t, 16>(c.p, 16));
     c.p += 16;
     return value;
 }
@@ -155,7 +155,7 @@ bool ReadPaddedBytes(Cursor& c, std::string* out) {
     return true;
 }
 
-void AddLenBytes(harkenstudiobuild::MediaContentRevisionHasherV1& hash,
+void AddLenBytes(harken::studio::build::MediaContentRevisionHasherV1& hash,
                  const std::string& value) {
     hash.AddU32(static_cast<std::uint32_t>(value.size()));
     if (!value.empty()) {
@@ -163,11 +163,11 @@ void AddLenBytes(harkenstudiobuild::MediaContentRevisionHasherV1& hash,
     }
 }
 
-void AddU8(harkenstudiobuild::MediaContentRevisionHasherV1& hash, std::uint8_t value) {
+void AddU8(harken::studio::build::MediaContentRevisionHasherV1& hash, std::uint8_t value) {
     hash.AddBytes(&value, sizeof(value));
 }
 
-void AddU16(harkenstudiobuild::MediaContentRevisionHasherV1& hash, std::uint16_t value) {
+void AddU16(harken::studio::build::MediaContentRevisionHasherV1& hash, std::uint16_t value) {
     const std::uint8_t bytes[2] = {static_cast<std::uint8_t>(value),
                                    static_cast<std::uint8_t>(value >> 8)};
     hash.AddBytes(bytes, sizeof(bytes));
@@ -187,7 +187,7 @@ void ComputeArtifactFingerprints(
     const std::vector<VariableContractRecordV1>& variables,
     std::uint64_t* executionCatalogFingerprint,
     std::uint64_t* apiCatalogFingerprint) {
-    std::vector<harkenstudiobuild::VariableCatalogFingerprintRowV1> executionRows;
+    std::vector<harken::studio::build::VariableCatalogFingerprintRowV1> executionRows;
     std::vector<std::uint64_t> catalogRows;
     executionRows.reserve(variables.size());
     catalogRows.reserve(variables.size());
@@ -197,10 +197,10 @@ void ComputeArtifactFingerprints(
         catalogRows.push_back(record.catalogFingerprint);
     }
     *executionCatalogFingerprint =
-        harkenstudiobuild::ComputeVariableExecutionCatalogFingerprintV1(
+        harken::studio::build::ComputeVariableExecutionCatalogFingerprintV1(
             executionRows.empty() ? nullptr : executionRows.data(),
             static_cast<std::uint32_t>(executionRows.size()));
-    *apiCatalogFingerprint = harkenstudiobuild::ComputeVariableApiCatalogFingerprintV1(
+    *apiCatalogFingerprint = harken::studio::build::ComputeVariableApiCatalogFingerprintV1(
         catalogRows.empty() ? nullptr : catalogRows.data(),
         static_cast<std::uint32_t>(catalogRows.size()));
 }
@@ -232,7 +232,7 @@ bool Canonicalize(VariableContractArtifactV1 artifact,
         std::vector<std::int32_t> anchors;
         if (record.execution.kind == ControlValueKindV1::Discrete)
             CollectAnchors(record.catalog, &anchors);
-        std::set<harkenstudio::ObjectId> ids;
+        std::set<harken::studio::types::ObjectId> ids;
         std::set<std::string> names;
         std::int32_t previousAnchor = -1;
         for (const auto& label : record.catalog.labels) {
@@ -240,7 +240,7 @@ bool Canonicalize(VariableContractArtifactV1 artifact,
                 || label.anchor <= previousAnchor
                 || label.anchor < record.execution.range.minimum
                 || label.anchor > record.execution.range.maximum
-                || harkenstudio::IsNull(label.labelId) || !ids.insert(label.labelId).second
+                || harken::studio::types::IsNull(label.labelId) || !ids.insert(label.labelId).second
                 || label.name.find('\0') != std::string::npos
                 || (!label.name.empty() && !names.insert(label.name).second)) return false;
             previousAnchor = label.anchor;
@@ -248,7 +248,7 @@ bool Canonicalize(VariableContractArtifactV1 artifact,
         if (record.execution.range.minimum < 0.0f) return false;
         const std::int32_t* pointer =
             anchors.empty() ? nullptr : anchors.data();
-        if (!harkenstudiobuild::ComputeVariableExecutionFingerprintV1(
+        if (!harken::studio::build::ComputeVariableExecutionFingerprintV1(
                 record.execution.variableId,
                 static_cast<std::uint8_t>(record.execution.kind),
                 static_cast<std::uint8_t>(record.execution.scopePolicy),
@@ -339,9 +339,9 @@ bool EncodeBinary(const VariableContractArtifactV1& artifact,
         std::uint32_t minBits = 0;
         std::uint32_t maxBits = 0;
         std::uint32_t defaultBits = 0;
-        if (!harkenstudiobuild::CanonicalF32Bits(record.execution.range.minimum, &minBits) ||
-            !harkenstudiobuild::CanonicalF32Bits(record.execution.range.maximum, &maxBits) ||
-            !harkenstudiobuild::CanonicalF32Bits(record.execution.range.defaultValue,
+        if (!harken::studio::build::CanonicalF32Bits(record.execution.range.minimum, &minBits) ||
+            !harken::studio::build::CanonicalF32Bits(record.execution.range.maximum, &maxBits) ||
+            !harken::studio::build::CanonicalF32Bits(record.execution.range.defaultValue,
                                      &defaultBits)) {
             return false;
         }
@@ -398,9 +398,9 @@ bool EncodeBinary(const VariableContractArtifactV1& artifact,
 }  // namespace
 
 std::uint64_t ComputeVariableCatalogFingerprintV1(
-    harkenstudio::ObjectId variableId, const VariableCatalogBlockV1& catalog) {
-    harkenstudiobuild::MediaContentRevisionHasherV1 hash(
-        harkenstudiobuild::kVariableCatalogDomain, sizeof(harkenstudiobuild::kVariableCatalogDomain));
+    harken::studio::types::ObjectId variableId, const VariableCatalogBlockV1& catalog) {
+    harken::studio::build::MediaContentRevisionHasherV1 hash(
+        harken::studio::build::kVariableCatalogDomain, sizeof(harken::studio::build::kVariableCatalogDomain));
     hash.AddObjectId(variableId);
     AddLenBytes(hash, catalog.codeName);
     AddLenBytes(hash, catalog.displayName);
@@ -464,7 +464,7 @@ bool DecodeVariableContractArtifactV1(const std::uint8_t* bytes,
         return false;
     }
     parsed.variables.reserve(variableCount);
-    harkenstudio::ObjectId previousId{};
+    harken::studio::types::ObjectId previousId{};
     bool havePrevious = false;
     for (std::uint32_t i = 0; i < variableCount; ++i) {
         VariableContractRecordV1 record;
@@ -533,7 +533,7 @@ bool DecodeVariableContractArtifactV1(const std::uint8_t* bytes,
         const std::int32_t* pointer =
             anchors.empty() ? nullptr : anchors.data();
         std::uint64_t recomputed = 0;
-        if (!harkenstudiobuild::ComputeVariableExecutionFingerprintV1(
+        if (!harken::studio::build::ComputeVariableExecutionFingerprintV1(
                 record.execution.variableId, kind, scopePolicy, writers,
                 record.execution.range.minimum, record.execution.range.maximum,
                 record.execution.range.defaultValue, pointer,
@@ -594,9 +594,9 @@ bool EncodeVariableContractArtifactJsonV1(
         std::uint32_t minBits = 0;
         std::uint32_t maxBits = 0;
         std::uint32_t defaultBits = 0;
-        if (!harkenstudiobuild::CanonicalF32Bits(record.execution.range.minimum, &minBits) ||
-            !harkenstudiobuild::CanonicalF32Bits(record.execution.range.maximum, &maxBits) ||
-            !harkenstudiobuild::CanonicalF32Bits(record.execution.range.defaultValue,
+        if (!harken::studio::build::CanonicalF32Bits(record.execution.range.minimum, &minBits) ||
+            !harken::studio::build::CanonicalF32Bits(record.execution.range.maximum, &maxBits) ||
+            !harken::studio::build::CanonicalF32Bits(record.execution.range.defaultValue,
                                      &defaultBits)) {
             return false;
         }
@@ -604,7 +604,7 @@ bool EncodeVariableContractArtifactJsonV1(
             json.push_back(',');
         }
         AppendJsonRaw(&json, "{\"variableId\":");
-        AppendJsonString(&json, harkenstudio::ObjectIdString(record.execution.variableId));
+        AppendJsonString(&json, harken::studio::types::ObjectIdString(record.execution.variableId));
         AppendJsonRaw(&json, ",\"kind\":");
         AppendJsonU64(&json, static_cast<std::uint8_t>(record.execution.kind));
         AppendJsonRaw(&json, ",\"scopePolicy\":");
@@ -636,7 +636,7 @@ bool EncodeVariableContractArtifactJsonV1(
         AppendJsonRaw(&json, ",\"deprecated\":");
         AppendJsonU64(&json, record.catalog.deprecated01);
         AppendJsonRaw(&json, ",\"replacementId\":");
-        AppendJsonString(&json, harkenstudio::ObjectIdString(record.catalog.replacementId));
+        AppendJsonString(&json, harken::studio::types::ObjectIdString(record.catalog.replacementId));
         AppendJsonRaw(&json, ",\"labels\":[");
         for (std::size_t labelIndex = 0;
              labelIndex < record.catalog.labels.size(); ++labelIndex) {
@@ -647,7 +647,7 @@ bool EncodeVariableContractArtifactJsonV1(
             AppendJsonRaw(&json, "{\"anchor\":");
             AppendJsonI32(&json, label.anchor);
             AppendJsonRaw(&json, ",\"labelId\":");
-            AppendJsonString(&json, harkenstudio::ObjectIdString(label.labelId));
+            AppendJsonString(&json, harken::studio::types::ObjectIdString(label.labelId));
             AppendJsonRaw(&json, ",\"name\":");
             AppendJsonString(&json, label.name);
             json.push_back('}');
@@ -677,4 +677,4 @@ bool EncodeVariableContractArtifactJsonV1(
     return true;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

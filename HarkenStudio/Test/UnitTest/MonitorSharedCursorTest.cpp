@@ -7,7 +7,7 @@
 
 #include <memory>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

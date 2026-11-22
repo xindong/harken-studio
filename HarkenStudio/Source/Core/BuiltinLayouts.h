@@ -6,7 +6,7 @@
 #include <QVector>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace BuiltinLayouts {
 
 struct Entry
@@ -49,4 +49,4 @@ struct LayoutStateItem
 QVector<LayoutStateItem> describeLayoutState(QStringView currentView);
 
 } // namespace BuiltinLayouts
-} // namespace VNX
+} // namespace harken::studio

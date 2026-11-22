@@ -8,7 +8,7 @@
 class QLabel;
 class QPushButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorRecordingPanel : public QWidget
 {
@@ -51,4 +51,4 @@ private:
     Monitor::MonitorRecordingCommand lastAccepted_ = Monitor::MonitorRecordingCommand::None;
 };
 
-} // namespace VNX
+} // namespace harken::studio

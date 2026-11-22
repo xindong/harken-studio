@@ -8,7 +8,7 @@
 #include <optional>
 #include "VariableSemantics.h"
 
-namespace VNX {
+namespace harken::studio {
 
 // Session-level Variable rehearsal overrides (AuditionOverlay family): tool
 // state that never dirties the document, never enters undo, never reaches

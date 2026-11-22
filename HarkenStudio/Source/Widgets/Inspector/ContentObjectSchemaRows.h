@@ -15,13 +15,13 @@
 #include <iterator>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
 {
     PropertySchema out;
-    out.reserve(std::size(VNX::PlayablePropertyAuthoringV1::fields()));
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
+    out.reserve(std::size(harken::studio::PlayablePropertyAuthoringV1::fields()));
+    for (const auto& field : harken::studio::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isInspectorVisible(field.id))
             continue;
         const auto group = FieldGroupForProperty(

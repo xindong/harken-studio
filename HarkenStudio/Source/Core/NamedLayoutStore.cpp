@@ -11,7 +11,7 @@
 #include <QStandardPaths>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace NamedLayoutStore {
 
 namespace {

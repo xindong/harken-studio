@@ -4,7 +4,7 @@
 
 #include <QPainter>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorCursorMark::MonitorCursorMark(QWidget* parent)
     : QWidget(parent)
@@ -81,4 +81,4 @@ void MonitorCursorMark::paintEvent(QPaintEvent*)
     painter.drawText(rect().adjusted(padding, 0, -padding, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
 }
 
-} // namespace VNX
+} // namespace harken::studio

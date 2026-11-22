@@ -2,7 +2,7 @@
 
 #include "SignalPathGraph.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct SignalPathFocus
 {

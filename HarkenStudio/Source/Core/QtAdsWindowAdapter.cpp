@@ -7,7 +7,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 QtAdsWindowAdapter::QtAdsWindowAdapter(ads::CDockManager* dockManager, RevealDockFn revealDock)
     : dockManager_(dockManager)

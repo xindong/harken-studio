@@ -27,7 +27,7 @@ QList<QRgb> grayscalePalette()
 TEST(SpectrogramHistory, SnapshotSurvivesLaterAppend)
 {
     const auto palette = grayscalePalette();
-    VNX::SpectrogramHistory history(48000, 2048, 4);
+    harken::studio::SpectrogramHistory history(48000, 2048, 4);
     std::vector<float> frame(1025);
     for (float db : {-72.0f, -60.0f, -48.0f, -36.0f, -24.0f, -12.0f}) {
         std::fill(frame.begin(), frame.end(), db);
@@ -43,10 +43,10 @@ TEST(SpectrogramHistory, SnapshotSurvivesLaterAppend)
 
 TEST(SpectrogramHistory, PaletteUpdatesPreserveRgbaForEmptyAndSampledPixels)
 {
-    VNX::SpectrogramHistory history(48000, 2048, 2);
-    std::vector<float> frame(1025, VNX::MeterScale::kMinDb);
+    harken::studio::SpectrogramHistory history(48000, 2048, 2);
+    std::vector<float> frame(1025, harken::studio::MeterScale::kMinDb);
     history.append(frame);
-    std::fill(frame.begin(), frame.end(), VNX::MeterScale::kSpectrogramMaxDb);
+    std::fill(frame.begin(), frame.end(), harken::studio::MeterScale::kSpectrogramMaxDb);
     history.append(frame);
     for (int alpha : {255, 0, 64, 128, 255}) {
         SCOPED_TRACE(alpha);
@@ -62,12 +62,12 @@ TEST(SpectrogramHistory, PaletteUpdatesPreserveRgbaForEmptyAndSampledPixels)
 
 TEST(SpectrogramMeterRenderer, HistoryColorsComposeOnceOverCanvas)
 {
-    auto style = VNX::createBuiltinDarkTheme().domains.meter;
+    auto style = harken::studio::createBuiltinDarkTheme().domains.meter;
     auto& colors = style.spectrogramMeter.colors;
     colors.canvasBackground = QColor(24, 48, 72);
     colors.grid = Qt::transparent;
-    VNX::SpectrogramHistory history(48000, 2048, 4);
-    VNX::SpectrogramMeterRenderFrame frame;
+    harken::studio::SpectrogramHistory history(48000, 2048, 4);
+    harken::studio::SpectrogramMeterRenderFrame frame;
     frame.canvasBounds = QRect(0, 0, 8, 10);
     frame.plotBounds = QRect(1, 1, 6, 8);
     frame.hasPlot = true;
@@ -75,13 +75,13 @@ TEST(SpectrogramMeterRenderer, HistoryColorsComposeOnceOverCanvas)
         QImage image(frame.canvasBounds.size(), QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::transparent);
         QPainter painter(&image);
-        VNX::SpectrogramMeterRenderer::render(painter, style, frame);
+        harken::studio::SpectrogramMeterRenderer::render(painter, style, frame);
         return image;
     };
     for (int alpha : {255, 0, 64, 128, 255}) {
         SCOPED_TRACE(alpha);
         colors.emptyHistory = QColor(180, 90, 30, alpha);
-        const auto palette = VNX::MeterColorMap::colorTable(colors);
+        const auto palette = harken::studio::MeterColorMap::colorTable(colors);
         frame.waterfallImage = {};
         QImage expected(frame.canvasBounds.size(), QImage::Format_ARGB32_Premultiplied);
         expected.fill(colors.canvasBackground);
@@ -92,7 +92,7 @@ TEST(SpectrogramMeterRenderer, HistoryColorsComposeOnceOverCanvas)
         EXPECT_EQ(render(), expected);
         frame.waterfallImage = history.image(frame.plotBounds.size(), 1.0, palette);
         EXPECT_EQ(render(), expected);
-        history.append(std::vector<float>(1025, VNX::MeterScale::kMinDb));
+        history.append(std::vector<float>(1025, harken::studio::MeterScale::kMinDb));
         frame.waterfallImage = history.image(frame.plotBounds.size(), 1.0, palette);
         EXPECT_EQ(render(), expected);
     }

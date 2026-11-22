@@ -25,7 +25,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 namespace detail {
 struct SegmentIRBuilder;
@@ -149,7 +149,7 @@ struct IrOccurrence {
     bool is3DEnabled = false;
     float attenuationDistanceScaling = 1.0f;
     bool attenuationResolved = false;
-    harkenstudio::ObjectId resolvedAttenuation{};
+    harken::studio::types::ObjectId resolvedAttenuation{};
 
     // The effect chain selected for this occurrence. hasEffectChain false means no
     // object along the chain declared one, so the occurrence runs no effects and
@@ -267,6 +267,6 @@ private:
     std::uint64_t runtimeLineageFingerprint_ = 0;
 };
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_SEGMENT_IR_H

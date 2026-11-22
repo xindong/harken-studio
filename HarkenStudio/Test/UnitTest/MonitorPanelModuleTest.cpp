@@ -4,7 +4,7 @@
 
 #include <QSet>
 
-using namespace VNX;
+using namespace harken::studio;
 
 TEST(MonitorPanelModule, WorkspacePanelKeysAreUnique)
 {

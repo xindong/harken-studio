@@ -78,19 +78,19 @@ TEST_F(ProjectInstanceTest, SharedOwnersKeepLeaseUntilLastRelease)
 {
     ASSERT_TRUE(directory.isValid());
     const QString first = project(QStringLiteral("new/project.hsp"));
-    auto original = VNX::ProjectInstance::acquire(first);
-    ASSERT_EQ(original.status, VNX::ProjectInstance::Status::Acquired)
+    auto original = harken::studio::ProjectInstance::acquire(first);
+    ASSERT_EQ(original.status, harken::studio::ProjectInstance::Status::Acquired)
         << original.error.toStdString();
-    auto repeated = VNX::ProjectInstance::acquire(first);
-    ASSERT_EQ(repeated.status, VNX::ProjectInstance::Status::Acquired);
+    auto repeated = harken::studio::ProjectInstance::acquire(first);
+    ASSERT_EQ(repeated.status, harken::studio::ProjectInstance::Status::Acquired);
     EXPECT_EQ(original.instance, repeated.instance);
-    auto different = VNX::ProjectInstance::acquire(
+    auto different = harken::studio::ProjectInstance::acquire(
         project(QStringLiteral("other/project.hsp")));
-    ASSERT_EQ(different.status, VNX::ProjectInstance::Status::Acquired);
+    ASSERT_EQ(different.status, harken::studio::ProjectInstance::Status::Acquired);
     EXPECT_NE(original.instance, different.instance);
 
     int activations = 0;
-    QObject::connect(original.instance.get(), &VNX::ProjectInstance::activationRequested,
+    QObject::connect(original.instance.get(), &harken::studio::ProjectInstance::activationRequested,
                      QCoreApplication::instance(), [&activations]() { ++activations; });
     original.instance.reset();
     InstanceProcess forwarded;
@@ -184,15 +184,15 @@ TEST_F(ProjectInstanceTest, NonActivatingOwnersShareTheSameExclusiveLifetime)
     owner.start(path);
     ASSERT_TRUE(waitUntil([&]() { return owner.hasStatus(); }));
     ASSERT_EQ(owner.status(), QByteArray("acquired"));
-    const auto denied = VNX::ProjectInstance::acquire(path, VNX::ProjectInstance::ActivationPolicy::Deny);
-    EXPECT_EQ(denied.status, VNX::ProjectInstance::Status::Failed);
+    const auto denied = harken::studio::ProjectInstance::acquire(path, harken::studio::ProjectInstance::ActivationPolicy::Deny);
+    EXPECT_EQ(denied.status, harken::studio::ProjectInstance::Status::Failed);
     EXPECT_FALSE(denied.instance);
     owner.hasStatus();
     EXPECT_FALSE(owner.output.contains("activated"));
     owner.stop();
 
-    auto headless = VNX::ProjectInstance::acquire(path, VNX::ProjectInstance::ActivationPolicy::Deny);
-    ASSERT_EQ(headless.status, VNX::ProjectInstance::Status::Acquired) << headless.error.toStdString();
+    auto headless = harken::studio::ProjectInstance::acquire(path, harken::studio::ProjectInstance::ActivationPolicy::Deny);
+    ASSERT_EQ(headless.status, harken::studio::ProjectInstance::Status::Acquired) << headless.error.toStdString();
     InstanceProcess contender;
     contender.start(path, false, true);
     ASSERT_TRUE(waitUntil([&]() { return contender.hasStatus(); }));

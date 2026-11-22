@@ -9,7 +9,7 @@
 #include <QLabel>
 #include <QSignalBlocker>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -1,6 +1,6 @@
 #include "ParameterPresenterRegistry.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QString parameterPresenterIdName(ParameterPresenterId id)
 {

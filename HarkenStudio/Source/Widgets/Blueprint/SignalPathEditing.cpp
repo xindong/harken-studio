@@ -17,7 +17,7 @@
 #include <map>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 const SignalPathPortPair* port(const SignalPathGraph& graph, SignalPathEndpoint endpoint)

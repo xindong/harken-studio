@@ -4,7 +4,7 @@
 
 class QMouseEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 class DirectJumpSlider final : public QSlider
 {

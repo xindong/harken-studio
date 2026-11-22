@@ -12,7 +12,7 @@
 #include <QString>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 #if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
 

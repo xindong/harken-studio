@@ -8,7 +8,7 @@
 class QHBoxLayout;
 class QScreen;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ThemeMetrics;
 

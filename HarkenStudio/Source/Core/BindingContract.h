@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class IComponent;
 

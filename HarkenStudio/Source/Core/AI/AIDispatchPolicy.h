@@ -7,7 +7,7 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 class AIDispatchPolicy
 {

@@ -9,7 +9,7 @@
 #include <QJsonArray>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class VAction : public ReflectedComponent<VAction>
 {

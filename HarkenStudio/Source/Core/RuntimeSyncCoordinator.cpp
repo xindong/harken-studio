@@ -5,7 +5,7 @@
 #include <limits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 RuntimeSyncCoordinator::RuntimeSyncCoordinator(SubmitCallback submit, QObject* parent)
     : RuntimeSyncCoordinator(std::move(submit), InitialIdentityForTesting{}, parent)
@@ -57,11 +57,11 @@ RuntimeSyncCoordinator::markCurrentWorldMutation()
 
 RuntimeSyncCoordinator::AllocationResult
 RuntimeSyncCoordinator::markCurrentWorldPropertyMutation(
-    harkenstudio::ObjectId stableId, std::uint8_t propertyId)
+    harken::studio::types::ObjectId stableId, std::uint8_t propertyId)
 {
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     const auto property = static_cast<Property>(propertyId);
-    if (harkenstudio::IsNull(stableId)
+    if (harken::studio::types::IsNull(stableId)
         || (property != Property::Volume && property != Property::Pitch))
         return markCurrentWorldMutation();
     if (!m_pendingMutations.full
@@ -83,7 +83,7 @@ RuntimeSyncCoordinator::submittedMutations() const noexcept
 }
 
 bool RuntimeSyncCoordinator::isCurrentSubmission(
-    HarkenEditor::Bridge::CurrentWorldSyncToken token) const noexcept
+    harken::studio::bridge::CurrentWorldSyncToken token) const noexcept
 {
     return m_runtimeActive && m_outstandingToken && token == *m_outstandingToken
         && token.projectSessionId == m_projectSessionId
@@ -106,8 +106,8 @@ RuntimeSyncCoordinator::allocateMutation()
         ? RevisionBarrierState::Pending
         : RevisionBarrierState::RuntimeUnavailable;
     m_failure = m_runtimeActive
-        ? HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok
-        : HarkenEditor::Bridge::CurrentWorldSyncStatus::RuntimeUnavailable;
+        ? harken::studio::bridge::CurrentWorldSyncStatus::Ok
+        : harken::studio::bridge::CurrentWorldSyncStatus::RuntimeUnavailable;
     if (m_runtimeActive && m_submissionBatchDepth == 0
         && !m_coalescingTimer.isActive())
         m_coalescingTimer.start();
@@ -133,8 +133,8 @@ RuntimeSyncCoordinator::beginProjectSession()
         ? RevisionBarrierState::Pending
         : RevisionBarrierState::RuntimeUnavailable;
     m_failure = m_runtimeActive
-        ? HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok
-        : HarkenEditor::Bridge::CurrentWorldSyncStatus::RuntimeUnavailable;
+        ? harken::studio::bridge::CurrentWorldSyncStatus::Ok
+        : harken::studio::bridge::CurrentWorldSyncStatus::RuntimeUnavailable;
     emit barrierChanged();
     return AllocationState::Allocated;
 }
@@ -154,7 +154,7 @@ RuntimeSyncCoordinator::AllocationState RuntimeSyncCoordinator::runtimeStarted()
     m_pendingMutations = {true, {}};
     m_submittedMutations = {};
     m_barrierState = RevisionBarrierState::Pending;
-    m_failure = HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
+    m_failure = harken::studio::bridge::CurrentWorldSyncStatus::Ok;
     emit barrierChanged();
     return AllocationState::Allocated;
 }
@@ -197,7 +197,7 @@ void RuntimeSyncCoordinator::runtimeStopping()
     m_coalescingTimer.stop();
     m_outstandingToken.reset();
     m_installedIdentity.reset();
-    m_failure = HarkenEditor::Bridge::CurrentWorldSyncStatus::RuntimeUnavailable;
+    m_failure = harken::studio::bridge::CurrentWorldSyncStatus::RuntimeUnavailable;
     m_barrierState = RevisionBarrierState::RuntimeUnavailable;
     emit barrierChanged();
 }
@@ -215,7 +215,7 @@ void RuntimeSyncCoordinator::flushCurrentWorldMutation()
         failIdentityExhausted();
         return;
     }
-    HarkenEditor::Bridge::CurrentWorldSyncToken token;
+    harken::studio::bridge::CurrentWorldSyncToken token;
     token.projectSessionId = m_projectSessionId;
     token.authoringRevision = m_latestAuthoringRevision;
     token.runtimeEpoch = m_runtimeEpoch;
@@ -233,13 +233,13 @@ void RuntimeSyncCoordinator::failIdentityExhausted()
     m_flushRequested = false;
     m_outstandingToken.reset();
     m_installedIdentity.reset();
-    m_failure = HarkenEditor::Bridge::CurrentWorldSyncStatus::IdentityExhausted;
+    m_failure = harken::studio::bridge::CurrentWorldSyncStatus::IdentityExhausted;
     m_barrierState = RevisionBarrierState::Failed;
     emit barrierChanged();
 }
 
 void RuntimeSyncCoordinator::acceptCurrentWorldSyncResult(
-    const HarkenEditor::Bridge::CurrentWorldSyncResult& result)
+    const harken::studio::bridge::CurrentWorldSyncResult& result)
 {
     if (!m_outstandingToken || !(result.token == *m_outstandingToken)
         || result.token.projectSessionId != m_projectSessionId
@@ -252,7 +252,7 @@ void RuntimeSyncCoordinator::acceptCurrentWorldSyncResult(
     if (result.token.authoringRevision != m_latestAuthoringRevision
         && m_flushRequested) {
         m_barrierState = RevisionBarrierState::Pending;
-        m_failure = HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
+        m_failure = harken::studio::bridge::CurrentWorldSyncStatus::Ok;
         if (m_runtimeActive && m_submissionBatchDepth == 0
             && !m_coalescingTimer.isActive()) {
             m_coalescingTimer.start();
@@ -276,7 +276,7 @@ void RuntimeSyncCoordinator::acceptCurrentWorldSyncResult(
     }
     m_failure = result.status;
     m_barrierState = result.status
-            == HarkenEditor::Bridge::CurrentWorldSyncStatus::Superseded
+            == harken::studio::bridge::CurrentWorldSyncStatus::Superseded
         ? RevisionBarrierState::Superseded
         : RevisionBarrierState::Failed;
     emit barrierChanged();

@@ -16,7 +16,7 @@
 
 namespace {
 
-using namespace VNX;
+using namespace harken::studio;
 using T = ProjectItemType;
 
 class SignalPathGraphTest : public ::testing::Test
@@ -60,7 +60,7 @@ protected:
         auto item = std::make_shared<ProjectItem>(QString::fromLatin1(name), type);
         item->guid = QUuid::createUuid();
         item->objectID = nextID++;
-        item->guid = VNX::authoringUuid(harkentest::StudioObjectId(item->objectID));
+        item->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(item->objectID));
         item->attachDefaultComponents();
         auto* result = item.get();
         if (parent) {

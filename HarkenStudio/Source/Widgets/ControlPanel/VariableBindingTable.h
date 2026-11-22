@@ -3,7 +3,7 @@
 #include "Core/VariableConsumerSemantics.h"
 #include "Widgets/Common/TableWidget.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class VariableBindingRow;
 

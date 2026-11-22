@@ -25,7 +25,7 @@
 #include "Utils/ObjectId.h"
 #include "VariableSemantics.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 struct ProjectData;
@@ -50,7 +50,7 @@ public:
     ~AudioEngine() override;
 
     bool initialize(int sampleRate = 0, int bufferSize = 0, int maxVoices = 64);
-    bool initialize(const HarkenEditor::Bridge::EngineSessionConfig& config);
+    bool initialize(const harken::studio::bridge::EngineSessionConfig& config);
     void shutdown();
 
     void resetListenerTransformCache();
@@ -82,49 +82,49 @@ public:
     bool setMasterVolume(float volume, int fadeMs = 0);
     float masterVolume() const { return masterVolume_; }
 
-    harkenstudio::ObjectId mintRawPcmSoundId();
-    HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration registerRawPcmSlice(
-        harkenstudio::ObjectId soundId, const QString& absolutePath,
+    harken::studio::types::ObjectId mintRawPcmSoundId();
+    harken::studio::bridge::EngineSession::RawPcmSliceRegistration registerRawPcmSlice(
+        harken::studio::types::ObjectId soundId, const QString& absolutePath,
         uint64_t startFrame, uint64_t frameCount, bool loops = false);
-    HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration registerRawPcmSlice(
-        harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+    harken::studio::bridge::EngineSession::RawPcmSliceRegistration registerRawPcmSlice(
+        harken::studio::types::ObjectId soundId, std::vector<float> interleaved,
         int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount,
         bool loops = false);
-    HarkenEditor::Bridge::EngineSession::RawPcmSliceRegistration relocateRawPcmSlice(
-        harkenstudio::ObjectId soundId, uint64_t startFrame);
-    HarkenEditor::Bridge::EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);
-    uint64_t playRawPcm(harkenstudio::ObjectId soundId, bool loops);
+    harken::studio::bridge::EngineSession::RawPcmSliceRegistration relocateRawPcmSlice(
+        harken::studio::types::ObjectId soundId, uint64_t startFrame);
+    harken::studio::bridge::EngineResult unregisterRawPcm(harken::studio::types::ObjectId soundId);
+    uint64_t playRawPcm(harken::studio::types::ObjectId soundId, bool loops);
     bool stopRawPcm(uint64_t playbackHandle, uint32_t fadeMs = 0);
 
     quintptr playByName(const QString& name);
-    quintptr playByName3D(const QString& name, const HarkenEditor::Vec3& position);
-    HarkenEditor::Bridge::EngineResult stopPlayback(quintptr playbackHandle, float fadeMs = 0);
+    quintptr playByName3D(const QString& name, const harken::studio::Vec3& position);
+    harken::studio::bridge::EngineResult stopPlayback(quintptr playbackHandle, float fadeMs = 0);
     bool stopAll(float fadeMs = 0);
 
     struct PlaybackStartResult {
         quintptr playbackHandle    = 0;
         bool     hasSound       = false;
         bool     previewVariablesPending = false;
-        HarkenEditor::Bridge::EngineResult engineResult =
-            HarkenEditor::Bridge::kEngineOk;
-        HarkenEditor::Bridge::PlaybackFailure failure =
-            HarkenEditor::Bridge::PlaybackFailure::None;
-        HarkenEditor::Bridge::BusTopologyFailure topologyFailure;
+        harken::studio::bridge::EngineResult engineResult =
+            harken::studio::bridge::kEngineOk;
+        harken::studio::bridge::PlaybackFailure failure =
+            harken::studio::bridge::PlaybackFailure::None;
+        harken::studio::bridge::BusTopologyFailure topologyFailure;
     };
 
     PlaybackStartResult playByNameDetailed(const QString& name);
-    PlaybackStartResult playByName3DDetailed(const QString& name, const HarkenEditor::Vec3& position);
+    PlaybackStartResult playByName3DDetailed(const QString& name, const harken::studio::Vec3& position);
     PlaybackStartResult playByNameWithPreviewContext(const QString& name);
 
-    bool setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position);
+    bool setPlaybackPosition(quintptr playbackHandle, const harken::studio::Vec3& position);
 
-    void setListenerPosition(const HarkenEditor::Vec3& position);
-    void setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
-    bool setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up);
-    HarkenEditor::Vec3 listenerPosition() const { return listenerPosition_; }
+    void setListenerPosition(const harken::studio::Vec3& position);
+    void setListenerOrientation(const harken::studio::Vec3& forward, const harken::studio::Vec3& up);
+    bool setListenerTransform(const harken::studio::Vec3& position, const harken::studio::Vec3& forward, const harken::studio::Vec3& up);
+    harken::studio::Vec3 listenerPosition() const { return listenerPosition_; }
 
-    bool loadPack(const QString& path, HarkenEditor::Bridge::EngineResult* result = nullptr);
-    bool unloadPack(const QString& path, HarkenEditor::Bridge::EngineResult* result = nullptr);
+    bool loadPack(const QString& path, harken::studio::bridge::EngineResult* result = nullptr);
+    bool unloadPack(const QString& path, harken::studio::bridge::EngineResult* result = nullptr);
     uint32_t getLoadedPackCount() const;
     QStringList getLoadedPackPaths() const;
 
@@ -138,9 +138,9 @@ public:
     void setVoiceDistanceScaleByName(const QString& soundName, float scale);
 
     void setVoiceSendsByName(const QString& soundName,
-                             const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends);
+                             const std::vector<std::pair<harken::studio::types::ObjectId, float>>& sends);
 
-    void removeRuntimeObject(harkenstudio::ObjectId objectID);
+    void removeRuntimeObject(harken::studio::types::ObjectId objectID);
     void clearRuntimeObjects();
     uint32_t getRuntimeObjectCount() const;
 
@@ -159,36 +159,36 @@ public:
     float masterMeterPeakL() const { return masterMeterPeakL_; }
     float masterMeterPeakR() const { return masterMeterPeakR_; }
 
-    void setBusVolumeDbById(harkenstudio::ObjectId busId, float db);
-    void setBusOutputVolumeDbById(harkenstudio::ObjectId busId, float db);
-    float getBusVolumeDbById(harkenstudio::ObjectId busId) const;
-    void setBusPanById(harkenstudio::ObjectId busId, float pan);
-    void setBusMuteById(harkenstudio::ObjectId busId, bool mute);
-    void setBusSoloById(harkenstudio::ObjectId busId, bool solo);
-    HarkenEditor::Bridge::EngineResult applyInstalledBusMuteOverlay(
-        harkenstudio::ObjectId busId, bool mute, uint32_t fadeMs = 0);
-    HarkenEditor::Bridge::EngineResult applyInstalledBusSoloOverlay(
-        harkenstudio::ObjectId busId, bool solo, uint32_t fadeMs = 0);
-    HarkenEditor::Bridge::EngineResult applyInstalledBusOutputVolumeOverlay(
-        harkenstudio::ObjectId busId, float db, uint32_t fadeMs = 0);
+    void setBusVolumeDbById(harken::studio::types::ObjectId busId, float db);
+    void setBusOutputVolumeDbById(harken::studio::types::ObjectId busId, float db);
+    float getBusVolumeDbById(harken::studio::types::ObjectId busId) const;
+    void setBusPanById(harken::studio::types::ObjectId busId, float pan);
+    void setBusMuteById(harken::studio::types::ObjectId busId, bool mute);
+    void setBusSoloById(harken::studio::types::ObjectId busId, bool solo);
+    harken::studio::bridge::EngineResult applyInstalledBusMuteOverlay(
+        harken::studio::types::ObjectId busId, bool mute, uint32_t fadeMs = 0);
+    harken::studio::bridge::EngineResult applyInstalledBusSoloOverlay(
+        harken::studio::types::ObjectId busId, bool solo, uint32_t fadeMs = 0);
+    harken::studio::bridge::EngineResult applyInstalledBusOutputVolumeOverlay(
+        harken::studio::types::ObjectId busId, float db, uint32_t fadeMs = 0);
     void applyPendingAuditionOverlay();
     void retryBackpressuredAuditionOverlay();
-    HarkenEditor::Bridge::IpcQueryStatus getBusMeterPeakById(
-        harkenstudio::ObjectId busId, float& peakL, float& peakR) const;
+    harken::studio::bridge::IpcQueryStatus getBusMeterPeakById(
+        harken::studio::types::ObjectId busId, float& peakL, float& peakR) const;
 
-    using VoiceStateBreakdown = HarkenEditor::Bridge::VoiceStateBreakdown;
+    using VoiceStateBreakdown = harken::studio::bridge::VoiceStateBreakdown;
     bool getVoiceStateBreakdown(VoiceStateBreakdown& out) const;
 
-    using VoiceInfoData = HarkenEditor::Bridge::VoiceInfoData;
+    using VoiceInfoData = harken::studio::bridge::VoiceInfoData;
     int getActiveVoiceInfoList(std::vector<VoiceInfoData>& outInfos) const;
 
     void synchronizeBusTopology(
-        const std::vector<HarkenEditor::Bridge::RuntimeBusDefinition>& buses,
-        const std::vector<HarkenEditor::Bridge::RuntimeBusSendDefinition>& sends);
-    HarkenEditor::Bridge::BusTopologyState busTopologyState() const;
-    HarkenEditor::Bridge::BusTopologyFailure busTopologyFailure() const;
-    void renameBus(harkenstudio::ObjectId busId, const QString& newName);
-    QList<harkenstudio::ObjectId> getRuntimeBusIds() const;
+        const std::vector<harken::studio::bridge::RuntimeBusDefinition>& buses,
+        const std::vector<harken::studio::bridge::RuntimeBusSendDefinition>& sends);
+    harken::studio::bridge::BusTopologyState busTopologyState() const;
+    harken::studio::bridge::BusTopologyFailure busTopologyFailure() const;
+    void renameBus(harken::studio::types::ObjectId busId, const QString& newName);
+    QList<harken::studio::types::ObjectId> getRuntimeBusIds() const;
 
     void setBusSendFilter(const QString& srcBusName, int32_t slot,
                           float lpfHz, float hpfHz);
@@ -218,9 +218,9 @@ public:
     void startAutomation(uint64_t gameObjectId);
     void stopAutomation(uint64_t gameObjectId);
 
-    using DebugVoiceData = HarkenEditor::Bridge::DebugVoiceData;
-    using DebugBusData = HarkenEditor::Bridge::DebugBusData;
-    using DebugPerfData = HarkenEditor::Bridge::DebugPerfData;
+    using DebugVoiceData = harken::studio::bridge::DebugVoiceData;
+    using DebugBusData = harken::studio::bridge::DebugBusData;
+    using DebugPerfData = harken::studio::bridge::DebugPerfData;
 
     bool getDebugVoices(std::vector<DebugVoiceData>& out) const;
     bool getDebugBuses(std::vector<DebugBusData>& out) const;
@@ -228,23 +228,23 @@ public:
 
     bool getBusTopologyPlanCount(uint64_t& outCount) const;
 
-    using DebugVoiceMetadataNode = HarkenEditor::Bridge::DebugVoiceMetadataNode;
+    using DebugVoiceMetadataNode = harken::studio::bridge::DebugVoiceMetadataNode;
     bool getVoiceMetadataChain(uint32_t voiceId,
                                std::vector<DebugVoiceMetadataNode>& outChain) const;
 
-    using SessionRecapData = HarkenEditor::Bridge::SessionRecapData;
+    using SessionRecapData = harken::studio::bridge::SessionRecapData;
     bool getSessionRecap(SessionRecapData& out) const;
 
-    using CpuBudgetState = HarkenEditor::Bridge::CpuBudgetState;
+    using CpuBudgetState = harken::studio::bridge::CpuBudgetState;
     bool getCpuBudgetState(CpuBudgetState& out) const;
 
-    using RenderPlanInfo = HarkenEditor::Bridge::RenderPlanInfo;
+    using RenderPlanInfo = harken::studio::bridge::RenderPlanInfo;
     bool getRenderPlan(RenderPlanInfo& out) const;
 
-    using JobStatsInfo = HarkenEditor::Bridge::JobStatsInfo;
+    using JobStatsInfo = harken::studio::bridge::JobStatsInfo;
     bool getJobStats(JobStatsInfo& out) const;
 
-    using ObjectAudioStatusInfo = HarkenEditor::Bridge::ObjectAudioStatusInfo;
+    using ObjectAudioStatusInfo = harken::studio::bridge::ObjectAudioStatusInfo;
     bool getObjectAudioStatus(ObjectAudioStatusInfo& out) const;
     bool setSpatialFallbackPolicy(uint8_t policy);
 
@@ -265,24 +265,24 @@ public:
     void setHRTFEnabled(bool enabled);
     void setGameObjectRadius(uint64_t gameObjectID, float outerRadius, float innerRadius);
 
-    using BinauralStatus = HarkenEditor::Bridge::BinauralStatus;
+    using BinauralStatus = harken::studio::bridge::BinauralStatus;
     BinauralStatus getBinauralStatus() const;
 
     bool reconfigureBufferSize(int32_t newBlockSize);
     int32_t getBufferSize() const;
 
-    HarkenEditor::Bridge::ActionSeekStartResult seekAction(
+    harken::studio::bridge::ActionSeekStartResult seekAction(
         quintptr actionHandle, const QString& expectedActionName,
         double positionMs, bool isRelative = false);
-    HarkenEditor::Bridge::EngineResult queryActionSeek(
+    harken::studio::bridge::EngineResult queryActionSeek(
         uint64_t operationId,
-        HarkenEditor::Bridge::ActionSeekInfo& outInfo) const;
-    HarkenEditor::Bridge::EngineResult releaseActionSeek(uint64_t operationId);
+        harken::studio::bridge::ActionSeekInfo& outInfo) const;
+    harken::studio::bridge::EngineResult releaseActionSeek(uint64_t operationId);
     void setGameObjectPosition(uint64_t gameObjectId, float x, float y, float z);
     void setGameObjectOrientation(uint64_t gameObjectId, float fwdX, float fwdY, float fwdZ);
-    void setMixerVolume(harkenstudio::ObjectId busId, float volumeDb);
+    void setMixerVolume(harken::studio::types::ObjectId busId, float volumeDb);
     bool hasInstalledCurrentWorld() const;
-    bool hasActionProgram(harkenstudio::ObjectId actionId) const;
+    bool hasActionProgram(harken::studio::types::ObjectId actionId) const;
     bool hasCurrentWorldPlayableConsumers() const;
     void cancelCurrentWorldPlayableConsumers();
 
@@ -292,17 +292,17 @@ public:
         bool rehearsalBlocked = false;
     };
 
-    using PreviewPlayableState = HarkenEditor::Bridge::PreviewPlayableState;
+    using PreviewPlayableState = harken::studio::bridge::PreviewPlayableState;
 
     PreviewPlayableStartResult playPreviewPlayable(
-        uint32_t playableKind, harkenstudio::ObjectId stableId, quint64 emitterHandle = 0);
-    int32_t resetPreviewPlayable(uint32_t playableKind, harkenstudio::ObjectId stableId);
+        uint32_t playableKind, harken::studio::types::ObjectId stableId, quint64 emitterHandle = 0);
+    int32_t resetPreviewPlayable(uint32_t playableKind, harken::studio::types::ObjectId stableId);
     int32_t stopPreviewPlayable(quint64 handle, uint32_t fadeMs = 0);
     int32_t queryPreviewPlayable(quint64 handle,
                                  PreviewPlayableState& outState) const;
 
-    HarkenEditor::Bridge::EngineResult setGameObjectVolume(uint64_t gameObjectId, float volume);
-    HarkenEditor::Bridge::EngineResult setGameObjectMute(uint64_t gameObjectId, bool mute);
+    harken::studio::bridge::EngineResult setGameObjectVolume(uint64_t gameObjectId, float volume);
+    harken::studio::bridge::EngineResult setGameObjectMute(uint64_t gameObjectId, bool mute);
     // false when the pack manager is unavailable
     bool setPackRoutingPriority(const QString& packName, int priority);
 
@@ -313,8 +313,8 @@ public:
     void unwatchParameter(uint32_t objectId, uint32_t paramId);
     void setMeteringInterval(uint32_t ms);
     bool setCpuBudgetConfig(float escalationPct, float recoveryPct);
-    HarkenEditor::Bridge::EngineResult setMemoryBudgetLimit(uint32_t category, uint64_t maxBytes);
-    HarkenEditor::Bridge::EngineResult setListenerOutputBus(uint32_t listenerId, harkenstudio::ObjectId busId);
+    harken::studio::bridge::EngineResult setMemoryBudgetLimit(uint32_t category, uint64_t maxBytes);
+    harken::studio::bridge::EngineResult setListenerOutputBus(uint32_t listenerId, harken::studio::types::ObjectId busId);
     void setRuntimeLanguage(const QString& code);
 
     enum class ExecErrorDomain : uint8_t { Music = 0, Stop, Lifecycle, Dispatch, Gate, Unclassified };
@@ -337,7 +337,7 @@ public:
 
     void serviceRuntime();
 
-    const std::vector<HarkenEditor::Bridge::PlaybackPathObservation>& playbackPaths() const {
+    const std::vector<harken::studio::bridge::PlaybackPathObservation>& playbackPaths() const {
         return playbackPaths_;
     }
 
@@ -365,7 +365,7 @@ private:
     AudioEngine(const AudioEngine&) = delete;
     AudioEngine& operator=(const AudioEngine&) = delete;
     PlaybackStartResult playByNameInternal(const QString& name, bool usePreviewContext);
-    quint64 ensurePreviewEmitter(HarkenEditor::Bridge::EngineResult* outResult = nullptr);
+    quint64 ensurePreviewEmitter(harken::studio::bridge::EngineResult* outResult = nullptr);
     void releasePreviewEmitter();
     void capturePreviewVariableOverride(const QUuid& variableId);
     void applyPreviewVariableOverrides();
@@ -383,14 +383,14 @@ private:
 
     friend class CurrentWorldPrimaryScope;
 
-    std::unique_ptr<HarkenEditor::Bridge::EngineSession> session_;
+    std::unique_ptr<harken::studio::bridge::EngineSession> session_;
     std::shared_ptr<LivePropertyPreview> livePropertyPreview_;
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> playbackPaths_;
+    std::vector<harken::studio::bridge::PlaybackPathObservation> playbackPaths_;
     std::unique_ptr<RuntimeSyncCoordinator> runtimeSyncCoordinator_;
     std::unique_ptr<CurrentWorldCompilation> currentWorldCompilation_;
     std::uint64_t currentWorldRequestSession_ = 0;
     std::uint64_t currentWorldRequestEpoch_ = 0;
-    std::vector<std::pair<harkenstudio::ObjectId, std::uint8_t>> currentWorldPreviewMutations_;
+    std::vector<std::pair<harken::studio::types::ObjectId, std::uint8_t>> currentWorldPreviewMutations_;
     ProjectPlatformId lastCurrentWorldPrimary_;
     bool currentWorldPlatformBound_ = false;
     VariableRehearsal* variableRehearsal_ = nullptr;
@@ -417,17 +417,17 @@ private:
     QHash<QUuid, PreviewVariableOverrideState> previewVariableOverrides_;
     std::vector<RehearsalPushRecord> rehearsalPushLog_;
     static constexpr size_t kRehearsalPushLogCap = 8;
-    std::vector<harkenstudio::ObjectId> runtimeBindingIds_;
+    std::vector<harken::studio::types::ObjectId> runtimeBindingIds_;
     std::vector<BindingRuntimeAttachment> runtimeBindingAttachments_;
-    QHash<harkenstudio::ObjectId, BindingRuntimeProgram> runtimeBindingPrograms_;
-    QHash<harkenstudio::ObjectId, QVector<std::pair<QUuid, BindingRuntimeProgram>>> runtimeBindingPreviews_;
+    QHash<harken::studio::types::ObjectId, BindingRuntimeProgram> runtimeBindingPrograms_;
+    QHash<harken::studio::types::ObjectId, QVector<std::pair<QUuid, BindingRuntimeProgram>>> runtimeBindingPreviews_;
     std::array<uint64_t, 3> runtimeBindingSyncIdentity_{};
     bool runtimeBindingsPending_ = true;
     float masterVolume_ = 1.0f;
 
-    HarkenEditor::Vec3 listenerPosition_;
-    HarkenEditor::Vec3 listenerForward_ = HarkenEditor::Vec3(0, 0, -1);
-    HarkenEditor::Vec3 listenerUp_ = HarkenEditor::Vec3(0, 1, 0);
+    harken::studio::Vec3 listenerPosition_;
+    harken::studio::Vec3 listenerForward_ = harken::studio::Vec3(0, 0, -1);
+    harken::studio::Vec3 listenerUp_ = harken::studio::Vec3(0, 1, 0);
 
     QTimer* runtimeServiceTimer_ = nullptr;
     QTimer* meterTimer_ = nullptr;
@@ -437,9 +437,9 @@ private:
     float cpuUsage_ = 0.0f;
     float masterMeterPeakL_ = 0.0f;
     float masterMeterPeakR_ = 0.0f;
-    QSet<harkenstudio::ObjectId> overlayMutePendingIds_;
-    QSet<harkenstudio::ObjectId> overlaySoloPendingIds_;
-    QHash<harkenstudio::ObjectId, float> overlayOutputVolumePendingValues_;
+    QSet<harken::studio::types::ObjectId> overlayMutePendingIds_;
+    QSet<harken::studio::types::ObjectId> overlaySoloPendingIds_;
+    QHash<harken::studio::types::ObjectId, float> overlayOutputVolumePendingValues_;
 
     QVector<ExecError> execErrors_;
     static constexpr int kMaxExecErrors = 100;

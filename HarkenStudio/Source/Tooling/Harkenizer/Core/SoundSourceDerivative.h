@@ -13,12 +13,12 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 class BuildSourceInput;
 struct AudioMetadata;
 }
 
-namespace VNX::SoundSourceDerivative {
+namespace harken::studio::SoundSourceDerivative {
 
 struct FrameRange
 {

@@ -5,7 +5,7 @@
 #include "WindowPlacement.h"
 #include <QShowEvent>
 
-namespace VNX {
+namespace harken::studio {
 
 BaseDialog::BaseDialog(QWidget* parent, Qt::WindowFlags flags)
     : QDialog(parent, flags)

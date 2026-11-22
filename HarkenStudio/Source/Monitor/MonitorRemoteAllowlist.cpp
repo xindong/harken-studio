@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -80,4 +80,4 @@ std::vector<std::string> productionObserveAllowlistNames()
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

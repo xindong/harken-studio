@@ -8,7 +8,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorCaptureControlStrip : public QWidget
 {
@@ -17,8 +17,8 @@ class MonitorCaptureControlStrip : public QWidget
 public:
     explicit MonitorCaptureControlStrip(QWidget* parent = nullptr);
 
-    void applyState(const VNX::Monitor::MonitorCaptureControlState& state);
-    void applyPreview(const VNX::Monitor::CaptureBudgetPreview& preview);
+    void applyState(const harken::studio::Monitor::MonitorCaptureControlState& state);
+    void applyPreview(const harken::studio::Monitor::CaptureBudgetPreview& preview);
     void setStatusText(const QString& text);
     QString statusText() const;
     QString previewText() const;
@@ -30,4 +30,4 @@ private:
     bool applyEnabled_ = false;
 };
 
-} // namespace VNX
+} // namespace harken::studio

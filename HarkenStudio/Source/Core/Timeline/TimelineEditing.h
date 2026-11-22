@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectManager;
 class TransactionalUndoCommand;

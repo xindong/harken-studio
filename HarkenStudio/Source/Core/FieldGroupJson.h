@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace VNX {
+namespace harken::studio {
 
 bool ReadFieldGroupsJson(const std::string& text,
                            DefinitionFieldGroups& groups,

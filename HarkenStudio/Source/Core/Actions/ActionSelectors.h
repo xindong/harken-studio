@@ -5,7 +5,7 @@
 #include <QJsonArray>
 #include "../ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct ResolvedSelector
 {

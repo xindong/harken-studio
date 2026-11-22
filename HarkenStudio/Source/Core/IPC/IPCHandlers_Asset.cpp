@@ -20,9 +20,8 @@
 #include <map>
 #include <tuple>
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 namespace {
 
@@ -193,7 +192,7 @@ void IPCServer::registerAssetHandlers()
                                                  PathUtils::buildPacksDirName())},
             {"pack_build_output_root", PathUtils::packBuildOutputRoot(
                  project->projectPath, project->packBuildOutputDir)},
-            {"pack_file_extension", Bridge::packArtifactExtension()}
+            {"pack_file_extension", bridge::packArtifactExtension()}
         };
         return successResponse(result);
     };
@@ -268,7 +267,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         return errorResponse("INVALID_ARGS", PathUtils::packBuildOutputLocationError());
     if (outputInfo.isFile()
         || (!args["output_path"].toString().trimmed().isEmpty()
-            && (outputInfo.fileName().endsWith(Bridge::packArtifactExtension(), Qt::CaseInsensitive)
+            && (outputInfo.fileName().endsWith(bridge::packArtifactExtension(), Qt::CaseInsensitive)
                 || outputInfo.fileName().endsWith(QStringLiteral(".pack"), Qt::CaseInsensitive))))
     {
         return errorResponse("INVALID_ARGS",
@@ -284,19 +283,19 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     const QString actionName = args["action_name"].toString().trimmed();
     if (!actionName.isEmpty() && (exportAll || selfCleaning))
         return errorResponse("INVALID_ARGS", "action_name cannot be combined with all=true or self_clean=true");
-    harkenstudio::ObjectId actionStableId = {};
+    harken::studio::types::ObjectId actionStableId = {};
     if (!actionName.isEmpty()) {
         const auto units = ProjectPackExporter::CollectActionPackUnits(*project);
         for (const auto& unit : units) {
             if (unit.name != actionName)
                 continue;
-            if (!harkenstudio::IsNull(actionStableId)) {
+            if (!harken::studio::types::IsNull(actionStableId)) {
                 return errorResponse("INVALID_ARGS",
                                      "action_name is ambiguous; use a unique Action name: " + actionName);
             }
             actionStableId = unit.stableId;
         }
-        if (harkenstudio::IsNull(actionStableId)) {
+        if (harken::studio::types::IsNull(actionStableId)) {
             return errorResponse("INVALID_ARGS",
                                  "action_name does not identify an Action: " + actionName);
         }
@@ -385,7 +384,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
         exportOpts.includeUnchecked = exportAll;
         exportOpts.forceReexport = forceReexport;
         exportOpts.selfCleaning = selfCleaning;
-        if (!harkenstudio::IsNull(actionStableId))
+        if (!harken::studio::types::IsNull(actionStableId))
             exportOpts.onlyActionStableIds.insert(actionStableId);
         exportOpts.cancelCheck = [cancel]() {
             return cancel->load(std::memory_order_relaxed);
@@ -537,7 +536,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
                 PackArtifactCache::instance().publish(it.key(), it.value(),
-                    !harkenstudio::IsNull(actionStableId) || partialPlatforms.contains(it.key()));
+                    !harken::studio::types::IsNull(actionStableId) || partialPlatforms.contains(it.key()));
             for (const auto& [key, progress] : unitProgress) {
                 PackGenerationRecordStore::instance().updateProgress(runId,
                     {progress.platform, progress.language, progress.unitKey, 0, PackGenerationStage::Queued});
@@ -660,7 +659,7 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
     if (file.error() != QFileDevice::NoError)
         return errorResponse("PACK_READ_FAILED", file.errorString());
 
-    using namespace harkenstudiobuild;
+    using namespace harken::studio::build;
     const auto* data = reinterpret_cast<const uint8_t*>(bytes.constData());
     PackFileHeader header;
     if (bytes.size() < kPackBytes<HkPackFileHeader> || !ReadPackFileHeader(data, &header))

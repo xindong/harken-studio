@@ -3,7 +3,7 @@
 
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 struct BlueprintConnectResult {
     bool    success = false;

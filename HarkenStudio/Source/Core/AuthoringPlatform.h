@@ -6,7 +6,7 @@
 #include <optional>
 #include <string_view>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class AuthoringPlatform : std::uint8_t {
     Universal = 0,

@@ -4,7 +4,7 @@
 
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class PaneSection : public QWidget
 {

@@ -9,7 +9,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class RenameClickHandler final : public QObject
 {

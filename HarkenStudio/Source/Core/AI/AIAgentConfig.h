@@ -6,7 +6,7 @@
 #include <memory>
 #include "AIPermissionModel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ISettingsStorage;
 

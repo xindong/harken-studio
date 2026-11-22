@@ -5,7 +5,7 @@
 class QCheckBox;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

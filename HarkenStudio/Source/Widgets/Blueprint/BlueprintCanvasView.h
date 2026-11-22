@@ -13,7 +13,7 @@ class QMouseEvent;
 class QContextMenuEvent;
 class QMenu;
 
-namespace VNX {
+namespace harken::studio {
 
 class BlueprintCanvasView : public QGraphicsView
 {

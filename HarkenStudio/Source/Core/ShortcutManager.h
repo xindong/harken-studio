@@ -15,7 +15,7 @@
 class QWidget;
 class QMenu;
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ShortcutCategory
 {

@@ -1,6 +1,6 @@
 #include "ScopeTriggerProjection.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool scopeWindowPublished()
@@ -26,4 +26,4 @@ ScopeTriggerProjection projectScopeFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

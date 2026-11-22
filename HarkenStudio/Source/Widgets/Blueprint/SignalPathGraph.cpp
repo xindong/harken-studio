@@ -8,7 +8,7 @@
 #include <set>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 namespace Slots = ReferenceSlotResolution;

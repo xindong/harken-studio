@@ -4,7 +4,7 @@
 
 #include <QDoubleSpinBox>
 
-namespace VNX {
+namespace harken::studio {
 
 class DecimalSpinBox : public QDoubleSpinBox
 {

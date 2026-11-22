@@ -2,7 +2,7 @@
 #include "LanguageContextService.h"
 #include "PlatformContextService.h"
 
-namespace VNX::RuntimeCapabilityMatrix {
+namespace harken::studio::RuntimeCapabilityMatrix {
 namespace {
 RuntimeCapabilityContext currentContext()
 {
@@ -29,7 +29,7 @@ RuntimeCapabilityAssessment assess(const ProjectItem& item,
 }
 
 RuntimeCapabilityAssessment assess(const ProjectData& project,
-                                   harkenstudio::ObjectId rootStableId,
+                                   harken::studio::types::ObjectId rootStableId,
                                    RuntimeCapabilityOperation operation,
                                    std::optional<BuildVariant> variant)
 {

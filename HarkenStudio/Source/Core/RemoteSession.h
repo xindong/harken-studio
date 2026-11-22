@@ -5,10 +5,10 @@
 #include <QObject>
 #include <QString>
 
-namespace HarkenEditor::Bridge { class RemoteConnection; }
-namespace VNX::Monitor { class EventCaptureController; }
+namespace harken::studio::bridge { class RemoteConnection; }
+namespace harken::studio::Monitor { class EventCaptureController; }
 
-namespace VNX {
+namespace harken::studio {
 
 class RemoteSession final : public QObject
 {
@@ -17,7 +17,7 @@ class RemoteSession final : public QObject
 public:
     static RemoteSession& instance();
 
-    HarkenEditor::Bridge::RemoteConnection& connection();
+    harken::studio::bridge::RemoteConnection& connection();
     Monitor::EventCaptureController& capture();
     bool startRecording(const QString& path);
     void stopRecording();
@@ -30,7 +30,7 @@ private:
     void ensure();
     void closeRecorderIfStopped();
 
-    HarkenEditor::Bridge::RemoteConnection* connection_ = nullptr;
+    harken::studio::bridge::RemoteConnection* connection_ = nullptr;
     Monitor::EventCaptureController* capture_ = nullptr;
     Monitor::MonitorSessionWriter recorder_;
     bool closeRecorderWhenStopped_ = false;

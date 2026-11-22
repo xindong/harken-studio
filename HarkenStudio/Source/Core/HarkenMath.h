@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <string>
 
-namespace HarkenEditor {
+namespace harken::studio {
 
 //==============================================================================
 // Vec3 - 3D vector for spatial authoring values (positions, directions)
@@ -110,4 +110,4 @@ inline uint32_t hashString(const std::string& str) noexcept
     return hashString(str.c_str());
 }
 
-} // namespace HarkenEditor
+} // namespace harken::studio

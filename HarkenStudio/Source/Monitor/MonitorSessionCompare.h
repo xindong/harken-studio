@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorTypes.h"
 
-namespace VNX::Monitor {
+namespace harken::studio::Monitor {
 
 MonitorCompareResult compareSessions(const MonitorSessionCompareDesc& desc);
 

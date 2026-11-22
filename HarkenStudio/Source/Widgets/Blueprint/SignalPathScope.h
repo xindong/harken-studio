@@ -3,7 +3,7 @@
 #include "SignalPathGraph.h"
 #include "Core/PlacementContext.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct SignalPathScope
 {

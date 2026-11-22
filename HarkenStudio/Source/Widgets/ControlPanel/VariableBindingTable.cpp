@@ -14,7 +14,7 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 class VariableBindingRow : public QWidget
 {

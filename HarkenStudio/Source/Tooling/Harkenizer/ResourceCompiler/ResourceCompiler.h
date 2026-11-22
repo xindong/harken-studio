@@ -15,7 +15,7 @@
 namespace harkenizer::resourcecompiler {
 
 struct MediaInput {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     std::string sourcePath;
     std::string contentHash;
     std::shared_ptr<const std::vector<float>> samplesOwner;
@@ -51,7 +51,7 @@ private:
 struct CompiledEntry {
     std::uint32_t kind = 0;
     std::uint32_t vintage = 1;
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     std::uint64_t relationOrdinal = 0;
     std::vector<std::uint8_t> payload;
     std::shared_ptr<const std::vector<float>> media;

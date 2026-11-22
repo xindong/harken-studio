@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 struct MonitorSessionCommit
@@ -78,4 +78,4 @@ private:
 };
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

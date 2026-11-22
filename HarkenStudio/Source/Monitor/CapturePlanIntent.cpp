@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool measurementIdAllowed(uint64_t)
@@ -163,4 +163,4 @@ std::string capturePlanFaceText(const CaptureBudgetPreview& preview)
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

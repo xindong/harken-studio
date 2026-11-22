@@ -3,7 +3,7 @@
 #include "../Component.h"
 #include "../Timeline/TimelineTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class VTrack final : public IComponent
 {

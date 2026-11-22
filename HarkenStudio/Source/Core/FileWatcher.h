@@ -13,7 +13,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 class FileWatcher : public QObject
 {

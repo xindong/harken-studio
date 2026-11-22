@@ -14,7 +14,7 @@
 #include <algorithm>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 void reconcile(const ProjectData& project, PackExportSelection& selection)
@@ -26,7 +26,7 @@ void reconcile(const ProjectData& project, PackExportSelection& selection)
     selection.selectedPlatformIds.removeIf([&](const auto& id) {
         return !platforms.contains(id);
     });
-    std::set<harkenstudio::ObjectId> actions;
+    std::set<harken::studio::types::ObjectId> actions;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> void {
         if (!item) return;
         if (item->type == ProjectItem::Type::Action) actions.insert(item->runtimeId());
@@ -46,7 +46,7 @@ void reconcile(const ProjectData& project, PackExportSelection& selection)
 
 }
 
-bool PackExportSelection::includesActionPack(harkenstudio::ObjectId id,
+bool PackExportSelection::includesActionPack(harken::studio::types::ObjectId id,
                                              const QString& platform,
                                              const QString& language) const
 {
@@ -110,7 +110,7 @@ void PackExportSelectionStore::openProject(const ProjectData& project)
             valid = valid && platform.isString();
         if (!valid) break;
         auto entry = ActionPackTargeting::fromJson(row);
-        if (harkenstudio::IsNull(entry.stableId)) {
+        if (harken::studio::types::IsNull(entry.stableId)) {
             valid = false;
             break;
         }

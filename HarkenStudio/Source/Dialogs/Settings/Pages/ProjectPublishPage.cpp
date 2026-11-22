@@ -18,7 +18,7 @@
 #include <QScopedValueRollback>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     : SettingsPage(parent)

@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 namespace Detail {
 
 enum class RuntimeProjectGenerationPrepareStatus : std::uint8_t {
@@ -74,5 +74,5 @@ void runtimeConfirmBusTopologyWithoutApply(
     const std::vector<RuntimeBusSendDefinition>& sends);
 
 } // namespace Detail
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

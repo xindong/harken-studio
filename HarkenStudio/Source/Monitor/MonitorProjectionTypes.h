@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorSubscriptionProjectionState
@@ -41,7 +41,7 @@ struct MonitorWorldObject
 {
     MonitorObjectKey key {};
     uint32_t entityKind = 0;
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     uint64_t stateCutId = 0;
     bool tombstoned = false;
 };
@@ -126,4 +126,4 @@ struct MonitorDropProjection
 };
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio
