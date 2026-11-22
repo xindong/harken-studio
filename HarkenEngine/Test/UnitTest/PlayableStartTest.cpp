@@ -13170,13 +13170,14 @@ public:
         return true;
     }
     bool ExhaustAttempts() {
-        for (std::uint32_t i = 0; i < lane_.AttemptCapacity(); ++i) {
-            harken::ImmediateLaneHandle handle{};
-            if (!lane_.Reserve(1, {1, 0, 0, 1}, &handle)) return false;
+        harken::ImmediateLaneHandle handle{};
+        if (!lane_.Reserve(1, {1, 0, 0, 1}, &handle)) return false;
+        lane_.SetAttemptCommitPageLimitForTests(0);
+        do {
             handles_.push_back(handle);
-        }
-        harken::ImmediateLaneHandle extra{};
-        return !lane_.Reserve(1, {1, 0, 0, 1}, &extra);
+            handle = {};
+        } while (lane_.Reserve(1, {1, 0, 0, 1}, &handle));
+        return !handle.Valid();
     }
 private:
     harken::ImmediateActionLane& lane_;

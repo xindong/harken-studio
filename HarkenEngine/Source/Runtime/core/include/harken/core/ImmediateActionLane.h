@@ -7,6 +7,7 @@
 #include "harken/core/AuthoredStopFence.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/StableSlotStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <algorithm>
 #include <atomic>
@@ -520,10 +521,12 @@ public:
         EventStorageRegistration* next_ = nullptr;
         void* context_ = nullptr;
         Prepare prepare_ = nullptr;
+        Prepare prepareAttempts_ = nullptr;
     };
     std::uint32_t EventStorageHighWater() const noexcept;
     void AttachEventStorage(EventStorageRegistration& registration,
-        void* context, EventStorageRegistration::Prepare prepare) const noexcept;
+        void* context, EventStorageRegistration::Prepare prepare,
+        EventStorageRegistration::Prepare prepareAttempts = nullptr) const noexcept;
     struct Config {
         std::uint32_t attempts = 0;
         std::uint32_t eventsPerAttempt = 0;
@@ -531,6 +534,7 @@ public:
         std::uint32_t quantumFrames = 0;
         bool requireArmPins = false;
         std::uint32_t maxGroupsPerQuantum = 0;
+        bool growAttempts = false;
     };
 
     bool Reset(Config config);
@@ -560,7 +564,8 @@ public:
         const PlainAuthoredControlLayoutInput& input,
         PrivatePlainLayoutEdit* out) noexcept;
     bool Valid() const noexcept { return valid_; }
-    std::uint32_t AttemptCapacity() const noexcept { return config_.attempts; }
+    std::uint32_t AttemptCapacity() const noexcept { return std::max(config_.attempts, attempts_.size()); }
+    std::uint32_t PreparedAttemptCount() const noexcept { return attempts_.size(); }
     std::uint32_t ReservedAttemptPrefix() const noexcept {
         return reservedAttemptPrefix_.load(std::memory_order_acquire);
     }
@@ -583,18 +588,12 @@ public:
              static_cast<std::size_t>(groupPlacementOrder_ != nullptr));
     }
     std::size_t EventStorageBytes() const noexcept {
-        return eventStorageBytes_ + singleEvents_.RequestedBytes();
+        return eventStorageBytes_ + static_cast<std::size_t>(singleEvents_.size()) * sizeof(ImmediateLaneEvent);
     }
     std::size_t MemberStorageBytes() const noexcept { return memberStorageBytes_; }
-    std::size_t PayloadCommittedBytes() const noexcept {
-        return eventStorage_.CommittedBytes() + singleEvents_.CommittedBytes() + memberStorage_.CommittedBytes();
-    }
-    std::size_t PayloadReservedBytes() const noexcept {
-        return eventStorage_.ReservedBytes() + singleEvents_.ReservedBytes() + memberStorage_.ReservedBytes();
-    }
-    std::size_t PayloadDirectoryBytes() const noexcept {
-        return eventStorage_.DirectoryBytes() + memberStorage_.DirectoryBytes();
-    }
+    std::size_t PayloadCommittedBytes() const noexcept;
+    std::size_t PayloadReservedBytes() const noexcept;
+    std::size_t PayloadDirectoryBytes() const noexcept { return 0; }
     std::size_t MetadataStorageBytes() const noexcept;
     std::size_t MetadataCommittedBytes() const noexcept;
     std::size_t MetadataReservedBytes() const noexcept;
@@ -619,7 +618,7 @@ public:
     void SetPayloadCommitPageLimitsForTests(std::size_t eventPages,
         std::size_t memberPages) noexcept {
         eventCommitPagesRemaining_ = eventPages;
-        memberStorage_.SetCommitPageLimitForTests(memberPages);
+        memberCommitPagesRemaining_ = memberPages;
     }
 #endif
     std::uint32_t MaxEventsPerQuantum() const noexcept { return config_.maxEventsPerQuantum; }
@@ -1043,6 +1042,8 @@ private:
         FrontierEntryReceiptRef* waitingScratch = nullptr;
     };
     struct AttemptMetadata {
+        StableRowStorage<ImmediateLaneEvent> eventBody;
+        StableRowStorage<ImmediateLaneMemberManifest> memberBody;
         AttemptMetadataBacking active;
         AttemptMetadataBacking standby;
     };
@@ -1161,7 +1162,7 @@ private:
             config_.eventsPerAttempt, config_.eventsPerAttempt};
     }
     mutable EventStorageRegistration* eventStorageConsumers_ = nullptr;
-    bool PrepareAttemptIdentityStorage() noexcept;
+    bool PrepareAttemptIdentityStorage(std::uint32_t count) noexcept;
     bool EnsureAttemptBacking(std::uint64_t count,
         std::uint32_t excluded = UINT32_MAX) noexcept;
     ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) noexcept;
@@ -1185,22 +1186,19 @@ private:
 #if !defined(HARKEN_RT_QUALIFICATION)
     bool fullCaptureScanForTest_ = false;
 #endif
-    StableRowStorage<ImmediateLaneAttempt> attempts_;
-    StableRowStorage<ImmediateLaneEvent> singleEvents_;
-    StableRowStorage<SingleEventMetadata> singleEventMetadata_;
-    StableRowStorage<AttemptMetadata> metadata_;
-    detail::StablePageReservation eventStorage_;
-    detail::StablePageReservation memberStorage_;
+    GrowingRowStorage<ImmediateLaneAttempt> attempts_;
+    GrowingRowStorage<ImmediateLaneEvent> singleEvents_;
+    GrowingRowStorage<SingleEventMetadata> singleEventMetadata_;
+    GrowingRowStorage<AttemptMetadata> metadata_;
+    std::uint32_t firstFreeCandidate_ = 0;
     StableStorageGrowthState payloadGrowth_{};
     std::size_t eventStorageBytes_ = 0;
     std::size_t memberStorageBytes_ = 0;
-    ImmediateLaneEvent* events_ = nullptr;
     MetadataColumn<&AttemptMetadataBacking::groups> groups_{this};
     MetadataColumn<&AttemptMetadataBacking::declaredGroups> declaredGroups_{this};
     std::unique_ptr<std::uint32_t[]> eventPlacementOrder_;
     std::unique_ptr<std::uint32_t[]> groupPlacementOrder_;
-    ImmediateLaneMemberManifest* members_ = nullptr;
-    StableRowStorage<PrivateEntryAssociation> privateEntries_;
+    GrowingRowStorage<PrivateEntryAssociation> privateEntries_;
     MetadataColumn<&AttemptMetadataBacking::eventState> eventState_{this};
     MetadataColumn<&AttemptMetadataBacking::groupState> groupState_{this};
     MetadataColumn<&AttemptMetadataBacking::memberState> memberState_{this};
@@ -1209,6 +1207,7 @@ private:
     ScheduledTransactionPool* groupPool_ = nullptr;
 #if !defined(HARKEN_RT_QUALIFICATION)
     std::size_t eventCommitPagesRemaining_ = SIZE_MAX;
+    std::size_t memberCommitPagesRemaining_ = SIZE_MAX;
     std::size_t groupCommitPageLimit_ = SIZE_MAX;
     std::size_t sourceWaitCommitPageLimit_ = SIZE_MAX;
     std::size_t stateCommitPageLimit_ = SIZE_MAX;

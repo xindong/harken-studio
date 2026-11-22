@@ -54,7 +54,7 @@ struct ImmediateLaneTimelineFinalizer::Impl {
     StableRowStorage<ControlScratch> controls;
     StableRowStorage<FenceScratch> fences;
     ImmediateActionLane::EventStorageRegistration eventStorageRegistration;
-    std::unique_ptr<Receipt[]> receipts;
+    GrowingRowStorage<Receipt> receipts;
     std::unique_ptr<std::uint32_t[]> controlRenderGenerations;
     std::uint32_t renderCapacity = 0;
     static bool PrepareEventStorage(void* context, std::uint32_t demand) noexcept {
@@ -83,11 +83,14 @@ bool ImmediateLaneTimelineFinalizer::Attach(
         !state->controls.Reserve(state->eventCapacity) ||
         !state->fences.Reserve(state->eventCapacity) ||
         !Impl::PrepareEventStorage(state.get(), lane.EventStorageHighWater())) return false;
-    state->receipts = std::make_unique<Impl::Receipt[]>(lane.AttemptCapacity());
+    if (!state->receipts.ConstructThrough(lane.PreparedAttemptCount())) return false;
     state->renderCapacity = voices_.Capacity();
     state->controlRenderGenerations =
         std::make_unique<std::uint32_t[]>(state->renderCapacity);
-    lane.AttachEventStorage(state->eventStorageRegistration, state.get(), Impl::PrepareEventStorage);
+    lane.AttachEventStorage(state->eventStorageRegistration, state.get(), Impl::PrepareEventStorage,
+        [](void* context, std::uint32_t count) noexcept {
+            return static_cast<Impl*>(context)->receipts.ConstructThrough(count);
+        });
     impl_ = std::move(state);
     return true;
 }

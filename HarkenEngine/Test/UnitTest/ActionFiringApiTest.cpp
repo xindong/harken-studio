@@ -64951,6 +64951,13 @@ void CheckTimelineArmGrowthPreservesPlayback(bool delayed) {
     desc.actionId = harkentest::ObjectId(50);
     VnActionFiringHandle firing = 0;
     if (delayed) ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    std::vector<harken::ImmediateLaneHandle> pending;
+    if (!delayed) {
+        // Isolate record capacity from render voices and per-quantum event budgets.
+        pending.resize(engine->immediateActionLane.AttemptCapacity());
+        for (auto& handle : pending)
+            ASSERT_TRUE(engine->immediateActionLane.Reserve(1, {1, 0, 0, 1}, &handle));
+    }
     std::vector<harken::TimelineArmToken> occupied(engine->timelineArms.Capacity());
     for (auto& token : occupied) {
         ASSERT_TRUE(engine->timelineArms.Prepare(
@@ -64978,6 +64985,7 @@ void CheckTimelineArmGrowthPreservesPlayback(bool delayed) {
     EXPECT_TRUE(heard);
     EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    for (auto handle : pending) EXPECT_TRUE(engine->immediateActionLane.Retire(handle));
     engine->timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
     for (const auto token : occupied) EXPECT_TRUE(engine->timelineArms.CancelPrepared(token));
     EXPECT_EQ(engine->timelineArms.Capacity(), engine->timelineArms.FreeCount());

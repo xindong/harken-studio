@@ -7387,7 +7387,7 @@ public:
                 privateLaneMetadataCapacity,
                 resolved.maxEventsPerQuantum,
                 resolved.blockFrames, true,
-                resolved.maxPlan03GroupHeadersPerPage}) ||
+                resolved.maxPlan03GroupHeadersPerPage, true}) ||
             !timelineSink.AttachImmediateLane(immediateActionLane, resolved.blockFrames) ||
             !timelineSink.AttachPlan03ScratchAuthority(decisions,
                                                        timelinePool) ||
