@@ -190,11 +190,8 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
                          std::size_t monitorSelectionCapacity,
                          DirectVoiceStoragePreparation prepareDirectVoiceStorage,
                          void* directVoiceStorageContext,
-                         std::uint32_t generationFloor)
-    : m_renderOwners(renderCapacity == 0
-                         ? (capacity == 0 ? 1 : capacity)
-                         : renderCapacity),
-      m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
+                         std::uint32_t generationFloor, std::uint32_t initialRender)
+    : m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
           ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)),
       m_prepareDirectVoiceStorage(prepareDirectVoiceStorage),
       m_directVoiceStorageContext(directVoiceStorageContext) {
@@ -202,7 +199,9 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
         throw std::invalid_argument("voice handle generation exhausted");
     m_initialGeneration = generationFloor + 1;
     const auto logicalCapacity = capacity == 0 ? 1 : capacity;
-    if (!m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
+    const auto renderRows = renderCapacity == 0 ? logicalCapacity : renderCapacity;
+    if (!m_renderOwners.Reserve(renderRows) || !PrepareRenderOwners(std::min(renderRows, initialRender)) ||
+        !m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
         throw harken::detail::LogicPreparationFailure{};
 }
 

@@ -27,6 +27,8 @@
 #include "harken/core/SourceCursorMirror.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
+#include "harken/core/SparseRowStorage.h"
 #include "harken/render/EffectChainUpdate.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineArmTable.h"
@@ -1117,6 +1119,7 @@ private:
         mutable std::atomic<std::uint64_t> renderedState{0};
         std::atomic<EffectChainUpdate*> effectChainUpdate{nullptr};
         std::atomic<std::uint32_t> sourceChannels{0};
+        ResamplerHighRatioColumns highRatioColumns{};
         VoiceRenderContext render;
         // Only logic resizes this storage while the slot is private. Physical
         // release leaves capacity available for reuse; audio never frees it.
@@ -1149,9 +1152,9 @@ private:
     bool FinishNativeVariableStart(Slot& slot, bool activated) noexcept;
     static constexpr std::uint32_t kFirstOutputBuiltinEndpoints = 11;
     std::uint32_t m_firstOutputStride = 0;
-    StableRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
-    StableRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
-    StableRowStorage<std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum>>
+    GrowingRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
+    GrowingRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
+    GrowingRowStorage<std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum>>
         m_pendingTimelineVariableEvents;
     bool FirstOutputBackingReady(std::uint32_t count) const noexcept;
     bool PrepareFirstOutputBacking(std::uint32_t count) noexcept;
@@ -1305,6 +1308,7 @@ private:
     std::uint32_t m_sampleRate;
     std::uint32_t m_pitchRampFrames;
     std::uint32_t m_blockFrames;
+    std::uint32_t m_monitorStride;
     std::uint32_t m_fxSlotsPerVoice;
     std::uint32_t m_starvationCooldownBlocks;
     // Mix layout the fold-in pans/maps into (resolved config). Stereo at the
@@ -1337,25 +1341,24 @@ private:
     static void FillSourceCursor(const Slot& slot, SlotState state,
         SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept;
     SlotStorageRegistration* m_slotStorageRegistrations = nullptr;
-    std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
+    StableRowStorage<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
-    std::vector<StreamParkMailbox> m_streamParkMailboxes;
+    StableRowStorage<StreamParkMailbox> m_streamParkMailboxes;
     std::uint32_t m_pendingStreamParkMailboxes = 0;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
     bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
         bool firstOutput, std::uint32_t highRatioChannels = 0) noexcept;
     bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
         std::uint32_t highRatioChannels) const noexcept;
-    std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
-    std::array<StableRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
-    ResamplerHighRatioColumns m_highRatioColumns{};
+    std::array<GrowingRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
+    std::array<GrowingRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
     void BindHighRatioBacking(std::uint32_t slot) noexcept;
     void BindMonitorPreChainBacking(std::uint32_t slot) noexcept;
-    StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
+    SparseRowStorage<MultirateResamplerCandidate, StableSlotStorage<MultirateResamplerCandidate>> m_professionalStorage;
     using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
-    StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;
+    SparseRowStorage<VariableWeightStorage, StableSlotStorage<VariableWeightStorage>> m_variableWeightStorage;
     using TimelineEnvelopeCurveStorage = std::array<CurveLUT, 2>;
-    StableSlotStorage<TimelineEnvelopeCurveStorage> m_timelineEnvelopeCurves;
+    SparseRowStorage<TimelineEnvelopeCurveStorage, StableSlotStorage<TimelineEnvelopeCurveStorage>> m_timelineEnvelopeCurves;
     bool PrepareTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept;
     void BindTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept;
     bool PrepareVariableWeightBacking(std::uint32_t slot) noexcept;
@@ -1378,17 +1381,16 @@ private:
     // order (§8.2 determinism).
     RenderWorkerPool m_workers;
     // Per-block cascade job list, filled in slot order by the parallel path's
-    // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Sized once at
-    // construction (Render capacity) so dispatch allocates nothing on the audio
-    // path.
-    std::vector<SignalMemberImage> m_signalMemberImages;
-    std::vector<std::uint32_t> m_jobSlots;
-    std::vector<std::uint32_t> m_jobGenerations;
+    // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Their stable
+    // backing is committed before a render slot becomes visible.
+    StableRowStorage<SignalMemberImage> m_signalMemberImages;
+    StableRowStorage<std::uint32_t> m_jobSlots;
+    StableRowStorage<std::uint32_t> m_jobGenerations;
     std::uint32_t m_deferredJobCount = 0;
     std::uint64_t m_jobQuantumIndex = 0;
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;
-    std::array<StableRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
+    std::array<GrowingRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
     std::atomic<bool> m_monitorPreChainPrepared{false};
     std::uint64_t m_workerBusyPeakTicks = 0; // running peak, audio-thread-owned
 };
