@@ -99,6 +99,7 @@ struct Profile {
     std::uint32_t transitionRows = 0;
     std::uint32_t variableControls = 0;
     std::uint32_t queueRows = 0;
+    std::uint32_t scheduleBankRows = 0;
     std::uint32_t conditionalRows = 0;
     std::uint64_t embeddedArmGroups = 0;
     std::uint64_t embeddedArmMembers = 0;
@@ -266,6 +267,7 @@ inline void Concurrent(Result& a, const Result& b, const Limits& limits) noexcep
     a.profile.mayExposeMusic |= b.profile.mayExposeMusic;
     a.profile.variableControls = SaturatingAdd(a.profile.variableControls, b.profile.variableControls, UINT32_MAX, a.flags);
     a.profile.queueRows = SaturatingAdd(a.profile.queueRows, b.profile.queueRows, UINT32_MAX, a.flags);
+    a.profile.scheduleBankRows = SaturatingAdd(a.profile.scheduleBankRows, b.profile.scheduleBankRows, UINT32_MAX, a.flags);
     a.profile.conditionalRows = SaturatingAdd(a.profile.conditionalRows, b.profile.conditionalRows, UINT32_MAX, a.flags);
     a.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull, a.profile.embeddedArmGroups + b.profile.embeddedArmGroups);
     a.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull, a.profile.embeddedArmMembers + b.profile.embeddedArmMembers);
@@ -305,6 +307,7 @@ inline void Alternative(Result& a, const Result& b) noexcept {
     a.profile.mayExposeMusic |= b.profile.mayExposeMusic;
     a.profile.variableControls = std::max(a.profile.variableControls, b.profile.variableControls);
     a.profile.queueRows = std::max(a.profile.queueRows, b.profile.queueRows);
+    a.profile.scheduleBankRows = std::max(a.profile.scheduleBankRows, b.profile.scheduleBankRows);
     a.profile.conditionalRows = std::max(a.profile.conditionalRows, b.profile.conditionalRows);
     a.profile.embeddedArmGroups = std::max(a.profile.embeddedArmGroups, b.profile.embeddedArmGroups);
     a.profile.embeddedArmMembers = std::max(a.profile.embeddedArmMembers, b.profile.embeddedArmMembers);
@@ -737,6 +740,8 @@ private:
                         dynamic.profile.variableControls, UINT32_MAX, result.flags);
                     result.profile.queueRows = SaturatingAdd(result.profile.queueRows, dynamic.profile.queueRows, UINT32_MAX, result.flags);
                     result.profile.queue.Include(dynamic.profile.queue);
+                    result.profile.scheduleBankRows = SaturatingAdd(result.profile.scheduleBankRows,
+                        dynamic.profile.scheduleBankRows, UINT32_MAX, result.flags);
                     result.profile.conditionalRows = SaturatingAdd(result.profile.conditionalRows, dynamic.profile.conditionalRows, UINT32_MAX, result.flags);
                     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
                         result.profile.completionWidths[t] = SaturatingAdd(result.profile.completionWidths[t],
@@ -765,7 +770,13 @@ private:
     Result Choices(const ContainerProgramViewV3& program, Budget budget) noexcept {
         Result result{};
         for (std::uint32_t i = 0; i < program.childCount; ++i) {
-            Alternative(result, Visit(program.children[i].playable, Mode::Frontier, budget));
+            const auto& ref = program.children[i].playable;
+            auto child = Visit(ref, Mode::Frontier, budget);
+            if (child && (ref.kind == PlayableKindV1::Track || ref.kind == PlayableKindV1::Segment) && child.profile.current) {
+                child.profile.scheduleBankRows = SaturatingAdd(child.profile.scheduleBankRows, 1u, UINT32_MAX, child.flags);
+                child.profile.queue.Include({child.profile.current, 2u * child.profile.current});
+            }
+            Alternative(result, child);
             if (!result) return result;
         }
         result.profile.selectionCount = SaturatingAdd(result.profile.selectionCount, 1u, UINT32_MAX, result.flags);
@@ -882,6 +893,7 @@ private:
             std::uint32_t futureTransitions = 0;
             std::uint32_t futureControls = 0;
             std::uint32_t futureQueueRows = 0;
+            std::uint32_t futureScheduleBanks = 0;
             std::uint32_t futureConditionalRows = 0;
             decltype(Profile::completionWidths) futureCompletions{};
             std::uint64_t futureEmbeddedGroups = 0, futureEmbeddedMembers = 0;
@@ -897,6 +909,7 @@ private:
                 futureControls = std::max(futureControls, next.profile.variableControls);
                 futureQueueRows = std::max(futureQueueRows, next.profile.queueRows);
                 current.profile.queue.Include(next.profile.queue);
+                futureScheduleBanks = std::max(futureScheduleBanks, next.profile.scheduleBankRows);
                 futureConditionalRows = std::max(futureConditionalRows, next.profile.conditionalRows);
                 futureEmbeddedGroups = std::max(futureEmbeddedGroups, next.profile.embeddedArmGroups);
                 futureEmbeddedMembers = std::max(futureEmbeddedMembers, next.profile.embeddedArmMembers);
@@ -928,6 +941,7 @@ private:
             AddFuture(current, capacity, limits_);
             current.profile.variableControls = SaturatingAdd(current.profile.variableControls, futureControls, UINT32_MAX, current.flags);
             current.profile.queueRows = SaturatingAdd(current.profile.queueRows, futureQueueRows, UINT32_MAX, current.flags);
+            current.profile.scheduleBankRows = SaturatingAdd(current.profile.scheduleBankRows, futureScheduleBanks, UINT32_MAX, current.flags);
             current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, futureConditionalRows, UINT32_MAX, current.flags);
             current.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull, current.profile.embeddedArmGroups + futureEmbeddedGroups);
             current.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull, current.profile.embeddedArmMembers + futureEmbeddedMembers);

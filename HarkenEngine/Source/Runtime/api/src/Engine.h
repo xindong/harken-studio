@@ -4805,6 +4805,26 @@ struct EngineActionPlayStorage {
             return false;
         }
     }
+    bool PrepareQueueLinks(std::uint32_t count) noexcept {
+        if (count <= queueRoleCapacity && queueFutureAttempts.size() >= count && queueFutureOwners.size() >= count)
+            return true;
+        if (phase != EngineFrontierAttemptPhase::Free || memguard::IsAudioTagged()) return false;
+        try {
+            const auto grow = [count](auto& column) {
+                if (column.size() >= count) return;
+                detail::CheckedGrow(column, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                column.resize(count);
+            };
+            // Only idle storage can move. Active owners keep their callback addresses until reset.
+            grow(queueFutureAttempts);
+            grow(queueFutureOwners);
+            queueRoleCapacity = std::max(queueRoleCapacity, count);
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
+    }
     bool PrepareContainerStorage() noexcept {
         if (containerStoragePrepared) return true;
         if (memguard::IsAudioTagged()) return false;
@@ -5804,6 +5824,32 @@ struct VariableControlRetargetTreeScratch {
           containerServices(capacity),
           containerQueues(capacity) {}
 
+    bool PrepareRows(std::uint32_t rows) noexcept {
+        if (nestedCount || containerCount || memguard::IsAudioTagged()) return false;
+        try {
+            // All columns are idle here. A failed allocation leaves existing cells reusable.
+            const auto prepare = [rows](auto& column) {
+                if (column.size() >= rows) return;
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableControlRetargetStorage);
+                std::remove_reference_t<decltype(column)>(rows).swap(column);
+            };
+            prepare(nestedInstances);
+            prepare(nestedParents);
+            prepare(nestedOrdinals);
+            prepare(nestedKinds);
+            prepare(containerRows);
+            prepare(containerInstances);
+            prepare(containerPrograms);
+            prepare(containerActiveChildren);
+            prepare(containerServices);
+            prepare(containerQueues);
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableControlRetargetStorage);
+            return false;
+        }
+    }
+
     VariableControlRetargetTreeScratch(
         const VariableControlRetargetTreeScratch&) = delete;
     VariableControlRetargetTreeScratch& operator=(
@@ -6215,7 +6261,16 @@ struct Engine {
         VariableControlSide side = VariableControlSide::Discrete;
         std::uint32_t topIndex = UINT32_MAX;
     };
-    struct NativeRuntimeBacking {
+    using DeferredTreeWidths = std::multiset<std::uint32_t>;
+    struct PreparedTreeWidth {
+        DeferredTreeWidths* widths = nullptr;
+        DeferredTreeWidths::iterator widthEntry;
+        std::uint32_t width = 0;
+        ~PreparedTreeWidth() {
+            if (widths != nullptr) widths->erase(widthEntry);
+        }
+    };
+    struct NativeRuntimeBacking : PreparedTreeWidth {
         struct RootInitialArms {
             EnginePlayableServiceToken service{};
             EngineVariableInitialArms arms;
@@ -7107,7 +7162,7 @@ public:
                      resolved.maxPropertiesPerCurrentSlice,
                      resolved.maxActions, logicCommits, transportEpochOwner,
                      variableSlices, timelinePool,
-                     static_cast<std::uint64_t>(resolved.maxPlayableInstances) +
+                     static_cast<std::uint64_t>(std::max(resolved.maxPlayableInstances, resolved.voiceCapacity.Logical())) +
                          resolved.voiceCapacity.Logical() +
                          resolved.maxDeferredIntents,
                      voices.Capacity(), resolved.maxVariableSliceTargetsTotal),
@@ -7347,7 +7402,7 @@ public:
             resolved.maxTransactionEvents;
         timelinePoolConfig.maxCurrentSlicesPerQuantum =
             resolved.maxEventsPerQuantum;
-        timelinePoolConfig.maxNativeStartCalendarsPerQuantum = variables.ReadCutCapacity();
+        timelinePoolConfig.maxNativeStartCalendarsPerQuantum = variables.NativeStartBudgetPerQuantum();
         timelinePoolConfig.maxPlan03GroupHeadersPerPage =
             resolved.maxPlan03GroupHeadersPerPage;
         timelinePoolConfig.maxArmsPerGroup = resolved.maxArmsPerGroup;
@@ -7517,9 +7572,7 @@ public:
         cutConfig.maxEffectParams =
             cutConfig.maxEffectNodes * kMaxEffectParamCount;
         cutConfig.maxEffectEdges = cutConfig.maxEffectNodes;
-        if (resolved.maxPlayableInstances == 0 ||
-            resolved.maxPlayableInstances > kMaxPlayableInstances ||
-            resolved.maxKnownScheduleLeaves == 0 ||
+        if (resolved.maxKnownScheduleLeaves == 0 ||
             resolved.maxKnownScheduleLeaves > kMaxKnownScheduleLeaves ||
             resolved.maxVariableControlActiveRows == 0 ||
             resolved.maxVariableControlActiveRows > 64 ||
@@ -8251,11 +8304,10 @@ public:
         return bytes;
     }
 
-    using DeferredTreeWidths = std::multiset<std::uint32_t>;
     DeferredTreeWidths deferredTreeWidths;
     std::uint32_t borrowedTreeWidth = 0;
     ActionFiringHandle preparingDeferredTreeOwner = 0;
-    struct DeferredTreeBacking final : ActionTreeBacking {
+    struct DeferredTreeBacking final : ActionTreeBacking, PreparedTreeWidth {
         StableStoragePreparation arms;
         std::uint32_t armCount = 0;
         bool AddArms(std::uint64_t count) noexcept {
@@ -8286,13 +8338,7 @@ public:
         std::uint32_t groupMembers = 0;
         std::vector<std::uint32_t> completionWidths;
         CompositeCompletionOwnerPool::BackingPreparation completions;
-        DeferredTreeWidths* widths = nullptr;
-        DeferredTreeWidths::iterator widthEntry;
-        std::uint32_t width = 0;
         std::uint32_t count = 0;
-        ~DeferredTreeBacking() override {
-            if (widths != nullptr) widths->erase(widthEntry);
-        }
         bool Include(std::uint32_t additional, std::uint32_t rows, std::uint32_t controls,
                      std::uint32_t queueRows, std::uint32_t conditionalRows,
                      std::uint64_t groupsNeeded, std::uint64_t membersNeeded) noexcept {
@@ -8314,7 +8360,7 @@ public:
     }
     bool FitsDeferredTree(const EngineActionPlayStorage& storage, std::uint32_t width) const noexcept {
         return storage.containerStoragePrepared && storage.frontierPolicies.size() >= width &&
-            storage.FitsControlTree(width) &&
+            storage.queueRoleCapacity >= width && storage.FitsControlTree(width) &&
             storage.ownerLedger.DomainCapacity(FrontierOwnerKind::Voice) >= std::min(width, config.voiceCapacity.Render());
     }
     bool CanPrepareIdleTree(const EngineActionPlayScratch& scratch, std::uint32_t width) const noexcept {
@@ -8335,7 +8381,7 @@ public:
                 return false;
             }
         }
-        return storage.PrepareControlChildren(width) &&
+        return storage.PrepareQueueLinks(width) && storage.PrepareControlChildren(width) &&
             storage.playableTreeExecutor->PrepareReservationCount(width) &&
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Mode, width) &&
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
@@ -8470,7 +8516,7 @@ public:
         return scratch.storage.phase == EngineFrontierAttemptPhase::Free && scratch.storage.generation != UINT64_MAX;
     }
     bool PrepareActionPlayBacking(std::uint32_t low, std::uint32_t high,
-        StableSlotStorage<EngineActionPlayScratch>::Preparation* out) noexcept {
+        StableSlotStorage<EngineActionPlayScratch>::Preparation* out, PreparedTreeWidth* tree = nullptr) noexcept {
         if (out == nullptr || out->Valid() || memguard::IsAudioTagged() ||
             actionPlayScratch.PreparedUseActive()) return false;
         // Generic allowances promise full storage, including existing Sound rows
@@ -8479,8 +8525,20 @@ public:
             if (!scratch.storage.PrepareContainerStorage()) return false;
             scratch.PrepareQueueScratchArrays();
         }
-        return actionPlayScratch.PrepareBacking(low, high, ActionPlaySlotReusable,
-            [this](std::uint32_t slot) noexcept { return EnsureActionPlaySlot(slot); }, out);
+        const auto width = std::max(RequiredDeferredTreeWidth(), tree ? tree->width : 0u);
+        if (!actionPlayScratch.PrepareBacking(low, high,
+                [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
+                [this, width](std::uint32_t slot) noexcept { return PrepareIdleTree(slot, width); }, out, width != 0))
+            return false;
+        if (!tree || !tree->width) return true;
+        try {
+            tree->widthEntry = deferredTreeWidths.insert(tree->width);
+            tree->widths = &deferredTreeWidths;
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
     }
     bool ProtectActionPlayBackingForAcquire(std::uint32_t slot) noexcept {
         const auto width = RequiredDeferredTreeWidth();

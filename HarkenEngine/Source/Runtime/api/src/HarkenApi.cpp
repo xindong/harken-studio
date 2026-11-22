@@ -21986,6 +21986,14 @@ bool PrepareVariableControlRetargetSubtree(
         schedule.leafCount > leafPrepared.size() - leafPreparedOffset) {
         return false;
     }
+    // The root and selected paths own these rows for this one change of target.
+    // Grow before issuing any nested instance or container token.
+    std::uint64_t rows = 1ull + out->frontierPolicyCount + schedule.leafCount;
+    for (std::uint32_t leaf = 0; leaf < schedule.leafCount; ++leaf) {
+        const auto& child = schedule.leaves[leaf];
+        if (child.frontierPolicyIndex == UINT32_MAX) rows += child.selectionCount;
+    }
+    if (rows > UINT32_MAX || !out->PrepareRows(static_cast<std::uint32_t>(rows))) return false;
     const auto resolve = [&](const harken::PlayableRefV1& ref)
         -> const harken::ContainerProgramViewV3* {
         return FindVariableControlNestedContainer(world, ref);
@@ -23946,7 +23954,9 @@ harken::EngineActionPlayScratch* AcquireFrontierAttempt(
             storage.phase = harken::EngineFrontierAttemptPhase::Quarantined;
             continue;
         }
-        if (engine.borrowedTreeWidth != 0 && !engine.FitsDeferredTree(storage, engine.borrowedTreeWidth)) continue;
+        const auto nativeWidth = engine.nativeRuntimeBackingInUse ? engine.nativeRuntimeBackingInUse->width : 0u;
+        const auto width = std::max(engine.borrowedTreeWidth, nativeWidth);
+        if (width != 0 && !engine.FitsDeferredTree(storage, width)) continue;
         if (!engine.EnsureActionPlaySlot(index, needsContainerState)) return nullptr;
         if (!engine.ProtectActionPlayBackingForAcquire(index)) return nullptr;
         if (!ResetImmediateActionPlayScratch(engine, &scratch)) {
@@ -64102,13 +64112,9 @@ static bool CountPendingVariableBacking(Engine& engine, EngineActionPlayScratch&
     const bool boundSelection = selection.BoundFor(producer.storage.generation);
     if (boundSelection && (!selection.prefixSealed || selection.prefixCount > selection.prefix.size())) return false;
     backing::Limits limits{};
-    const auto futureCapacity = std::min({static_cast<std::size_t>(producer.storage.queueRoleCapacity),
-        producer.storage.queueFutureAttempts.size(), producer.storage.queueFutureOwners.size(),
-        static_cast<std::size_t>(engine.config.maxPlayableInstances)});
-    if (futureCapacity > UINT32_MAX || row.selectionCount > row.selectedChildOrdinals.size()) return false;
+    if (row.selectionCount > row.selectedChildOrdinals.size()) return false;
     limits.includeDynamicInstanceRows = true;
-    limits.immediateFutureSides = static_cast<std::uint32_t>(futureCapacity);
-    limits.queueRoleCapacity = producer.storage.queueRoleCapacity;
+    limits.immediateFutureSides = limits.queueRoleCapacity = UINT32_MAX;
     limits.propertyPrefixCount = row.VariableControlPropertyRoot().stableId != VnObjectId{} ? row.selectionCount : 0;
     limits.seedPrefixCount = boundSelection ? selection.prefixCount : 0;
     const bool pack = !row.variableControlWorldUsesCurrentAuthority && source.lease.leaseToken != 0;
@@ -64365,6 +64371,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         std::uint64_t nativeLaneMembers = 0;
         std::uint64_t nativeBindingRows = 0;
         std::uint64_t queueControls = 0;
+        std::uint64_t scheduleBanks = 0;
         EffectPoolBank::BackingDemand effectInstances{};
         auto token = firstToken();
         for (std::uint32_t ordinal = 0; ordinal < producerCount; ++ordinal) {
@@ -64412,6 +64419,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             nativeTransitions += result.profile.transitionRows;
             if (group->replacementControls.ReservedRows() < result.profile.variableControls - 1u) return false;
             queueControls += result.profile.Q;
+            scheduleBanks += 2ull * result.profile.Q + result.profile.scheduleBankRows;
+            if (scheduleBanks > UINT32_MAX) return shortage();
             nativeGroups += backing::ArmGroupRows(result.profile);
             for (std::uint32_t threshold = 1; threshold <= backing::kLeafCapacity; ++threshold) {
                 if (result.profile.H[threshold] > UINT32_MAX - futures.H[threshold]) return false;
@@ -64488,6 +64497,13 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             queueControls > UINT32_MAX - nativeVoices || queueControls > UINT32_MAX / 2u) return false;
         if (!AllowNativeBackingAllocation()) return shortage();
         auto nativeCandidate = std::make_unique<NativeRuntimeBacking>();
+        for (const auto& profile : profiles) {
+            // Re-selection may replace a narrow branch with a wider one while this request is pending.
+            const auto width = std::max<std::uint64_t>(profile.Q, 2ull * profile.instanceRows + 1u);
+            if (width > UINT32_MAX) return shortage();
+            if (width > config.maxPlayableInstances)
+                nativeCandidate->width = std::max(nativeCandidate->width, static_cast<std::uint32_t>(width));
+        }
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->rootMemberWeights.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
@@ -64578,8 +64594,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         nativeCandidate->publicationChildren.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->publicationOwners.resize(producerCount);
-        if (queueControls != 0 && !queueScheduleStorage.Prepare(
-                {futures.queue.programs, futures.queue.events}, static_cast<std::uint32_t>(2u * queueControls),
+        if (scheduleBanks != 0 && !queueScheduleStorage.Prepare(
+                {futures.queue.programs, futures.queue.events}, static_cast<std::uint32_t>(scheduleBanks),
                 &nativeCandidate->queueSchedules,
                 [&]() noexcept { return AllowNativeBackingAllocation(); })) return shortage();
         // Queue futures acquire a slot even when their selected schedule has no leaves.
@@ -64587,8 +64603,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !playableInstances.PrepareFutureAcquisitions(static_cast<std::uint32_t>(nativeInstances), &nativeCandidate->instances) ||
             !containerPlayback.PrepareStorage(playableInstances.ConstructedEntryCount()) ||
             !PrepareActionPlayBacking(producerCount, static_cast<std::uint32_t>(queueControls),
-                &nativeCandidate->actionPlays) ||
-            !PrepareQueueProgramBankBacking(static_cast<std::uint32_t>(2u * queueControls),
+                &nativeCandidate->actionPlays, nativeCandidate.get()) ||
+            !PrepareQueueProgramBankBacking(static_cast<std::uint32_t>(scheduleBanks),
                 &nativeCandidate->queueBanks) ||
             (nativeTransitions != 0 && !transitionInstances.PrepareBacking(
                 static_cast<std::uint32_t>(nativeTransitions), &nativeCandidate->transitions)) ||
@@ -64615,8 +64631,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 &nativeCandidate->selectionHistory) ||
             !timelineArms.PrepareBacking(static_cast<std::uint32_t>(nativeVoices + queueControls),
                 &nativeCandidate->arms) ||
-            !variables.PrepareReadCutBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                nativeVoices + queueControls + producerCount, variables.ReadCutCapacity())),
+            nativeVoices + queueControls + producerCount > UINT32_MAX ||
+            !variables.PrepareReadCutBacking(static_cast<std::uint32_t>(nativeVoices + queueControls + producerCount),
                 &nativeCandidate->readCuts) ||
             !armGroups.PrepareBacking(static_cast<std::uint32_t>(nativeGroups),
                 static_cast<std::uint32_t>(nativeVoices + queueControls), &nativeCandidate->groups) ||
@@ -64815,14 +64831,9 @@ VnResult Engine::PrepareNativeBindingGrowth(
             backing::Limits limits{};
             limits.currentScheduleDepth = limits.directFutureScheduleDepth = pack
                 ? kSelectionPathNodeCapacity : world.maxTrackSegmentScheduleDepth;
-            limits.immediateFutureSides = config.maxPlayableInstances;
-            limits.queueRoleCapacity = config.maxPlayableInstances;
+            limits.immediateFutureSides = limits.queueRoleCapacity = UINT32_MAX;
             if (variableControl) {
                 if (storage == nullptr) return false;
-                limits.immediateFutureSides = static_cast<std::uint32_t>(std::min({
-                    static_cast<std::size_t>(storage->queueRoleCapacity), storage->queueFutureAttempts.size(),
-                    storage->queueFutureOwners.size(), static_cast<std::size_t>(config.maxPlayableInstances)}));
-                limits.queueRoleCapacity = storage->queueRoleCapacity;
                 const auto& initial = storage->initialSelection;
                 if (initial.BoundFor(storage->generation)) {
                     if (!initial.prefixSealed || initial.prefixCount > initial.prefix.size()) return false;
@@ -64956,8 +64967,7 @@ static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
     backing::Limits limits{};
     limits.currentScheduleDepth = limits.directFutureScheduleDepth = pack
         ? WorldCapacitySummaryV1{}.maxTrackSegmentScheduleDepth : world->maxTrackSegmentScheduleDepth;
-    limits.immediateFutureSides = engine.config.maxPlayableInstances;
-    limits.queueRoleCapacity = engine.config.maxPlayableInstances;
+    limits.immediateFutureSides = limits.queueRoleCapacity = UINT32_MAX;
     const backing::AuthorityStamp stamp{row.Invocation().worldGeneration, pack
         ? row.Invocation().packPlaybackView.WorldSemanticFingerprint() : world->identity.runtimeSemanticFingerprint};
     std::vector<backing::MemoEntry> memo;
@@ -87030,6 +87040,18 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
             if (stop) return VN_OK;
             if (result.profile.instanceRows > UINT32_MAX - rows) return VN_OUT_OF_MEMORY;
             rows += result.profile.instanceRows;
+            // A multi-leaf Track or Segment also needs a bank for its own events.
+            if ((kind == harken::PlayableKindV1::Track || kind == harken::PlayableKindV1::Segment) &&
+                result.profile.current > 1u) {
+                if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+                if (!trees->AddQueueBanks(1u, 0u, {result.profile.current, result.profile.current}))
+                    return VN_OUT_OF_MEMORY;
+            }
+            if (result.profile.scheduleBankRows != 0) {
+                if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+                if (!trees->AddQueueBanks(result.profile.scheduleBankRows, 0u,
+                        {result.profile.queue.programs, result.profile.queue.events})) return VN_OUT_OF_MEMORY;
+            }
             if (result.profile.queueRows != 0) {
                 if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
                 if (!trees->AddQueueBanks(result.profile.queueRows, result.profile.conditionalRows,

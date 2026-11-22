@@ -1355,13 +1355,13 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
     EXPECT_EQ(64u, layout.endpointStride);
     EXPECT_EQ(32u, layout.continuousStride);
 
-    EXPECT_EQ(resolved.voiceCapacity.Logical(), resolved.maxPlayableInstances);
-    EXPECT_EQ(81'920u, layout.MemberBase(resolved.maxPlayableInstances));
-    EXPECT_EQ(65'536u, layout.PairedBase(resolved.maxPlayableInstances));
-    EXPECT_EQ(65'536u, layout.CurrentEventBase(resolved.maxPlayableInstances));
-    EXPECT_EQ(49'152u, layout.InitialProgramBase(resolved.maxPlayableInstances));
-    EXPECT_EQ(32'768u, layout.EndpointBase(resolved.maxPlayableInstances));
-    EXPECT_EQ(16'384u, layout.ContinuousBase(resolved.maxPlayableInstances));
+    constexpr std::uint32_t instanceSlot = 512;
+    EXPECT_EQ(81'920u, layout.MemberBase(instanceSlot));
+    EXPECT_EQ(65'536u, layout.PairedBase(instanceSlot));
+    EXPECT_EQ(65'536u, layout.CurrentEventBase(instanceSlot));
+    EXPECT_EQ(49'152u, layout.InitialProgramBase(instanceSlot));
+    EXPECT_EQ(32'768u, layout.EndpointBase(instanceSlot));
+    EXPECT_EQ(16'384u, layout.ContinuousBase(instanceSlot));
 
     EXPECT_EQ(64u, layout.PackedDiscreteTransitionOffset(96u));
     EXPECT_EQ(127u, layout.PackedDiscreteTransitionOffset(159u));

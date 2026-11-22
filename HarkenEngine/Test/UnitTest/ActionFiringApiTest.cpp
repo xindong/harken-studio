@@ -65306,7 +65306,8 @@ TEST(ActionFiringApi, DistantTrackLeafLeavesRoomForTheNextImmediateTrack) {
     ASSERT_EQ(expected.end(), difference.first) << "sample " << (difference.first - expected.begin());
 }
 
-static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<float>& output, bool forbidGrowth = false) {
+static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<float>& output,
+    bool forbidGrowth = false, bool loop = false, bool addWideTrack = false, bool wrapTrack = false) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(8, 64, 48000));
@@ -65328,7 +65329,56 @@ static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<f
             .contentRevision);
     const auto dueFrame = engine->timelinePool.WindowEndFrame() + 8u * engine->config.blockFrames;
     image.MakeImmediateSequenceQueuePlayAction();
-    image.MakeFirstQueueChildCompositeTrack();
+    if (loop) {
+        image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
+        image.containers[2].queueCycleCount = 2;
+    }
+    const auto originalChild = image.queueChildren[0];
+    const auto originalOccurrence = image.occurrences[2];
+    const auto queueStep = image.steps[11];
+    if (wrapTrack) image.MakeImmediateCompositeContainerPlayAction();
+    else image.MakeFirstQueueChildCompositeTrack();
+    const auto trackContainer = image.steps[11].target;
+    image.steps[11] = queueStep;
+    std::array<harken::ScheduleClipPlacementV1, 3> wide{};
+    std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences;
+    const auto trackFrame = dueFrame + 12u * engine->config.blockFrames;
+    if (addWideTrack) {
+        image.queueChildren[0] = originalChild;
+        wide = {image.trackPlacements[0], image.trackPlacements[1], image.trackPlacements[0]};
+        auto& third = wide[2];
+        third.stablePlacementOrdinal = 2;
+        third.stableOccurrenceOrdinal = 22;
+        third.clipId = harkentest::ObjectId(5003);
+        third.clipGuidHigh = 6003;
+        third.clipGuidLow = 7003;
+        occurrences.assign(image.world.playableOccurrences, image.world.playableOccurrences + image.world.playableOccurrenceCount);
+        for (auto& entry : occurrences)
+            if (entry.parentStableId == originalOccurrence.parentStableId &&
+                entry.stableOccurrenceOrdinal == originalOccurrence.stableOccurrenceOrdinal) entry = originalOccurrence;
+        const auto first = std::find_if(occurrences.begin(), occurrences.end(), [&](const auto& entry) {
+            return entry.parentStableId == image.track.rootDefinition.stableId &&
+                entry.stableOccurrenceOrdinal == wide[0].stableOccurrenceOrdinal;
+        });
+        ASSERT_NE(occurrences.end(), first);
+        auto additional = *first;
+        additional.stableOccurrenceOrdinal = third.stableOccurrenceOrdinal;
+        additional.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(additional);
+        occurrences.insert(first + 2, additional);
+        image.world.playableOccurrences = occurrences.data();
+        image.world.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences.size());
+        image.track.placements = wide.data();
+        image.track.placementCount = 3;
+        image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+        image.steps[12] = image.steps[11];
+        image.steps[12].authoredEventIndex = 1;
+        image.steps[12].target.kind = harken::ActionTargetKindV1::Track;
+        image.steps[12].target.stableId = image.track.rootDefinition.stableId;
+        image.steps[12].target.expectedProgramSemanticFingerprint = image.track.rootDefinition.expectedProgramSemanticFingerprint;
+        if (wrapTrack) image.steps[12].target = trackContainer;
+        SetAbsoluteTime(&image.steps[12].delay, DelayNanosecondsForTargetFrame(*engine, trackFrame));
+        image.actions[9].stepCount = image.actions[9].expandedStepOccurrenceCount = 2;
+    }
     {
         SetAbsoluteTime(&image.steps[11].delay, DelayNanosecondsForTargetFrame(*engine, dueFrame));
         image.actions[9].directFeatureMask = image.actions[9].transitiveFeatureMask = 1;
@@ -65381,6 +65431,11 @@ static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<f
     EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
     EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
     EXPECT_GT(harkentest::Peak(output.data(), output.size()), harkentest::kSilenceFloor);
+    if (addWideTrack) {
+        const auto sample = trackFrame * engine->nullBackend.Channels();
+        ASSERT_LT(sample, output.size());
+        EXPECT_GT(harkentest::Peak(output.data() + sample, output.size() - sample), harkentest::kSilenceFloor);
+    }
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -65392,6 +65447,22 @@ TEST(ActionFiringApi, AcceptedCompositeQueueKeepsItsAudioWhenOtherProgramsFillTh
     std::vector<float> noGrowth;
     ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(true, noGrowth, true));
     EXPECT_TRUE(reference == noGrowth);
+    std::vector<float> repeated, repeatedUnderPressure;
+    ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(false, repeated, false, true));
+    EXPECT_GT(std::count_if(repeated.begin(), repeated.end(), [](float x) { return x != 0.f; }),
+        std::count_if(reference.begin(), reference.end(), [](float x) { return x != 0.f; }));
+    ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(true, repeatedUnderPressure, true, true));
+    EXPECT_TRUE(repeated == repeatedUnderPressure);
+}
+
+TEST(ActionFiringApi, DelayedQueueAndWiderTrackKeepBothStepsUnderProgramPressure) {
+    for (bool wrapped : {false, true}) {
+        SCOPED_TRACE(wrapped);
+        std::vector<float> reference, pressured;
+        ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(false, reference, false, false, true, wrapped));
+        ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(true, pressured, true, false, true, wrapped));
+        EXPECT_TRUE(reference == pressured);
+    }
 }
 
 static void CheckCompositePlaybackPastCapacity(bool delayed) {

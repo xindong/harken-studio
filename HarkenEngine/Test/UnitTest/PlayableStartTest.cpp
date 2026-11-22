@@ -22660,7 +22660,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         pool.maxEventsPerQuantum = resolved.maxEventsPerQuantum;
         pool.maxTransactionEvents = resolved.maxTransactionEvents;
         pool.maxCurrentSlicesPerQuantum = resolved.maxEventsPerQuantum;
-        pool.maxNativeStartCalendarsPerQuantum = engine.variables.ReadCutCapacity();
+        pool.maxNativeStartCalendarsPerQuantum = engine.variables.NativeStartBudgetPerQuantum();
         pool.maxPlan03GroupHeadersPerPage = resolved.maxPlan03GroupHeadersPerPage;
         pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
         pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
@@ -23455,7 +23455,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             pool.maxEventsPerQuantum = resolved.maxEventsPerQuantum;
             pool.maxTransactionEvents = resolved.maxTransactionEvents;
             pool.maxCurrentSlicesPerQuantum = resolved.maxEventsPerQuantum;
-            pool.maxNativeStartCalendarsPerQuantum = engine.variables.ReadCutCapacity();
+            pool.maxNativeStartCalendarsPerQuantum = engine.variables.NativeStartBudgetPerQuantum();
             pool.maxPlan03GroupHeadersPerPage = resolved.maxPlan03GroupHeadersPerPage;
             pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
             pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
@@ -24578,7 +24578,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         pool.maxEventsPerQuantum = resolved.maxEventsPerQuantum;
         pool.maxTransactionEvents = resolved.maxTransactionEvents;
         pool.maxCurrentSlicesPerQuantum = resolved.maxEventsPerQuantum;
-        pool.maxNativeStartCalendarsPerQuantum = engine.variables.ReadCutCapacity();
+        pool.maxNativeStartCalendarsPerQuantum = engine.variables.NativeStartBudgetPerQuantum();
         pool.maxPlan03GroupHeadersPerPage = resolved.maxPlan03GroupHeadersPerPage;
         pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
         pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +

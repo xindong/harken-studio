@@ -272,8 +272,8 @@ private:
 class VariableServiceV1 {
     struct ReadCutRow;
 public:
-    using ReadCutBackingPreparation = StableSlotStorage<ReadCutRow>::Preparation;
-    using ReadCutBackingUse = StableSlotStorage<ReadCutRow>::PreparedUse;
+    using ReadCutBackingPreparation = StableStoragePreparation;
+    using ReadCutBackingUse = StableStoragePreparedUse;
     friend void test::SetApiCatalogFingerprint(VariableServiceV1&,
                                                std::uint64_t) noexcept;
     friend bool test::SetDefinitionExecutionFingerprint(VariableServiceV1&,
@@ -721,7 +721,7 @@ public:
     bool PendingTimelineReadUseMatchesArm(VariableTimelineReadUseRef use,
         VnVoiceHandle nativeHandle, TimelineArmToken arm) const noexcept;
     void AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept;
-    std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
+    std::uint32_t NativeStartBudgetPerQuantum() const noexcept { return nativeStartBudgetPerQuantum_; }
     bool PrepareReadCutBacking(std::uint32_t count, ReadCutBackingPreparation* out) noexcept;
     bool PrepareActionResultBacking(std::uint32_t futureWrites,
         ActionVariableResultBacking* out) noexcept;
@@ -1544,8 +1544,8 @@ private:
     std::vector<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
     std::uint64_t candidateEpoch_ = 0;
     mutable std::vector<VariableSliceRef> dependencyVisited_;
-    std::uint32_t readCutCapacity_ = 0;
-    StableSlotStorage<ReadCutRow> readCuts_;
+    std::uint32_t nativeStartBudgetPerQuantum_ = 0;
+    GrowingRowStorage<ReadCutRow> readCuts_;
     std::vector<std::uint32_t> capturingCuts_;
     std::uint32_t timelineReadUseCapacity_ = 0;
     StableRowStorage<TimelineReadUseRow> timelineReadUses_;
