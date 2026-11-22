@@ -57565,6 +57565,13 @@ TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricSegmentAndSoundPreser
 }
 
 TEST(ActionFiringApi, PendingVariableGroupInitialAsymmetricTrackAndSoundReselectBothPlays) {
+#if !defined(HARKEN_RT_QUALIFICATION)
+    // The larger branch needs ten voice records even with only eight initial playable slots.
+    harken::detail::SetPlayableCapacitiesForTests(8, 0);
+    struct ResetCapacity {
+        ~ResetCapacity() { harken::detail::SetPlayableCapacitiesForTests(0, 0); }
+    } reset;
+#endif
     CheckRegisteredInitialCompositeCohort(false, true, 9, false, 0, false, true);
 }
 

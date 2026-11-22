@@ -27086,7 +27086,10 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     }
     treeRows += memberCount + 1u;
     if (treeRows > UINT32_MAX ||
-        (engine.actionPlayScratch.PreparedUseActive() && !scratch->storage.FitsControlTree(static_cast<std::uint32_t>(treeRows))) ||
+        (engine.actionPlayScratch.PreparedUseActive() &&
+            (!scratch->storage.FitsControlTree(static_cast<std::uint32_t>(treeRows)) ||
+             scratch->storage.ownerLedger.DomainCapacity(harken::FrontierOwnerKind::Voice) < memberCount)) ||
+        !scratch->storage.ownerLedger.PrepareDomain(harken::FrontierOwnerKind::Voice, memberCount) ||
         !scratch->storage.PrepareControlChildren(static_cast<std::uint32_t>(treeRows)) ||
         !scratch->playableTreeExecutor.PrepareReservationCount(static_cast<std::uint32_t>(treeRows)) ||
         !scratch->storage.ownerLedger.PrepareDomain(harken::FrontierOwnerKind::Mode,
