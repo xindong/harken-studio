@@ -3138,7 +3138,7 @@ void EngineIntegrationsPage::runUnrealRemoval(const EngineTargetRecord& target)
         return ProjectIntegrationExecutor::executeUnreal(target, plan, IntegrationOperation::Remove, true);
     });
     ResultStep removal;
-    removal.id = QStringLiteral("remove_sdk");
+    removal.id = QStringLiteral("remove_package");
     removal.title = QCoreApplication::translate("HarkenHub", "Uninstall Integration Package");
     removal.status = result.success ? ResultStatus::Succeeded : ResultStatus::Failed;
     removal.summary = result.success

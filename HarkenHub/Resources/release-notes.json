@@ -3,7 +3,7 @@
   "unreleased": [
     {
       "category": "improved",
-      "text": "Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk) and apply_package (apply_sdk)."
+      "text": "Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk), apply_package (apply_sdk) and remove_package (remove_sdk)."
     }
   ],
   "excludedPullRequests": {
