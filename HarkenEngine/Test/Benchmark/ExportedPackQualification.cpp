@@ -600,7 +600,7 @@ int main(int argc, char* argv[]) {
         static_cast<unsigned long long>(FileFnv(contentPath)),
         inspectUs, loadInitUs, coldLoadUs, warmLoadUs, replaceUs, unloadUs,
         postUs, static_cast<unsigned long long>(heldLeases),
-        resolved.maxActionFirings, resolved.maxDeferredIntents,
+        0u, resolved.maxDeferredIntents,
         resolved.maxPlayableInstances,
         static_cast<unsigned long long>(retiringCount),
         static_cast<unsigned long long>(audioHits),

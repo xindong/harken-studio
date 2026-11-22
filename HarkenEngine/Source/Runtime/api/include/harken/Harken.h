@@ -403,8 +403,7 @@ typedef struct VnConfig {
                                             * VN_INVALID_CONFIG. */
     uint64_t maxTopologyPlanBytes;         /* aggregate topology-plan pool byte
                                             * budget; 0 = 256 MiB */
-    uint32_t maxActionFirings;             /* retained Action firing rows;
-                                            * 0 = 256 */
+    uint32_t maxActionFirings;             /* legacy field, ignored; firing records grow on demand */
     uint32_t reserved10;                   /* keeps the appended vintage explicit */
     /* Pack catalog / resident budgets (one struct-size vintage). A shorter
      * struct omitting these reads every field as its default. */

@@ -1086,7 +1086,6 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
     EXPECT_EQ(256u, resolved.voiceCapacity.Render());
     EXPECT_EQ(0u, resolved.maxActions);
-    EXPECT_EQ(256u, resolved.maxActionFirings);
 
     config.maxVoices = 128;
     config.maxPacks = 8;
@@ -1095,7 +1094,6 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
     EXPECT_EQ(128u, resolved.voiceCapacity.Render());
     EXPECT_EQ(32u, resolved.maxActions);
-    EXPECT_EQ(64u, resolved.maxActionFirings);
     config.maxActions = UINT32_MAX;
     EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
 }
@@ -1255,19 +1253,16 @@ TEST(CapacityContract, ControlCommandCeilingIsIgnoredForAnOlderVintage) {
     EXPECT_EQ(256u, resolved.maxControlCommandsPerQuantum);
 }
 
-TEST(CapacityContract, ActionFiringCapacityDefaultsAndStopsAtItsHardCeiling) {
+TEST(CapacityContract, LegacyActionFiringFieldDoesNotLimitStartup) {
     VnConfig config = MakeNullConfig();
-    harken::EngineConfig resolved;
-
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.maxActionFirings);
-
-    config.maxActionFirings = 4096;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(4096u, resolved.maxActionFirings);
-
-    config.maxActionFirings = 4097;
-    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
+    config.maxActionFirings = UINT32_MAX;
+    for (const auto size : {static_cast<std::uint32_t>(sizeof(config)),
+            static_cast<std::uint32_t>(offsetof(VnConfig, maxCatalogEntries)),
+            static_cast<std::uint32_t>(offsetof(VnConfig, maxActionFirings))}) {
+        config.structSize = size;
+        harkentest::EngineSession session(config);
+        EXPECT_EQ(VN_OK, session.InitResult()) << size;
+    }
 }
 
 TEST(CapacityContract, ActionCooldownIgnoresLegacyQuotaAndGrowsBeyond4096) {

@@ -7376,14 +7376,12 @@ public:
             static_cast<std::uint32_t>(
                 (laneHorizonQuanta + resolved.maxDeferredIntents) *
                 groupsPerBucket);
-        const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
-        if (laneAttempts > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
         if (!decisions.Valid() || !transitionInstances.Valid() ||
             !armGroups.Valid() ||
             !timelinePool.Reset(timelinePoolConfig, 0,
                                 transportEpochOwner.Current()) ||
             !immediateActionLane.Reset({
-                static_cast<std::uint32_t>(laneAttempts),
+                1u,
                 privateLaneMetadataCapacity,
                 resolved.maxEventsPerQuantum,
                 resolved.blockFrames, true,

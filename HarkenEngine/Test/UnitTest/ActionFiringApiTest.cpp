@@ -64954,7 +64954,8 @@ void CheckTimelineArmGrowthPreservesPlayback(bool delayed) {
     std::vector<harken::ImmediateLaneHandle> pending;
     if (!delayed) {
         // Isolate record capacity from render voices and per-quantum event budgets.
-        pending.resize(engine->immediateActionLane.AttemptCapacity());
+        // The previous limit combined 256 firing records with the configured arm capacity.
+        pending.resize(256u + harken::TimelineArmCapacity(engine->config));
         for (auto& handle : pending)
             ASSERT_TRUE(engine->immediateActionLane.Reserve(1, {1, 0, 0, 1}, &handle));
     }
