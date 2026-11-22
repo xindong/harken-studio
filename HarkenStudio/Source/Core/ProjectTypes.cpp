@@ -20,7 +20,7 @@
 #include <map>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -416,7 +416,7 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
     QSet<QUuid> identities;
     QSet<const ProjectItem*> visited;
     auto claim = [&](const QUuid& guid) {
-        if (runtimeObjectId(guid) == harkenstudio::kMasterBusObjectId) {
+        if (runtimeObjectId(guid) == harken::studio::types::kMasterBusObjectId) {
             if (error) *error = QStringLiteral("The Runtime output root UUID is reserved");
             return false;
         }

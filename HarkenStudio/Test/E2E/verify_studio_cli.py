@@ -216,10 +216,6 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         assert help_result.returncode == 0 and f"Usage: HarkenStudioCLI {command}".encode() in help_result.stdout
         assert call(command, "--help")["result"]["help"]
     call("not_a_subcommand", "--help", exit_code=2)
-    worker = run(cli, ["--resource-worker"], environment, b"{}\n")
-    assert worker.returncode == 2, worker.stderr.decode("utf-8", "replace")
-    identity = json.loads(worker.stdout)
-    assert identity["protocol"] == 1 and identity["compiler"], identity
     assert call("--version")["result"]["version"]
     catalog = call("commands")["result"]["commands"]
     assert call("exec", "list_commands")["result"]["commands"] == catalog
@@ -267,8 +263,7 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
     rejected = call("exec", "save_project", "--project", "missing.hsp", "--input", "-",
                     data={"typo": True}, exit_code=2)
     assert rejected["code"] == "INVALID_ARGUMENTS" and "typo" in rejected["message"], rejected
-    for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener",
-                     "set_platform_profile", "set_preferred_format", "audition_get_speed",
+    for excluded in ("get_theme", "click_widget", "batch", "add_listener", "audition_get_speed",
                      "transcode_asset", "batch_convert_media", "get_transcode_status", "cancel_transcode",
                      "get_conversion_settings", "set_conversion_settings", "get_platform_profile",
                      "set_project_platform_profile"):
@@ -319,12 +314,6 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         assert project.is_file()
         call("init", str(project_dir), exit_code=1)
         verify_shell(cli, environment, root, audio_output)
-        worker_request = json.dumps({"manifest": str(root / "missing-manifest.json")}).encode("utf-8") + b"\n"
-        worker = run(cli, ["--resource-worker"], environment, worker_request * 2)
-        assert worker.returncode == 0, worker.stderr.decode("utf-8", "replace")
-        responses = [json.loads(line) for line in worker.stdout.splitlines()]
-        assert len(responses) == 3 and responses[0] == identity, responses
-        assert all(response["success"] is False and response["error"] for response in responses[1:]), responses
 
         def execute(name, arguments=None, save=False, exit_code=0):
             flags = ["exec", name, "--project", str(project), "--input", "-"]

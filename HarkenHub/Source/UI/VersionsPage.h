@@ -17,7 +17,7 @@ class QPushButton;
 class QTableWidget;
 class QTimer;
 
-namespace VNH {
+namespace harken::hub {
 
 class ProjectStore;
 class ButtonPulseAnimator;

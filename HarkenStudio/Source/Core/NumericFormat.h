@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 inline const QString kPositiveInfinityText = QStringLiteral("Inf");
 inline const QString kNegativeInfinityText = QStringLiteral("-Inf");

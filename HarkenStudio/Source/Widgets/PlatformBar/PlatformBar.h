@@ -9,7 +9,7 @@ class QAction;
 class QComboBox;
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class PlatformContextService;
 

@@ -9,7 +9,7 @@
 #include <vector>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 struct PackBuildPlan;
 
@@ -18,15 +18,15 @@ struct CanonicalPackSetExportRequest
     const ProjectData* project = nullptr;
     QString outputDir;
     ProjectPackExporter::ExportOptions options;
-    std::set<harkenstudio::ObjectId> includedActionIds;
-    std::set<std::pair<harkenstudio::ObjectId, QString>> failedActionVariants;
+    std::set<harken::studio::types::ObjectId> includedActionIds;
+    std::set<std::pair<harken::studio::types::ObjectId, QString>> failedActionVariants;
     const PackBuildPlan* plan = nullptr;
-    harkenstudio::ObjectId snapshotBus = harkenstudio::kMasterBusObjectId;
-    harkenstudio::ObjectId snapshotParent = {};
-    harkenstudio::ObjectId snapshotSendSource = {};
-    harkenstudio::ObjectId snapshotSendTarget = {};
-    harkenstudio::ObjectId snapshotDownmix = harkenstudio::kMasterBusObjectId;
-    harkenstudio::ObjectId snapshotMaster = harkenstudio::kMasterBusObjectId;
+    harken::studio::types::ObjectId snapshotBus = harken::studio::types::kMasterBusObjectId;
+    harken::studio::types::ObjectId snapshotParent = {};
+    harken::studio::types::ObjectId snapshotSendSource = {};
+    harken::studio::types::ObjectId snapshotSendTarget = {};
+    harken::studio::types::ObjectId snapshotDownmix = harken::studio::types::kMasterBusObjectId;
+    harken::studio::types::ObjectId snapshotMaster = harken::studio::types::kMasterBusObjectId;
 };
 
 ProjectPackExporter::ExportResult ExportCanonicalPackSet(
@@ -41,16 +41,16 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                          bool allowPlatformReplacement = false,
                          const std::function<bool()>& cancelCheck = {});
 
-inline bool ValidateSnapshotBusIds(harkenstudio::ObjectId bus, harkenstudio::ObjectId parent,
-                                   harkenstudio::ObjectId sendSource, harkenstudio::ObjectId sendTarget,
-                                   harkenstudio::ObjectId downmix, harkenstudio::ObjectId master)
+inline bool ValidateSnapshotBusIds(harken::studio::types::ObjectId bus, harken::studio::types::ObjectId parent,
+                                   harken::studio::types::ObjectId sendSource, harken::studio::types::ObjectId sendTarget,
+                                   harken::studio::types::ObjectId downmix, harken::studio::types::ObjectId master)
 {
-    const harkenstudio::ObjectId ids[] = {bus, parent, sendSource, sendTarget, downmix, master};
-    for (const harkenstudio::ObjectId id : ids) {
+    const harken::studio::types::ObjectId ids[] = {bus, parent, sendSource, sendTarget, downmix, master};
+    for (const harken::studio::types::ObjectId id : ids) {
         if (id.high != 0)
             return false;
     }
     return true;
 }
 
-} // namespace VNX
+} // namespace harken::studio

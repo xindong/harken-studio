@@ -16,7 +16,7 @@
 #include "Components/VTrack.h"
 #include "Components/VSegment.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void ProjectItem::attachDefaultComponents()
 {

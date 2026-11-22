@@ -7,7 +7,7 @@
 #include <QStringList>
 #include <QStringView>
 
-namespace VNX::GeneratedSchemaRegistry {
+namespace harken::studio::GeneratedSchemaRegistry {
 
 bool supportsProjectVersion(int version);
 bool supportsPackVersion(int version);
@@ -20,12 +20,12 @@ bool validatePackMetadata(int version,
                           const QString& relativePath,
                           QStringList& errors);
 bool validateProjectRules(int version,
-                          VNX::ProjectSchemaRuleExecutor& executor,
+                          harken::studio::ProjectSchemaRuleExecutor& executor,
                           QStringList& errors);
 bool validateDevelopmentProjectV9Document(QStringView documentType,
                                           const QJsonValue& document,
                                           const QString& relativePath,
                                           QStringList& errors);
-void validateDevelopmentProjectV9Rules(VNX::ProjectSchemaRuleExecutor& executor);
+void validateDevelopmentProjectV9Rules(harken::studio::ProjectSchemaRuleExecutor& executor);
 
 }

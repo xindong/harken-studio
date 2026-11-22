@@ -16,7 +16,7 @@ class ScheduledTransactionPool;
 class DecisionTable;
 class BlockArena;
 struct ImmediateLaneBucket;
-struct Plan03ScratchDecisionState;
+struct ScratchDecisionState;
 
 // Stages every voice in a due bucket before claiming or exposing any Start.
 // Scratch is prepared by Attach or lane admission, outside the audio callback.
@@ -37,14 +37,14 @@ public:
     bool Capture(std::uint64_t quantum) noexcept;
     bool AdmitQuantum(std::uint32_t availableBytes, std::uint32_t blockFrames,
         const DecisionTable* decisions = nullptr,
-        const Plan03ScratchDecisionState* currentSlices = nullptr,
+        const ScratchDecisionState* currentSlices = nullptr,
         std::uint32_t currentSliceCount = 0) const noexcept;
     // Root issuance checks actual native arena storage, never a capacity DTO.
     // The Engine adapter fixes the Arena/Voice/Arm receiver to its own domain.
     bool ProveQuantumAdmission(const BlockArena& arena, std::uint32_t blockFrames,
         NativeTimelineQuantumAdmissionProof* admitted,
         const DecisionTable* decisions = nullptr,
-        const Plan03ScratchDecisionState* currentSlices = nullptr,
+        const ScratchDecisionState* currentSlices = nullptr,
         std::uint32_t currentSliceCount = 0) const noexcept;
     void Discard(bool arenaCapacityRefused = false) noexcept;
     void Apply(std::uint64_t quantum) noexcept;

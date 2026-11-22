@@ -7,7 +7,7 @@
 #include <QWidget>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 class ObjectRefWidget;
 

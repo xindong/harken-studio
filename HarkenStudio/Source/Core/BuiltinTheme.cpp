@@ -5,7 +5,7 @@
 
 #include <QFont>
 
-namespace VNX {
+namespace harken::studio {
 
 ThemeSnapshot createBuiltinDarkTheme()
 {

@@ -8,7 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-using VNH::ServerVersionCatalog;
+using harken::hub::ServerVersionCatalog;
 using HarkenHubTest::baseManifestPayload;
 using HarkenHubTest::makeKeypair;
 using HarkenHubTest::signEnvelope;
@@ -26,7 +26,7 @@ QByteArray versionsResponse(const std::vector<QJsonObject>& versions)
         array.append(version);
     QJsonObject root;
     QJsonObject channels;
-    channels[VNH::ServerEndpoints::hostChannel()] = array;
+    channels[harken::hub::ServerEndpoints::hostChannel()] = array;
     root[QStringLiteral("schema_version")] = 1;
     root[QStringLiteral("channels")] = channels;
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
@@ -38,7 +38,7 @@ QJsonObject versionObject(const QString& version, const QString& envelope)
     object[QStringLiteral("version")] = version;
     object[QStringLiteral("file")] =
         QStringLiteral("release/harken/%1/%2/run12-abcd1234-20261008T100000Z/Harken-%2.zip")
-            .arg(VNH::ServerEndpoints::hostChannel(), version);
+            .arg(harken::hub::ServerEndpoints::hostChannel(), version);
     if (!envelope.isEmpty()) {
         QJsonObject integrity =
             QJsonDocument::fromJson(envelope.toUtf8()).object();
@@ -71,7 +71,7 @@ TEST(ServerVersionCatalogTest, ParsesVersionListResponse)
         {release,
          versionObject(QStringLiteral("1.3.0"), QString())}),
         QStringLiteral("harken"),
-        VNH::ServerEndpoints::hostChannel());
+        harken::hub::ServerEndpoints::hostChannel());
 
     ASSERT_TRUE(result.ok) << result.error.toStdString();
     ASSERT_EQ(result.entries.size(), 1u);
@@ -93,7 +93,7 @@ TEST(ServerVersionCatalogTest, SkipsEntriesWithUnsafeReleaseTag)
 
     const auto result = ServerVersionCatalog::parse(
         versionsResponse({release}), QStringLiteral("harken"),
-        VNH::ServerEndpoints::hostChannel());
+        harken::hub::ServerEndpoints::hostChannel());
 
     ASSERT_TRUE(result.ok) << result.error.toStdString();
     EXPECT_TRUE(result.entries.empty());
@@ -104,11 +104,11 @@ TEST(ServerVersionCatalogTest, RejectsMalformedResponses)
     EXPECT_FALSE(ServerVersionCatalog::parse(
                      QByteArrayLiteral("not json"),
                      QStringLiteral("harken"),
-                     VNH::ServerEndpoints::hostChannel()).ok);
+                     harken::hub::ServerEndpoints::hostChannel()).ok);
     EXPECT_FALSE(ServerVersionCatalog::parse(
                      QByteArrayLiteral("{\"product\":\"harken\"}"),
                      QStringLiteral("harken"),
-                     VNH::ServerEndpoints::hostChannel()).ok);
+                     harken::hub::ServerEndpoints::hostChannel()).ok);
 }
 
 TEST(ServerVersionCatalogTest, SkipsEntriesWithoutVersion)
@@ -120,7 +120,7 @@ TEST(ServerVersionCatalogTest, SkipsEntriesWithoutVersion)
          versionObject(QStringLiteral("1.2.0"),
                        QStringLiteral("envelope"))}),
         QStringLiteral("harken"),
-        VNH::ServerEndpoints::hostChannel());
+        harken::hub::ServerEndpoints::hostChannel());
     ASSERT_TRUE(result.ok);
     ASSERT_EQ(result.entries.size(), 1u);
     EXPECT_EQ(result.entries[0].version, QStringLiteral("1.2.0"));
@@ -137,7 +137,7 @@ TEST(ServerVersionCatalogTest, SkipsStorageProbeWithoutReleaseManifest)
     const auto result = ServerVersionCatalog::parse(versionsResponse(
         {versionObject(QStringLiteral("1.4.0"), QStringLiteral("envelope")),
          probe}), QStringLiteral("harken"),
-        VNH::ServerEndpoints::hostChannel());
+        harken::hub::ServerEndpoints::hostChannel());
 
     ASSERT_TRUE(result.ok) << result.error.toStdString();
     ASSERT_EQ(result.entries.size(), 1u);
@@ -156,7 +156,7 @@ TEST(ServerVersionCatalogTest, MatchesEnvelopeByBuildId)
         {versionObject(QStringLiteral("1.4.0"),
                        QString::fromUtf8(envelope))}),
         QStringLiteral("harken"),
-        VNH::ServerEndpoints::hostChannel());
+        harken::hub::ServerEndpoints::hostChannel());
     ASSERT_TRUE(parsed.ok);
 
     EXPECT_EQ(ServerVersionCatalog::matchEnvelopeForBuild(

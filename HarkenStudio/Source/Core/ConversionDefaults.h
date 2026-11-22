@@ -4,9 +4,9 @@
 #include "FieldGroups.h"
 #include "ProjectPlatform.h"
 
-namespace VNX { struct ProjectData; }
+namespace harken::studio { struct ProjectData; }
 
-namespace VNX::ConversionDefaults {
+namespace harken::studio::ConversionDefaults {
 
 QString lowQualityName();
 ConversionConfig lowQuality();

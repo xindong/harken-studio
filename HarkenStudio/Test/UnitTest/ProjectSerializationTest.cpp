@@ -30,8 +30,8 @@
 #include <functional>
 #include <limits>
 
-using VNX::ProjectData;
-using VNX::ProjectItem;
+using harken::studio::ProjectData;
+using harken::studio::ProjectItem;
 
 namespace {
 
@@ -54,7 +54,7 @@ std::shared_ptr<ProjectItem> addChild(ProjectItem& parent,
     child->parent = &parent;
     parent.children.push_back(child);
     if (parent.type == ProjectItem::Type::Container) {
-        EXPECT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(
+        EXPECT_TRUE(harken::studio::PlayablePropertyAuthoringV1::addContainerChildOccurrence(
             parent, child->guid));
     }
     return child;
@@ -94,11 +94,11 @@ TEST(ProjectSerialization, NewProjectIdentityRemainsStableAcrossSaves)
     project.projectPath = QDir(tempDir.path()).filePath(QStringLiteral("Identity.hsp"));
     auto master = std::make_shared<ProjectItem>(QStringLiteral("Master"), ProjectItem::Type::Bus);
     master->objectID = 1;
-    master->guid = VNX::authoringUuid(harkentest::StudioObjectId(1));
+    master->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(1));
     master->attachDefaultComponents();
     project.busses.push_back({master, QStringLiteral("Busses")});
 
-    VNX::ProjectSerializer serializer;
+    harken::studio::ProjectSerializer serializer;
     ASSERT_TRUE(serializer.prepareProjectSave(project.projectPath, project))
         << serializer.lastError().toStdString();
     ASSERT_TRUE(serializer.commitProjectSave());
@@ -131,9 +131,9 @@ TEST(ProjectSerialization, ProjectSavedStateTracksContentAcrossCreationReopening
     ensureApp();
     QTemporaryDir tempDir;
     ASSERT_TRUE(tempDir.isValid());
-    auto& manager = VNX::ProjectManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
     const auto closeProject = qScopeGuard([&] { manager.closeProject(); });
-    VNX::ProjectConfig config;
+    harken::studio::ProjectConfig config;
     config.name = QStringLiteral("SavedState");
     config.location = tempDir.path();
     ASSERT_TRUE(manager.createProject(config));
@@ -170,10 +170,10 @@ TEST(ProjectSerialization, AssetSavedStateIgnoresCacheRepresentationAndTracksCon
     ensureApp();
     QTemporaryDir tempDir;
     ASSERT_TRUE(tempDir.isValid());
-    auto& manager = VNX::ProjectManager::instance();
-    auto& registry = VNX::AssetRegistry::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto& registry = harken::studio::AssetRegistry::instance();
     const auto closeProject = qScopeGuard([&] { manager.closeProject(); });
-    VNX::ProjectConfig config;
+    harken::studio::ProjectConfig config;
     config.name = QStringLiteral("AssetSavedState");
     config.location = tempDir.path();
     ASSERT_TRUE(manager.createProject(config));
@@ -181,7 +181,7 @@ TEST(ProjectSerialization, AssetSavedStateIgnoresCacheRepresentationAndTracksCon
     const QString projectRoot = QFileInfo(projectPath).absolutePath();
     const QString registryPath = QDir(projectRoot).filePath(
         QStringLiteral(".cache/asset_registry/assets.json"));
-    VNX::AssetInfo asset;
+    harken::studio::AssetInfo asset;
     asset.sourceID = registry.allocateStableID();
     asset.relativePath = QStringLiteral("source.wav");
     ASSERT_TRUE(registry.registerAsset(asset));
@@ -231,12 +231,12 @@ TEST(ProjectSerialization, DuplicateTransitionEndpointsRejectItemLoad)
                           ProjectItem::Type::Container);
     container.guid = QUuid::createUuid();
     container.attachDefaultComponents();
-    VNX::TransitionRuleDef override = VNX::canonicalTransitionRule();
+    harken::studio::TransitionRuleDef override = harken::studio::canonicalTransitionRule();
     override.source = QUuid::createUuid();
     override.target = QUuid::createUuid();
-    ASSERT_TRUE(container.comp<VNX::VSelection>()->transitions.addRule(override));
+    ASSERT_TRUE(container.comp<harken::studio::VSelection>()->transitions.addRule(override));
 
-    VNX::ProjectSerializer serializer;
+    harken::studio::ProjectSerializer serializer;
     QJsonObject saved = serializer.projectItemToJson(container);
     ProjectItem original;
     ASSERT_TRUE(serializer.projectItemFromJson(saved, original));
@@ -268,7 +268,7 @@ TEST(ProjectSerialization, NestedTreeDeserializationRestoresParentLinks)
     auto tail  = addChild(*intro, "Tail", ProjectItem::Type::Track);
     addChild(*tail, "Tail_Hit", ProjectItem::Type::Sound);
 
-    VNX::ProjectSerializer serializer;
+    harken::studio::ProjectSerializer serializer;
 
     std::function<QJsonObject(const ProjectItem&)> inlineWindowForm =
         [&](const ProjectItem& node) {
@@ -308,10 +308,10 @@ TEST(ProjectSerialization, RejectsOrphanContentPackWithoutChangingDisk)
     QTemporaryDir tempDir;
     ASSERT_TRUE(tempDir.isValid());
 
-    VNX::ProjectConfig config;
+    harken::studio::ProjectConfig config;
     config.name = QStringLiteral("V6Orphan");
     config.location = tempDir.path();
-    auto& pm = VNX::ProjectManager::instance();
+    auto& pm = harken::studio::ProjectManager::instance();
     ASSERT_TRUE(pm.createProject(config));
     ProjectData* project = pm.currentProject();
     ASSERT_NE(project, nullptr);
@@ -373,15 +373,15 @@ std::shared_ptr<ProjectItem> addSaveStateRoot(
 class ProjectSerializationSavedState : public ::testing::TestWithParam<bool>
 {
 protected:
-    bool markSaved(VNX::ProjectItemSaveState& state, const ProjectData& project)
+    bool markSaved(harken::studio::ProjectItemSaveState& state, const ProjectData& project)
     {
         if (!GetParam()) return state.markSaved(project);
-        VNX::ProjectSerializer serializer;
+        harken::studio::ProjectSerializer serializer;
         if (!serializer.prepareReferenceWrite(project)) return false;
         QHash<QUuid, QJsonObject> serializedItems;
         const auto capture = [&](const auto& self, const ProjectItem& item) -> bool {
-            if (VNX::ItemTypeCatalog::bucketOf(item.type)
-                == VNX::ItemTypeCatalog::Bucket::Layers) {
+            if (harken::studio::ItemTypeCatalog::bucketOf(item.type)
+                == harken::studio::ItemTypeCatalog::Bucket::Layers) {
                 auto json = serializer.audioItemToJson(item);
                 if (json.isEmpty()) return false;
                 serializedItems.insert(item.guid, std::move(json));
@@ -412,7 +412,7 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
                                         type, objectId));
         ++objectId;
     }
-    VNX::ProjectItemSaveState saved;
+    harken::studio::ProjectItemSaveState saved;
     ASSERT_TRUE(markSaved(saved, project));
     EXPECT_TRUE(saved.refresh(project).isEmpty());
 
@@ -431,7 +431,7 @@ TEST_P(ProjectSerializationSavedState, SavedContentTracksValuesAcrossObjectKinds
     for (const auto& item : items) EXPECT_FALSE(item->isDirtyObject());
 
     const auto variable = items[7];
-    auto* declaration = variable->comp<VNX::VVariable>();
+    auto* declaration = variable->comp<harken::studio::VVariable>();
     ASSERT_NE(declaration, nullptr);
     const float initialValue = declaration->defaultValue;
     declaration->defaultValue = 2.5f;
@@ -457,17 +457,17 @@ TEST_P(ProjectSerializationSavedState, SavedContentFollowsPersistentIdentityAndH
     const auto right = addSaveStateRoot(project, QStringLiteral("Right"), ProjectItem::Type::Layer, 2);
     auto sound = addChild(*left, "Tone", ProjectItem::Type::Sound);
     sound->objectID = 3;
-    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
+    sound->parentRef.kind = harken::studio::ParentRef::Kind::Item;
     const auto sibling = addChild(*left, "Tail", ProjectItem::Type::Sound);
     sibling->objectID = 4;
-    sibling->parentRef.kind = VNX::ParentRef::Kind::Item;
+    sibling->parentRef.kind = harken::studio::ParentRef::Kind::Item;
     const auto action = addSaveStateRoot(project, QStringLiteral("PlayTone"), ProjectItem::Type::Action, 5);
-    VNX::VActionStep step;
+    harken::studio::VActionStep step;
     step.targetObjectID = sound->objectID;
     step.targetName = sound->name;
-    action->comp<VNX::VAction>()->steps.push_back(step);
-    auto& target = action->comp<VNX::VAction>()->steps.front();
-    VNX::ProjectItemSaveState saved;
+    action->comp<harken::studio::VAction>()->steps.push_back(step);
+    auto& target = action->comp<harken::studio::VAction>()->steps.front();
+    harken::studio::ProjectItemSaveState saved;
     ASSERT_TRUE(markSaved(saved, project));
 
     sound->name = QStringLiteral("RenamedTone");
@@ -484,7 +484,7 @@ TEST_P(ProjectSerializationSavedState, SavedContentFollowsPersistentIdentityAndH
     EXPECT_FALSE(sound->isDirtyObject());
     EXPECT_FALSE(action->isDirtyObject());
 
-    VNX::ProjectSerializer serializer;
+    harken::studio::ProjectSerializer serializer;
     ASSERT_TRUE(serializer.prepareReferenceWrite(project));
     const QJsonObject content = serializer.projectItemToJson(*sound, false);
     ASSERT_FALSE(content.isEmpty());
@@ -548,8 +548,8 @@ TEST_P(ProjectSerializationSavedState, FailedContentCapturePreservesTheLastSucce
     const auto layer = addSaveStateRoot(project, QStringLiteral("Layer"), ProjectItem::Type::Layer, 1);
     const auto sound = addChild(*layer, "Tone", ProjectItem::Type::Sound);
     sound->objectID = 2;
-    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
-    VNX::ProjectItemSaveState saved;
+    sound->parentRef.kind = harken::studio::ParentRef::Kind::Item;
+    harken::studio::ProjectItemSaveState saved;
     ASSERT_TRUE(markSaved(saved, project));
     sound->notes = QStringLiteral("Pending content");
     saved.refresh(project);
@@ -573,7 +573,7 @@ TEST_P(ProjectSerializationSavedState, FailedContentCapturePreservesTheLastSucce
     saved.refresh(project);
     EXPECT_TRUE(sound->isDirtyObject());
     const auto groups = sound->fieldGroups;
-    sound->fieldGroups.spatialRating.shared.localHistory = VNX::SpatialRatingFieldGroup{};
+    sound->fieldGroups.spatialRating.shared.localHistory = harken::studio::SpatialRatingFieldGroup{};
     sound->fieldGroups.spatialRating.shared.localHistory->spatialPanning =
         std::numeric_limits<float>::quiet_NaN();
     sound->notes.clear();
@@ -596,11 +596,11 @@ TEST_P(ProjectSerializationSavedState, ScopedSavedContentMatchesFullComparisonAc
     const auto layer = addSaveStateRoot(project, QStringLiteral("Layer"), ProjectItem::Type::Layer, 1);
     const auto sound = addChild(*layer, "Tone", ProjectItem::Type::Sound);
     sound->objectID = 2;
-    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
+    sound->parentRef.kind = harken::studio::ParentRef::Kind::Item;
     const auto other = addSaveStateRoot(project, QStringLiteral("Other"), ProjectItem::Type::Sound, 3);
     const QList<ProjectItem*> items{layer.get(), sound.get(), other.get()};
-    VNX::ProjectItemSaveState scoped;
-    VNX::ProjectItemSaveState full;
+    harken::studio::ProjectItemSaveState scoped;
+    harken::studio::ProjectItemSaveState full;
     ASSERT_TRUE(markSaved(scoped, project));
     ASSERT_TRUE(full.markSaved(project));
     const QSet<QUuid> writes{sound->guid};
@@ -614,13 +614,13 @@ TEST_P(ProjectSerializationSavedState, ScopedSavedContentMatchesFullComparisonAc
         EXPECT_EQ(scopedChanged, full.refresh(project));
         for (qsizetype i = 0; i < items.size(); ++i) EXPECT_EQ(actual[i], items[i]->dirtyBit);
     };
-    using Authoring = VNX::PlayablePropertyAuthoringV1;
+    using Authoring = harken::studio::PlayablePropertyAuthoringV1;
     const auto locator = Authoring::definitionLocator(*sound);
     ASSERT_TRUE(locator);
     for (const auto* name : {"volume", "pitch", "loopCount"}) {
         const auto* field = Authoring::fieldByName(QLatin1String(name));
         ASSERT_NE(field, nullptr);
-        for (const auto& scope : {VNX::PlatformScope{}, VNX::PlatformScope{HarkenTest::PlatformIds::Windows}}) {
+        for (const auto& scope : {harken::studio::PlatformScope{}, harken::studio::PlatformScope{HarkenTest::PlatformIds::Windows}}) {
             const auto original = scope
                 ? Authoring::readPlatformOverlay(*sound, *locator, field->id, *scope)
                 : Authoring::readProperty(*sound, *locator, field->id, scope);
@@ -686,7 +686,7 @@ TEST_P(ProjectSerializationSavedState, TrackedChangesPreserveIndependentSavePoin
     ProjectData project = HarkenTest::projectWithPlatforms();
     const auto sound = addSaveStateRoot(project, QStringLiteral("Tone"), ProjectItem::Type::Sound, 1);
     const auto action = addSaveStateRoot(project, QStringLiteral("Play"), ProjectItem::Type::Action, 2);
-    VNX::ProjectItemSaveState saved;
+    harken::studio::ProjectItemSaveState saved;
     ASSERT_TRUE(markSaved(saved, project));
     EXPECT_FALSE(saved.requiresFullSave());
     const auto initialRevision = saved.revision();
@@ -739,8 +739,8 @@ TEST_P(ProjectSerializationSavedState, StructuralInvalidationRefreshesIdentityWi
     const auto layer = addSaveStateRoot(project, QStringLiteral("Layer"), ProjectItem::Type::Layer, 1);
     auto sound = addChild(*layer, "Tone", ProjectItem::Type::Sound);
     sound->objectID = 2;
-    sound->parentRef.kind = VNX::ParentRef::Kind::Item;
-    VNX::ProjectItemSaveState saved;
+    sound->parentRef.kind = harken::studio::ParentRef::Kind::Item;
+    harken::studio::ProjectItemSaveState saved;
     ASSERT_TRUE(markSaved(saved, project));
     const auto identity = sound->guid;
     const auto content = saved.serializer().projectItemToJson(*sound, false);
@@ -773,9 +773,9 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
     ProjectItem item(QStringLiteral("Layer"), ProjectItem::Type::Layer);
     item.guid = QUuid::createUuid();
     item.attachDefaultComponents();
-    VNX::ProjectSerializer reused;
+    harken::studio::ProjectSerializer reused;
     const auto compare = [&](bool valid) {
-        VNX::ProjectSerializer fresh;
+        harken::studio::ProjectSerializer fresh;
         const auto expected = fresh.projectItemToJson(item, false);
         auto actual = reused.projectItemToJson(item, false);
         EXPECT_EQ(actual.isEmpty(), !valid);
@@ -795,7 +795,7 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
                   expected.value(QStringLiteral("fieldGroups")));
     };
     compare(true);
-    item.fieldGroups = VNX::MakeRootFieldGroups({1, 2});
+    item.fieldGroups = harken::studio::MakeRootFieldGroups({1, 2});
     item.fieldGroups.send.shared.localHistory->sends = {{{3, 4}, -6.0f}, {{5, 6}, -12.0f}};
     compare(true);
     item.fieldGroups.output.shared.localHistory->outputBusVolume = -0.0f;
@@ -806,18 +806,18 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
                  item.fieldGroups.send.shared.localHistory->sends.end());
     compare(true);
     auto overlay = item.fieldGroups.output.shared;
-    overlay.mode = VNX::FieldGroupMode::UseShared;
-    overlay.localFields = VNX::FieldGroupFieldMask(
+    overlay.mode = harken::studio::FieldGroupMode::UseShared;
+    overlay.localFields = harken::studio::FieldGroupFieldMask(
         harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume);
     overlay.localHistory->outputBusVolume = -3.0f;
     item.fieldGroups.output.platforms[{7, 8}] = overlay;
     compare(true);
     item.fieldGroups.output.platforms[{7, 8}].localFields =
-        VNX::FieldGroupPropertyMask(VNX::FieldGroupId::Output);
+        harken::studio::FieldGroupPropertyMask(harken::studio::FieldGroupId::Output);
     compare(true);
     item.fieldGroups.output.shared.localHistory->outputBusRef = {9, 10};
     compare(true);
-    item.fieldGroups.output.platforms[{7, 8}].mode = VNX::FieldGroupMode::Inherit;
+    item.fieldGroups.output.platforms[{7, 8}].mode = harken::studio::FieldGroupMode::Inherit;
     compare(true);
     item.fieldGroups.output.platforms.clear();
     compare(true);

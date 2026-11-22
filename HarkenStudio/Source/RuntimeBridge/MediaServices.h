@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 class MediaServices
 {

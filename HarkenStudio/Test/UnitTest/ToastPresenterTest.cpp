@@ -11,13 +11,13 @@ TEST(ToastPresenterTest, HostsOwnIndependentFeedbackLifetimes)
     auto firstHost = std::make_unique<QWidget>();
     firstHost->resize(800, 600);
     firstHost->show();
-    QPointer<VNX::ToastPresenter> firstToast = new VNX::ToastPresenter(firstHost.get());
+    QPointer<harken::studio::ToastPresenter> firstToast = new harken::studio::ToastPresenter(firstHost.get());
     firstToast->showMessage(QStringLiteral("First view"));
 
     QWidget secondHost;
     secondHost.resize(800, 600);
     secondHost.show();
-    VNX::ToastPresenter secondToast(&secondHost);
+    harken::studio::ToastPresenter secondToast(&secondHost);
     secondToast.showMessage(QStringLiteral("Second view"));
 
     firstHost.reset();

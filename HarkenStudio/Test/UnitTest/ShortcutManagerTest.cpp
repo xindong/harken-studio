@@ -10,8 +10,8 @@
 
 TEST(ShortcutManager, DefaultAliasesFollowRemappingClearingAndReset)
 {
-    auto& manager = VNX::ShortcutManager::instance();
-    const auto id = VNX::Shortcuts::ZoomIn;
+    auto& manager = harken::studio::ShortcutManager::instance();
+    const auto id = harken::studio::Shortcuts::ZoomIn;
     const auto original = manager.info(id);
     const auto restore = qScopeGuard([&] {
         if (original.isCustom) manager.setShortcut(id, original.currentShortcut);
@@ -33,9 +33,9 @@ TEST(ShortcutManager, DefaultAliasesFollowRemappingClearingAndReset)
 
 TEST(ShortcutManager, DefaultAliasesParticipateInAllConflicts)
 {
-    auto& manager = VNX::ShortcutManager::instance();
-    const QStringList ids{VNX::Shortcuts::ZoomIn, VNX::Shortcuts::AudioSettings, VNX::Shortcuts::Preferences};
-    QList<VNX::ShortcutInfo> originals;
+    auto& manager = harken::studio::ShortcutManager::instance();
+    const QStringList ids{harken::studio::Shortcuts::ZoomIn, harken::studio::Shortcuts::AudioSettings, harken::studio::Shortcuts::Preferences};
+    QList<harken::studio::ShortcutInfo> originals;
     for (const auto& id : ids) originals.append(manager.info(id));
     const auto restore = qScopeGuard([&] {
         for (const auto& info : originals) {
@@ -43,24 +43,24 @@ TEST(ShortcutManager, DefaultAliasesParticipateInAllConflicts)
             else manager.resetToDefault(info.id);
         }
     });
-    manager.resetToDefault(VNX::Shortcuts::ZoomIn);
-    EXPECT_EQ(manager.conflictingShortcut(VNX::Shortcuts::AudioSettings,
-        QKeySequence(QStringLiteral("Ctrl++"))), VNX::Shortcuts::ZoomIn);
-    manager.setShortcut(VNX::Shortcuts::ZoomIn, {});
-    manager.setShortcut(VNX::Shortcuts::AudioSettings, QKeySequence(QStringLiteral("Ctrl+=")));
-    manager.setShortcut(VNX::Shortcuts::Preferences, QKeySequence(QStringLiteral("Ctrl++")));
-    const auto conflicts = manager.conflictingShortcuts(VNX::Shortcuts::ZoomIn,
+    manager.resetToDefault(harken::studio::Shortcuts::ZoomIn);
+    EXPECT_EQ(manager.conflictingShortcut(harken::studio::Shortcuts::AudioSettings,
+        QKeySequence(QStringLiteral("Ctrl++"))), harken::studio::Shortcuts::ZoomIn);
+    manager.setShortcut(harken::studio::Shortcuts::ZoomIn, {});
+    manager.setShortcut(harken::studio::Shortcuts::AudioSettings, QKeySequence(QStringLiteral("Ctrl+=")));
+    manager.setShortcut(harken::studio::Shortcuts::Preferences, QKeySequence(QStringLiteral("Ctrl++")));
+    const auto conflicts = manager.conflictingShortcuts(harken::studio::Shortcuts::ZoomIn,
         QKeySequence(QStringLiteral("Ctrl+=")));
     EXPECT_EQ(conflicts.size(), 2);
-    EXPECT_TRUE(conflicts.contains(VNX::Shortcuts::AudioSettings));
-    EXPECT_TRUE(conflicts.contains(VNX::Shortcuts::Preferences));
-    EXPECT_FALSE(manager.hasConflict(VNX::Shortcuts::ZoomIn, {}));
+    EXPECT_TRUE(conflicts.contains(harken::studio::Shortcuts::AudioSettings));
+    EXPECT_TRUE(conflicts.contains(harken::studio::Shortcuts::Preferences));
+    EXPECT_FALSE(manager.hasConflict(harken::studio::Shortcuts::ZoomIn, {}));
 }
 
 TEST(ShortcutManager, MenuDoesNotDispatchToDestroyedTarget)
 {
-    auto& manager = VNX::ShortcutManager::instance();
-    const QString id = VNX::Shortcuts::Copy;
+    auto& manager = harken::studio::ShortcutManager::instance();
+    const QString id = harken::studio::Shortcuts::Copy;
     QWidget window;
     auto* layout = new QVBoxLayout(&window);
     auto* second = new QWidget(&window);

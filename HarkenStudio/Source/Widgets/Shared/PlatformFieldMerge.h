@@ -6,7 +6,7 @@
 #include <QPair>
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct PropertyDescriptor;
 

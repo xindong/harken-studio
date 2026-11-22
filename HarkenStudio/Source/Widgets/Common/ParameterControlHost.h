@@ -7,7 +7,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class ParameterBinding;
 class ParameterPresenter;

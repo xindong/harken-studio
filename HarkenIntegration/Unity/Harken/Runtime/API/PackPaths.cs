@@ -7,7 +7,7 @@ namespace Harken
 {
     internal static class PackPaths
     {
-        internal static bool IsPlatformId(string id) => Guid.TryParseExact(id, "D", out Guid value) &&
+        internal static bool IsCanonicalGuid(string id) => Guid.TryParseExact(id, "D", out Guid value) &&
             value != Guid.Empty && value.ToString("D") == id;
 
         internal static bool IsPlatformName(string name)

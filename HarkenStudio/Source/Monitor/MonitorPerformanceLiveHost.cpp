@@ -7,7 +7,7 @@
 #include <cstring>
 #include <thread>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -302,4 +302,4 @@ void MonitorPerformanceLiveHost::pollLoop()
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

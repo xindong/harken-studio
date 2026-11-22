@@ -10,7 +10,7 @@
 
 TEST(PreparedProjectAssetReconcile, WorkerIntegrityScanUsesOnlyTheSuppliedProjectAndAssets)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     const auto item = [](ProjectItem::Type type, uint32_t id) {
         auto result = std::make_shared<ProjectItem>(QString::number(id), type);
         result->objectID = id;

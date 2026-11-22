@@ -8,7 +8,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class BasePlatform { Windows, macOS, Linux, Android, iOS };
 

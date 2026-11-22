@@ -2,7 +2,7 @@
 
 #include "ParameterPresenterRegistry.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QString componentRecipeHostName(ComponentRecipeHostId host)
 {

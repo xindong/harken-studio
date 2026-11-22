@@ -16,9 +16,9 @@
 #include <QLockFile>
 #include <QTemporaryDir>
 
-using VNH::HandoffArea;
-using VNH::TransactionJournal;
-using VNH::TransactionReclaimer;
+using harken::hub::HandoffArea;
+using harken::hub::TransactionJournal;
+using harken::hub::TransactionReclaimer;
 
 namespace {
 
@@ -76,15 +76,15 @@ TEST(TransactionReclaimer, FailedTransactionIsReclaimedImmediately)
     EXPECT_EQ(TransactionJournal::lastStateByTransaction().value(transactionId),
               QStringLiteral("Reclaimed"));
 
-    const auto summaries = VNH::TransactionDiagnostics::summarize();
+    const auto summaries = harken::hub::TransactionDiagnostics::summarize();
     ASSERT_EQ(summaries.size(), 1u);
     EXPECT_EQ(summaries.front().lastState, QStringLiteral("Reclaimed"));
     EXPECT_EQ(summaries.front().failureCode, QStringLiteral("PackageRejected"));
     EXPECT_EQ(summaries.front().failureDetail, QStringLiteral("Package SHA-256 mismatch"));
-    const auto json = VNH::TransactionDiagnostics::toJson(summaries);
+    const auto json = harken::hub::TransactionDiagnostics::toJson(summaries);
     EXPECT_EQ(json[0].toObject().value(QStringLiteral("failureDetail")).toString(),
               QStringLiteral("Package SHA-256 mismatch"));
-    EXPECT_TRUE(VNH::TransactionDiagnostics::failureMessage(transactionId)
+    EXPECT_TRUE(harken::hub::TransactionDiagnostics::failureMessage(transactionId)
                     .contains(QStringLiteral("Package SHA-256 mismatch")));
 }
 
@@ -97,7 +97,7 @@ TEST(TransactionReclaimer, InvalidInstallIndexDoesNotPreventFinishedHandoffClean
     ASSERT_FALSE(transactionId.isEmpty());
     ASSERT_TRUE(TransactionJournal::append(transactionId, QStringLiteral("HarkenStudio"),
         QString(), QStringLiteral("Failed"), QStringLiteral("IndexCorrupted"), kNow));
-    QFile index(VNH::InstallIndex::filePath());
+    QFile index(harken::hub::InstallIndex::filePath());
     ASSERT_TRUE(index.open(QIODevice::WriteOnly));
     index.write("{broken");
     index.close();
@@ -139,7 +139,7 @@ TEST(TransactionReclaimer, OldUnknownTransactionIsReclaimed)
     EXPECT_TRUE(report.locked);
     EXPECT_EQ(report.reclaimedTransactionIds, QStringList{transactionId});
     EXPECT_FALSE(handoffExists(transactionId));
-    EXPECT_TRUE(VNH::TransactionDiagnostics::failureMessage(transactionId).isEmpty());
+    EXPECT_TRUE(harken::hub::TransactionDiagnostics::failureMessage(transactionId).isEmpty());
 }
 
 TEST(TransactionReclaimer, NonTerminalRecentJournalStateIsKept)
@@ -174,7 +174,7 @@ TEST(TransactionReclaimer, HeldInstallLockSkipsReclamation)
         transactionId, QStringLiteral("HarkenStudio"), QString(),
         QStringLiteral("Failed"), QString(), kNow));
 
-    QLockFile heldLock(VNH::InstallExecutor::lockFilePath());
+    QLockFile heldLock(harken::hub::InstallExecutor::lockFilePath());
     heldLock.setStaleLockTime(0);
     ASSERT_TRUE(heldLock.tryLock(0));
 

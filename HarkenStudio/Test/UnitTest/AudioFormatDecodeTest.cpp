@@ -240,13 +240,13 @@ TEST(AudioFormatDecodeTest, DecodesAndBuildsWaveformsForAllSupportedExtensions)
         {QStringLiteral("tone.aif"), QStringLiteral("PCM")},
     }};
 
-    VNX::AssetImporter importer;
+    harken::studio::AssetImporter importer;
     for (const auto& [fileName, codec] : cases)
     {
         SCOPED_TRACE(fileName.toStdString());
         const QString path = dir.filePath(fileName);
 
-        const auto info = HarkenEditor::Bridge::audioFileInfo(path);
+        const auto info = harken::studio::bridge::audioFileInfo(path);
         ASSERT_TRUE(info.valid);
         EXPECT_EQ(info.channels, 1);
         EXPECT_EQ(info.sampleRate, 8000);
@@ -256,21 +256,21 @@ TEST(AudioFormatDecodeTest, DecodesAndBuildsWaveformsForAllSupportedExtensions)
         std::vector<float> samples;
         int channels = 0;
         int sampleRate = 0;
-        ASSERT_TRUE(HarkenEditor::Bridge::decodeAudioFileInterleaved(
+        ASSERT_TRUE(harken::studio::bridge::decodeAudioFileInterleaved(
             path, samples, channels, sampleRate));
         EXPECT_EQ(channels, 1);
         EXPECT_EQ(sampleRate, 8000);
         EXPECT_FALSE(samples.empty());
 
-        const VNX::AudioMetadata metadata = importer.analyzeFile(path);
+        const harken::studio::AudioMetadata metadata = importer.analyzeFile(path);
         EXPECT_EQ(metadata.codec, codec);
         EXPECT_EQ(metadata.channels, 1);
         EXPECT_EQ(metadata.sampleRate, 8000u);
         EXPECT_GT(metadata.totalSamples, 0u);
 
-        ASSERT_TRUE(VNX::WaveformCache::generate(path, 8));
-        VNX::WaveformPeakData waveform;
-        ASSERT_TRUE(VNX::WaveformCache::load(path, waveform));
+        ASSERT_TRUE(harken::studio::WaveformCache::generate(path, 8));
+        harken::studio::WaveformPeakData waveform;
+        ASSERT_TRUE(harken::studio::WaveformCache::load(path, waveform));
         EXPECT_TRUE(waveform.isValid());
         EXPECT_EQ(waveform.numChannels, 1u);
         EXPECT_EQ(waveform.sampleRate, 8000u);
@@ -303,13 +303,13 @@ TEST(AudioFormatDecodeTest, RejectsCorruptInputs)
     {
         SCOPED_TRACE(name.toStdString());
         const QString path = dir.filePath(name);
-        EXPECT_FALSE(HarkenEditor::Bridge::audioFileInfo(path).valid);
+        EXPECT_FALSE(harken::studio::bridge::audioFileInfo(path).valid);
         std::vector<float> samples;
         int channels = 0;
         int sampleRate = 0;
-        EXPECT_FALSE(HarkenEditor::Bridge::decodeAudioFileInterleaved(
+        EXPECT_FALSE(harken::studio::bridge::decodeAudioFileInterleaved(
             path, samples, channels, sampleRate));
         EXPECT_TRUE(samples.empty());
-        EXPECT_FALSE(VNX::WaveformCache::generate(path, 8));
+        EXPECT_FALSE(harken::studio::WaveformCache::generate(path, 8));
     }
 }

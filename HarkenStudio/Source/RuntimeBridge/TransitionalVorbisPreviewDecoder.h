@@ -4,11 +4,11 @@
 #include <optional>
 #include <vector>
 
-namespace VNX::VorbisEncoder { struct EncodedMedia; }
+namespace harken::studio::VorbisEncoder { struct EncodedMedia; }
 
-namespace HarkenEditor::Bridge::Detail {
+namespace harken::studio::bridge::Detail {
 
 std::optional<std::vector<float>> decodeTransitionalVorbisPreview(
-    const VNX::VorbisEncoder::EncodedMedia& media, QString* error);
+    const harken::studio::VorbisEncoder::EncodedMedia& media, QString* error);
 
 }

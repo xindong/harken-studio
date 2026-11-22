@@ -1,4 +1,4 @@
-"""Audience decisions must survive removal from the observed public surface."""
+"""Every generated managed symbol needs an explicit visibility decision."""
 import copy
 import importlib.util
 import json
@@ -57,13 +57,6 @@ class GenerationPolicyTests(unittest.TestCase):
         self.policy["groups"][group]["disposition"] = "tombstone"
         with self.assertRaisesRegex(ValueError, "Invalid managed disposition"):
             self.validate(self.policy)
-
-    def test_visibility_does_not_depend_on_public_inventory(self):
-        for group in self.policy["groups"].values():
-            group["entries"] = {}
-        policy = self.validate(self.policy)
-        self.assertEqual("internal", binding.managed_access(policy, "types", "HarkenNative"))
-        self.assertEqual("public", binding.managed_access(policy, "types", "VnResult"))
 
     def test_excluded_native_contracts_do_not_change_managed_outputs(self):
         baseline_policy = self.validate(self.policy)

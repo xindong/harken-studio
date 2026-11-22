@@ -9,7 +9,7 @@
 #include "Dialogs/Settings/Pages/ShortcutsPage.h"
 #include "Platform/SecretStore.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

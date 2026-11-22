@@ -22,7 +22,7 @@
 
 #include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void AssetImporter::setProjectRoot(const QString& root)
 {

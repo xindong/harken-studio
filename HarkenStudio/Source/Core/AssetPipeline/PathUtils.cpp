@@ -6,7 +6,7 @@
 #include <QObject>
 #include <QRegularExpression>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

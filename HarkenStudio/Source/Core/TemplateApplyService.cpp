@@ -33,14 +33,14 @@
 #include <utility>
 
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
 struct TemplateIdentityMap
 {
     QHash<uint32_t, uint32_t> objects;
-    QHash<harkenstudio::ObjectId, harkenstudio::ObjectId> stableIds;
+    QHash<harken::studio::types::ObjectId, harken::studio::types::ObjectId> stableIds;
     QHash<QUuid, QUuid> guids;
 };
 
@@ -49,7 +49,7 @@ void remintTree(ProjectData& project, ProjectItem* item, ProjectItem* parent,
 {
     if (!item) return;
     const uint32_t oldObjectId = item->objectID;
-    const harkenstudio::ObjectId oldStableId = item->runtimeId();
+    const harken::studio::types::ObjectId oldStableId = item->runtimeId();
     const QUuid oldGuid = item->guid;
     item->objectID = project.generateObjectID();
     item->guid = QUuid::createUuid();
@@ -61,7 +61,7 @@ void remintTree(ProjectData& project, ProjectItem* item, ProjectItem* parent,
         item->parentRef.guid = parent->guid;
     }
     if (oldObjectId != 0) identities.objects.insert(oldObjectId, item->objectID);
-    if (!harkenstudio::IsNull(oldStableId)) identities.stableIds.insert(oldStableId, item->runtimeId());
+    if (!harken::studio::types::IsNull(oldStableId)) identities.stableIds.insert(oldStableId, item->runtimeId());
     if (!oldGuid.isNull()) identities.guids.insert(oldGuid, item->guid);
     for (auto& child : item->children)
         remintTree(project, child.get(), item, identities);
@@ -75,7 +75,7 @@ void remapAttenuationReference(PlayablePropertyOccurrenceV1& properties,
     if (!properties.presence.Has(propertyId))
         return;
     const auto* value = properties.value(propertyId);
-    const auto* reference = value ? std::get_if<harkenstudio::ObjectId>(value) : nullptr;
+    const auto* reference = value ? std::get_if<harken::studio::types::ObjectId>(value) : nullptr;
     if (reference)
         properties.setValue(propertyId, identities.stableIds.value(*reference, *reference));
 }
@@ -109,7 +109,7 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
         }
         mix->bindings.replace(std::move(bindings));
     }
-    const auto remapGuid = [&](harkenprojectschema::AuthoringGuid& guid) {
+    const auto remapGuid = [&](harken::studio::project_schema::AuthoringGuid& guid) {
         const auto original = fromFieldGroupGuid(guid);
         guid = toFieldGroupGuid(identities.guids.value(original, original));
     };
@@ -565,11 +565,11 @@ bool TemplateApplyService::seedTemplateInto(
         masterAuthoring.value(QStringLiteral("guid")).toString());
     const uint32_t sourceMasterObjectId =
         serializer.transientObjectIdForGuid(sourceMasterGuid);
-    const harkenstudio::ObjectId sourceMasterStableId =
+    const harken::studio::types::ObjectId sourceMasterStableId =
         serializer.transientRuntimeStableIdForGuid(sourceMasterGuid);
     if (sourceMasterObjectId != 0)
         identities.objects.insert(sourceMasterObjectId, master->objectID);
-    if (!harkenstudio::IsNull(sourceMasterStableId))
+    if (!harken::studio::types::IsNull(sourceMasterStableId))
         identities.stableIds.insert(sourceMasterStableId, master->runtimeId());
     if (!sourceMasterGuid.isNull())
         identities.guids.insert(sourceMasterGuid, master->guid);

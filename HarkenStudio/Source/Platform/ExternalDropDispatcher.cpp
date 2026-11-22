@@ -20,7 +20,7 @@
 #include "Platform/NativeDropTarget_Win.h"
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 ExternalDropDispatcher::ExternalDropDispatcher(QObject* parent)
     : QObject(parent)

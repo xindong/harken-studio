@@ -4,7 +4,7 @@
 
 class QPainter;
 
-namespace VNX {
+namespace harken::studio {
 
 class PreviewField : public QWidget
 {

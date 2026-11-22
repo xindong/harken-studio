@@ -6,7 +6,7 @@
 
 class QShowEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 class AboutDialog final : public BaseDialog
 {

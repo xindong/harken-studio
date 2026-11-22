@@ -13,7 +13,7 @@
 #include <QDeadlineTimer>
 #include <QThread>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -167,16 +167,6 @@ QSize HubSettings::windowSize()
     return size.width() > 0 && size.height() > 0 ? size : QSize(-1, -1);
 }
 
-bool HubSettings::setWindowSize(const QSize& size)
-{
-    if (size.width() <= 0 || size.height() <= 0)
-        return false;
-    QJsonObject object;
-    object[QStringLiteral("width")] = size.width();
-    object[QStringLiteral("height")] = size.height();
-    return updateValue(QStringLiteral("windowSize"), object);
-}
-
 std::optional<QPoint> HubSettings::windowPosition()
 {
     const QJsonValue value = loadRoot().value(QStringLiteral("windowPosition"));
@@ -188,14 +178,6 @@ std::optional<QPoint> HubSettings::windowPosition()
     if (!x.isDouble() || !y.isDouble())
         return std::nullopt;
     return QPoint(x.toInt(), y.toInt());
-}
-
-bool HubSettings::setWindowPosition(const QPoint& position)
-{
-    QJsonObject object;
-    object[QStringLiteral("x")] = position.x();
-    object[QStringLiteral("y")] = position.y();
-    return updateValue(QStringLiteral("windowPosition"), object);
 }
 
 TableSortPreference HubSettings::tableSort(const QString& table)

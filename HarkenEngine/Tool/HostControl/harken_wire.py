@@ -9005,6 +9005,7 @@ TABLE_JSON = r'''
     },
     {
       "name": "Vn_ActivateCanonicalPackSetV1",
+      "deprecated": "Use Vn_ActivateCanonicalPackSetV2.",
       "note": "public Runtime API; additive Canonical Pack Set activation. Not part of the remote wire protocol (no opcode).",
       "params": [
         {
@@ -9054,6 +9055,9 @@ TABLE_JSON = r'''
     {
       "opcode": 19,
       "name": "Vn_LoadPack",
+      "deprecatedDescriptors": {
+        "VnPackDesc": "Use VnPackLoadDesc for current Pack files."
+      },
       "policy": "mirror",
       "params": [
         {
@@ -9650,6 +9654,7 @@ TABLE_JSON = r'''
     {
       "opcode": 54,
       "name": "Vn_ReplacePack",
+      "deprecated": "Use Vn_ActivateCanonicalPackSetV2 to replace canonical Pack set members.",
       "policy": "mirror",
       "params": [
         {
@@ -10326,6 +10331,7 @@ TABLE_JSON = r'''
     {
       "opcode": 94,
       "name": "Vn_LoadCurrentWorld",
+      "deprecated": "Use canonical Pack activation for runtime content.",
       "policy": "mirror",
       "note": "the wire carries only the descriptor path; the server supplies current struct sizes and zero descriptor flags.",
       "params": [
@@ -11690,6 +11696,7 @@ TABLE_JSON = r'''
     },
     {
       "name": "VnPreview_PrepareProjectV2",
+      "deprecated": "Use VnPreview_PrepareProjectV4.",
       "note": "Development preview; process-local, no remote opcode.",
       "returnType": "VnPreviewPrepareStatus",
       "params": [
@@ -11708,6 +11715,7 @@ TABLE_JSON = r'''
     },
     {
       "name": "VnPreview_PrepareProjectV3",
+      "deprecated": "Use VnPreview_PrepareProjectV4.",
       "note": "Development preview; process-local, no remote opcode.",
       "returnType": "VnPreviewPrepareStatus",
       "params": [
@@ -13231,6 +13239,10 @@ TABLE_JSON = r'''
       },
       "VnMonitorMeasurementKind": {
         "backing": "u32",
+        "deprecatedValues": {
+          "VN_MONITOR_MEASURE_LUFS_SHORT_TERM": "ID 10 is permanently reserved.",
+          "VN_MONITOR_MEASURE_LUFS_INTEGRATED": "ID 11 is permanently reserved."
+        },
         "values": {
           "VN_MONITOR_MEASURE_SAMPLE_PEAK": 1,
           "VN_MONITOR_MEASURE_TRUE_PEAK": 2,

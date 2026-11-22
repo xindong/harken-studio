@@ -3,7 +3,7 @@
 #include <QSettings>
 #include <QVersionNumber>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

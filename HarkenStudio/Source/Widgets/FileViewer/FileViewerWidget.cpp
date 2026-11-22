@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -329,7 +329,7 @@ void FileViewerWidget::clearSource()
     bindSource(0);
 }
 
-void FileViewerWidget::setAuditionManager(HarkenEditor::AuditionManager* audition)
+void FileViewerWidget::setAuditionManager(harken::studio::AuditionManager* audition)
 {
     if (audition_ == audition)
         return;
@@ -338,7 +338,7 @@ void FileViewerWidget::setAuditionManager(HarkenEditor::AuditionManager* auditio
     audition_ = audition;
     if (!audition_)
         return;
-    connect(audition_, &HarkenEditor::AuditionManager::auditionStateChanged,
+    connect(audition_, &harken::studio::AuditionManager::auditionStateChanged,
             this, [this](uint32_t playingId, int state) {
         if (playingId == 0 || playingId != auditionPlayingId_ || state != 0)
             return;
@@ -346,7 +346,7 @@ void FileViewerWidget::setAuditionManager(HarkenEditor::AuditionManager* auditio
         if (previewPlaybackHandle_ == 0)
             return;
         previewPlaybackHandle_ = 0;
-        if (previewSoundId_ != harkenstudio::ObjectId{}) {
+        if (previewSoundId_ != harken::studio::types::ObjectId{}) {
             AudioEngine::instance().unregisterRawPcm(previewSoundId_);
             previewSoundId_ = {};
         }
@@ -435,9 +435,9 @@ bool FileViewerWidget::startPreviewPlayhead(uint64_t startFrame)
         stopPreviewPlayhead();
         return false;
     }
-    if (previewSoundId_ == harkenstudio::ObjectId{})
+    if (previewSoundId_ == harken::studio::types::ObjectId{})
         previewSoundId_ = engine.mintRawPcmSoundId();
-    if (previewSoundId_ == harkenstudio::ObjectId{}) {
+    if (previewSoundId_ == harken::studio::types::ObjectId{}) {
         stopPreviewPlayhead();
         return false;
     }
@@ -453,23 +453,23 @@ bool FileViewerWidget::startPreviewPlayhead(uint64_t startFrame)
             slice->windowStartFrame, slice->windowFrameCount, slice->loops).result;
     };
     auto registrationResult = registerFile();
-    if (registrationResult == HarkenEditor::Bridge::kEngineUnknownId
-        || registrationResult == HarkenEditor::Bridge::kEngineInUse
-        || registrationResult == HarkenEditor::Bridge::kEngineNotInit) {
+    if (registrationResult == harken::studio::bridge::kEngineUnknownId
+        || registrationResult == harken::studio::bridge::kEngineInUse
+        || registrationResult == harken::studio::bridge::kEngineNotInit) {
         previewSoundId_ = engine.mintRawPcmSoundId();
-        if (previewSoundId_ == harkenstudio::ObjectId{}) {
+        if (previewSoundId_ == harken::studio::types::ObjectId{}) {
             stopPreviewPlayhead();
             return false;
         }
         registrationResult = registerFile();
     }
-    if (registrationResult != HarkenEditor::Bridge::kEngineOk) {
+    if (registrationResult != harken::studio::bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
 
     const auto relocated = engine.relocateRawPcmSlice(previewSoundId_, slice->startFrame);
-    if (relocated.result != HarkenEditor::Bridge::kEngineOk) {
+    if (relocated.result != harken::studio::bridge::kEngineOk) {
         stopPreviewPlayhead();
         return false;
     }
@@ -498,7 +498,7 @@ void FileViewerWidget::stopPreviewPlayhead()
         engine.stopRawPcm(previewPlaybackHandle_, 0);
         previewPlaybackHandle_ = 0;
     }
-    if (previewSoundId_ != harkenstudio::ObjectId{}) {
+    if (previewSoundId_ != harken::studio::types::ObjectId{}) {
         engine.unregisterRawPcm(previewSoundId_);
         previewSoundId_ = {};
     }

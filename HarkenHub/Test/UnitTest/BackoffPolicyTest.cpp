@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-using VNH::BackoffPolicy;
+using harken::hub::BackoffPolicy;
 
 TEST(BackoffPolicy, GrowsExponentiallyAndCaps)
 {

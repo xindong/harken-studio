@@ -210,7 +210,7 @@ void sendResponse(QLocalSocket* socket, QJsonObject response)
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 struct StudioInstanceServer::State {
     QPointer<IPCServer> dispatcher;
@@ -479,7 +479,7 @@ QJsonObject StudioInstanceServer::descriptor() const
 
 }
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 
 struct StudioInstanceClient::State {
     QString id;
@@ -584,7 +584,7 @@ QJsonObject StudioInstanceClient::validate(const QString& name, const QJsonObjec
     if (schema.isEmpty())
         return failure(QStringLiteral("COMMAND_CONTRACT_MISSING"), QStringLiteral("The Studio command has no argument contract."));
     QString error;
-    if (!VNX::validateCommandArguments(args, schema, &error)) {
+    if (!harken::studio::validateCommandArguments(args, schema, &error)) {
         auto invalid = failure(QStringLiteral("INVALID_ARGUMENTS"), error);
         invalid.insert(QStringLiteral("command"), name);
         return invalid;

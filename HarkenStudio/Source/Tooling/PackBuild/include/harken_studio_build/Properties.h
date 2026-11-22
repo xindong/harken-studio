@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <iterator>
 
-namespace harkenstudiobuild { namespace playableproperties {
+namespace harken::studio::build { namespace playableproperties {
 
 enum class ContentPropertyKindV1 : std::uint8_t { Layer = HK_PACK_CONTENT_LAYER, Sound = HK_PACK_CONTENT_SOUND, Container = HK_PACK_CONTENT_CONTAINER, Track = HK_PACK_CONTENT_TRACK, Segment = HK_PACK_CONTENT_SEGMENT };
 

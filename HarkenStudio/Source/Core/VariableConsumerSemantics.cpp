@@ -20,7 +20,7 @@
 #include <functional>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 namespace VariableConsumerSemantics {
 
 namespace {

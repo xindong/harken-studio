@@ -15,7 +15,7 @@
 #include <QStyle>
 #include <QStyleOptionMenuItem>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

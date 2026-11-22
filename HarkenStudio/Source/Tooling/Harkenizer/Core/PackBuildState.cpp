@@ -24,7 +24,7 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using ExportResult = ProjectPackExporter::ExportResult;
@@ -36,7 +36,7 @@ QString digest(const QJsonObject& object)
         QJsonDocument(object).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
 }
 
-QString companionPath(const QString& path)
+QString packMetadataPath(const QString& path)
 {
     const QFileInfo file(path);
     return QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
@@ -62,7 +62,7 @@ PackBuildState::PackBuildState(std::shared_ptr<const ProjectBuildSnapshot> snaps
     QFile file(cachePath_);
     if (file.open(QIODevice::ReadOnly)) {
         const auto state = QJsonDocument::fromJson(file.readAll()).object();
-        if (state.value(QStringLiteral("version")).toInt() == 2) {
+        if (state.value(QStringLiteral("version")).toInt() == kPackBuildStateVersion) {
             legacyCleanup_ = false;
             targets_ = state.value(QStringLiteral("targets")).toObject();
             waveforms_ = state.value(QStringLiteral("waveforms")).toObject();
@@ -84,7 +84,7 @@ void PackBuildState::select(const ProjectPackExporter::ExportOptions& options, c
     packs_ = targets_.value(outputDirectory_).toObject().value(QStringLiteral("packs")).toObject();
     inputs_.clear();
     packMatches_.clear();
-    companionMatches_.clear();
+    packMetadataMatches_.clear();
     current_.clear();
     resources_.clear();
     records_.clear();
@@ -154,7 +154,7 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     };
     QJsonObject globals;
     QSet<const ProjectItem*> visited;
-    QSet<harkenstudio::ObjectId> objects, actions;
+    QSet<harken::studio::types::ObjectId> objects, actions;
     QSet<QString> media;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> void {
         if (!item || visited.contains(item)) return;
@@ -301,13 +301,13 @@ bool PackBuildState::savedPackMatches(const QString& path) const
     return current;
 }
 
-bool PackBuildState::savedCompanionMatches(const QString& path) const
+bool PackBuildState::savedPackMetadataMatches(const QString& path) const
 {
-    const auto found = companionMatches_.constFind(path);
-    if (found != companionMatches_.cend()) return *found;
-    const auto current = matches(QDir(outputDirectory_).filePath(companionPath(path)),
-        packs_.value(path).toObject().value(QStringLiteral("companionState")));
-    companionMatches_.insert(path, current);
+    const auto found = packMetadataMatches_.constFind(path);
+    if (found != packMetadataMatches_.cend()) return *found;
+    const auto current = matches(QDir(outputDirectory_).filePath(packMetadataPath(path)),
+        packs_.value(path).toObject().value(QStringLiteral("packMetadataState")));
+    packMetadataMatches_.insert(path, current);
     return current;
 }
 
@@ -321,7 +321,7 @@ bool PackBuildState::isCurrent(const QString& path) const
         if (input.isEmpty() || row.value(QStringLiteral("input")).toString() != input) return false;
         if (!row.value(QStringLiteral("media")).isArray()) return false;
         if (!savedPackMatches(path)
-            || !savedCompanionMatches(path)) return false;
+            || !savedPackMetadataMatches(path)) return false;
         for (const auto& waveform : row.value(QStringLiteral("waveforms")).toArray())
             if (!isWaveformCurrent(path, waveform.toString())) return false;
         return true;
@@ -404,7 +404,7 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
         restored.outputs.append(QJsonObject{{QStringLiteral("path"), path},
             {QStringLiteral("key"), record.unitKey},
             {QStringLiteral("media"), media},
-            {QStringLiteral("companion"), QJsonObject{{QStringLiteral("waveforms"), waveforms}}}});
+            {QStringLiteral("packMetadata"), QJsonObject{{QStringLiteral("waveforms"), waveforms}}}});
     }
     if (options_.updateSelectedOnly)
         std::erase_if(restoredRecords, [](const auto& record) { return record.source == BuildRecord::Source::Init; });
@@ -420,14 +420,14 @@ QString PackBuildState::resourceFingerprint(const QString& path) const
 {
     const auto row = packs_.value(path).toObject();
     return savedPackMatches(path)
-        && savedCompanionMatches(path)
+        && savedPackMetadataMatches(path)
         ? row.value(QStringLiteral("resourceFingerprint")).toString() : QString();
 }
 
 std::optional<QJsonArray> PackBuildState::mediaResults(const QString& path) const
 {
     const auto media = packs_.value(path).toObject().value(QStringLiteral("media"));
-    if (!media.isArray() || !savedPackMatches(path) || !savedCompanionMatches(path))
+    if (!media.isArray() || !savedPackMatches(path) || !savedPackMetadataMatches(path))
         return std::nullopt;
     return media.toArray();
 }
@@ -459,13 +459,13 @@ void PackBuildState::save(const ExportResult& result, const std::vector<BuildRec
         row.insert(QStringLiteral("input"), path == QStringLiteral("Init.bytes") && !result.success
             ? QString() : inputs_.value(path, inputsReady_ || unchanged
                 ? previous.value(QStringLiteral("input")).toString() : QString()));
-        row.insert(QStringLiteral("companionState"), fileState(directory.filePath(companionPath(path))));
+        row.insert(QStringLiteral("packMetadataState"), fileState(directory.filePath(packMetadataPath(path))));
         const auto fingerprint = resources_.value(path,
             unchanged
                 ? previous.value(QStringLiteral("resourceFingerprint")).toString() : QString());
         if (!fingerprint.isEmpty()) row.insert(QStringLiteral("resourceFingerprint"), fingerprint);
         QJsonArray waveforms;
-        for (const auto& value : output.value(QStringLiteral("companion")).toObject().value(QStringLiteral("waveforms")).toArray()) {
+        for (const auto& value : output.value(QStringLiteral("packMetadata")).toObject().value(QStringLiteral("waveforms")).toArray()) {
             const auto file = value.toObject().value(QStringLiteral("file")).toString();
             if (!waveforms.contains(file)) waveforms.append(file);
         }
@@ -516,7 +516,7 @@ bool PackBuildState::flush()
             if (!referenced.contains(path)) waveforms_.remove(path);
     }
     if (!QDir().mkpath(QFileInfo(cachePath_).absolutePath())) return false;
-    QJsonObject state{{QStringLiteral("version"), 2}, {QStringLiteral("targets"), targets_}};
+    QJsonObject state{{QStringLiteral("version"), kPackBuildStateVersion}, {QStringLiteral("targets"), targets_}};
     if (!waveforms_.isEmpty()) state.insert(QStringLiteral("waveforms"), waveforms_);
     const auto bytes = QJsonDocument(state).toJson(QJsonDocument::Compact);
     QSaveFile file(cachePath_);

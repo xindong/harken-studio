@@ -20,7 +20,7 @@
 #include <functional>
 #include <iterator>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 quint32 closestRate(quint32 rate)

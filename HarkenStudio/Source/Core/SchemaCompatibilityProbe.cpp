@@ -17,7 +17,7 @@
 #include <string_view>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

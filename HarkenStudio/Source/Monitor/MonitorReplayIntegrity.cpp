@@ -7,7 +7,7 @@
 #include <set>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool entityReplayIsIncomplete(
@@ -51,4 +51,4 @@ bool entityReplayIsIncomplete(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

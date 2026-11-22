@@ -9,7 +9,7 @@
 #include <QFileInfo>
 #include <QDir>
 
-namespace VNX {
+namespace harken::studio {
 std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     const ProjectData& source, QString* error)
 {

@@ -1,6 +1,6 @@
 #include "ThemeColorCatalog.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const QVector<ThemeColorRole>& studioDefaultColorRoles()
 {

@@ -21,10 +21,10 @@
 
 #include <optional>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 std::optional<SegmentProgram> BuildSegmentProgram(const SegmentIR& ir);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_BUILD_SEGMENT_PROGRAM_H

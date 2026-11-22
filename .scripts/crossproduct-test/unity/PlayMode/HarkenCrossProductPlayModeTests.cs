@@ -135,13 +135,13 @@ namespace HarkenCrossProduct
             Assert.That(runtime.ConfigureBeforeStartup("HarkenCrossProduct", "Init.bytes", Array.Empty<ulong>(), true, false),
                 Is.EqualTo(VnResult.VN_OK));
             if (language != null) Assert.That(runtime.ConfigureLanguageBeforeStartup(language), Is.EqualTo(VnResult.VN_OK));
-            if (platform != null) Assert.That(runtime.ConfigurePlatformBeforeStartup(null, platform), Is.EqualTo(VnResult.VN_OK));
+            if (platform != null) Assert.That(runtime.ConfigurePlatformBeforeStartup(platform), Is.EqualTo(VnResult.VN_OK));
         }
 
         private IEnumerator StartFrom(PackSource source, string language = null)
         {
             CreateRuntime(language);
-            Assert.That(runtime.ConfigureCompanionSourceBeforeStartup(source), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(runtime.ConfigurePackSourceBeforeStartup(source), Is.EqualTo(VnResult.VN_OK));
             owner.SetActive(true);
             yield return WaitForStartup();
         }

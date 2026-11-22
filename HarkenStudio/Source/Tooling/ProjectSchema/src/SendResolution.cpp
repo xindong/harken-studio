@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 // One clip's placement facts, gathered from the model so occurrences can be
@@ -56,7 +56,7 @@ SendResolutionResult BuildSendResolution(const CanonicalProject& project,
             if (sendsIt == sendsById.end()) continue;
             const auto& merged = *sendsIt->second;
 
-            if (merged.size() > harkenstudiobuild::kMaxVoiceSendSlots) {
+            if (merged.size() > harken::studio::build::kMaxVoiceSendSlots) {
                 // More distinct target buses than the per-voice send array can
                 // hold. Refuse loudly, all-or-nothing, rather than truncate.
                 Diagnostic d;
@@ -84,4 +84,4 @@ SendResolutionResult BuildSendResolution(const CanonicalProject& project,
     return result;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

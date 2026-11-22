@@ -171,7 +171,7 @@ void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time,
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 StartupRenderer::StartupRenderer(ThemeSnapshotPtr theme)
     : theme_(std::move(theme))

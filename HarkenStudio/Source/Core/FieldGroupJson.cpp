@@ -15,13 +15,13 @@
 #include <set>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using harkenprojectschema::AuthoringGuid;
+using harken::studio::project_schema::AuthoringGuid;
 
-using harkenstudiojson::JsonValue;
-using harkenstudiojson::JsonWriter;
+using harken::studio::json::JsonValue;
+using harken::studio::json::JsonWriter;
 
 bool Fail(std::string& error, const std::string& path,
           const std::string& message)
@@ -150,17 +150,17 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
             const auto converted = std::from_chars(mode->text.data(), end, parsed);
             if (mode->kind != JsonValue::Kind::Number || converted.ec != std::errc{}
                 || converted.ptr != end
-                || (parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Mix)
-                    && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Ducking)
-                    && parsed != static_cast<unsigned>(harkenprojectschema::SendMode::Sidechain)))
+                || (parsed != static_cast<unsigned>(harken::studio::project_schema::SendMode::Mix)
+                    && parsed != static_cast<unsigned>(harken::studio::project_schema::SendMode::Ducking)
+                    && parsed != static_cast<unsigned>(harken::studio::project_schema::SendMode::Sidechain)))
                 return Fail(error, rowPath + ".mode", "expected a send mode");
-            row.mode = static_cast<harkenprojectschema::SendMode>(parsed);
+            row.mode = static_cast<harken::studio::project_schema::SendMode>(parsed);
         }
         if (const auto* volumes = entry.Find("modeVolumes")) {
             if (!CheckMembers(*volumes, rowPath + ".modeVolumes", {"0", "1", "2"}, {}, error))
                 return false;
             for (const auto& [key, value] : volumes->members) {
-                const auto mode = static_cast<harkenprojectschema::SendMode>(key.front() - '0');
+                const auto mode = static_cast<harken::studio::project_schema::SendMode>(key.front() - '0');
                 float volume = 0.0f;
                 if (mode == row.mode)
                     return Fail(error, rowPath + ".modeVolumes." + key, "active mode uses sendLevel");
@@ -236,7 +236,7 @@ bool ReadFieldValue(const JsonValue& value, EffectChainLedger& effects,
         AuthoringGuid document;
         AuthoringGuid guid;
         if (!ReadGuid(*reference->Find("documentId"), document,
-                rowPath + ".effectRef.documentId", error) || harkenstudio::IsNull(document))
+                rowPath + ".effectRef.documentId", error) || harken::studio::types::IsNull(document))
             return Fail(error, rowPath + ".effectRef.documentId", "expected a non-null document UUID");
         if (!ReadGuid(*reference->Find("id"), guid, rowPath + ".effectRef.id", error)) return false;
         auto object = array.at(static_cast<qsizetype>(index)).toObject();
@@ -477,7 +477,7 @@ bool ReadFieldGroupsJson(const std::string& text,
                            std::string& error)
 {
     JsonValue root;
-    if (!harkenstudiojson::ParseJson(text, &root, &error, true)) return false;
+    if (!harken::studio::json::ParseJson(text, &root, &error, true)) return false;
     if (!CheckMembers(root, "fieldGroups", {"shared", "platforms"}, {"shared"}, error))
         return false;
     const auto& shared = *root.Find("shared");
@@ -506,7 +506,7 @@ bool ReadFieldGroupsJson(const std::string& text,
             identity.text = name;
             AuthoringGuid platform;
             if (!ReadGuid(identity, platform, path, error)) return false;
-            if (harkenprojectschema::IsNull(platform) || WriteGuid(platform) != name)
+            if (harken::studio::project_schema::IsNull(platform) || WriteGuid(platform) != name)
                 return Fail(error, path, "expected a canonical non-null platform UUID");
             if (!CheckMembers(value, path, {"output", "send", "spatialRating", "effect", "conversion"}, {}, error)
                 || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
@@ -576,7 +576,7 @@ bool ValidateOccurrenceFieldGroupExclusionJson(const std::string& text,
                                                 std::string& error)
 {
     JsonValue root;
-    if (!harkenstudiojson::ParseJson(text, &root, &error)) return false;
+    if (!harken::studio::json::ParseJson(text, &root, &error)) return false;
     if (!CheckOccurrence(root, "occurrence", error)) return false;
     error.clear();
     return true;

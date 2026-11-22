@@ -4,7 +4,7 @@
 #include "LMDBService.h"
 #include <QThread>
 
-namespace VNX {
+namespace harken::studio {
 
 
 LMDBQueryTask::LMDBQueryTask(LMDBService* service, const QString& query,

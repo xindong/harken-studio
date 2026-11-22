@@ -52,7 +52,7 @@
 #include "Core/UndoCommands.h"
 #include "Core/AppSettings.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 constexpr int kBucketRole = TreeRowStyle::kBucketRole;
@@ -1098,7 +1098,7 @@ void ProjectTreePanel::rebuildTree()
 
     for (const QString& cat : ProjectManager::getStandardDirectories())
     {
-        if (VNX::isUiHiddenBucket(cat)) continue;
+        if (harken::studio::isUiHiddenBucket(cat)) continue;
         ensureCategoryFolder(cat);
     }
 
@@ -1123,7 +1123,7 @@ void ProjectTreePanel::rebuildTree()
     for (const ProjectFolderBinding& binding : project->folders)
     {
         if (!binding.rootFolder) continue;
-        if (VNX::isUiHiddenBucket(binding.parentFolder)) continue;
+        if (harken::studio::isUiHiddenBucket(binding.parentFolder)) continue;
         const auto addFolders = [this](auto&& self, PhysicalFolder* folder) -> void {
             ensureFolderRow(folder);
             for (const auto& child : folder->children) self(self, child.get());
@@ -1134,7 +1134,7 @@ void ProjectTreePanel::rebuildTree()
     for (const auto* binding : project->allFileBindings())
     {
         if (!binding || !binding->rootItem) continue;
-        if (VNX::isUiHiddenBucket(binding->parentFolder)) continue;
+        if (harken::studio::isUiHiddenBucket(binding->parentFolder)) continue;
         const auto* root = binding->rootItem.get();
 
         if (root->type == ProjectItem::Type::Bus)

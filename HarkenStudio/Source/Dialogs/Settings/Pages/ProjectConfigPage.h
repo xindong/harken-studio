@@ -13,7 +13,7 @@ class QLineEdit;
 class QToolButton;
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectPlatformEditor;
 class ObjectRefWidget;

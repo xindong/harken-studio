@@ -21,7 +21,7 @@
 #include <QProcess>
 #include <cstdio>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 namespace {
 
 struct Command

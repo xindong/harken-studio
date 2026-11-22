@@ -7,7 +7,7 @@
 
 #include "Versions/VersionScanner.h"
 
-namespace VNH {
+namespace harken::hub {
 
 class StudioLaunchTarget
 {

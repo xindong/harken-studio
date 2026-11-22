@@ -17,7 +17,7 @@
 #include "harken_studio_build/VariableExecutionFingerprint.h"
 #include <utility>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 namespace {
 bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
@@ -126,14 +126,14 @@ bool HasDuplicateId(const std::vector<T>& entries, IdFn&& idOf) {
 bool ValidateCanonicalBusParentForestV2(
     std::span<const PackBusDefinitionBus> buses) {
     if (buses.empty() || buses.size() > 4096) return false;
-    std::map<harkenstudio::ObjectId, std::size_t> indices;
+    std::map<harken::studio::types::ObjectId, std::size_t> indices;
     for (std::size_t i = 0; i < buses.size(); ++i) {
-        if (harkenstudio::IsNull(buses[i].busId) ||
+        if (harken::studio::types::IsNull(buses[i].busId) ||
             !indices.emplace(buses[i].busId, i).second) return false;
     }
-    const auto master = indices.find(harkenstudio::kMasterBusObjectId);
+    const auto master = indices.find(harken::studio::types::kMasterBusObjectId);
     if (master == indices.end() ||
-        !harkenstudio::IsNull(buses[master->second].parentId)) return false;
+        !harken::studio::types::IsNull(buses[master->second].parentId)) return false;
 
     std::vector<std::uint8_t> state(buses.size(), 0);
     std::vector<std::size_t> path;
@@ -158,14 +158,14 @@ bool ValidateCanonicalBusParentForestV2(
 bool ValidateCanonicalBusSendGraphV2(
     std::span<const PackBusDefinitionBus> buses,
     std::span<const PackBusDefinitionSend> sends) {
-    std::map<harkenstudio::ObjectId, std::size_t> indices;
+    std::map<harken::studio::types::ObjectId, std::size_t> indices;
     for (std::size_t i = 0; i < buses.size(); ++i) {
         indices.emplace(buses[i].busId, i);
     }
     std::vector<std::vector<std::size_t>> edges(buses.size());
     std::vector<std::size_t> indegree(buses.size(), 0);
-    const auto addEdge = [&](harkenstudio::ObjectId source,
-                             harkenstudio::ObjectId target) {
+    const auto addEdge = [&](harken::studio::types::ObjectId source,
+                             harken::studio::types::ObjectId target) {
         const auto from = indices.find(source);
         const auto to = indices.find(target);
         if (from == indices.end() || to == indices.end()) return false;
@@ -174,7 +174,7 @@ bool ValidateCanonicalBusSendGraphV2(
         return true;
     };
     for (const auto& bus : buses) {
-        if (!harkenstudio::IsNull(bus.parentId) &&
+        if (!harken::studio::types::IsNull(bus.parentId) &&
             !addEdge(bus.busId, bus.parentId)) return false;
     }
     for (const auto& send : sends) {
@@ -193,31 +193,31 @@ bool ValidateCanonicalBusSendGraphV2(
     return ready.size() == buses.size();
 }
 
-harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
+harken::studio::build::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
                           PackLogicImage* out) {
     if (bytes == nullptr || fileBytes < kPackBytes<HkPackFileHeader>) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     PackFileHeader header;
     if (!ReadPackFileHeader(bytes, &header)) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (header.formatVersion != HK_PACK_FORMAT_VERSION ||
         header.headerBytes != kPackBytes<HkPackFileHeader> ||
         header.fileBytes != fileBytes) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (PackIsCanonicalKind(header.packKind)) {
-        return harkenstudiobuild::kPackIncompatible;
+        return harken::studio::build::kPackIncompatible;
     }
     if (header.packKind != HK_PACK_KIND_RESIDENT &&
         header.packKind != HK_PACK_KIND_CONTENT) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (header.entryCount == 0 &&
         (header.packKind != HK_PACK_KIND_CONTENT ||
          header.fileBytes != header.headerBytes)) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const std::uint64_t dirBytes =
         static_cast<std::uint64_t>(header.entryCount) *
@@ -225,12 +225,12 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
     if (header.directoryOffset != header.headerBytes ||
         header.directoryOffset > fileBytes ||
         dirBytes > fileBytes - header.directoryOffset) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const std::uint8_t* dir = bytes + header.directoryOffset;
     if (Fnv1a64(dir, static_cast<std::size_t>(dirBytes)) !=
         header.directoryChecksum) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const std::uint64_t dirEnd = header.directoryOffset + dirBytes;
 
@@ -248,43 +248,43 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             dir + static_cast<std::size_t>(i) * kPackBytes<HkPackDirectoryEntry>);
         if (!PackEntryKindSupported(entry.kind)) return kPackInvalid;
         if (PackIsCanonicalEntryKind(entry.kind)) {
-            return harkenstudiobuild::kPackIncompatible;
+            return harken::studio::build::kPackIncompatible;
         }
         if (!VintageLegalForKind(entry.kind, entry.vintage)) {
-            return harkenstudiobuild::kPackIncompatible;
+            return harken::studio::build::kPackIncompatible;
         }
         if (!KindLegalForPack(entry.kind, header.packKind)) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         if (entry.offset < dirEnd || entry.offset > fileBytes ||
             entry.size > fileBytes - entry.offset) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         if (entry.offset % HK_PACK_PAYLOAD_ALIGN != 0) {
-            return harkenstudiobuild::kPackInvalid; // the writer aligns every payload
+            return harken::studio::build::kPackInvalid; // the writer aligns every payload
         }
         ranges.emplace_back(entry.offset, entry.size);
         const std::uint8_t* payload = bytes + entry.offset;
         if (Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
             entry.payloadChecksum) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         image.stamps.push_back(
             {entry.kind, entry.id, entry.payloadChecksum});
         switch (entry.kind) {
         case HK_PACK_ENTRY_KIND_MEDIA: {
             if (entry.size != kPackBytes<HkPackMedia>) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (Fnv1a64(bytes + media.blobOffset,
                         static_cast<std::size_t>(media.blobBytes)) !=
                 media.blobChecksum) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ranges.emplace_back(media.blobOffset, media.blobBytes);
             image.media.push_back(media);
@@ -297,7 +297,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             if (!parsed || bus.busId != entry.id ||
                 !std::isfinite(bus.volume) ||
                 !std::isfinite(bus.outputBusVolume)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.buses.push_back(bus);
             break;
@@ -306,10 +306,10 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             PackBusSendEntry send;
             if (!ParsePackRow<HkPackBusSend>(payload, entry.size, &send) ||
                 entry.relationOrdinal != sendOrdinal) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (!std::isfinite(send.levelDb)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ++sendOrdinal;
             image.busSends.push_back(send);
@@ -318,11 +318,11 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         case HK_PACK_ENTRY_KIND_BUS_EFFECT: {
             PackBusEffectEntry effect;
             if (!ReadPackBusEffect(payload, entry.size, &effect) ||
-                entry.relationOrdinal != busEffectOrdinal || effect.busId == harkenstudio::ObjectId{} ||
+                entry.relationOrdinal != busEffectOrdinal || effect.busId == harken::studio::types::ObjectId{} ||
                 effect.bypass > 1 ||
                 effect.slot >= kMaxFxSlotsPerBus ||
                 effect.faderPointGuard > kMaxFxSlotsPerBus) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             const PackEffectSchemaRow* effectSchema =
                 FindPackEffectSchemaByType(effect.effectType);
@@ -330,11 +330,11 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
                 effect.descriptorVintage !=
                     effectSchema->descriptorVintage ||
                 effect.paramCount != effectSchema->paramCount) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             for (std::uint32_t p = 0; p < effect.paramCount; ++p) {
                 if (!std::isfinite(effect.params[p])) {
-                    return harkenstudiobuild::kPackInvalid;
+                    return harken::studio::build::kPackInvalid;
                 }
             }
             ++busEffectOrdinal;
@@ -346,16 +346,16 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             if (!ParsePackRow<HkPackEffectDynamicRoute>(payload, entry.size,
                                                &route) ||
                 entry.relationOrdinal != dynamicRouteOrdinal ||
-                route.targetBusId == harkenstudio::ObjectId{} || route.sourceId == harkenstudio::ObjectId{} ||
-                route.expectedEffectType != harkenstudio::kEffectCompressor ||
-                route.signalForm != harkenstudio::kDynamicSignalRawAudio ||
-                route.sourceKind != harkenstudio::kDynamicSourceBus ||
-                route.tap > harkenstudio::kDynamicTapBusPostFader ||
+                route.targetBusId == harken::studio::types::ObjectId{} || route.sourceId == harken::studio::types::ObjectId{} ||
+                route.expectedEffectType != harken::studio::types::kEffectCompressor ||
+                route.signalForm != harken::studio::types::kDynamicSignalRawAudio ||
+                route.sourceKind != harken::studio::types::kDynamicSourceBus ||
+                route.tap > harken::studio::types::kDynamicTapBusPostFader ||
                 route.effectSlot >= kMaxFxSlotsPerBus ||
                 route.routeSlot >= 4u ||
                 !std::isfinite(route.levelDb) ||
                 route.levelDb < -96.0f || route.levelDb > 24.0f) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ++dynamicRouteOrdinal;
             image.dynamicRoutes.push_back(route);
@@ -366,18 +366,18 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             attenuation.id = entry.id;
             if (!ReadPackAttenuation(payload, entry.size,
                                         &attenuation.desc)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (!std::isfinite(attenuation.desc.proximityFrequency) ||
                 !(attenuation.desc.proximityFrequency > 0.0f)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.attenuations.push_back(attenuation);
             break;
         }
         case HK_PACK_ENTRY_KIND_RETIRED_DISCRETE_VARIABLE:
         case HK_PACK_ENTRY_KIND_RETIRED_METER_WIRING:
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         case HK_PACK_ENTRY_KIND_BINDING_DEFINITION: {
             PackLogicImage::BindingDefinition definition;
             if (!ReadPackBindingDefinition(payload, entry.size,
@@ -385,17 +385,17 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
                                               &definition.desc) ||
                 definition.id != entry.id
                 || !IsValidBindingTransitionMs(definition.desc.transitionMs)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (definition.desc.targetScopeKind >
-                harkenstudio::kTargetScopeBusEffectParam) {
-                return harkenstudiobuild::kPackInvalid;
+                harken::studio::types::kTargetScopeBusEffectParam) {
+                return harken::studio::build::kPackInvalid;
             }
             if (header.packKind == HK_PACK_KIND_RESIDENT &&
-                (definition.desc.targetScopeKind == harkenstudio::kTargetScopeVoice ||
+                (definition.desc.targetScopeKind == harken::studio::types::kTargetScopeVoice ||
                  definition.desc.targetScopeKind ==
-                     harkenstudio::kTargetScopeVoiceEffectParam)) {
-                return harkenstudiobuild::kPackInvalid;
+                     harken::studio::types::kTargetScopeVoiceEffectParam)) {
+                return harken::studio::build::kPackInvalid;
             }
             image.bindingDefinitions.push_back(definition);
             break;
@@ -405,20 +405,20 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             if (!ParsePackRow<HkPackBindingAttachment>(payload, entry.size,
                                               &attachment) ||
                 entry.relationOrdinal != attachmentOrdinal) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ++attachmentOrdinal;
             if (attachment.scopeKind ==
-                    harkenstudio::kTargetScopeVoiceEffectParam ||
+                    harken::studio::types::kTargetScopeVoiceEffectParam ||
                 attachment.scopeKind >
-                    harkenstudio::kTargetScopeBusEffectParam) {
-                return harkenstudiobuild::kPackInvalid;
+                    harken::studio::types::kTargetScopeBusEffectParam) {
+                return harken::studio::build::kPackInvalid;
             }
             if (header.packKind == HK_PACK_KIND_RESIDENT &&
-                attachment.scopeKind != harkenstudio::kTargetScopeBus &&
+                attachment.scopeKind != harken::studio::types::kTargetScopeBus &&
                 attachment.scopeKind !=
-                    harkenstudio::kTargetScopeBusEffectParam) {
-                return harkenstudiobuild::kPackInvalid;
+                    harken::studio::types::kTargetScopeBusEffectParam) {
+                return harken::studio::build::kPackInvalid;
             }
             image.bindingAttachments.push_back(attachment);
             break;
@@ -427,7 +427,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             PackLogicImage::Container container;
             if (!ReadPackContainerPayload(payload, entry.size, entry.id, container) ||
                 container.header.childCount == 0) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.containers.push_back(std::move(container));
             break;
@@ -436,14 +436,14 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             PackLogicImage::VoiceRecipe recipe;
             if (!ReadPackVoiceRecipePayload(payload, entry.size, entry.id, recipe) ||
                 !VoiceToneWireValuesValid(recipe.tone)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             std::uint32_t previousSlot = 0;
             for (std::uint32_t n = 0; n < recipe.header.installCount; ++n) {
                 const auto& install = recipe.installs[n];
                 if (                    install.slot >= HK_PACK_VOICE_RECIPE_MAX_INSTALLS ||
                     (n > 0 && install.slot <= previousSlot)) {
-                    return harkenstudiobuild::kPackInvalid;
+                    return harken::studio::build::kPackInvalid;
                 }
                 const PackEffectSchemaRow* effectSchema =
                     FindPackEffectSchemaByType(install.effectType);
@@ -451,21 +451,21 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
                     install.descriptorVintage !=
                         effectSchema->descriptorVintage ||
                     install.paramCount != effectSchema->paramCount) {
-                    return harkenstudiobuild::kPackInvalid;
+                    return harken::studio::build::kPackInvalid;
                 }
                 for (std::uint32_t p = 0; p < install.paramCount; ++p) {
                     if (!std::isfinite(install.params[p])) {
-                        return harkenstudiobuild::kPackInvalid;
+                        return harken::studio::build::kPackInvalid;
                     }
                 }
                 previousSlot = install.slot;
             }
-            harkenstudio::ObjectId previousBinding{};
+            harken::studio::types::ObjectId previousBinding{};
             for (std::uint32_t n = 0; n < recipe.header.bindingCount; ++n) {
                 const auto binding = recipe.bindings[n];
-                if (binding == harkenstudio::ObjectId{} ||
+                if (binding == harken::studio::types::ObjectId{} ||
                     (n > 0 && binding <= previousBinding)) {
-                    return harkenstudiobuild::kPackInvalid;
+                    return harken::studio::build::kPackInvalid;
                 }
                 previousBinding = binding;
             }
@@ -473,13 +473,13 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             break;
         }
         default:
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
     std::sort(ranges.begin(), ranges.end());
     for (std::size_t i = 1; i < ranges.size(); ++i) {
         if (ranges[i].first < ranges[i - 1].first + ranges[i - 1].second) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
     if (HasDuplicateId(image.media,
@@ -502,12 +502,12 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
                        [](const PackLogicImage::VoiceRecipe& e) {
                            return e.header.playableId;
                        })) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     for (const PackTocEntry& media : image.media) {
         for (const PackLogicImage::Container& container : image.containers) {
             if (media.soundId == container.header.containerId) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
     }
@@ -515,7 +515,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
         for (std::size_t j = i + 1; j < image.busSends.size(); ++j) {
             if (image.busSends[i].fromBusId == image.busSends[j].fromBusId &&
                 image.busSends[i].toBusId == image.busSends[j].toBusId) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
     }
@@ -525,7 +525,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             const PackBindingAttachmentEntry& b = image.bindingAttachments[j];
             if (a.bindingId == b.bindingId && a.scopeKind == b.scopeKind &&
                 a.objectId == b.objectId) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
     }
@@ -536,13 +536,13 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             if (current.busId < previous.busId ||
                 (current.busId == previous.busId &&
                  current.slot <= previous.slot)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
         for (std::size_t j = i + 1; j < image.busEffects.size(); ++j) {
             if (image.busEffects[i].busId == image.busEffects[j].busId &&
                 image.busEffects[i].slot == image.busEffects[j].slot) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
     }
@@ -557,7 +557,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
                  (current.effectSlot < previous.effectSlot ||
                   (current.effectSlot == previous.effectSlot &&
                    current.routeSlot <= previous.routeSlot)))) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
         for (std::size_t j = i + 1; j < image.dynamicRoutes.size(); ++j) {
@@ -568,7 +568,7 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             if (a.targetBusId == b.targetBusId &&
                 a.effectSlot == b.effectSlot &&
                 a.routeSlot == b.routeSlot) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
         }
     }
@@ -583,17 +583,17 @@ harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::u
             }
         }
         if (!declaredTarget) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
     for (const PackBusSendEntry& send : image.busSends) {
         if (send.fromBusId == send.toBusId) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
 
     *out = std::move(image);
-    return harkenstudiobuild::kPackOk;
+    return harken::studio::build::kPackOk;
 }
 
 namespace {
@@ -624,7 +624,7 @@ PackResult ParseVariablePolicyOverlayPayload(
             target.variableId = wire.variableId;
             target.writers = wire.writers;
             target.executionFingerprint = wire.executionFingerprint;
-            return target.variableId != harkenstudio::ObjectId{} && target.executionFingerprint != 0 && target.writers >= 1 && target.writers <= 3;
+            return target.variableId != harken::studio::types::ObjectId{} && target.executionFingerprint != 0 && target.writers >= 1 && target.writers <= 3;
         }
     };
     struct AnchorVisitor {
@@ -651,7 +651,7 @@ PackResult ParseVariablePolicyOverlayPayload(
         bool Finish() noexcept {
             target.labelId = wire.labelId;
             target.anchor = wire.anchor;
-            return target.labelId != harkenstudio::ObjectId{} && target.anchor >= 0 && target.anchor <= 16777216;
+            return target.labelId != harken::studio::types::ObjectId{} && target.anchor >= 0 && target.anchor <= 16777216;
         }
     };
     struct LabelVisitor {
@@ -671,7 +671,7 @@ PackResult ParseVariablePolicyOverlayPayload(
         LabelRecord Labels(std::uint64_t index) noexcept { return {target.labels[static_cast<std::size_t>(index)]}; }
         bool Finish() noexcept {
             return state.Attempt([&] {
-                std::set<harkenstudio::ObjectId> identities;
+                std::set<harken::studio::types::ObjectId> identities;
                 for (std::size_t i = 0; i < target.labels.size(); ++i) {
                     const auto& label = target.labels[i];
                     if (!identities.insert(label.labelId).second || (i > 0 && label.anchor <= target.labels[i - 1].anchor)) return false;
@@ -728,7 +728,7 @@ PackResult ParseVariableRequirementsPayload(
             target.stableId = wire.stableId;
             target.expectedExecutionFingerprint = wire.expectedExecutionFingerprint;
             target.expectedLabelMappingFingerprint = wire.expectedLabelMappingFingerprint;
-            return target.stableId != harkenstudio::ObjectId{} && target.expectedExecutionFingerprint != 0 && target.expectedLabelMappingFingerprint != 0;
+            return target.stableId != harken::studio::types::ObjectId{} && target.expectedExecutionFingerprint != 0 && target.expectedLabelMappingFingerprint != 0;
         }
     };
     struct Visitor {
@@ -776,7 +776,7 @@ PackResult ParseEffectPresetPayload(const std::uint8_t* payload, std::uint64_t s
         return kPackInvalid;
     const auto& header = preset.header;
     const auto* schema = FindPackEffectSchemaByType(header.effectType);
-    if (header.presetId == harkenstudio::ObjectId{} || !schema ||
+    if (header.presetId == harken::studio::types::ObjectId{} || !schema ||
         header.descriptorVintage != schema->descriptorVintage ||
         header.paramCount != schema->paramCount ||
         size != kPackBytes<HkPackEffectPresetHeader> +
@@ -821,7 +821,7 @@ struct PackBusDefinitionSnapshotReader {
     bool Finish() noexcept { return true; }
 };
 
-harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
+harken::studio::build::PackResult ParseBusDefinitionSnapshotPayload(
     const std::uint8_t* payload, std::uint64_t size, PackCanonicalImage* image) {
     PackBusDefinitionSnapshotHeader header;
     if (!ReadPackBusDefinitionSnapshotHeader(payload, size, &header) ||
@@ -843,10 +843,10 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
     PackWireBuffer<const std::uint8_t> input{payload, size};
     PackBusDefinitionSnapshotReader visitor{header, buses, sends, effects, effectParameters, downmixes, coefficients};
     if (!ReadPackBusDefinitionSnapshot(input, visitor) || input.offset != size) return kPackInvalid;
-    std::set<harkenstudio::ObjectId> ids;
+    std::set<harken::studio::types::ObjectId> ids;
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
         const auto& row = buses[i];
-        if (harkenstudio::IsNull(row.busId) || !ids.insert(row.busId).second ||
+        if (harken::studio::types::IsNull(row.busId) || !ids.insert(row.busId).second ||
             !std::isfinite(row.faderDb) || row.faderDb < -96.0f || row.faderDb > 24.0f ||
             !std::isfinite(row.outputBusVolumeDb) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
@@ -859,11 +859,11 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
         }
     }
     if (!ValidateCanonicalBusParentForestV2(buses)) return kPackInvalid;
-    std::set<harkenstudio::ObjectId> effectIds;
+    std::set<harken::studio::types::ObjectId> effectIds;
     std::size_t nextEffect = 0;
     std::size_t nextParameter = 0;
     for (const auto& bus : buses) {
-        if (bus.busId == harkenstudio::kMasterBusObjectId) {
+        if (bus.busId == harken::studio::types::kMasterBusObjectId) {
             if (bus.effectFirst != 0 || bus.effectCount != 0) return kPackInvalid;
             continue;
         }
@@ -871,7 +871,7 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
         for (std::uint32_t offset = 0; offset < bus.effectCount; ++offset) {
             const auto& effect = effects[nextEffect++];
             const auto* schema = FindPackEffectSchemaByType(effect.effectType);
-            if (effect.busId != bus.busId || harkenstudio::IsNull(effect.effectId) ||
+            if (effect.busId != bus.busId || harken::studio::types::IsNull(effect.effectId) ||
                 !effectIds.insert(effect.effectId).second || effect.slot >= kMaxFxSlotsPerBus ||
                 (offset != 0 && effects[nextEffect - 2].slot >= effect.slot) ||
                 (effect.flags & ~1u) != 0 || !schema ||
@@ -890,13 +890,13 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
         }
     }
     if (nextEffect != effects.size() || nextParameter != effectParameters.size()) return kPackInvalid;
-    std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> sendEdges;
+    std::set<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>> sendEdges;
     for (std::uint32_t i = 0; i < header.sendCount; ++i) {
         const auto& row = sends[i];
         if (!ids.contains(row.source) || !ids.contains(row.target) ||
             row.source == row.target ||
             (header.publicationCapabilityVintage >= 4 &&
-             row.target == harkenstudio::kMasterBusObjectId) ||
+             row.target == harken::studio::types::kMasterBusObjectId) ||
             (header.publicationCapabilityVintage == 3 ? row.levelDb != 0.0f :
                 (!std::isfinite(row.levelDb) || row.levelDb < -96.0f ||
                  row.levelDb > 24.0f ||
@@ -967,11 +967,11 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
 
 } // namespace
 
-harkenstudiobuild::PackResult ValidateCanonicalInitDependency(
+harken::studio::build::PackResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,
     std::uint64_t expectedInitPackStableId) noexcept {
     if (expectedInitPackStableId == 0) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     bool found = false;
     for (const auto& edge : edges) {
@@ -981,30 +981,30 @@ harkenstudiobuild::PackResult ValidateCanonicalInitDependency(
         if (found || edge.required01 != 1 ||
             edge.prerequisitePackStableId != expectedInitPackStableId ||
             edge.expectedPrerequisiteContentRevision == 0 || edge.reserved0 != 0) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         found = true;
     }
-    return found ? harkenstudiobuild::kPackOk : harkenstudiobuild::kPackInvalid;
+    return found ? harken::studio::build::kPackOk : harken::studio::build::kPackInvalid;
 }
 
-harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
+harken::studio::build::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                                  std::uint64_t fileBytes,
                                  PackCanonicalImage* out) {
     if (bytes == nullptr || out == nullptr || fileBytes < kPackBytes<HkPackFileHeader>) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     PackFileHeader header;
     if (!ReadPackFileHeader(bytes, &header)) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (header.formatVersion != HK_PACK_FORMAT_VERSION ||
         header.headerBytes != kPackBytes<HkPackFileHeader> ||
         header.fileBytes != fileBytes) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (!PackIsCanonicalKind(header.packKind)) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const std::uint64_t dirBytes =
         static_cast<std::uint64_t>(header.entryCount) *
@@ -1012,12 +1012,12 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
     if (header.directoryOffset != header.headerBytes ||
         header.directoryOffset > fileBytes ||
         dirBytes > fileBytes - header.directoryOffset) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const std::uint8_t* dir = bytes + header.directoryOffset;
     if (Fnv1a64(dir, static_cast<std::size_t>(dirBytes)) !=
         header.directoryChecksum) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const std::uint64_t dirEnd = header.directoryOffset + dirBytes;
 
@@ -1037,36 +1037,36 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             dir + static_cast<std::size_t>(i) * kPackBytes<HkPackDirectoryEntry>);
         if (!PackEntryKindSupported(entry.kind)) return kPackInvalid;
         if (!VintageLegalForKind(entry.kind, entry.vintage)) {
-            return harkenstudiobuild::kPackIncompatible;
+            return harken::studio::build::kPackIncompatible;
         }
         if (entry.offset < dirEnd || entry.offset > fileBytes ||
             entry.size > fileBytes - entry.offset ||
             entry.offset % HK_PACK_PAYLOAD_ALIGN != 0) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         ranges.emplace_back(entry.offset, entry.size);
         const std::uint8_t* payload = bytes + entry.offset;
         if (Fnv1a64(payload, static_cast<std::size_t>(entry.size)) !=
             entry.payloadChecksum) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         switch (entry.kind) {
 
         case HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION: {
             if (image.hasPartition) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             PackCanonicalPartitionHeader partitionHeader;
             if (entry.size < kPackBytes<HkPackCanonicalPartitionHeader>) {
-                return harkenstudiobuild::kPackIncompatible;
+                return harken::studio::build::kPackIncompatible;
             }
             const bool parsed = ReadPackCanonicalPartitionHeader(payload, entry.size, &partitionHeader);
             if (!parsed) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (partitionHeader.bodyVintage !=
                 kCanonicalDefinitionPartitionBodyVintage) {
-                return harkenstudiobuild::kPackIncompatible;
+                return harken::studio::build::kPackIncompatible;
             }
             CurrentWorldBodyImage body;
             const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
@@ -1075,20 +1075,20 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 kCanonicalDefinitionPartitionBodyVintage);
             if (decoded != CurrentWorldBodyDecodeResult::Ok) {
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
-                           ? harkenstudiobuild::kPackResidentCapacity
-                           : harkenstudiobuild::kPackInvalid;
+                           ? harken::studio::build::kPackResidentCapacity
+                           : harken::studio::build::kPackInvalid;
             }
             const WorldInstallStatus validation =
                 detail::ValidateCurrentWorldPartitionLocalV1(*body.ProductionView());
             if (validation == WorldInstallStatus::InvalidFormat ||
                 validation == WorldInstallStatus::CapabilityUnavailable) {
-                return harkenstudiobuild::kPackIncompatible;
+                return harken::studio::build::kPackIncompatible;
             }
             if (validation == WorldInstallStatus::Capacity) {
-                return harkenstudiobuild::kPackResidentCapacity;
+                return harken::studio::build::kPackResidentCapacity;
             }
             if (validation != WorldInstallStatus::Ok) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             const ContainerWorldInstallViewV1 decodedView = *body.ProductionView();
             const std::uint64_t decodedOwnedDefinitions =
@@ -1096,7 +1096,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 decodedView.playablePropertyCount + decodedView.actionCount;
             if (partitionHeader.ownedDefinitionCount !=
                 decodedOwnedDefinitions) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.partitionHeader = partitionHeader;
             image.partitionBody.assign(
@@ -1108,22 +1108,22 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK: {
             if (image.hasRequirement) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             PackRequirementBlock requirement;
             if (entry.size != kPackBytes<HkPackRequirementBlock>) {
-                return harkenstudiobuild::kPackIncompatible;
+                return harken::studio::build::kPackIncompatible;
             }
             if (!ParsePackRow<HkPackRequirementBlock>(payload, entry.size, &requirement)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (requirement.schemaVersion != entry.vintage ||
                 requirement.storageModelVersion != entry.vintage) {
-                return harkenstudiobuild::kPackIncompatible;
+                return harken::studio::build::kPackIncompatible;
             }
             if (!PackRequirementBlockValid(requirement) ||
                 requirement.payloadChecksumCoverage != Fnv1a64(payload, offsetof(HkPackRequirementBlock, payloadChecksumCoverage))) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.requirement = requirement;
             image.packStableId = requirement.packStableId;
@@ -1133,11 +1133,11 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         case HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE: {
             PackDependencyEdge edge;
             if (entry.size != kPackBytes<HkPackDependencyEdge>) {
-                return harkenstudiobuild::kPackIncompatible;
+                return harken::studio::build::kPackIncompatible;
             }
             if (!ReadPackDependencyEdge(payload, entry.size, &edge) ||
                 entry.relationOrdinal != dependencyOrdinal) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             const bool initRequired =
                 edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT &&
@@ -1146,7 +1146,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                 (edge.expectedBusContentGeneration != 0 ||
                  edge.expectedPublishedBusFingerprint != 0 ||
                  edge.expectedCompileTargetProfileFingerprint != 0)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ++dependencyOrdinal;
             image.dependencyEdges.push_back(edge);
@@ -1154,25 +1154,25 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT: {
             if (image.hasBusDefinitionSnapshot) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
-            if (entry.id != harkenstudio::ObjectId{} || entry.relationOrdinal != 1) {
-                return harkenstudiobuild::kPackInvalid;
+            if (entry.id != harken::studio::types::ObjectId{} || entry.relationOrdinal != 1) {
+                return harken::studio::build::kPackInvalid;
             }
-            const harkenstudiobuild::PackResult parsed =
+            const harken::studio::build::PackResult parsed =
                 ParseBusDefinitionSnapshotPayload(payload, entry.size, &image);
-            if (parsed != harkenstudiobuild::kPackOk) {
+            if (parsed != harken::studio::build::kPackOk) {
                 return parsed;
             }
             break;
         }
         case HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY: {
             if (image.hasVariablePolicyOverlay) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
-            const harkenstudiobuild::PackResult parsed = ParseVariablePolicyOverlayPayload(
+            const harken::studio::build::PackResult parsed = ParseVariablePolicyOverlayPayload(
                 payload, entry.size, &image.variablePolicyOverlays);
-            if (parsed != harkenstudiobuild::kPackOk) {
+            if (parsed != harken::studio::build::kPackOk) {
                 return parsed;
             }
             image.hasVariablePolicyOverlay = true;
@@ -1180,11 +1180,11 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS: {
             if (image.hasVariableRequirements) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
-            const harkenstudiobuild::PackResult parsed = ParseVariableRequirementsPayload(
+            const harken::studio::build::PackResult parsed = ParseVariableRequirementsPayload(
                 payload, entry.size, &image.variableRequirements);
-            if (parsed != harkenstudiobuild::kPackOk) {
+            if (parsed != harken::studio::build::kPackOk) {
                 return parsed;
             }
             image.hasVariableRequirements = true;
@@ -1192,17 +1192,17 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         }
         case HK_PACK_ENTRY_KIND_MEDIA: {
             if (entry.size != kPackBytes<HkPackMedia>) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (Fnv1a64(bytes + media.blobOffset,
                         static_cast<std::size_t>(media.blobBytes)) !=
                 media.blobChecksum) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ranges.emplace_back(media.blobOffset, media.blobBytes);
             image.media.push_back(media);
@@ -1211,19 +1211,19 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         case HK_PACK_ENTRY_KIND_BUS_EFFECT: {
             PackBusEffectEntry effect;
             if (!ReadPackBusEffect(payload, entry.size, &effect) ||
-                entry.relationOrdinal != image.busEffects.size() || effect.busId == harkenstudio::ObjectId{} ||
+                entry.relationOrdinal != image.busEffects.size() || effect.busId == harken::studio::types::ObjectId{} ||
                 effect.bypass > 1 || effect.slot >= kMaxFxSlotsPerBus ||
                 effect.faderPointGuard > kMaxFxSlotsPerBus) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             const PackEffectSchemaRow* schema = FindPackEffectSchemaByType(effect.effectType);
             if (schema == nullptr || effect.descriptorVintage != schema->descriptorVintage ||
                 effect.paramCount != schema->paramCount) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             for (std::uint32_t p = 0; p < effect.paramCount; ++p) {
                 if (!std::isfinite(effect.params[p])) {
-                    return harkenstudiobuild::kPackInvalid;
+                    return harken::studio::build::kPackInvalid;
                 }
             }
             image.busEffects.push_back(effect);
@@ -1232,14 +1232,14 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
         case HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE: {
             PackEffectDynamicRouteEntry route;
             if (!ParsePackRow<HkPackEffectDynamicRoute>(payload, entry.size, &route) ||
-                entry.relationOrdinal != image.dynamicRoutes.size() || route.targetBusId == harkenstudio::ObjectId{} ||
-                route.sourceId == harkenstudio::ObjectId{} || route.expectedEffectType != harkenstudio::kEffectCompressor ||
-                route.signalForm != harkenstudio::kDynamicSignalRawAudio ||
-                route.sourceKind != harkenstudio::kDynamicSourceBus ||
-                route.tap > harkenstudio::kDynamicTapBusPostFader ||
+                entry.relationOrdinal != image.dynamicRoutes.size() || route.targetBusId == harken::studio::types::ObjectId{} ||
+                route.sourceId == harken::studio::types::ObjectId{} || route.expectedEffectType != harken::studio::types::kEffectCompressor ||
+                route.signalForm != harken::studio::types::kDynamicSignalRawAudio ||
+                route.sourceKind != harken::studio::types::kDynamicSourceBus ||
+                route.tap > harken::studio::types::kDynamicTapBusPostFader ||
                 route.effectSlot >= kMaxFxSlotsPerBus || route.routeSlot >= 4u ||
                 !std::isfinite(route.levelDb) || route.levelDb < -96.0f || route.levelDb > 24.0f) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.dynamicRoutes.push_back(route);
             break;
@@ -1251,7 +1251,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             if (!parsed || bus.busId != entry.id ||
                 !std::isfinite(bus.volume) ||
                 !std::isfinite(bus.outputBusVolume)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.buses.push_back(bus);
             break;
@@ -1260,7 +1260,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             PackBusSendEntry send;
             if (!ParsePackRow<HkPackBusSend>(payload, entry.size, &send) ||
                 entry.relationOrdinal != sendOrdinal || !std::isfinite(send.levelDb)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ++sendOrdinal;
             image.busSends.push_back(send);
@@ -1282,7 +1282,7 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             attenuation.id = entry.id;
             if (!ReadPackAttenuation(payload, entry.size,
                                         &attenuation.desc)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             image.attenuations.push_back(attenuation);
             break;
@@ -1294,17 +1294,17 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                                               &definition.desc) ||
                 definition.id != entry.id ||
                 !IsValidBindingTransitionMs(definition.desc.transitionMs)) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             if (definition.desc.targetScopeKind >
-                harkenstudio::kTargetScopeBusEffectParam) {
-                return harkenstudiobuild::kPackInvalid;
+                harken::studio::types::kTargetScopeBusEffectParam) {
+                return harken::studio::build::kPackInvalid;
             }
             if (header.packKind == HK_PACK_KIND_INIT &&
-                (definition.desc.targetScopeKind == harkenstudio::kTargetScopeVoice ||
+                (definition.desc.targetScopeKind == harken::studio::types::kTargetScopeVoice ||
                  definition.desc.targetScopeKind ==
-                     harkenstudio::kTargetScopeVoiceEffectParam)) {
-                return harkenstudiobuild::kPackInvalid;
+                     harken::studio::types::kTargetScopeVoiceEffectParam)) {
+                return harken::studio::build::kPackInvalid;
             }
             image.bindingDefinitions.push_back(definition);
             break;
@@ -1314,56 +1314,56 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             if (!ParsePackRow<HkPackBindingAttachment>(payload, entry.size,
                                               &attachment) ||
                 entry.relationOrdinal != attachmentOrdinal) {
-                return harkenstudiobuild::kPackInvalid;
+                return harken::studio::build::kPackInvalid;
             }
             ++attachmentOrdinal;
             if (attachment.scopeKind ==
-                    harkenstudio::kTargetScopeVoiceEffectParam ||
+                    harken::studio::types::kTargetScopeVoiceEffectParam ||
                 attachment.scopeKind >
-                    harkenstudio::kTargetScopeBusEffectParam) {
-                return harkenstudiobuild::kPackInvalid;
+                    harken::studio::types::kTargetScopeBusEffectParam) {
+                return harken::studio::build::kPackInvalid;
             }
             if (header.packKind == HK_PACK_KIND_INIT &&
-                attachment.scopeKind != harkenstudio::kTargetScopeBus &&
+                attachment.scopeKind != harken::studio::types::kTargetScopeBus &&
                 attachment.scopeKind !=
-                    harkenstudio::kTargetScopeBusEffectParam) {
-                return harkenstudiobuild::kPackInvalid;
+                    harken::studio::types::kTargetScopeBusEffectParam) {
+                return harken::studio::build::kPackInvalid;
             }
             image.bindingAttachments.push_back(attachment);
             break;
         }
         case HK_PACK_ENTRY_KIND_CONTAINER:
         case HK_PACK_ENTRY_KIND_VOICE_RECIPE:
-            return harkenstudiobuild::kPackIncompatible;
+            return harken::studio::build::kPackIncompatible;
         default:
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
 
     if (!image.hasRequirement) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
-    const std::uint32_t maxBindingScope = harkenstudio::kTargetScopeBusEffectParam;
+    const std::uint32_t maxBindingScope = harken::studio::types::kTargetScopeBusEffectParam;
     for (const auto& definition : image.bindingDefinitions) {
         if (definition.desc.targetScopeKind > maxBindingScope) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
         if (header.packKind == HK_PACK_KIND_INIT &&
-            (definition.desc.targetScopeKind == harkenstudio::kTargetScopeVoice ||
+            (definition.desc.targetScopeKind == harken::studio::types::kTargetScopeVoice ||
              definition.desc.targetScopeKind ==
-                 harkenstudio::kTargetScopeVoiceEffectParam)) {
-            return harkenstudiobuild::kPackInvalid;
+                 harken::studio::types::kTargetScopeVoiceEffectParam)) {
+            return harken::studio::build::kPackInvalid;
         }
     }
     for (const auto& attachment : image.bindingAttachments) {
         if (attachment.scopeKind > maxBindingScope ||
-            attachment.scopeKind == harkenstudio::kTargetScopeVoiceEffectParam) {
-            return harkenstudiobuild::kPackInvalid;
+            attachment.scopeKind == harken::studio::types::kTargetScopeVoiceEffectParam) {
+            return harken::studio::build::kPackInvalid;
         }
         if (header.packKind == HK_PACK_KIND_INIT &&
-            attachment.scopeKind != harkenstudio::kTargetScopeBus &&
-            attachment.scopeKind != harkenstudio::kTargetScopeBusEffectParam) {
-            return harkenstudiobuild::kPackInvalid;
+            attachment.scopeKind != harken::studio::types::kTargetScopeBus &&
+            attachment.scopeKind != harken::studio::types::kTargetScopeBusEffectParam) {
+            return harken::studio::build::kPackInvalid;
         }
     }
     const bool sharedResidentOwner =
@@ -1376,23 +1376,23 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             dir + static_cast<std::size_t>(i) * kPackBytes<HkPackDirectoryEntry>);
         if (!CanonicalKindLegal(entry.kind, header.packKind,
                                 sharedResidentOwner)) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
     if (header.packKind == HK_PACK_KIND_CANONICAL_CONTENT &&
         image.hasBusDefinitionSnapshot) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (image.hasPartition &&
         (image.requirement.definitionPartitionRevision == 0 ||
          image.partitionHeader.packStableId != image.packStableId ||
          image.partitionHeader.partitionRevision !=
              image.requirement.definitionPartitionRevision)) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     if (!image.hasPartition &&
         image.requirement.definitionPartitionRevision != 0) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     const CanonicalBusTriple requirementT = RequirementBusTriple(image.requirement);
     if (image.hasBusDefinitionSnapshot) {
@@ -1400,33 +1400,33 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             SnapshotBusTriple(image.busDefinitionSnapshotHeader);
         if (!CanonicalBusTripleFullyNonzero(snapshotT) ||
             !CanonicalBusTripleEqual(snapshotT, requirementT)) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
     if (image.hasPartition &&
         !CanonicalBusTripleEqual(PartitionBusTriple(image.partitionHeader),
                                  requirementT)) {
-        return harkenstudiobuild::kPackInvalid;
+        return harken::studio::build::kPackInvalid;
     }
     for (const PackDependencyEdge& edge : image.dependencyEdges) {
         const bool initRequired =
             edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT && edge.required01 == 1;
         if (initRequired &&
             !CanonicalBusTripleEqual(DependencyBusTriple(edge), requirementT)) {
-            return harkenstudiobuild::kPackInvalid;
+            return harken::studio::build::kPackInvalid;
         }
     }
     *out = std::move(image);
-    return harkenstudiobuild::kPackOk;
+    return harken::studio::build::kPackOk;
 }
 
-harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
+harken::studio::build::PackResult CheckPackClosure(const PackLogicImage& image,
                           const PackClosureResolver& resolver,
                           PackClosureRef* outRefClass,
-                          harkenstudio::ObjectId* outReferrerId,
-                          harkenstudio::ObjectId* outMissingId) {
-    const auto fail = [&](PackClosureRef refClass, harkenstudio::ObjectId referrer,
-                          harkenstudio::ObjectId missing) {
+                          harken::studio::types::ObjectId* outReferrerId,
+                          harken::studio::types::ObjectId* outMissingId) {
+    const auto fail = [&](PackClosureRef refClass, harken::studio::types::ObjectId referrer,
+                          harken::studio::types::ObjectId missing) {
         if (outRefClass != nullptr) {
             *outRefClass = refClass;
         }
@@ -1436,10 +1436,10 @@ harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
         if (outMissingId != nullptr) {
             *outMissingId = missing;
         }
-        return harkenstudiobuild::kPackUnknownId;
+        return harken::studio::build::kPackUnknownId;
     };
 
-    const auto packPlayable = [&](harkenstudio::ObjectId id) {
+    const auto packPlayable = [&](harken::studio::types::ObjectId id) {
         for (const PackTocEntry& media : image.media) {
             if (media.soundId == id) {
                 return true;
@@ -1452,12 +1452,12 @@ harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
         }
         return false;
     };
-    const auto playableCloses = [&](harkenstudio::ObjectId id) {
+    const auto playableCloses = [&](harken::studio::types::ObjectId id) {
         return packPlayable(id) ||
                (resolver.playableExists != nullptr &&
                 resolver.playableExists(resolver.ctx, id));
     };
-    const auto busCloses = [&](harkenstudio::ObjectId id) {
+    const auto busCloses = [&](harken::studio::types::ObjectId id) {
         for (const PackBusEntry& bus : image.buses) {
             if (bus.busId == id) {
                 return true;
@@ -1466,7 +1466,7 @@ harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
         return resolver.busExists != nullptr &&
                resolver.busExists(resolver.ctx, id);
     };
-    const auto bindingCloses = [&](harkenstudio::ObjectId id) {
+    const auto bindingCloses = [&](harken::studio::types::ObjectId id) {
         for (const PackLogicImage::BindingDefinition& def :
              image.bindingDefinitions) {
             if (def.id == id) {
@@ -1514,9 +1514,9 @@ harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
             return fail(PackClosureRef::AttachmentBinding, attachment.bindingId,
                         attachment.bindingId);
         }
-        if (attachment.scopeKind == harkenstudio::kTargetScopeBus ||
+        if (attachment.scopeKind == harken::studio::types::kTargetScopeBus ||
             attachment.scopeKind ==
-                harkenstudio::kTargetScopeBusEffectParam) {
+                harken::studio::types::kTargetScopeBusEffectParam) {
             if (!busCloses(attachment.objectId)) {
                 return fail(PackClosureRef::AttachmentBus, attachment.bindingId,
                             attachment.objectId);
@@ -1542,14 +1542,14 @@ harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
                         recipe.header.playableId,
                         recipe.header.playableId);
         }
-        for (harkenstudio::ObjectId bindingId : recipe.bindings) {
+        for (harken::studio::types::ObjectId bindingId : recipe.bindings) {
             if (!bindingCloses(bindingId)) {
                 return fail(PackClosureRef::RecipeBinding,
                             recipe.header.playableId, bindingId);
             }
         }
     }
-    return harkenstudiobuild::kPackOk;
+    return harken::studio::build::kPackOk;
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build

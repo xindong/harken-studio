@@ -9,7 +9,7 @@ class QLabel;
 class QPushButton;
 class QTreeWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr const char* kSettingsPageLayout = "layout";
 

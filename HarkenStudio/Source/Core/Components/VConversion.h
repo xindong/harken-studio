@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ConversionFormat : std::uint8_t { PCM, Vorbis };
 inline constexpr int kMaxVorbisQuality = 10;

@@ -2,9 +2,9 @@
 #include "LanguageContextService.h"
 #include "PlatformContextService.h"
 
-namespace VNX::ActionClosureSemantics {
+namespace harken::studio::ActionClosureSemantics {
 
-ActionClosurePlan build(const ProjectData& project, harkenstudio::ObjectId actionStableId,
+ActionClosurePlan build(const ProjectData& project, harken::studio::types::ObjectId actionStableId,
                         const BuildVariant& variant)
 {
     return buildForContext(project, actionStableId, variant,

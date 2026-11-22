@@ -10,7 +10,7 @@
 
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;
@@ -28,7 +28,7 @@ struct VariableConsumerRef
     VariableConsumerKind kind = VariableConsumerKind::Binding;
     QUuid hostGuid;
     BindingAddress address;
-    harkenstudio::ObjectId bindingStableId = {};
+    harken::studio::types::ObjectId bindingStableId = {};
     int axisIndex = -1;
     PlatformScope platform;
 };

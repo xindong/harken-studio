@@ -31,11 +31,11 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The fixed per-voice slot count this backend lowers onto — the published layout
 // bound, resolved from the shared ABI contract rather than restated here.
-inline constexpr std::uint32_t kFixedVoiceFxSlotCount = harkenstudiobuild::kMaxVoiceFxSlots;
+inline constexpr std::uint32_t kFixedVoiceFxSlotCount = harken::studio::build::kMaxVoiceFxSlots;
 
 // One lowered chain step: which chain entry runs in which physical slot. slot is
 // the index into the voice's insert-effect array; entryIndex indexes the chain's
@@ -69,6 +69,6 @@ struct LowerEffectChainResult {
 LowerEffectChainResult LowerEffectChainToFixedSlots(
     const CompiledEffectChain& chain, const AuthoringGuid& owner);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_FIXED_SLOT_LOWERER_H

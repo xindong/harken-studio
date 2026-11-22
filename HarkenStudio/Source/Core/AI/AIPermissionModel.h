@@ -3,7 +3,7 @@
 #include <QString>
 #include <QList>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class AIPermissionMode { ReadOnly, Ask, Auto };
 enum class AIConfirmationPolicy { None, WhenPolicyRequires, Always };

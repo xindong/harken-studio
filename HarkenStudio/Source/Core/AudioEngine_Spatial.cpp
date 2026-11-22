@@ -3,7 +3,7 @@
 #include "RuntimeSyncCoordinator.h"
 #include "RuntimeBridge/CurrentWorldSyncBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 
@@ -188,7 +188,7 @@ bool AudioEngine::reconfigureBufferSize(int32_t newBlockSize)
         stopRuntimeSynchronization();
     }
     if (session_->reconfigureBufferSize(newBlockSize)
-        != HarkenEditor::Bridge::kEngineOk) {
+        != harken::studio::bridge::kEngineOk) {
         return false;
     }
     if (runtimeSyncCoordinator_->runtimeStarted()

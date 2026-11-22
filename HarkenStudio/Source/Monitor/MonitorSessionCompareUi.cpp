@@ -2,7 +2,7 @@
 #include "Monitor/MonitorTypes.h"
 #include "MonitorSessionCompare.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 const char* compareResultText(uint32_t result)
@@ -105,4 +105,4 @@ std::string compareExportText(const MonitorCompareSummary& summary)
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

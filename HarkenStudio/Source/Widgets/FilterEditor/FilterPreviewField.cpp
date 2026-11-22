@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 FilterPreviewField::FilterPreviewField(QWidget* parent)
     : PreviewField(parent)

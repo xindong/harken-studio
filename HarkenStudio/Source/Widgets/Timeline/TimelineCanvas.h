@@ -20,7 +20,7 @@ class QDialog;
 class QMenu;
 class QMimeData;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class TimelineEditorPanel;

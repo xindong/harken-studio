@@ -36,7 +36,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr double kSpectrogramHistorySeconds = 40.0;
@@ -297,7 +297,7 @@ void MeterPanel::setBus(uint32_t objectID)
         return;
     setDisplayPaused(false);
     busObjectID_ = bus && bus != projects.getMasterBusItem() ? bus->objectID : 0;
-    busRuntimeId_ = busObjectID_ != 0 ? projects.busRuntimeHandle(bus) : harkenstudio::ObjectId{};
+    busRuntimeId_ = busObjectID_ != 0 ? projects.busRuntimeHandle(bus) : harken::studio::types::ObjectId{};
     busSelector_->setCurrentObjectID(bus ? bus->objectID : 0);
     updatePresentation();
     resetLevels();
@@ -386,7 +386,7 @@ void MeterPanel::sampleLevels()
     if (busObjectID_ == 0) {
         engine.getMasterMeterPeak(left, right);
     } else if (engine.getBusMeterPeakById(busRuntimeId_, left, right)
-               != HarkenEditor::Bridge::IpcQueryStatus::Ok) {
+               != harken::studio::bridge::IpcQueryStatus::Ok) {
         if (liveDisplay_.levelAvailable)
             resetLevels();
         return;
@@ -453,10 +453,10 @@ void MeterPanel::sampleMeasurements()
             return;
         retryTimer_.start();
     }
-    const auto bus = busObjectID_ == 0 ? HarkenEditor::Bridge::kEngineMasterBusId : busRuntimeId_;
-    const auto measurement = mode_ != Mode::Loudness ? HarkenEditor::Bridge::MeterMeasurement::Spectrum
-        : loudnessMeasurement_ == LoudnessMeasurement::Rms ? HarkenEditor::Bridge::MeterMeasurement::Rms
-        : HarkenEditor::Bridge::MeterMeasurement::LufsMomentary;
+    const auto bus = busObjectID_ == 0 ? harken::studio::bridge::kEngineMasterBusId : busRuntimeId_;
+    const auto measurement = mode_ != Mode::Loudness ? harken::studio::bridge::MeterMeasurement::Spectrum
+        : loudnessMeasurement_ == LoudnessMeasurement::Rms ? harken::studio::bridge::MeterMeasurement::Rms
+        : harken::studio::bridge::MeterMeasurement::LufsMomentary;
     if (!source_.start(bus, measurement))
         return;
     auto samples = source_.poll();
@@ -466,7 +466,7 @@ void MeterPanel::sampleMeasurements()
         acceptMeasurement(frame);
 }
 
-void MeterPanel::acceptMeasurement(const HarkenEditor::Bridge::MeterMeasurementFrame& frame)
+void MeterPanel::acceptMeasurement(const harken::studio::bridge::MeterMeasurementFrame& frame)
 {
     if (mode_ == Mode::Loudness) {
         float db = -std::numeric_limits<float>::infinity();

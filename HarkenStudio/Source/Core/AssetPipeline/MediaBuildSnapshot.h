@@ -3,7 +3,7 @@
 #include "../ConversionResolution.h"
 #include "BuildSourceInputs.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct MediaConversionRequest
 {

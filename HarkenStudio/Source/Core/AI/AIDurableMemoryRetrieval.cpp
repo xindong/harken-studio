@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr auto kContextPrefix =

@@ -9,7 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

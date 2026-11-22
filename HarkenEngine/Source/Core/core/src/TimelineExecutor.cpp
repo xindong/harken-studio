@@ -67,7 +67,7 @@ bool TimelineExecutor::Reset(std::uint32_t quantumFrames,
     std::vector<TransactionScratch> transactions(pool->MaxScheduledTransactions());
     std::vector<std::uint32_t> touchedTransactions(pool->MaxScheduledTransactions());
     std::vector<TimelineSinkEvent> sinkEvents(kTimelineMaxEventsPerVoiceQuantum);
-    std::vector<Plan03PageGroupView> pageGroups(pool->MaxPlan03GroupHeadersPerPage());
+    std::vector<SchedulePageGroupView> pageGroups(pool->MaxScheduleGroupHeadersPerPage());
     eventStorageRegistration_.Detach();
     decoded_.Swap(decoded);
     deferredDigest_.Swap(digest);
@@ -99,7 +99,7 @@ bool TimelineExecutor::PrepareEventStorage(ScheduledTransactionPool::PendingEven
     return decoded_.ConstructThrough(count) && nextEvent_.ConstructThrough(count) && deferredDigest_.ConstructThrough(count);
 }
 
-void TimelineExecutor::PrepassPlan03Deadlines(
+void TimelineExecutor::PrepassScheduleDeadlines(
     std::uint64_t absoluteQuantum,
     const TimelineExecutionPlan& plan) noexcept {
     if (decisionTable_ == nullptr || pageGroups_.empty()) {
@@ -110,13 +110,13 @@ void TimelineExecutor::PrepassPlan03Deadlines(
          inspected < plan.maxPages && inspected < 2 &&
          page < absoluteQuantum;
          ++inspected, ++page) {
-        const std::size_t count = pool_->CapturePlan03PageGroupsRt(
+        const std::size_t count = pool_->CaptureSchedulePageGroupsRt(
             page, pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) {
             return;
         }
         for (std::size_t group = 0; group < count; ++group) {
-            Plan03PageGroupView& view = pageGroups_[group];
+            SchedulePageGroupView& view = pageGroups_[group];
             if (view.lease != nullptr) {
                 (void)view.lease->Invalidate(
                     AudioSliceInvalidateReason::Deadline);
@@ -130,7 +130,7 @@ void TimelineExecutor::PrepassPlan03Deadlines(
             }
             if (disposition ==
                 DecisionDeadlineDisposition::NewlyInvalidated) {
-                sink_->FailPlan03Deadline(view.identity.decision,
+                sink_->FailScheduleDeadline(view.identity.decision,
                                           absoluteQuantum);
             }
         }
@@ -301,7 +301,7 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
     if (actualFrontier != plan.expectedFrontier || plan.maxPages > 2) {
         return result;
     }
-    PrepassPlan03Deadlines(absoluteQuantum, plan);
+    PrepassScheduleDeadlines(absoluteQuantum, plan);
     const bool independentWork = sink_->CaptureIndependentWork(absoluteQuantum);
     if ((plan.maxPages != 0 || independentWork) &&
         !sink_->AdmitQuantum(absoluteQuantum)) {
@@ -313,7 +313,7 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
         sink_->DiscardIndependentWork();
         return result;
     }
-    if (!sink_->ApplyPlan03Groups(absoluteQuantum)) {
+    if (!sink_->ApplyScheduleGroups(absoluteQuantum)) {
         sink_->BeforeEndQuantum(absoluteQuantum, result);
         sink_->EndQuantum(absoluteQuantum);
         return result;

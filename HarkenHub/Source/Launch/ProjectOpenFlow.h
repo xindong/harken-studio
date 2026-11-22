@@ -9,7 +9,7 @@
 
 class QWidget;
 
-namespace VNH {
+namespace harken::hub {
 
 class ProjectStore;
 
@@ -38,7 +38,6 @@ public:
                                    const std::vector<InstalledVersion>& versions,
                                    QWidget* dialogParent,
                                    const QString& selectedBuildId = {});
-    static bool isVersionBlock(const QString& blockCode);
 };
 
 }

@@ -12,7 +12,7 @@
 
 extern char** environ;
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

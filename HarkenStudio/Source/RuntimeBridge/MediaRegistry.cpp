@@ -6,7 +6,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 namespace {
 
 struct LocalMediaEntry

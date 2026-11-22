@@ -1,6 +1,6 @@
 #include "StandaloneEditorDispatch.h"
 
-namespace VNX {
+namespace harken::studio {
 
 bool StandaloneEditorDispatch::shouldCollapse(bool accepted, bool pinned, bool atDefaultSlot)
 {
@@ -12,4 +12,4 @@ bool StandaloneEditorDispatch::shouldHide(StandaloneEditorPushReason reason)
     return reason != StandaloneEditorPushReason::RestoreSync;
 }
 
-} // namespace VNX
+} // namespace harken::studio

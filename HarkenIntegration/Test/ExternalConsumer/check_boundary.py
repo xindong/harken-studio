@@ -22,11 +22,7 @@ NEGATIVE = {
     "VnMonitorRecordHeader": "typeof(VnMonitorRecordHeader)",
     "VnBusTopologyDesc": "typeof(VnBusTopologyDesc)",
     "RemoteCommunication": "RemoteCommunication.Stop()",
-    "CreateBus": "HarkenEngine.CreateBus(default, default)",
-    "ReparentBus": "HarkenEngine.ReparentBus(default, default)",
-    "DestroyBus": "HarkenEngine.DestroyBus(default)",
     "NotificationFnPtr": "HarkenCallbacks.NotificationFnPtr",
-    "OutstandingPinCount": "PackByteProvider.OutstandingPinCount",
     "VN_SNAPSHOT_MAX_VOICES": "VnConstants.VN_SNAPSHOT_MAX_VOICES",
 }
 
@@ -55,7 +51,7 @@ def verify(integration, work):
               f"-p:HarkenCoreAssembly={library}", "--artifacts-path", str(work / "artifacts"), "--nologo"]
     positive = work / "positive"
     run(common + [f"-p:ConsumerSource={fixture / 'Program.cs'}", "-o", str(positive)], work / "positive.log")
-    policy = ROOT / "HarkenIntegration/Unity/Binding/api_surface.json"
+    policy = ROOT / "HarkenIntegration/Unity/Binding/managed_policy.json"
     # Reflection checks every generated symbol's effective public visibility.
     run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--surface", str(policy)],
         work / "surface.log")

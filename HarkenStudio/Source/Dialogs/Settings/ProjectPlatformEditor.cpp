@@ -9,7 +9,7 @@
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     : QWidget(parent)

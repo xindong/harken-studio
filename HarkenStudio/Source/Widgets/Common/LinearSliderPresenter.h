@@ -7,7 +7,7 @@ class QComboBox;
 class QLabel;
 class QSlider;
 
-namespace VNX {
+namespace harken::studio {
 
 class ParameterBinding;
 class ThemeManager;

@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 ParameterBinding::ParameterBinding(QObject* parent)
     : QObject(parent)

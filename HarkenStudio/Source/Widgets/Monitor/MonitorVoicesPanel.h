@@ -15,7 +15,7 @@ class QLabel;
 class QLineEdit;
 class QTableView;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorVoicesPanel : public QWidget
 {
@@ -41,7 +41,6 @@ public:
     void restoreParams(const QVariantMap& params);
 
     MonitorCursorReject lockCurrentRow();
-    MonitorCursorReject lockExecuteFrameForTest(std::optional<qint64> executeFrame);
 
     int visibleRowCount() const;
     const MonitorVoicesRow* visibleRowAt(int row) const;
@@ -75,4 +74,4 @@ private:
     QString filterObject_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

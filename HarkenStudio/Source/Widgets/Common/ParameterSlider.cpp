@@ -10,7 +10,7 @@
 #include <QSignalBlocker>
 #include <QStyle>
 
-namespace VNX {
+namespace harken::studio {
 
 ParameterSlider::ParameterSlider(const QString& label, QWidget* parent,
                                  ThemeManager* themeManager)

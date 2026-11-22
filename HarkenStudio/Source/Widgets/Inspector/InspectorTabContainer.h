@@ -7,7 +7,7 @@ class QBoxLayout;
 class QButtonGroup;
 class QStackedWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class InspectorTabContainer : public QWidget
 {

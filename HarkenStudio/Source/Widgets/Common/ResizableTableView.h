@@ -3,7 +3,7 @@
 #include <QPointer>
 #include <QTableView>
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

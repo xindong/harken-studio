@@ -6,7 +6,7 @@
 #include <QTableWidgetItem>
 #include <QTimer>
 
-namespace VNH {
+namespace harken::hub {
 
 class SortableTableItem final : public QTableWidgetItem
 {

@@ -2,7 +2,7 @@
 
 #include "Widgets/Common/SourceRangeThumb.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ActiveSourcePreview final : public SourceRangeThumb
 {

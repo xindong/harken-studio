@@ -10,7 +10,7 @@
 #include <QLatin1String>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 namespace BindingContractSemantics {
 namespace {
 
@@ -303,15 +303,15 @@ std::optional<uint32_t> engineTargetId(const BindingAddress& address)
     switch (address.hostClass) {
     case BindingHostClass::Voice:
         if (address.slotId == static_cast<uint8_t>(PlayablePropertyIdV1::Volume))
-            return harkenstudiobuild::kTargetVoiceVolume;
+            return harken::studio::build::kTargetVoiceVolume;
         if (address.slotId == static_cast<uint8_t>(PlayablePropertyIdV1::Pitch))
-            return harkenstudiobuild::kTargetVoicePitch;
+            return harken::studio::build::kTargetVoicePitch;
         return std::nullopt;
     case BindingHostClass::Bus:
         if (address.slotId == static_cast<uint8_t>(PlayablePropertyIdV1::Volume))
-            return harkenstudiobuild::kBusTargetBusVolume;
+            return harken::studio::build::kBusTargetBusVolume;
         if (address.slotId == static_cast<uint8_t>(PlayablePropertyIdV1::OutputBusVolume))
-            return harkenstudiobuild::kBusTargetBusOutputVolume;
+            return harken::studio::build::kBusTargetBusOutputVolume;
         return std::nullopt;
     case BindingHostClass::SendElement:
     case BindingHostClass::EffectParam:
@@ -323,13 +323,13 @@ std::optional<uint32_t> engineTargetId(const BindingAddress& address)
 uint32_t engineTargetScopeKind(BindingHostClass hostClass)
 {
     return hostClass == BindingHostClass::Bus
-        ? harkenstudiobuild::kTargetScopeBus
-        : harkenstudiobuild::kTargetScopeVoice;
+        ? harken::studio::build::kTargetScopeBus
+        : harken::studio::build::kTargetScopeVoice;
 }
 
 bool supportsTransition(uint32_t scopeKind, uint32_t targetId)
 {
-    const auto* meta = harkenstudiobuild::FindTargetMeta(scopeKind, targetId);
+    const auto* meta = harken::studio::build::FindTargetMeta(scopeKind, targetId);
     return meta && meta->supportsTransition;
 }
 
@@ -345,11 +345,11 @@ uint32_t defaultTransitionMs(const BindingAddress& address)
     const auto target = engineTargetId(address);
     if (!target) return 0;
     const auto scope = engineTargetScopeKind(address.hostClass);
-    return ((scope == harkenstudiobuild::kTargetScopeVoice
-             && (*target == harkenstudiobuild::kTargetVoiceVolume || *target == harkenstudiobuild::kTargetVoicePitch))
-            || (scope == harkenstudiobuild::kTargetScopeBus
-                && (*target == harkenstudiobuild::kBusTargetBusVolume
-                    || *target == harkenstudiobuild::kBusTargetBusOutputVolume)))
+    return ((scope == harken::studio::build::kTargetScopeVoice
+             && (*target == harken::studio::build::kTargetVoiceVolume || *target == harken::studio::build::kTargetVoicePitch))
+            || (scope == harken::studio::build::kTargetScopeBus
+                && (*target == harken::studio::build::kBusTargetBusVolume
+                    || *target == harken::studio::build::kBusTargetBusOutputVolume)))
         ? 20u : 0u;
 }
 

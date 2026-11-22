@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 std::optional<ConversionPresetSnapshot> captureConversionPreset(
     const ReferenceSlotResolution::ResolutionScope& scope, QString* error)

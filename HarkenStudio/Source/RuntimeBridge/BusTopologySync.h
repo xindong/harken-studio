@@ -11,8 +11,8 @@
 #include <utility>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 namespace Detail {
 
 struct BusTopologyBackend {
@@ -20,14 +20,14 @@ struct BusTopologyBackend {
         const std::vector<RuntimeBusDefinition>&,
         const std::vector<RuntimeBusSendDefinition>&,
         uint64_t, uint64_t)> applySnapshot;
-    std::function<EngineResult(harkenstudio::ObjectId, float, uint32_t)> setVolume;
-    std::function<EngineResult(harkenstudio::ObjectId, bool, uint32_t)> setMute;
-    std::function<EngineResult(harkenstudio::ObjectId, bool, uint32_t)> setSolo;
-    std::function<EngineResult(harkenstudio::ObjectId, float, uint32_t)> setOutputVolume;
+    std::function<EngineResult(harken::studio::types::ObjectId, float, uint32_t)> setVolume;
+    std::function<EngineResult(harken::studio::types::ObjectId, bool, uint32_t)> setMute;
+    std::function<EngineResult(harken::studio::types::ObjectId, bool, uint32_t)> setSolo;
+    std::function<EngineResult(harken::studio::types::ObjectId, float, uint32_t)> setOutputVolume;
 };
 
 struct ConfirmedBusPropertyPatch {
-    harkenstudio::ObjectId busId = {};
+    harken::studio::types::ObjectId busId = {};
     QString busName;
     std::optional<float> volumeDb;
     std::optional<float> outputVolumeDb;
@@ -38,7 +38,7 @@ struct ConfirmedBusPropertyPatch {
 class BusTopologySync {
 public:
     explicit BusTopologySync(BusTopologyBackend backend,
-                             harkenstudio::ObjectId masterBusId);
+                             harken::studio::types::ObjectId masterBusId);
 
     void Submit(const std::vector<RuntimeBusDefinition>& buses,
                 const std::vector<RuntimeBusSendDefinition>& sends,
@@ -54,7 +54,7 @@ public:
 
     BusTopologyState State() const { return m_state; }
     const BusTopologyFailure& Failure() const { return m_failure; }
-    std::vector<harkenstudio::ObjectId> ConfirmedBusIds() const;
+    std::vector<harken::studio::types::ObjectId> ConfirmedBusIds() const;
     std::vector<RuntimeBusDefinition> ConfirmedBuses() const;
     bool ConfirmedPropertyReplayPending() const {
         return m_nextPropertyReplayOperation <
@@ -63,8 +63,8 @@ public:
 
 private:
     struct SendKey {
-        harkenstudio::ObjectId sourceId = {};
-        harkenstudio::ObjectId targetId = {};
+        harken::studio::types::ObjectId sourceId = {};
+        harken::studio::types::ObjectId targetId = {};
 
         bool operator<(const SendKey& other) const {
             return std::tie(sourceId, targetId) <
@@ -74,8 +74,8 @@ private:
 
     struct Operation {
         BusTopologyOperation kind = BusTopologyOperation::None;
-        harkenstudio::ObjectId busId = {};
-        harkenstudio::ObjectId relatedBusId = {};
+        harken::studio::types::ObjectId busId = {};
+        harken::studio::types::ObjectId relatedBusId = {};
         float value = 0.0f;
         bool flag = false;
         uint32_t fadeMs = 0;
@@ -87,20 +87,20 @@ private:
         const std::vector<RuntimeBusSendDefinition>& sends);
     bool BuildOperations(uint32_t propertyFadeMs);
     bool BuildParentFirstOrder(
-        const std::map<harkenstudio::ObjectId, RuntimeBusDefinition>& buses,
-        std::vector<harkenstudio::ObjectId>& outOrder) const;
+        const std::map<harken::studio::types::ObjectId, RuntimeBusDefinition>& buses,
+        std::vector<harken::studio::types::ObjectId>& outOrder) const;
     void ApplyConfirmed(const Operation& operation);
     EngineResult Execute(const Operation& operation) const;
     void Fail(BusTopologyOperation operation, EngineResult result,
-              harkenstudio::ObjectId busId, harkenstudio::ObjectId relatedBusId,
+              harken::studio::types::ObjectId busId, harken::studio::types::ObjectId relatedBusId,
               const QString& busName);
 
     BusTopologyBackend m_backend;
-    harkenstudio::ObjectId m_masterBusId = {};
+    harken::studio::types::ObjectId m_masterBusId = {};
     BusTopologyState m_state = BusTopologyState::Idle;
     BusTopologyFailure m_failure;
-    std::map<harkenstudio::ObjectId, RuntimeBusDefinition> m_desiredBuses;
-    std::map<harkenstudio::ObjectId, RuntimeBusDefinition> m_confirmedBuses;
+    std::map<harken::studio::types::ObjectId, RuntimeBusDefinition> m_desiredBuses;
+    std::map<harken::studio::types::ObjectId, RuntimeBusDefinition> m_confirmedBuses;
     std::map<SendKey, RuntimeBusSendDefinition> m_desiredSends;
     std::map<SendKey, RuntimeBusSendDefinition> m_confirmedSends;
     std::vector<Operation> m_operations;
@@ -112,5 +112,5 @@ private:
 };
 
 } // namespace Detail
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

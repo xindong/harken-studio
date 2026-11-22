@@ -10,7 +10,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX::ContainerBehaviorSemantics {
+namespace harken::studio::ContainerBehaviorSemantics {
 
 namespace {
 
@@ -85,7 +85,7 @@ int maxAvoidRepeatFor(const VSelection& selection,
             [&](uint32_t ordinal) { return effectiveChildWeight(selection, ordinal, scope) > 0; }))
         : static_cast<int>(occurrenceOrdinals.size());
     constexpr int limit = static_cast<int>(
-        harkenstudiobuild::kHardSelectionAvoidCapacity);
+        harken::studio::build::kHardSelectionAvoidCapacity);
     return std::clamp(eligibleCount - 1, 0, limit);
 }
 

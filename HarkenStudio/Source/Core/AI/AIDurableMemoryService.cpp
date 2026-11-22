@@ -5,7 +5,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr auto kInvalidCode = "AI_DURABLE_MEMORY_INVALID";

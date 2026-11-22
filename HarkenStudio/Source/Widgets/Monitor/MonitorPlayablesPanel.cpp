@@ -10,7 +10,7 @@
 #include <QStandardItemModel>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr int kVariableControlFilterIndex = 6;
@@ -166,4 +166,4 @@ void MonitorPlayablesPanel::onSharedCursor(const MonitorCursorSnapshot&)
     refreshFace();
 }
 
-} // namespace VNX
+} // namespace harken::studio

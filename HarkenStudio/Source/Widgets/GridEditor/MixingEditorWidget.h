@@ -9,7 +9,7 @@
 class QToolButton;
 class QStandardItemModel;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class CurveCanvas;

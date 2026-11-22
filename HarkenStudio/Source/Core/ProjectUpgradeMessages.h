@@ -4,14 +4,14 @@
 
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ProjectUpgradePhase;
 struct ProjectUpgradeProgress;
 
 }
 
-namespace VNX::ProjectUpgradeMessages {
+namespace harken::studio::ProjectUpgradeMessages {
 
 struct Presentation
 {

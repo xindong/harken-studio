@@ -24,7 +24,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -173,8 +173,7 @@ ServerVersionsDialog::ServerVersionsDialog(
             &ServerVersionsDialog::handleDownloadFinished);
 
     if (!catalog_.fetch(ServerEndpoints::manifestUrls(
-            ServerEndpoints::resolvedBaseUrl(), kServerProduct,
-            ServerEndpoints::hostChannel()), kServerProduct,
+            ServerEndpoints::resolvedBaseUrl(), kServerProduct), kServerProduct,
             ServerEndpoints::hostChannel()))
         statusLabel_->setText(
             QCoreApplication::translate("HarkenHub", "The update server is not configured."));

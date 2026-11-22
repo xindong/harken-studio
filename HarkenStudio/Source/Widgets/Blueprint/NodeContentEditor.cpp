@@ -35,7 +35,7 @@
 #include <array>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr std::array kFields{NodeContentField::Volume, NodeContentField::Pitch,

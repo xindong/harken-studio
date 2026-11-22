@@ -12,7 +12,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

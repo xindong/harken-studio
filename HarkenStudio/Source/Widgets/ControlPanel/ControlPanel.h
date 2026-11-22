@@ -5,7 +5,7 @@
 #include <QVariantMap>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 class RehearsalTable;
 class VariableBindingTable;
 struct ProjectItem;
@@ -17,14 +17,14 @@ class ControlPanel : public QWidget
 public:
     explicit ControlPanel(QWidget* parent = nullptr);
 
-    void setItem(VNX::ProjectItem* item);
-    VNX::ProjectItem* boundItem() const;
+    void setItem(harken::studio::ProjectItem* item);
+    harken::studio::ProjectItem* boundItem() const;
     bool isPinned() const { return pinned_; }
     void setPinned(bool pinned);
     QVariantMap snapshotState() const;
     void restoreState(const QVariantMap& state);
-    VNX::RehearsalTable* variableTable() const { return variableTable_; }
-    VNX::VariableBindingTable* bindingTable() const { return bindingTable_; }
+    harken::studio::RehearsalTable* variableTable() const { return variableTable_; }
+    harken::studio::VariableBindingTable* bindingTable() const { return bindingTable_; }
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -37,8 +37,8 @@ private:
     void scheduleVariableRefresh();
     void refreshVariables();
 
-    VNX::RehearsalTable* variableTable_ = nullptr;
-    VNX::VariableBindingTable* bindingTable_ = nullptr;
+    harken::studio::RehearsalTable* variableTable_ = nullptr;
+    harken::studio::VariableBindingTable* bindingTable_ = nullptr;
     QUuid selectedItemId_;
     QUuid boundItemId_;
     bool pinned_ = false;

@@ -15,12 +15,12 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ParameterBindingDef
 {
     QUuid guid;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
+    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(guid); }
     BindingAddress address;
     QUuid variable;
     QVector<CurvePointDef> curve;
@@ -46,16 +46,16 @@ public:
 
     const std::vector<ParameterBindingDef>& entries() const { return entries_; }
 
-    const ParameterBindingDef* find(harkenstudio::ObjectId runtimeStableId) const;
-    ParameterBindingDef* find(harkenstudio::ObjectId runtimeStableId);
+    const ParameterBindingDef* find(harken::studio::types::ObjectId runtimeStableId) const;
+    ParameterBindingDef* find(harken::studio::types::ObjectId runtimeStableId);
     const ParameterBindingDef* findFirst(const BindingAddress& address) const;
     ParameterBindingDef* findFirst(const BindingAddress& address);
     std::vector<const ParameterBindingDef*> findAll(const BindingAddress& address) const;
 
     bool upsert(ParameterBindingDef binding);
-    bool remove(harkenstudio::ObjectId runtimeStableId);
+    bool remove(harken::studio::types::ObjectId runtimeStableId);
     bool removeAll(const BindingAddress& address);
-    bool move(harkenstudio::ObjectId runtimeStableId, int toIndex);
+    bool move(harken::studio::types::ObjectId runtimeStableId, int toIndex);
     bool reorder(const BindingAddress& address, int fromLocal, int toLocal);
     bool replace(std::vector<ParameterBindingDef> entries);
 

@@ -786,10 +786,6 @@ public:
                              BindingTable& bindings,
                              BusTargetStore& busTargets) noexcept;
 
-    // Replaces the installed Variable definition table from a Pack composite.
-    // Does not install Action or playable programs, close admission, or drain.
-    VnResult ReplacePackDefinitions(
-        const VariableDefinitionV1* definitions, std::uint32_t count);
     VnResult PreparePackDefinitions(
         const VariableDefinitionV1* definitions, std::uint32_t count,
         PreparedPackDefinitions* out) const;
@@ -1397,7 +1393,6 @@ private:
                                     VnVariableId id) const noexcept;
     const OverrideRow* FindCurrentOverride(const EmitterBank& bank,
                                            VnVariableId id) const noexcept;
-    OverrideRow* EnsureOverride(EmitterBank& bank, VnVariableId id) noexcept;
 
     VariableAcceptResult Accept(WriteOperation operation,
                                 const VariableScopeKey& scope,
@@ -1424,9 +1419,6 @@ private:
         TransportEpoch transport) const noexcept;
     bool TicketExpired(const VnVariableTicketV1& ticket) const noexcept;
     void PushExpiredTicket(const TicketQueryRecord& record) noexcept;
-    void SupersedeIntersectingPendingBatches(
-        const PreparedVariableBatchToken& batch,
-        LogicCommitSequence sequence) noexcept;
     bool CanSupersede(WriteRow& prior, const WriteRow& next,
                       LogicCommitSequence sequence) noexcept;
     VariableAcceptResult Prepare(
@@ -1470,8 +1462,6 @@ private:
     };
     CandidateCaptureResult CaptureCandidateSlice(Engine& engine, WriteRow& row, WorkSpan work);
     void RejectPreparedRow(Engine& engine, WriteRow& row) noexcept;
-    bool SnapshotCandidateBaselines(Engine& engine, WriteRow& row) noexcept;
-    void ClearCandidateBaselines(Engine& engine, WriteRow& row) noexcept;
     void SetSliceRampSuppressed(Engine& engine, const WriteRow& row,
                                 bool suppressed) noexcept;
     void ResetPreparedRow(Engine& engine, WriteRow& row) noexcept;

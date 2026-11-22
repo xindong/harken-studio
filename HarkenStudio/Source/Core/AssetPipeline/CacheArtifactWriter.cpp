@@ -17,7 +17,7 @@
 #include <cstdio>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

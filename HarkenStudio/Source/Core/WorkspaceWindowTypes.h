@@ -10,7 +10,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 enum class WindowKind
 {
@@ -68,6 +68,8 @@ struct WorkspaceWindowDescriptor
     ClosePolicy closePolicy = ClosePolicy::Hide;
     AvailabilityPolicy availability = AvailabilityPolicy::Always;
     bool showInViewMenu = true;
+
+    bool isMonitorPanel() const { return typeId.startsWith(QLatin1String("Monitor")); }
 };
 
 struct WorkspaceWindowInstanceSpec

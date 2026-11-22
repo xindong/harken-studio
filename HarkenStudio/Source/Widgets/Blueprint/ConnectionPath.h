@@ -9,7 +9,7 @@
 #include "NodeItem.h"
 #include "Core/ThemeSnapshot.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class NodePin;
 

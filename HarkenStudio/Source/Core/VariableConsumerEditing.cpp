@@ -22,7 +22,7 @@
 
 #include "VariableConsumerSemanticsPrivate.h"
 
-namespace VNX::VariableConsumerSemantics {
+namespace harken::studio::VariableConsumerSemantics {
 
 bool retarget(ProjectData* project, const QUuid& fromGuid, const QUuid& toGuid)
 {

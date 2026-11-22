@@ -1,6 +1,6 @@
 #pragma once
 
-namespace VNH {
+namespace harken::hub {
 
 bool registerBackgroundOnLogin();
 bool unregisterBackgroundOnLogin();

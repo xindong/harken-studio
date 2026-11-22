@@ -20,7 +20,7 @@
 #include <QtConcurrent>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 
 MediaPool& MediaPool::instance()
@@ -185,7 +185,7 @@ MediaInfo MediaPool::getMediaInfo(uint32_t sourceID) const
     info.metadata       = asset->metadata;
     info.isOrphaned     = asset->isOrphaned;
 
-    const QString runtimePath = HarkenEditor::Bridge::mediaRegistryFindPath(sourceID);
+    const QString runtimePath = harken::studio::bridge::mediaRegistryFindPath(sourceID);
     if (!runtimePath.isEmpty()) {
         info.absolutePath = runtimePath;
     }
@@ -338,7 +338,7 @@ void MediaPool::commitReplacements(const QVector<PendingReplace>& pending)
             emit AssetRegistry::instance().assetModified(pr.sourceID);
         WaveformCache::remove(pr.destPath);
         refreshWaveform(pr.sourceID);
-        HarkenEditor::Bridge::mediaRegistryRegister(pr.sourceID, pr.destPath);
+        harken::studio::bridge::mediaRegistryRegister(pr.sourceID, pr.destPath);
 
         emit mediaStatusChanged(pr.sourceID, MediaStatus::Available);
         emit mediaHotSwapped(pr.sourceID, pr.destPath);
@@ -682,7 +682,7 @@ void MediaPool::synchronizeSourceFiles(const QStringList& paths)
             info.absolutePath = path;
             info.lastModified = QFileInfo(path).lastModified().toSecsSinceEpoch();
             if (registry.registerAsset(info, false)) {
-                HarkenEditor::Bridge::mediaRegistryRegister(info.sourceID, path);
+                harken::studio::bridge::mediaRegistryRegister(info.sourceID, path);
                 refreshWaveform(info.sourceID);
             }
         }
@@ -754,7 +754,7 @@ void MediaPool::synchronizeSourceFilesAsync(const QStringList& paths)
             info.contentHash = source.contentHash;
             info.lastModified = static_cast<uint64_t>(source.modified.toSecsSinceEpoch());
             if (registry.registerAsset(info, false)) {
-                HarkenEditor::Bridge::mediaRegistryRegister(info.sourceID, source.path);
+                harken::studio::bridge::mediaRegistryRegister(info.sourceID, source.path);
                 refreshWaveform(info.sourceID);
             }
         }
@@ -824,7 +824,7 @@ void MediaPool::commitSourceFile(uint32_t sourceID, const QString& absolutePath,
         WaveformCache::remove(absolutePath);
     }
     refreshWaveform(sourceID);
-    HarkenEditor::Bridge::mediaRegistryRegister(sourceID, absolutePath);
+    harken::studio::bridge::mediaRegistryRegister(sourceID, absolutePath);
     if (changed)
         emit mediaStatusChanged(sourceID, MediaStatus::Available);
     emit mediaHotSwapped(sourceID, absolutePath);

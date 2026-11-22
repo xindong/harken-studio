@@ -30,7 +30,7 @@
 #include <QHeaderView>
 #include "Core/UndoHistory.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject serializeWidget(QWidget* widget, int depth, int maxDepth);
 QString widgetPath(QWidget* widget);

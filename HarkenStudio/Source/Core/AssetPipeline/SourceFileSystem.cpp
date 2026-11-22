@@ -28,7 +28,7 @@
 
 #include <algorithm>
 
-namespace VNX::SourceFileSystem {
+namespace harken::studio::SourceFileSystem {
 namespace {
 
 struct SourceFadeState {
@@ -157,7 +157,7 @@ void publishChanges(const QList<Change>& changes, bool record)
                     item->markDirty();
                     emit manager.itemPropertyChanged(item, QStringLiteral("sources"));
                 }
-                HarkenEditor::Bridge::mediaRegistryRegister(sourceID, path);
+                harken::studio::bridge::mediaRegistryRegister(sourceID, path);
                 emit MediaPool::instance().mediaHotSwapped(sourceID, path);
                 if (!change.after->file.isEmpty())
                     MediaPool::instance().refreshWaveform(sourceID);

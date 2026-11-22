@@ -36,7 +36,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 
-namespace VNX {
+namespace harken::studio {
 
 void InspectorPanelPrivate::setupActionPage()
 {

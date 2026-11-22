@@ -5,7 +5,7 @@
 #include <QVBoxLayout>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorCaptureControlStrip::MonitorCaptureControlStrip(QWidget* parent)
     : QWidget(parent)
@@ -24,16 +24,16 @@ MonitorCaptureControlStrip::MonitorCaptureControlStrip(QWidget* parent)
     setStatusText(QStringLiteral("Unavailable"));
 }
 
-void MonitorCaptureControlStrip::applyState(const VNX::Monitor::MonitorCaptureControlState& state)
+void MonitorCaptureControlStrip::applyState(const harken::studio::Monitor::MonitorCaptureControlState& state)
 {
-    applyEnabled_ = VNX::Monitor::canApply(state);
-    setStatusText(QString::fromStdString(VNX::Monitor::captureControlStatusText(state)));
+    applyEnabled_ = harken::studio::Monitor::canApply(state);
+    setStatusText(QString::fromStdString(harken::studio::Monitor::captureControlStatusText(state)));
 }
 
-void MonitorCaptureControlStrip::applyPreview(const VNX::Monitor::CaptureBudgetPreview& preview)
+void MonitorCaptureControlStrip::applyPreview(const harken::studio::Monitor::CaptureBudgetPreview& preview)
 {
     if (previewLabel_)
-        previewLabel_->setText(QString::fromStdString(VNX::Monitor::capturePlanFaceText(preview)));
+        previewLabel_->setText(QString::fromStdString(harken::studio::Monitor::capturePlanFaceText(preview)));
 }
 
 void MonitorCaptureControlStrip::setStatusText(const QString& text)
@@ -57,4 +57,4 @@ bool MonitorCaptureControlStrip::applyEnabled() const
     return applyEnabled_;
 }
 
-} // namespace VNX
+} // namespace harken::studio

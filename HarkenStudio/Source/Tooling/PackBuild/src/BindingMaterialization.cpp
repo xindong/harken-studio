@@ -2,17 +2,17 @@
 
 #include "harken_studio_build/BindingTargets.h"
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
-bool MaterializeBindingCurveV1(const harkenstudiobuild::CurvePoint* points,
-                               const harkenstudiobuild::CurveHandlePair* handles,
+bool MaterializeBindingCurveV1(const harken::studio::build::CurvePoint* points,
+                               const harken::studio::build::CurveHandlePair* handles,
                                std::uint32_t pointCount,
-                               harkenstudiobuild::Curve* output) noexcept {
+                               harken::studio::build::Curve* output) noexcept {
     if (output == nullptr || points == nullptr || pointCount == 0 ||
         (pointCount > 1 && handles == nullptr)) {
         return false;
     }
-    harkenstudiobuild::Curve candidate{};
+    harken::studio::build::Curve candidate{};
     if (!candidate.SetPoints(points, handles, pointCount)) return false;
     for (std::uint32_t i = 0; i < candidate.pointCount; ++i) {
         auto& point = candidate.points[i];
@@ -33,9 +33,9 @@ bool MaterializeBindingCurveV1(const harkenstudiobuild::CurvePoint* points,
 bool ValidateBindingTargetV1(std::uint32_t scopeKind,
                              std::uint32_t targetId,
                              std::uint32_t transitionMs) noexcept {
-    const harkenstudiobuild::TargetMeta* target = harkenstudiobuild::FindTargetMeta(scopeKind, targetId);
+    const harken::studio::build::TargetMeta* target = harken::studio::build::FindTargetMeta(scopeKind, targetId);
     return target != nullptr &&
            (transitionMs == 0 || target->supportsTransition);
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build

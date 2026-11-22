@@ -5,7 +5,7 @@
 #include <QMap>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 class MemorySettingsStorage : public ISettingsStorage {
 public:

@@ -12,7 +12,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 TableItemDelegate::TableItemDelegate(QObject* parent, ThemeManager* themeManager)
     : QStyledItemDelegate(parent),

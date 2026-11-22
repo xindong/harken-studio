@@ -8,7 +8,7 @@
 #include <array>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 namespace ComponentCatalog {
 
 struct ComponentFacts {

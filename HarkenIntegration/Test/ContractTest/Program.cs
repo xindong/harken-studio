@@ -23,7 +23,7 @@ namespace Harken.Test
     {
         private static int Main(string[] args)
         {
-            if (args.Length == 1 && (args[0] == "--attenuation-only" || args[0] == "--attenuation-old-native"))
+            if (args.Length == 1 && args[0] == "--attenuation-only")
             {
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HARKEN_NATIVE_DIR")))
                 {
@@ -31,19 +31,10 @@ namespace Harken.Test
                     return 2;
                 }
                 InstallNativeResolver(true);
-                return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
-            }
-            if (args.Length == 1 && args[0] == "--state-only-unavailable")
-            {
-                InstallNativeResolver(true);
-                VnConfig config = HarkenEngine.DefaultConfig();
-                bool refused = HarkenEngine.Init(config) == VnResult.VN_CAPABILITY_UNAVAILABLE &&
-                    Emitter.CreateStateOnly(out Emitter emitter) == VnResult.VN_CAPABILITY_UNAVAILABLE && !emitter.IsValid;
-                Console.WriteLine("Old native StateOnly compatibility: " + (refused ? "PASS" : "FAIL"));
-                return refused ? 0 : 1;
+                return RunAbiFidelity() && RunAttenuationAbi() ? 0 : 1;
             }
             bool requireNative = false;
-            string companionRoot = null;
+            string exportRoot = null;
             string archiveRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
@@ -58,19 +49,19 @@ namespace Harken.Test
                     archiveRoot = args[++i];
                     continue;
                 }
-                if (arg == "--companion-root" && i + 1 < args.Length)
+                if (arg == "--export-root" && i + 1 < args.Length)
                 {
-                    companionRoot = args[++i];
+                    exportRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--companion-root path | --archive-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path | --archive-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
             if (archiveRoot != null) return ArchivePublicationContract.Run(archiveRoot) ? 0 : 1;
-            if (companionRoot != null) return RepositoryPublicationContract.Run(companionRoot) ? 0 : 1;
+            if (exportRoot != null) return ExportedPackContract.Run(exportRoot) ? 0 : 1;
 
             Console.WriteLine("== Harken C# binding gates ==");
             Console.WriteLine("Native mode : " + (requireNative ? "REQUIRED" : "OPTIONAL"));
@@ -81,7 +72,7 @@ namespace Harken.Test
             int namePost = RunNamePostAndProvider();
             int zeroGc = RunZeroGc();   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
-            bool companionVersionOk = CompanionVersionContract.Run();
+            bool metadataVersionOk = PackMetadataVersionContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -89,7 +80,7 @@ namespace Harken.Test
             Console.WriteLine("Pack bootstrap: " + (bootstrapOk ? "PASS" : "FAIL"));
             Console.WriteLine("Name post     : " +
                 (namePost == 0 ? "PASS" : namePost == 2 ? "SKIP" : "FAIL"));
-            Console.WriteLine("Metadata version: " + (companionVersionOk ? "PASS" : "FAIL"));
+            Console.WriteLine("Metadata version: " + (metadataVersionOk ? "PASS" : "FAIL"));
             Console.WriteLine("Zero-GC hot  : " + (zeroGc == 0 ? "PASS" : zeroGc == 2 ? "SKIP" : "FAIL"));
             Console.WriteLine("Remote native: " + (remoteNative == 0 ? "PASS" : remoteNative == 2 ? "SKIP" : "FAIL"));
             if (requireNative)
@@ -102,7 +93,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
+            bool ok = metadataVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&
                 (zeroGc == 0 || (!requireNative && zeroGc == 2)) &&
                 (remoteNative == 0 || (!requireNative && remoteNative == 2));
@@ -136,7 +127,7 @@ namespace Harken.Test
             return false;
         }
 
-        private static unsafe bool RunAttenuationAbi(bool oldNative)
+        private static unsafe bool RunAttenuationAbi()
         {
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
@@ -162,32 +153,28 @@ namespace Harken.Test
                 ok &= AttenuationResult("Replace prefix612", HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
 
                 desc.structSize = (uint)Marshal.SizeOf<VnAttenuationDesc>();
-                VnResult expected = oldNative ? VnResult.VN_INVALID_ARG : VnResult.VN_OK;
                 ok &= AttenuationResult("Register current HPF off size=" + desc.structSize,
-                    HarkenNative.Vn_RegisterAttenuation(unused, in desc), expected);
+                    HarkenNative.Vn_RegisterAttenuation(unused, in desc), VnResult.VN_OK);
                 ok &= AttenuationResult("Replace current HPF off",
-                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), expected);
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
                 desc.highpassCurve.enabled = 1;
                 desc.highpassCurve.pointCount = 1;
                 desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(1000);
                 ok &= AttenuationResult("Replace current HPF 1000Hz",
-                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), expected);
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
                 ok &= AttenuationResult("Register current HPF 1000Hz",
-                    HarkenNative.Vn_RegisterAttenuation(new VnObjectId(0, 0xe30004), in desc), expected);
-                if (!oldNative)
-                {
-                    desc.highpassCurve.pointsRaw[1] = 0;
-                    ok &= AttenuationResult("Replace current HPF 0Hz",
-                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
-                    desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(-1);
-                    ok &= AttenuationResult("Replace negative HPF",
-                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
-                    desc.highpassCurve.pointsRaw[1] = 0;
-                    desc.highpassCurve.enabled = 2;
-                    ok &= AttenuationResult("Replace invalid HPF enabled",
-                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
-                }
-                Console.WriteLine("[Attenuation ABI] " + (oldNative ? "old native rejects current descriptor: " : "current native: ") + (ok ? "PASS" : "FAIL"));
+                    HarkenNative.Vn_RegisterAttenuation(new VnObjectId(0, 0xe30004), in desc), VnResult.VN_OK);
+                desc.highpassCurve.pointsRaw[1] = 0;
+                ok &= AttenuationResult("Replace current HPF 0Hz",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
+                desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(-1);
+                ok &= AttenuationResult("Replace negative HPF",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
+                desc.highpassCurve.pointsRaw[1] = 0;
+                desc.highpassCurve.enabled = 2;
+                ok &= AttenuationResult("Replace invalid HPF enabled",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
+                Console.WriteLine("[Attenuation ABI] current native: " + (ok ? "PASS" : "FAIL"));
                 return ok;
             }
             finally { HarkenEngine.Term(); }
@@ -297,31 +284,23 @@ namespace Harken.Test
                     ok = false;
                 }
 
+#pragma warning disable CS0618
                 result = PackByteProvider.LoadPack(
                     22, FailProvider, null, out Pack pack);
-                if (result != VnResult.VN_PACK_PROVIDER_FAILED || pack.IsValid ||
-                    !PackByteProvider.LastProvideLeftSpanZero ||
-                    PackByteProvider.OutstandingPinCount != 0)
+                if (result != VnResult.VN_PACK_PROVIDER_FAILED || pack.IsValid)
                 {
-                    Console.WriteLine(
-                        "[NamePost] FAIL: failing provider returned " + result +
-                        " spanZero=" + PackByteProvider.LastProvideLeftSpanZero +
-                        " pins=" + PackByteProvider.OutstandingPinCount + ".");
+                    Console.WriteLine("[NamePost] FAIL: failing provider returned " + result + ".");
                     ok = false;
                 }
 
                 result = PackByteProvider.LoadPack(
                     22, GarbageProvider, null, out pack);
+#pragma warning restore CS0618
                 if ((result != VnResult.VN_BAD_PACK &&
                      result != VnResult.VN_PACK_INCOMPATIBLE) ||
-                    pack.IsValid ||
-                    PackByteProvider.LastReleaseCalls < 1 ||
-                    PackByteProvider.OutstandingPinCount != 0)
+                    pack.IsValid)
                 {
-                    Console.WriteLine(
-                        "[NamePost] FAIL: garbage provider returned " + result +
-                        " releases=" + PackByteProvider.LastReleaseCalls +
-                        " pins=" + PackByteProvider.OutstandingPinCount + ".");
+                    Console.WriteLine("[NamePost] FAIL: garbage provider returned " + result + ".");
                     ok = false;
                 }
 
@@ -542,8 +521,10 @@ namespace Harken.Test
 
         private static bool CheckCurrentWorldContract()
         {
+#pragma warning disable CS0618
             VnResult result = CurrentWorld.Load(
                 null, out CurrentWorldLoadReport report);
+#pragma warning restore CS0618
             if (result != VnResult.VN_INVALID_ARG ||
                 report.Status !=
                     VnCurrentWorldLoadStatus.VN_CURRENT_WORLD_LOAD_INVALID_ARGUMENT ||

@@ -4,7 +4,7 @@
 #include <cstring>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 MonitorCaptureControlHost::MonitorCaptureControlHost(MonitorAdapter* adapter)
@@ -161,4 +161,4 @@ void MonitorCaptureControlHost::leaveLayout()
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

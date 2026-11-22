@@ -12,7 +12,7 @@
 #include <atomic>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class AssetRegistry;
 class AssetImporter;
@@ -97,13 +97,13 @@ public:
     void refreshWaveform(uint32_t sourceID);
 
 signals:
-    void mediaStatusChanged(uint32_t sourceID, VNX::MediaStatus newStatus);
+    void mediaStatusChanged(uint32_t sourceID, harken::studio::MediaStatus newStatus);
     void batchOperationProgress(int current, int total, const QString& currentFile);
     void batchOperationComplete(int succeeded, int failed);
     void mediaHotSwapped(uint32_t sourceID, const QString& path);
     void statusCacheRefreshed();
     void waveformReady(uint32_t sourceID);
-    void batchReplaceFinished(QVector<VNX::BatchReplaceResult> results);
+    void batchReplaceFinished(QVector<harken::studio::BatchReplaceResult> results);
 
 private:
     explicit MediaPool(QObject* parent = nullptr);

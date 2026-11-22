@@ -12,7 +12,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 void setInspectorFormSlotCount(QWidget* parent, int occupiedSlots)
 {

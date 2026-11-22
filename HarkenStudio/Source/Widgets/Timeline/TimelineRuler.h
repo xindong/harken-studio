@@ -8,7 +8,7 @@ class QAction;
 class QLabel;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class TimelineEditorPanel;
 class TimelineMarkerRuler;

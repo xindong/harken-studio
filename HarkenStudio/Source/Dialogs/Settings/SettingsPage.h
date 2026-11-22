@@ -7,7 +7,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 class ToastPresenter;
 

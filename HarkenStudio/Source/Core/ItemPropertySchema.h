@@ -8,7 +8,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
-namespace VNX {
+namespace harken::studio {
 
 inline QJsonObject setItemPropertySchema()
 {
@@ -27,7 +27,7 @@ inline QJsonObject setItemPropertySchema()
         propertyNames.append(QLatin1String(field.field));
     for (const auto& field : VEffect::schema())
         propertyNames.append(field.field);
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
+    for (const auto& field : harken::studio::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isEditorExposed(field.id)) continue;
         const QString name = QString::fromLatin1(field.fieldName);
         if (!propertyNames.contains(name)) propertyNames.append(name);

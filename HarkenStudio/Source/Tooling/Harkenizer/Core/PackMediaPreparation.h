@@ -9,7 +9,7 @@
 #include <memory>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class PackMediaPreparation
 {
@@ -27,10 +27,10 @@ public:
                          ProjectPlatformId platform, QString derivativeDir);
     ~PackMediaPreparation();
 
-    void add(harkenstudio::ObjectId soundId, const SoundSourceDef& source,
+    void add(harken::studio::types::ObjectId soundId, const SoundSourceDef& source,
              double scheduleOffsetSec);
     void start();
-    Result take(harkenstudio::ObjectId soundId, const QUuid& entryId,
+    Result take(harken::studio::types::ObjectId soundId, const QUuid& entryId,
                 const std::function<bool()>& cancelCheck);
     void stop();
 

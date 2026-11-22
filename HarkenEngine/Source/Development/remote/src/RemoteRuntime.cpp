@@ -496,9 +496,6 @@ class Server {
                 welcome.result = VN_MONITOR_INCOMPATIBLE;
             welcome.minor = std::min(hello.minor, kProtocolMinor);
             welcome.capabilities &= hello.capabilities;
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-            welcome.capabilities &= ~(kCapabilityEventCapture | kCapabilityExecutionObservation);
-#endif
             auto bytes = EncodeFrame(MakeFrame(Message::Welcome, frame.requestId, welcome));
             std::lock_guard<std::mutex> lock(mutex);
             outboundBytes += bytes.size();

@@ -650,17 +650,17 @@ bool QueueInstanceTable::BindFrontierInitial(QueueInstanceToken token,
     if (!token.Valid() || !rows_.IsConstructed(token.slot) || !binding.Valid() || !binding.queueInitial.Valid() ||
         binding.variableSide.Valid() || binding.queueInitial.slot != token.slot ||
         binding.queueInitial.generation != token.generation ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group)) return false;
+        !pool.PrivateScheduleGroupBindable(binding.operation.group)) return false;
     auto& row = rows_[token.slot];
     const auto state = row.slotState.load(std::memory_order_acquire);
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if ((state != SlotState::Initializing && state != SlotState::Live) || row.generation != token.generation ||
         row.world != binding.operation.world || row.rootInstance != binding.operation.owner.child ||
         row.programSemanticFingerprint != binding.queueInitial.programSemanticFingerprint ||
         row.mirrorVersion.load(std::memory_order_acquire) != binding.queueInitial.version ||
         row.initialActivationSequence.load(std::memory_order_acquire) != 0 ||
         (row.frontierInitial != nullptr && row.frontierInitial != &binding) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready ||
         (row.frontierPool != nullptr && (row.frontierPool != &pool || !(row.frontierOwner == binding.operation.owner))))
         return false;
@@ -676,7 +676,7 @@ bool QueueInstanceTable::ProveFrontierInitial(const FrontierGroupBinding& bindin
         out == nullptr || out->Valid() || audioSequence == 0) return false;
     const auto& identity = binding.queueInitial;
     auto* row = Resolve({identity.slot, identity.generation});
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row == nullptr || row->frontierPool == nullptr || row->frontierInitial != &binding ||
         !(row->frontierOwner == binding.operation.owner) ||
         row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
@@ -684,7 +684,7 @@ bool QueueInstanceTable::ProveFrontierInitial(const FrontierGroupBinding& bindin
         row->mirrorVersion.load(std::memory_order_acquire) != identity.version ||
         row->initialActivationSequence.load(std::memory_order_acquire) != 0 ||
         row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
-        !row->frontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !row->frontierPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || lease.Capture().state != AudioSliceState::Ready)
         return false;
     out->row_ = row;
@@ -716,11 +716,11 @@ bool QueueInstanceTable::CaptureFrontierSignal(const PreparedQueueSignalAdvanceV
 bool QueueInstanceTable::BindFrontierSignal(const PreparedQueueSignalAdvanceV1& prepared,
     const FrontierGroupBinding& binding, ScheduledTransactionPool& pool) noexcept {
     FrontierQueueSignalIdentity original{};
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (!binding.Valid() || !binding.queueSignal.Valid() ||
         !CaptureFrontierSignal(prepared, &original) || !(binding.queueSignal == original) ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease == nullptr || group.sourceControlCount != 0 ||
         group.lease->Capture().state != AudioSliceState::Ready ||
         binding.operation.order.executeFrame != prepared.identity_.order.executeFrame ||
@@ -747,7 +747,7 @@ bool QueueInstanceTable::ProveFrontierSignal(const FrontierGroupBinding& binding
     // Acquire the immutable binding without reading any logic-thread signal state.
     if (row == nullptr || row->signalPublishedAttempt.load(std::memory_order_acquire) != identity.attempt)
         return false;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row->signalFrontier != &binding || row->signalFrontierPool == nullptr ||
         row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
         row->programSemanticFingerprint != identity.programSemanticFingerprint ||
@@ -755,10 +755,10 @@ bool QueueInstanceTable::ProveFrontierSignal(const FrontierGroupBinding& binding
         row->mirrorSequence.load(std::memory_order_acquire) != identity.mirrorSequence ||
         row->signalActivationSequence.load(std::memory_order_acquire) != 0 ||
         row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
-        !row->signalFrontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !row->signalFrontierPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || group.sourceControlCount != 0 ||
         lease.Capture().state != AudioSliceState::Ready ||
-        !row->signalFrontierPool->NotePlan03GroupReadRt(group.identity, audioSequence)) return false;
+        !row->signalFrontierPool->NoteScheduleGroupReadRt(group.identity, audioSequence)) return false;
     out->row_ = row;
     out->lease_ = &lease;
     out->audioSequence_ = audioSequence;
@@ -786,7 +786,7 @@ bool QueueInstanceTable::ReleaseFrontierSignal(const FrontierGroupBinding& bindi
         row->signalIdentity.attempt != identity.attempt)) return false;
     // Detachment rechecks the actual lease, dependents, pins, and strict read fence.
     // A private unread detach may erase binding, so do not inspect it afterwards.
-    if (!row->signalFrontierPool->DetachPlan03GroupFrontier(
+    if (!row->signalFrontierPool->DetachScheduleGroupFrontier(
             binding.operation.group, completedAudioSequence)) return false;
     row->signalPublishedAttempt.store(0, std::memory_order_release);
     row->signalFrontier = nullptr;
@@ -831,7 +831,7 @@ bool QueueInstanceTable::PendingConditionalConsumesCurrentReset(const Row& row) 
 }
 
 bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBinding& binding,
-    const Plan03PageGroupView& source, AudioSliceLease& lease,
+    const SchedulePageGroupView& source, AudioSliceLease& lease,
     const ScheduledTransactionPool& pool, std::uint64_t sourceSequence,
     const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
     std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
@@ -841,10 +841,10 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
     if (out == nullptr || out->Valid() || sourceSequence == 0 || !binding.Valid() ||
         binding.role != FrontierGroupRole::Future || !binding.queueInitial.Valid() ||
         binding.queueConditional.Valid() || binding.variableSide.Valid() ||
-        binding.operation.group.backing != Plan03GroupBacking::ImmediateLane ||
+        binding.operation.group.backing != ScheduleGroupBacking::ImmediateLane ||
         binding.operation.group.sliceIndex != 1u || source.frontier == nullptr ||
         source.lease == nullptr || source.memberCount != 2u || source.sourceControlCount != 1u ||
-        source.identity.backing != Plan03GroupBacking::ImmediateLane || source.identity.sliceIndex != 0u ||
+        source.identity.backing != ScheduleGroupBacking::ImmediateLane || source.identity.sliceIndex != 0u ||
         source.identity.decision.slot != binding.operation.group.decision.slot ||
         source.identity.decision.generation != binding.operation.group.decision.generation ||
         !pool.ClaimImmediateLaneFrontier(binding.operation.group, &out->claim_)) return false;
@@ -853,7 +853,7 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
     const auto& initial = *source.frontier;
     const auto& identity = binding.queueInitial;
     auto* row = Resolve({identity.slot, identity.generation});
-    Plan03PageGroupView actualSource{}, actualTarget{};
+    SchedulePageGroupView actualSource{}, actualTarget{};
     if (row == nullptr || row->frontierPool != &pool || row->frontierInitial != &initial ||
         initial.role != FrontierGroupRole::EntryMember || !(initial.entry == binding.entry) ||
         !(initial.primary == binding.primary) || !(initial.operation.owner == binding.operation.owner) ||
@@ -871,10 +871,10 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
         row->mirrorVersion.load(std::memory_order_acquire) != identity.version ||
         row->initialActivationSequence.load(std::memory_order_acquire) != sourceSequence ||
         row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
-        !pool.ResolvePlan03GroupSliceRt(source.identity, &actualSource) ||
+        !pool.ResolveScheduleGroupSliceRt(source.identity, &actualSource) ||
         actualSource.frontier != source.frontier || actualSource.lease != source.lease ||
         source.lease->Capture().state != AudioSliceState::SliceApplied ||
-        !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &actualTarget) ||
+        !pool.ResolveScheduleGroupSliceRt(binding.operation.group, &actualTarget) ||
         actualTarget.frontier != &binding || actualTarget.lease != &lease ||
         lease.Capture().state != AudioSliceState::Ready) return fail();
     if (!binding.canonicalInitialCompletion) return true;
@@ -963,7 +963,7 @@ bool QueueInstanceTable::BindFrontierConditional(QueueInstanceToken token,
     const auto& identity = binding.queueConditional;
     auto* row = Resolve(token);
     auto* state = row == nullptr ? nullptr : FindConditional(*row, {identity.pendingVersion});
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row == nullptr || state == nullptr || !binding.Valid() || !identity.Valid() || binding.queueInitial.Valid() ||
         binding.variableSide.Valid() || token.slot != identity.slot || token.generation != identity.generation ||
         row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
@@ -974,8 +974,8 @@ bool QueueInstanceTable::BindFrontierConditional(QueueInstanceToken token,
         !SameDecision(state->pendingDecision, binding.operation.group.decision) ||
         !SameOccurrence(state->pendingExpectedCurrent, identity.current) ||
         !SameOccurrence(state->pendingSuccessor, identity.successor) ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready ||
         (row->frontierPool != nullptr && (row->frontierPool != &pool || !(row->frontierOwner == binding.operation.owner))))
         return false;
@@ -993,7 +993,7 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
         !IsCurrentOriginalConditionalFutureReservation(cap) || !IsOriginalLifetimePinFor(parent, cap.Token())) return false;
     const auto& original = originalConditionalRows_[cap.row_];
     const auto& row = rows_[original.queue.slot];
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     if (original.parent.marker_ != parent.marker_ || row.frontierPool != &pool || row.frontierOwner != binding.operation.owner ||
         row.world != binding.operation.world || row.rootInstance != binding.operation.owner.child ||
         row.initialActivationSequence.load(std::memory_order_acquire) != 0 ||
@@ -1001,7 +1001,7 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
         row.resetReserved.load(std::memory_order_acquire) ||
         (row.resetPending.load(std::memory_order_acquire) && !PendingConditionalConsumesCurrentReset(row)) ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
         native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
     const auto matchesConditional = [&](const FrontierQueueConditionalIdentity& identity) noexcept {
         return identity.Valid() && identity.slot == original.queue.slot && identity.generation == original.queue.generation &&
@@ -1015,7 +1015,7 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
         if ((!preludeRole && !targetRole) || !counterpart->Valid() || counterpart->variableSide.Valid()) return false;
         const auto& prelude = preludeRole ? binding : *counterpart;
         const auto& target = targetRole ? binding : *counterpart;
-        Plan03PageGroupView source{}, destination{};
+        SchedulePageGroupView source{}, destination{};
         TransitionInstanceSnapshot transition{};
         std::uint64_t currentStart = UINT64_MAX, currentComplete = 0;
         const bool single = row.Pending().pendingCompletionOwner.kind == CompletionOwnerKind::SingleQueue;
@@ -1079,8 +1079,8 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
             prelude.operation.order.executeFrame >= currentComplete ||
             target.operation.order.executeFrame < currentComplete ||
             !pool.PrivateImmediateLaneFrontierRollbackReady(counterpart->operation.group) ||
-            !pool.ResolvePlan03GroupSliceProducer(prelude.operation.group, &source) || source.frontier != &prelude ||
-            !pool.ResolvePlan03GroupSliceProducer(target.operation.group, &destination) || destination.frontier != &target ||
+            !pool.ResolveScheduleGroupSliceProducer(prelude.operation.group, &source) || source.frontier != &prelude ||
+            !pool.ResolveScheduleGroupSliceProducer(target.operation.group, &destination) || destination.frontier != &target ||
             source.lease == nullptr || destination.lease == nullptr ||
             source.lease->Capture().state != AudioSliceState::Ready || destination.lease->Capture().state != AudioSliceState::Ready ||
             source.sourceControlCount != 1 || destination.sourceControlCount != 1 ||
@@ -1123,7 +1123,7 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
         !binding.queueInitial.Valid() || binding.queueConditional.Valid() || !binding.transition.Valid() ||
         row.frontierInitial == nullptr) return false;
     const auto& initial = *row.frontierInitial;
-    Plan03PageGroupView source{};
+    SchedulePageGroupView source{};
     TransitionInstanceSnapshot transition{};
     if (!initial.Valid() || initial.role != FrontierGroupRole::EntryMember || initial.operation.kind != FrontierOperationKind::Dependent ||
         initial.operation.group.sliceIndex != 0 || initial.entry != binding.entry || initial.primary != binding.primary ||
@@ -1136,7 +1136,7 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
         binding.queueInitial.version != original.currentState.version ||
         binding.queueInitial.programSemanticFingerprint != original.programSemanticFingerprint ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(initial.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(initial.operation.group, &source) || source.frontier != &initial ||
+        !pool.ResolveScheduleGroupSliceProducer(initial.operation.group, &source) || source.frontier != &initial ||
         source.lease == nullptr || source.lease->Capture().state != AudioSliceState::Ready ||
         source.sourceControlCount != native.sourceControlCount || source.memberCount != native.memberCount ||
         !transitions.Capture({binding.transition.slot, binding.transition.generation}, &transition) ||
@@ -1182,7 +1182,7 @@ bool QueueInstanceTable::BindRetainedOriginalFrontierConditional(
     const auto& original = originalConditionalRows_[cap.row_];
     auto& row = rows_[original.queue.slot];
     const auto& identity = binding.queueConditional;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (!binding.Valid() || !identity.Valid() || binding.queueInitial.Valid() ||
         binding.variableSide.Valid() || original.clockPool != &pool ||
         original.parent.marker_ != parent.marker_ ||
@@ -1192,8 +1192,8 @@ bool QueueInstanceTable::BindRetainedOriginalFrontierConditional(
         identity.currentVersion != original.currentState.version || identity.pendingVersion != original.version.version ||
         !SameDecision(binding.operation.group.decision, original.decision) ||
         !SameOccurrence(identity.current, original.current) || !SameOccurrence(identity.successor, original.successor) ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready ||
         (row.frontierPool != nullptr && (row.frontierPool != &pool || row.frontierOwner != binding.operation.owner)))
         return false;
@@ -1214,7 +1214,7 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
         out == nullptr || out->Valid()) return false;
     auto* row = Resolve({identity.slot, identity.generation});
     auto* conditional = row == nullptr ? nullptr : FindConditional(*row, {identity.pendingVersion});
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row == nullptr || conditional == nullptr || row->frontierPool == nullptr || !(row->frontierOwner == binding.operation.owner) ||
         row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
         !MatchesConditionalCurrent(*row, *conditional, identity.currentVersion, true) ||
@@ -1223,7 +1223,7 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
         !SameOccurrence(conditional->pendingExpectedCurrent, identity.current) ||
         !SameOccurrence(conditional->pendingSuccessor, identity.successor) ||
         row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
-        !row->frontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !row->frontierPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || lease.Capture().state != AudioSliceState::Ready)
         return false;
     bool expected = false;
@@ -1805,8 +1805,8 @@ void QueueInstanceTable::RetireDetachedConditional(Row& row, ConditionalState& s
             !original.predecessor.Valid() && state.following.load(std::memory_order_acquire) == nullptr &&
             state.pendingActivation.load(std::memory_order_acquire) == ConditionalQueueActivation::Waiting &&
             row.frontierInitial == nullptr && row.initialActivationSequence.load(std::memory_order_acquire) == 0 &&
-            original.clockPool->PrivatePlan03GroupBindable(original.clockGroups[0].Identity()) &&
-            original.clockPool->PrivatePlan03GroupBindable(original.clockGroups[1].Identity());
+            original.clockPool->PrivateScheduleGroupBindable(original.clockGroups[0].Identity()) &&
+            original.clockPool->PrivateScheduleGroupBindable(original.clockGroups[1].Identity());
         if (conditionalReadReclamationEnabled_ && !unpublishedInitial &&
             row.slotState.load(std::memory_order_acquire) == SlotState::Live) {
             assert(original.readRetirementEpoch == 0);
@@ -2828,19 +2828,19 @@ bool QueueInstanceTable::PrepareConditional(
 
 bool QueueInstanceTable::ProveFollowingPageSource(
     const OriginalConditionalFutureReservation& predecessor, const DecisionTable& decisions,
-    const DecisionFuturePin& lifetime, const Plan03GroupReaderPin& reader,
+    const DecisionFuturePin& lifetime, const ScheduleGroupReaderPin& reader,
     const ScheduledTransactionPool& pool, const FrontierOwnerIdentity& dependent,
     ContinuationSourceBinding* out) const noexcept {
     if (out == nullptr || out->validate_ != nullptr ||
         !MatchesOriginalConditionalFutureReservation(predecessor) || !lifetime.Valid() ||
-        !pool.IsPlan03GroupReaderFor(reader, reader.Identity())) return false;
+        !pool.IsScheduleGroupReaderFor(reader, reader.Identity())) return false;
     const auto& original = originalConditionalRows_[predecessor.row_];
     const auto* row = Resolve(original.queue);
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row == nullptr || original.state != OriginalConditionalState::Committed ||
         original.body == nullptr || FindConditional(*row, original.version) != original.body ||
         !SameDecision(original.decision, lifetime.Token()) ||
-        !pool.ResolvePlan03GroupSliceProducer(reader.Identity(), &group) ||
+        !pool.ResolveScheduleGroupSliceProducer(reader.Identity(), &group) ||
         group.frontier == nullptr) return false;
     const auto& binding = *group.frontier;
     const auto& identity = binding.queueConditional;
@@ -4208,7 +4208,7 @@ bool QueueInstanceTable::ProveSourceWaitAuthority(const FrontierGroupBinding& bi
             {context.slot, context.bucket->attemptGeneration}, context.bucket)) return false;
     const auto& identity = binding.queueConditional.Valid() ? binding.queueConditional : binding.queueInitialCompletion;
     const auto* row = Resolve({identity.slot, identity.generation});
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (!identity.Valid() || row == nullptr || row->frontierPool != &pool ||
         !(row->frontierOwner == binding.operation.owner) || row->world != binding.operation.world ||
         row->rootInstance != binding.operation.owner.child ||
@@ -4221,23 +4221,23 @@ bool QueueInstanceTable::ProveSourceWaitAuthority(const FrontierGroupBinding& bi
         !SameDecision(row->Pending().pendingDecision, binding.operation.group.decision) ||
         !SameOccurrence(row->Pending().pendingExpectedCurrent, identity.current) ||
         !SameOccurrence(row->Pending().pendingSuccessor, identity.successor) ||
-        !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !pool.ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease ||
         lease.Capture().state != AudioSliceState::Ready) return false;
 
     const auto* initial = row->frontierInitial;
     if (initial == nullptr || !initial->queueInitial.Valid()) return false;
-    Plan03PageGroupView control{};
+    SchedulePageGroupView control{};
     if (binding.canonicalInitialCompletion) {
         if (!(binding.entry == initial->entry) || !(binding.primary == initial->primary)) return false;
     } else {
-        Plan03PageGroupView prerequisite{};
+        SchedulePageGroupView prerequisite{};
         if (!binding.queueConditional.Valid() || !binding.primary.Exact() ||
-            !pool.ResolvePlan03GroupSliceRt(binding.primary, &control) || control.frontier == nullptr ||
+            !pool.ResolveScheduleGroupSliceRt(binding.primary, &control) || control.frontier == nullptr ||
             control.frontier->role != FrontierGroupRole::Coordinator ||
             !(control.frontier->entry == binding.entry) || control.frontier->prerequisite == binding.entry ||
             !control.frontier->prerequisiteMember.Exact() ||
-            !pool.ResolvePlan03GroupSliceRt(control.frontier->prerequisiteMember, &prerequisite) ||
+            !pool.ResolveScheduleGroupSliceRt(control.frontier->prerequisiteMember, &prerequisite) ||
             prerequisite.frontier != initial || !(control.frontier->prerequisite == initial->entry) ||
             !(control.frontier->operation.owner == binding.operation.owner) ||
             (binding.role == FrontierGroupRole::EntryMember
@@ -4253,7 +4253,7 @@ bool QueueInstanceTable::ProveSourceWaitAuthority(const FrontierGroupBinding& bi
             context.bucket, control.frontier->prerequisite))) return false;
     auto* activation = context.decisions->ResolveFrontierActivation(initial->entry.coordinator);
     FrontierActivationReceipt receipt{};
-    Plan03PageGroupView source{};
+    SchedulePageGroupView source{};
     if (stagedInitial != nullptr) {
         const auto& completion = row->Pending().pendingCompletion;
         const auto* events = context.lane->Events(context.slot, context.bucket);
@@ -4279,7 +4279,7 @@ bool QueueInstanceTable::ProveSourceWaitAuthority(const FrontierGroupBinding& bi
             identity.currentVersion != initial->queueInitial.version ||
             activation == nullptr || !(activation->Descriptor().entry == initial->entry) ||
             !(activation->Descriptor().primary == initial->primary) ||
-            !pool.ResolvePlan03GroupSliceRt(initial->operation.group, &source) ||
+            !pool.ResolveScheduleGroupSliceRt(initial->operation.group, &source) ||
             source.frontier != initial || source.lease != stagedInitial->lease_ ||
             source.lease == nullptr || source.lease->Capture().state != AudioSliceState::Ready ||
             source.memberCount != 0u || source.sourceControlCount != 0u ||
@@ -4306,7 +4306,7 @@ bool QueueInstanceTable::ProveSourceWaitAuthority(const FrontierGroupBinding& bi
         receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
         receipt.audioSequence == 0 || receipt.audioSequence != row->initialActivationSequence.load(std::memory_order_acquire) ||
         !context.lane->EntryApplied(context.slot, context.bucket->attemptGeneration, initial->entry) ||
-        !pool.ResolvePlan03GroupSliceRt(initial->operation.group, &source) ||
+        !pool.ResolveScheduleGroupSliceRt(initial->operation.group, &source) ||
         source.frontier != initial || source.lease == nullptr ||
         source.lease->Capture().state != AudioSliceState::SliceApplied ||
         !(initial->operation.owner == binding.operation.owner)) return false;

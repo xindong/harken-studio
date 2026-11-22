@@ -13,13 +13,13 @@
 #include <unordered_map>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 struct PreparedPreviewMedia;
 
 struct PreviewEffectSource {
-    harkenstudio::ObjectId id{};
-    harkenstudio::ObjectId presetId{};
+    harken::studio::types::ObjectId id{};
+    harken::studio::types::ObjectId presetId{};
     std::uint32_t type = 0;
     std::vector<float> parameters;
     bool bypass = false;
@@ -28,13 +28,13 @@ struct PreviewEffectSource {
 };
 
 using PreviewEffectDefinitions =
-    std::map<harkenstudio::ObjectId, std::vector<PreviewEffectSource>>;
+    std::map<harken::studio::types::ObjectId, std::vector<PreviewEffectSource>>;
 
 bool captureInstalledPreviewEffects(std::uint64_t generation,
-    harkenstudio::ObjectId soundId, std::vector<PreviewEffectSource>& effects);
+    harken::studio::types::ObjectId soundId, std::vector<PreviewEffectSource>& effects);
 bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t authoringRevision,
-    harkenstudio::ObjectId busId,
-    harkenstudio::ObjectId definitionId, const PreviewEffectSource& effect);
+    harken::studio::types::ObjectId busId,
+    harken::studio::types::ObjectId definitionId, const PreviewEffectSource& effect);
 
 enum class CurrentWorldSyncStatus : std::uint32_t {
     Ok = 0,
@@ -71,7 +71,7 @@ struct CurrentWorldSyncToken {
 struct CurrentWorldSyncResult {
     CurrentWorldSyncStatus status = CurrentWorldSyncStatus::InvalidProject;
     CurrentWorldSyncToken token;
-    harkenstudio::ObjectId relatedStableId = {};
+    harken::studio::types::ObjectId relatedStableId = {};
     std::uint64_t worldGeneration = 0;
 
     bool ok() const noexcept { return status == CurrentWorldSyncStatus::Ok; }
@@ -103,21 +103,21 @@ struct CurrentWorldSoundPreparation {
 
     std::vector<Sound> sounds;
     std::vector<SourceState> sources;
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> contentRevisions;
+    std::unordered_map<harken::studio::types::ObjectId, std::uint64_t> contentRevisions;
 };
 
 struct CurrentWorldArtifact {
     struct Bus {
-        harkenstudio::ObjectId id = {};
-        harkenstudio::ObjectId parentId = {};
+        harken::studio::types::ObjectId id = {};
+        harken::studio::types::ObjectId parentId = {};
         float faderDb = 0.0f;
         float outputBusVolumeDb = 0.0f;
         std::uint32_t faderAfterSlot = 0;
     };
     struct Effect {
-        harkenstudio::ObjectId busId = {};
-        harkenstudio::ObjectId effectId = {};
-        harkenstudio::ObjectId definitionId = {};
+        harken::studio::types::ObjectId busId = {};
+        harken::studio::types::ObjectId effectId = {};
+        harken::studio::types::ObjectId definitionId = {};
         std::uint32_t slot = 0;
         std::uint32_t effectType = 0;
         std::uint32_t descriptorVintage = 0;
@@ -130,8 +130,8 @@ struct CurrentWorldArtifact {
         float value = 0.0f;
     };
     struct Send {
-        harkenstudio::ObjectId sourceId = {};
-        harkenstudio::ObjectId targetId = {};
+        harken::studio::types::ObjectId sourceId = {};
+        harken::studio::types::ObjectId targetId = {};
         float levelDb = 0.0f;
     };
     struct Profile {
@@ -158,7 +158,7 @@ struct CurrentWorldArtifact {
 
 struct CurrentWorldArtifactResult {
     CurrentWorldSyncStatus status = CurrentWorldSyncStatus::InvalidProject;
-    harkenstudio::ObjectId relatedStableId = {};
+    harken::studio::types::ObjectId relatedStableId = {};
     CurrentWorldArtifact artifact;
 
     bool ok() const noexcept { return status == CurrentWorldSyncStatus::Ok; }
@@ -177,4 +177,4 @@ std::optional<CurrentWorldSyncResult> discardPendingCurrentWorld(
         PendingCurrentWorldDisposition::Cancelled) noexcept;
 std::optional<CurrentWorldSyncResult> takeCurrentWorldSyncCompletion() noexcept;
 
-} // namespace HarkenEditor::Bridge
+} // namespace harken::studio::bridge

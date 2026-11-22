@@ -6,7 +6,7 @@
 #include <cmath>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 double AmplitudeScale::dbToPosition(double db) const
 {

@@ -12,7 +12,7 @@
 #include <set>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 struct VoiceKey
@@ -30,12 +30,12 @@ struct VoiceKey
 
 bool hasUnsupportedVolume(std::uint32_t validityFlags)
 {
-    return (validityFlags & VNX::Monitor::kMonitorValidUnsupported) != 0;
+    return (validityFlags & harken::studio::Monitor::kMonitorValidUnsupported) != 0;
 }
 
 bool hasNumericVolume(std::uint32_t validityFlags)
 {
-    return (validityFlags & VNX::Monitor::kMonitorValidNumeric) != 0
+    return (validityFlags & harken::studio::Monitor::kMonitorValidNumeric) != 0
         && !hasUnsupportedVolume(validityFlags);
 }
 
@@ -48,10 +48,10 @@ bool voiceReplayIsIncomplete(
     std::set<std::pair<std::uint64_t, std::uint64_t>> voiceStreams;
     for (const auto& rec : snapshot->records)
     {
-        if (rec.header.entityKind != VNX::Monitor::kMonitorEntityVoice)
+        if (rec.header.entityKind != harken::studio::Monitor::kMonitorEntityVoice)
             continue;
-        if (rec.header.recordKind != VNX::Monitor::kMonitorRecordStateUpsert
-            && rec.header.recordKind != VNX::Monitor::kMonitorRecordStateTombstone)
+        if (rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateUpsert
+            && rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateTombstone)
             continue;
         if (rec.header.streamId == 0)
             continue;
@@ -212,10 +212,10 @@ MonitorVoicesProjection projectVoiceRows(
     bool sawVoiceLayout = false;
     for (const auto& rec : snapshot->records)
     {
-        if (rec.header.entityKind != VNX::Monitor::kMonitorEntityVoice)
+        if (rec.header.entityKind != harken::studio::Monitor::kMonitorEntityVoice)
             continue;
-        if (rec.header.recordKind != VNX::Monitor::kMonitorRecordStateUpsert
-            && rec.header.recordKind != VNX::Monitor::kMonitorRecordStateTombstone)
+        if (rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateUpsert
+            && rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateTombstone)
             continue;
         sawVoiceLayout = true;
         voiceState.push_back(&rec);
@@ -250,7 +250,7 @@ MonitorVoicesProjection projectVoiceRows(
         if (rec->header.executeFrame > cursorFrame)
             continue;
         VoiceKey key{rec->header.instanceHandle, rec->header.instanceGeneration};
-        if (rec->header.recordKind == VNX::Monitor::kMonitorRecordStateTombstone)
+        if (rec->header.recordKind == harken::studio::Monitor::kMonitorRecordStateTombstone)
         {
             live.erase(key);
             continue;
@@ -270,9 +270,9 @@ MonitorVoicesProjection projectVoiceRows(
             row.volumeState = MonitorVoicesVolumeState::Unsupported;
         }
         else if (hasNumericVolume(rec->header.validityFlags)
-                 && rec->payload.size() >= sizeof(VNX::Monitor::MonitorStateUpsert))
+                 && rec->payload.size() >= sizeof(harken::studio::Monitor::MonitorStateUpsert))
         {
-            VNX::Monitor::MonitorStateUpsert payload {};
+            harken::studio::Monitor::MonitorStateUpsert payload {};
             std::memcpy(&payload, rec->payload.data(), sizeof(payload));
             row.volumeDb = payload.volumeDb;
             row.volumeState = MonitorVoicesVolumeState::Numeric;
@@ -292,4 +292,4 @@ MonitorVoicesProjection projectVoiceRows(
     return out;
 }
 
-} // namespace VNX
+} // namespace harken::studio

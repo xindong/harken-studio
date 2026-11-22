@@ -9,7 +9,7 @@
 #include "ThemeManager.h"
 #include "FontManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void initializeEditorSingletons()
 {

@@ -10,7 +10,7 @@ class QCheckBox;
 class QLabel;
 class QScrollArea;
 
-namespace VNX {
+namespace harken::studio {
 
 class BlueprintVisibilityMenu : public QMenu
 {

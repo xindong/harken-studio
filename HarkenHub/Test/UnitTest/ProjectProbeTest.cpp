@@ -8,8 +8,8 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-using VNH::ProjectProbe;
-using VNH::ProjectProbeResult;
+using harken::hub::ProjectProbe;
+using harken::hub::ProjectProbeResult;
 
 namespace {
 

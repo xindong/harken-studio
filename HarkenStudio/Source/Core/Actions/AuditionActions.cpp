@@ -14,7 +14,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 
 static ActionResult auditionNotAvailable()
@@ -53,10 +53,10 @@ static bool parseNonNegativeExactInt64(const QJsonValue& value,
 
 
 void registerAuditionActions(ActionManager& mgr,
-                              HarkenEditor::AuditionManager* auditionManager,
+                              harken::studio::AuditionManager* auditionManager,
                               AudioEngine* engine)
 {
-    using namespace HarkenEditor;
+    using namespace harken::studio;
 
     {
         ActionDef def;
@@ -209,7 +209,7 @@ void registerAuditionActions(ActionManager& mgr,
             }
             const auto result = auditionManager->setPositionSamples(tid, samplePos);
             const QString state = result.result
-                    == HarkenEditor::Bridge::kEngineOk
+                    == harken::studio::bridge::kEngineOk
                 ? QStringLiteral("accepted")
                 : QStringLiteral("rejected");
             auto response = AdvancedActionDetail::fromEngineResult(
@@ -326,7 +326,7 @@ void registerAuditionActions(ActionManager& mgr,
             const auto* selection = item->comp<VSelection>();
             if (!selection || selection->mode == SelectionMode::Match || selection->mode == SelectionMode::Blend)
                 return {false, {}, "INVALID_PARAM", "Container has no selection memory"};
-            if (harkenstudio::IsNull(item->runtimeId()))
+            if (harken::studio::types::IsNull(item->runtimeId()))
                 return {false, {}, "NOT_READY", "Container has no runtime identity"};
             const auto barrier = engine->currentWorldPlaybackBarrier();
             if (barrier.state != RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
@@ -341,9 +341,9 @@ void registerAuditionActions(ActionManager& mgr,
             }
             const int32_t status = auditionManager->resetPreviewContainer(
                 item->runtimeId());
-            if (HarkenEditor::AuditionManager::previewResetSucceeded(status))
+            if (harken::studio::AuditionManager::previewResetSucceeded(status))
                 return {true, QJsonObject{{"status", status}}};
-            if (HarkenEditor::AuditionManager::previewResetBackpressured(status))
+            if (harken::studio::AuditionManager::previewResetBackpressured(status))
                 return {false, {}, "BACKPRESSURE", "Preview reset was backpressured"};
             return {false, {}, "RESET_FAILED", "Preview reset refused"};
         };

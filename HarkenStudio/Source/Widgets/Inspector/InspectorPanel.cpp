@@ -44,7 +44,7 @@
 #include "Core/Components/VAudio.h"
 #include "Core/Components/VBus.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -640,7 +640,7 @@ void InspectorPanel::showCanvasNode(uint32_t anchorId)
     {
         auto& pm = ProjectManager::instance();
         if (auto* busItem = pm.findBusItem(anchorId)) {
-            if (auto* bc = busItem->comp<VNX::VBus>()) {
+            if (auto* bc = busItem->comp<harken::studio::VBus>()) {
                 showBusInspector(busItem->objectID);
                 return;
             }

@@ -1,7 +1,7 @@
 #include "IPCServerInternal.h"
 #include "FieldGroupProjectAdapter.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void IPCServer::registerSpatialHandlers()
 {

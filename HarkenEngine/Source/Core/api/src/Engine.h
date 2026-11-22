@@ -1983,15 +1983,15 @@ struct EngineServiceFeatureArrays {
         std::uint32_t memberCount = 0;
     };
     PlayableRefV1 variableControlPropertyRoot{};
-    Plan03GroupSliceIdentity initialLaneDiscreteGroup{};
-    Plan03GroupSliceIdentity initialLaneContinuousGroup{};
+    ScheduleGroupSliceIdentity initialLaneDiscreteGroup{};
+    ScheduleGroupSliceIdentity initialLaneContinuousGroup{};
     UnpublishedVariableGroupCancellation variableControlDiscreteGroupCancellation{};
     UnpublishedVariableGroupCancellation variableControlContinuousGroupCancellation{};
     EngineVariableTreeStorage variableControlRetargetIncoming;
-    Plan03GroupSliceIdentity variableControlDiscreteRetargetSlice{};
-    Plan03GroupSliceIdentity variableControlRetargetSlice{};
-    Plan03GroupSliceIdentity variableControlDiscreteDeferredSupersedeSlice{};
-    Plan03GroupSliceIdentity variableControlDeferredSupersedeSlice{};
+    ScheduleGroupSliceIdentity variableControlDiscreteRetargetSlice{};
+    ScheduleGroupSliceIdentity variableControlRetargetSlice{};
+    ScheduleGroupSliceIdentity variableControlDiscreteDeferredSupersedeSlice{};
+    ScheduleGroupSliceIdentity variableControlDeferredSupersedeSlice{};
     QueueCheckpointKey queueParentCheckpointKey{};
     QueueCheckpointKey queueCheckpointKey{};
     RandomQueueSeedContext queueParentRandomSeed{};
@@ -2063,11 +2063,11 @@ struct EngineSourceExit {
     QueuePageConditionalReceiver queueReceiver;
     EngineQueueChainFuture queueChain;
     std::unique_ptr<EngineOwnedQueueFutureFiling> queueFollowingFiling;
-    Plan03GroupSliceIdentity targetAdmission{};
+    ScheduleGroupSliceIdentity targetAdmission{};
     DecisionFuturePin sourceAdmissionLifetime{};
-    Plan03GroupReaderPin sourceAdmissionReader{};
+    ScheduleGroupReaderPin sourceAdmissionReader{};
     DecisionFuturePin lifetime{};
-    Plan03GroupReaderPin reader{};
+    ScheduleGroupReaderPin reader{};
     bool cancellationAccepted = false;
     std::vector<std::unique_ptr<Voice>> voices;
     std::vector<FrontierSourceExitVoice*> initialVoices;
@@ -2214,8 +2214,8 @@ struct EngineScheduleSourceSide {
     OriginalDecisionLifetimePin original;
     DecisionToken decision{};
     ArmGroupToken arms{};
-    CommittedPlan03GroupSlice page;
-    Plan03GroupSliceIdentity identity{};
+    CommittedScheduleGroupSlice page;
+    ScheduleGroupSliceIdentity identity{};
     std::vector<EngineScheduleAggregateChild*> children;
     std::vector<EngineScheduleCohortSource> sources;
     std::vector<TimelineArmToken> members;
@@ -2252,7 +2252,7 @@ struct EngineScheduleSourceCohort {
     OriginalDecisionLifetimePin original;
     DecisionToken decision{};
     ArmGroupToken arms{};
-    CommittedPlan03GroupSlice page;
+    CommittedScheduleGroupSlice page;
     FrontierActivationDescriptor descriptor{};
     std::vector<EngineScheduleSourceMember> children;
     std::vector<std::unique_ptr<EngineScheduleSourceSide>> sides;
@@ -2326,11 +2326,11 @@ struct EngineNativeEntryDependency {
     EnginePlayablePartitionToken parentPartition{};
     std::uint64_t invocationGeneration = 0;
     FrontierEntryReceiptRef entry{};
-    Plan03GroupSliceIdentity primary{};
-    Plan03GroupSliceIdentity member{};
+    ScheduleGroupSliceIdentity primary{};
+    ScheduleGroupSliceIdentity member{};
     DecisionFuturePin coordinatorPin{};
-    Plan03GroupReaderPin primaryPin{};
-    Plan03GroupReaderPin memberPin{};
+    ScheduleGroupReaderPin primaryPin{};
+    ScheduleGroupReaderPin memberPin{};
     std::unique_ptr<FrontierAppliedSignalDependency> appliedSignal;
     bool entryBound = false;
 };
@@ -2552,7 +2552,7 @@ public:
     bool variableControlMembershipExitObserved = false;
     bool variableControlRetargetSuperseded = false;
     bool variableControlDeferredSupersede = false;
-    Plan03GroupSliceIdentity variableControlDeferredCancellationSlice{};
+    ScheduleGroupSliceIdentity variableControlDeferredCancellationSlice{};
     std::uint32_t variableControlDeferredCancellationReasonBit = 0;
     HARKEN_MONITOR_FIELD MonitorControlCause pendingControlCause{};
     PlayableInstanceHandle pendingControlTarget = 0;
@@ -2674,19 +2674,19 @@ public:
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlPropertyRoot;
     }
-    Plan03GroupSliceIdentity& InitialLaneDiscreteGroup() noexcept {
+    ScheduleGroupSliceIdentity& InitialLaneDiscreteGroup() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->initialLaneDiscreteGroup;
     }
-    const Plan03GroupSliceIdentity& InitialLaneDiscreteGroup() const noexcept {
+    const ScheduleGroupSliceIdentity& InitialLaneDiscreteGroup() const noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->initialLaneDiscreteGroup;
     }
-    Plan03GroupSliceIdentity& InitialLaneContinuousGroup() noexcept {
+    ScheduleGroupSliceIdentity& InitialLaneContinuousGroup() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->initialLaneContinuousGroup;
     }
-    const Plan03GroupSliceIdentity& InitialLaneContinuousGroup() const noexcept {
+    const ScheduleGroupSliceIdentity& InitialLaneContinuousGroup() const noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->initialLaneContinuousGroup;
     }
@@ -2714,35 +2714,35 @@ public:
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlRetargetIncoming;
     }
-    Plan03GroupSliceIdentity& VariableControlDiscreteRetargetSlice() noexcept {
+    ScheduleGroupSliceIdentity& VariableControlDiscreteRetargetSlice() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDiscreteRetargetSlice;
     }
-    const Plan03GroupSliceIdentity& VariableControlDiscreteRetargetSlice() const noexcept {
+    const ScheduleGroupSliceIdentity& VariableControlDiscreteRetargetSlice() const noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDiscreteRetargetSlice;
     }
-    Plan03GroupSliceIdentity& VariableControlRetargetSlice() noexcept {
+    ScheduleGroupSliceIdentity& VariableControlRetargetSlice() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlRetargetSlice;
     }
-    const Plan03GroupSliceIdentity& VariableControlRetargetSlice() const noexcept {
+    const ScheduleGroupSliceIdentity& VariableControlRetargetSlice() const noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlRetargetSlice;
     }
-    Plan03GroupSliceIdentity& VariableControlDiscreteDeferredSupersedeSlice() noexcept {
+    ScheduleGroupSliceIdentity& VariableControlDiscreteDeferredSupersedeSlice() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDiscreteDeferredSupersedeSlice;
     }
-    const Plan03GroupSliceIdentity& VariableControlDiscreteDeferredSupersedeSlice() const noexcept {
+    const ScheduleGroupSliceIdentity& VariableControlDiscreteDeferredSupersedeSlice() const noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDiscreteDeferredSupersedeSlice;
     }
-    Plan03GroupSliceIdentity& VariableControlDeferredSupersedeSlice() noexcept {
+    ScheduleGroupSliceIdentity& VariableControlDeferredSupersedeSlice() noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDeferredSupersedeSlice;
     }
-    const Plan03GroupSliceIdentity& VariableControlDeferredSupersedeSlice() const noexcept {
+    const ScheduleGroupSliceIdentity& VariableControlDeferredSupersedeSlice() const noexcept {
         assert(featureArrays_ != nullptr);
         return featureArrays_->variableControlDeferredSupersedeSlice;
     }
@@ -3055,12 +3055,12 @@ struct EngineQueueContinuationRecord {
     ArmGroupToken coordinatorArmGroup{};
     bool coordinatorArmGroupPrepared = false;
     bool abortRetireCommittedCoordinator = false;
-    Plan03GroupSliceIdentity primaryGroup{};
-    Plan03GroupSliceIdentity prerequisiteMember{};
-    Plan03GroupSliceIdentity conditionalMember{};
-    Plan03GroupSliceIdentity targetMember{};
+    ScheduleGroupSliceIdentity primaryGroup{};
+    ScheduleGroupSliceIdentity prerequisiteMember{};
+    ScheduleGroupSliceIdentity conditionalMember{};
+    ScheduleGroupSliceIdentity targetMember{};
     TransitionInstanceToken sourceTransitionBinding{};
-    Plan03GroupReaderPin prerequisiteMemberPin{};
+    ScheduleGroupReaderPin prerequisiteMemberPin{};
     FrontierActivationDescriptor descriptor{};
     EnginePlayableServiceToken service{};
     QueueInstanceToken queue{};
@@ -3082,11 +3082,11 @@ struct EngineQueueFutureRecord {
     DecisionToken coordinator{};
     ArmGroupToken coordinatorArmGroup{};
     bool coordinatorArmGroupPrepared = false;
-    Plan03GroupSliceIdentity primaryGroup{};
-    Plan03GroupSliceIdentity prerequisiteMember{};
-    Plan03GroupSliceIdentity sourceMember{};
-    Plan03GroupSliceIdentity targetMember{};
-    Plan03GroupReaderPin prerequisiteMemberPin{};
+    ScheduleGroupSliceIdentity primaryGroup{};
+    ScheduleGroupSliceIdentity prerequisiteMember{};
+    ScheduleGroupSliceIdentity sourceMember{};
+    ScheduleGroupSliceIdentity targetMember{};
+    ScheduleGroupReaderPin prerequisiteMemberPin{};
     DecisionFuturePin parentPin{};
     FrontierEntryReceiptRef parentEntry{};
     FrontierActivationDescriptor descriptor{};
@@ -3116,12 +3116,12 @@ struct EngineQueueLaneRecordView {
     DecisionToken& coordinator;
     ArmGroupToken& coordinatorArmGroup;
     bool& coordinatorArmGroupPrepared;
-    Plan03GroupSliceIdentity& primaryGroup;
-    Plan03GroupSliceIdentity& prerequisiteMember;
-    Plan03GroupSliceIdentity& conditionalMember;
-    Plan03GroupSliceIdentity& targetMember;
+    ScheduleGroupSliceIdentity& primaryGroup;
+    ScheduleGroupSliceIdentity& prerequisiteMember;
+    ScheduleGroupSliceIdentity& conditionalMember;
+    ScheduleGroupSliceIdentity& targetMember;
     TransitionInstanceToken& sourceTransitionBinding;
-    Plan03GroupReaderPin& prerequisiteMemberPin;
+    ScheduleGroupReaderPin& prerequisiteMemberPin;
     FrontierActivationDescriptor& descriptor;
     EnginePlayableServiceToken& service;
     QueueInstanceToken& queue;
@@ -3138,7 +3138,7 @@ struct EngineQueueLaneRecordView {
     EngineQueueFutureRecord* future = nullptr;
 private:
     template<class Record>
-    EngineQueueLaneRecordView(Record& record, Plan03GroupSliceIdentity& source) noexcept
+    EngineQueueLaneRecordView(Record& record, ScheduleGroupSliceIdentity& source) noexcept
         : coordinatorReservation(record.coordinatorReservation), coordinator(record.coordinator),
           coordinatorArmGroup(record.coordinatorArmGroup), coordinatorArmGroupPrepared(record.coordinatorArmGroupPrepared),
           primaryGroup(record.primaryGroup), prerequisiteMember(record.prerequisiteMember), conditionalMember(source),
@@ -3264,8 +3264,8 @@ private:
     std::uint64_t attemptGeneration_ = 0, marker_ = 0;
     ImmediateLaneHandle lane_{};
     std::array<OriginalQueueFutureGroupRegistration*, 4> originals_{};
-    std::array<Plan03GroupSliceIdentity, 4> groups_{};
-    std::array<Plan03GroupSliceInput, 4> reservedInputs_{};
+    std::array<ScheduleGroupSliceIdentity, 4> groups_{};
+    std::array<ScheduleGroupSliceInput, 4> reservedInputs_{};
     std::uint64_t provisionalAnchor_ = 0;
     QueueInstanceToken queue_{};
     FrontierQueueInitialIdentity initial_{};
@@ -3417,13 +3417,13 @@ struct EngineImmediateQueueCoordinators {
     DecisionToken initialQueueCoordinator{};
     ArmGroupToken initialQueueCoordinatorArmGroup{};
     bool initialQueueCoordinatorArmGroupPrepared = false;
-    Plan03GroupSliceIdentity initialQueuePrimaryGroup{};
+    ScheduleGroupSliceIdentity initialQueuePrimaryGroup{};
     FrontierActivationDescriptor initialQueueDescriptor{};
     PreparedDecisionReservation queueContinuationCoordinatorReservation{};
     DecisionToken queueContinuationCoordinator{};
     ArmGroupToken queueContinuationCoordinatorArmGroup{};
     bool queueContinuationCoordinatorArmGroupPrepared = false;
-    Plan03GroupSliceIdentity queueContinuationPrimaryGroup{};
+    ScheduleGroupSliceIdentity queueContinuationPrimaryGroup{};
     FrontierActivationDescriptor queueContinuationDescriptor{};
 };
 
@@ -4319,7 +4319,7 @@ struct EngineInitialFrontierSide {
     EnginePlayableServiceReference service{};
     DecisionToken decision{};
     ArmGroupToken armGroup{};
-    Plan03GroupSliceIdentity group{};
+    ScheduleGroupSliceIdentity group{};
 };
 
 struct EngineInitialFrontierArmPin {
@@ -4900,9 +4900,9 @@ struct EngineActionPlayStorage {
         std::uint64_t earliestFrame = 0;
         std::uint64_t stoppingBlockerFrame = 0;
         FrontierEntryReceiptRef stoppingEntry{};
-        Plan03GroupSliceIdentity stoppingMember{};
-        Plan03GroupSliceIdentity stoppingPrimary{};
-        Plan03UnpublishedRetirementToken unpublishedRetirement{};
+        ScheduleGroupSliceIdentity stoppingMember{};
+        ScheduleGroupSliceIdentity stoppingPrimary{};
+        ScheduleUnpublishedRetirementToken unpublishedRetirement{};
         LeaseDisposition lease = LeaseDisposition::RecordOwns;
         bool active = false;
         bool fault = false;
@@ -4951,7 +4951,7 @@ struct EngineActionPlayStorage {
     std::vector<TimelineArmTable::Row*> pendingInitialVcRows;
     TimelineArmTable::UnpublishedPendingRetirementProof initialVcRetirementProof{};
     FrontierEntryReceiptRef initialVcRetirementEntry{};
-    Plan03GroupSliceIdentity initialVcRetirementPrimary{};
+    ScheduleGroupSliceIdentity initialVcRetirementPrimary{};
     bool initialVcRetirementDecisionsOpen = false;
     bool initialVcUnboundRetirementConsumed = false;
     std::vector<TimelineArmToken> retiredInitialVcArms;
@@ -4978,7 +4978,7 @@ struct EngineActionPlayStorage {
     std::vector<EngineFrontierAttemptToken> queueFutureAttempts;
     std::vector<EngineQueueFutureAttemptOwnerContext> queueFutureOwners;
     std::vector<EngineFrontierWorkItem> frontierPolicies;
-    std::vector<CommittedPlan03GroupSlice> initialControlSlices;
+    std::vector<CommittedScheduleGroupSlice> initialControlSlices;
     std::vector<EngineInitialFrontierSide> initialFrontierSides;
     std::vector<DecisionParticipantRef> initialFrontierParticipants;
     std::vector<PreparedDecisionReservation> nestedContinuousDecisions;
@@ -5083,8 +5083,8 @@ struct EngineActionPlayScratch {
         enum class Backing : std::uint8_t { None, Page, ImmediateLane };
         Backing backing = Backing::None;
         std::uint64_t cohortRoot = 0;
-        std::array<Plan03GroupSliceIdentity, 2> laneSides{};
-        Plan03GroupSliceIdentity lanePrimary{};
+        std::array<ScheduleGroupSliceIdentity, 2> laneSides{};
+        ScheduleGroupSliceIdentity lanePrimary{};
         std::array<PreparedPrivateImmediateLaneGroup, 3> laneOriginals{};
         std::array<PrivateImmediateLaneGroupTransferProof, 3> laneTransferProofs{};
         std::span<ImmediateLaneMemberManifest> laneMemberManifests{};
@@ -5109,13 +5109,13 @@ struct EngineActionPlayScratch {
         bool pageTransferRequired = false;
         PreparedPageGroupTransferScope pageTransferScope{};
         std::array<PreparedPageGroupTransferProof, 3> pageTransferProofs{};
-        std::array<Plan03GroupSliceIdentity, 3> pageProspectiveIdentities{};
-        std::array<Plan03GroupSliceIdentity, 2> pageConsumedSideIdentities{};
+        std::array<ScheduleGroupSliceIdentity, 3> pageProspectiveIdentities{};
+        std::array<ScheduleGroupSliceIdentity, 2> pageConsumedSideIdentities{};
         void ReleasePageTransferProofs() noexcept {
             pageBatchTransferProof.Release();
             for (auto& proof : pageTransferProofs) proof.Release();
         }
-        bool PageTransferHeld(const PreparedPlan03GroupSlice& primary) const noexcept {
+        bool PageTransferHeld(const PreparedScheduleGroupSlice& primary) const noexcept {
             if (pageBatchTransferProof.Valid()) return true;
             if (primary.Held()) return true;
             for (const auto& original : sides) if (original.Held()) return true;
@@ -5145,8 +5145,8 @@ struct EngineActionPlayScratch {
         DecisionReserveRequest coordinatorRequest{};
         DecisionToken coordinator{};
         ArmGroupToken coordinatorGroup{};
-        std::array<PreparedPlan03GroupSlice, 2> sides{};
-        std::array<Plan03GroupSliceInput, 2> descriptors{};
+        std::array<PreparedScheduleGroupSlice, 2> sides{};
+        std::array<ScheduleGroupSliceInput, 2> descriptors{};
         std::array<TimelineArmToken, 2> members{};
     } privateInitialVcPageCohort{};
     std::uint32_t frontierCurrentVoiceOwnerCount = 0;
@@ -5301,7 +5301,7 @@ struct EngineActionPlayScratch {
     static constexpr std::size_t kPendingVariableReplacementQueueCapacity = 2u * kMaxKnownScheduleLeaves;
     static constexpr std::size_t kPendingVariableReplacementGroupCapacity =
         kPendingVariableReplacementControlCapacity + 1u + 4u * kPendingVariableReplacementQueueCapacity;
-    std::vector<Plan03GroupSliceIdentity> pendingVariableReplacementGroups;
+    std::vector<ScheduleGroupSliceIdentity> pendingVariableReplacementGroups;
     struct PendingVariableReplacementQueueLane {
         std::uint32_t queueIndex = UINT32_MAX;
         std::uint32_t recordIndex = UINT32_MAX;
@@ -5383,8 +5383,8 @@ struct EngineActionPlayScratch {
     DecisionToken frontierCoordinator{};
     bool frontierCoordinatorCancelled = false;
     ArmGroupToken frontierCoordinatorGroup{};
-    PreparedPlan03GroupSlice frontierPreparedPrimary{};
-    CommittedPlan03GroupSlice frontierPrimary{};
+    PreparedScheduleGroupSlice frontierPreparedPrimary{};
+    CommittedScheduleGroupSlice frontierPrimary{};
     FrontierActivationDescriptor frontierDescriptor{};
     PreparedQueueSignalAdvanceV1 frontierSignal{};
     struct InitialQueueSignalAdmission {
@@ -5394,9 +5394,9 @@ struct EngineActionPlayScratch {
         EnginePlayableServiceReference service{};
         DecisionToken decision{};
         ArmGroupToken armGroup{};
-        PreparedPlan03GroupSlice prepared{};
-        CommittedPlan03GroupSlice committed{};
-        Plan03GroupSliceIdentity group{};
+        PreparedScheduleGroupSlice prepared{};
+        CommittedScheduleGroupSlice committed{};
+        ScheduleGroupSliceIdentity group{};
         bool decisionCommitted = false;
         bool decisionCancelled = false;
         bool signalBound = false;
@@ -5421,9 +5421,9 @@ struct EngineActionPlayScratch {
         std::uint64_t entryFrame = 0;
         DecisionToken decision{};
         ArmGroupToken armGroup{};
-        PreparedPlan03GroupSlice prepared{};
-        CommittedPlan03GroupSlice committed{};
-        Plan03GroupSliceIdentity group{};
+        PreparedScheduleGroupSlice prepared{};
+        CommittedScheduleGroupSlice committed{};
+        ScheduleGroupSliceIdentity group{};
         bool decisionCommitted = false;
         bool decisionCancelled = false;
         bool initialBound = false;
@@ -5558,7 +5558,7 @@ public:
     std::uint32_t variableControlChildCount = 0;
     PreparedDecisionReservation variableControlDiscreteDecision{};
     PreparedDecisionReservation variableControlContinuousDecision{};
-    std::vector<CommittedPlan03GroupSlice>& variableControlInitialCommittedSlices;
+    std::vector<CommittedScheduleGroupSlice>& variableControlInitialCommittedSlices;
     std::uint32_t variableControlInitialCommittedSliceCount = 0;
     PreparedQueueInstanceV1 queueInstance{};
     // Parent Queue token for an Action that enters a nested Queue. The
@@ -5595,8 +5595,8 @@ public:
     PreparedTransactionBatch queueTransactions{};
     PreparedTransactionBatch queueCurrentStartTransactions{};
     std::vector<PreparedDeferredPost> queueCurrentDeferredStarts;
-    std::array<PreparedPlan03GroupSlice, 2> queueGroupSlices{};
-    std::array<CommittedPlan03GroupSlice, 2> queueCommittedGroupSlices{};
+    std::array<PreparedScheduleGroupSlice, 2> queueGroupSlices{};
+    std::array<CommittedScheduleGroupSlice, 2> queueCommittedGroupSlices{};
     PreparedQueueConditionalV1 queueConditional{};
     // Same-call native output alias, never reconstructed from a Queue snapshot.
     QueueInstanceTable::OriginalConditionalFutureReservation* initialOriginalConditional = nullptr;
@@ -5895,7 +5895,7 @@ struct EngineActionQueueReplacementScratch {
     PreparedDecisionReservation successorDecision{};
     EnginePreparedAuthoredStop inheritedStop{};
     PreparedQueueConditionalReplacementV1 conditional{};
-    std::array<PreparedPlan03GroupSliceReplacement, 2> groupSlices{};
+    std::array<PreparedScheduleGroupSliceReplacement, 2> groupSlices{};
     ArmGroupToken armGroup{};
     EffectiveQueueState next{};
     KnownCompletionPredicateV1 replacementCompletion{};
@@ -6191,7 +6191,7 @@ struct Engine {
         enum class State : std::uint32_t { Available, Borrowed, Consumed };
         EngineQueueRoleDirectory directory;
         std::vector<EngineActionPlayScratch::PendingVariableReplacementControl> controls;
-        std::vector<Plan03GroupSliceIdentity> groups;
+        std::vector<ScheduleGroupSliceIdentity> groups;
         std::vector<EngineActionPlayScratch::PendingVariableReplacementQueueLane> lanes;
         QueueCheckpointTable::BackingPreparation checkpoints;
         EngineFrontierAttemptToken borrower{};
@@ -6380,7 +6380,7 @@ struct Engine {
         EnginePlayableServiceReference service{};
         EnginePlayablePartitionToken partition{};
         QueueInstanceToken queue{};
-        Plan03GroupSliceIdentity identity{};
+        ScheduleGroupSliceIdentity identity{};
         OriginalQueueFutureGroupScope scope{};
         std::uint64_t attemptGeneration = 0;
         std::uint64_t recordGeneration = 0;
@@ -6390,7 +6390,7 @@ struct Engine {
         std::size_t memberOffset = SIZE_MAX;
         RecordKind recordKind = RecordKind::None;
         Role role = Role::Primary;
-        Plan03GroupSliceIdentity prerequisite{};
+        ScheduleGroupSliceIdentity prerequisite{};
         EnginePlayableServiceReference prerequisiteService{};
         FrontierEntryReceiptRef prerequisiteEntry{};
         bool disposed = false;
@@ -6560,7 +6560,7 @@ struct Engine {
             DecisionReserveRequest input{};
             BankVersionToken bank{};
             ArmGroupToken armGroup{};
-            Plan03GroupSliceIdentity group{};
+            ScheduleGroupSliceIdentity group{};
             std::uint32_t memberCount = 0;
             VariableControlInstanceTable::OriginalInitialSideReceipt original;
             bool sideReturned = false;
@@ -6646,7 +6646,7 @@ struct Engine {
             ArmGroupToken coordinatorGroup{};
             std::vector<DecisionToken> decisions;
             std::vector<ArmGroupToken> armGroups;
-            std::vector<Plan03GroupSliceIdentity> nativeGroups;
+            std::vector<ScheduleGroupSliceIdentity> nativeGroups;
             std::vector<PlayableInstanceHandle> children;
             std::vector<std::uint64_t> childEpochs;
             std::uint32_t nativeGroupCount = 0;
@@ -6680,7 +6680,7 @@ struct Engine {
             std::size_t StorageBytes() const noexcept {
                 return decisions.capacity() * sizeof(DecisionToken) +
                     armGroups.capacity() * sizeof(ArmGroupToken) +
-                    nativeGroups.capacity() * sizeof(Plan03GroupSliceIdentity) +
+                    nativeGroups.capacity() * sizeof(ScheduleGroupSliceIdentity) +
                     children.capacity() * sizeof(PlayableInstanceHandle) +
                     childEpochs.capacity() * sizeof(std::uint64_t) +
                     armGroupsReturned.capacity() * sizeof(std::uint8_t) +
@@ -7391,14 +7391,14 @@ public:
         timelinePoolConfig.maxCurrentSlicesPerQuantum =
             resolved.maxEventsPerQuantum;
         timelinePoolConfig.maxNativeStartCalendarsPerQuantum = variables.ReadCutCapacity();
-        timelinePoolConfig.maxPlan03GroupHeadersPerPage =
-            resolved.maxPlan03GroupHeadersPerPage;
+        timelinePoolConfig.maxScheduleGroupHeadersPerPage =
+            resolved.maxScheduleGroupHeadersPerPage;
         timelinePoolConfig.maxArmsPerGroup = resolved.maxArmsPerGroup;
         const auto laneHorizonQuanta =
             resolved.scheduleHorizonFrames / resolved.blockFrames;
         const auto laneGroupLimit =
             static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max());
-        const auto groupsPerBucket = resolved.maxPlan03GroupHeadersPerPage;
+        const auto groupsPerBucket = resolved.maxScheduleGroupHeadersPerPage;
         if (groupsPerBucket != 0 &&
             (laneHorizonQuanta > laneGroupLimit / groupsPerBucket ||
              resolved.maxDeferredIntents >
@@ -7421,9 +7421,9 @@ public:
                 privateLaneMetadataCapacity,
                 resolved.maxEventsPerQuantum,
                 resolved.blockFrames, true,
-                resolved.maxPlan03GroupHeadersPerPage}) ||
+                resolved.maxScheduleGroupHeadersPerPage}) ||
             !timelineSink.AttachImmediateLane(immediateActionLane, resolved.blockFrames) ||
-            !timelineSink.AttachPlan03ScratchAuthority(decisions,
+            !timelineSink.AttachScheduleScratchAuthority(decisions,
                                                        timelinePool) ||
             !timelineSink.AttachTransitionAuthority(
                 transitionInstances) ||
@@ -7492,15 +7492,15 @@ public:
             throw std::bad_alloc{};
         if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw std::bad_alloc{};
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
-            resolved.maxPlan03GroupHeadersPerPage;
+            resolved.maxScheduleGroupHeadersPerPage;
         if (pageGroupRows >
             std::numeric_limits<std::size_t>::max() /
-                sizeof(Plan03GroupSliceInput))
+                sizeof(ScheduleGroupSliceInput))
             throw std::bad_alloc{};
         const auto groupScratchCount = pageGroupRows +
             timelinePoolConfig.maxImmediateLaneGroupRows;
         if (groupScratchCount > UINT32_MAX ||
-            groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(Plan03PageGroupView))
+            groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(SchedulePageGroupView))
             throw std::bad_alloc{};
         if (!timelineGroupCaptureScratch.Reserve(static_cast<std::uint32_t>(groupScratchCount)))
             throw std::bad_alloc{};
@@ -7529,7 +7529,7 @@ public:
                 sizeof(ImmediateLaneEvent));
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
-                sizeof(Plan03ImmediateLaneGroupDescriptor));
+                sizeof(ScheduleImmediateLaneGroupDescriptor));
         if (!initialQueueLaneGroupsScratch.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
             throw std::bad_alloc{};
         if (!timelinePool.AttachImmediateLaneRowStoragePreparation(this,
@@ -9637,7 +9637,7 @@ public:
     void TransferPendingVariableQueueNativeOrigins(OriginalPendingVariableGroupHolder& group) noexcept;
     bool ReturnDisposedPendingVariableQueueNativeOrigins(OriginalPendingVariableGroupHolder& group) noexcept;
     static void ObservePendingVariableQueueNativeDisposal(void* context,
-        Plan03GroupSliceIdentity identity, std::uint64_t root, std::uint64_t domain) noexcept;
+        ScheduleGroupSliceIdentity identity, std::uint64_t root, std::uint64_t domain) noexcept;
 
     bool PreparePendingVariableGroupRetentions(EngineActionPlayScratch& scratch,
         const PlayableInstanceTable::PreparedParentLinksProof& links,
@@ -9759,8 +9759,8 @@ public:
     }
 
     bool SealPendingVariableGroupInitialSideNativeGroup(EngineActionPlayScratch& scratch,
-        EnginePlayableServiceRow& service, bool discrete, const Plan03GroupSliceIdentity& identity,
-        const Plan03GroupSliceInput& input) noexcept;
+        EnginePlayableServiceRow& service, bool discrete, const ScheduleGroupSliceIdentity& identity,
+        const ScheduleGroupSliceInput& input) noexcept;
 
     bool AcceptPendingVariableGroup(EngineActionPlayScratch& scratch) noexcept {
         auto* prepared = PreparedPendingVariableGroupFor(scratch.storage);
@@ -9873,8 +9873,8 @@ public:
         VariableControlSide side) noexcept;
 
     bool MatchesPendingVariableRetiredNativeScope(const OriginalPendingVariableGroupHolder& group,
-        const Plan03GroupSliceIdentity& identity, std::uint64_t root, std::uint64_t anchor,
-        const Plan03GroupSliceInput& input) noexcept;
+        const ScheduleGroupSliceIdentity& identity, std::uint64_t root, std::uint64_t anchor,
+        const ScheduleGroupSliceInput& input) noexcept;
 
     OriginalPendingVariableGroupHolder* OriginalPendingVariableGroupForPreparing(
         EngineActionPlayScratch& scratch, const EngineImmediateEntryAttempt& attempt,
@@ -10031,7 +10031,7 @@ public:
         const auto groupSpan = std::size_t{3} + group->nestedInitialSideCount + group->queueNativeOriginCount;
         if (groupSpan > EngineActionPlayScratch::kPendingVariableReplacementGroupCapacity ||
             groupSpan > nativeGroups.size()) return false;
-        std::fill(nativeGroups.begin(), nativeGroups.end(), Plan03GroupSliceIdentity{});
+        std::fill(nativeGroups.begin(), nativeGroups.end(), ScheduleGroupSliceIdentity{});
         nativeGroups[0] = scratch.frontierDescriptor.primary;
         nativeGroups[1] = row.InitialLaneDiscreteGroup();
         nativeGroups[2] = row.InitialLaneContinuousGroup();
@@ -10147,13 +10147,13 @@ public:
         for (std::size_t index = 0; index < count; ++index) {
             const auto& identity = captures[index].identity;
             if (registered && std::count(nativeGroups.begin(), nativeGroups.end(), identity) == 0) continue;
-            Plan03PageGroupView native{};
+            SchedulePageGroupView native{};
             if (std::count(nativeGroups.begin(), nativeGroups.end(), identity) != 1 ||
                 identity.committedRow >= originalQueueGroupHolders.size() ||
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     originalQueueGroupHolders[identity.committedRow], identity, attempt.root) ||
-                !timelinePool.PrivatePlan03GroupBindable(identity) ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier != nullptr ||
+                !timelinePool.PrivateScheduleGroupBindable(identity) ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.frontier != nullptr ||
                 native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
             const auto& owner = timelinePool.immediateLaneGroups_[identity.committedRow];
             const bool unbound = owner.laneOwner == nullptr && owner.laneSlot == UINT32_MAX && owner.laneGeneration == 0;
@@ -10318,7 +10318,7 @@ public:
         std::size_t censusBytes = 0;
         const auto replacementBytes = [](const auto& controls, const auto& groups, const auto& lanes) noexcept {
             return controls.capacity() * sizeof(EngineActionPlayScratch::PendingVariableReplacementControl) +
-                groups.capacity() * sizeof(Plan03GroupSliceIdentity) +
+                groups.capacity() * sizeof(ScheduleGroupSliceIdentity) +
                 lanes.capacity() * sizeof(EngineActionPlayScratch::PendingVariableReplacementQueueLane);
         };
         for (const auto& scratch : actionPlayScratch)
@@ -11596,8 +11596,8 @@ public:
         return true;
     }
     bool ReserveInitialSoundQueueCompanionPrimary(EngineImmediateEntryAttempt& attempt,
-        bool continuation, std::uint64_t anchor, const Plan03GroupSliceInput& input,
-        Plan03GroupSliceIdentity* out) noexcept {
+        bool continuation, std::uint64_t anchor, const ScheduleGroupSliceInput& input,
+        ScheduleGroupSliceIdentity* out) noexcept {
         const bool originalC0 = OriginalInitialC0FactoryRequested(attempt);
         if (!HasInitialSoundQueueCohort(attempt) && !originalC0)
             return ReserveOriginalQueueLaneGroup(attempt.root, anchor, input, timelineArms, out);
@@ -12164,7 +12164,7 @@ public:
     }
 private:
     bool RecordOriginalInitialC0GroupFactoryOutput(EngineImmediateEntryAttempt& attempt,
-        std::uint32_t role, std::uint64_t anchor, const Plan03GroupSliceInput& input,
+        std::uint32_t role, std::uint64_t anchor, const ScheduleGroupSliceInput& input,
         OriginalQueueFutureGroupRegistration& actual) noexcept {
         if (attempt.originalC0Factory == nullptr) return false;
         auto& record = *attempt.originalC0Factory;
@@ -12186,8 +12186,8 @@ private:
 
 public:
     bool ReserveOriginalInitialC0MemberGroup(EngineImmediateEntryAttempt& attempt,
-        bool conditional, std::uint64_t anchor, const Plan03GroupSliceInput& input,
-        Plan03GroupSliceIdentity* out, OriginalQueueFutureGroupRegistration** issued) noexcept {
+        bool conditional, std::uint64_t anchor, const ScheduleGroupSliceInput& input,
+        ScheduleGroupSliceIdentity* out, OriginalQueueFutureGroupRegistration** issued) noexcept {
         const auto role = conditional ? 3u : 1u;
         if (attempt.originalC0Factory == nullptr) return false;
         auto& record = *attempt.originalC0Factory;
@@ -12617,7 +12617,7 @@ public:
         PreparedDecisionReservation coordinator;
         DecisionTable::PreparedTicketCommitProof coordinatorTicket, memberTicket, sourceTicket;
         std::array<DecisionToken, 2> decisions{};
-        std::array<Plan03GroupSliceIdentity, 2> groups{};
+        std::array<ScheduleGroupSliceIdentity, 2> groups{};
         ArmGroupToken coordinatorArms{};
         FrontierEntryReceiptRef entry{};
         std::uint64_t relativeFrame = 0;
@@ -12738,7 +12738,7 @@ public:
                     scratch.successorDecision.OriginalRequest(), order.Sequence(), &holder.sourceTicket)) return false;
         }
         for (std::uint32_t i = 0; i < holder.groups.size(); ++i) {
-            Plan03GroupSliceInput input{};
+            ScheduleGroupSliceInput input{};
             input.decision = holder.decisions[i];
             input.executeFrame = holder.relativeFrame;
             if (i == 1 && !scratch.sameProgramKey) {
@@ -12941,7 +12941,7 @@ public:
         const auto* original = row == nullptr ? nullptr : OriginalQueueConditionalForService(*row);
         PrivateSelectedQueueFutureSpanPool::ConditionalBacking selected{};
         QueueInstanceTable::OriginalConditionalInitialClockBinding clock{};
-        Plan03PageGroupView prerequisite{};
+        SchedulePageGroupView prerequisite{};
         TimelineTransactionProgramRef controller{};
         QueueInstanceSnapshot queue{};
         if (original == nullptr || original->initialGroup == nullptr ||
@@ -12949,7 +12949,7 @@ public:
             !holder.conditionalReader.Capture(&selected) ||
             !queueInstances.Capture(holder.queue, &queue) ||
             queue.pendingVersion != selected.version.version ||
-            !timelinePool.ResolvePlan03GroupSliceProducer(original->initialGroup->Identity(), &prerequisite) ||
+            !timelinePool.ResolveScheduleGroupSliceProducer(original->initialGroup->Identity(), &prerequisite) ||
             prerequisite.frontier == nullptr || !prerequisite.frontier->Valid() ||
             prerequisite.frontier->role != FrontierGroupRole::EntryMember ||
             !decisions.CaptureFrontierControlProgram(holder.decisions[0], &controller) ||
@@ -12994,12 +12994,12 @@ public:
                 binding.queueConditional = {holder.queue.slot, holder.queue.generation,
                     queue.logicMirror.version, selected.version.version, selected.current, selected.successor};
             }
-            if (!timelinePool.BindPlan03GroupFrontier(holder.groups[i], binding)) return false;
+            if (!timelinePool.BindScheduleGroupFrontier(holder.groups[i], binding)) return false;
             ++holder.frontierBoundCount;
         }
         if (!holder.conditionalBound) {
-            Plan03PageGroupView member{};
-            if (!timelinePool.ResolvePlan03GroupSliceProducer(holder.groups[1], &member) || member.frontier == nullptr ||
+            SchedulePageGroupView member{};
+            if (!timelinePool.ResolveScheduleGroupSliceProducer(holder.groups[1], &member) || member.frontier == nullptr ||
                 !queueInstances.BindFrontierConditional(holder.queue, *member.frontier, timelinePool) ||
                 !decisions.BindFrontierDecision(holder.decisions[1], *member.frontier, timelinePool)) return false;
             holder.conditionalBound = true;
@@ -13025,7 +13025,7 @@ public:
             holder.phase = OriginalQueueReplacementHolder::Phase::Retiring;
         }
         while (holder.frontierBoundCount != 0) {
-            if (!timelinePool.DetachPlan03GroupFrontier(holder.groups[holder.frontierBoundCount - 1], completed))
+            if (!timelinePool.DetachScheduleGroupFrontier(holder.groups[holder.frontierBoundCount - 1], completed))
                 return false;
             --holder.frontierBoundCount;
         }
@@ -13387,7 +13387,7 @@ public:
     }
 
     bool OriginalQueueOwnsUnpublishedGroup(const EngineImmediateEntryAttempt& attempt,
-        const Plan03GroupSliceIdentity& group) const noexcept {
+        const ScheduleGroupSliceIdentity& group) const noexcept {
         const auto* holder = OriginalQueueConditionalForAttempt(attempt);
         return holder != nullptr &&
             holder->projection.OwnsUnpublishedGroup(immediateActionLane, attempt.lane, group);
@@ -13730,7 +13730,7 @@ public:
         return original != nullptr && original->baseline.Borrow(out);
     }
 
-    Plan03GroupSliceIdentity ConsumeOriginalQueueLaneGroup(
+    ScheduleGroupSliceIdentity ConsumeOriginalQueueLaneGroup(
         PrivateImmediateLaneGroupTransferProof&& proof,
         OriginalQueueFutureGroupRegistration** issued = nullptr) noexcept {
         const auto identity = proof.Identity();
@@ -13745,8 +13745,8 @@ public:
     }
 
     bool ReserveOriginalQueueLaneGroup(std::uint64_t cohortRoot,
-        std::uint64_t anchor, const Plan03GroupSliceInput& input,
-        const TimelineArmTable& arms, Plan03GroupSliceIdentity* out,
+        std::uint64_t anchor, const ScheduleGroupSliceInput& input,
+        const TimelineArmTable& arms, ScheduleGroupSliceIdentity* out,
         PreparedPrivateImmediateLaneGroup* callerOriginal = nullptr,
         OriginalQueueFutureGroupRegistration** issued = nullptr) noexcept {
         if (issued != nullptr && (*issued != nullptr || callerOriginal != nullptr)) return false;
@@ -13754,7 +13754,7 @@ public:
             return timelinePool.ReserveImmediateLaneGroup(cohortRoot, anchor, input, arms,
                 out, callerOriginal);
         if (out == nullptr || out->Valid()) return false;
-        Plan03GroupSliceIdentity identity{};
+        ScheduleGroupSliceIdentity identity{};
         PreparedPrivateImmediateLaneGroup original;
         if (!timelinePool.ReserveImmediateLaneGroup(cohortRoot, anchor, input, arms,
                 &identity, &original)) return false;
@@ -13772,7 +13772,7 @@ public:
     }
 
     bool CancelOriginalQueueLaneGroup(std::uint64_t cohortRoot,
-        const Plan03GroupSliceIdentity& identity) noexcept {
+        const ScheduleGroupSliceIdentity& identity) noexcept {
         if (identity.committedRow >= originalQueueGroupHolders.size()) return false;
         auto& original = originalQueueGroupHolders[identity.committedRow];
         return timelinePool.CancelPrivateImmediateLaneGroup(cohortRoot, identity,
@@ -13786,7 +13786,7 @@ public:
     }
 
     bool BorrowOriginalQueueFutureGroup(const EnginePlayableServiceReference& service,
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         OriginalQueueFutureGroupLifetimePin* out) noexcept {
         auto* row = ResolvePlayableService(service);
         if (row == nullptr || !row->InvocationValid() ||
@@ -13978,9 +13978,9 @@ public:
         initialQueueTimingProgramsScratch;
     StableRowStorage<EngineInitialQueueTimingEvent>
         initialQueueTimingEventsScratch;
-    StableRowStorage<Plan03GroupSliceInput>
+    StableRowStorage<ScheduleGroupSliceInput>
         initialQueueTimingGroupsScratch;
-    StableRowStorage<Plan03ImmediateLaneGroupDescriptor>
+    StableRowStorage<ScheduleImmediateLaneGroupDescriptor>
         initialQueueLaneGroupsScratch;
     StableRowStorage<EngineImmediateEntryAttempt> immediateEntryAttempts;
     std::uint32_t activeImmediateEntryAttemptCount = 0;
@@ -15096,7 +15096,7 @@ public:
             member.leafInstance, member.leafEpoch};
         return true;
     }
-    StableRowStorage<Plan03PageGroupView> timelineGroupCaptureScratch;
+    StableRowStorage<SchedulePageGroupView> timelineGroupCaptureScratch;
     ScheduledTransactionPool::PendingEventStorageRegistration timelineGroupCapturePreparation;
     std::uint32_t preparedPageGroupCaptures = 0;
     std::uint32_t preparedLaneGroupCaptures = 0;
@@ -15830,45 +15830,6 @@ inline bool Engine::OriginalPlayableServiceLifetimePin::Borrow(OriginalPlayableS
     return out != this && Valid() && engine_->BorrowOriginalPlayableServiceLifetime(*original_, out);
 }
 
-inline VnResult AcquireMasterClaimKind(Engine& engine, std::uint8_t kind,
-                                      std::uint64_t fingerprint) {
-    auto& claim = engine.masterClaim;
-    std::uint8_t* bit = nullptr;
-    if (kind == 1) {
-        bit = &claim.packHeld;
-    } else if (kind == 2) {
-        bit = &claim.previewHeld;
-    } else if (kind == 3) {
-        bit = &claim.directHeld;
-    } else {
-        return VN_INVALID_ARG;
-    }
-    if (claim.packHeld == 0 && claim.previewHeld == 0 && claim.directHeld == 0) {
-        claim.fingerprint = fingerprint;
-        *bit = 1;
-        return VN_OK;
-    }
-    if (claim.fingerprint != fingerprint) {
-        return VN_IN_USE;
-    }
-    *bit = 1;
-    return VN_OK;
-}
-
-inline void ReleaseMasterClaimKind(Engine& engine, std::uint8_t kind) noexcept {
-    auto& claim = engine.masterClaim;
-    if (kind == 1) {
-        claim.packHeld = 0;
-    } else if (kind == 2) {
-        claim.previewHeld = 0;
-    } else if (kind == 3) {
-        claim.directHeld = 0;
-    }
-    if (claim.packHeld == 0 && claim.previewHeld == 0 && claim.directHeld == 0) {
-        claim.fingerprint = 0;
-    }
-}
-
 namespace detail {
 
 inline bool ActionConsumerCanReachImmediateQuantum(
@@ -15896,9 +15857,6 @@ bool CommitPreparedVariableControlOwnerForTests(
 // Internal construction-only limits; zero restores the resolved default.
 // Tests can reduce either bound before Init without mutating a live config.
 void SetPlayableCapacitiesForTests(std::uint32_t playable, std::uint32_t modes) noexcept;
-// kind: 1=pack, 2=preview, 3=direct. Same-F is idempotent; different F is VN_IN_USE.
-VnResult AcquireMasterClaimForTests(std::uint8_t kind, std::uint64_t fingerprint);
-void ReleaseMasterClaimForTests(std::uint8_t kind) noexcept;
 #endif
 bool CancelPreparedQueueInstanceOwnerForTests(
     EngineActionPlayScratch::PreparedQueueInstanceOwnerContext* context)

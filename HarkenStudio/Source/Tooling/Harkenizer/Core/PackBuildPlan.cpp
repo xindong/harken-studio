@@ -13,7 +13,7 @@
 #include <map>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 const BindingRuntimeLowering& PackBuildContext::bindingLowering()
 {
@@ -37,15 +37,15 @@ namespace PackBuildPlanning {
 namespace {
 
 std::vector<const ProjectItem*> actions(const ProjectData& project,
-                                        harkenstudio::ObjectId actionStableId)
+                                        harken::studio::types::ObjectId actionStableId)
 {
     std::vector<const ProjectItem*> result;
     for (const auto* binding : project.allFileBindings()) {
         if (!binding || !binding->rootItem) continue;
         std::function<void(const ProjectItem*)> visit = [&](const ProjectItem* item) {
             if (!item) return;
-            if (item->type == ProjectItem::Type::Action && !harkenstudio::IsNull(item->runtimeId())
-                && (harkenstudio::IsNull(actionStableId) || item->runtimeId() == actionStableId))
+            if (item->type == ProjectItem::Type::Action && !harken::studio::types::IsNull(item->runtimeId())
+                && (harken::studio::types::IsNull(actionStableId) || item->runtimeId() == actionStableId))
                 result.push_back(item);
             for (const auto& child : item->children) visit(child.get());
         };
@@ -91,11 +91,11 @@ bool localizedClosure(const ActionClosurePlan& closure, const ActionClosureBuild
     return localized(closure.objects) || localized(closure.controlObjects);
 }
 
-std::map<harkenstudio::ObjectId, bool> localizedActionsFor(
+std::map<harken::studio::types::ObjectId, bool> localizedActionsFor(
     const std::vector<const ProjectItem*>& actionItems,
     const ActionClosureBuildContext& context)
 {
-    std::map<harkenstudio::ObjectId, bool> localizedActions;
+    std::map<harken::studio::types::ObjectId, bool> localizedActions;
     for (const auto* action : actionItems) {
         const auto closure = context.contentReferences(action->runtimeId());
         localizedActions.emplace(action->runtimeId(), localizedClosure(closure, context));
@@ -103,7 +103,7 @@ std::map<harkenstudio::ObjectId, bool> localizedActionsFor(
     return localizedActions;
 }
 
-PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actionStableId,
+PackBuildPlan buildImpl(const ProjectData& project, harken::studio::types::ObjectId actionStableId,
                         const QStringList& requestedPlatforms,
                         const QStringList& requestedLanguages,
                         const QString& singleActionArtifactName, bool includeUnchecked,
@@ -186,7 +186,7 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
                     project, action->runtimeId(), variant.variant, context, closures);
                 variant.capability = RuntimeCapabilityMatrix::assessForContext(
                     *action, project, RuntimeCapabilityOperation::PackBuild, variant.variant, context);
-                std::map<harkenstudio::ObjectId, std::vector<harkenstudio::ObjectId>> dependencies;
+                std::map<harken::studio::types::ObjectId, std::vector<harken::studio::types::ObjectId>> dependencies;
                 for (const auto& edge : variant.closure.edges)
                     if (edge.reason == ActionClosureEdgeReason::PostAction)
                         dependencies[edge.fromStableId].push_back(edge.toStableId);
@@ -194,12 +194,12 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
                     std::sort(targets.begin(), targets.end());
                     targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
                 }
-                std::set<harkenstudio::ObjectId> visited;
-                std::set<harkenstudio::ObjectId> active;
-                std::function<void(harkenstudio::ObjectId)> append = [&](harkenstudio::ObjectId id) {
+                std::set<harken::studio::types::ObjectId> visited;
+                std::set<harken::studio::types::ObjectId> active;
+                std::function<void(harken::studio::types::ObjectId)> append = [&](harken::studio::types::ObjectId id) {
                     if (visited.count(id) != 0 || active.count(id) != 0) return;
                     active.insert(id);
-                    for (harkenstudio::ObjectId dependency : dependencies[id]) append(dependency);
+                    for (harken::studio::types::ObjectId dependency : dependencies[id]) append(dependency);
                     active.erase(id);
                     visited.insert(id);
                     variant.dependencyOrder.push_back(id);
@@ -221,10 +221,10 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
         unit.actionStableIds = {variant.actionStableId};
         plan.units.push_back(std::move(unit));
     }
-    std::map<harkenstudio::ObjectId, int> references;
+    std::map<harken::studio::types::ObjectId, int> references;
     std::map<QString, int> mediaReferences;
     for (const auto& unit : plan.units) {
-        std::set<harkenstudio::ObjectId> unitActions;
+        std::set<harken::studio::types::ObjectId> unitActions;
         std::set<QString> unitMedia;
         for (const auto& variant : plan.variants) {
             if (variant.variant.platform != unit.variant.platform
@@ -248,7 +248,7 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
     return plan;
 }
 
-bool localizedAction(const ProjectData& project, harkenstudio::ObjectId actionStableId)
+bool localizedAction(const ProjectData& project, harken::studio::types::ObjectId actionStableId)
 {
     const ActionClosureBuildContext context(project);
     for (const auto* action : actions(project, actionStableId)) {
@@ -260,10 +260,10 @@ bool localizedAction(const ProjectData& project, harkenstudio::ObjectId actionSt
 
 }
 
-QHash<harkenstudio::ObjectId, QStringList> artifactLanguages(
+QHash<harken::studio::types::ObjectId, QStringList> artifactLanguages(
     const ProjectData& project, const QStringList& requestedPlatforms)
 {
-    QHash<harkenstudio::ObjectId, QStringList> result;
+    QHash<harken::studio::types::ObjectId, QStringList> result;
     const QStringList platforms = requestedPlatforms.isEmpty()
         ? project.platformIds() : requestedPlatforms;
     if (!ProjectPlatformSemantics::validatePlatforms(project.platforms)
@@ -273,7 +273,7 @@ QHash<harkenstudio::ObjectId, QStringList> artifactLanguages(
     return actionLanguages(project);
 }
 
-QString stableArtifactKey(harkenstudio::ObjectId actionStableId)
+QString stableArtifactKey(harken::studio::types::ObjectId actionStableId)
 {
     return QStringLiteral("action_%1").arg(objectIdString(actionStableId));
 }
@@ -309,18 +309,18 @@ QString packFileName(const QString& language, const QString& artifact,
     return language.trimmed() + QLatin1Char('/') + artifact + extension;
 }
 
-bool actionIsLocalized(const ProjectData& project, harkenstudio::ObjectId actionStableId)
+bool actionIsLocalized(const ProjectData& project, harken::studio::types::ObjectId actionStableId)
 {
     return localizedAction(project, actionStableId);
 }
 
-QHash<harkenstudio::ObjectId, QStringList> actionLanguages(const ProjectData& project)
+QHash<harken::studio::types::ObjectId, QStringList> actionLanguages(const ProjectData& project)
 {
     const auto actionItems = actions(project, {});
     const ActionClosureBuildContext context(project);
     const auto localization = localizedActionsFor(actionItems, context);
     const auto languages = ProjectLanguageSemantics::buildLanguages(project);
-    QHash<harkenstudio::ObjectId, QStringList> result;
+    QHash<harken::studio::types::ObjectId, QStringList> result;
     for (const auto* action : actionItems)
         result.insert(action->runtimeId(), localization.at(action->runtimeId())
             ? languages : QStringList{QString()});
@@ -335,7 +335,7 @@ PackBuildPlan build(const ProjectData& project, const QStringList& requestedPlat
     return buildImpl(project, {}, requestedPlatforms, requestedLanguages, {}, includeUnchecked, selection, context, closures);
 }
 
-PackBuildPlan buildForAction(const ProjectData& project, harkenstudio::ObjectId actionStableId,
+PackBuildPlan buildForAction(const ProjectData& project, harken::studio::types::ObjectId actionStableId,
                             const QStringList& requestedPlatforms,
                             const QStringList& requestedLanguages,
                             const QString& artifactName, bool includeUnchecked,
@@ -383,7 +383,7 @@ QJsonObject PackBuildPlan::toJson(const ProjectData& project) const
             {QStringLiteral("language"), variant.variant.language},
             {QStringLiteral("dependencyOrder"), [&variant] {
                 QJsonArray values;
-                for (harkenstudio::ObjectId id : variant.dependencyOrder)
+                for (harken::studio::types::ObjectId id : variant.dependencyOrder)
                     values.append(objectIdString(id));
                 return values;
             }()},

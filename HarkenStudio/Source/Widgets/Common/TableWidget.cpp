@@ -42,7 +42,7 @@
 #include <algorithm>
 #include <numeric>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

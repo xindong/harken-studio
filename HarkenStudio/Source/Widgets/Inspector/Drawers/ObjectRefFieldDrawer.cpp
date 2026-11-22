@@ -7,7 +7,7 @@
 
 #include <QMetaType>
 
-namespace VNX {
+namespace harken::studio {
 
 QWidget* ObjectRefFieldDrawer::build(const PropertyDescriptor& d, QWidget* parent)
 {

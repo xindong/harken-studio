@@ -2,7 +2,7 @@
 
 #include <QCoreApplication>
 
-namespace VNH {
+namespace harken::hub {
 
 ProjectVersionSelection ProjectVersionSelection::resolve(
     const ProjectRecord& project, const ProjectProbeResult& probe,

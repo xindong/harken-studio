@@ -102,7 +102,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
 std::vector<ProjectItem*> findItemsByObjectIDInProject(
@@ -1607,12 +1607,12 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     project.sampleRate        = config.sampleRate;
     project.channelConfig     = config.channelConfig;
 
-    m_projectIndex = std::make_unique<VNX::ProjectIndex>();
+    m_projectIndex = std::make_unique<harken::studio::ProjectIndex>();
     if (!m_projectIndex->loadFromCache(projectRoot)) {
         qDebug() << "[ProjectManager] ProjectIndex cache miss/stale -- rebuilding from disk";
     }
     const auto scanResult = m_projectIndex->scanProjectRoot(projectRoot);
-    if (scanResult != VNX::ProjectIndex::ScanResult::Ok) {
+    if (scanResult != harken::studio::ProjectIndex::ScanResult::Ok) {
         qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:" << static_cast<int>(scanResult);
     }
     m_projectIndex->saveToCache(projectRoot);
@@ -3198,7 +3198,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                     collectClaimants(binding->rootItem.get());
             auto nameStillResolvesFor = [&](VActionStep::Type stepType) {
                 for (ProjectItem::Type ct : residualClaimants)
-                    if (VNX::EditorUtils::canActionStepReferenceObject(stepType, ct))
+                    if (harken::studio::EditorUtils::canActionStepReferenceObject(stepType, ct))
                         return true;
                 return false;
             };
@@ -3208,7 +3208,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                     bool changed = false;
                     for (auto& action : ec->steps) {
                         const auto* stepCatalog =
-                            VNX::EditorUtils::actionStepCatalogEntry(action.type);
+                            harken::studio::EditorUtils::actionStepCatalogEntry(action.type);
                         if (stepCatalog && stepCatalog->supportsQuantize
                             && ItemTypeCatalog::isContentObject(item->type)
                             && action.quantize.referenceObjectID == item->objectID
@@ -3216,7 +3216,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                             action.quantize.referenceName = toName;
                             changed = true;
                         }
-                        if (!VNX::EditorUtils::canActionStepReferenceObject(
+                        if (!harken::studio::EditorUtils::canActionStepReferenceObject(
                                 action.type, item->type, item->objectID,
                                 pi->objectID))
                             continue;
@@ -3865,10 +3865,10 @@ ProjectItem* ProjectManager::createActionTargeting(ProjectItem* target,
         }
     }
 
-    if (!VNX::EditorUtils::canActionStepReferenceObject(
+    if (!harken::studio::EditorUtils::canActionStepReferenceObject(
             actionType, target->type, target->objectID)) {
         VActionStep::Type defaultType = VActionStep::Type::Play;
-        if (!VNX::EditorUtils::defaultActionStepTypeForTarget(target->type, defaultType)) {
+        if (!harken::studio::EditorUtils::defaultActionStepTypeForTarget(target->type, defaultType)) {
             emit errorOccurred("Selected object cannot be targeted by a new Action.");
             return nullptr;
         }
@@ -3911,7 +3911,7 @@ bool ProjectManager::canCreateActionsTargeting(const QList<ProjectItem*>& target
             return false;
         if (!ItemTypeCatalog::isUserFacingType(target->type))
             return false;
-        if (!VNX::EditorUtils::canActionStepReferenceObject(
+        if (!harken::studio::EditorUtils::canActionStepReferenceObject(
                 actionType, target->type, target->objectID)) {
             return false;
         }
@@ -4149,9 +4149,9 @@ std::vector<ProjectItem*> ProjectManager::findItemsByObjectID(
     return findItemsByObjectIDInProject(m_currentProject.get(), objectIDs);
 }
 
-ProjectItem* ProjectManager::findItemByRuntimeStableId(harkenstudio::ObjectId runtimeStableId) const
+ProjectItem* ProjectManager::findItemByRuntimeStableId(harken::studio::types::ObjectId runtimeStableId) const
 {
-    if (!m_currentProject || harkenstudio::IsNull(runtimeStableId)) return nullptr;
+    if (!m_currentProject || harken::studio::types::IsNull(runtimeStableId)) return nullptr;
     ProjectItem* found = nullptr;
     bool ambiguous = false;
     std::function<void(ProjectItem*)> walk = [&](ProjectItem* item) {
@@ -5009,17 +5009,17 @@ namespace {
 std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
     ProjectData& project, ProjectItem* deletedRoot)
 {
-    std::set<harkenprojectschema::AuthoringGuid> deleted;
+    std::set<harken::studio::project_schema::AuthoringGuid> deleted;
     std::function<void(ProjectItem*)> collect = [&](ProjectItem* item) {
         if (!item) return;
         deleted.insert(toFieldGroupGuid(item->guid));
         for (const auto& child : item->children) collect(child.get());
     };
     collect(deletedRoot);
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     const auto* fallback = deletedRoot->parent && deletedRoot->parent->type == ProjectItem::Type::Bus
         ? deletedRoot->parent : (project.busses.empty() ? nullptr : project.busses.front().rootItem.get());
-    const auto fallbackGuid = fallback ? toFieldGroupGuid(fallback->guid) : harkenprojectschema::AuthoringGuid{};
+    const auto fallbackGuid = fallback ? toFieldGroupGuid(fallback->guid) : harken::studio::project_schema::AuthoringGuid{};
     std::vector<DeletedSubtreeRefLog::FieldGroupRef> result;
     const auto editActive = [](auto& group, bool root, const auto& edit) {
         bool sharedActive = root || group.shared.mode == FieldGroupMode::Local;
@@ -5354,7 +5354,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
     }
 
     log.fieldGroups = fieldGroupReferenceRemovals(*project, deletedRoot);
-    const auto groupSource = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+    const auto groupSource = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
     for (const auto& change : log.fieldGroups) {
         auto* item = groupSource->byQtGuid.at(change.definition);
         item->fieldGroups = change.after;
@@ -5526,7 +5526,7 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
     }
 
     std::vector<FieldGroupDefinitionSnapshot> groups;
-    const auto groupSource = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+    const auto groupSource = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
     bool matching = true;
     for (const auto& ref : log.fieldGroups) {
         const auto item = groupSource->byQtGuid.find(ref.definition);
@@ -5897,7 +5897,7 @@ bool ProjectManager::restoreFieldGroupsInternal(
     const QObject* originator)
 {
     if (!item || !m_currentProject) return false;
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*m_currentProject);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*m_currentProject);
     const auto found = source->byQtGuid.find(item->guid);
     if (found == source->byQtGuid.end() || found->second != item) return false;
     const auto prepared = prepareFieldGroupRestore(*m_currentProject, item->guid,
@@ -6136,7 +6136,7 @@ void ProjectManager::pushItemSendsLive(
     ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
 {
     if (!item || item->type != ProjectItem::Type::Sound) return;
-    std::vector<std::pair<harkenstudio::ObjectId, float>> runtimeSends;
+    std::vector<std::pair<harken::studio::types::ObjectId, float>> runtimeSends;
     for (const Send& s : aggregateVoiceSendsForItem(item, snapshot)) {
         if (s.mode != SendMode::Mix) continue;
         if (!findVBus(s.targetBusID)) continue;
@@ -6334,14 +6334,14 @@ ProjectItem* ProjectManager::findBusItem(uint32_t objectID) const
     return walk(master);
 }
 
-harkenstudio::ObjectId ProjectManager::busRuntimeHandle(const ProjectItem* item) const
+harken::studio::types::ObjectId ProjectManager::busRuntimeHandle(const ProjectItem* item) const
 {
     if (!item)
         return {};
     return item->runtimeId();
 }
 
-harkenstudio::ObjectId ProjectManager::busRuntimeHandleForId(uint32_t objectID) const
+harken::studio::types::ObjectId ProjectManager::busRuntimeHandleForId(uint32_t objectID) const
 {
     return busRuntimeHandle(findBusItem(objectID));
 }
@@ -6580,7 +6580,7 @@ bool ProjectManager::validateStructuralPlacement(ProjectItem::Type type,
     return true;
 }
 
-void ProjectManager::materializeRuntime(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId)
+void ProjectManager::materializeRuntime(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId)
 {
     if (!item) return;
     using T = ProjectItem::Type;
@@ -6599,7 +6599,7 @@ void ProjectManager::materializeRuntime(ProjectItem* item, harkenstudio::ObjectI
     resyncItemToRuntime(item);
 }
 
-void ProjectManager::materializeBusSubtree(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId)
+void ProjectManager::materializeBusSubtree(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId)
 {
     Q_UNUSED(item);
     Q_UNUSED(parentRuntimeId);
@@ -6617,7 +6617,7 @@ void ProjectManager::dematerializeRuntime(ProjectItem* item)
     unregisterItemFromRuntime(item);
 }
 
-bool ProjectManager::reparentRuntime(ProjectItem* item, harkenstudio::ObjectId newParentRuntimeId)
+bool ProjectManager::reparentRuntime(ProjectItem* item, harken::studio::types::ObjectId newParentRuntimeId)
 {
     if (!item) return false;
     using T = ProjectItem::Type;
@@ -6639,7 +6639,7 @@ void ProjectManager::applyBusRuntimeState(ProjectItem* item)
 
 void ProjectManager::syncBusTreeToRuntime(
     ProjectData* project,
-    std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> compiledBus)
+    std::shared_ptr<const harken::studio::bus_compiler::CompiledBusResultV1> compiledBus)
 {
     Q_UNUSED(project);
     Q_UNUSED(compiledBus);
@@ -6807,7 +6807,7 @@ bool ProjectManager::setBusMuteInternal(uint32_t busID, bool mute, const QObject
 {
     ProjectItem* item = findBusItem(busID);
     if (!item || !item->comp<VBus>()) return false;
-    const harkenstudio::ObjectId busId = busRuntimeHandle(item);
+    const harken::studio::types::ObjectId busId = busRuntimeHandle(item);
     m_auditionOverlay.setMuted(busId, mute);
     (void)AudioEngine::instance().applyInstalledBusMuteOverlay(busId, mute, 0);
     emit busChanged(busID, QStringLiteral("mute"), originator);
@@ -6818,7 +6818,7 @@ bool ProjectManager::setBusSoloInternal(uint32_t busID, bool solo, const QObject
 {
     ProjectItem* item = findBusItem(busID);
     if (!item || !item->comp<VBus>()) return false;
-    const harkenstudio::ObjectId busId = busRuntimeHandle(item);
+    const harken::studio::types::ObjectId busId = busRuntimeHandle(item);
     m_auditionOverlay.setSoloed(busId, solo);
     (void)AudioEngine::instance().applyInstalledBusSoloOverlay(busId, solo, 0);
     emit busChanged(busID, QStringLiteral("solo"), originator);

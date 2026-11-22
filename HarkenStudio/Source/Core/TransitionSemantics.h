@@ -12,7 +12,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class PlacementContext;
 struct ProjectItem;

@@ -4,8 +4,8 @@
 
 #include <vector>
 
-using VNH::UpdateNotifier;
-using VNH::UpdateStateRecord;
+using harken::hub::UpdateNotifier;
+using harken::hub::UpdateStateRecord;
 
 namespace {
 

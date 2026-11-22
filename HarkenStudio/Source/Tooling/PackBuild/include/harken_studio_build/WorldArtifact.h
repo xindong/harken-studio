@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline constexpr std::uint32_t kCurrentWorldArtifactHeaderBytes = 64;
 inline constexpr std::uint64_t kCurrentWorldArtifactMaxBodyBytes =
@@ -17,6 +17,6 @@ bool EncodeCurrentWorldArtifactV1(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_CURRENT_WORLD_ARTIFACT_H

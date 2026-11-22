@@ -14,7 +14,7 @@
 #include <functional>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace VariableSemantics {
 
 EditForm editFormForKind(VariableKind kind)

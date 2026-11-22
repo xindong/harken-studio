@@ -30,7 +30,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     : SettingsPage(parent)

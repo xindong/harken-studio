@@ -14,16 +14,16 @@
 #include <unordered_map>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
 struct CanonicalRuntimeProjectContextV1;
 }
 
-namespace HarkenEditor::Build {
+namespace harken::studio::build {
 struct CurrentWorldScalarUpdate;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 namespace EditorUtils {
 class ActionTargetLookup;
@@ -58,39 +58,39 @@ enum class CurrentWorldBuildDiagnosticKind
 
 struct CurrentWorldBuildDiagnostic
 {
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     CurrentWorldBuildDiagnosticKind kind = CurrentWorldBuildDiagnosticKind::Definition;
     QString error;
 };
 
 struct CurrentWorldBuildOptions
 {
-    const std::set<harkenstudio::ObjectId>* includedActionIds = nullptr;
+    const std::set<harken::studio::types::ObjectId>* includedActionIds = nullptr;
     bool skipEmptyActionSteps = false;
     bool isolateUnavailable = false;
-    const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>* soundContentRevisions = nullptr;
+    const std::unordered_map<harken::studio::types::ObjectId, std::uint64_t>* soundContentRevisions = nullptr;
     std::optional<QString> language;
-    const std::set<harkenstudio::ObjectId>* includedDefinitionIds = nullptr;
+    const std::set<harken::studio::types::ObjectId>* includedDefinitionIds = nullptr;
     const ProjectItem* actionRoot = nullptr;
     const ProjectItem* definitionRoot = nullptr;
-    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1> sourceIndex;
-    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1> canonicalContext;
+    std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1> sourceIndex;
+    std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectContextV1> canonicalContext;
     const FieldGroupEffectiveSnapshot* fieldGroups = nullptr;
     const EditorUtils::ActionTargetLookup* actionLookup = nullptr;
     bool includePreviewDucking = false;
     bool validatePackResources = false;
     BindingRuntimeLowering* bindingLowering = nullptr;
-    std::map<harkenstudio::ObjectId, RuntimeCapabilityEntry>* bindingCapabilities = nullptr;
+    std::map<harken::studio::types::ObjectId, RuntimeCapabilityEntry>* bindingCapabilities = nullptr;
     std::vector<CurrentWorldBuildDiagnostic>* loweringDiagnostics = nullptr;
 };
 
-HarkenEditor::Build::CurrentWorldSyncRequestPtr
+harken::studio::build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
                              QString* error = nullptr,
                              CurrentWorldBuildStatus* status = nullptr,
                              const CurrentWorldBuildOptions* options = nullptr,
                              std::uint64_t projectGeneration = 0);
-HarkenEditor::Build::CurrentWorldSyncRequestPtr
+harken::studio::build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope,
                                        QString* error,
                                        CurrentWorldBuildStatus* status,
@@ -98,10 +98,10 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                                        std::uint64_t projectGeneration,
                                        const QString& languageFallback);
 void retainCurrentWorldSyncRequestInputs(
-    HarkenEditor::Build::CurrentWorldSyncRequest& request,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
-    const std::set<harkenstudio::ObjectId>& actionIds,
-    const std::set<harkenstudio::ObjectId>& definitionIds);
+    harken::studio::build::CurrentWorldSyncRequest& request,
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
+    const std::set<harken::studio::types::ObjectId>& actionIds,
+    const std::set<harken::studio::types::ObjectId>& definitionIds);
 bool isCurrentWorldPlayableForContext(ProjectData& project, const ProjectItem& item,
                                       PlatformScope scope, const QString& languageFallback);
 bool isCurrentWorldPlayable(ProjectData& project, const ProjectItem& item);
@@ -110,6 +110,6 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                          QStringView propertyName = {});
 bool readCurrentWorldScalarUpdate(
     ProjectItem& item, PlatformScope scope, std::uint8_t propertyId,
-    HarkenEditor::Build::CurrentWorldScalarUpdate* output);
+    harken::studio::build::CurrentWorldScalarUpdate* output);
 
-} // namespace VNX
+} // namespace harken::studio

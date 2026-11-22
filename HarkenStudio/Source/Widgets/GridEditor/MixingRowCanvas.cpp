@@ -13,7 +13,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QColor unselectedClipColor(QColor color)

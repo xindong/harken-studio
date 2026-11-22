@@ -11,7 +11,7 @@
 #include <cstddef>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 int64_t saturatingMul(int64_t left, int64_t right)

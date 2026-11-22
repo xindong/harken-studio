@@ -18,7 +18,7 @@
 #include <atomic>
 #include <exception>
 
-namespace VNX::ConversionResults {
+namespace harken::studio::ConversionResults {
 namespace {
 
 QString cacheDirectory(const ProjectData& project)
@@ -216,7 +216,7 @@ struct Batch::Impl
 {
     struct Work
     {
-        harkenstudio::ObjectId soundId;
+        harken::studio::types::ObjectId soundId;
         SoundSourceDef source;
         double scheduleOffsetSec;
     };

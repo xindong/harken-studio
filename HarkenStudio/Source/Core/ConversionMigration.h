@@ -5,7 +5,7 @@
 #include <QMap>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 bool prepareConversionMigration(const QString& sourceDirectory,
                                 const QString& projectFile,

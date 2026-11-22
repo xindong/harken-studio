@@ -7,7 +7,7 @@
 #include <QStringList>
 #include <QMimeData>
 
-namespace VNX {
+namespace harken::studio {
 
 class DropZoneWidget : public QWidget
 {

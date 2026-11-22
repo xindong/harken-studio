@@ -2558,8 +2558,8 @@ struct GenuineInitialSingleClockHarness {
     harken::ImmediateLaneHandle lane{};
     std::array<harken::DecisionToken, 4> decisions{};
     std::array<harken::ArmGroupToken, 4> armGroups{};
-    std::array<harken::Plan03GroupSliceInput, 4> inputs{};
-    std::array<harken::Plan03GroupSliceIdentity, 4> groups{};
+    std::array<harken::ScheduleGroupSliceInput, 4> inputs{};
+    std::array<harken::ScheduleGroupSliceIdentity, 4> groups{};
     harken::TimelineEventPayload payload{};
     harken::TimelineProgramView program{};
     harken::ImmediateLaneEvent start{};
@@ -2756,9 +2756,9 @@ struct GenuineInitialSingleClockHarness {
             if (index == 1) binding.queueInitial = {queue.slot, queue.generation, 1, fingerprint};
             if (index == 3) binding.queueConditional = {queue.slot, queue.generation,
                 1, version.version, episode.occurrence, episode.occurrence};
-            ASSERT_TRUE(engine.timelinePool.BindPlan03GroupFrontier(groups[index], binding));
-            harken::Plan03PageGroupView actual{};
-            ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(groups[index], &actual));
+            ASSERT_TRUE(engine.timelinePool.BindScheduleGroupFrontier(groups[index], binding));
+            harken::SchedulePageGroupView actual{};
+            ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(groups[index], &actual));
             ASSERT_NE(nullptr, actual.frontier);
             ASSERT_TRUE(engine.armGroups.Reserve(decisions[index], nullptr, 0, &armGroups[index]));
             harken::DecisionParticipantRef participant{};
@@ -2784,9 +2784,9 @@ struct GenuineInitialSingleClockHarness {
         ASSERT_TRUE(engine.timelineArms.BindPendingImmediateStart(episode.source.arm, anchor, anchor));
         ASSERT_TRUE(engine.immediateActionLane.PinArms(lane, engine.timelineArms));
         ASSERT_TRUE(engine.immediateActionLane.PinGroups(lane, engine.timelinePool,
-            engine.decisions, engine.config.maxPlan03GroupHeadersPerPage));
-        harken::Plan03PageGroupView initial{};
-        ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(groups[0], &initial));
+            engine.decisions, engine.config.maxScheduleGroupHeadersPerPage));
+        harken::SchedulePageGroupView initial{};
+        ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(groups[0], &initial));
         ASSERT_TRUE(engine.timelineArms.BindFrontierAdmission(episode.source.arm, *initial.frontier, *initial.lease));
         ASSERT_TRUE(engine.timelinePool.ProvePrivateOriginalQueueGroupClock(Original(1), Original(3),
             &placement, &privateClock));
@@ -2820,7 +2820,7 @@ struct GenuineInitialSingleClockHarness {
         ASSERT_TRUE(engine.immediateActionLane.Cancel(lane));
         ASSERT_TRUE(engine.immediateActionLane.Retire(lane, engine.mixer.BlocksRendered()));
         for (std::uint32_t index = groups.size(); index != 0; --index)
-            ASSERT_TRUE(engine.timelinePool.DetachPlan03GroupFrontier(groups[index - 1],
+            ASSERT_TRUE(engine.timelinePool.DetachScheduleGroupFrontier(groups[index - 1],
                 engine.mixer.BlocksRendered()));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(decisions[1]));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(decisions[3]));
@@ -3024,8 +3024,8 @@ TEST(OriginalSourceSubmission, InitialSingleClockStructuralProofCannotReplaceAnI
     ASSERT_NO_FATAL_FAILURE(state.ReserveUnboundGroups());
     ASSERT_NO_FATAL_FAILURE(state.PublishSourceAndObserveFreshAck());
     ASSERT_NO_FATAL_FAILURE(state.PlaceAndHold());
-    harken::Plan03PageGroupView actual{};
-    ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(state.groups[0], &actual));
+    harken::SchedulePageGroupView actual{};
+    ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(state.groups[0], &actual));
     ASSERT_NE(nullptr, actual.frontier);
     ASSERT_TRUE(engine.timelinePool.InvalidateFrontierOwnerOperations(actual.frontier->operation.owner,
         state.decisions[0], harken::AudioSliceInvalidateReason::Cancel));
@@ -3088,8 +3088,8 @@ TEST(OriginalSourceSubmission, InitialSingleClockRejectsNativeBindingOrderDiffer
     harken::DecisionCommittedSnapshot actual{};
     ASSERT_TRUE(engine.decisions.CaptureCommitted(state.decisions[1], &actual));
     ASSERT_EQ(state.logicSequence, actual.ticket.sequence);
-    harken::Plan03PageGroupView group{};
-    ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(state.groups[1], &group));
+    harken::SchedulePageGroupView group{};
+    ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(state.groups[1], &group));
     ASSERT_NE(nullptr, group.frontier);
     ASSERT_NE(actual.ticket.sequence, group.frontier->operation.order.logicCommitSequence);
     EXPECT_FALSE(state.Bind());
@@ -3156,9 +3156,9 @@ TEST(OriginalSourceSubmission, InitialSingleClockQuiescentEngineReturnsNativeCon
     ASSERT_TRUE(engine.queueInstances.PrepareConditional(queue, conditional, &prepared, parent, &original));
     harken::ConditionalQueueVersionToken version{};
     ASSERT_TRUE(engine.queueInstances.CommitPreparedConditional(&prepared, &version));
-    std::array<harken::Plan03GroupSliceIdentity, 2> groups{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> groups{};
     for (std::uint32_t index = 0; index < groups.size(); ++index) {
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.executeFrame = 100 + index * kFrames;
         input.decision = decisions[index];
         ASSERT_TRUE(engine.ReserveOriginalQueueLaneGroup(47, 100, input,
@@ -4212,8 +4212,8 @@ struct HiddenBoundNativeFuture {
     harken::OccurrenceStatePool::OriginalSingleCompletionOwnerPin successorOwner;
     harken::OccurrenceStatePool::PreparedSingleCompletionCommitProof successorProof;
     harken::CompletionOwnerRef completionOwner{};
-    std::array<harken::Plan03GroupSliceInput, 2> input{};
-    std::array<harken::Plan03GroupSliceIdentity, 2> group{};
+    std::array<harken::ScheduleGroupSliceInput, 2> input{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> group{};
     std::array<harken::DecisionToken, 2> token{};
     std::array<harken::ArmGroupToken, 2> armGroup{};
     harken::ImmediateLaneHandle lane{};
@@ -4334,9 +4334,9 @@ struct HiddenBoundNativeFuture {
                 ASSERT_TRUE(engine.decisions.PrepareFrontierActivation(old.decisions[index],
                     descriptor, engine.timelinePool));
             }
-            ASSERT_TRUE(engine.timelinePool.BindPlan03GroupFrontier(old.groups[index], binding));
-            harken::Plan03PageGroupView actual{};
-            ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(old.groups[index], &actual));
+            ASSERT_TRUE(engine.timelinePool.BindScheduleGroupFrontier(old.groups[index], binding));
+            harken::SchedulePageGroupView actual{};
+            ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(old.groups[index], &actual));
             ASSERT_NE(nullptr, actual.frontier);
             // These actual factories issue empty native groups; no member is invented.
             ASSERT_EQ(0u, actual.memberCount);
@@ -4379,9 +4379,9 @@ struct HiddenBoundNativeFuture {
         ASSERT_TRUE(engine.timelineArms.BindPendingImmediateStart(old.episode.source.arm, old.anchor, old.anchor));
         ASSERT_TRUE(engine.immediateActionLane.PinArms(old.lane, engine.timelineArms));
         ASSERT_TRUE(engine.immediateActionLane.PinGroups(old.lane, engine.timelinePool,
-            engine.decisions, engine.config.maxPlan03GroupHeadersPerPage));
-        harken::Plan03PageGroupView initial{};
-        ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(old.groups[0], &initial));
+            engine.decisions, engine.config.maxScheduleGroupHeadersPerPage));
+        harken::SchedulePageGroupView initial{};
+        ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(old.groups[0], &initial));
         ASSERT_TRUE(engine.timelineArms.BindFrontierAdmission(old.episode.source.arm,
             *initial.frontier, *initial.lease));
         ASSERT_TRUE(engine.timelinePool.ProvePrivateOriginalQueueGroupClock(old.Original(1), old.Original(3),
@@ -4620,7 +4620,7 @@ struct HiddenBoundNativeFuture {
             binding.primary = group[0];
             if (i == 1) binding.queueConditional = {old.queue.slot, old.queue.generation,
                 body.currentState.version, body.version.version, body.current, body.successor};
-            ASSERT_TRUE(engine.timelinePool.BindPlan03GroupFrontier(group[i], binding));
+            ASSERT_TRUE(engine.timelinePool.BindScheduleGroupFrontier(group[i], binding));
             ASSERT_TRUE(engine.armGroups.Reserve(token[i], nullptr, 0, &armGroup[i]));
             harken::DecisionParticipantRef participant{};
             participant.kind = harken::DecisionParticipantKind::QueueInstance;
@@ -4632,7 +4632,7 @@ struct HiddenBoundNativeFuture {
         }
         ASSERT_TRUE(engine.immediateActionLane.PinArms(lane, engine.timelineArms));
         ASSERT_TRUE(engine.immediateActionLane.PinGroups(lane, engine.timelinePool,
-            engine.decisions, engine.config.maxPlan03GroupHeadersPerPage));
+            engine.decisions, engine.config.maxScheduleGroupHeadersPerPage));
         ASSERT_TRUE(engine.timelinePool.PublishImmediateLaneGroups(root));
         // Only Old is published to the actual audio Lane. New backing is native
         // readable but has no Catalog selector or public Queue state effect.
@@ -4653,8 +4653,8 @@ struct HiddenBoundNativeFuture {
         ASSERT_TRUE(engine.queueInstances.Capture(old.queue, &currentQueue));
         ASSERT_EQ(wanted, currentQueue.initialActivationSequence);
         for (const auto index : {0u, 1u}) {
-            harken::Plan03PageGroupView admittedGroup{};
-            ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceRt(old.groups[index], &admittedGroup));
+            harken::SchedulePageGroupView admittedGroup{};
+            ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceRt(old.groups[index], &admittedGroup));
             ASSERT_NE(nullptr, admittedGroup.lease);
             ASSERT_EQ(harken::AudioSliceState::SliceApplied, admittedGroup.lease->Capture().state);
         }
@@ -4682,7 +4682,7 @@ struct HiddenBoundNativeFuture {
         ASSERT_TRUE(engine.immediateActionLane.Cancel(lane));
         ASSERT_TRUE(engine.immediateActionLane.Retire(lane, engine.mixer.BlocksRendered()));
         for (std::uint32_t i = 2; i != 0; --i)
-            ASSERT_TRUE(engine.timelinePool.DetachPlan03GroupFrontier(group[i - 1u], engine.mixer.BlocksRendered()));
+            ASSERT_TRUE(engine.timelinePool.DetachScheduleGroupFrontier(group[i - 1u], engine.mixer.BlocksRendered()));
         ASSERT_TRUE(engine.CancelOriginalQueueLaneGroups(root, engine.mixer.BlocksRendered()));
         if (!retainedCurrent) {
             ASSERT_TRUE(engine.timelineOccurrences.ClearCompletionOwnerExact(successor, completionOwner));
@@ -4721,7 +4721,7 @@ struct HiddenBoundNativeFuture {
         ASSERT_TRUE(engine.immediateActionLane.Cancel(old.lane));
         ASSERT_TRUE(engine.immediateActionLane.Retire(old.lane, engine.mixer.BlocksRendered()));
         for (std::uint32_t i = 4; i != 0; --i)
-            ASSERT_TRUE(engine.timelinePool.DetachPlan03GroupFrontier(old.groups[i - 1], engine.mixer.BlocksRendered()));
+            ASSERT_TRUE(engine.timelinePool.DetachScheduleGroupFrontier(old.groups[i - 1], engine.mixer.BlocksRendered()));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(old.decisions[1]));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(old.decisions[3]));
         engine.ledger.Reap(old.episode.source.source);
@@ -4759,7 +4759,7 @@ void CheckHiddenFutureRetainedCurrent(bool afterOriginalPublication) {
     harken::BlockArena arena(4096);
     harken::NativeTimelineQuantumAdmissionProof admitted;
     ASSERT_TRUE(finalizer.ProveQuantumAdmission(arena, kFrames, &admitted));
-    harken::Plan03PageGroupView native;
+    harken::SchedulePageGroupView native;
     ASSERT_TRUE(future.spans.ResolveNativeConditionalGroup(future.read, &native));
     harken::PrivateSelectedQueueFutureSpanPool::NativeConditionalProof proof;
     ASSERT_EQ(harken::QueueConditionalProofStatus::ReadyToActivate,
@@ -4812,8 +4812,8 @@ TEST(OriginalSourceSubmission, HiddenFutureNativeFirstSReadyRequiresActualScratc
     harken::ImmediateLaneObservation hiddenLane{};
     ASSERT_TRUE(engine.immediateActionLane.Observe(future.lane, &hiddenLane));
     ASSERT_FALSE(hiddenLane.committed);
-    harken::Plan03PageGroupView native;
-    EXPECT_FALSE(engine.timelinePool.ResolvePlan03GroupSliceRt(future.group[1], &native));
+    harken::SchedulePageGroupView native;
+    EXPECT_FALSE(engine.timelinePool.ResolveScheduleGroupSliceRt(future.group[1], &native));
     harken::PrivateSelectedQueueFutureSpanPool foreignSpans(1);
     harken::PrivateSelectedQueueFutureSpanPool::NativeConditionalRead invalidRead;
     native.identity = future.group[0];
@@ -4946,7 +4946,7 @@ struct EngineOriginalConditionalHolderHarness {
     harken::ConditionalQueuePrepareRequest request{};
     harken::PreparedQueueConditionalV1 prepared;
     harken::ConditionalQueueVersionToken version{};
-    std::array<harken::Plan03GroupSliceIdentity, 2> groups{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> groups{};
     static constexpr std::uint64_t cohort = 47;
     bool initializing = false;
 
@@ -4994,7 +4994,7 @@ struct EngineOriginalConditionalHolderHarness {
     void PrepareAndClock() {
         ASSERT_TRUE(engine.PrepareOriginalQueueConditional(queue, request, &prepared));
         for (std::uint32_t index = 0; index < groups.size(); ++index) {
-            harken::Plan03GroupSliceInput input{};
+            harken::ScheduleGroupSliceInput input{};
             input.executeFrame = 100 + index * kFrames;
             input.decision = decisions[index];
             ASSERT_TRUE(engine.ReserveOriginalQueueLaneGroup(cohort, 100, input,
@@ -5357,7 +5357,7 @@ struct RegisteredVariableWorkerEpisode {
     harken::BankVersionToken bank{};
     harken::DecisionToken decision{};
     harken::ArmGroupToken armGroup{};
-    harken::Plan03PageGroupView group{};
+    harken::SchedulePageGroupView group{};
     std::uint64_t startFrame = 0;
     std::uint64_t startBlock = 0;
 };
@@ -5454,14 +5454,14 @@ void PublishRegisteredVariableWorkerSource(harken::Engine& engine,
     ASSERT_TRUE(engine.timelineArms.ProvePreparedCommit(logical, &armProof));
     ASSERT_TRUE(engine.armGroups.Reserve(episode.decision, &episode.body.arm,
         1, &episode.armGroup));
-    harken::Plan03GroupSliceInput slice{};
+    harken::ScheduleGroupSliceInput slice{};
     slice.executeFrame = episode.startFrame;
     slice.decision = episode.decision;
     slice.members = &episode.body.arm;
     slice.memberCount = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        engine.timelinePool.ReservePlan03GroupSlice(slice, engine.timelineArms));
-    ASSERT_EQ(1u, engine.timelinePool.CaptureLivePlan03Groups(&episode.group, 1));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        engine.timelinePool.ReserveScheduleGroupSlice(slice, engine.timelineArms));
+    ASSERT_EQ(1u, engine.timelinePool.CaptureLiveScheduleGroups(&episode.group, 1));
     ASSERT_TRUE(episode.group.identity.Exact());
     ASSERT_EQ(episode.decision.slot, episode.group.identity.decision.slot);
     ASSERT_EQ(episode.decision.generation, episode.group.identity.decision.generation);
@@ -5498,7 +5498,7 @@ void PublishRegisteredVariableWorkerSource(harken::Engine& engine,
         harken::DecisionParticipantKind::Variable, episode.variable.slot,
         episode.variable.generation};
     harken::DecisionCommitPayload commit{};
-    // This is the existing legacy Plan03 carrier marker, not a new capability.
+    // This is the existing legacy Schedule carrier marker, not a new capability.
     // The genuine group, members and lease above come from the pool factory.
     commit.pages = {0, 1};
     commit.armGroup = episode.armGroup;
@@ -5941,7 +5941,7 @@ struct InitialConditionalFactoryOutputHarness : EngineOriginalConditionalHolderH
     }
     void ReserveMembers() {
         for (std::uint32_t index = 0; index < groups.size(); ++index) {
-            harken::Plan03GroupSliceInput input{};
+            harken::ScheduleGroupSliceInput input{};
             input.executeFrame = 100 + index * kFrames;
             input.decision = decisions[index];
             ASSERT_TRUE(engine.ReserveOriginalQueueLaneGroup(cohort, 100, input,
@@ -6246,7 +6246,7 @@ struct GenuineBoundC1ProjectionHarness {
             Engine().mixer.BlocksRendered(), &originalLane));
         ASSERT_FALSE(originalLane.Valid());
         for (std::uint32_t i = 4; i != 0; --i)
-            ASSERT_TRUE(Engine().timelinePool.DetachPlan03GroupFrontier(actual.old.groups[i - 1],
+            ASSERT_TRUE(Engine().timelinePool.DetachScheduleGroupFrontier(actual.old.groups[i - 1],
                 Engine().mixer.BlocksRendered()));
         ASSERT_TRUE(Engine().decisions.ReleaseFrontierDecisionBinding(actual.old.decisions[1]));
         ASSERT_TRUE(Engine().decisions.ReleaseFrontierDecisionBinding(actual.old.decisions[3]));
@@ -6847,21 +6847,21 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
             } else binding.queueConditional = {future.old.queue.slot, future.old.queue.generation,
                 before.logicMirror.version, accepted.pendingVersion, future.old.episode.occurrence,
                 installNewSource ? newSource.occurrence : future.old.episode.occurrence};
-            ASSERT_TRUE(engine.timelinePool.BindPlan03GroupFrontier(future.group[i], binding));
+            ASSERT_TRUE(engine.timelinePool.BindScheduleGroupFrontier(future.group[i], binding));
             if (i == 1) {
-                harken::Plan03PageGroupView actual{};
-                ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(future.group[i], &actual));
+                harken::SchedulePageGroupView actual{};
+                ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(future.group[i], &actual));
                 ASSERT_NE(nullptr, actual.frontier);
                 ASSERT_TRUE(engine.queueInstances.BindFrontierConditional(future.old.queue, *actual.frontier, engine.timelinePool));
                 ASSERT_TRUE(engine.decisions.BindFrontierDecision(future.token[1], *actual.frontier, engine.timelinePool));
             }
         }
         ASSERT_TRUE(selectedCalendar.PinPrivate(engine.timelineArms, engine.decisions,
-            engine.config.maxPlan03GroupHeadersPerPage));
+            engine.config.maxScheduleGroupHeadersPerPage));
         if (scheduledStop) ASSERT_NO_FATAL_FAILURE(stop.BindAndPublish(engine, future, newSource, sequence));
         if (installNewSource) {
-            harken::Plan03PageGroupView actual{};
-            ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(future.group[1], &actual));
+            harken::SchedulePageGroupView actual{};
+            ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(future.group[1], &actual));
             ASSERT_TRUE(engine.timelineArms.BindFrontierAdmission(newSource.source.arm, *actual.frontier, *actual.lease));
             ASSERT_TRUE(engine.timelineArms.Publish(newSource.source.arm));
         }
@@ -6950,7 +6950,7 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
         foreignSelectedLane.Return();
         ASSERT_TRUE(selectedCalendar.RetireSelected(engine.mixer.BlocksRendered()));
         for (std::uint32_t i = 2; i != 0; --i)
-            ASSERT_TRUE(engine.timelinePool.DetachPlan03GroupFrontier(future.group[i - 1], engine.mixer.BlocksRendered()));
+            ASSERT_TRUE(engine.timelinePool.DetachScheduleGroupFrontier(future.group[i - 1], engine.mixer.BlocksRendered()));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(future.token[1]));
     }
     future.owner.Release();
@@ -7477,9 +7477,9 @@ struct GenuineScopedC0SourceFixture : GenuineInitialSingleClockHarness {
             if (index == 1) binding.queueInitial = {queue.slot, queue.generation, 1, fingerprint};
             if (index == 3) binding.queueConditional = {queue.slot, queue.generation,
                 1, version.version, episode.occurrence, episode.occurrence};
-            ASSERT_TRUE(engine.timelinePool.BindPlan03GroupFrontier(groups[index], binding));
-            harken::Plan03PageGroupView actual{};
-            ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(groups[index], &actual));
+            ASSERT_TRUE(engine.timelinePool.BindScheduleGroupFrontier(groups[index], binding));
+            harken::SchedulePageGroupView actual{};
+            ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(groups[index], &actual));
             ASSERT_NE(nullptr, actual.frontier);
             ASSERT_TRUE(engine.armGroups.Reserve(decisions[index], nullptr, 0, &armGroups[index]));
             harken::DecisionParticipantRef participant{};
@@ -7505,9 +7505,9 @@ struct GenuineScopedC0SourceFixture : GenuineInitialSingleClockHarness {
         ASSERT_TRUE(engine.timelineArms.BindPendingImmediateStart(episode.source.arm, anchor + sourceRelative, anchor + sourceRelative));
         ASSERT_TRUE(engine.immediateActionLane.PinArms(lane, engine.timelineArms));
         ASSERT_TRUE(engine.immediateActionLane.PinGroups(lane, engine.timelinePool,
-            engine.decisions, engine.config.maxPlan03GroupHeadersPerPage));
-        harken::Plan03PageGroupView initial{};
-        ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(groups[0], &initial));
+            engine.decisions, engine.config.maxScheduleGroupHeadersPerPage));
+        harken::SchedulePageGroupView initial{};
+        ASSERT_TRUE(engine.timelinePool.ResolveScheduleGroupSliceProducer(groups[0], &initial));
         ASSERT_TRUE(engine.timelineArms.BindFrontierAdmission(episode.source.arm, *initial.frontier, *initial.lease));
         ASSERT_TRUE(Original(0).BorrowLifetime(&primaryOriginal));
         ASSERT_TRUE(Original(1).BorrowLifetime(&initialOriginal));
@@ -7560,7 +7560,7 @@ struct GenuineScopedC0SourceFixture : GenuineInitialSingleClockHarness {
         ASSERT_TRUE(engine.immediateActionLane.Cancel(lane));
         ASSERT_TRUE(engine.immediateActionLane.Retire(lane, engine.mixer.BlocksRendered()));
         for (std::uint32_t index = groups.size(); index != 0; --index)
-            ASSERT_TRUE(engine.timelinePool.DetachPlan03GroupFrontier(groups[index - 1],
+            ASSERT_TRUE(engine.timelinePool.DetachScheduleGroupFrontier(groups[index - 1],
                 engine.mixer.BlocksRendered()));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(decisions[1]));
         ASSERT_TRUE(engine.decisions.ReleaseFrontierDecisionBinding(decisions[3]));
@@ -8068,8 +8068,8 @@ namespace harken::detail {
 struct OriginalConditionalWithdrawalNegativeTestAccess {
     static bool HasRealCapturedAudioPair(const ImmediateActionLane& lane,
         ImmediateLaneHandle handle, const ScheduledTransactionPool& pool,
-        const DecisionTable& decisions, const Plan03GroupSliceIdentity& primary,
-        const Plan03GroupSliceIdentity& member) noexcept {
+        const DecisionTable& decisions, const ScheduleGroupSliceIdentity& primary,
+        const ScheduleGroupSliceIdentity& member) noexcept {
         if (!handle.Valid() || handle.slot >= lane.config_.attempts) return false;
         const auto& actual = lane.attempts_[handle.slot];
         if (actual.generation != handle.generation ||
@@ -8107,8 +8107,8 @@ struct OriginalConditionalWithdrawalNegativeTestAccess {
     }
     static bool RefusesCapturedPair(const ImmediateActionLane& lane,
         ImmediateLaneHandle handle, const ScheduledTransactionPool& pool,
-        const DecisionTable& decisions, const Plan03GroupSliceIdentity& primary,
-        const Plan03GroupSliceIdentity& member) noexcept {
+        const DecisionTable& decisions, const ScheduleGroupSliceIdentity& primary,
+        const ScheduleGroupSliceIdentity& member) noexcept {
         const ImmediateLaneBucket* bucket = nullptr;
         if (handle.slot < lane.config_.attempts) {
             const auto& actual = lane.attempts_[handle.slot];
@@ -9085,9 +9085,9 @@ struct NativeJointCancellation {
     NativeUnpublishedDispositionSource source;
     std::uint64_t startFrame = 0;
     harken::DecisionToken decision{};
-    std::array<harken::CommittedPlan03GroupSlice, 2> groups;
-    std::array<harken::CommittedPlan03GroupSlice*, 2> originals{&groups[0], &groups[1]};
-    std::array<harken::Plan03GroupSliceIdentity, 2> identities{};
+    std::array<harken::CommittedScheduleGroupSlice, 2> groups;
+    std::array<harken::CommittedScheduleGroupSlice*, 2> originals{&groups[0], &groups[1]};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> identities{};
     std::array<harken::UnpublishedGroupCancellationHold, 2> groupStorage;
     std::array<harken::UnpublishedArmCancellationHold, 1> armStorage;
     harken::UnpublishedGroupArmCancellationProof proof;
@@ -9111,16 +9111,16 @@ struct NativeJointCancellation {
         startFrame = pool.PublishCutoffFrame();
         ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, bindRange, true, true, true, {decision}, captureBody, startFrame));
         for (std::uint32_t index = 0; index < count; ++index) {
-            harken::Plan03GroupSliceInput input{};
+            harken::ScheduleGroupSliceInput input{};
             input.executeFrame = startFrame; input.decision = decision; input.sliceIndex = index;
             input.members = &source.arm; input.memberCount = 1;
-            harken::PreparedPlan03GroupSlice prepared;
-            ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                pool.PreparePlan03GroupSlice(input, engine.timelineArms, &prepared));
-            ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&prepared, &groups[index]));
+            harken::PreparedScheduleGroupSlice prepared;
+            ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                pool.PrepareScheduleGroupSlice(input, engine.timelineArms, &prepared));
+            ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&prepared, &groups[index]));
         }
-        std::array<harken::Plan03PageGroupView, 2> actual{};
-        ASSERT_EQ(count, pool.CaptureLivePlan03Groups(actual.data(), actual.size()));
+        std::array<harken::SchedulePageGroupView, 2> actual{};
+        ASSERT_EQ(count, pool.CaptureLiveScheduleGroups(actual.data(), actual.size()));
         for (std::uint32_t index = 0; index < count; ++index) {
             ASSERT_TRUE(actual[index].identity.Exact());
             ASSERT_EQ(decision.slot, actual[index].identity.decision.slot);
@@ -9150,7 +9150,7 @@ harken::ScheduledTransactionPool::Config NativeJointForeignConfig() {
     config.maxTransactionSpanFrames = kFrames * 2; config.maxIngressTransactionsPerQuantum = 4;
     config.maxFrameBatchesPerQuantum = 4; config.maxEventsPerQuantum = 8;
     config.maxTransactionEvents = 4; config.maxCurrentSlicesPerQuantum = 4;
-    config.maxPlan03GroupHeadersPerPage = 4; config.maxArmsPerGroup = 4;
+    config.maxScheduleGroupHeadersPerPage = 4; config.maxArmsPerGroup = 4;
     config.maxImmediateLaneGroupRows = 2; config.maxImmediateLaneOwnerGates = 4;
     config.maxImmediateLaneDecisionGates = 4;
     return config;
@@ -9164,16 +9164,16 @@ TEST(OriginalSourceSubmission, NativeJointCancellationConsumesTwoRealSlicesAndOn
     NativeJointCancellation actual;
     ASSERT_NO_FATAL_FAILURE(actual.Prepare(engine, engine.timelinePool));
     ASSERT_EQ(JointStatus::Held, actual.Begin(engine, engine.timelinePool));
-    EXPECT_FALSE(engine.timelinePool.RollbackCommittedPlan03GroupSlice(&actual.groups[0]));
-    EXPECT_FALSE(engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&actual.groups[1]));
+    EXPECT_FALSE(engine.timelinePool.RollbackCommittedScheduleGroupSlice(&actual.groups[0]));
+    EXPECT_FALSE(engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&actual.groups[1]));
     EXPECT_FALSE(engine.timelineArms.RequestCancel(actual.source.arm));
     ASSERT_NO_FATAL_FAILURE(actual.Dispose(engine));
     ASSERT_EQ(JointStatus::Consumed, actual.Finish(engine, engine.timelinePool));
     EXPECT_FALSE(actual.proof.Valid()); EXPECT_TRUE(actual.proof.ConsumedOriginalArm(actual.source.arm));
     EXPECT_FALSE(actual.groups[0].Valid()); EXPECT_FALSE(actual.groups[1].Valid());
     EXPECT_EQ(free, engine.timelineArms.FreeCount());
-    std::array<harken::Plan03PageGroupView, 2> remaining{};
-    EXPECT_EQ(0u, engine.timelinePool.CaptureLivePlan03Groups(remaining.data(), remaining.size()));
+    std::array<harken::SchedulePageGroupView, 2> remaining{};
+    EXPECT_EQ(0u, engine.timelinePool.CaptureLiveScheduleGroups(remaining.data(), remaining.size()));
     EXPECT_EQ(0u, engine.mixer.BlocksRendered()); EXPECT_EQ(0u, engine.commands.PublishedHead());
     EXPECT_EQ(0u, engine.timelineArms.RowAt(actual.source.arm.slot)->armedCompletionSequence.load());
     EXPECT_EQ(0u, engine.timelineArms.RowAt(actual.source.arm.slot)->tombstoneAudioSequence.load());
@@ -9201,13 +9201,13 @@ TEST(OriginalSourceSubmission, NativeJointCancellationBusyRetainsTruePublication
     ASSERT_EQ(VN_OK, Vn_Update());
     engine.timelinePool.Publish(actual.startFrame + kFrames, nullptr, nullptr, &engine.timelineArms);
     for (const auto& identity : actual.identities) {
-        harken::Plan03ExactGroupSnapshot group{};
-        ASSERT_TRUE(engine.timelinePool.CaptureExactPlan03Group(identity, &group));
+        harken::ScheduleExactGroupSnapshot group{};
+        ASSERT_TRUE(engine.timelinePool.CaptureExactScheduleGroup(identity, &group));
         EXPECT_FALSE(group.page.frozen); EXPECT_TRUE(group.publicationHeld);
         EXPECT_EQ(UINT64_MAX, group.pageStamp); EXPECT_EQ(UINT64_MAX, group.emptyPageStamp);
         EXPECT_EQ(harken::AudioSliceState::Ready, group.effectiveLease.state);
-        harken::Plan03GroupReaderPin forbidden;
-        EXPECT_FALSE(engine.timelinePool.AcquirePlan03GroupReader(identity, &forbidden));
+        harken::ScheduleGroupReaderPin forbidden;
+        EXPECT_FALSE(engine.timelinePool.AcquireScheduleGroupReader(identity, &forbidden));
     }
     EXPECT_EQ(0u, engine.timelinePool.Advance());
     EXPECT_FALSE(engine.timelinePool.CanResetForEpoch(0, engine.timelinePool.Epoch() + 1));
@@ -9227,26 +9227,26 @@ TEST(OriginalSourceSubmission, NativeJointCancellationRequiresEveryActualMemberA
     NativeJointCancellation actual;
     ASSERT_NO_FATAL_FAILURE(actual.Prepare(engine, engine.timelinePool));
     EXPECT_EQ(JointStatus::Busy, actual.Begin(engine, engine.timelinePool, 1));
-    harken::Plan03ExactGroupSnapshot before{};
-    ASSERT_TRUE(engine.timelinePool.CaptureExactPlan03Group(actual.identities[0], &before));
+    harken::ScheduleExactGroupSnapshot before{};
+    ASSERT_TRUE(engine.timelinePool.CaptureExactScheduleGroup(actual.identities[0], &before));
     EXPECT_FALSE(before.publicationHeld); EXPECT_FALSE(actual.groups[0].Held());
     std::array<harken::UnpublishedArmCancellationHold, 0> absent;
     EXPECT_EQ(JointStatus::StorageTooSmall, engine.timelinePool.BeginUnpublishedGroupArmCancellation(
         actual.originals, engine.timelineArms, actual.groupStorage, absent, &actual.proof));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(engine.timelinePool.AcquirePlan03GroupReader(actual.identities[1], &reader));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(engine.timelinePool.AcquireScheduleGroupReader(actual.identities[1], &reader));
     EXPECT_EQ(JointStatus::Busy, actual.Begin(engine, engine.timelinePool));
     ASSERT_TRUE(reader.Release(0));
     auto* row = engine.timelineArms.RowAt(actual.source.arm.slot);
     ASSERT_FALSE(row->reservation.test_and_set());
     EXPECT_EQ(JointStatus::Busy, actual.Begin(engine, engine.timelinePool));
     row->reservation.clear();
-    ASSERT_TRUE(engine.timelinePool.CaptureExactPlan03Group(actual.identities[0], &before));
+    ASSERT_TRUE(engine.timelinePool.CaptureExactScheduleGroup(actual.identities[0], &before));
     EXPECT_EQ(harken::AudioSliceState::Ready, before.effectiveLease.state); EXPECT_FALSE(before.publicationHeld);
     ASSERT_EQ(JointStatus::Held, actual.Begin(engine, engine.timelinePool));
     actual.proof.Release();
-    ASSERT_TRUE(engine.timelinePool.RollbackCommittedPlan03GroupSlice(&actual.groups[1]));
-    ASSERT_TRUE(engine.timelinePool.RollbackCommittedPlan03GroupSlice(&actual.groups[0]));
+    ASSERT_TRUE(engine.timelinePool.RollbackCommittedScheduleGroupSlice(&actual.groups[1]));
+    ASSERT_TRUE(engine.timelinePool.RollbackCommittedScheduleGroupSlice(&actual.groups[0]));
     ASSERT_NO_FATAL_FAILURE(actual.Dispose(engine));
     ASSERT_TRUE(engine.timelineArms.RequestCancel(actual.source.arm));
     engine.nullBackend.Pump(1);
@@ -9266,16 +9266,16 @@ TEST(OriginalSourceSubmission, NativeJointCancellationForeignPoolObligationPreve
     ASSERT_NO_FATAL_FAILURE(actual.Prepare(engine, engine.timelinePool, 1));
     harken::ScheduledTransactionPool foreign;
     ASSERT_TRUE(foreign.Reset(NativeJointForeignConfig(), 0, engine.timelinePool.Epoch()));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = actual.startFrame; input.decision = actual.decision; input.sliceIndex = 1;
     input.members = &actual.source.arm; input.memberCount = 1;
-    harken::PreparedPlan03GroupSlice prepared; harken::CommittedPlan03GroupSlice committed;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        foreign.PreparePlan03GroupSlice(input, engine.timelineArms, &prepared));
-    ASSERT_TRUE(foreign.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    harken::PreparedScheduleGroupSlice prepared; harken::CommittedScheduleGroupSlice committed;
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        foreign.PrepareScheduleGroupSlice(input, engine.timelineArms, &prepared));
+    ASSERT_TRUE(foreign.CommitPreparedScheduleGroupSlice(&prepared, &committed));
     EXPECT_EQ(JointStatus::Busy, actual.Begin(engine, engine.timelinePool, 1));
     EXPECT_FALSE(actual.proof.Valid()); EXPECT_TRUE(committed.Valid());
-    ASSERT_TRUE(foreign.RollbackCommittedPlan03GroupSlice(&committed));
+    ASSERT_TRUE(foreign.RollbackCommittedScheduleGroupSlice(&committed));
     ASSERT_EQ(JointStatus::Held, actual.Begin(engine, engine.timelinePool, 1));
     ASSERT_NO_FATAL_FAILURE(actual.Dispose(engine));
     ASSERT_EQ(JointStatus::Consumed, actual.Finish(engine, engine.timelinePool));
@@ -9408,7 +9408,7 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitNeverPromotesGroupedFactoryAf
     NativeJointCancellation actual;
     ASSERT_NO_FATAL_FAILURE(actual.Prepare(engine, engine.timelinePool));
     for (std::size_t index = actual.groups.size(); index-- > 0;)
-        ASSERT_TRUE(engine.timelinePool.RollbackCommittedPlan03GroupSlice(&actual.groups[index]));
+        ASSERT_TRUE(engine.timelinePool.RollbackCommittedScheduleGroupSlice(&actual.groups[index]));
     ASSERT_NO_FATAL_FAILURE(actual.Dispose(engine));
     const auto* original = engine.originalSourceSubmissions.OriginalUnpublishedDisposition(actual.source.arm);
     ASSERT_NE(nullptr, original);

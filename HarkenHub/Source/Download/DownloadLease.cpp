@@ -6,7 +6,7 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 
-namespace VNH {
+namespace harken::hub {
 
 DownloadLease::DownloadLease(const QString& lockPath)
     : lockPath_(lockPath), lock_(lockPath)

@@ -83,7 +83,7 @@
 #include <cstdint>
 #include <utility>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The runtime capabilities a program requires. This is the minimal set of
 // capabilities that actually exist in this vintage's tree — expressed as "what
@@ -151,6 +151,6 @@ private:
     std::uint64_t programSemanticFingerprint_ = 0;
 };
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_SEGMENT_PROGRAM_H

@@ -33,7 +33,7 @@
 #include <limits>
 #include <stdexcept>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 
@@ -673,23 +673,23 @@ TEST(SoundSourceSemanticsTest, DerivativeCacheRecoversCorruptArtifactsAndPreserv
         const auto media = SoundSourceDerivative::materialize(
             inputPath, definition, 0.0, platform, outputDir, {}, &error, &cache);
         ASSERT_TRUE(media) << error.toStdString();
-        HarkenEditor::Bridge::PackMediaDesc desc;
+        harken::studio::bridge::PackMediaDesc desc;
         desc.interleavedSamples = media->samples;
         desc.sampleRate = media->sampleRate;
         desc.channels = media->channels;
-        desc.format = HarkenEditor::Bridge::PackMediaFormat::PcmFloat;
+        desc.format = harken::studio::bridge::PackMediaFormat::PcmFloat;
         desc.loopable = media->loopable;
         desc.loopStartFrame = media->loopStartFrame;
         desc.loopEndFrame = media->loopEndFrame;
         uint64_t reference = 0;
-        ASSERT_TRUE(HarkenEditor::Bridge::computePackMediaContentRevision(desc, &reference));
+        ASSERT_TRUE(harken::studio::bridge::computePackMediaContentRevision(desc, &reference));
         const auto referencePath = directory.filePath(QStringLiteral("reference.wav"));
         ASSERT_TRUE(AssetConverter::writeFloatWav(referencePath, *media->samples,
             media->channels, media->sampleRate));
         desc.interleavedSamples.reset();
         desc.sourcePath = referencePath;
         uint64_t fileRevision = 0;
-        ASSERT_TRUE(HarkenEditor::Bridge::computePackMediaContentRevision(desc, &fileRevision));
+        ASSERT_TRUE(harken::studio::bridge::computePackMediaContentRevision(desc, &fileRevision));
         EXPECT_EQ(fileRevision, reference);
         const auto revision = cache.contentRevision(*media);
         ASSERT_TRUE(revision);
@@ -1185,7 +1185,7 @@ TEST(SoundSourceSemanticsTest, SharedMediaCanBePublishedToIndependentDestination
 
 TEST(SoundSourceSemanticsTest, PreviewMediaPreparationPreservesDecodedChannelsFramesAndRevision)
 {
-    namespace Bridge = HarkenEditor::Bridge;
+    namespace Bridge = harken::studio::bridge;
     const auto previousServices = Bridge::mediaServices();
     const auto restoreServices = qScopeGuard([&] { Bridge::setMediaServices(previousServices); });
     Bridge::setMediaServices(Bridge::makeBuildMediaServices());

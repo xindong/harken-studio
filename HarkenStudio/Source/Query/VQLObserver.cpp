@@ -2,7 +2,7 @@
 #include "VQLObserver.h"
 #include "VQLEngine.h"
 
-namespace VNX {
+namespace harken::studio {
 
 VQLObserver::VQLObserver(VQLEngine* engine, QObject* parent)
     : QObject(parent)

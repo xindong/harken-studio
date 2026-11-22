@@ -7,7 +7,7 @@
 #include <QPainter>
 #include <QSizePolicy>
 
-namespace VNX {
+namespace harken::studio {
 
 class ComponentRecipeHost::SlotContainer : public QWidget
 {

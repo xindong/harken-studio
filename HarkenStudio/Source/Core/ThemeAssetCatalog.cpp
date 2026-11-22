@@ -1,6 +1,6 @@
 #include "ThemeAssetCatalog.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
 {

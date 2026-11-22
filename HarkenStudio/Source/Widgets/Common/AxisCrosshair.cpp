@@ -9,7 +9,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 void drawIndicatorSurface(QPainter& painter, const QColor& background, const QRectF& bounds,

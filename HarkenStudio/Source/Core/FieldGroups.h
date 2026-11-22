@@ -13,9 +13,9 @@
 #include <variant>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
-using FieldGroupScope = std::optional<harkenprojectschema::AuthoringGuid>;
+using FieldGroupScope = std::optional<harken::studio::project_schema::AuthoringGuid>;
 
 enum class FieldGroupId : std::uint8_t {
     Output,
@@ -42,17 +42,17 @@ constexpr std::uint64_t FieldGroupFieldMask(harkenplayableproperties::PlayablePr
 
 struct OutputFieldGroup {
     static constexpr auto groupId = FieldGroupId::Output;
-    harkenprojectschema::AuthoringGuid outputBusRef{};
+    harken::studio::project_schema::AuthoringGuid outputBusRef{};
     float outputBusVolume = 0.0f;
 
     bool operator==(const OutputFieldGroup&) const = default;
 };
 
 struct SendFieldGroupRow {
-    harkenprojectschema::AuthoringGuid targetBusID{};
+    harken::studio::project_schema::AuthoringGuid targetBusID{};
     float sendLevel = 0.0f;
-    harkenprojectschema::SendMode mode = harkenprojectschema::SendMode::Mix;
-    std::map<harkenprojectschema::SendMode, float> modeVolumesDb{};
+    harken::studio::project_schema::SendMode mode = harken::studio::project_schema::SendMode::Mix;
+    std::map<harken::studio::project_schema::SendMode, float> modeVolumesDb{};
 
     bool operator==(const SendFieldGroupRow&) const = default;
 };
@@ -68,7 +68,7 @@ struct SpatialRatingFieldGroup {
     static constexpr auto groupId = FieldGroupId::SpatialRating;
     float spatialPanning = 0.0f;
     bool spatialIs3DEnabled = false;
-    harkenprojectschema::AuthoringGuid spatialAttenuationRef{};
+    harken::studio::project_schema::AuthoringGuid spatialAttenuationRef{};
     float spatialAttenuationDistanceScaling = 1.0f;
 
     bool operator==(const SpatialRatingFieldGroup&) const = default;
@@ -92,7 +92,7 @@ constexpr std::uint64_t FieldGroupFieldMask(ConversionFieldId)
 
 struct ConversionFieldGroup {
     static constexpr auto groupId = FieldGroupId::Conversion;
-    harkenprojectschema::AuthoringGuid settingsRef{};
+    harken::studio::project_schema::AuthoringGuid settingsRef{};
 
     bool operator==(const ConversionFieldGroup&) const = default;
 };
@@ -109,7 +109,7 @@ struct GroupState {
 template <typename Payload>
 struct AuthoredGroup {
     GroupState<Payload> shared;
-    std::map<harkenprojectschema::AuthoringGuid, GroupState<Payload>> platforms;
+    std::map<harken::studio::project_schema::AuthoringGuid, GroupState<Payload>> platforms;
 
     bool operator==(const AuthoredGroup&) const = default;
 };
@@ -204,7 +204,7 @@ void VisitAuthoredEffectChains(Groups& groups, Visitor&& visit)
 }
 
 inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
-                                             harkenprojectschema::AuthoringGuid platform)
+                                             harken::studio::project_schema::AuthoringGuid platform)
 {
     const auto mask = [platform](const auto& group) {
         const auto state = group.platforms.find(platform);
@@ -244,23 +244,23 @@ enum class FieldGroupDiagnosticCode : std::uint8_t {
 
 struct FieldGroupDiagnostic {
     FieldGroupDiagnosticCode code = FieldGroupDiagnosticCode::InvalidValue;
-    harkenprojectschema::AuthoringGuid definition{};
+    harken::studio::project_schema::AuthoringGuid definition{};
     std::optional<FieldGroupId> group;
     FieldGroupScope scope;
     std::string_view field;
     std::optional<std::size_t> row;
-    harkenprojectschema::AuthoringGuid relatedGuid{};
+    harken::studio::project_schema::AuthoringGuid relatedGuid{};
 };
 
 struct FieldGroupDefinitionView {
-    harkenprojectschema::AuthoringGuid guid{};
-    harkenprojectschema::ContentKind kind = harkenprojectschema::ContentKind::Sound;
-    harkenprojectschema::AuthoringGuid parentGuid{};
+    harken::studio::project_schema::AuthoringGuid guid{};
+    harken::studio::project_schema::ContentKind kind = harken::studio::project_schema::ContentKind::Sound;
+    harken::studio::project_schema::AuthoringGuid parentGuid{};
     const DefinitionFieldGroups* groups = nullptr;
 };
 
 struct FieldGroupSource {
-    harkenprojectschema::AuthoringGuid definition{};
+    harken::studio::project_schema::AuthoringGuid definition{};
     FieldGroupScope scope;
     bool isDefault = true;
 };
@@ -289,7 +289,7 @@ enum class FieldGroupReferenceKind : std::uint8_t {
 };
 
 struct FieldGroupReferenceTarget {
-    harkenprojectschema::AuthoringGuid guid{};
+    harken::studio::project_schema::AuthoringGuid guid{};
     FieldGroupReferenceKind kind = FieldGroupReferenceKind::Other;
 };
 
@@ -301,13 +301,13 @@ public:
         FieldGroupId group, const FieldGroupPayload& payload) const;
 
 private:
-    std::map<harkenprojectschema::AuthoringGuid, FieldGroupReferenceKind> targets_;
-    std::vector<harkenprojectschema::AuthoringGuid> invalidTargets_;
+    std::map<harken::studio::project_schema::AuthoringGuid, FieldGroupReferenceKind> targets_;
+    std::vector<harken::studio::project_schema::AuthoringGuid> invalidTargets_;
 };
 
 bool IsFieldGroupScopeValid(FieldGroupScope scope) noexcept;
 DefinitionFieldGroups MakeRootFieldGroups(
-    harkenprojectschema::AuthoringGuid masterBusGuid);
+    harken::studio::project_schema::AuthoringGuid masterBusGuid);
 std::string_view FieldGroupName(FieldGroupId group) noexcept;
 std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept;
 std::optional<FieldGroupId> FieldGroupForProperty(
@@ -319,7 +319,7 @@ inline constexpr std::uint64_t kFieldGroupPropertyMask = UINT64_C(0x2de0)
 std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
     FieldGroupId group, const FieldGroupPayload& payload);
 std::vector<FieldGroupDiagnostic> ValidateDefinitionFieldGroups(
-    const DefinitionFieldGroups& groups, harkenprojectschema::AuthoringGuid definition = {});
+    const DefinitionFieldGroups& groups, harken::studio::project_schema::AuthoringGuid definition = {});
 std::vector<FieldGroupDiagnostic> ValidateActiveFieldGroup(
     FieldGroupId group, const FieldGroupPayload& payload,
     std::span<const FieldGroupReferenceTarget> targets);
@@ -327,18 +327,18 @@ std::vector<FieldGroupDiagnostic> ValidateActiveFieldGroup(
 class FieldGroupResolver {
 public:
     FieldGroupResolver(std::span<const FieldGroupDefinitionView> definitions,
-                         harkenprojectschema::AuthoringGuid masterBusGuid);
+                         harken::studio::project_schema::AuthoringGuid masterBusGuid);
 
     bool ok() const noexcept { return diagnostics_.empty(); }
     const std::vector<FieldGroupDiagnostic>& diagnostics() const noexcept {
         return diagnostics_;
     }
-    FieldGroupResolutionResult Resolve(harkenprojectschema::AuthoringGuid definition,
+    FieldGroupResolutionResult Resolve(harken::studio::project_schema::AuthoringGuid definition,
                                          FieldGroupScope scope,
                                          FieldGroupId group) const;
 
 private:
-    std::map<harkenprojectschema::AuthoringGuid, FieldGroupDefinitionView> definitions_;
+    std::map<harken::studio::project_schema::AuthoringGuid, FieldGroupDefinitionView> definitions_;
     std::vector<FieldGroupDiagnostic> diagnostics_;
 };
 

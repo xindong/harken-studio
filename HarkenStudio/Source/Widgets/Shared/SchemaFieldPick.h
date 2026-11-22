@@ -5,7 +5,7 @@
 
 #include <QLatin1String>
 
-namespace VNX {
+namespace harken::studio {
 
 inline const PropertyDescriptor* pickSchemaField(const PropertySchema& src, QLatin1String field)
 {

@@ -2749,6 +2749,10 @@
         },
         "VnMonitorMeasurementKind": {
           "backing": "u32",
+          "deprecatedValues": {
+            "VN_MONITOR_MEASURE_LUFS_INTEGRATED": "ID 11 is permanently reserved.",
+            "VN_MONITOR_MEASURE_LUFS_SHORT_TERM": "ID 10 is permanently reserved."
+          },
           "edition": "development",
           "values": {
             "VN_MONITOR_MEASURE_GAIN_REDUCTION": 5,
@@ -3660,6 +3664,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use Vn_ActivateCanonicalPackSetV2.",
           "edition": "core",
           "name": "Vn_ActivateCanonicalPackSetV1",
           "parameters": [
@@ -3704,6 +3709,9 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecatedDescriptors": {
+            "VnPackDesc": "Use VnPackLoadDesc for current Pack files."
+          },
           "edition": "core",
           "name": "Vn_LoadPack",
           "parameters": [
@@ -4192,6 +4200,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use Vn_ActivateCanonicalPackSetV2 to replace canonical Pack set members.",
           "edition": "core",
           "name": "Vn_ReplacePack",
           "parameters": [
@@ -4746,6 +4755,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use canonical Pack activation for runtime content.",
           "edition": "core",
           "name": "Vn_LoadCurrentWorld",
           "parameters": [
@@ -5972,6 +5982,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use VnPreview_PrepareProjectV4.",
           "edition": "development",
           "name": "VnPreview_PrepareProjectV2",
           "parameters": [
@@ -5988,6 +5999,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use VnPreview_PrepareProjectV4.",
           "edition": "development",
           "name": "VnPreview_PrepareProjectV3",
           "parameters": [
@@ -27096,7 +27108,7 @@
       }
     }
   },
-  "contractSha256": "4d2ac125828a0c4d05478a72d77ec5fd3d9529dde45d7baba3c92d4c0ac0121f",
+  "contractSha256": "2521d79c9cf3acc007f7c6932375e1d9ba2e4ac6452cbf4dceab71584c18e147",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

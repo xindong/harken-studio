@@ -6,7 +6,7 @@
 
 class QAbstractButton;
 
-namespace VNH {
+namespace harken::hub {
 
 class ButtonPulseAnimator : public QObject
 {

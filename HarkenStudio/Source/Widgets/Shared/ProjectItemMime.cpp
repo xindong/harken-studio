@@ -3,7 +3,7 @@
 
 #include "RefIdMime.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace ProjectItemMime {
 
 void writeObjectIDs(QMimeData* mime, const QList<uint32_t>& objectIDs)

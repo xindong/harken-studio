@@ -13,7 +13,7 @@
 
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path);
 ProjectItem* resolveItemByPathOrObjectID(ProjectData* project,
@@ -194,9 +194,9 @@ void registerBindingActions(ActionManager& mgr)
             if (!item) return missingHost();
             auto* mix = BindingEditing::ledgerHost(item, BindingEditing::hostClassOf(item));
             if (!mix) return {false, {}, "NO_COMPONENT", "No MixNode on binding host"};
-            harkenstudio::ObjectId runtimeStableId{};
+            harken::studio::types::ObjectId runtimeStableId{};
             if (!parseObjectIdJson(args.value(QStringLiteral("runtime_stable_id")), &runtimeStableId) ||
-                harkenstudio::IsNull(runtimeStableId))
+                harken::studio::types::IsNull(runtimeStableId))
                 return {false, {}, "INVALID_ARGS", "runtime_stable_id is required"};
             const BindingLedger oldLedger = mix->bindings;
             if (!BindingEditing::remove(

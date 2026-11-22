@@ -4,7 +4,7 @@
 #include <QPair>
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 class LogExporter
 {

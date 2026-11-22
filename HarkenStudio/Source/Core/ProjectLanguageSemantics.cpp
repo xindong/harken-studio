@@ -4,7 +4,7 @@
 
 #include <QRegularExpression>
 
-namespace VNX {
+namespace harken::studio {
 namespace ProjectLanguageSemantics {
 namespace {
 

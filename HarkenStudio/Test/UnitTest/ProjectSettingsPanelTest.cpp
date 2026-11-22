@@ -18,7 +18,7 @@
 #include <QTemporaryDir>
 #include <QToolButton>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

@@ -17,7 +17,7 @@
 
 #include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 AssetImporter::AssetImporter(QObject* parent)
@@ -41,7 +41,7 @@ AudioMetadata AssetImporter::readMetadata(const QString& path)
     AudioMetadata meta;
     if (format.isEmpty()) return meta;
 
-    const auto info = HarkenEditor::Bridge::audioFileInfo(path);
+    const auto info = harken::studio::bridge::audioFileInfo(path);
     if (!info.valid) {
         qWarning() << "[AssetImporter] Failed to read" << format << "metadata:" << path;
         if (format == "WAV") return meta;

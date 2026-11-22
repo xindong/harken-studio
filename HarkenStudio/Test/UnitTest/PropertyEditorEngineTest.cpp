@@ -45,14 +45,14 @@ void ensureApp()
 
 struct NotesFixture
 {
-    VNX::PropertyEditorEngine engine;
+    harken::studio::PropertyEditorEngine engine;
     std::unique_ptr<QWidget> page;
     QPlainTextEdit* edit = nullptr;
 
     NotesFixture()
     {
-        engine.setSchema({VNX::notesInspectorDescriptor()}, VNX::ComponentType::_Count);
-        engine.setItemType(VNX::ProjectItem::Type::Sound);
+        engine.setSchema({harken::studio::notesInspectorDescriptor()}, harken::studio::ComponentType::_Count);
+        engine.setItemType(harken::studio::ProjectItem::Type::Sound);
         page.reset(engine.buildPage());
         edit = page->findChild<QPlainTextEdit*>(QStringLiteral("prop_notes"));
     }
@@ -65,10 +65,10 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
     ensureApp();
     const QString style = qApp->styleSheet();
     const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(style); });
-    qApp->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
+    qApp->setStyleSheet(harken::studio::QtControlSkin::current().applicationStyleSheet());
     NotesFixture fx;
     ASSERT_NE(fx.edit, nullptr);
-    auto* section = fx.page->findChild<VNX::CollapsibleSection*>();
+    auto* section = fx.page->findChild<harken::studio::CollapsibleSection*>();
     ASSERT_NE(section, nullptr);
     section->setDynamicContent(true);
     fx.page->resize(480, 240);
@@ -96,7 +96,7 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
     for (bool expanded : {true, false}) {
         SCOPED_TRACE(expanded);
         section->setExpanded(expanded);
-        for (int height : {VNX::QtControlSkin::current().fieldHeight(), 96}) {
+        for (int height : {harken::studio::QtControlSkin::current().fieldHeight(), 96}) {
             SCOPED_TRACE(height);
             fx.edit->setFixedHeight(height);
             for (const auto& text : samples) {
@@ -122,7 +122,7 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
 
 TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAuthoringChanges)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     ensureApp();
     auto& manager = ProjectManager::instance();
     auto& platforms = PlatformContextService::instance();
@@ -220,7 +220,7 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
 
 TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomicHistoryAcrossPlatforms)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     ensureApp();
     registerBuiltinInspectorCustomizations();
     auto& manager = ProjectManager::instance();
@@ -288,8 +288,8 @@ TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomi
     PlatformContextService::instance().setAll(true);
     emit settings->objectChanged(0);
     EXPECT_EQ(history.undoStack()->count(), 4);
-    EXPECT_TRUE(harkenprojectschema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
-    EXPECT_TRUE(harkenprojectschema::IsNull(second->fieldGroups.conversion.shared.localHistory->settingsRef));
+    EXPECT_TRUE(harken::studio::project_schema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
+    EXPECT_TRUE(harken::studio::project_schema::IsNull(second->fieldGroups.conversion.shared.localHistory->settingsRef));
     history.undo();
     EXPECT_EQ(settings->currentObjectID(), preset->objectID);
     EXPECT_EQ(parent->fieldGroups, parentBefore);
@@ -313,7 +313,7 @@ TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomi
     ASSERT_TRUE(manager.restoreFieldGroupsInternal(second, secondStable, secondChanged));
     panel.showItemInspector(first);
     emit settings->objectChanged(0);
-    EXPECT_TRUE(harkenprojectschema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
+    EXPECT_TRUE(harken::studio::project_schema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
     EXPECT_EQ(second->fieldGroups, secondStable);
     EXPECT_EQ(history.undoStack()->index(), historyIndex + 1);
     history.undo();

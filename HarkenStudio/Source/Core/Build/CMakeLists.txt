@@ -1,4 +1,19 @@
+set(compiler_identity "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>/ResourceCompilerIdentity.cpp")
+set(identity_script "${CMAKE_CURRENT_SOURCE_DIR}/../../Tooling/Harkenizer/CompilerIdentity.cmake")
+add_custom_command(
+    OUTPUT "${compiler_identity}"
+    COMMAND ${CMAKE_COMMAND}
+        "-DCOMPILER_ARCHIVES=$<TARGET_FILE:harkenizer_resource_compiler>;$<TARGET_FILE:harken_studio_pack_build>;$<TARGET_FILE:harken_studio_media_decode>"
+        "-DOUTPUT=${compiler_identity}"
+        "-DIDENTITY_FUNCTION=resourceCompilerIdentity"
+        -P "${identity_script}"
+    DEPENDS harkenizer_resource_compiler harken_studio_pack_build harken_studio_media_decode
+        "${identity_script}"
+    VERBATIM
+)
+
 add_library(harken_studio_build_pipeline STATIC
+    "${compiler_identity}"
     CurrentWorldCompile.h
     CurrentWorldCompile.cpp
     PackagingBridge.h
@@ -25,7 +40,6 @@ target_link_libraries(harken_studio_build_pipeline PUBLIC
 target_link_libraries(harken_studio_build_pipeline PRIVATE
     harken_studio_media_decode
     harkenizer_resource_compiler
-    harkenizer_compiler_client
     vorbisfile
 )
 

@@ -1,6 +1,6 @@
 #pragma once
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 bool refreshFieldGroupDerivedViews(ProjectData& project);

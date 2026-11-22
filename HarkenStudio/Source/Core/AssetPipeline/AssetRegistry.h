@@ -12,7 +12,7 @@
 #include <QSet>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class AssetRegistry : public QObject
 {

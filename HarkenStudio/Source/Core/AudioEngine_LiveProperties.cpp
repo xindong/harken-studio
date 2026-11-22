@@ -15,12 +15,12 @@
 #include <map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 using LiveProperty = harkenplayableproperties::PlayablePropertyIdV1;
-using LivePropertyKey = std::pair<uint8_t, harkenstudio::ObjectId>;
+using LivePropertyKey = std::pair<uint8_t, harken::studio::types::ObjectId>;
 using LivePropertyValues = std::map<LivePropertyKey, float>;
-using LiveEffectChain = std::vector<HarkenEditor::Bridge::PreviewVoiceEffectEntry>;
+using LiveEffectChain = std::vector<harken::studio::bridge::PreviewVoiceEffectEntry>;
 
 template<typename Key, typename Value>
 bool updateCurvePreview(QHash<Key, QVector<std::pair<QUuid, Value>>>& previews,
@@ -41,10 +41,10 @@ bool updateCurvePreview(QHash<Key, QVector<std::pair<QUuid, Value>>>& previews,
 }
 
 struct LivePropertyPreview {
-    using Effect = HarkenEditor::Bridge::PreviewEffectSource;
+    using Effect = harken::studio::bridge::PreviewEffectSource;
     struct BusEffect {
-        harkenstudio::ObjectId busId{};
-        harkenstudio::ObjectId definitionId{};
+        harken::studio::types::ObjectId busId{};
+        harken::studio::types::ObjectId definitionId{};
         Effect effect;
     };
 
@@ -68,9 +68,9 @@ struct LivePropertyPreview {
         }
     };
     QHash<QUuid, DefinitionFieldGroups> groups;
-    QHash<harkenstudio::ObjectId, Definition> definitions;
+    QHash<harken::studio::types::ObjectId, Definition> definitions;
     QHash<uint64_t, LivePropertyValues> applied;
-    QHash<uint64_t, std::map<harkenstudio::ObjectId, Effect>> appliedEffects;
+    QHash<uint64_t, std::map<harken::studio::types::ObjectId, Effect>> appliedEffects;
     std::vector<BusEffect> busEffects;
     QHash<uint64_t, std::optional<LiveEffectChain>> appliedChains;
     QHash<QUuid, QVector<std::pair<QUuid, AttenuationSnapshot>>> attenuations;
@@ -119,7 +119,7 @@ void AudioEngine::bindProjectPropertyPreview(ProjectManager& project)
             livePropertyPreview_->dirty = true;
         });
     connect(&project, &ProjectManager::bindingCurvePreviewed, this,
-        [this](ProjectItem* item, harkenstudio::ObjectId id, const QUuid& previewId,
+        [this](ProjectItem* item, harken::studio::types::ObjectId id, const QUuid& previewId,
                const std::optional<ParameterBindingDef>& binding) {
             std::optional<BindingRuntimeProgram> program;
             if (binding) {
@@ -169,8 +169,8 @@ void AudioEngine::applyLivePropertyPreview()
             it = preview.pendingAttenuations.erase(it);
         else ++it;
     }
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
-    if (!HarkenEditor::Bridge::capturePlaybackPaths(paths)) return;
+    std::vector<harken::studio::bridge::PlaybackPathObservation> paths;
+    if (!harken::studio::bridge::capturePlaybackPaths(paths)) return;
     if (paths.empty()) {
         preview.applied.clear();
         preview.appliedChains.clear();
@@ -184,7 +184,7 @@ void AudioEngine::applyLivePropertyPreview()
                 return found == preview.groups.cend() ? &item.fieldGroups : &*found;
             });
         if (!snapshot.ok()) return;
-        const auto sourceIndex = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+        const auto sourceIndex = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
         if (!sourceIndex || !sourceIndex->valid) return;
         preview.definitions.clear();
         bool unresolvedEffects = false;
@@ -198,7 +198,7 @@ void AudioEngine::applyLivePropertyPreview()
                 {{static_cast<uint8_t>(LiveProperty::OutputBusVolume), {}}, groups.output.outputBusVolume},
                 {{static_cast<uint8_t>(LiveProperty::SpatialPanning), {}}, groups.spatialRating.spatialPanning},
                 {{static_cast<uint8_t>(LiveProperty::SpatializationMix), {}},
-                    HarkenEditor::Bridge::resolvedStudioSpatializationMix(*item, *sourceIndex)},
+                    harken::studio::bridge::resolvedStudioSpatializationMix(*item, *sourceIndex)},
                 {{static_cast<uint8_t>(LiveProperty::SpatialAttenuationDistanceScaling), {}},
                     groups.spatialRating.spatialAttenuationDistanceScaling}};
             definition.chain.emplace();
@@ -228,7 +228,7 @@ void AudioEngine::applyLivePropertyPreview()
                 if (!effect) continue;
                 const auto preset = sourceIndex->byQtGuid.find(entry.effectGuid);
                 const auto presetId = entry.mode == EffectMode::Preset && preset != sourceIndex->byQtGuid.end()
-                    ? preset->second->runtimeId() : harkenstudio::ObjectId{};
+                    ? preset->second->runtimeId() : harken::studio::types::ObjectId{};
                 definition.effects.push_back({entry.runtimeId(), presetId,
                     static_cast<uint32_t>(effect->type), effect->parameters, entry.bypass});
             }
@@ -252,19 +252,19 @@ void AudioEngine::applyLivePropertyPreview()
     const auto installedWorld = runtimeSyncCoordinator().installedWorld();
     if (installedWorld)
         for (const auto& busEffect : preview.busEffects)
-            (void)HarkenEditor::Bridge::updateLivePreviewBusEffect(installedWorld->runtimeEpoch,
+            (void)harken::studio::bridge::updateLivePreviewBusEffect(installedWorld->runtimeEpoch,
                 runtimeSyncCoordinator().currentAuthoringRevision(), busEffect.busId,
                 busEffect.definitionId, busEffect.effect);
     QSet<uint64_t> active;
     for (const auto& path : paths) {
         active.insert(path.voiceInstance);
-        (void)HarkenEditor::Bridge::refreshPreviewVoiceBindings(path.voiceInstance);
+        (void)harken::studio::bridge::refreshPreviewVoiceBindings(path.voiceInstance);
         const auto leaf = preview.definitions.constFind(path.soundId);
         if (leaf == preview.definitions.cend()) continue;
         auto effectState = preview.appliedEffects.find(path.voiceInstance);
         if (effectState == preview.appliedEffects.end()) {
-            std::vector<HarkenEditor::Bridge::PreviewEffectSource> installed;
-            if (HarkenEditor::Bridge::captureInstalledPreviewEffects(
+            std::vector<harken::studio::bridge::PreviewEffectSource> installed;
+            if (harken::studio::bridge::captureInstalledPreviewEffects(
                     path.worldGeneration, path.soundId, installed)) {
                 effectState = preview.appliedEffects.insert(path.voiceInstance, {});
                 for (auto& effect : installed) effectState->emplace(effect.id, std::move(effect));
@@ -285,8 +285,8 @@ void AudioEngine::applyLivePropertyPreview()
                 next.parameters = effect.parameters;
             next.bypass = effect.bypass;
             if (next == previous->second) continue;
-            if (HarkenEditor::Bridge::setPreviewVoiceEffect(path.voiceInstance, effect.id,
-                    next.type, next.parameters, next.bypass) == HarkenEditor::Bridge::kEngineOk) {
+            if (harken::studio::bridge::setPreviewVoiceEffect(path.voiceInstance, effect.id,
+                    next.type, next.parameters, next.bypass) == harken::studio::bridge::kEngineOk) {
                 previous->second = std::move(next);
                 preview.appliedChains.remove(path.voiceInstance);
             }
@@ -307,9 +307,9 @@ void AudioEngine::applyLivePropertyPreview()
         values[{static_cast<uint8_t>(LiveProperty::Pitch), {}}] = std::clamp(pitchCents, -7200.0f, 7200.0f);
         auto& acceptedChain = preview.appliedChains[path.voiceInstance];
         if (liveChain && acceptedChain != leaf->chain) {
-            const auto result = HarkenEditor::Bridge::setPreviewVoiceEffectChain(
+            const auto result = harken::studio::bridge::setPreviewVoiceEffectChain(
                 path.voiceInstance, *leaf->chain);
-            if (result == HarkenEditor::Bridge::kEngineOk) {
+            if (result == harken::studio::bridge::kEngineOk) {
                 acceptedChain = leaf->chain;
                 effectState->clear();
                 for (const auto& effect : leaf->effects) effectState->emplace(effect.id, effect);
@@ -322,9 +322,9 @@ void AudioEngine::applyLivePropertyPreview()
             if (key.first == static_cast<uint8_t>(LiveProperty::Sends)
                 && std::none_of(path.sends.begin(), path.sends.end(),
                     [&key](const auto& send) { return send.targetBusId == key.second; })) continue;
-            const auto result = HarkenEditor::Bridge::setPreviewVoiceProperty(
+            const auto result = harken::studio::bridge::setPreviewVoiceProperty(
                 path.voiceInstance, key.first, value, key.second);
-            if (result == HarkenEditor::Bridge::kEngineOk) applied[key] = value;
+            if (result == harken::studio::bridge::kEngineOk) applied[key] = value;
         }
     }
     for (auto it = preview.applied.begin(); it != preview.applied.end();) {

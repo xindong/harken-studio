@@ -28,7 +28,7 @@
 #include <tuple>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using F = RuntimeCapabilityFeature;
@@ -43,7 +43,7 @@ RuntimeCapabilityEntry row(T objectType, O operation, F feature, S state,
     return {objectType, operation, feature, state, diagnostic};
 }
 
-const ProjectItem* findByStableId(const ProjectData& project, harkenstudio::ObjectId stableId)
+const ProjectItem* findByStableId(const ProjectData& project, harken::studio::types::ObjectId stableId)
 {
     const ProjectItem* result = nullptr;
     std::set<const ProjectItem*> visited;
@@ -149,7 +149,7 @@ RuntimeCapabilityEntry bindingCapability(const ProjectItem& item,
     if (!mix || mix->bindings.isEmpty()) return result;
     BindingRuntimeLowering lowered;
     for (const auto& binding : mix->bindings.entries()) {
-        if (!binding.typed || harkenstudio::IsNull(binding.runtimeId()))
+        if (!binding.typed || harken::studio::types::IsNull(binding.runtimeId()))
             return refuse(S::InvalidAuthoring,
                           QStringLiteral("Binding is not typed or has no stable identity"));
         if (binding.address.hostClass != BindingContractSemantics::hostClassOf(item.type)
@@ -165,7 +165,7 @@ RuntimeCapabilityEntry bindingCapability(const ProjectItem& item,
             return refuse(S::InvalidAuthoring,
                           QStringLiteral("Binding Variable or curve is invalid"));
         if (operation == O::PackBuild
-            && lowered.programs.back().points.size() > harkenstudio::kCurveMaxPoints)
+            && lowered.programs.back().points.size() > harken::studio::types::kCurveMaxPoints)
             return refuse(S::InvalidAuthoring,
                           QStringLiteral("Binding curve exceeds the runtime point limit"));
     }
@@ -282,12 +282,12 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
             }
         }
     }
-    const auto frontEnd = harkenprojectschema::CompileFrontEnd(request->project);
+    const auto frontEnd = harken::studio::project_schema::CompileFrontEnd(request->project);
     if (!frontEnd.ok()) {
         diagnostic = QStringLiteral("Current World project compilation failed");
         if (!frontEnd.diagnostics.empty())
             diagnostic += QStringLiteral(": %1").arg(QString::fromLatin1(
-                harkenprojectschema::DiagnosticCodeName(frontEnd.diagnostics.front().code)));
+                harken::studio::project_schema::DiagnosticCodeName(frontEnd.diagnostics.front().code)));
         return refuse(S::InvalidAuthoring, diagnostic);
     }
     auto materializations = request->materializations;
@@ -324,15 +324,15 @@ bool isUnsupportedState(S state)
 struct RuntimeCapabilityBuildSession::Impl
 {
     const ProjectData& project;
-    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1> source;
+    std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1> source;
     std::map<PlatformScope, std::shared_ptr<const FieldGroupEffectiveSnapshot>> groups;
-    std::map<PlatformScope, std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>> contexts;
+    std::map<PlatformScope, std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectContextV1>> contexts;
     using CompileKey = std::tuple<const ProjectItem*, RuntimeCapabilityOperation,
         PlatformScope, QString, std::optional<QString>, QString>;
     std::map<CompileKey, RuntimeCapabilityEntry> compiled;
 
     explicit Impl(const ProjectData& value)
-        : project(value), source(HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(value))
+        : project(value), source(harken::studio::bridge::canonicalRuntimeProjectSourceIndex(value))
     {
     }
 };
@@ -344,19 +344,19 @@ RuntimeCapabilityBuildSession::RuntimeCapabilityBuildSession(const ProjectData& 
 
 RuntimeCapabilityBuildSession::~RuntimeCapabilityBuildSession() = default;
 
-std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1>
+std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1>
 RuntimeCapabilityBuildSession::sourceIndex() const
 {
     return impl_->source;
 }
 
-std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>
+std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectContextV1>
 RuntimeCapabilityBuildSession::canonicalContext(PlatformScope scope)
 {
     auto& context = impl_->contexts[scope];
     if (!context)
-        context = std::make_shared<HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>(
-            HarkenEditor::Bridge::canonicalRuntimeProjectContext(
+        context = std::make_shared<harken::studio::bridge::CanonicalRuntimeProjectContextV1>(
+            harken::studio::bridge::canonicalRuntimeProjectContext(
                 const_cast<ProjectData&>(impl_->project), 0, std::nullopt, scope, impl_->source));
     return context;
 }
@@ -504,7 +504,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         return result;
     };
     if (feature == F::StableIdentity) {
-        if (harkenstudio::IsNull(item.runtimeId()) || item.guid.isNull())
+        if (harken::studio::types::IsNull(item.runtimeId()) || item.guid.isNull())
             return refuse(S::InvalidAuthoring,
                           QStringLiteral("Object requires a GUID and runtime stable identity"));
         return result;
@@ -536,7 +536,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
             return refuse(S::UnavailableEngineContract,
                           QStringLiteral("Attenuation exposes its resource capability only"));
         const auto* attenuation = item.comp<VAttenuation>();
-        if (!attenuation || item.guid.isNull() || harkenstudio::IsNull(item.runtimeId())
+        if (!attenuation || item.guid.isNull() || harken::studio::types::IsNull(item.runtimeId())
             || !std::isfinite(attenuation->maxDistance)
             || attenuation->maxDistance <= 0.0f)
             return refuse(S::InvalidAuthoring,
@@ -552,12 +552,12 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
             if (dimension.type != AttenuationDimension::Volume)
                 return refuse(S::UnavailableEngineContract,
                               QStringLiteral("Runtime Attenuation supports the Volume dimension only"));
-            if (dimension.curve.size() > harkenstudiobuild::kMaxCurvePoints
+            if (dimension.curve.size() > harken::studio::build::kMaxCurvePoints
                 || dimension.handles.size() != dimension.curve.size() - 1)
                 return refuse(S::InvalidAuthoring,
                               QStringLiteral("Attenuation curve points and handles are invalid"));
-            std::vector<harkenstudiobuild::CurvePoint> points;
-            std::vector<harkenstudiobuild::CurveHandlePair> handles;
+            std::vector<harken::studio::build::CurvePoint> points;
+            std::vector<harken::studio::build::CurveHandlePair> handles;
             for (const auto& point : dimension.curve) {
                 if (point.value < -96.0f || point.value > 0.0f)
                     return refuse(S::InvalidAuthoring,
@@ -571,7 +571,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
                                   QStringLiteral("Attenuation Volume handles exceed their gain range"));
                 handles.push_back({handle.h1x, handle.h1y, handle.h2x, handle.h2y});
             }
-            harkenstudiobuild::CurveV1 curve;
+            harken::studio::build::CurveV1 curve;
             if (!curve.curve.SetPoints(points.data(), handles.data(),
                                        static_cast<uint32_t>(points.size())))
                 return refuse(S::InvalidAuthoring,
@@ -611,7 +611,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         if (effects->isEmpty()) return result;
         for (const auto& effect : effects->entries()) {
             QString diagnostic;
-            if (!effect.typed || harkenstudio::IsNull(effect.runtimeId())
+            if (!effect.typed || harken::studio::types::IsNull(effect.runtimeId())
                 || !EffectChainSemantics::validate(effect, &diagnostic))
                 return refuse(S::InvalidAuthoring, diagnostic.isEmpty()
                     ? QStringLiteral("Effect chain contains an invalid typed entry") : diagnostic);
@@ -720,7 +720,7 @@ RuntimeCapabilityAssessment assessForContext(const ProjectItem& item,
 }
 
 RuntimeCapabilityAssessment assessForContext(const ProjectData& project,
-                                   harkenstudio::ObjectId rootStableId,
+                                   harken::studio::types::ObjectId rootStableId,
                                    RuntimeCapabilityOperation operation,
                                    std::optional<BuildVariant> variant,
                                    const RuntimeCapabilityContext& context)

@@ -3,7 +3,7 @@
 #include "Core/BaseDialog.h"
 #include "Core/ProjectPlatform.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectPlatformDialog : public BaseDialog
 {

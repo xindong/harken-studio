@@ -15,7 +15,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 class MatrixHeaderView : public ReorderHeaderView
 {

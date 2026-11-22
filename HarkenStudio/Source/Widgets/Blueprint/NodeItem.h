@@ -23,7 +23,7 @@ class QGraphicsProxyWidget;
 class QGraphicsRectItem;
 class QLineEdit;
 
-namespace VNX {
+namespace harken::studio {
 
 class ConnectionPath;
 

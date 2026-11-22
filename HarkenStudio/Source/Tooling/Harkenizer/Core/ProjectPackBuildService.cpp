@@ -13,7 +13,7 @@
 
 #include <utility>
 
-namespace VNX::ProjectPackBuildService {
+namespace harken::studio::ProjectPackBuildService {
 
 Result run(const Request& request)
 {

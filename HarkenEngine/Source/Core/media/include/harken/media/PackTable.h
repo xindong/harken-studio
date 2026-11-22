@@ -484,8 +484,6 @@ public:
         std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
     VnResult SetResourceClosureGenerationForTests(
         std::size_t rowIndex, std::uint32_t generation) noexcept;
-    VnResult SetSlotGenerationForTests(
-        std::size_t rowIndex, std::uint32_t generation) noexcept;
     void SetStorageCommitPageLimitsForTests(std::size_t slots,
         std::size_t closures, std::size_t retiring) noexcept {
         m_slots.SetCommitPageLimitForTests(slots);

@@ -3,7 +3,7 @@
 The .NET 9 runner compiles the generated and hand-written managed API sources
 shipped in the Unity Integration Package with C# 9 and no NuGet dependencies. It checks ABI layout, coordinate conversion,
 Variable symbol rules, bootstrap capacity recommendations, byte providers,
-zero-allocation calls, Remote communication and companion lifecycle behavior.
+zero-allocation calls, Remote communication and Pack metadata lifecycle behavior.
 
 ```powershell
 dotnet run --project HarkenIntegration/Test/ContractTest
@@ -24,7 +24,7 @@ To validate a real exported selected-platform directory independently:
 
 ```powershell
 dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release -- `
-  --require-native --companion-root "path/to/Windows"
+  --require-native --export-root "path/to/Windows"
 ```
 
 This focused mode requires `Init.bytes` with `Init.json` and Action pairs,
@@ -42,18 +42,7 @@ checked by the Engine export checks. It calls the generated Register/Replace
 bindings with the 608/612-byte prefixes and the new descriptor, including an
 enabled 1000 Hz high-pass point, a zero-Hz bypass point and invalid tail values.
 This proves native argument transfer and validation; it does not measure the
-resulting sound.
+resulting sound. It does not skip a missing library.
 
-Run the same newly built runner in a separate process with
-`--attenuation-old-native` and `HARKEN_NATIVE_DIR` pointing to the preserved
-pre-high-pass library, supplied under the `HarkenEngineDev` file name. The old
-library must initialize and accept the historical prefixes, then return
-`VN_INVALID_ARG` for both Register and Replace with the new descriptor,
-including its disabled high-pass curve. Neither mode skips a missing library or
-retries with a shortened descriptor. `HarkenAbi.CheckLayout()` alone is a
-managed-layout check, not a native capability probe; old gameplay calls can
-still work with the old library.
-
-`--state-only-unavailable` verifies capability refusal against an older native
-library. Unity compilation, IL2CPP, device behavior and audible output require
-their corresponding environments; this runner covers managed/native contracts.
+Unity compilation, IL2CPP, device behavior and audible output require their
+corresponding environments; this runner covers managed/native contracts.

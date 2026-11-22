@@ -86,7 +86,7 @@ namespace Harken.Unity.Editor
     public sealed class HarkenActionPreview
     {
         private HarkenCandidateOverview overview;
-        internal HarkenActionPreview(GameplayAction action, HarkenActionPreviewKind kind,
+        internal HarkenActionPreview(ActionCatalogEntry action, HarkenActionPreviewKind kind,
             HarkenActionPreviewCandidate[] candidates, HarkenActionDurationKind duration,
             double? minimum, double? maximum, string sourceReason, string durationReason)
         {
@@ -94,7 +94,7 @@ namespace Harken.Unity.Editor
             DurationKind = duration; MinimumDurationSeconds = minimum; MaximumDurationSeconds = maximum;
             SourceUnavailableReason = sourceReason; DurationUnavailableReason = durationReason;
         }
-        public GameplayAction Action { get; }
+        public ActionCatalogEntry Action { get; }
         public HarkenActionPreviewKind Kind { get; }
         public IReadOnlyList<HarkenActionPreviewCandidate> Candidates { get; }
         public HarkenActionDurationKind DurationKind { get; }
@@ -158,7 +158,7 @@ namespace Harken.Unity.Editor
 
     public sealed class HarkenActionWaveform
     {
-        internal HarkenActionWaveform(GameplayAction action, HarkenSourceEnvelope source,
+        internal HarkenActionWaveform(ActionCatalogEntry action, HarkenSourceEnvelope source,
             bool oneShotKnown, string sourceReason, string durationReason, double? executionDuration = null)
         {
             Action = action;
@@ -169,36 +169,11 @@ namespace Harken.Unity.Editor
             OneShotDurationSeconds = executionDuration;
         }
 
-        public GameplayAction Action { get; }
+        public ActionCatalogEntry Action { get; }
         public HarkenSourceEnvelope Source { get; }
         public bool OneShotDurationKnown { get; }
         public double? OneShotDurationSeconds { get; }
         public string SourceUnavailableReason { get; }
         public string DurationUnavailableReason { get; }
-    }
-
-    public sealed class HarkenWaveformPublication
-    {
-        private HarkenWaveformPublication() { }
-
-        public bool TryFindPreview(string name, out HarkenActionPreview preview)
-        {
-            preview = null;
-            return false;
-        }
-
-        public bool TryFindAction(string name, out HarkenActionWaveform waveform)
-        {
-            waveform = null;
-            return false;
-        }
-
-        public static VnResult Parse(byte[] companionBytes, byte[] manifestBytes, GameplayPublication publication,
-            out HarkenWaveformPublication waveforms, out string diagnostic)
-        {
-            waveforms = null;
-            diagnostic = "Legacy Editor waveform publications are unsupported. Editor publication tools remain unavailable.";
-            return VnResult.VN_CAPABILITY_UNAVAILABLE;
-        }
     }
 }

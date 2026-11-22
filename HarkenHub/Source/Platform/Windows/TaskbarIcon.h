@@ -9,7 +9,7 @@
 
 class QWindow;
 
-namespace VNH {
+namespace harken::hub {
 
 class TaskbarIcon final : public QObject, public QAbstractNativeEventFilter
 {

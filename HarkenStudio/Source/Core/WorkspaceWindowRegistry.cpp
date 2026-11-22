@@ -1,6 +1,6 @@
 #include "WorkspaceWindowRegistry.h"
 
-namespace VNX {
+namespace harken::studio {
 
 bool WorkspaceWindowRegistry::registerSingleton(const QString& typeId, ads::CDockWidget* dock)
 {

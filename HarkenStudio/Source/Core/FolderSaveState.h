@@ -4,7 +4,7 @@
 #include <QSet>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct PhysicalFolder;

@@ -32,7 +32,7 @@ constexpr double kBodyDeltaTs[] = {0.05, 0.3, 0.5, 0.7, 0.95};
 TEST(AttenuationCurveHandleGeometry, RayReachesRequestedLengthInsideBox)
 {
     const QPointF anchor(50.0, 50.0);
-    const QPointF result = VNX::curveHandleRayIntoRect(anchor, QPointF(3.0, 4.0), 10.0, kBox);
+    const QPointF result = harken::studio::curveHandleRayIntoRect(anchor, QPointF(3.0, 4.0), 10.0, kBox);
     EXPECT_NEAR(result.x(), 56.0, kTolerance);
     EXPECT_NEAR(result.y(), 58.0, kTolerance);
 }
@@ -41,7 +41,7 @@ TEST(AttenuationCurveHandleGeometry, RayStopsOnBoundaryKeepingDirection)
 {
     const QPointF anchor(50.0, 50.0);
     const QPointF direction(2.0, 1.0);
-    const QPointF result = VNX::curveHandleRayIntoRect(anchor, direction, 1000.0, kBox);
+    const QPointF result = harken::studio::curveHandleRayIntoRect(anchor, direction, 1000.0, kBox);
     EXPECT_NEAR(result.x(), 100.0, kTolerance);
     EXPECT_NEAR(result.y(), 75.0, kTolerance);
     EXPECT_NEAR(cross(result - anchor, direction), 0.0, kTolerance);
@@ -51,7 +51,7 @@ TEST(AttenuationCurveHandleGeometry, RayStopsOnBoundaryKeepingDirection)
 TEST(AttenuationCurveHandleGeometry, MirrorAlignedForOppositeHandles)
 {
     const QPointF anchor(10.0, -4.0);
-    EXPECT_TRUE(VNX::curveHandlesMirrorAligned(anchor,
+    EXPECT_TRUE(harken::studio::curveHandlesMirrorAligned(anchor,
                                                anchor + QPointF(12.0, 0.0),
                                                anchor + QPointF(-30.0, 0.0)));
 }
@@ -59,7 +59,7 @@ TEST(AttenuationCurveHandleGeometry, MirrorAlignedForOppositeHandles)
 TEST(AttenuationCurveHandleGeometry, NotAlignedAtRightAngle)
 {
     const QPointF anchor(0.0, 0.0);
-    EXPECT_FALSE(VNX::curveHandlesMirrorAligned(anchor, QPointF(10.0, 0.0),
+    EXPECT_FALSE(harken::studio::curveHandlesMirrorAligned(anchor, QPointF(10.0, 0.0),
                                                 QPointF(0.0, 10.0)));
 }
 
@@ -73,7 +73,7 @@ TEST(AttenuationCurveHandleGeometry, BodyDeltaMovesCurvePointExactly)
     for (double t : kBodyDeltaTs) {
         QPointF d1;
         QPointF d2;
-        VNX::curveDistributeBodyDelta(t, delta, &d1, &d2);
+        harken::studio::curveDistributeBodyDelta(t, delta, &d1, &d2);
         const QPointF before = bezierPoint(p0, p1, p2, p3, t);
         const QPointF after = bezierPoint(p0, p1 + d1, p2 + d2, p3, t);
         EXPECT_NEAR(after.x() - before.x(), delta.x(), kTolerance) << "t=" << t;

@@ -20,7 +20,7 @@
 #include <thread>
 #include <vector>
 
-using VNH::SingleInstanceGuard;
+using harken::hub::SingleInstanceGuard;
 
 #ifdef Q_OS_WIN
 namespace HarkenHubTest {

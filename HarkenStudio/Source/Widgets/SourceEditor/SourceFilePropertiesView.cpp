@@ -19,7 +19,7 @@
 #include <QLocale>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 SourceFilePropertiesView::SourceFilePropertiesView(QWidget* parent) : QWidget(parent)
 {

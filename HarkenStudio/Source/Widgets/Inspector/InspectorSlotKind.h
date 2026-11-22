@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class InspectorSlotKind : uint8_t
 {

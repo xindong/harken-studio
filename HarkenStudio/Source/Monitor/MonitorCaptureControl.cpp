@@ -5,7 +5,7 @@
 #include <cstring>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 void zeroCaptureControlStatus(MonitorCaptureControlStatus* outStatus)
@@ -103,4 +103,4 @@ std::string captureControlStatusText(const MonitorCaptureControlState& state)
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

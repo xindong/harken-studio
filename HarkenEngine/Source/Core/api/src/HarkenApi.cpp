@@ -2578,7 +2578,7 @@ bool CommitPreparedActionResourceOwner(
     }
     for (std::uint32_t index = 0;
          index < scratch.queueGroupSliceCount; ++index) {
-        if (!engine.timelinePool.CommitPreparedPlan03GroupSlice(
+        if (!engine.timelinePool.CommitPreparedScheduleGroupSlice(
                 &scratch.queueGroupSlices[index],
                 &scratch.queueCommittedGroupSlices[index])) {
             return false;
@@ -2709,8 +2709,8 @@ bool MatchesNativeEntryDependency(harken::Engine& engine,
             : engine.decisions.IsAppliedSignalDependencyFor(*owned.appliedSignal,
                 owned.entry, owned.primary, owned.member, engine.mixer.BlocksRendered());
     }
-    return engine.timelinePool.IsPlan03GroupReaderFor(owned.primaryPin, owned.primary) &&
-        engine.timelinePool.IsPlan03GroupReaderFor(owned.memberPin, owned.member);
+    return engine.timelinePool.IsScheduleGroupReaderFor(owned.primaryPin, owned.primary) &&
+        engine.timelinePool.IsScheduleGroupReaderFor(owned.memberPin, owned.member);
 }
 
 bool CloneNativeEntryDependency(harken::Engine& engine,
@@ -2734,8 +2734,8 @@ bool CloneNativeEntryDependency(harken::Engine& engine,
         try {
             owned.appliedSignal = std::make_unique<harken::FrontierAppliedSignalDependency>(*original.appliedSignal);
         } catch (const std::bad_alloc&) { return false; }
-    } else if (!engine.timelinePool.ClonePlan03GroupReader(original.primaryPin, &owned.primaryPin) ||
-        !engine.timelinePool.ClonePlan03GroupReader(original.memberPin, &owned.memberPin)) return false;
+    } else if (!engine.timelinePool.CloneScheduleGroupReader(original.primaryPin, &owned.primaryPin) ||
+        !engine.timelinePool.CloneScheduleGroupReader(original.memberPin, &owned.memberPin)) return false;
     return MatchesNativeEntryDependency(engine, owned, child);
 }
 
@@ -2814,10 +2814,10 @@ bool VisitPrivateInitialForest(harken::Engine& engine,
 
 bool SealPrivateInitialForest(harken::Engine& engine,
     harken::EngineActionPlayScratch& root) noexcept {
-    const auto privateGroup = [&](const harken::Plan03GroupSliceIdentity& identity) noexcept {
+    const auto privateGroup = [&](const harken::ScheduleGroupSliceIdentity& identity) noexcept {
         if (!identity.Exact()) return true;
-        harken::Plan03ExactGroupSnapshot snapshot{};
-        return engine.timelinePool.CaptureExactPlan03Group(identity, &snapshot) &&
+        harken::ScheduleExactGroupSnapshot snapshot{};
+        return engine.timelinePool.CaptureExactScheduleGroup(identity, &snapshot) &&
             snapshot.publicationHeld && snapshot.pagePublicationHolds != 0 &&
             !snapshot.page.frozen && snapshot.lastAudioSequence == 0 &&
             snapshot.effectiveLease.state == harken::AudioSliceState::Ready;
@@ -3216,21 +3216,21 @@ bool PrepareInitialSourcePages(harken::Engine& engine,
                 !engine.armGroups.Capture(native.armGroup, &arms) ||
                 !SameCanonicalDecision(arms.parent, native.decision) || arms.memberCount != count ||
                 arms.ackedCount != 0 || arms.tombstonedCount != 0) return false;
-            harken::Plan03GroupSliceInput input{};
+            harken::ScheduleGroupSliceInput input{};
             input.executeFrame = native.entryFrame;
             input.decision = native.decision;
             input.members = native.members.data();
             input.memberCount = static_cast<std::uint16_t>(count);
-            if (engine.timelinePool.PreparePlan03GroupSlice(input, engine.timelineArms, &native.prepared) !=
-                    harken::Plan03GroupReserveStatus::Committed ||
-                !engine.timelinePool.CommitPreparedPlan03GroupSlice(&native.prepared, &native.committed, true)) return false;
+            if (engine.timelinePool.PrepareScheduleGroupSlice(input, engine.timelineArms, &native.prepared) !=
+                    harken::ScheduleGroupReserveStatus::Committed ||
+                !engine.timelinePool.CommitPreparedScheduleGroupSlice(&native.prepared, &native.committed, true)) return false;
             auto& groups = engine.timelineGroupCaptureScratch;
-            const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+            const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
             if (groupCount > groups.size()) return false;
             for (std::size_t index = 0; index < groupCount; ++index) {
                 const auto& actual = groups[index];
-                if (!engine.timelinePool.MatchesCommittedPlan03GroupSlice(native.committed, actual.identity)) continue;
-                if (native.group.Exact() || actual.identity.backing != harken::Plan03GroupBacking::Page ||
+                if (!engine.timelinePool.MatchesCommittedScheduleGroupSlice(native.committed, actual.identity)) continue;
+                if (native.group.Exact() || actual.identity.backing != harken::ScheduleGroupBacking::Page ||
                     !SameCanonicalDecision(actual.identity.decision, native.decision) ||
                     actual.identity.sliceIndex != input.sliceIndex || actual.memberCount != count ||
                     actual.sourceControlCount != 0 || (count != 0 && actual.members == nullptr)) return false;
@@ -3255,7 +3255,7 @@ bool CanReleaseInitialSourceAdmissionOwners(harken::Engine& engine,
     for (const auto& pointer : scratch.initialSourceAdmissions) {
         if (pointer == nullptr || !pointer->decisionCommitted || pointer->decisionCancelled || !pointer->initialBound ||
             pointer->prepared.Valid() || !pointer->committed.Valid() ||
-            !engine.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(pointer->committed)) return false;
+            !engine.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(pointer->committed)) return false;
         if (pointer->kind == InitialSourceAdmission::Kind::ScheduleSource) {
             harken::DecisionCommittedSnapshot decision{};
             const auto* service = engine.ResolvePlayableService(pointer->service);
@@ -3275,7 +3275,7 @@ bool ReleaseInitialSourceAdmissionOwners(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (!CanReleaseInitialSourceAdmissionOwners(engine, scratch)) return false;
     for (const auto& pointer : scratch.initialSourceAdmissions) {
-        if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&pointer->committed)) return false;
+        if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&pointer->committed)) return false;
         if (pointer->kind == InitialSourceAdmission::Kind::ScheduleSource) {
             // Source-only sides have no Queue/Variable owner after publication.
             // Preserve their actual arm receipts before the generic arm reclaimer.
@@ -3294,7 +3294,7 @@ bool ReleaseInitialSourceAdmissionOwners(harken::Engine& engine,
 
 harken::UnpublishedGroupArmCancellationStatus CancelUnpublishedInitialGroupSources(
     harken::Engine& engine, harken::EngineActionPlayScratch& scratch,
-    std::span<harken::CommittedPlan03GroupSlice*> originals,
+    std::span<harken::CommittedScheduleGroupSlice*> originals,
     std::span<harken::UnpublishedGroupCancellationHold> groupStorage,
     std::span<harken::UnpublishedArmCancellationHold> armStorage,
     std::span<harken::EnginePreparedTimelineVoiceStart*> voices,
@@ -3376,7 +3376,7 @@ harken::UnpublishedGroupArmCancellationStatus CancelUnpublishedActionGroupSource
     using Status = harken::UnpublishedGroupArmCancellationStatus;
     if (resources.groupSlicesCommitted == 0) return Status::NotEligible;
     if (resources.groupSlicesCommitted > scratch.queueCommittedGroupSlices.size()) return Status::StorageTooSmall;
-    std::array<harken::CommittedPlan03GroupSlice*, 2> originals{};
+    std::array<harken::CommittedScheduleGroupSlice*, 2> originals{};
     std::array<harken::UnpublishedGroupCancellationHold, 2> groupStorage{};
     constexpr std::size_t kSourceCapacity = 2u * harken::kMaxKnownScheduleLeaves;
     std::array<harken::UnpublishedArmCancellationHold, kSourceCapacity> armStorage{};
@@ -3415,7 +3415,7 @@ bool CancelPreparedActionResourceOwnerImpl(void* opaque, bool preserveCanonicalR
          index-- > context->groupSlicesCommitted;) {
         if (scratch.queueGroupSlices[index].Valid()) {
             preparedSlicesResolved =
-                engine.timelinePool.CancelPreparedPlan03GroupSlice(
+                engine.timelinePool.CancelPreparedScheduleGroupSlice(
                     &scratch.queueGroupSlices[index]) &&
                 preparedSlicesResolved;
         }
@@ -3426,7 +3426,7 @@ bool CancelPreparedActionResourceOwnerImpl(void* opaque, bool preserveCanonicalR
         joint != harken::UnpublishedGroupArmCancellationStatus::Consumed) return false;
     while (context->groupSlicesCommitted != 0) {
         const std::uint32_t index = context->groupSlicesCommitted - 1u;
-        if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(
+        if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(
                 &scratch.queueCommittedGroupSlices[index])) {
             resolved = false;
             break;
@@ -3698,7 +3698,7 @@ bool RetirePrivateUnboundInitialVariableControlArms(harken::Engine& engine,
 bool ReleaseInitialFrontierBindings(harken::Engine& engine,
     const harken::FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
     const harken::EngineActionPlayScratch* prepared,
-    const harken::Plan03UnpublishedRetirementToken* witnessed) noexcept;
+    const harken::ScheduleUnpublishedRetirementToken* witnessed) noexcept;
 
 bool CancelInitialSourceAdmissions(harken::Engine&, harken::EngineActionPlayScratch&) noexcept;
 bool ReleaseInitialSourceAdmissionOwners(harken::Engine&, harken::EngineActionPlayScratch&) noexcept;
@@ -3750,16 +3750,16 @@ bool CancelInitialSourceAdmissions(harken::Engine& engine,
     for (std::size_t index = scratch.initialSourceAdmissions.size(); index-- > 0;) {
         auto& native = *scratch.initialSourceAdmissions[index];
         if (native.group.Exact()) {
-            harken::Plan03PageGroupView group{};
-            if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(native.group, &group)) return false;
+            harken::SchedulePageGroupView group{};
+            if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(native.group, &group)) return false;
             if (group.frontier != nullptr && group.frontier->Valid() &&
-                !engine.timelinePool.DetachPlan03GroupFrontier(native.group, 0)) return false;
+                !engine.timelinePool.DetachScheduleGroupFrontier(native.group, 0)) return false;
             native.initialBound = false;
         }
         if (native.prepared.Valid() &&
-            !engine.timelinePool.CancelPreparedPlan03GroupSlice(&native.prepared)) return false;
+            !engine.timelinePool.CancelPreparedScheduleGroupSlice(&native.prepared)) return false;
         if (native.committed.Valid()) {
-            std::array<harken::CommittedPlan03GroupSlice*, 1> originals{&native.committed};
+            std::array<harken::CommittedScheduleGroupSlice*, 1> originals{&native.committed};
             if (CancelUnpublishedInitialGroupSources(engine, *root, originals, native.cancellationGroups,
                     native.cancellationArms, native.voices, native.owners, native.sources) !=
                     harken::UnpublishedGroupArmCancellationStatus::Consumed) return false;
@@ -3794,8 +3794,8 @@ bool RollbackInitialNativeSideDecisions(harken::Engine& engine,
         harken::DecisionCommittedSnapshot committed{};
         if (!engine.decisions.CaptureCommitted(side.decision, &committed)) continue;
         auto* service = engine.ResolvePlayableService(side.service);
-        harken::Plan03PageGroupView group{};
-        if (service == nullptr || !engine.timelinePool.ResolvePlan03GroupSliceProducer(side.group, &group) ||
+        harken::SchedulePageGroupView group{};
+        if (service == nullptr || !engine.timelinePool.ResolveScheduleGroupSliceProducer(side.group, &group) ||
             group.frontier == nullptr || !(group.frontier->entry == scratch.frontierDescriptor.entry) ||
             !engine.decisions.CanRollbackPreparedFrontierDecision(side.decision,
                 scratch.frontierCoordinator, group.frontier)) return false;
@@ -3846,26 +3846,26 @@ bool CancelInitialQueueSignalAdmission(harken::Engine& engine,
     if (scratch.queueTransactions.Valid() &&
         !engine.timelinePool.CancelPreparedTransactionBatch(&scratch.queueTransactions)) return false;
     if (owned->decisionCommitted) {
-        harken::Plan03PageGroupView group{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(owned->group, &group) ||
+        harken::SchedulePageGroupView group{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(owned->group, &group) ||
             group.frontier == nullptr || !engine.decisions.RollbackPreparedFrontierDecision(
                 owned->decision, scratch.frontierCoordinator, group.frontier)) return false;
         owned->decisionCommitted = false;
     }
     if (!owned->signalBound && owned->group.Exact()) {
-        harken::Plan03PageGroupView group{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(owned->group, &group)) return false;
+        harken::SchedulePageGroupView group{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(owned->group, &group)) return false;
         if (group.frontier != nullptr && group.frontier->Valid() &&
-            !engine.timelinePool.DetachPlan03GroupFrontier(owned->group, 0)) return false;
+            !engine.timelinePool.DetachScheduleGroupFrontier(owned->group, 0)) return false;
     }
     if (engine.decisions.ResolveFrontierActivation(scratch.frontierCoordinator) != nullptr &&
         !ReleaseInitialFrontierBindings(engine, scratch.frontierDescriptor.entry, 0, &scratch, nullptr))
         return false;
     if (!ReleaseInitialNativeSideLifetimes(engine, scratch)) return false;
     if (owned->prepared.Valid() &&
-        !engine.timelinePool.CancelPreparedPlan03GroupSlice(&owned->prepared)) return false;
+        !engine.timelinePool.CancelPreparedScheduleGroupSlice(&owned->prepared)) return false;
     if (owned->committed.Valid()) {
-        std::array<harken::CommittedPlan03GroupSlice*, 1> originals{&owned->committed};
+        std::array<harken::CommittedScheduleGroupSlice*, 1> originals{&owned->committed};
         if (CancelUnpublishedInitialGroupSources(engine, scratch, originals, owned->cancellationGroups,
                 owned->cancellationArms, owned->voices, owned->owners, owned->sources) !=
                 harken::UnpublishedGroupArmCancellationStatus::Consumed) return false;
@@ -3925,7 +3925,7 @@ bool CancelPreparedDirectExposureOwnerImpl(
     if (scratch.frontierDescriptor.entry.Valid() &&
         engine.timelinePool.HasFrontierOwnerOperations(scratch.frontierDescriptor.entry.owner,
             scratch.frontierCoordinator) &&
-        !engine.timelinePool.DetachPlan03GroupFrontier(scratch.frontierDescriptor.primary, 0)) {
+        !engine.timelinePool.DetachScheduleGroupFrontier(scratch.frontierDescriptor.primary, 0)) {
         return false;
     }
     if (!scratch.queueSignalEntryOwner.Valid() && scratch.row != nullptr &&
@@ -3962,11 +3962,11 @@ bool CancelPreparedDirectExposureOwnerImpl(
         return false;
     }
     if (scratch.frontierPreparedPrimary.Valid() &&
-        !engine.timelinePool.CancelPreparedPlan03GroupSlice(&scratch.frontierPreparedPrimary)) {
+        !engine.timelinePool.CancelPreparedScheduleGroupSlice(&scratch.frontierPreparedPrimary)) {
         return false;
     }
     if (scratch.frontierPrimary.Valid() &&
-        !engine.timelinePool.RollbackCommittedPlan03GroupSlice(&scratch.frontierPrimary)) {
+        !engine.timelinePool.RollbackCommittedScheduleGroupSlice(&scratch.frontierPrimary)) {
         return false;
     }
     if (scratch.frontierCoordinatorGroup.Valid()) {
@@ -4052,13 +4052,13 @@ bool ValidatePrivateInitialVcPageTransfer(harken::Engine& engine,
         held.pageTransferScope.sequence != held.sequence ||
         held.pageTransferScope.world != scratch.row->Invocation().worldGeneration ||
         held.pageTransferScope.attemptGeneration != scratch.storage.generation) return false;
-    harken::Plan03GroupSliceInput primary{};
+    harken::ScheduleGroupSliceInput primary{};
     primary.executeFrame = held.frame;
     primary.decision = held.coordinator;
     for (std::size_t position = 0; position < held.pageTransferProofs.size(); ++position) {
         const auto& original = position < 2 ? held.sides[position] : scratch.frontierPreparedPrimary;
         const auto& input = position < 2 ? held.descriptors[position] : primary;
-        harken::Plan03GroupSliceIdentity prospective{};
+        harken::ScheduleGroupSliceIdentity prospective{};
         if (!original.CaptureProspectiveIdentity(&prospective) ||
             !(prospective == held.pageProspectiveIdentities[position]) ||
             prospective.transportEpoch != engine.timelinePool.Epoch() ||
@@ -4373,7 +4373,7 @@ bool ValidatePrivateInitialVcLaneTransfer(harken::Engine& engine,
         if (!(held.laneSides[side] == held.laneOriginals[side].Identity()) ||
             !held.laneTransferProofs[side].MatchesOriginalScope(held.laneOriginals[side],
                 held.cohortRoot, held.frame, held.descriptors[side], engine.timelineArms)) return false;
-    harken::Plan03GroupSliceInput primary{};
+    harken::ScheduleGroupSliceInput primary{};
     primary.executeFrame = held.frame;
     primary.decision = held.coordinator;
     harken::ImmediateLanePrivateVariableControlEntryScope entryScope{};
@@ -4407,7 +4407,7 @@ bool CommitPreparedVariableControlExposureOwner(void* opaque, std::uint64_t) noe
 bool ReleaseInitialFrontierBindings(harken::Engine& engine,
     const harken::FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
     const harken::EngineActionPlayScratch* prepared = nullptr,
-    const harken::Plan03UnpublishedRetirementToken* witnessed = nullptr) noexcept {
+    const harken::ScheduleUnpublishedRetirementToken* witnessed = nullptr) noexcept {
     if (!entry.Valid()) return true;
     for (const auto& scratch : engine.actionPlayScratch) {
         const auto& owner = scratch.storage.deferredContainerOwner;
@@ -4418,7 +4418,7 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
             !(*witnessed == owner.unpublishedRetirement)) return false;
     }
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (count > groups.size()) return false;
     const auto* originalActivation = engine.decisions.ResolveFrontierActivation(entry.coordinator);
     if (originalActivation == nullptr || !(originalActivation->Descriptor().entry == entry))
@@ -4430,11 +4430,11 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
         if (group.frontier == nullptr || group.lease == nullptr ||
             !(group.frontier->entry == entry) || group.frontier->role != harken::FrontierGroupRole::EntryMember ||
             (!group.frontier->variableSide.Valid() && !group.frontier->queueSignal.Valid() &&
-             !(group.identity.backing == harken::Plan03GroupBacking::Page && group.frontier->queueInitial.Valid())) ||
+             !(group.identity.backing == harken::ScheduleGroupBacking::Page && group.frontier->queueInitial.Valid())) ||
             group.frontier->transition.Valid() ||
             group.lease->Capture().state != harken::AudioSliceState::SliceApplied) continue;
         if ((group.frontier->queueSignal.Valid() ||
-             (group.identity.backing == harken::Plan03GroupBacking::Page && group.frontier->queueInitial.Valid())) && engine.timelinePool.FrontierMemberBindingDetached(
+             (group.identity.backing == harken::ScheduleGroupBacking::Page && group.frontier->queueInitial.Valid())) && engine.timelinePool.FrontierMemberBindingDetached(
                 group.identity, entry, completedAudioSequence)) continue;
         for (std::uint32_t member = group.sourceControlCount; member < group.memberCount; ++member) {
             const auto arm = group.members[member];
@@ -4463,11 +4463,11 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
             a.current.generation == b.current.generation && a.successor.slot == b.successor.slot &&
             a.successor.generation == b.successor.generation;
     };
-    const auto conditionalCompletion = [&](const harken::Plan03PageGroupView& target) noexcept {
+    const auto conditionalCompletion = [&](const harken::SchedulePageGroupView& target) noexcept {
         if (target.frontier == nullptr || target.lease == nullptr || target.members == nullptr ||
             target.frontier->role != harken::FrontierGroupRole::Future ||
             !(target.frontier->entry == entry) ||
-            target.identity.backing != harken::Plan03GroupBacking::ImmediateLane || target.identity.sliceIndex != 1u ||
+            target.identity.backing != harken::ScheduleGroupBacking::ImmediateLane || target.identity.sliceIndex != 1u ||
             !target.frontier->queueConditional.Valid() || !target.frontier->transition.Valid() ||
             target.sourceControlCount != 1u || target.memberCount <= target.sourceControlCount) return false;
         harken::DecisionCommittedSnapshot decision{};
@@ -4565,7 +4565,7 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
                     group.frontier->role != harken::FrontierGroupRole::EntryMember)) continue;
             // Returned native members may already have retired and reused their arm slots.
             if ((group.frontier->queueSignal.Valid() ||
-                 (group.identity.backing == harken::Plan03GroupBacking::Page && group.frontier->queueInitial.Valid())) && engine.timelinePool.FrontierMemberBindingDetached(
+                 (group.identity.backing == harken::ScheduleGroupBacking::Page && group.frontier->queueInitial.Valid())) && engine.timelinePool.FrontierMemberBindingDetached(
                     group.identity, entry, completedAudioSequence)) continue;
             for (std::uint32_t member = 0; member < group.memberCount; ++member) {
                 const auto arm = group.members[member];
@@ -4579,7 +4579,7 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
                 owned.entry = {};
             }
             if (group.frontier->queueSignal.Valid() ||
-                (group.identity.backing == harken::Plan03GroupBacking::Page && group.frontier->queueInitial.Valid())) {
+                (group.identity.backing == harken::ScheduleGroupBacking::Page && group.frontier->queueInitial.Valid())) {
                 const auto decision = group.identity.decision;
                 const bool hasBinding = engine.timelinePool.HasFrontierOwnerOperations(
                     group.frontier->operation.owner, decision);
@@ -4615,7 +4615,7 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
                 if (hasBinding) {
                     const bool detached = group.frontier->queueSignal.Valid()
                         ? engine.queueInstances.ReleaseFrontierSignal(*group.frontier, completedAudioSequence)
-                        : engine.timelinePool.DetachPlan03GroupFrontier(group.identity, completedAudioSequence);
+                        : engine.timelinePool.DetachScheduleGroupFrontier(group.identity, completedAudioSequence);
                     if (!detached) return false;
                 }
                 if (published) {
@@ -4633,14 +4633,14 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
             } else if ((witnessed == nullptr || !(group.identity == witnessed->member)) &&
                 engine.timelinePool.HasFrontierOwnerOperations(group.frontier->operation.owner, group.identity.decision) &&
                 !engine.timelinePool.FrontierMemberBindingDetached(group.identity, entry, completedAudioSequence) &&
-                !engine.timelinePool.DetachPlan03GroupFrontier(group.identity, completedAudioSequence)) return false;
+                !engine.timelinePool.DetachScheduleGroupFrontier(group.identity, completedAudioSequence)) return false;
         }
     }
     const auto* activation = engine.decisions.ResolveFrontierActivation(entry.coordinator);
     if (activation == nullptr || !(activation->Descriptor().entry == entry)) return false;
     if ((witnessed == nullptr || !(activation->Descriptor().primary == witnessed->primary)) &&
         engine.timelinePool.HasFrontierOwnerOperations(entry.owner, entry.coordinator) &&
-        !engine.timelinePool.DetachPlan03GroupFrontier(activation->Descriptor().primary,
+        !engine.timelinePool.DetachScheduleGroupFrontier(activation->Descriptor().primary,
             completedAudioSequence)) return false;
     for (auto& record : engine.queueContinuationRecords) {
         if (!record.occupied || record.descriptor.entry != entry || !record.sourceTransitionBinding.Valid()) continue;
@@ -4661,8 +4661,8 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
         if (engine.decisions.HasFrontierDecisionBinding(decision) &&
             !engine.decisions.ReleaseFrontierDecisionBinding(decision)) return false;
     }
-    harken::Plan03PageGroupView sourceRoot{};
-    const bool directSourceRoot = engine.timelinePool.ResolvePlan03GroupSliceProducer(
+    harken::SchedulePageGroupView sourceRoot{};
+    const bool directSourceRoot = engine.timelinePool.ResolveScheduleGroupSliceProducer(
         originalActivation->Descriptor().primary, &sourceRoot) && sourceRoot.frontier != nullptr &&
         sourceRoot.frontier->entry == entry &&
         sourceRoot.frontier->primary == originalActivation->Descriptor().primary &&
@@ -4685,9 +4685,9 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
                 !MatchesNativeEntryDependencyOwner(engine, *dependency, service) ||
                 dependency->entry != sourceRoot.frontier->prerequisite ||
                 (dependency->memberPin.Valid() &&
-                 !engine.timelinePool.IsPlan03GroupReaderFor(dependency->memberPin, dependency->member)) ||
+                 !engine.timelinePool.IsScheduleGroupReaderFor(dependency->memberPin, dependency->member)) ||
                 (dependency->primaryPin.Valid() &&
-                 !engine.timelinePool.IsPlan03GroupReaderFor(dependency->primaryPin, dependency->primary)) ||
+                 !engine.timelinePool.IsScheduleGroupReaderFor(dependency->primaryPin, dependency->primary)) ||
                 (HasPendingNativeScheduleChildren(service) &&
                  service.phase != harken::EnginePlayableStartPhase::Cancelling &&
                  service.pendingCancellationIntent == 0)) return false;
@@ -4706,22 +4706,22 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
 }
 
 bool ValidatePrivateInitialVcLaneGroup(harken::Engine& engine,
-    std::uint64_t root, const harken::Plan03GroupSliceIdentity& identity,
-    const harken::Plan03GroupSliceInput& expected, bool cancelling = false) noexcept {
-    harken::Plan03PageGroupView actual{};
-    std::array<harken::Plan03ImmediateLaneGroupDescriptor, 3> cohort{};
+    std::uint64_t root, const harken::ScheduleGroupSliceIdentity& identity,
+    const harken::ScheduleGroupSliceInput& expected, bool cancelling = false) noexcept {
+    harken::SchedulePageGroupView actual{};
+    std::array<harken::ScheduleImmediateLaneGroupDescriptor, 3> cohort{};
     const auto count = engine.timelinePool.CaptureImmediateLaneCohortGroups(
         root, cohort.data(), cohort.size());
-    if (!identity.Exact() || identity.backing != harken::Plan03GroupBacking::ImmediateLane ||
+    if (!identity.Exact() || identity.backing != harken::ScheduleGroupBacking::ImmediateLane ||
         identity.transportEpoch != engine.timelinePool.Epoch() ||
         !SameCanonicalDecision(identity.decision, expected.decision) ||
         identity.sliceIndex != expected.sliceIndex || count > cohort.size() ||
         std::none_of(cohort.begin(), cohort.begin() + count,
             [&](const auto& group) noexcept { return group.identity == identity; }) ||
-        !(engine.timelinePool.PrivatePlan03GroupBindable(identity) ||
+        !(engine.timelinePool.PrivateScheduleGroupBindable(identity) ||
             (cancelling && engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(
                 identity, engine.mixer.BlocksRendered()))) ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &actual) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(identity, &actual) ||
         !(actual.identity == identity) || actual.memberCount != expected.memberCount ||
         actual.sourceControlCount != expected.sourceControlCount ||
         (actual.frontier != nullptr && actual.frontier->Valid())) return false;
@@ -4780,7 +4780,7 @@ bool CancelPrivateInitialVcPageCohort(harken::Engine& engine,
             }
         }
         if (held.lanePrimary.Exact()) {
-            harken::Plan03GroupSliceInput primary{};
+            harken::ScheduleGroupSliceInput primary{};
             primary.executeFrame = held.frame;
             primary.decision = held.coordinator;
             if (held.laneOriginals[2].Valid()) {
@@ -4798,7 +4798,7 @@ bool CancelPrivateInitialVcPageCohort(harken::Engine& engine,
     }
     for (std::size_t side = held.sides.size(); side-- > 0;) {
         if (held.sides[side].Valid() &&
-            !engine.timelinePool.CancelPreparedPlan03GroupSlice(&held.sides[side]))
+            !engine.timelinePool.CancelPreparedScheduleGroupSlice(&held.sides[side]))
             return fail();
     }
     // Only the unbound coordinator can exit before the exposure owner.
@@ -4902,12 +4902,12 @@ bool CancelPreparedVariableControlExposureOwner(void* opaque) noexcept {
         for (std::uint32_t index = 0; !resumeRetirement && !completedRetirement &&
                 index < scratch.initialFrontierSideCount; ++index) {
             const auto& side = scratch.storage.initialFrontierSides[index];
-            harken::Plan03PageGroupView group{};
+            harken::SchedulePageGroupView group{};
             harken::DecisionCommittedSnapshot committed{};
             if (!engine.decisions.CaptureCommitted(side.decision, &committed)) continue;
             auto* service = engine.ResolvePlayableService(side.service);
             if (service == nullptr ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(side.group, &group) ||
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(side.group, &group) ||
                 group.frontier == nullptr || !engine.decisions.CanRollbackPreparedFrontierDecision(
                 side.decision, scratch.frontierCoordinator, group.frontier)) {
                 return false;
@@ -4922,10 +4922,10 @@ bool CancelPreparedVariableControlExposureOwner(void* opaque) noexcept {
         for (std::uint32_t index = 0; !resumeRetirement && !completedRetirement &&
                 index < scratch.initialFrontierSideCount; ++index) {
             const auto& side = scratch.storage.initialFrontierSides[index];
-            harken::Plan03PageGroupView group{};
+            harken::SchedulePageGroupView group{};
             harken::DecisionCommittedSnapshot committed{};
             if (!engine.decisions.CaptureCommitted(side.decision, &committed)) continue;
-            if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(side.group, &group) || group.frontier == nullptr ||
+            if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(side.group, &group) || group.frontier == nullptr ||
                 !engine.decisions.RollbackPreparedFrontierDecision(side.decision,
                 scratch.frontierCoordinator, group.frontier)) {
                 return false;
@@ -4966,7 +4966,7 @@ bool CancelPreparedVariableControlExposureOwner(void* opaque) noexcept {
     while (scratch.variableControlInitialCommittedSliceCount != 0) {
         auto& slice = scratch.variableControlInitialCommittedSlices[
             scratch.variableControlInitialCommittedSliceCount - 1u];
-        if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(&slice)) {
+        if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(&slice)) {
             return false;
         }
         --scratch.variableControlInitialCommittedSliceCount;
@@ -5001,16 +5001,16 @@ bool CancelInstalledPrivateInitialNativeForest(harken::Engine& engine,
             while (attempt.variableControlInitialCommittedSliceCount != 0) {
                 auto& slice = attempt.variableControlInitialCommittedSlices[
                     attempt.variableControlInitialCommittedSliceCount - 1u];
-                if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(&slice)) return false;
+                if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(&slice)) return false;
                 --attempt.variableControlInitialCommittedSliceCount;
             }
             for (const auto& pointer : attempt.initialSourceAdmissions) {
                 if (pointer == nullptr) return false;
                 auto& native = *pointer;
                 if (native.prepared.Valid() &&
-                    !engine.timelinePool.CancelPreparedPlan03GroupSlice(&native.prepared)) return false;
+                    !engine.timelinePool.CancelPreparedScheduleGroupSlice(&native.prepared)) return false;
                 if (native.committed.Valid() &&
-                    !engine.timelinePool.RollbackCommittedPlan03GroupSlice(&native.committed)) return false;
+                    !engine.timelinePool.RollbackCommittedScheduleGroupSlice(&native.committed)) return false;
                 native.group = {};
                 native.initialBound = false;
             }
@@ -5019,9 +5019,9 @@ bool CancelInstalledPrivateInitialNativeForest(harken::Engine& engine,
                     attempt.frontierCoordinator, attempt.frontierCoordinator) ||
                  !engine.decisions.CancelPreparedFrontierActivation(attempt.frontierCoordinator))) return false;
             if (attempt.frontierPreparedPrimary.Valid() &&
-                !engine.timelinePool.CancelPreparedPlan03GroupSlice(&attempt.frontierPreparedPrimary)) return false;
+                !engine.timelinePool.CancelPreparedScheduleGroupSlice(&attempt.frontierPreparedPrimary)) return false;
             return !attempt.frontierPrimary.Valid() ||
-                engine.timelinePool.RollbackCommittedPlan03GroupSlice(&attempt.frontierPrimary);
+                engine.timelinePool.RollbackCommittedScheduleGroupSlice(&attempt.frontierPrimary);
         })) return false;
     bool settled = true;
     if (!VisitPrivateInitialForest(engine, root, [&](auto& attempt) noexcept {
@@ -7031,21 +7031,6 @@ void SetPlayableCapacitiesForTests(std::uint32_t playable, std::uint32_t modes) 
     g_testModeCapacity = modes;
 }
 
-VnResult AcquireMasterClaimForTests(std::uint8_t kind, std::uint64_t fingerprint) {
-    Engine* engine = g_engine;
-    if (engine == nullptr) {
-        return VN_NOT_INITIALIZED;
-    }
-    return harken::AcquireMasterClaimKind(*engine, kind, fingerprint);
-}
-
-void ReleaseMasterClaimForTests(std::uint8_t kind) noexcept {
-    Engine* engine = g_engine;
-    if (engine == nullptr) {
-        return;
-    }
-    harken::ReleaseMasterClaimKind(*engine, kind);
-}
 #endif
 
 } // namespace harken::detail
@@ -10522,7 +10507,7 @@ bool CompleteDeferredPlayableCancellation(harken::Engine& engine,
     const auto identity = row.variableControlDeferredCancellationSlice;
     // A claimed slice can be aborted before application when its bucket loses
     // cancellation arbitration. It will never publish consumedSlices.
-    if (engine.timelinePool.IsInvalidatedPlan03GroupAudioReadComplete(
+    if (engine.timelinePool.IsInvalidatedScheduleGroupAudioReadComplete(
             identity, row.variableControlDeferredCancellationReasonBit, observed)) {
         row.variableControlDeferredCancellation = false;
         row.variableControlDeferredCancellationSlice = {};
@@ -10540,8 +10525,8 @@ engine.runtimeRecreateRequired = true;
     if (decision.audioState != harken::AudioGroupState::Admitted &&
         decision.audioState != harken::AudioGroupState::AudioClaimed &&
         decision.audioState != harken::AudioGroupState::PostStartInvalidated) return false;
-    harken::Plan03PageGroupView group{};
-    if (engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &group)) {
+    harken::SchedulePageGroupView group{};
+    if (engine.timelinePool.ResolveScheduleGroupSliceProducer(identity, &group)) {
         if (group.lease == nullptr) return false;
         const auto lease = group.lease->Capture();
         if (lease.state != harken::AudioSliceState::SliceApplied ||
@@ -10596,7 +10581,7 @@ void RequestPlayableArmCancellation(harken::Engine& engine, harken::TimelineArmT
         (void)engine.timelineArms.RequestCancelAppliedAudioSlice(arm);
 }
 
-QueueCancellationLeaseStatus DropLivePlan03GroupMemberArms(
+QueueCancellationLeaseStatus DropLiveScheduleGroupMemberArms(
     harken::Engine& engine, std::uint64_t observedAudioSequence,
     bool ownedOnly, harken::EnginePlayableServiceRow* owner,
     bool reclaimArms = true,
@@ -10657,7 +10642,7 @@ QueueCancellationLeaseStatus DropLivePlan03GroupMemberArms(
         return false;
     };
     auto& groups = engine.timelineGroupCaptureScratch;
-    const std::size_t captured = engine.timelinePool.CaptureLivePlan03Groups(
+    const std::size_t captured = engine.timelinePool.CaptureLiveScheduleGroups(
         groups.data(), groups.size());
     if (captured > groups.size()) {
 engine.runtimeRecreateRequired = true;
@@ -10686,10 +10671,10 @@ engine.runtimeRecreateRequired = true;
             continue;
         }
         harken::DecisionCommittedSnapshot decision{};
-        harken::Plan03PageGroupView checked{};
+        harken::SchedulePageGroupView checked{};
         if (group.lease == nullptr || !engine.decisions.CaptureCommitted(group.identity.decision, &decision) ||
             !decision.pages.Valid() || group.identity.sliceIndex >= decision.sliceCount ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(group.identity, &checked) ||
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(group.identity, &checked) ||
             checked.lease != group.lease || checked.members != group.members) {
             return QueueCancellationLeaseStatus::Failed;
         }
@@ -10797,7 +10782,7 @@ QueueCancellationLeaseStatus GuardQueueCancellationSlices(
     // A same-key replacement retains its slices after removing the transition.
     // Read their exact pool identities instead of reconstructing them from fades.
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (groupCount > groups.size()) return QueueCancellationLeaseStatus::Failed;
     for (std::size_t index = 0; index < groupCount; ++index) {
         const auto& group = groups[index];
@@ -12003,15 +11988,15 @@ public:
         return true;
     }
 
-    bool PrepareGroup(const harken::Plan03GroupSliceInput& group) noexcept {
+    bool PrepareGroup(const harken::ScheduleGroupSliceInput& group) noexcept {
         if (!ownsScratch_ || groupCount_ == groups_.size()) return false;
         if (queueRow_ != nullptr) return queueBank_->continuationLane.ReserveGroup(group, engine_.timelineArms);
-        const auto result = engine_.timelinePool.PreparePlan03GroupSlice(
+        const auto result = engine_.timelinePool.PrepareScheduleGroupSlice(
                 group, engine_.timelineArms, &groups_[groupCount_]);
-        if (result != harken::Plan03GroupReserveStatus::Committed) {
-            permanentFailure_ = result != harken::Plan03GroupReserveStatus::OutsideWindow &&
-                result != harken::Plan03GroupReserveStatus::PageGroupCapacity &&
-                result != harken::Plan03GroupReserveStatus::MemberCapacity;
+        if (result != harken::ScheduleGroupReserveStatus::Committed) {
+            permanentFailure_ = result != harken::ScheduleGroupReserveStatus::OutsideWindow &&
+                result != harken::ScheduleGroupReserveStatus::PageGroupCapacity &&
+                result != harken::ScheduleGroupReserveStatus::MemberCapacity;
             return false;
         }
         groupFrames_[groupCount_] = group.executeFrame;
@@ -12150,7 +12135,7 @@ public:
             }
         }
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
-            if (!engine_.timelinePool.CommitPreparedPlan03GroupSlice(
+            if (!engine_.timelinePool.CommitPreparedScheduleGroupSlice(
                     &groups_[index], &committedGroups_[index], true)) return false;
         }
         privateCommitted_ = true;
@@ -12164,7 +12149,7 @@ public:
         if (!BindServiceFrontier()) return false;
         if (frontierSourceExit_ != nullptr &&
             (!engine_.decisions.AcquireFuturePin(frontierDecision_, &frontierSourceExit_->lifetime) ||
-             !engine_.timelinePool.AcquirePlan03GroupReader(frontierGroups_[0], &frontierSourceExit_->reader) ||
+             !engine_.timelinePool.AcquireScheduleGroupReader(frontierGroups_[0], &frontierSourceExit_->reader) ||
              !engine_.decisions.CaptureFrontierSliceDependency(frontierSourceExit_->lifetime,
                  frontierSourceExit_->reader, engine_.timelinePool, frontierSourceExit_->control.source,
                  &frontierSourceExit_->control.dependency))) return false;
@@ -12191,7 +12176,7 @@ public:
             for (std::uint32_t index = 0; index < transactionCount_; ++index)
                 if (!engine_.timelinePool.CanReleasePreparedTransactionPublication(transactions_[index])) return false;
             for (std::uint32_t index = 0; index < groupCount_; ++index)
-                if (!engine_.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(committedGroups_[index])) return false;
+                if (!engine_.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(committedGroups_[index])) return false;
             if (!CanPublishNativeScheduleTransition(*nativeSchedule_)) return false;
         }
         committed_ = true;
@@ -12212,7 +12197,7 @@ public:
             }
         }
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
-            if (!engine_.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&committedGroups_[index])) {
+            if (!engine_.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&committedGroups_[index])) {
                 engine_.runtimeRecreateRequired = true;
                 return false;
             }
@@ -12267,12 +12252,12 @@ public:
         }
         for (std::uint32_t index = groupCount_; index-- > 0;) {
             if (groups_[index].Valid() &&
-                !engine_.timelinePool.CancelPreparedPlan03GroupSlice(&groups_[index])) {
+                !engine_.timelinePool.CancelPreparedScheduleGroupSlice(&groups_[index])) {
                 engine_.runtimeRecreateRequired = true;
                 if (nativeSchedule_ != nullptr) return;
             }
             if (committedGroups_[index].Valid() &&
-                !engine_.timelinePool.RollbackCommittedPlan03GroupSlice(&committedGroups_[index])) {
+                !engine_.timelinePool.RollbackCommittedScheduleGroupSlice(&committedGroups_[index])) {
                 engine_.runtimeRecreateRequired = true;
                 if (nativeSchedule_ != nullptr) return;
             }
@@ -12346,7 +12331,7 @@ private:
             owner.parent, owner.parent == 0 ? 0 : parent.scheduleEpoch,
             entry.owner.invocation, entry.owner.invocationEpoch, row.identity.slot, row.identity.generation};
         auto& captures = engine_.timelineGroupCaptureScratch;
-        const auto count = engine_.timelinePool.CaptureLivePlan03Groups(captures.data(), captures.size());
+        const auto count = engine_.timelinePool.CaptureLiveScheduleGroups(captures.data(), captures.size());
         if (!owner.live || count > captures.size()) return false;
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
             for (std::size_t captured = 0; captured < count; ++captured) {
@@ -12386,10 +12371,10 @@ private:
                 binding.sourceExit = &frontierSourceExit_->control;
                 if (nativeQueue) binding.queuePageReceiver = &frontierSourceExit_->queueReceiver;
             }
-            if (!engine_.timelinePool.BindPlan03GroupFrontier(frontierGroups_[index], binding)) return false;
+            if (!engine_.timelinePool.BindScheduleGroupFrontier(frontierGroups_[index], binding)) return false;
             frontierBound_[index] = true;
-            harken::Plan03PageGroupView group{};
-            if (!engine_.timelinePool.ResolvePlan03GroupSliceProducer(frontierGroups_[index], &group) ||
+            harken::SchedulePageGroupView group{};
+            if (!engine_.timelinePool.ResolveScheduleGroupSliceProducer(frontierGroups_[index], &group) ||
                 !(nativeQueue ? engine_.queueInstances.BindFrontierConditional(row.queueInstance, *group.frontier, engine_.timelinePool)
                     : engine_.variableControlInstances.BindFrontierSide(side.instance, *group.frontier, engine_.timelinePool)) ||
                 !engine_.decisions.BindFrontierDecision(frontierDecision_, *group.frontier, engine_.timelinePool)) return false;
@@ -12470,8 +12455,8 @@ private:
         }
         for (std::uint32_t index = 0; index < groupCount_; ++index) {
             if (!frontierBound_[index]) continue;
-            harken::Plan03PageGroupView group{};
-            if (!engine_.timelinePool.ResolvePlan03GroupSliceProducer(frontierGroups_[index], &group)) return false;
+            harken::SchedulePageGroupView group{};
+            if (!engine_.timelinePool.ResolveScheduleGroupSliceProducer(frontierGroups_[index], &group)) return false;
             for (std::uint32_t member = 0; member < group.memberCount; ++member) {
                 auto& owned = engine_.initialFrontierArmPins[group.members[member].slot];
                 if (!owned.pin.Valid()) continue;
@@ -12479,7 +12464,7 @@ private:
                 owned.arm = {};
                 owned.entry = {};
             }
-            if (!engine_.timelinePool.DetachPlan03GroupFrontier(frontierGroups_[index], 0)) return false;
+            if (!engine_.timelinePool.DetachScheduleGroupFrontier(frontierGroups_[index], 0)) return false;
             frontierBound_[index] = false;
         }
         if (frontierTransitionBound_) {
@@ -12508,7 +12493,7 @@ private:
     std::array<std::uint64_t, 2> groupFrames_{};
     std::array<std::uint16_t, 2> groupSlices_{};
     std::array<std::uint32_t, 2> frontierControlTransactions_{};
-    std::array<harken::Plan03GroupSliceIdentity, 2> frontierGroups_{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> frontierGroups_{};
     std::array<bool, 2> frontierBound_{};
     harken::EngineQueueProgramBank* queueBank_ = nullptr;
     bool permanentFailure_ = false;
@@ -12522,8 +12507,8 @@ private:
     harken::ArmGroupToken armGroup_{};
     bool armGroupCommitted_ = false;
     decltype(harken::EngineTimelineStartScratch::transactions)& transactions_;
-    std::array<harken::PreparedPlan03GroupSlice, 2> groups_{};
-    std::array<harken::CommittedPlan03GroupSlice, 2> committedGroups_{};
+    std::array<harken::PreparedScheduleGroupSlice, 2> groups_{};
+    std::array<harken::CommittedScheduleGroupSlice, 2> committedGroups_{};
     std::uint32_t transactionCount_ = 0;
     std::uint32_t groupCount_ = 0;
     harken::CommandQueue::BatchReservation commands_{};
@@ -14310,9 +14295,9 @@ bool ReleaseServiceFutureBindings(harken::Engine& engine, harken::DecisionToken 
     std::uint64_t observed, harken::TransitionInstanceToken transition) noexcept {
     if (!engine.decisions.HasFrontierDecisionBinding(decision)) return true;
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (count > groups.size()) return false;
-    const auto matches = [&](const harken::Plan03PageGroupView& group) {
+    const auto matches = [&](const harken::SchedulePageGroupView& group) {
         return group.identity.decision.slot == decision.slot && group.identity.decision.generation == decision.generation &&
             group.frontier != nullptr && group.frontier->role == harken::FrontierGroupRole::Future &&
             (group.frontier->variableSide.Valid() || group.frontier->queueConditional.Valid());
@@ -14342,7 +14327,7 @@ bool ReleaseServiceFutureBindings(harken::Engine& engine, harken::DecisionToken 
             owned.entry = {};
         }
         if (!engine.timelinePool.FrontierMemberBindingDetached(group.identity, group.frontier->entry, observed) &&
-            !engine.timelinePool.DetachPlan03GroupFrontier(group.identity, observed)) return false;
+            !engine.timelinePool.DetachScheduleGroupFrontier(group.identity, observed)) return false;
     }
     if (transition.Valid() && !engine.transitionInstances.ReleaseFrontierBinding(transition)) return false;
     return engine.decisions.ReleaseFrontierDecisionBinding(decision);
@@ -14497,8 +14482,8 @@ bool ServiceDecisionRetirement(
         record.retirementAudioSequence = observed;
     }
     if (const auto* activation = engine.decisions.ResolveFrontierActivation(record.decision)) {
-        harken::Plan03PageGroupView primary{};
-        if (engine.timelinePool.ResolvePlan03GroupSliceProducer(activation->Descriptor().primary, &primary))
+        harken::SchedulePageGroupView primary{};
+        if (engine.timelinePool.ResolveScheduleGroupSliceProducer(activation->Descriptor().primary, &primary))
             return false;
     }
     harken::TimelineTransactionProgramRef controlProgram{};
@@ -14794,7 +14779,7 @@ void ClearQueueArrivalReferences(harken::EnginePlayableServiceRow& row) noexcept
 
 struct QueueSignalEntryPublication {
     const harken::FrontierActivation* activation = nullptr;
-    harken::Plan03PageGroupView group{};
+    harken::SchedulePageGroupView group{};
     harken::DecisionCommittedSnapshot decision{};
     harken::ArmGroupSnapshot arms{};
 };
@@ -14820,7 +14805,7 @@ harken::EnginePlayableServiceRow* ResolveQueueSignalReceiptOwner(harken::Engine&
 
 bool ValidateSharedQueueEntrySide(harken::Engine& engine,
     const harken::FrontierActivationDescriptor& descriptor,
-    const harken::Plan03PageGroupView& primary, const harken::Plan03PageGroupView& group) noexcept {
+    const harken::SchedulePageGroupView& primary, const harken::SchedulePageGroupView& group) noexcept {
     if (group.frontier == nullptr) return false;
     const auto& binding = *group.frontier;
     const auto& owner = binding.operation.owner;
@@ -14847,7 +14832,7 @@ bool ValidateSharedQueueEntrySide(harken::Engine& engine,
         service->frontierLifetimePin.Owner() != &engine.decisions ||
         !SameCanonicalDecision(service->frontierLifetimePin.Token(), descriptor.entry.coordinator) ||
         owner.invocation != entryOwner.invocation || owner.invocationEpoch != entryOwner.invocationEpoch ||
-        group.identity.backing != harken::Plan03GroupBacking::Page || group.identity.sliceIndex != 0 ||
+        group.identity.backing != harken::ScheduleGroupBacking::Page || group.identity.sliceIndex != 0 ||
         group.lease != primary.lease || group.sourceControlCount != 0 ||
         (group.memberCount != 0 && group.members == nullptr) ||
         !engine.decisions.CaptureCommitted(group.identity.decision, &decision) ||
@@ -14896,13 +14881,13 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
         !engine.queueInstances.SettleSignalAdvance(accepted, harken::QueueSignalOutcomeV1::InFlight)) return false;
     const auto& descriptor = activation->Descriptor();
     harken::DecisionCommittedSnapshot coordinator{};
-    harken::Plan03PageGroupView primary{};
+    harken::SchedulePageGroupView primary{};
     harken::QueueInstanceSnapshot queue{};
     if (!descriptor.Valid() || !(descriptor.entry == row.frontierEntry) ||
         descriptor.entry.owner.child != entry->ownerInstance || descriptor.entry.owner.childEpoch != entry->ownerEpoch ||
         descriptor.entry.owner.serviceSlot != entry->identity.slot ||
         descriptor.entry.owner.serviceGeneration != entry->identity.generation ||
-        descriptor.expectedMemberCount == 0u || descriptor.primary.backing != harken::Plan03GroupBacking::Page ||
+        descriptor.expectedMemberCount == 0u || descriptor.primary.backing != harken::ScheduleGroupBacking::Page ||
         descriptor.primary.transportEpoch != engine.timelinePool.Epoch() ||
         descriptor.worldGeneration != row.Invocation().worldGeneration ||
         descriptor.order.executeFrame != accepted.order.executeFrame || descriptor.order.executeFrame != row.startFrame ||
@@ -14917,7 +14902,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
         coordinator.audioState != harken::AudioGroupState::Pending || coordinator.consumedSlices != 0 ||
         coordinator.participantCount != descriptor.expectedMemberCount ||
         coordinator.world != descriptor.worldGeneration || coordinator.transport != descriptor.primary.transportEpoch ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
         primary.frontier == nullptr || !primary.frontier->Valid() ||
         primary.frontier->role != harken::FrontierGroupRole::Coordinator ||
         !(primary.frontier->entry == descriptor.entry) || !(primary.frontier->operation.order == descriptor.order) ||
@@ -14925,7 +14910,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
         primary.memberCount != 0 || primary.sourceControlCount != 0 || primary.lease == nullptr ||
         primary.lease->Capture().state != harken::AudioSliceState::Ready) return false;
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (groupCount > groups.size()) return false;
     QueueSignalEntryPublication captured{};
     std::uint32_t entryMemberCount = 0;
@@ -15007,7 +14992,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
         const auto& owner = nativeDescriptor.entry.owner;
         const auto* native = engine.ResolvePlayableService({owner.serviceSlot, owner.serviceGeneration},
             owner.child, owner.childEpoch);
-        harken::Plan03PageGroupView nativeGroup{};
+        harken::SchedulePageGroupView nativeGroup{};
         harken::DecisionCommittedSnapshot nativeCoordinator{};
         if (native == nullptr || native == entry || !nativeDescriptor.Valid() ||
             !SameCanonicalDecision(nativeDescriptor.entry.coordinator, token) ||
@@ -15015,7 +15000,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
             !engine.playablePartitions.Published(native->partition, native->identity) ||
             !IsPlayableServiceDescendant(engine, *native, *entry) ||
             native->nativeEntryDependency == nullptr || !native->nativeEntryDependency->entryBound ||
-            nativeDescriptor.primary.backing != harken::Plan03GroupBacking::Page ||
+            nativeDescriptor.primary.backing != harken::ScheduleGroupBacking::Page ||
             nativeDescriptor.primary.transportEpoch != descriptor.primary.transportEpoch ||
             nativeDescriptor.worldGeneration != descriptor.worldGeneration ||
             nativeDescriptor.worldSemanticFingerprint != native->root.expectedProgramSemanticFingerprint ||
@@ -15034,7 +15019,7 @@ bool CaptureQueueSignalEntryPublication(harken::Engine& engine,
             nativeCoordinator.world != descriptor.worldGeneration ||
             nativeCoordinator.transport != descriptor.primary.transportEpoch ||
             nativeCoordinator.participantCount != nativeDescriptor.expectedMemberCount ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(nativeDescriptor.primary, &nativeGroup) ||
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(nativeDescriptor.primary, &nativeGroup) ||
             nativeGroup.frontier == nullptr || nativeGroup.lease == nullptr || nativeGroup.lease == primary.lease ||
             nativeGroup.memberCount != 0 || nativeGroup.sourceControlCount != 0 ||
             nativeGroup.lease->Capture().state != harken::AudioSliceState::Ready) return false;
@@ -15119,7 +15104,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
     const bool independentInitial = native != nullptr &&
         IsPublishedIndependentQueueEntry(engine, *native, descriptor.entry);
     harken::DecisionCommittedSnapshot coordinator{};
-    harken::Plan03PageGroupView primary{};
+    harken::SchedulePageGroupView primary{};
     harken::QueueInstanceSnapshot queue{};
     if (!descriptor.Valid() || !(descriptor.entry == row.frontierLifetimeEntry) || native == nullptr ||
         (signalOwner == nullptr && !independentInitial && (!(native->frontierEntry == descriptor.entry) ||
@@ -15127,7 +15112,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
         !engine.playablePartitions.Published(row.partition, row.identity) ||
         !engine.playablePartitions.Published(native->partition, native->identity) ||
         (native != &row && !IsPlayableServiceDescendant(engine, row, *native)) ||
-        descriptor.primary.backing != harken::Plan03GroupBacking::Page ||
+        descriptor.primary.backing != harken::ScheduleGroupBacking::Page ||
         descriptor.primary.transportEpoch != engine.timelinePool.Epoch() ||
         descriptor.worldGeneration != row.Invocation().worldGeneration ||
         descriptor.order.executeFrame > row.startFrame ||
@@ -15142,7 +15127,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
         coordinator.ticket.sequence != descriptor.order.logicCommitSequence ||
         coordinator.participantCount != descriptor.expectedMemberCount ||
         coordinator.world != descriptor.worldGeneration || coordinator.transport != descriptor.primary.transportEpoch ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
         primary.frontier == nullptr || !primary.frontier->Valid() ||
         primary.frontier->role != harken::FrontierGroupRole::Coordinator ||
         !(primary.frontier->entry == descriptor.entry) || !(primary.frontier->primary == primary.identity) ||
@@ -15157,7 +15142,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
     } else if (!independentInitial) {
         const auto& dependency = *native->nativeEntryDependency;
         const auto* original = engine.decisions.ResolveFrontierActivation(dependency.entry.coordinator);
-        harken::Plan03PageGroupView signal{};
+        harken::SchedulePageGroupView signal{};
         if (!MatchesNativeEntryDependency(engine, dependency, *native) ||
             dependency.coordinatorPin.Owner() != &engine.decisions ||
             !SameCanonicalDecision(dependency.coordinatorPin.Token(), dependency.entry.coordinator) ||
@@ -15174,15 +15159,15 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
                     *primary.frontier, engine.mixer.BlocksRendered());
             if (!proven) return false;
         } else if (dependency.kind == harken::FrontierEntryPrerequisiteKind::SourceCohortChild) {
-            harken::Plan03PageGroupView parent{};
+            harken::SchedulePageGroupView parent{};
             if (primary.frontier->appliedPrerequisite != nullptr ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(dependency.primary, &parent) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(dependency.member, &signal) ||
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(dependency.primary, &parent) ||
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(dependency.member, &signal) ||
                 parent.frontier == nullptr || signal.frontier == nullptr ||
                 !engine.decisions.ValidateSourceCohortPrerequisite(*primary.frontier, *parent.frontier, *signal.frontier))
                 return false;
         } else if (primary.frontier->appliedPrerequisite != nullptr ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(dependency.member, &signal) ||
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(dependency.member, &signal) ||
             signal.frontier == nullptr || !signal.frontier->Valid() || !signal.frontier->queueSignal.Valid() ||
             signal.frontier->role != harken::FrontierGroupRole::EntryMember ||
             !(signal.frontier->entry == dependency.entry) || !(signal.frontier->primary == dependency.primary) ||
@@ -15193,7 +15178,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
         primary.frontier->appliedPrerequisite != nullptr)) return false;
     QueueSignalEntryPublication captured{};
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (groupCount > groups.size()) return false;
     for (std::size_t index = 0; index < groupCount; ++index) {
         const auto& group = groups[index];
@@ -15215,7 +15200,7 @@ bool CaptureNativeQueueInitialPublication(harken::Engine& engine,
             binding.operation.transport != descriptor.primary.transportEpoch ||
             binding.operation.order.executeFrame != descriptor.order.executeFrame ||
             initial.version != queue.logicMirror.version || initial.programSemanticFingerprint != queue.programSemanticFingerprint ||
-            group.identity.backing != harken::Plan03GroupBacking::Page || group.identity.sliceIndex != 0 ||
+            group.identity.backing != harken::ScheduleGroupBacking::Page || group.identity.sliceIndex != 0 ||
             group.lease != primary.lease || group.sourceControlCount != 0 ||
             (group.memberCount != 0 && group.members == nullptr) ||
             !engine.decisions.CaptureCommitted(group.identity.decision, &captured.decision) ||
@@ -15370,7 +15355,7 @@ void ServiceNativeQueueInitialArms(harken::Engine& engine,
         row.queueAbortRequested || row.phase == harken::EnginePlayableStartPhase::Cancelling) return;
     auto* activation = engine.decisions.ResolveFrontierActivation(row.frontierLifetimeEntry.coordinator);
     if (activation == nullptr || activation->State() != harken::FrontierReceiptState::Pending ||
-        activation->Descriptor().primary.backing != harken::Plan03GroupBacking::Page) return;
+        activation->Descriptor().primary.backing != harken::ScheduleGroupBacking::Page) return;
     QueueSignalEntryPublication entry{};
     if (!CaptureNativeQueueInitialPublication(engine, row, &entry)) {
         (void)activation->Cancel(row.frontierLifetimeEntry, harken::AudioSliceInvalidateReason::Cancel);
@@ -15457,8 +15442,8 @@ engine.runtimeRecreateRequired = true;
         bool belongs = identity.decision.slot == row.frontierEntry.coordinator.slot &&
             identity.decision.generation == row.frontierEntry.coordinator.generation;
         if (!belongs) {
-            harken::Plan03PageGroupView group{};
-            belongs = engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &group) &&
+            harken::SchedulePageGroupView group{};
+            belongs = engine.timelinePool.ResolveScheduleGroupSliceProducer(identity, &group) &&
                 group.identity == identity && group.frontier != nullptr &&
                 group.frontier->entry == row.frontierEntry;
         }
@@ -15519,7 +15504,7 @@ engine.runtimeRecreateRequired = true;
         }
         if (cancel || receipt.outcome == harken::FrontierReceiptOutcome::DefinitivelyNotApplied) {
             auto& groups = engine.timelineGroupCaptureScratch;
-            const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+            const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
             if (count > groups.size()) return false;
             for (std::size_t index = 0; index < count; ++index) {
                 const auto& group = groups[index];
@@ -15547,7 +15532,7 @@ engine.runtimeRecreateRequired = true;
             completedAudioSequence)) return false;
     if (!row.frontierArmPin.Release(completedAudioSequence)) return false;
     if (engine.timelinePool.HasFrontierOwnerOperations(row.frontierEntry.owner, row.frontierEntry.coordinator) &&
-        !engine.timelinePool.DetachPlan03GroupFrontier(activation->Descriptor().primary, completedAudioSequence))
+        !engine.timelinePool.DetachScheduleGroupFrontier(activation->Descriptor().primary, completedAudioSequence))
         return false;
     if (!engine.decisions.ReconcileFrontierActivation(row.frontierEntry.coordinator,
             row.frontierEntry, completedAudioSequence, &receipt) ||
@@ -16848,7 +16833,7 @@ bool ReleaseQueueStopNativeOccupancy(
         privateAttempt->privateCleanupPhase !=
             harken::InitialQueuePrivateCleanupPhase::Finished) return false;
     if (!ReconcileQueueFrontier(engine, row, observedAudioSequence, true)) return false;
-    if (DropLivePlan03GroupMemberArms(engine, observedAudioSequence, true, &row,
+    if (DropLiveScheduleGroupMemberArms(engine, observedAudioSequence, true, &row,
             true, harken::AudioSliceInvalidateReason::Cancel, true) !=
         QueueCancellationLeaseStatus::Clear) return false;
     if (GuardQueueCancellationSlices(
@@ -16989,7 +16974,7 @@ bool ReleaseQueueStopPhysicalArms(
             dropArm(row.QueueFiling().queueTransitionGroupArms[index]);
         }
     }
-    if (DropLivePlan03GroupMemberArms(engine, observedAudioSequence, true, &row) !=
+    if (DropLiveScheduleGroupMemberArms(engine, observedAudioSequence, true, &row) !=
         QueueCancellationLeaseStatus::Clear) return false;
     const bool otherLive = std::any_of(
         engine.playableServices.begin(), engine.playableServices.end(),
@@ -16998,7 +16983,7 @@ bool ReleaseQueueStopPhysicalArms(
                    candidate.phase != harken::EnginePlayableStartPhase::Free;
         });
     if (!otherLive) {
-        if (DropLivePlan03GroupMemberArms(engine, observedAudioSequence, false,
+        if (DropLiveScheduleGroupMemberArms(engine, observedAudioSequence, false,
                                       nullptr) != QueueCancellationLeaseStatus::Clear) return false;
         engine.timelinePool.DropPreparedOccupancy();
     }
@@ -18609,7 +18594,7 @@ void CatchUpTimelineWindow(
         return;
     }
     const std::uint64_t sequence = engine.mixer.BlocksRendered();
-    if (DropLivePlan03GroupMemberArms(engine, sequence, false, nullptr) !=
+    if (DropLiveScheduleGroupMemberArms(engine, sequence, false, nullptr) !=
         QueueCancellationLeaseStatus::Clear) return;
     engine.timelinePool.DropPreparedOccupancy();
     while (engine.timelinePool.WindowEndFrame() <= needFrame) {
@@ -23949,7 +23934,7 @@ bool CanTransferFrontierQueueResponsibilitiesAfterLinks(harken::Engine& engine,
         harken::Engine::NativeBackingReturnPlan backingTransfer;
         if (!engine.PrepareNativeBackingReturn(*child, &backingTransfer)) return false;
         for (std::uint32_t slice = 0; slice < child->actionResourceOwnerContext.groupSlicesCommitted; ++slice)
-            if (!engine.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(child->queueCommittedGroupSlices[slice]))
+            if (!engine.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(child->queueCommittedGroupSlices[slice]))
                 return false;
         for (std::uint32_t prior = 0; prior < index; ++prior)
             if (scratch.storage.queueFutureAttempts[prior].slot == token.slot &&
@@ -24001,7 +23986,7 @@ bool TransferFrontierQueueFutureResponsibilities(harken::Engine& engine,
         auto& resources = child->actionResourceOwnerContext;
         while (resources.groupSlicesCommitted != 0) {
             auto& slice = child->queueCommittedGroupSlices[resources.groupSlicesCommitted - 1u];
-            if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&slice)) return false;
+            if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&slice)) return false;
             --resources.groupSlicesCommitted;
         }
         auto& queue = *child->row;
@@ -24083,11 +24068,11 @@ bool TransferFrontierAttempt(harken::Engine& engine,
     if (!scratch.storage.ownerLedger.Empty() &&
         !scratch.storage.ownerLedger.CanTransfer(scratch.storage.generation)) return false;
     if (scratch.frontierPrimary.Valid() &&
-        !engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&scratch.frontierPrimary)) return false;
+        !engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&scratch.frontierPrimary)) return false;
     while (scratch.variableControlInitialCommittedSliceCount != 0) {
         auto& slice = scratch.variableControlInitialCommittedSlices[
             scratch.variableControlInitialCommittedSliceCount - 1u];
-        if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&slice)) return false;
+        if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&slice)) return false;
         --scratch.variableControlInitialCommittedSliceCount;
     }
     if (scratch.frontierOwnerBatchRegistered &&
@@ -24224,8 +24209,8 @@ bool CancelScheduleChildSignalAdmission(harken::Engine& engine,
             return true;
         }) || !ownsContext) return false;
     if (signal != nullptr && signal->committed.Valid() &&
-        (!engine.timelinePool.MatchesCommittedPlan03GroupSlice(signal->committed, signal->group) ||
-         !engine.timelinePool.PrivatePlan03GroupBindable(signal->group))) return false;
+        (!engine.timelinePool.MatchesCommittedScheduleGroupSlice(signal->committed, signal->group) ||
+         !engine.timelinePool.PrivateScheduleGroupBindable(signal->group))) return false;
     // PlayableTreeExecutor cancels a failed child before returning to the root.
     // Consume the still-private original group before that child can drop an arm.
     return SealPrivateInitialForest(engine, *root) &&
@@ -25165,14 +25150,14 @@ bool RetirePrivateUnboundInitialVariableControlArms(
     for (std::size_t i = 0; i < 2; ++i) {
         const auto& side = storage.initialFrontierSides[i];
         auto* service = engine.ResolvePlayableService(side.service);
-        harken::Plan03PageGroupView group{};
+        harken::SchedulePageGroupView group{};
         if (service == nullptr || !service->InvocationValid() ||
             service->invocation != scratch.row->invocation ||
             service->invocationGeneration != scratch.row->invocationGeneration ||
             !engine.playablePartitions.Owns(service->partition, service->identity) ||
-            !engine.timelinePool.MatchesCommittedPlan03GroupSlice(
+            !engine.timelinePool.MatchesCommittedScheduleGroupSlice(
                 scratch.variableControlInitialCommittedSlices[i], side.group) ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(side.group, &group) ||
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(side.group, &group) ||
             group.memberCount != 1 || group.members == nullptr ||
             side.decision.slot != group.identity.decision.slot ||
             side.decision.generation != group.identity.decision.generation) return false;
@@ -25260,11 +25245,11 @@ bool PreparePrivateInitialVariableControlArmRetirement(
          sideIndex < scratch.initialFrontierSideCount; ++sideIndex) {
         const auto& side = storage.initialFrontierSides[sideIndex];
         auto* service = engine.ResolvePlayableService(side.service);
-        harken::Plan03PageGroupView group{};
-        harken::Plan03ExactGroupSnapshot exact{};
-        const bool foundGroup = engine.timelinePool.ResolvePlan03GroupSliceProducer(
+        harken::SchedulePageGroupView group{};
+        harken::ScheduleExactGroupSnapshot exact{};
+        const bool foundGroup = engine.timelinePool.ResolveScheduleGroupSliceProducer(
             side.group, &group);
-        const bool foundExact = engine.timelinePool.CaptureExactPlan03Group(
+        const bool foundExact = engine.timelinePool.CaptureExactScheduleGroup(
             side.group, &exact);
         if (service == nullptr || !service->partition.Valid() ||
             service->invocation != scratch.row->invocation ||
@@ -25273,7 +25258,7 @@ bool PreparePrivateInitialVariableControlArmRetirement(
             !engine.playablePartitions.Owns(service->partition,
                                              service->identity) ||
             !side.group.Exact() ||
-            side.group.backing != harken::Plan03GroupBacking::Page ||
+            side.group.backing != harken::ScheduleGroupBacking::Page ||
             !foundGroup || !foundExact ||
             !(group.identity == side.group) || group.memberCount == 0 ||
             group.members == nullptr || group.frontier == nullptr ||
@@ -25717,7 +25702,7 @@ bool RollbackCommittedVariableControlInitial(
         while (scratch->variableControlInitialCommittedSliceCount != 0) {
             auto& slice = scratch->variableControlInitialCommittedSlices[
                 scratch->variableControlInitialCommittedSliceCount - 1u];
-            if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(&slice)) return false;
+            if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(&slice)) return false;
             --scratch->variableControlInitialCommittedSliceCount;
         }
         for (auto* group : {&row.variableControlDiscreteArmGroup, &row.variableControlContinuousArmGroup}) {
@@ -27038,9 +27023,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         return result;
     }
     if (!laneEntry && groupCount != 0 &&
-        engine.timelinePool.PreflightPlan03GroupSlices(
+        engine.timelinePool.PreflightScheduleGroupSlices(
             startFrame, groupCount) !=
-            harken::Plan03GroupReserveStatus::Committed) {
+            harken::ScheduleGroupReserveStatus::Committed) {
         result.status = harken::PlayableStartStatus::Backpressure;
         return result;
     }
@@ -28535,7 +28520,7 @@ bool CommitPreparedQueueResources(
     }
     for (std::uint32_t index = 0; index < scratch->queueGroupSliceCount;
          ++index) {
-        ok = engine.timelinePool.CommitPreparedPlan03GroupSlice(
+        ok = engine.timelinePool.CommitPreparedScheduleGroupSlice(
                  &scratch->queueGroupSlices[index]) &&
              ok;
     }
@@ -28996,7 +28981,7 @@ bool PrepareInitialVariableControlOwners(harken::Engine& engine,
 
 bool BuildInitialVcLaneMemberManifest(harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row,
-    harken::Plan03GroupSliceIdentity identity, harken::TimelineArmToken arm,
+    harken::ScheduleGroupSliceIdentity identity, harken::TimelineArmToken arm,
     harken::ImmediateLaneMemberManifest* out) noexcept {
     if (out == nullptr) return false;
     const harken::ProgramView* selected = nullptr;
@@ -29445,7 +29430,7 @@ bool CompleteVariableControlInitialPlacement(
                                   const harken::TimelineArmToken* members,
                                   std::uint32_t count) noexcept {
         if (count == 0 && (!row.variableControlIndependentFrontier || !decision.Valid())) return true;
-        harken::Plan03GroupSliceInput group{};
+        harken::ScheduleGroupSliceInput group{};
         group.executeFrame = row.startFrame;
         group.decision = decision;
         group.members = members;
@@ -29547,7 +29532,7 @@ bool CompleteVariableControlInitialPlacement(
                             std::move(privatePages.pageTransferProofs[side]));
                         privatePages.pageConsumedSideIdentities[side] = consumed.identity;
                         destination = std::move(consumed.owner);
-                    } else if (!engine.timelinePool.CommitPreparedPlan03GroupSlice(
+                    } else if (!engine.timelinePool.CommitPreparedScheduleGroupSlice(
                             &privatePages.sides[side],
                             &scratch->variableControlInitialCommittedSlices[
                                 scratch->variableControlInitialCommittedSliceCount],
@@ -29557,21 +29542,21 @@ bool CompleteVariableControlInitialPlacement(
                 }
                 return false;
             }
-            harken::PreparedPlan03GroupSlice prepared{};
-            if (engine.timelinePool.PreparePlan03GroupSlice(group, engine.timelineArms, &prepared) !=
-                harken::Plan03GroupReserveStatus::Committed) return false;
-            if (!engine.timelinePool.CommitPreparedPlan03GroupSlice(&prepared,
+            harken::PreparedScheduleGroupSlice prepared{};
+            if (engine.timelinePool.PrepareScheduleGroupSlice(group, engine.timelineArms, &prepared) !=
+                harken::ScheduleGroupReserveStatus::Committed) return false;
+            if (!engine.timelinePool.CommitPreparedScheduleGroupSlice(&prepared,
                     &scratch->variableControlInitialCommittedSlices[
                         scratch->variableControlInitialCommittedSliceCount], row.variableControlIndependentFrontier)) {
-                (void)engine.timelinePool.CancelPreparedPlan03GroupSlice(&prepared);
+                (void)engine.timelinePool.CancelPreparedScheduleGroupSlice(&prepared);
                 return false;
             }
             ++scratch->variableControlInitialCommittedSliceCount;
             return true;
         }
-        return engine.timelinePool.ReservePlan03GroupSlice(
+        return engine.timelinePool.ReserveScheduleGroupSlice(
                    group, engine.timelineArms) ==
-               harken::Plan03GroupReserveStatus::Committed;
+               harken::ScheduleGroupReserveStatus::Committed;
     };
     ok = reserveGroup(row, row.variableControlDiscreteDecision,
                       row.variableControlInitialArms.Discrete().data(),
@@ -31612,7 +31597,7 @@ engine.runtimeRecreateRequired = true;
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = naturalEndPrelude
         ? sourcePhaseFrame : completionFrame;
     group.decision = row.QueueFiling().queueDecision;
@@ -31626,7 +31611,7 @@ engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
     if (naturalEndPrelude || delayedTargetLock) {
-        harken::Plan03GroupSliceInput second = group;
+        harken::ScheduleGroupSliceInput second = group;
         second.executeFrame = naturalEndPrelude
             ? completionFrame : successorStartFrame;
         second.sliceIndex = 1;
@@ -31741,7 +31726,7 @@ bool PrepareSameKeyQueueContinuation(
         cancelSuccessorDecision();
         return false;
     }
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = row.QueuePayload().queueCompletionFrame;
     group.decision = row.QueueFiling().queueDecision;
     if (!starts.PrepareGroup(group)) {
@@ -33078,7 +33063,7 @@ engine.runtimeRecreateRequired = true;
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = naturalEndPrelude
         ? sourcePhaseFrame
         : successorAnchorFrame;
@@ -33093,7 +33078,7 @@ engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
     if (naturalEndPrelude || delayedTargetLock) {
-        harken::Plan03GroupSliceInput second = group;
+        harken::ScheduleGroupSliceInput second = group;
         second.executeFrame = naturalEndPrelude
             ? successorAnchorFrame : successorStartFrame;
         second.sliceIndex = 1;
@@ -33638,7 +33623,7 @@ bool PrepareFrontierCoordinator(harken::Engine& engine,
     } else if (!engine.decisions.Reserve(reserve, &scratch.frontierCoordinator) ||
                !engine.armGroups.Reserve(scratch.frontierCoordinator, nullptr, 0,
                    &scratch.frontierCoordinatorGroup)) return false;
-    harken::Plan03GroupSliceInput primary{};
+    harken::ScheduleGroupSliceInput primary{};
     primary.executeFrame = frame;
     primary.decision = scratch.frontierCoordinator;
     auto& descriptor = scratch.frontierDescriptor;
@@ -33683,7 +33668,7 @@ bool PrepareFrontierCoordinator(harken::Engine& engine,
                 return false;
             std::size_t ownerCount = 0;
             for (std::size_t committed = 0; committed < scratch.variableControlInitialCommittedSliceCount; ++committed)
-                ownerCount += engine.timelinePool.MatchesCommittedPlan03GroupSlice(
+                ownerCount += engine.timelinePool.MatchesCommittedScheduleGroupSlice(
                     scratch.variableControlInitialCommittedSlices[committed],
                     privatePages.pageConsumedSideIdentities[side]) ? 1u : 0u;
             if (ownerCount != 1) return false;
@@ -33695,12 +33680,12 @@ bool PrepareFrontierCoordinator(harken::Engine& engine,
         privatePages.sequence = 0;
         return true;
     }
-    if ((!privatelyReserved && engine.timelinePool.PreparePlan03GroupSlice(primary, engine.timelineArms,
-            &scratch.frontierPreparedPrimary) != harken::Plan03GroupReserveStatus::Committed ||
-        !engine.timelinePool.CommitPreparedPlan03GroupSlice(&scratch.frontierPreparedPrimary,
+    if ((!privatelyReserved && engine.timelinePool.PrepareScheduleGroupSlice(primary, engine.timelineArms,
+            &scratch.frontierPreparedPrimary) != harken::ScheduleGroupReserveStatus::Committed ||
+        !engine.timelinePool.CommitPreparedScheduleGroupSlice(&scratch.frontierPreparedPrimary,
             &scratch.frontierPrimary, true))) return false;
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (count > groups.size()) return false;
     for (std::size_t index = 0; index < count; ++index) {
         const auto& identity = groups[index].identity;
@@ -33808,8 +33793,8 @@ bool PrepareQueueSignalEntryDependencies(harken::Engine& engine,
             owned.primary = root.frontierDescriptor.primary;
             owned.member = signal->group;
             return engine.decisions.AcquireFuturePin(owned.entry.coordinator, &owned.coordinatorPin) &&
-                engine.timelinePool.AcquirePlan03GroupReader(owned.primary, &owned.primaryPin) &&
-                engine.timelinePool.AcquirePlan03GroupReader(owned.member, &owned.memberPin) &&
+                engine.timelinePool.AcquireScheduleGroupReader(owned.primary, &owned.primaryPin) &&
+                engine.timelinePool.AcquireScheduleGroupReader(owned.member, &owned.memberPin) &&
                 MatchesNativeEntryDependency(engine, owned, row);
         });
     });
@@ -33904,8 +33889,8 @@ bool ValidateNativeEntryPrerequisite(harken::Engine& engine,
     if (owned == nullptr) return !scratch.nativeEntryDomain;
     if (!owned->entryBound || !MatchesNativeEntryDependency(engine, *owned, *scratch.row)) return false;
     if (owned->appliedSignal != nullptr) {
-        harken::Plan03PageGroupView child{};
-        return engine.timelinePool.ResolvePlan03GroupSliceProducer(scratch.frontierDescriptor.primary, &child) &&
+        harken::SchedulePageGroupView child{};
+        return engine.timelinePool.ResolveScheduleGroupSliceProducer(scratch.frontierDescriptor.primary, &child) &&
             child.frontier != nullptr && child.frontier->entry == scratch.frontierDescriptor.entry &&
             child.frontier->primary == scratch.frontierDescriptor.primary &&
             (owned->kind == harken::FrontierEntryPrerequisiteKind::SourceCohortChild
@@ -33915,23 +33900,23 @@ bool ValidateNativeEntryPrerequisite(harken::Engine& engine,
                     *child.frontier, engine.mixer.BlocksRendered()));
     }
     const auto* parent = engine.decisions.ResolveFrontierActivation(owned->entry.coordinator);
-    harken::Plan03PageGroupView member{};
-    harken::Plan03PageGroupView primary{};
-    harken::Plan03PageGroupView child{};
+    harken::SchedulePageGroupView member{};
+    harken::SchedulePageGroupView primary{};
+    harken::SchedulePageGroupView child{};
     if (owned->kind == harken::FrontierEntryPrerequisiteKind::SourceCohortChild) {
         return parent != nullptr && parent->Descriptor().entry == owned->entry &&
             parent->Descriptor().primary == owned->primary &&
-            engine.timelinePool.ResolvePlan03GroupSliceProducer(owned->primary, &primary) &&
-            engine.timelinePool.ResolvePlan03GroupSliceProducer(owned->member, &member) &&
-            engine.timelinePool.ResolvePlan03GroupSliceProducer(scratch.frontierDescriptor.primary, &child) &&
+            engine.timelinePool.ResolveScheduleGroupSliceProducer(owned->primary, &primary) &&
+            engine.timelinePool.ResolveScheduleGroupSliceProducer(owned->member, &member) &&
+            engine.timelinePool.ResolveScheduleGroupSliceProducer(scratch.frontierDescriptor.primary, &child) &&
             primary.frontier != nullptr && member.frontier != nullptr && child.frontier != nullptr &&
             engine.decisions.ValidateSourceCohortPrerequisite(*child.frontier, *primary.frontier, *member.frontier);
     }
     if (parent == nullptr || !(parent->Descriptor().entry == owned->entry) ||
         !(parent->Descriptor().primary == owned->primary) ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(owned->primary, &primary) ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(owned->member, &member) ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(scratch.frontierDescriptor.primary, &child) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(owned->primary, &primary) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(owned->member, &member) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(scratch.frontierDescriptor.primary, &child) ||
         primary.frontier == nullptr || member.frontier == nullptr || child.frontier == nullptr ||
         !member.frontier->queueSignal.Valid() || !(member.frontier->entry == owned->entry) ||
         !(member.frontier->primary == owned->primary) ||
@@ -33970,7 +33955,7 @@ bool BindPreparedFrontierCoordinator(harken::Engine& engine,
     binding.operation.world = descriptor.worldGeneration;
     binding.initialVariables = descriptor.initialVariables;
     if (!BindNativeEntryPrerequisite(engine, scratch, binding) ||
-        !engine.timelinePool.BindPlan03GroupFrontier(descriptor.primary, binding)) return false;
+        !engine.timelinePool.BindScheduleGroupFrontier(descriptor.primary, binding)) return false;
     if (scratch.nativeEntryDomain) scratch.row->nativeEntryDependency->entryBound = true;
     return true;
 }
@@ -34049,12 +34034,12 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             descriptor.entry.attempt != storage.generation || !descriptor.primary.Exact() ||
             descriptor.worldGeneration != reserved.world ||
             !MatchesNativeEntryCoordinatorReservation(engine, scratch, reserved) ||
-            !engine.timelinePool.MatchesCommittedPlan03GroupSlice(scratch.frontierPrimary, descriptor.primary))
+            !engine.timelinePool.MatchesCommittedScheduleGroupSlice(scratch.frontierPrimary, descriptor.primary))
             return InitialFrontierPrepareStatus::Failed;
     } else if (!PrepareFrontierCoordinator(engine, scratch, ownerIdentity(row), row.Invocation().worldGeneration,
             row.root.expectedProgramSemanticFingerprint, entryFrame, sequence)) return InitialFrontierPrepareStatus::Failed;
     auto& captures = engine.timelineGroupCaptureScratch;
-    const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(captures.data(), captures.size());
+    const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(captures.data(), captures.size());
     if (groupCount > captures.size()) return InitialFrontierPrepareStatus::Failed;
     scratch.initialFrontierSideCount = 0;
     const auto addSide = [&](harken::EnginePlayableServiceRow& service,
@@ -34114,7 +34099,7 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
     std::uint32_t entryEventCount = 0;
     const auto addEvent = [&](const harken::EnginePlayableServiceRow& service,
         harken::TimelineTransactionProgramRef program, harken::TimelineArmToken arm,
-        harken::Plan03GroupSliceIdentity group, const harken::EventTemplate* original,
+        harken::ScheduleGroupSliceIdentity group, const harken::EventTemplate* original,
         std::uint64_t frame, harken::PlayableInstanceHandle resourceOwner, std::uint64_t resourceEpoch) {
         if (eventCount >= engine.initialFrontierEvents.size()) return false;
         auto& event = engine.initialFrontierEvents[eventCount];
@@ -34139,7 +34124,7 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             if (admission->kind == InitialSourceAdmission::Kind::ScheduleSource &&
                 SameCanonicalDecision(admission->decision, group.decision))
                 event.frontier.owner = scratch.frontierDescriptor.entry.owner;
-        event.frontier.group = delayed ? harken::Plan03GroupSliceIdentity{} : group;
+        event.frontier.group = delayed ? harken::ScheduleGroupSliceIdentity{} : group;
         event.frontier.transport = scratch.continuationTransportEpoch;
         event.frontier.world = row.Invocation().worldGeneration;
         event.frontier.operationEventCount = 1;
@@ -34179,7 +34164,7 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
                 side.group, nullptr, entryFrame, service->ownerInstance, service->ownerEpoch)) return InitialFrontierPrepareStatus::Failed;
     }
     const auto addSource = [&](const harken::EnginePlayableServiceRow& service,
-        const harken::ProgramView& program, const harken::Plan03GroupSliceIdentity& group) {
+        const harken::ProgramView& program, const harken::ScheduleGroupSliceIdentity& group) {
         const auto* runtime = program.runtimeProgram.program;
         if (program.events == nullptr || program.eventCount == 0 || runtime == nullptr ||
             program.runtimeProgram.programGeneration != runtime->generation ||
@@ -34233,8 +34218,8 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             IsInitialNativeAdmissionDecision(engine, scratch, arm.parentGroup.decision);
         if (program == nullptr || !harken::Engine::SameOriginalSingleArm(program->armToken, originalArm)) return false;
         const auto* service = engine.ResolvePlayableService(side->service);
-        harken::Plan03PageGroupView group{};
-        if (service == nullptr || !engine.timelinePool.ResolvePlan03GroupSliceProducer(side->group, &group) ||
+        harken::SchedulePageGroupView group{};
+        if (service == nullptr || !engine.timelinePool.ResolveScheduleGroupSliceProducer(side->group, &group) ||
             arm.memberIndex >= group.memberCount || group.members == nullptr ||
             !harken::Engine::SameOriginalSingleArm(group.members[arm.memberIndex], originalArm)) return false;
         for (std::uint32_t index = 0; index < eventCount; ++index)
@@ -34314,8 +34299,8 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
     }
     std::uint32_t expectedSources = 0;
     for (std::uint32_t index = 0; index < scratch.initialFrontierSideCount; ++index) {
-        harken::Plan03PageGroupView group{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(storage.initialFrontierSides[index].group, &group) ||
+        harken::SchedulePageGroupView group{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(storage.initialFrontierSides[index].group, &group) ||
             group.memberCount > UINT32_MAX - expectedSources) return InitialFrontierPrepareStatus::Failed;
         expectedSources += group.memberCount;
     }
@@ -34410,9 +34395,9 @@ InitialFrontierPrepareStatus PrepareInitialVariableControlFrontier(harken::Engin
             service->queueInstance.generation, queueSnapshot.logicMirror.version, queueSnapshot.programSemanticFingerprint};
         else if (!sourceOnly) binding.variableSide = {proof.instance.slot, proof.instance.generation, static_cast<std::uint8_t>(proof.side),
             proof.sideGeneration, proof.bank.slot, proof.bank.generation};
-        harken::Plan03PageGroupView group{};
-        if (!engine.timelinePool.BindPlan03GroupFrontier(side.group, binding) ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(side.group, &group) || group.frontier == nullptr)
+        harken::SchedulePageGroupView group{};
+        if (!engine.timelinePool.BindScheduleGroupFrontier(side.group, binding) ||
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(side.group, &group) || group.frontier == nullptr)
             return InitialFrontierPrepareStatus::Failed;
         if (signalSide) {
             if (!engine.queueInstances.BindFrontierSignal(scratch.frontierSignal, *group.frontier, engine.timelinePool))
@@ -34656,7 +34641,7 @@ bool PublishInitialScheduleFrontiers(harken::Engine& engine,
             !ReleaseInitialSourceAdmissionOwners(engine, scratch)) return false;
         while (scratch.actionResourceOwnerContext.groupSlicesCommitted != 0) {
             const auto index = scratch.actionResourceOwnerContext.groupSlicesCommitted - 1u;
-            if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(
+            if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(
                     &scratch.queueCommittedGroupSlices[index])) return false;
             --scratch.actionResourceOwnerContext.groupSlicesCommitted;
         }
@@ -34664,7 +34649,7 @@ bool PublishInitialScheduleFrontiers(harken::Engine& engine,
         while (scratch.variableControlInitialCommittedSliceCount != 0) {
             auto& slice = scratch.variableControlInitialCommittedSlices[
                 scratch.variableControlInitialCommittedSliceCount - 1u];
-            if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&slice)) return false;
+            if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&slice)) return false;
             --scratch.variableControlInitialCommittedSliceCount;
         }
         return true;
@@ -35569,8 +35554,8 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     if (engine.timelinePool.PrepareTransactionBatch(requests.data(), requests.size(),
             engine.timelinePool.PublishCutoffFrame(), &scratch.queueTransactions) != harken::ReserveRefusal::None ||
         !BindPreparedFrontierCoordinator(engine, scratch, targetEventCount + 1u)) return QueueContinuationPrepareStatus::Failed;
-    harken::Plan03PageGroupView coordinator{};
-    if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(scratch.frontierDescriptor.primary, &coordinator) ||
+    harken::SchedulePageGroupView coordinator{};
+    if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(scratch.frontierDescriptor.primary, &coordinator) ||
         coordinator.frontier == nullptr || coordinator.lease == nullptr ||
         !engine.timelineArms.PinFrontierReader(installed.armToken, &scratch.frontierArmPin) ||
         !engine.timelineArms.BindFrontierAdmission(installed.armToken, *coordinator.frontier, *coordinator.lease) ||
@@ -39659,8 +39644,8 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
         preflightTransactions[index].eventCount = 1;
     }
     if (decisionFrame >= engine.timelinePool.WindowEndFrame() ||
-        engine.timelinePool.PreflightPlan03GroupSlices(decisionFrame, 1) !=
-            harken::Plan03GroupReserveStatus::Committed ||
+        engine.timelinePool.PreflightScheduleGroupSlices(decisionFrame, 1) !=
+            harken::ScheduleGroupReserveStatus::Committed ||
         engine.timelinePool.PreflightTransactionBatch(
             preflightTransactions.data(), sourceMemberCount,
             engine.timelinePool.PublishCutoffFrame()) !=
@@ -39812,7 +39797,7 @@ engine.runtimeRecreateRequired = true;
         postedAll = postedAll && starts.PrepareProgram(
             row.DiscreteRetargetStorage().schedules[index]);
     }
-    harken::Plan03GroupSliceInput slice{};
+    harken::ScheduleGroupSliceInput slice{};
     slice.executeFrame = decisionFrame;
     slice.decision = decision;
     slice.members = exitingArms.data();
@@ -40088,8 +40073,8 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
         }
     }
     if (decisionFrame >= engine.timelinePool.WindowEndFrame() ||
-        engine.timelinePool.PreflightPlan03GroupSlices(decisionFrame, 1) !=
-            harken::Plan03GroupReserveStatus::Committed ||
+        engine.timelinePool.PreflightScheduleGroupSlices(decisionFrame, 1) !=
+            harken::ScheduleGroupReserveStatus::Committed ||
         targetSchedule.leafCount > engine.config.maxArmsPerGroup ||
         engine.timelineArms.FreeCount() < targetSchedule.leafCount ||
         engine.armGroups.FreeCount() == 0 ||
@@ -40452,7 +40437,7 @@ engine.runtimeRecreateRequired = true;
     for (std::uint32_t index = 0; index < targetSchedule.leafCount; ++index) {
         postedAll = postedAll && starts.PrepareProgram(*targetPrograms[index]);
     }
-    harken::Plan03GroupSliceInput slice{};
+    harken::ScheduleGroupSliceInput slice{};
     slice.executeFrame = decisionFrame;
     slice.decision = decision;
     slice.members = groupArms.data();
@@ -41228,19 +41213,19 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         sourceBoundary && audibleFrame < sourceStopFrame;
     const auto groupPreflight = [&]() {
         if (!sourceBoundaryPrelude) {
-            return engine.timelinePool.PreflightPlan03GroupSlices(
+            return engine.timelinePool.PreflightScheduleGroupSlices(
                 audibleFrame, 1);
         }
         if (audibleFrame / blockFrames == sourceStopFrame / blockFrames) {
-            return engine.timelinePool.PreflightPlan03GroupSlices(
+            return engine.timelinePool.PreflightScheduleGroupSlices(
                 audibleFrame, 2);
         }
-        const harken::Plan03GroupReserveStatus first =
-            engine.timelinePool.PreflightPlan03GroupSlices(
+        const harken::ScheduleGroupReserveStatus first =
+            engine.timelinePool.PreflightScheduleGroupSlices(
                 audibleFrame, 1);
-        return first != harken::Plan03GroupReserveStatus::Committed
+        return first != harken::ScheduleGroupReserveStatus::Committed
             ? first
-            : engine.timelinePool.PreflightPlan03GroupSlices(
+            : engine.timelinePool.PreflightScheduleGroupSlices(
                   sourceStopFrame, 1);
     }();
     const harken::PlayableStartStatus leafPreflight =
@@ -41255,7 +41240,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     if (audibleFrame >= engine.timelinePool.WindowEndFrame() ||
         sourceStopFrame >= engine.timelinePool.WindowEndFrame() ||
         targetStartFrame >= engine.timelinePool.WindowEndFrame() ||
-        groupPreflight != harken::Plan03GroupReserveStatus::Committed ||
+        groupPreflight != harken::ScheduleGroupReserveStatus::Committed ||
         groupMemberCount > engine.config.maxArmsPerGroup ||
         engine.timelineArms.FreeCount() < (nativeTargets ? sourceMemberCount : groupMemberCount) ||
         engine.armGroups.FreeCount() == 0 ||
@@ -41863,7 +41848,7 @@ engine.runtimeRecreateRequired = true;
         exitingPosted = exitingPosted && starts.PrepareProgram(
             row.DiscreteRetargetStorage().schedules[index]);
     }
-    harken::Plan03GroupSliceInput slice{};
+    harken::ScheduleGroupSliceInput slice{};
     slice.executeFrame = audibleFrame;
     slice.decision = decision;
     slice.members =
@@ -41880,7 +41865,7 @@ engine.runtimeRecreateRequired = true;
                                          : VariableRetargetPrepareStatus::Retry;
     }
     if (sourceBoundaryPrelude) {
-        harken::Plan03GroupSliceInput completion = slice;
+        harken::ScheduleGroupSliceInput completion = slice;
         completion.executeFrame = sourceStopFrame;
         completion.sliceIndex = 1;
         if (!starts.PrepareGroup(completion)) {
@@ -42411,10 +42396,10 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
             retargetZeroWorkCompletionFrame,
             pendingLogicalCompletionFrames[index]);
     }
-    const harken::Plan03GroupReserveStatus groupPreflight =
-        engine.timelinePool.PreflightPlan03GroupSlices(decisionFrame, 1);
+    const harken::ScheduleGroupReserveStatus groupPreflight =
+        engine.timelinePool.PreflightScheduleGroupSlices(decisionFrame, 1);
     if (decisionFrame >= engine.timelinePool.WindowEndFrame() ||
-        groupPreflight != harken::Plan03GroupReserveStatus::Committed ||
+        groupPreflight != harken::ScheduleGroupReserveStatus::Committed ||
         engine.timelineArms.FreeCount() < audioMemberCount ||
         engine.armGroups.FreeCount() == 0 ||
         livePriorMemberCount > engine.playLedBatchScratch.size() ||
@@ -42622,7 +42607,7 @@ engine.runtimeRecreateRequired = true;
                                              : VariableRetargetPrepareStatus::Retry;
         }
     }
-    harken::Plan03GroupSliceInput groupSlice{};
+    harken::ScheduleGroupSliceInput groupSlice{};
     groupSlice.executeFrame = decisionFrame;
     groupSlice.decision = decision;
     groupSlice.members = audioArms.data();
@@ -43294,7 +43279,7 @@ void ReconcileVariableFutureInvalidation(harken::Engine& engine,
         row.controlLifecycle != harken::PlayableControlLifecycle::Active ||
         (!row.variableControlDiscreteRetargetPrepared && !row.variableControlRetargetPrepared)) return;
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (count > groups.size()) {
 engine.runtimeRecreateRequired = true;
         return;
@@ -44042,7 +44027,7 @@ bool ReleaseQueueFutureHeadRecord(
                 const auto& entry = record.descriptor.entry;
                 const auto observed = engine.mixer.BlocksRendered();
                 harken::FrontierActivationSidecarSnapshot sidecar{};
-                harken::Plan03PageGroupView primary{};
+                harken::SchedulePageGroupView primary{};
                 if (record.descriptor.Valid() || !entry.Valid() ||
                     !SameCanonicalDecision(entry.coordinator, record.coordinator) ||
                     entry.attempt != record.attemptGeneration ||
@@ -44055,7 +44040,7 @@ bool ReleaseQueueFutureHeadRecord(
                     (sidecar.state != harken::FrontierReceiptState::AudioFinal &&
                         sidecar.state != harken::FrontierReceiptState::LogicFinal) ||
                     sidecar.pagePinHeld || sidecar.observerPinHeld || !sidecar.primary.Exact() ||
-                    engine.timelinePool.ResolvePlan03GroupSliceProducer(sidecar.primary, &primary) ||
+                    engine.timelinePool.ResolveScheduleGroupSliceProducer(sidecar.primary, &primary) ||
                     engine.timelinePool.HasFrontierOwnerOperations(entry.owner, record.coordinator)) return false;
             }
             if (engine.decisions.HasFrontierDecisionBinding(record.coordinator) ||
@@ -44179,8 +44164,8 @@ bool PrivateStoppedRootQueueCoordinatorReady(
     harken::DecisionCommittedSnapshot decision{};
     harken::ArmGroupSnapshot arms{};
     harken::ActionFiringSnapshot firing{};
-    harken::Plan03ImmediateLaneGroupDescriptor group{};
-    harken::Plan03PageGroupView primary{};
+    harken::ScheduleImmediateLaneGroupDescriptor group{};
+    harken::SchedulePageGroupView primary{};
     const auto coordinator = attempt.QueueCoordinators().initialQueueCoordinator;
     const bool cancelledLaneRetired = !attempt.lane.Valid() &&
         attempt.gate.Observe(attempt.generation) == harken::ImmediateEntryAttemptState::Aborted;
@@ -44220,8 +44205,8 @@ bool PrivateStoppedRootQueueCoordinatorReady(
         !(group.identity == attempt.QueueCoordinators().initialQueuePrimaryGroup) ||
         !(cancelledLaneRetired
             ? engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(group.identity, engine.mixer.BlocksRendered())
-            : engine.timelinePool.PrivatePlan03GroupBindable(group.identity)) ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(group.identity, &primary) ||
+            : engine.timelinePool.PrivateScheduleGroupBindable(group.identity)) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(group.identity, &primary) ||
         primary.memberCount != 0 || primary.sourceControlCount != 0 ||
         (primary.frontier != nullptr && primary.frontier->Valid())) return false;
     // Actual private Pool cancellation precedes ordinary committed retirement.
@@ -44236,7 +44221,7 @@ bool FailedRootQueueCoordinatorOwned(
     const auto& descriptor = attempt.QueueCoordinators().initialQueueDescriptor;
     harken::DecisionCommittedSnapshot decision{};
     harken::ArmGroupSnapshot arms{};
-    harken::Plan03PageGroupView primary{};
+    harken::SchedulePageGroupView primary{};
     if (!attempt.active || attempt.lane.Valid() || !attempt.queueContinuationFailed ||
         attempt.producerSlot != UINT32_MAX || !descriptor.Valid() ||
         !SameCanonicalDecision(descriptor.entry.coordinator, coordinator) ||
@@ -44269,9 +44254,9 @@ bool FailedRootQueueCoordinatorOwned(
         arms.memberCount != 0 || arms.tombstonedCount != 0 ||
         (arms.state != harken::ArmGroupState::Ready && arms.state != harken::ArmGroupState::AwaitingAcks &&
             arms.state != harken::ArmGroupState::Retiring) ||
-        descriptor.primary.backing != harken::Plan03GroupBacking::ImmediateLane ||
+        descriptor.primary.backing != harken::ScheduleGroupBacking::ImmediateLane ||
         descriptor.primary.sliceIndex != 0 ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
         !(primary.identity == descriptor.primary) ||
         primary.memberCount != 0 || primary.sourceControlCount != 0) return false;
     const auto* activation = engine.decisions.ResolveFrontierActivation(coordinator);
@@ -44312,7 +44297,7 @@ bool FailedRootQueueCoordinatorOwned(
     if (prepared)
         return privateCancelled && sidecar.pagePinHeld && sidecar.observerPinHeld &&
             engine.decisions.MatchesPreparedFrontierActivationPool(descriptor.entry, engine.timelinePool) &&
-            engine.timelinePool.PrivatePlan03GroupBindable(descriptor.primary) &&
+            engine.timelinePool.PrivateScheduleGroupBindable(descriptor.primary) &&
             (detached || engine.timelinePool.PrivateImmediateLaneFrontierRollbackReady(descriptor.primary));
     if (activation->State() == harken::FrontierReceiptState::Pending)
         return sidecar.pagePinHeld && sidecar.observerPinHeld;
@@ -44397,7 +44382,7 @@ bool ReleasePreHandoffCommittedInitialQueue(
                 coordinator);
             if (preparedActivationCancelled) {
                 harken::DecisionCommittedSnapshot decision{};
-                harken::Plan03PageGroupView primary{};
+                harken::SchedulePageGroupView primary{};
                 if (activation != nullptr ||
                     !SameCanonicalDecision(coordinator, descriptor.entry.coordinator) ||
                     !engine.decisions.CaptureCommitted(coordinator, &decision) ||
@@ -44412,7 +44397,7 @@ bool ReleasePreHandoffCommittedInitialQueue(
                     decision.armGroup.slot != group.slot || decision.armGroup.generation != group.generation ||
                     engine.decisions.HasFrontierDecisionBinding(coordinator) ||
                     engine.timelinePool.HasFrontierOwnerOperations(descriptor.entry.owner, coordinator) ||
-                    !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+                    !engine.timelinePool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
                     (primary.frontier != nullptr && primary.frontier->Valid()) ||
                     !engine.timelinePool.PrivateImmediateLaneGroupRetirementReady(descriptor.primary,
                         observedAudioSequence)) return false;
@@ -44501,7 +44486,7 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
     if (initial == engine.playableServices.end()) return false;
     const auto count = engine.immediateActionLane.PrivatePinGroupCount(
         attempt.lane);
-    if (count == 0 || count > engine.config.maxPlan03GroupHeadersPerPage)
+    if (count == 0 || count > engine.config.maxScheduleGroupHeadersPerPage)
         return false;
     const auto descriptorFor = [&](const harken::FrontierEntryReceiptRef& entry)
         -> const harken::FrontierActivationDescriptor* {
@@ -44573,13 +44558,13 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
         std::uint32_t coordinators = 0;
         std::uint32_t members = 0;
         for (std::uint32_t i = 0; i < count; ++i) {
-            harken::Plan03GroupSliceIdentity identity{};
-            harken::Plan03PageGroupView group{};
+            harken::ScheduleGroupSliceIdentity identity{};
+            harken::SchedulePageGroupView group{};
             if (!engine.immediateActionLane.CapturePrivatePinGroup(
                     attempt.lane, i, &identity) ||
                 !engine.timelinePool.PrivateImmediateLaneFrontierRollbackReady(
                     identity) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     identity, &group) ||
                 group.frontier == nullptr || group.lease == nullptr ||
                 !(group.frontier->operation.group == identity)) return false;
@@ -44617,11 +44602,11 @@ bool ServicePrivateInitialQueuePinGroupCleanup(
     }
     if (attempt.privateCleanupPhase == Phase::Members) {
         for (std::uint32_t i = 0; i < count; ++i) {
-            harken::Plan03GroupSliceIdentity identity{};
-            harken::Plan03PageGroupView group{};
+            harken::ScheduleGroupSliceIdentity identity{};
+            harken::SchedulePageGroupView group{};
             if (!engine.immediateActionLane.CapturePrivatePinGroup(
                     attempt.lane, i, &identity) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     identity, &group) || group.frontier == nullptr)
                 return false;
             if (group.frontier->role !=
@@ -45108,7 +45093,7 @@ bool ProveUnboundInitialVariableQueueRecord(
         record.descriptor.entry.coordinator.generation !=
             record.coordinator.generation ||
         record.primaryGroup.backing !=
-            harken::Plan03GroupBacking::ImmediateLane ||
+            harken::ScheduleGroupBacking::ImmediateLane ||
         !owner.live || owner.scheduleEpoch != holder->ownerEpoch || !root.live ||
         (owner.parent != 0 && !parent.live) || !expectedOwner.Valid() ||
         !(record.descriptor.entry.owner == expectedOwner) || !holder->InvocationValid() ||
@@ -45137,7 +45122,7 @@ bool ProveUnboundInitialVariableQueueRecord(
     harken::DecisionCommittedSnapshot decision{};
     harken::DecisionParticipantRef participant{};
     harken::ArmGroupSnapshot arms{};
-    harken::Plan03PageGroupView primary{};
+    harken::SchedulePageGroupView primary{};
     if (!engine.decisions.CaptureCommitted(record.coordinator, &decision) ||
         decision.audioState != harken::AudioGroupState::Pending ||
         decision.consumedSlices != 0 || decision.lastAudioSequence != 0 ||
@@ -45163,9 +45148,9 @@ bool ProveUnboundInitialVariableQueueRecord(
         arms.parent.slot != record.coordinator.slot ||
         arms.parent.generation != record.coordinator.generation ||
         arms.memberCount != 0 || arms.tombstonedCount != 0 ||
-        !engine.timelinePool.PrivatePlan03GroupBindable(
+        !engine.timelinePool.PrivateScheduleGroupBindable(
             record.primaryGroup) ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(
             record.primaryGroup, &primary) ||
         primary.frontier != nullptr || primary.lease == nullptr ||
         primary.memberCount != 0 || primary.sourceControlCount != 0)
@@ -45201,7 +45186,7 @@ bool ProveUnboundInitialVariableControlAbort(
                 service->partition.slot != original.partition.slot || service->partition.generation != original.partition.generation ||
                 service->queueInstance.slot != original.queue.slot || service->queueInstance.generation != original.queue.generation ||
                 original.identity.committedRow >= engine.originalQueueGroupHolders.size() ||
-                !engine.timelinePool.PrivatePlan03GroupBindable(original.identity) ||
+                !engine.timelinePool.PrivateScheduleGroupBindable(original.identity) ||
                 !engine.timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     engine.originalQueueGroupHolders[original.identity.committedRow], original.identity, attempt.root) ||
                 !engine.MatchesPendingVariableRetiredNativeScope(*retired, original.identity,
@@ -45223,12 +45208,12 @@ bool ProveUnboundInitialVariableControlAbort(
             group.laneGeneration != attempt.lane.generation))
             return false;
         foundPrimary |= group.identity == record.primaryGroup;
-        harken::Plan03PageGroupView view{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+        harken::SchedulePageGroupView view{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                 group.identity, &view)) return false;
         if (retired != nullptr) {
             std::uint32_t matches = 0;
-            harken::Plan03GroupSliceInput expectedScope{};
+            harken::ScheduleGroupSliceInput expectedScope{};
             std::uint64_t expectedAnchor = producer.row->startFrame;
             for (const auto& original : engine.pendingVariableQueueNativeOrigins) {
                 if (original.group != retired || original.identity != group.identity) continue;
@@ -45327,8 +45312,8 @@ bool ProveUnboundInitialVariableControlAbort(
                 // Every saved sound belongs to exactly one actual native member.
                 std::uint32_t matches = 0;
                 for (std::size_t other = 0; other < count; ++other) {
-                    harken::Plan03PageGroupView census{};
-                    if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(groups[other].identity, &census)) return false;
+                    harken::SchedulePageGroupView census{};
+                    if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(groups[other].identity, &census)) return false;
                     for (std::uint16_t sound = census.sourceControlCount; sound < census.memberCount; ++sound)
                         matches += harken::OriginalSourceSubmissionRegistry::SameToken(
                             census.members[sound], view.members[member]);
@@ -45530,7 +45515,7 @@ bool CancelPartialPublishedVariableControlExposureOwner(
     while (scratch.variableControlInitialCommittedSliceCount != 0) {
         auto& slice = scratch.variableControlInitialCommittedSlices[
             scratch.variableControlInitialCommittedSliceCount - 1u];
-        if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(
+        if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(
                 &slice)) return false;
         --scratch.variableControlInitialCommittedSliceCount;
     }
@@ -45565,28 +45550,28 @@ bool ReleaseQueueFutureFrontierBindings(harken::Engine& engine,
         const auto count = engine.timelinePool.CaptureImmediateLaneCohortGroups(
             record.root, captured.data(), captured.size());
         if (count > captured.size()) return false;
-        const harken::Plan03GroupSliceIdentity identities[]{
+        const harken::ScheduleGroupSliceIdentity identities[]{
             record.sourceMember, record.targetMember, record.primaryGroup};
         for (std::uint32_t index = 0; index < 3u; ++index) {
             const auto& identity = identities[index];
             const auto matches = std::count_if(captured.begin(), captured.begin() + count,
                 [&](const auto& candidate) { return candidate.identity == identity; });
-            harken::Plan03PageGroupView group{};
-            if (matches != 1 || identity.backing != harken::Plan03GroupBacking::ImmediateLane ||
+            harken::SchedulePageGroupView group{};
+            if (matches != 1 || identity.backing != harken::ScheduleGroupBacking::ImmediateLane ||
                 identity.transportEpoch != engine.timelinePool.Epoch() ||
-                !engine.timelinePool.PrivatePlan03GroupBindable(identity) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &group) ||
+                !engine.timelinePool.PrivateScheduleGroupBindable(identity) ||
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(identity, &group) ||
                 (group.frontier != nullptr && group.frontier->Valid()) ||
                 (index < 2u && (group.memberCount != 2u || group.sourceControlCount != 1u)) ||
                 (index == 2u && (group.memberCount != 0u || group.sourceControlCount != 0u))) return false;
         }
         return true;
     }
-    const harken::Plan03GroupSliceIdentity members[]{record.sourceMember, record.targetMember};
-    harken::Plan03PageGroupView groups[2]{};
+    const harken::ScheduleGroupSliceIdentity members[]{record.sourceMember, record.targetMember};
+    harken::SchedulePageGroupView groups[2]{};
     for (std::uint32_t slice = 0; slice < 2u; ++slice) {
         if ((record.exitedFutureBindings & (1u << slice)) != 0) continue;
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(members[slice], &groups[slice]) ||
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(members[slice], &groups[slice]) ||
             groups[slice].identity.decision.slot != record.memberDecision.slot ||
             groups[slice].identity.decision.generation != record.memberDecision.generation ||
             groups[slice].memberCount != 2u || groups[slice].sourceControlCount != 1u) return false;
@@ -45622,16 +45607,16 @@ bool ReleaseQueueFutureFrontierBindings(harken::Engine& engine,
         }
         if ((record.exitedFutureBindings & (1u << slice)) == 0) {
             if (group.frontier != nullptr && group.frontier->Valid() &&
-                !engine.timelinePool.DetachPlan03GroupFrontier(group.identity, observedAudioSequence))
+                !engine.timelinePool.DetachScheduleGroupFrontier(group.identity, observedAudioSequence))
                 return false;
             record.exitedFutureBindings |= 1u << slice;
         }
     }
-    harken::Plan03PageGroupView primary{};
+    harken::SchedulePageGroupView primary{};
     if ((record.exitedFutureBindings & 4u) == 0) {
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(record.primaryGroup, &primary)) return false;
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(record.primaryGroup, &primary)) return false;
         if (primary.frontier != nullptr && primary.frontier->Valid() &&
-            !engine.timelinePool.DetachPlan03GroupFrontier(record.primaryGroup, observedAudioSequence))
+            !engine.timelinePool.DetachScheduleGroupFrontier(record.primaryGroup, observedAudioSequence))
             return false;
         record.exitedFutureBindings |= 4u;
     }
@@ -45792,7 +45777,7 @@ bool ObserveRegisteredPrivateVcInvalidatedGroups(harken::Engine& engine,
                 const auto& original = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
                 if (original.engine != &engine || !original.accepted ||
                     original.nestedInitialSideCount > original.nestedInitialSides.size()) return false;
-                const auto outer = [&](const harken::Plan03GroupSliceIdentity& identity) {
+                const auto outer = [&](const harken::ScheduleGroupSliceIdentity& identity) {
                     if (group.identity == identity) { ++matches; originalEntry = &held.laneEntry; }
                 };
                 outer(producer->frontierDescriptor.primary);
@@ -45836,8 +45821,8 @@ bool ObserveRegisteredPrivateVcInvalidatedGroups(harken::Engine& engine,
             if (memberBase != held.laneMemberCount) return false;
             token = held.rootProducerNext;
         }
-        harken::Plan03PageGroupView actual{};
-        if (matches != 1 || !engine.timelinePool.ResolvePlan03GroupSliceProducer(group.identity, &actual) ||
+        harken::SchedulePageGroupView actual{};
+        if (matches != 1 || !engine.timelinePool.ResolveScheduleGroupSliceProducer(group.identity, &actual) ||
             actual.lease == nullptr || actual.frontier == nullptr || !actual.frontier->Valid() ||
             originalEntry == nullptr || !(actual.frontier->entry == *originalEntry) ||
             !(actual.frontier->operation.group == group.identity) ||
@@ -45947,7 +45932,7 @@ bool CancelRegisteredPrivateVcPublishedExposure(harken::Engine& engine,
     while (producer.variableControlInitialCommittedSliceCount != 0) {
         auto& slice = producer.variableControlInitialCommittedSlices[
             producer.variableControlInitialCommittedSliceCount - 1u];
-        if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(&slice)) return false;
+        if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(&slice)) return false;
         --producer.variableControlInitialCommittedSliceCount;
     }
     return CancelPreparedQueueCompletionBindings(engine, producer);
@@ -46606,7 +46591,7 @@ bool HasPublishedLaneValidationRefusal(
         refusal.root != attempt.root) return false;
     for (std::uint32_t offset = 0; offset < refusal.groupCount; ++offset) {
         harken::ImmediateLaneGroupRef declared{};
-        harken::Plan03PageGroupView group{};
+        harken::SchedulePageGroupView group{};
         if (!engine.immediateActionLane.CapturePublishedValidationRefusalGroup(
                 attempt.lane, observedAudioSequence,
                 refusal.bucketOrdinal, offset, &declared) ||
@@ -46617,7 +46602,7 @@ bool HasPublishedLaneValidationRefusal(
                 : refusal.sourceWaitSequence <= declared.dueQuantum ||
                     refusal.sourceWaitSequence > refusal.audioSequence ||
                     declared.dueQuantum >= refusal.audioSequence) ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                 declared.identity, &group) || group.frontier == nullptr ||
             !group.frontier->Valid() ||
             group.frontier->operation.group != declared.identity ||
@@ -46915,8 +46900,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         auto read = activation == nullptr ? harken::FrontierReceiptRead::Stale :
                             activation->Read(record.descriptor.entry, observedAudioSequence, &receipt);
                         if (read == harken::FrontierReceiptRead::InFlight) {
-                            harken::Plan03PageGroupView source{};
-                            if (engine.timelinePool.ResolvePlan03GroupSliceProducer(record.sourceMember, &source) &&
+                            harken::SchedulePageGroupView source{};
+                            if (engine.timelinePool.ResolveScheduleGroupSliceProducer(record.sourceMember, &source) &&
                                 source.lease != nullptr &&
                                 source.lease->Capture().state == harken::AudioSliceState::SliceInvalidated) {
                                 (void)activation->Cancel(record.descriptor.entry,
@@ -47377,14 +47362,14 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                 auto* activation = engine.decisions.ResolveFrontierActivation(record.coordinator);
                 harken::FrontierActivationReceipt receipt{};
                 harken::DecisionCommittedSnapshot member{};
-                harken::Plan03PageGroupView source{}, target{};
+                harken::SchedulePageGroupView source{}, target{};
                 auto read = activation == nullptr ? harken::FrontierReceiptRead::Stale :
                     activation->Read(record.descriptor.entry, observedAudioSequence, &receipt);
                 const bool haveMember = engine.decisions.CaptureCommitted(record.memberDecision, &member);
                 const auto* service = engine.ResolvePlayableService(record.service,
                     record.ownerInstance, record.ownerEpoch);
                 const auto& entry = record.descriptor.entry;
-                harken::Plan03PageGroupView prerequisite{};
+                harken::SchedulePageGroupView prerequisite{};
                 const auto* parentActivation = engine.decisions.ResolveFrontierActivation(record.parentEntry.coordinator);
                 const bool retainedParent = record.parentEntry.Valid() &&
                     record.bindingArmPinEntry == record.parentEntry && record.parentPin.Valid() &&
@@ -47393,7 +47378,7 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     parentActivation != nullptr && parentActivation->Descriptor().entry == record.parentEntry &&
                     record.prerequisiteMemberPin.Valid() &&
                     record.prerequisiteMemberPin.Identity() == record.prerequisiteMember &&
-                    engine.timelinePool.ResolvePlan03GroupSliceProducer(record.prerequisiteMember, &prerequisite) &&
+                    engine.timelinePool.ResolveScheduleGroupSliceProducer(record.prerequisiteMember, &prerequisite) &&
                     prerequisite.frontier != nullptr && prerequisite.frontier->Valid() &&
                     prerequisite.frontier->role == harken::FrontierGroupRole::EntryMember &&
                     prerequisite.frontier->entry == record.parentEntry &&
@@ -47427,8 +47412,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     SameCanonicalDecision(record.sourceMember.decision, record.memberDecision) &&
                     SameCanonicalDecision(record.targetMember.decision, record.memberDecision) &&
                     record.sourceMember.sliceIndex == 0u && record.targetMember.sliceIndex == 1u && haveMember &&
-                    engine.timelinePool.ResolvePlan03GroupSliceProducer(record.sourceMember, &source) &&
-                    engine.timelinePool.ResolvePlan03GroupSliceProducer(record.targetMember, &target) &&
+                    engine.timelinePool.ResolveScheduleGroupSliceProducer(record.sourceMember, &source) &&
+                    engine.timelinePool.ResolveScheduleGroupSliceProducer(record.targetMember, &target) &&
                     source.lease != nullptr && target.lease != nullptr;
                 if (fullIdentity && read == harken::FrontierReceiptRead::InFlight &&
                     (observation.cancelled || observation.missed)) {
@@ -47466,8 +47451,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     member.sliceCount != 2u || member.consumedSlices != 2u ||
                     member.lastAudioSequence <= receipt.audioSequence ||
                     member.lastAudioSequence > observedAudioSequence ||
-                    !engine.timelinePool.ResolvePlan03GroupSliceProducer(record.sourceMember, &source) ||
-                    !engine.timelinePool.ResolvePlan03GroupSliceProducer(record.targetMember, &target) ||
+                    !engine.timelinePool.ResolveScheduleGroupSliceProducer(record.sourceMember, &source) ||
+                    !engine.timelinePool.ResolveScheduleGroupSliceProducer(record.targetMember, &target) ||
                     source.lease == nullptr || target.lease == nullptr ||
                     source.lease->Capture().state != harken::AudioSliceState::SliceApplied ||
                     target.lease->Capture().state != harken::AudioSliceState::SliceApplied ||
@@ -47877,7 +47862,7 @@ bool DeclarePendingPrivateVcLaneMember(harken::Engine& engine,
 bool DeclarePendingPrivateVcLaneGroup(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch,
     harken::EngineImmediateEntryAttempt& attempt,
-    harken::Plan03GroupSliceIdentity identity, std::uint64_t relative) noexcept {
+    harken::ScheduleGroupSliceIdentity identity, std::uint64_t relative) noexcept {
     const harken::ImmediateLaneDeclaredGroup schedule{identity, relative};
     auto& held = scratch.privateInitialVcPageCohort;
     auto& groups = scratch.storage.privateInitialVcLaneGroups;
@@ -48023,7 +48008,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
     const auto addSide = [&](harken::EnginePlayableServiceRow& service,
                              harken::DecisionToken decision,
                              harken::ArmGroupToken armGroup,
-                             harken::Plan03GroupSliceIdentity group) {
+                             harken::ScheduleGroupSliceIdentity group) {
         if (!decision.Valid()) return true;
         if (!MatchesPrivateVcProducerService(engine, service, row) || !group.Exact() || scratch.initialFrontierSideCount >=
                 storage.initialFrontierSides.size()) return false;
@@ -48055,7 +48040,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
     const auto addEvent = [&](const harken::EnginePlayableServiceRow& service,
                               harken::TimelineTransactionProgramRef program,
                               harken::TimelineArmToken arm,
-                              harken::Plan03GroupSliceIdentity group,
+                              harken::ScheduleGroupSliceIdentity group,
                               const harken::EventTemplate* original,
                               std::uint64_t relativeFrame,
                               harken::PlayableInstanceHandle owner,
@@ -48107,7 +48092,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                 {program->generation, program}, {}, side.group, nullptr, 0,
                 service->ownerInstance, service->ownerEpoch)) return false;
     }
-    const auto declareGroup = [&](const harken::Plan03GroupSliceIdentity& group,
+    const auto declareGroup = [&](const harken::ScheduleGroupSliceIdentity& group,
                                   std::uint64_t relative) {
         return DeclarePendingPrivateVcLaneGroup(engine, scratch, attempt, group, relative);
     };
@@ -48129,7 +48114,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
         harken::TimelineArmObservation arm{};
         if (!engine.timelineArms.Observe(program->armToken, &arm)) return false;
         const harken::EnginePlayableServiceRow* control = nullptr;
-        harken::Plan03GroupSliceIdentity group{};
+        harken::ScheduleGroupSliceIdentity group{};
         for (std::uint32_t sideIndex = 0;
              sideIndex < scratch.initialFrontierSideCount; ++sideIndex) {
             const auto& side = storage.initialFrontierSides[sideIndex];
@@ -48274,7 +48259,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                 childDescriptor.expectedEntryEventCount = natural ? 2u : 1u + targetSpanCount;
                 controller.frontier.operationEventCount = childDescriptor.expectedEntryEventCount;
                 const auto append = [&](const harken::EngineInitialQueueTimingEvent& staged,
-                    harken::Plan03GroupSliceIdentity identity, std::uint32_t count, std::uint32_t ordinal) {
+                    harken::ScheduleGroupSliceIdentity identity, std::uint32_t count, std::uint32_t ordinal) {
                     const auto& program = engine.initialQueueTimingProgramsScratch[staged.programIndex];
                     if (program.frozen == nullptr || program.frozen->runtimeProgram.program == nullptr) return false;
                     const auto laneIndex = eventCount;
@@ -48303,7 +48288,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                     (fade != nullptr && !append(*fade, targetGroup, natural ? targetSpanCount : 1u + targetSpanCount,
                         natural ? 1u : 2u))) return false;
                 const auto declare = [&](harken::ImmediateLaneMemberKind kind,
-                    harken::Plan03GroupSliceIdentity identity, harken::Plan03GroupSliceIdentity related,
+                    harken::ScheduleGroupSliceIdentity identity, harken::ScheduleGroupSliceIdentity related,
                     const harken::EngineInitialQueueTimingEvent& staged, std::uint16_t memberIndex,
                     std::uint16_t spanCount) {
                     const auto& program = engine.initialQueueTimingProgramsScratch[staged.programIndex];
@@ -48466,7 +48451,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                 timing.newGroupFrames[0] < earliestFrame ||
                 timing.newGroupFrames[1] <= timing.newGroupFrames[0])
                 return false;
-            harken::Plan03GroupSliceIdentity identities[2]{};
+            harken::ScheduleGroupSliceIdentity identities[2]{};
             for (std::uint32_t slice = 0; slice < 2u; ++slice) {
                 std::uint32_t matches = 0;
                 for (std::size_t candidate = 0; candidate < liveCount;
@@ -48582,7 +48567,7 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                 return false;
             const auto targetSpan = targetEnvelope == nullptr ? 1u : 2u;
             const auto addFrozen = [&](const harken::EngineInitialQueueTimingEvent& staged,
-                                       harken::Plan03GroupSliceIdentity group,
+                                       harken::ScheduleGroupSliceIdentity group,
                                        std::uint32_t operationCount,
                                        std::uint32_t operationOrdinal) {
                 const auto& program =
@@ -48637,8 +48622,8 @@ bool AppendPendingVariableControlLaneEvents(harken::Engine& engine,
                  !addFrozen(*targetEnvelope, identities[1], targetSpan, 1u)))
                 return false;
             const auto declare = [&](harken::ImmediateLaneMemberKind kind,
-                                     harken::Plan03GroupSliceIdentity group,
-                                     harken::Plan03GroupSliceIdentity related,
+                                     harken::ScheduleGroupSliceIdentity group,
+                                     harken::ScheduleGroupSliceIdentity related,
                                      const harken::EngineInitialQueueTimingEvent& staged,
                                      std::uint16_t spanCount) {
                 const auto& program =
@@ -49902,14 +49887,14 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
                     candidate.identity.decision.generation != memberDecision.generation)
                     continue;
                 const auto slice = candidate.identity.sliceIndex;
-                harken::Plan03PageGroupView actual{};
+                harken::SchedulePageGroupView actual{};
                 if (slice >= sliceCount ||
                     candidate.identity.transportEpoch != expected.transport ||
                     candidate.laneSlot != attempt.lane.slot ||
                     candidate.laneGeneration != attempt.lane.generation ||
                     candidate.dueQuantum != timing.newGroupFrames[slice + phaseOffset] / engine.config.blockFrames ||
-                    !engine.timelinePool.PrivatePlan03GroupBindable(candidate.identity) ||
-                    !engine.timelinePool.ResolvePlan03GroupSliceProducer(candidate.identity, &actual) ||
+                    !engine.timelinePool.PrivateScheduleGroupBindable(candidate.identity) ||
+                    !engine.timelinePool.ResolveScheduleGroupSliceProducer(candidate.identity, &actual) ||
                     actual.memberCount != memberCount || actual.sourceControlCount != controlCount ||
                     actual.members == nullptr) return false;
                 for (std::uint16_t member = 0; member < actual.memberCount; ++member)
@@ -50110,7 +50095,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             }
         }
         const auto exactGroup = [&](
-            const harken::Plan03GroupSliceIdentity& identity,
+            const harken::ScheduleGroupSliceIdentity& identity,
             std::uint64_t frame) {
             std::size_t matches = 0;
             for (std::size_t index = 0; index < capturedCount; ++index)
@@ -50241,13 +50226,13 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
     coordinator.operation.group = descriptor.primary;
     coordinator.operation.transport = scratch.continuationTransportEpoch;
     coordinator.operation.world = descriptor.worldGeneration;
-    if (!engine.timelinePool.BindPlan03GroupFrontier(
+    if (!engine.timelinePool.BindScheduleGroupFrontier(
             descriptor.primary, coordinator)) return false;
     for (std::uint32_t index = 0; index < scratch.initialFrontierSideCount; ++index) {
         const auto& side = storage.initialFrontierSides[index];
         auto* service = engine.ResolvePlayableService(side.service);
         harken::VariableControlActivationProof proof{};
-        harken::Plan03PageGroupView group{};
+        harken::SchedulePageGroupView group{};
         const bool activation = service != nullptr &&
             engine.variableControlInstances.ProveActivation(
                 service->variableControlInstance, side.decision, &proof);
@@ -50288,8 +50273,8 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         binding.variableSide = {proof.instance.slot, proof.instance.generation,
             static_cast<std::uint8_t>(proof.side), proof.sideGeneration,
             proof.bank.slot, proof.bank.generation};
-        if (!engine.timelinePool.BindPlan03GroupFrontier(side.group, binding) ||
-            !engine.timelinePool.ResolvePlan03GroupSliceProducer(side.group, &group) ||
+        if (!engine.timelinePool.BindScheduleGroupFrontier(side.group, binding) ||
+            !engine.timelinePool.ResolveScheduleGroupSliceProducer(side.group, &group) ||
             group.frontier == nullptr || group.lease == nullptr ||
             !engine.variableControlInstances.BindFrontierSide(
                 proof.instance, *group.frontier, engine.timelinePool) ||
@@ -50513,8 +50498,8 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                 side.decision.slot != decision.slot ||
                 side.decision.generation != decision.generation ||
                 !(side.group == group)) continue;
-            harken::Plan03PageGroupView sideView{};
-            if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+            harken::SchedulePageGroupView sideView{};
+            if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     side.group, &sideView) ||
                 sideView.frontier == nullptr ||
                 sideView.frontier->role !=
@@ -50620,10 +50605,10 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                 !proveQueueDescendant(record, *holder, queue,
                                       &queueDescendant)) return false;
             initial.queueDescendant = queueDescendant;
-            harken::Plan03PageGroupView initialGroup{};
-            if (!engine.timelinePool.BindPlan03GroupFrontier(
+            harken::SchedulePageGroupView initialGroup{};
+            if (!engine.timelinePool.BindScheduleGroupFrontier(
                     record.prerequisiteMember, initial) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     record.prerequisiteMember, &initialGroup) ||
                 initialGroup.frontier == nullptr ||
                 initialGroup.lease == nullptr ||
@@ -50686,7 +50671,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             nextCoordinator.operation.transport =
                 scratch.continuationTransportEpoch;
             nextCoordinator.operation.world = next.worldGeneration;
-            if (!engine.timelinePool.BindPlan03GroupFrontier(
+            if (!engine.timelinePool.BindScheduleGroupFrontier(
                     next.primary, nextCoordinator)) return false;
             harken::FrontierGroupBinding conditional{};
             conditional.role =
@@ -50728,9 +50713,9 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
                         binding.operation.order.executeFrame, queueProgramCount,
                         &binding.operation.order.executionOrdinal)) return false;
                 if (slice != 0u) ++binding.operation.order.rowSequence;
-                harken::Plan03PageGroupView native{};
-                if (!engine.timelinePool.BindPlan03GroupFrontier(identity, binding) ||
-                    !engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) ||
+                harken::SchedulePageGroupView native{};
+                if (!engine.timelinePool.BindScheduleGroupFrontier(identity, binding) ||
+                    !engine.timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) ||
                     native.frontier == nullptr || native.lease == nullptr ||
                     !engine.queueInstances.BindFrontierConditional(record.queue, *native.frontier, engine.timelinePool) ||
                     !engine.decisions.BindFrontierDecision(record.memberDecision, *native.frontier, engine.timelinePool)) return false;
@@ -50821,7 +50806,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             engine.timelinePool.CaptureImmediateLaneCohortGroups(
                 attempt.root, captured.data(), captured.size());
         if (capturedCount > captured.size()) return false;
-        harken::Plan03GroupSliceIdentity identities[2]{};
+        harken::ScheduleGroupSliceIdentity identities[2]{};
         future->bindingArmPinEntry = descriptor.entry;
         for (std::uint32_t slice = 0; slice < 2u; ++slice) {
             std::uint32_t matches = 0;
@@ -50861,7 +50846,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             future->prerequisiteMemberPin.Valid() ||
             !engine.decisions.AcquireFuturePin(
                 descriptor.entry.coordinator, &future->parentPin) ||
-            !engine.timelinePool.AcquirePlan03GroupReader(
+            !engine.timelinePool.AcquireScheduleGroupReader(
                 future->prerequisiteMember,
                 &future->prerequisiteMemberPin)) return false;
         future->parentEntry = descriptor.entry;
@@ -50883,7 +50868,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         childCoordinator.operation.transport =
             scratch.continuationTransportEpoch;
         childCoordinator.operation.world = descriptor.worldGeneration;
-        if (!engine.timelinePool.BindPlan03GroupFrontier(
+        if (!engine.timelinePool.BindScheduleGroupFrontier(
                 future->primaryGroup, childCoordinator)) return false;
         for (std::uint32_t slice = 0; slice < 2u; ++slice) {
             harken::FrontierGroupBinding binding{};
@@ -50924,10 +50909,10 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             }
             binding.transition = {holder->QueueFiling().queueTransition.slot,
                 holder->QueueFiling().queueTransition.generation, gate.audibleFrame};
-            harken::Plan03PageGroupView group{};
-            if (!engine.timelinePool.BindPlan03GroupFrontier(
+            harken::SchedulePageGroupView group{};
+            if (!engine.timelinePool.BindScheduleGroupFrontier(
                     identities[slice], binding) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     identities[slice], &group) ||
                 group.frontier == nullptr || group.lease == nullptr ||
                 (slice == 0u && !engine.queueInstances.BindFrontierInitial(
@@ -51049,10 +51034,10 @@ bool CapturePendingPrivateVcLaneEntryMapping(harken::Engine& engine,
                 mapping.memberCount != originalEntry.laneMemberCount ||
                 mapping.ownedGroupCount != originalEntry.laneOwnedGroupCount ||
                 originalEntry.laneOwnedGroupCount > storage.privateInitialVcLaneGroups.size()) return false;
-            const harken::Plan03GroupSliceIdentity outer[] = {
+            const harken::ScheduleGroupSliceIdentity outer[] = {
                 row.InitialLaneDiscreteGroup(), row.InitialLaneContinuousGroup(), descriptor.primary};
             for (std::size_t index = 0; index < mapping.groups.size(); ++index) {
-                harken::Plan03GroupSliceIdentity actual{};
+                harken::ScheduleGroupSliceIdentity actual{};
                 if (!engine.immediateActionLane.CapturePrivatePinGroup(attempt.lane, mapping.groups[index], &actual) ||
                     !(actual == outer[index])) return false;
             }
@@ -51064,7 +51049,7 @@ bool CapturePendingPrivateVcLaneEntryMapping(harken::Engine& engine,
         if (scratch.initialFrontierSideCount != originalEntry.descriptors.size()) return false;
         std::uint32_t memberBase = 0;
         for (std::size_t side = 0; side < originalEntry.descriptors.size(); ++side) {
-            harken::Plan03GroupSliceIdentity actual{};
+            harken::ScheduleGroupSliceIdentity actual{};
             const auto& transferred = storage.initialFrontierSides[side];
             const auto* service = engine.ResolvePlayableService(transferred.service);
             if (service == nullptr) return false;
@@ -51081,7 +51066,7 @@ bool CapturePendingPrivateVcLaneEntryMapping(harken::Engine& engine,
             memberBase += memberCount;
         }
         if (memberBase != originalEntry.laneMemberCount) return false;
-        harken::Plan03GroupSliceIdentity actualPrimary{};
+        harken::ScheduleGroupSliceIdentity actualPrimary{};
         if (!engine.immediateActionLane.CapturePrivatePinGroup(attempt.lane,
                 mapping.groups[2], &actualPrimary) || !(actualPrimary == descriptor.primary)) return false;
         if (engine.privateInitialVcLaneTransferHookForTest != nullptr)
@@ -51365,7 +51350,7 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
     }
     if (!engine.immediateActionLane.PinGroups(attempt.lane,
             engine.timelinePool, engine.decisions,
-            engine.config.maxPlan03GroupHeadersPerPage)) return false;
+            engine.config.maxScheduleGroupHeadersPerPage)) return false;
     if (!engine.immediateActionLane.PinArms(attempt.lane,
             engine.timelineArms)) return false;
     if (!CapturePendingPrivateVcLaneEntryMapping(engine, row, scratch, attempt)) return false;
@@ -51655,18 +51640,18 @@ bool ProvePendingPrivateVcRootPublication(harken::Engine& engine,
                 !(preparation->target == manifest.target) ||
                 !SameCanonicalDecision(preparation->parentGroup.decision, manifest.group.decision) ||
                 !preparation->pendingImmediateStart) return false;
-            harken::Plan03PageGroupView group{};
-            harken::Plan03PageGroupView logical{};
+            harken::SchedulePageGroupView group{};
+            harken::SchedulePageGroupView logical{};
             const bool alias = manifest.kind == harken::ImmediateLaneMemberKind::FrozenFutureTarget ||
                 manifest.kind == harken::ImmediateLaneMemberKind::HistoricalSourceCompletion;
             const auto admissionGroup = alias ? manifest.relatedGroup : manifest.group;
             const auto& reader = engine.initialFrontierArmPins[manifest.arm.slot];
             if (!harken::OriginalSourceSubmissionRegistry::SameToken(reader.arm, manifest.arm) ||
                 !reader.pin.Valid() ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(manifest.group, &logical) ||
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(manifest.group, &logical) ||
                 logical.members == nullptr || preparation->memberIndex >= logical.memberCount ||
                 !harken::OriginalSourceSubmissionRegistry::SameToken(logical.members[preparation->memberIndex], manifest.arm) ||
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(admissionGroup, &group) ||
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(admissionGroup, &group) ||
                 group.frontier == nullptr || group.lease == nullptr ||
                 !(group.frontier->operation.group == admissionGroup) ||
                 preparation->memberIndex >= group.memberCount || group.members == nullptr ||
@@ -51874,7 +51859,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
         token = producer->privateInitialVcPageCohort.rootProducerNext;
     }
     if (token.Valid() || !engine.immediateActionLane.PinGroups(attempt.lane, engine.timelinePool,
-            engine.decisions, engine.config.maxPlan03GroupHeadersPerPage) ||
+            engine.decisions, engine.config.maxScheduleGroupHeadersPerPage) ||
         !engine.immediateActionLane.PinArms(attempt.lane, engine.timelineArms)) return false;
     std::uint32_t entryEventCount = 0;
     token = attempt.privateVcProducerHead;
@@ -54076,7 +54061,7 @@ void ServicePendingImmediateEntries(
         const bool rootCurrentOnly = independentCoordinator && initialCoordinator.participantCount == 0;
         if (rootCurrentOnly) {
             harken::ArmGroupSnapshot arms{};
-            harken::Plan03ImmediateLaneGroupDescriptor group{};
+            harken::ScheduleImmediateLaneGroupDescriptor group{};
             harken::CompletionMutationBinding mutation{}, expectedMutation{};
             const auto count = engine.timelinePool.CaptureImmediateLaneCohortGroups(
                 attempt->root, &group, 1);
@@ -54281,7 +54266,7 @@ void ServicePendingImmediateEntries(
         };
         const auto groupIdentity = [&](harken::DecisionToken decision,
                                        std::uint16_t slice) {
-            harken::Plan03GroupSliceIdentity result{};
+            harken::ScheduleGroupSliceIdentity result{};
             std::size_t matches = 0;
             for (std::size_t index = 0;
                  index < queueGroupCount + 1u +
@@ -54295,7 +54280,7 @@ void ServicePendingImmediateEntries(
                     ++matches;
                 }
             }
-            return matches == 1u ? result : harken::Plan03GroupSliceIdentity{};
+            return matches == 1u ? result : harken::ScheduleGroupSliceIdentity{};
         };
 
         struct OriginalDelayedCurrent {
@@ -54787,7 +54772,7 @@ void ServicePendingImmediateEntries(
                 continuationOwner.child, continuationOwner.childEpoch);
             if (holder != nullptr && holder->HasFeatureArrays() && holder->queueFirstContinuationLane &&
                 holder->QueuePayload().queueUnplacedGroupCount == 3u) {
-                harken::Plan03GroupSliceIdentity sourceGroup{}, targetGroup{};
+                harken::ScheduleGroupSliceIdentity sourceGroup{}, targetGroup{};
                 for (std::size_t index = 0; index < queueGroupCount + 2u; ++index) {
                     const auto identity = engine.initialQueueLaneGroupsScratch[index].identity;
                     if (identity.decision.slot != engine.InitialQueueFilingFuture(*holder).queueDecision.slot ||
@@ -54806,7 +54791,7 @@ void ServicePendingImmediateEntries(
                     sourceEvent = &staged;
                 }
                 const auto declare = [&](harken::ImmediateLaneMemberKind kind,
-                    harken::Plan03GroupSliceIdentity group, harken::Plan03GroupSliceIdentity related,
+                    harken::ScheduleGroupSliceIdentity group, harken::ScheduleGroupSliceIdentity related,
                     const harken::EngineInitialQueueTimingEvent& staged, std::uint16_t span) {
                     const auto& program = engine.initialQueueTimingProgramsScratch[staged.programIndex];
                     harken::ImmediateLaneMemberManifest member{};
@@ -54957,10 +54942,10 @@ void ServicePendingImmediateEntries(
                         member.QueuePayload().queueInitialCurrentMemberIndices[leaf] != UINT16_MAX;
                     if (attempt->QueueCoordinators().initialQueueCoordinator.Valid() && !rootCurrentOnly &&
                         !initialDelayed) {
-                        harken::Plan03PageGroupView primary{};
+                        harken::SchedulePageGroupView primary{};
                         const auto arm = program->armToken;
                         if (arm.slot >= engine.initialFrontierArmPins.size() ||
-                            !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                            !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                                 attempt->QueueCoordinators().initialQueuePrimaryGroup, &primary) ||
                             primary.frontier == nullptr || primary.lease == nullptr) {
                             filingFailed = true;
@@ -55118,13 +55103,13 @@ void ServicePendingImmediateEntries(
                 coordinator.operation.world = descriptor.worldGeneration;
                 if (!filingFailed)
                     filingFailed = !engine.timelinePool.
-                        BindPlan03GroupFrontier(
+                        BindScheduleGroupFrontier(
                             descriptor.primary, coordinator);
                 if (!filingFailed &&
                     attempt->QueueCoordinators().queueContinuationCoordinator.Valid()) {
                     auto& next = attempt->QueueCoordinators().queueContinuationDescriptor;
                     auto* holder = serviceByToken(attempt->queueContinuationService);
-                    harken::Plan03GroupSliceIdentity prerequisiteMember{};
+                    harken::ScheduleGroupSliceIdentity prerequisiteMember{};
                     std::size_t prerequisiteCount = 0;
                     if (holder != nullptr && holder->queueFirstContinuationLane &&
                         holder->PendingImmediateCohortRoot() == root) {
@@ -55166,7 +55151,7 @@ void ServicePendingImmediateEntries(
                     nextCoordinator.operation.world = next.worldGeneration;
                     if (!filingFailed)
                         filingFailed = !engine.timelinePool.
-                            BindPlan03GroupFrontier(
+                            BindScheduleGroupFrontier(
                                 next.primary, nextCoordinator);
                 }
                 if (!filingFailed) filingFailed = !bindOriginalCurrentStarts();
@@ -55192,7 +55177,7 @@ void ServicePendingImmediateEntries(
                         filingFailed = true;
                         break;
                     }
-                    harken::Plan03GroupSliceIdentity identity{};
+                    harken::ScheduleGroupSliceIdentity identity{};
                     for (std::size_t candidate = 0;
                          candidate < queueGroupCount + 1u +
                             static_cast<std::size_t>(
@@ -55268,11 +55253,11 @@ void ServicePendingImmediateEntries(
                         }
                         binding.transition = {engine.InitialQueueFilingFuture(*holder).queueTransition.slot, engine.InitialQueueFilingFuture(*holder).queueTransition.generation, gate.audibleFrame};
                     }
-                    harken::Plan03PageGroupView group{};
-                    const bool boundGroup = engine.timelinePool.BindPlan03GroupFrontier(
+                    harken::SchedulePageGroupView group{};
+                    const bool boundGroup = engine.timelinePool.BindScheduleGroupFrontier(
                         identity, binding);
                     const bool resolvedGroup = boundGroup &&
-                        engine.timelinePool.ResolvePlan03GroupSliceProducer(identity, &group) &&
+                        engine.timelinePool.ResolveScheduleGroupSliceProducer(identity, &group) &&
                         group.frontier != nullptr && group.lease != nullptr;
                     const bool boundQueue = resolvedGroup &&
                         (conditional
@@ -55452,7 +55437,7 @@ void ServicePendingImmediateEntries(
         if (!filingFailed && attempt->QueueCoordinators().initialQueueCoordinator.Valid() &&
             !engine.immediateActionLane.PinGroups(attempt->lane,
                 engine.timelinePool, engine.decisions,
-                engine.config.maxPlan03GroupHeadersPerPage)) {
+                engine.config.maxScheduleGroupHeadersPerPage)) {
             filingFailed = true;
             privatePinGroupsFailed = true;
         }
@@ -55628,16 +55613,16 @@ void ServicePendingImmediateEntries(
                 };
                 const auto ownPreparedManifest = [&]() noexcept {
                     const auto groupCount = engine.immediateActionLane.PrivatePinGroupCount(attempt->lane);
-                    if (groupCount == 0 || groupCount > engine.config.maxPlan03GroupHeadersPerPage)
+                    if (groupCount == 0 || groupCount > engine.config.maxScheduleGroupHeadersPerPage)
                         return false;
                     std::uint32_t coordinators = 0;
                     std::uint32_t members = 0;
                     for (std::uint32_t index = 0; index < groupCount; ++index) {
-                        harken::Plan03GroupSliceIdentity identity{};
-                        harken::Plan03PageGroupView native{};
+                        harken::ScheduleGroupSliceIdentity identity{};
+                        harken::SchedulePageGroupView native{};
                         if (!engine.immediateActionLane.CapturePrivatePinGroup(attempt->lane,index,&identity) ||
                             !engine.timelinePool.PrivateImmediateLaneFrontierRollbackReady(identity) ||
-                            !engine.timelinePool.ResolvePlan03GroupSliceProducer(identity,&native) ||
+                            !engine.timelinePool.ResolveScheduleGroupSliceProducer(identity,&native) ||
                             native.frontier == nullptr || native.lease == nullptr)
                             return false;
                         const auto* descriptor = native.frontier->entry == attempt->QueueCoordinators().initialQueueDescriptor.entry
@@ -55800,20 +55785,20 @@ void ServicePendingImmediateEntries(
 bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
     const harken::FrontierEntryReceiptRef& entry) noexcept {
     const auto* activation = engine.decisions.ResolveFrontierActivation(entry.coordinator);
-    harken::Plan03PageGroupView primary{};
+    harken::SchedulePageGroupView primary{};
     harken::DecisionCommittedSnapshot coordinator{};
     if (!entry.Valid() || activation == nullptr || activation->State() != harken::FrontierReceiptState::Pending)
         return false;
     const auto& descriptor = activation->Descriptor();
     if (!(descriptor.entry == entry) ||
         (!descriptor.initialVariables.Valid() && !descriptor.initialMediaWaitAllowed) ||
-        descriptor.primary.backing != harken::Plan03GroupBacking::Page ||
+        descriptor.primary.backing != harken::ScheduleGroupBacking::Page ||
         descriptor.primary.transportEpoch != engine.timelinePool.Epoch() ||
         engine.variables.FrontierEntrySourcesStatus(descriptor) == harken::VariableReadCutStatus::Failed ||
         !engine.decisions.CaptureCommitted(entry.coordinator, &coordinator) ||
         coordinator.audioState != harken::AudioGroupState::Pending || coordinator.consumedSlices != 0 ||
         coordinator.world != descriptor.worldGeneration || coordinator.transport != descriptor.primary.transportEpoch ||
-        !engine.timelinePool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+        !engine.timelinePool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
         primary.frontier == nullptr || primary.frontier->role != harken::FrontierGroupRole::Coordinator ||
         !(primary.frontier->entry == entry) || !(primary.frontier->initialVariables == descriptor.initialVariables) ||
         !(primary.frontier->operation.order == descriptor.order) ||
@@ -55829,7 +55814,7 @@ bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
             static_cast<std::uint32_t>(participants.size()), &participantCount) ||
         participantCount != descriptor.expectedMemberCount) return false;
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (groupCount > groups.size()) return false;
     std::uint32_t memberCount = 0;
     for (std::size_t i = 0; i < groupCount; ++i) {
@@ -56831,11 +56816,11 @@ bool CanTransferPrivateInitialNativeForest(harken::Engine& engine,
             if (row == nullptr || !serviceReady(*row)) return false;
         }
         if (attempt.frontierPrimary.Valid() &&
-            !engine.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(attempt.frontierPrimary)) return false;
+            !engine.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(attempt.frontierPrimary)) return false;
         for (std::uint32_t index = 0; index < attempt.actionResourceOwnerContext.groupSlicesCommitted; ++index)
-            if (!engine.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(attempt.queueCommittedGroupSlices[index])) return false;
+            if (!engine.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(attempt.queueCommittedGroupSlices[index])) return false;
         for (std::uint32_t index = 0; index < attempt.variableControlInitialCommittedSliceCount; ++index)
-            if (!engine.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(attempt.variableControlInitialCommittedSlices[index])) return false;
+            if (!engine.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(attempt.variableControlInitialCommittedSlices[index])) return false;
         if (attempt.frontierOwnerBatchRegistered &&
             storage.initialSelection.preparation.mode == harken::EngineSelectionPreparationMode::Legacy) {
             if (attempt.selectionPlayCount > attempt.selectionOwnerContexts.size()) return false;
@@ -57835,7 +57820,7 @@ void ServicePlayableStarts(harken::Engine& engine,
             if (beginCancellation) {
                 const auto reason = ancestorReason;
                 const bool normalAncestorStop = ancestorCancelling && !ancestorPending && ancestorStopRequested;
-                if (DropLivePlan03GroupMemberArms(engine, observedAudioSequence, true, &row,
+                if (DropLiveScheduleGroupMemberArms(engine, observedAudioSequence, true, &row,
                         false, harken::AudioSliceInvalidateReason::Cancel, true) !=
                     QueueCancellationLeaseStatus::Clear) continue;
                 const bool originalLaneStop = normalAncestorStop &&
@@ -58071,7 +58056,7 @@ void ServicePlayableStarts(harken::Engine& engine,
         const PlayableStorageBases storageBases =
             StorageBasesForRow(engine, row);
         const auto waitForDeferredSupersede = [&engine](
-            harken::Plan03GroupSliceIdentity& identity,
+            harken::ScheduleGroupSliceIdentity& identity,
             harken::BankVersionToken& bank, bool& deferred) {
             if (!deferred) return true;
             harken::DecisionCommittedSnapshot decision{};
@@ -58084,8 +58069,8 @@ void ServicePlayableStarts(harken::Engine& engine,
                 deferred = false;
                 return bank.Valid();
             }
-            harken::Plan03PageGroupView group{};
-            if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+            harken::SchedulePageGroupView group{};
+            if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     identity, &group) || group.lease == nullptr) {
 engine.runtimeRecreateRequired = true;
                 return false;
@@ -58826,10 +58811,10 @@ engine.runtimeRecreateRequired = true;
                         row.variableControlDiscreteRetargetSuperseded = true;
                         return;
                     }
-                    const harken::Plan03GroupSliceIdentity identity =
+                    const harken::ScheduleGroupSliceIdentity identity =
                         row.VariableControlDiscreteRetargetSlice();
-                    harken::Plan03PageGroupView group{};
-                    if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                    harken::SchedulePageGroupView group{};
+                    if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                             identity, &group) || group.lease == nullptr) {
 engine.runtimeRecreateRequired = true;
                         return;
@@ -58934,10 +58919,10 @@ engine.runtimeRecreateRequired = true;
                             row.VariablePayload().variableControlDiscretePendingDesiredFrame =
                                 newestFrame;
                         }
-                        const harken::Plan03GroupSliceIdentity identity =
+                        const harken::ScheduleGroupSliceIdentity identity =
                             row.VariableControlDiscreteRetargetSlice();
-                        harken::Plan03PageGroupView group{};
-                        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                        harken::SchedulePageGroupView group{};
+                        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                                 identity, &group) || group.lease == nullptr) {
 engine.runtimeRecreateRequired = true;
                         } else {
@@ -59640,10 +59625,10 @@ engine.runtimeRecreateRequired = true;
                         row.variableControlRetargetSuperseded = true;
                         return;
                     }
-                    const harken::Plan03GroupSliceIdentity identity =
+                    const harken::ScheduleGroupSliceIdentity identity =
                         row.VariableControlRetargetSlice();
-                    harken::Plan03PageGroupView group{};
-                    if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                    harken::SchedulePageGroupView group{};
+                    if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                             identity, &group) || group.lease == nullptr) {
 engine.runtimeRecreateRequired = true;
                         return;
@@ -59746,10 +59731,10 @@ engine.runtimeRecreateRequired = true;
                     if (engine.variables.HasPendingBankWrite(
                             row.variableControlEmitter, variableIds.data(),
                             program->continuousAxisCount)) {
-                        const harken::Plan03GroupSliceIdentity identity =
+                        const harken::ScheduleGroupSliceIdentity identity =
                             row.VariableControlRetargetSlice();
-                        harken::Plan03PageGroupView group{};
-                        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                        harken::SchedulePageGroupView group{};
+                        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                                 identity, &group) || group.lease == nullptr) {
 engine.runtimeRecreateRequired = true;
                         } else if (group.lease->Capture().state ==
@@ -63769,7 +63754,7 @@ void Engine::CommitNativeBackingReturn(EngineActionPlayScratch& scratch,
         plan.queue->directory = std::move(scratch.storage.frontierQueues);
         for (auto& control : scratch.pendingVariableReplacementControls) control = {};
         std::fill(scratch.pendingVariableReplacementGroups.begin(), scratch.pendingVariableReplacementGroups.end(),
-            Plan03GroupSliceIdentity{});
+            ScheduleGroupSliceIdentity{});
         std::fill(scratch.pendingVariableReplacementQueueLanes.begin(), scratch.pendingVariableReplacementQueueLanes.end(),
             EngineActionPlayScratch::PendingVariableReplacementQueueLane{});
         plan.queue->controls = std::move(scratch.pendingVariableReplacementControls);
@@ -65032,8 +65017,8 @@ bool Engine::MatchesPendingVariableRetiredInitialSide(const OriginalPendingVaria
 }
 
 bool Engine::MatchesPendingVariableRetiredNativeScope(const OriginalPendingVariableGroupHolder& group,
-    const Plan03GroupSliceIdentity& identity, std::uint64_t root, std::uint64_t anchor,
-    const Plan03GroupSliceInput& input) noexcept {
+    const ScheduleGroupSliceIdentity& identity, std::uint64_t root, std::uint64_t anchor,
+    const ScheduleGroupSliceInput& input) noexcept {
     if (group.engine != this || !group.accepted || !group.cut.Valid() || !group.producer.Valid()) return false;
     const auto* service = ResolvePlayableService(group.reference);
     const auto* original = group.producer.original_;
@@ -65104,7 +65089,7 @@ bool Engine::MatchesPendingVariableQueueNativeOrigins(const OriginalPendingVaria
     return count == group.queueNativeOriginCount;
 }
 
-void Engine::ObservePendingVariableQueueNativeDisposal(void* context, Plan03GroupSliceIdentity identity,
+void Engine::ObservePendingVariableQueueNativeDisposal(void* context, ScheduleGroupSliceIdentity identity,
     std::uint64_t root, std::uint64_t domain) noexcept {
     auto& engine = *static_cast<Engine*>(context);
     for (auto& original : engine.pendingVariableQueueNativeOrigins) {
@@ -65157,7 +65142,7 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
         if (record.occupied && record.root == attempt->root && record.attemptGeneration == attempt->generation &&
             !nativeIssuer(record.service)) return false;
     if (attempt->queueContinuationService.Valid() && !nativeIssuer(attempt->queueContinuationService)) return false;
-    const auto capture = [&](const Plan03GroupSliceIdentity& identity, Origin& captured) noexcept {
+    const auto capture = [&](const ScheduleGroupSliceIdentity& identity, Origin& captured) noexcept {
         std::uint32_t matches = 0;
         for (const auto& service : playableServices) {
             if (!service.identity.Valid() || !service.InvocationValid() || !service.queueInstance.Valid() ||
@@ -65213,11 +65198,11 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
                 !playableInstances.MatchesPreparedOriginalAncestry(links, service.ownerInstance,
                     group->root.OriginalHandle()) || identity.committedRow >= originalQueueGroupHolders.size()) return false;
             auto& baseline = originalQueueGroupHolders[identity.committedRow];
-            Plan03PageGroupView native{};
+            SchedulePageGroupView native{};
             if (!timelinePool.IsOriginalQueueFutureGroupRegistrationFor(baseline, identity, attempt->root) ||
                 !baseline.CaptureOriginalScope(timelinePool, timelineArms, &candidate.scope) ||
                 candidate.scope.cohortRoot != attempt->root || candidate.scope.selectedFutureDomain != 0 ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.identity != identity ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.identity != identity ||
                 native.memberCount != candidate.scope.input.memberCount ||
                 native.sourceControlCount != candidate.scope.input.sourceControlCount ||
                 (native.memberCount != 0 && native.members == nullptr)) return false;
@@ -65360,7 +65345,7 @@ bool Engine::CanTransferPendingVariableQueueNativeOrigins(EngineActionPlayScratc
                     : original.role == OriginalPendingVariableQueueNativeOrigin::Role::Current
                         ? !(original.identity == record.prerequisiteMember)
                         : original.identity != record.conditionalMember && original.identity != record.targetMember) ||
-                !timelinePool.IsPlan03GroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember)) return false;
+                !timelinePool.IsScheduleGroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember)) return false;
         } else if (original.recordKind == OriginalPendingVariableQueueNativeOrigin::RecordKind::Future) {
             if (original.recordSlot >= queueFutureRecords.size()) return false;
             const auto& record = queueFutureRecords[original.recordSlot];
@@ -65370,7 +65355,7 @@ bool Engine::CanTransferPendingVariableQueueNativeOrigins(EngineActionPlayScratc
                 (original.role == OriginalPendingVariableQueueNativeOrigin::Role::Primary
                     ? !(original.identity == record.primaryGroup)
                     : !(original.identity == record.sourceMember) && !(original.identity == record.targetMember)) ||
-                !timelinePool.IsPlan03GroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember) ||
+                !timelinePool.IsScheduleGroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember) ||
                 !record.parentPin.Valid() || record.parentPin.Owner() != &decisions ||
                 !SameCanonicalDecision(record.parentPin.Token(), scratch.frontierDescriptor.entry.coordinator) ||
                 !(record.parentEntry == scratch.frontierDescriptor.entry) ||
@@ -65382,12 +65367,12 @@ bool Engine::CanTransferPendingVariableQueueNativeOrigins(EngineActionPlayScratc
                 const auto& side = scratch.storage.initialFrontierSides[index];
                 if (!(side.group == record.prerequisiteMember)) continue;
                 const auto* parent = ResolvePlayableService(side.service);
-                Plan03PageGroupView native{};
+                SchedulePageGroupView native{};
                 if (++prerequisites != 1 || !queueOwner.live || parent == nullptr ||
                     parent->ownerInstance != queueOwner.parent || !parent->InvocationValid() ||
                     &parent->Invocation() != &scratch.row->Invocation() ||
                     !SameCanonicalDecision(side.decision, side.group.decision) ||
-                    !timelinePool.ResolvePlan03GroupSliceProducer(side.group, &native) ||
+                    !timelinePool.ResolveScheduleGroupSliceProducer(side.group, &native) ||
                     native.frontier == nullptr || native.lease == nullptr ||
                     !(native.frontier->entry == record.parentEntry) ||
                     !(native.frontier->operation.group == side.group)) return false;
@@ -65670,8 +65655,8 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
 }
 
 bool Engine::SealPendingVariableGroupInitialSideNativeGroup(EngineActionPlayScratch& scratch,
-    EnginePlayableServiceRow& service, bool discrete, const Plan03GroupSliceIdentity& identity,
-    const Plan03GroupSliceInput& input) noexcept {
+    EnginePlayableServiceRow& service, bool discrete, const ScheduleGroupSliceIdentity& identity,
+    const ScheduleGroupSliceInput& input) noexcept {
     auto* group = PreparedPendingVariableGroupFor(scratch.storage);
     if (group == nullptr || group->Empty()) return true;
     if (group->engine != this || scratch.row == nullptr || group->accepted ||
@@ -65684,7 +65669,7 @@ bool Engine::SealPendingVariableGroupInitialSideNativeGroup(EngineActionPlayScra
         if (original != nullptr) return false;
         original = &candidate;
     }
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     ArmGroupSnapshot arms{};
     const auto actualArms = discrete ? service.variableControlDiscreteArmGroup : service.variableControlContinuousArmGroup;
     if (original == nullptr || !SameCanonicalDecision(original->decision, input.decision) ||
@@ -65697,7 +65682,7 @@ bool Engine::SealPendingVariableGroupInitialSideNativeGroup(EngineActionPlayScra
         !SameCanonicalDecision(identity.decision, input.decision) || identity.sliceIndex != input.sliceIndex ||
         !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
             originalQueueGroupHolders[identity.committedRow], identity, scratch.row->Invocation().actionFiring) ||
-        !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) ||
+        !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) ||
         native.memberCount != input.memberCount || native.sourceControlCount != 0 || native.frontier != nullptr ||
         !armGroups.Capture(actualArms, &arms) || arms.memberCount != input.memberCount ||
         !SameCanonicalDecision(arms.parent, input.decision)) return false;
@@ -67040,7 +67025,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
                 control.original, control.instance, control.side, control.decision, control.bank) ||
             decisions.PrepareFrontierControlProgram(control.decision, producer.storage.generation) == nullptr)
             return refuse();
-        Plan03GroupSliceInput input{};
+        ScheduleGroupSliceInput input{};
         input.executeFrame = anchor;
         input.decision = control.decision;
         input.immediateEntry = {&nativeAttempt->gate, attempt.generation};
@@ -67290,7 +67275,7 @@ bool Engine::MatchesPendingVariableReplacementBoundSide(const EngineActionPlaySc
     const auto& control = child.pendingVariableReplacementControls[index];
     FrontierOwnerIdentity owner{};
     VariableControlActivationProof proof{};
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     if (!CapturePendingVariableReplacementControlOwner(child, index, &owner) ||
         !binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
         binding.operation.kind != FrontierOperationKind::Entry || binding.operation.owner != owner ||
@@ -67301,7 +67286,7 @@ bool Engine::MatchesPendingVariableReplacementBoundSide(const EngineActionPlaySc
         binding.transition.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
         !binding.queueDescendant.Empty() || binding.prerequisite.Valid() || binding.prerequisiteMember.Valid() ||
         binding.initialVariables.Valid() ||
-        !timelinePool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        !timelinePool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
         native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready ||
         !timelinePool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
         !variableControlInstances.ProveActivation(control.instance, control.decision, &proof)) return false;
@@ -67864,7 +67849,7 @@ bool Engine::PreparePendingVariableReplacementQueueLaneGroups(EngineActionPlaySc
         if (!PrepareOriginalQueueDecisionReservation(request, &reservation) ||
             !armGroups.Prepare(reservation.Token(), nullptr, 0, &armGroup)) return false;
         prepared = true;
-        Plan03GroupSliceInput input{};
+        ScheduleGroupSliceInput input{};
         input.executeFrame = holder->QueuePayload().queueUnplacedGroupFrames[continuation ? 1u : 0u];
         input.decision = reservation.Token();
         input.immediateEntry = {&attempt.gate, attempt.generation};
@@ -67890,7 +67875,7 @@ bool Engine::PreparePendingVariableReplacementQueueLaneGroups(EngineActionPlaySc
             if (continuation) {
                 (initial ? continuationRecord->prerequisiteMember : slice == 1u ?
                     continuationRecord->conditionalMember : continuationRecord->targetMember) = native;
-                if (initial && !timelinePool.AcquirePlan03GroupReader(native,
+                if (initial && !timelinePool.AcquireScheduleGroupReader(native,
                         &continuationRecord->prerequisiteMemberPin)) return false;
             } else (slice == 0 ? futureRecord->sourceMember : futureRecord->targetMember) = native;
         }
@@ -67934,8 +67919,8 @@ bool Engine::CancelPendingVariableReplacementQueueLaneRecords(EngineActionPlaySc
         auto& owned = child.pendingVariableReplacementQueueLanes[child.pendingVariableReplacementQueueLaneCount - 1u];
         for (std::uint32_t native = 0; native < owned.groupCount; ++native) {
             const auto& identity = child.pendingVariableReplacementGroups[owned.groupOffset + native];
-            Plan03PageGroupView live{};
-            if (identity.Valid() && (timelinePool.ResolvePlan03GroupSliceProducer(identity, &live) ||
+            SchedulePageGroupView live{};
+            if (identity.Valid() && (timelinePool.ResolveScheduleGroupSliceProducer(identity, &live) ||
                     identity.committedRow >= originalQueueGroupHolders.size() || originalQueueGroupHolders[identity.committedRow].Valid()))
                 return false;
         }
@@ -68065,10 +68050,10 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
             controls[index].program == nullptr || controls[index].programGeneration != producer.storage.generation)
             return false;
         if (index >= 2u) {
-            Plan03PageGroupView native{};
+            SchedulePageGroupView native{};
             ArmGroupSnapshot held{};
             if (!SameCanonicalDecision(child->pendingVariableReplacementGroups[index + 1u].decision, control.decision) ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(child->pendingVariableReplacementGroups[index + 1u], &native) ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(child->pendingVariableReplacementGroups[index + 1u], &native) ||
                 native.memberCount != counts[index] || counts[index] != control.nativeMemberCount ||
                 !armGroups.Capture(control.armGroup, &held) ||
                 !SameCanonicalDecision(held.parent, control.decision) || held.memberCount != counts[index] ||
@@ -68105,7 +68090,7 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
     const auto* coordinatorProgram = decisions.PrepareFrontierControlProgram(coordinator, producer.storage.generation);
     if (coordinatorProgram == nullptr) return refuse();
     auto& groups = child->pendingVariableReplacementGroups;
-    Plan03GroupSliceInput input{};
+    ScheduleGroupSliceInput input{};
     input.executeFrame = anchor;
     input.decision = coordinator;
     input.immediateEntry = {&attempt.gate, attempt.generation};
@@ -68146,7 +68131,7 @@ bool Engine::PreparePendingVariableGroupLaneEvents(EngineActionPlayScratch& prod
     if (firstEvent > events.size() || eventCount > events.size() - firstEvent) return refuse();
     std::uint32_t written = 0;
     const auto addEvent = [&](TimelineTransactionProgramRef program, TimelineArmToken arm,
-        const Plan03GroupSliceIdentity& nativeGroup, const FrontierOwnerIdentity& controlOwner,
+        const ScheduleGroupSliceIdentity& nativeGroup, const FrontierOwnerIdentity& controlOwner,
         const EngineActionPlayScratch::PendingVariableReplacementLeaf* leaf) {
         auto& lane = events[firstEvent + written];
         lane = {};
@@ -68395,8 +68380,8 @@ bool Engine::DeclarePendingVariableGroupLane(EngineActionPlayScratch& child,
             const bool sourceEvent = owned.natural && payload.kind == TimelineEventKind::Envelope &&
                 payload.envelopeDirection == TimelineEnvelopeDirection::FadeOut;
             if (payload.kind == TimelineEventKind::Envelope && !sourceEvent) continue;
-            const auto declare = [&](ImmediateLaneMemberKind kind, const Plan03GroupSliceIdentity& group,
-                const Plan03GroupSliceIdentity& related, std::uint16_t ordinal, std::uint16_t span) noexcept {
+            const auto declare = [&](ImmediateLaneMemberKind kind, const ScheduleGroupSliceIdentity& group,
+                const ScheduleGroupSliceIdentity& related, std::uint16_t ordinal, std::uint16_t span) noexcept {
                 ImmediateLaneMemberManifest member{};
                 member.kind = kind;
                 member.group = group;
@@ -68545,7 +68530,7 @@ bool Engine::CancelRegisteredPendingVariableCohortLane(EngineImmediateEntryAttem
             if (child != nullptr) {
                 if (!CancelPendingVariableReplacementQueueLaneRecords(*child, attempt)) return false;
                 std::fill(child->pendingVariableReplacementGroups.begin(), child->pendingVariableReplacementGroups.end(),
-                    Plan03GroupSliceIdentity{});
+                    ScheduleGroupSliceIdentity{});
                 child->pendingVariableReplacementLane = {};
                 child->pendingVariableReplacementPlacedEventCount = 0;
             }
@@ -68607,8 +68592,8 @@ bool Engine::CancelRegisteredPendingVariableCohortLane(EngineImmediateEntryAttem
                 for (std::size_t native = 0; native < remaining; ++native)
                     matches += census[native].identity == identity;
                 if (matches == 1) { ++kept; continue; }
-                Plan03PageGroupView returned{};
-                if (matches != 0 || timelinePool.ResolvePlan03GroupSliceProducer(identity, &returned) ||
+                SchedulePageGroupView returned{};
+                if (matches != 0 || timelinePool.ResolveScheduleGroupSliceProducer(identity, &returned) ||
                     originalQueueGroupHolders[identity.committedRow].Valid()) return false;
                 // The exact native cancellation above returned this original registration.
                 identity = {};
@@ -68625,7 +68610,7 @@ bool Engine::CancelRegisteredPendingVariableCohortLane(EngineImmediateEntryAttem
         if (child != nullptr) {
             if (!CancelPendingVariableReplacementQueueLaneRecords(*child, attempt)) return false;
             std::fill(child->pendingVariableReplacementGroups.begin(), child->pendingVariableReplacementGroups.end(),
-                Plan03GroupSliceIdentity{});
+                ScheduleGroupSliceIdentity{});
             child->pendingVariableReplacementLane = {};
             child->pendingVariableReplacementPlacedEventCount = 0;
         }
@@ -68906,7 +68891,7 @@ const EngineActionPlayScratch* Engine::OriginalEntryBoundPendingVariableGroupChi
         row.rootInstance, root.scheduleEpoch, row.identity.slot, row.identity.generation};
     if (!root.live || !ownerInstance.live || (ownerInstance.parent != 0 && !parent.live) ||
         descriptor.entry.owner != expectedOwner) return nullptr;
-    std::array<Plan03PageGroupView, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity + 1u> natives{};
+    std::array<SchedulePageGroupView, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity + 1u> natives{};
     std::array<std::uint16_t, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity> counts{};
     std::array<std::uint16_t, 2> logicalCounts{};
     std::uint32_t controlCount = 0;
@@ -68940,7 +68925,7 @@ const EngineActionPlayScratch* Engine::OriginalEntryBoundPendingVariableGroupChi
         if (!SameCanonicalDecision(identity.decision, decision) ||
             !timelinePool.MatchesPrivateImmediateLaneGroupPlacement(identity, immediateActionLane, placement) ||
             !timelinePool.PrivateImmediateLaneFrontierRollbackReady(identity) ||
-            !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier == nullptr || native.lease == nullptr ||
+            !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.frontier == nullptr || native.lease == nullptr ||
             native.lease->Capture().state != AudioSliceState::Ready || native.sourceControlCount != 0 ||
             !decisions.CaptureCommitted(decision, &committed) || committed.commit != DecisionCommitState::Committed ||
             committed.ticket.sequence != row.ticket ||
@@ -69163,8 +69148,8 @@ bool Engine::PreparePendingVariableGroupInstallationPublication(EngineActionPlay
         const auto& leaf = child->pendingVariableReplacementLeaves[index];
         const auto& start = child->voiceStarts[index];
         const auto side = leaf.controlIndex;
-        Plan03PageGroupView native{};
-        if (!timelinePool.ResolvePlan03GroupSliceProducer(child->pendingVariableReplacementGroups[side + 1u], &native) ||
+        SchedulePageGroupView native{};
+        if (!timelinePool.ResolveScheduleGroupSliceProducer(child->pendingVariableReplacementGroups[side + 1u], &native) ||
             native.frontier == nullptr || native.lease == nullptr) return false;
         auto& source = pendingVariableLeafSources[start.arm.slot];
         if (!originalSourceSubmissions.PrepareEntryBoundGroupPublication(source.source, source.body,
@@ -69177,12 +69162,12 @@ bool Engine::PreparePendingVariableGroupInstallationPublication(EngineActionPlay
         if (!borrowed) return false;
         const auto& record = *borrowed;
         auto* service = ResolvePlayableService(record.service, record.ownerInstance, record.ownerEpoch);
-        Plan03PageGroupView native{}, counterpart{};
+        SchedulePageGroupView native{}, counterpart{};
         const auto* original = ResolveOriginalQueueConditionalBaseline(this, queueInstances, record.queue);
         PrivatePendingQueueFrontierBinding queueBinding;
         if (service == nullptr || original == nullptr ||
-            !timelinePool.ResolvePlan03GroupSliceProducer(owned.natural ? record.targetMember : record.conditionalMember, &native) || native.frontier == nullptr ||
-            (owned.natural && (!timelinePool.ResolvePlan03GroupSliceProducer(record.conditionalMember, &counterpart) ||
+            !timelinePool.ResolveScheduleGroupSliceProducer(owned.natural ? record.targetMember : record.conditionalMember, &native) || native.frontier == nullptr ||
+            (owned.natural && (!timelinePool.ResolveScheduleGroupSliceProducer(record.conditionalMember, &counterpart) ||
                 counterpart.frontier == nullptr)) ||
             native.lease == nullptr || !queueInstances.CapturePrivatePendingFrontierBinding(*original,
                 originalQueueLifetimeHolders[record.queue.slot], *native.frontier, timelinePool, transitionInstances, &queueBinding,
@@ -69605,7 +69590,7 @@ bool Engine::PublishPendingVariableGroupReplacement(EngineActionPlayScratch& pro
     const auto descriptor = child.frontierDescriptor;
     const auto anchor = descriptor.order.executeFrame;
     auto& row = *producer.row;
-    if (!immediateActionLane.PinGroups(attempt.lane, timelinePool, decisions, config.maxPlan03GroupHeadersPerPage) ||
+    if (!immediateActionLane.PinGroups(attempt.lane, timelinePool, decisions, config.maxScheduleGroupHeadersPerPage) ||
         !immediateActionLane.PinArms(attempt.lane, timelineArms)) return false;
     if (privateInitialVcLaneTransferHookForTest != nullptr)
         privateInitialVcLaneTransferHookForTest(*this, child, 6, privateInitialVcLaneTransferContextForTest);
@@ -69637,7 +69622,7 @@ bool Engine::PublishPendingVariableGroupReplacement(EngineActionPlayScratch& pro
     PublishMonitorPendingInitialSelections(*this, producer);
     // Original group registrations remain in the engine until ordinary retirement.
     std::fill(child.pendingVariableReplacementGroups.begin(), child.pendingVariableReplacementGroups.end(),
-        Plan03GroupSliceIdentity{});
+        ScheduleGroupSliceIdentity{});
     for (auto& side : child.pendingVariableReplacementSideLifetimes) side.Release();
     child.storage.phase = EngineFrontierAttemptPhase::Free;
     attempt.entryQuantum = anchor / config.blockFrames;
@@ -69724,7 +69709,7 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
             !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                 originalQueueGroupHolders[identity.committedRow], identity, attempt.root)) return false;
     }
-    if (!immediateActionLane.PinGroups(attempt.lane, timelinePool, decisions, config.maxPlan03GroupHeadersPerPage) ||
+    if (!immediateActionLane.PinGroups(attempt.lane, timelinePool, decisions, config.maxScheduleGroupHeadersPerPage) ||
         !immediateActionLane.PinArms(attempt.lane, timelineArms)) return false;
 
     auto* firstChild = *std::find_if(children.begin(), children.begin() + count,
@@ -69772,7 +69757,7 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
         issued.cohortPhase = Initial::CohortPhase::Closing;
         if (auto* child = children[index]) {
             std::fill(child->pendingVariableReplacementGroups.begin(), child->pendingVariableReplacementGroups.end(),
-                Plan03GroupSliceIdentity{});
+                ScheduleGroupSliceIdentity{});
             for (auto& side : child->pendingVariableReplacementSideLifetimes) side.Release();
             child->storage.phase = EngineFrontierAttemptPhase::Free;
             RebasePendingImmediateStopIntents(*this, *producers[index]->row);
@@ -69975,12 +69960,12 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
                 record.descriptor.primary != record.primaryGroup || activation == nullptr ||
                 activation->State() != FrontierReceiptState::Prepared || activation->Descriptor() != record.descriptor ||
                 !CapturePendingVariableReplacementQueueOwner(child, *holder, &owner)) return false;
-            std::array<Plan03PageGroupView, 4> natives{};
+            std::array<SchedulePageGroupView, 4> natives{};
             for (std::uint32_t native = 0; native < owned.groupCount; ++native) {
                 const auto identity = child.pendingVariableReplacementGroups[owned.groupOffset + native];
                 if (!timelinePool.MatchesPrivateImmediateLaneGroupPlacement(identity, immediateActionLane, placement) ||
                     !timelinePool.PrivateImmediateLaneFrontierRollbackReady(identity) ||
-                    !timelinePool.ResolvePlan03GroupSliceProducer(identity, &natives[native]) ||
+                    !timelinePool.ResolveScheduleGroupSliceProducer(identity, &natives[native]) ||
                     natives[native].frontier == nullptr || natives[native].lease == nullptr ||
                     natives[native].lease->Capture().state != AudioSliceState::Ready) return false;
             }
@@ -69997,17 +69982,17 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
                 prelude.sourceControlCount != 1u || target.sourceControlCount != 1u) return false;
             if (!owned.continuation) {
                 const auto& original = *record.future;
-                Plan03PageGroupView parent{};
+                SchedulePageGroupView parent{};
                 if (!original.parentPin.Valid() || original.parentPin.Owner() != &decisions ||
                     !SameCanonicalDecision(original.parentPin.Token(), outer.entry.coordinator) ||
                     original.parentEntry != outer.entry || original.bindingArmPinEntry != outer.entry ||
-                    !timelinePool.ResolvePlan03GroupSliceProducer(record.prerequisiteMember, &parent) ||
+                    !timelinePool.ResolveScheduleGroupSliceProducer(record.prerequisiteMember, &parent) ||
                     parent.frontier == nullptr || !parent.frontier->variableSide.Valid() ||
                     parent.frontier->entry != outer.entry || parent.frontier->operation.owner.child != owner.parent ||
                     parent.frontier->operation.owner.childEpoch != owner.parentEpoch) return false;
             } else if (natives[1].identity != record.prerequisiteMember || natives[1].memberCount != 0 ||
                 natives[1].frontier->entry != outer.entry || natives[1].frontier->operation.owner != owner) return false;
-            const auto committed = [&](DecisionToken decision, const Plan03PageGroupView& native, ArmGroupToken group,
+            const auto committed = [&](DecisionToken decision, const SchedulePageGroupView& native, ArmGroupToken group,
                 std::uint16_t slices, DecisionParticipantKind kind, std::uint32_t slot, std::uint64_t generation) noexcept {
                 DecisionCommittedSnapshot snapshot{};
                 DecisionParticipantRef participant{};
@@ -70124,14 +70109,14 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
             activation == nullptr || activation->State() != FrontierReceiptState::Prepared || activation->Descriptor() != record.descriptor ||
             !decisions.MatchesPreparedFrontierActivationPool(record.descriptor.entry, timelinePool) ||
             !CapturePendingVariableReplacementQueueOwner(child, *holder, &owner)) return false;
-        std::array<Plan03PageGroupView, 3> natives{};
-        const std::array<Plan03GroupSliceIdentity, 3> identities{record.primaryGroup, record.prerequisiteMember, record.conditionalMember};
+        std::array<SchedulePageGroupView, 3> natives{};
+        const std::array<ScheduleGroupSliceIdentity, 3> identities{record.primaryGroup, record.prerequisiteMember, record.conditionalMember};
         for (std::uint32_t native = 0; native < natives.size(); ++native) {
             if (owned.groupOffset + native >= child.pendingVariableReplacementGroups.size() ||
                 identities[native] != child.pendingVariableReplacementGroups[owned.groupOffset + native] ||
                 !timelinePool.MatchesPrivateImmediateLaneGroupPlacement(identities[native], immediateActionLane, placement) ||
                 !timelinePool.PrivateImmediateLaneFrontierRollbackReady(identities[native]) ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(identities[native], &natives[native]) ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(identities[native], &natives[native]) ||
                 natives[native].frontier == nullptr || natives[native].lease == nullptr ||
                 natives[native].lease->Capture().state != AudioSliceState::Ready || natives[native].sourceControlCount != 0) return false;
         }
@@ -70145,7 +70130,7 @@ bool Engine::MatchesPrivatePendingVariableQueueEntries(const EngineActionPlayScr
             initial.operation.kind != FrontierOperationKind::Entry || initial.operation.owner != owner || natives[1].memberCount != 0 ||
             conditional.entry != record.descriptor.entry || conditional.primary != record.primaryGroup ||
             conditional.operation.owner != owner || conditional.operation.order.executeFrame != record.descriptor.order.executeFrame) return false;
-        const auto validateDecision = [&](DecisionToken decision, const Plan03GroupSliceIdentity& identity, ArmGroupToken group,
+        const auto validateDecision = [&](DecisionToken decision, const ScheduleGroupSliceIdentity& identity, ArmGroupToken group,
             DecisionParticipantKind kind, std::uint32_t slot, std::uint64_t generation, std::uint16_t members) noexcept {
             DecisionCommittedSnapshot committed{};
             DecisionParticipantRef participant{};
@@ -70244,7 +70229,7 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
                 owned.coordinatorCommitted = false;
             }
             const auto sourceIndex = owned.continuation ? 2u : 1u;
-            std::array<Plan03PageGroupView, 2> pair{};
+            std::array<SchedulePageGroupView, 2> pair{};
             const bool needsPair = owned.decisionCommitted[1] ||
                 std::any_of(holder->QueueFiling().queueTransitionGroupArms.begin(), holder->QueueFiling().queueTransitionGroupArms.begin() + 2u,
                     [&](TimelineArmToken arm) { return arm.Valid() && arm.slot < initialFrontierArmPins.size() &&
@@ -70252,7 +70237,7 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
             if (needsPair) {
                 for (std::uint32_t slice = 0; slice < 2u; ++slice) {
                     if (!owned.groupBound[sourceIndex + slice]) continue;
-                    if (!timelinePool.ResolvePlan03GroupSliceProducer(
+                    if (!timelinePool.ResolveScheduleGroupSliceProducer(
                             child.pendingVariableReplacementGroups[owned.groupOffset + sourceIndex + slice], &pair[slice]) ||
                         pair[slice].frontier == nullptr || pair[slice].lease == nullptr) return false;
                 }
@@ -70291,8 +70276,8 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
                 }
             }
             if (owned.decisionCommitted[0]) {
-                Plan03PageGroupView initial{};
-                if (!timelinePool.ResolvePlan03GroupSliceProducer(record.prerequisiteMember, &initial) ||
+                SchedulePageGroupView initial{};
+                if (!timelinePool.ResolveScheduleGroupSliceProducer(record.prerequisiteMember, &initial) ||
                     initial.frontier == nullptr || !decisions.RollbackPreparedFrontierDecision(record.initialDecision,
                         child.frontierDescriptor.entry.coordinator, initial.frontier)) return false;
                 owned.decisionCommitted[0] = false;
@@ -70300,15 +70285,15 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
             for (std::uint32_t slice = 0; slice < 2u; ++slice) {
                 const auto native = sourceIndex + 1u - slice;
                 if (!owned.groupBound[native]) continue;
-                if (!timelinePool.DetachPlan03GroupFrontier(child.pendingVariableReplacementGroups[owned.groupOffset + native], 0)) return false;
+                if (!timelinePool.DetachScheduleGroupFrontier(child.pendingVariableReplacementGroups[owned.groupOffset + native], 0)) return false;
                 owned.groupBound[native] = false;
             }
             if (owned.groupBound[0]) {
-                if (!timelinePool.DetachPlan03GroupFrontier(record.primaryGroup, 0)) return false;
+                if (!timelinePool.DetachScheduleGroupFrontier(record.primaryGroup, 0)) return false;
                 owned.groupBound[0] = false;
             }
             if (owned.continuation && owned.groupBound[1]) {
-                if (!timelinePool.DetachPlan03GroupFrontier(record.prerequisiteMember, 0)) return false;
+                if (!timelinePool.DetachScheduleGroupFrontier(record.prerequisiteMember, 0)) return false;
                 owned.groupBound[1] = false;
             }
             if (record.sourceTransitionBinding.Valid()) {
@@ -70342,11 +70327,11 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
             if (!decisions.RollbackPreparedFrontierDecision(record.coordinator, record.coordinator)) return false;
             owned.coordinatorCommitted = false;
         }
-        Plan03PageGroupView conditional{};
+        SchedulePageGroupView conditional{};
         PrivatePendingQueueFrontierBinding queueBinding;
         if (owned.groupBound[2]) {
             const auto* original = ResolveOriginalQueueConditionalBaseline(this, queueInstances, record.queue);
-            if (original == nullptr || !timelinePool.ResolvePlan03GroupSliceProducer(record.conditionalMember, &conditional) ||
+            if (original == nullptr || !timelinePool.ResolveScheduleGroupSliceProducer(record.conditionalMember, &conditional) ||
                 conditional.frontier == nullptr || conditional.lease == nullptr ||
                 !queueInstances.CapturePrivatePendingFrontierBinding(*original, originalQueueLifetimeHolders[record.queue.slot],
                     *conditional.frontier, timelinePool, transitionInstances, &queueBinding)) return false;
@@ -70358,8 +70343,8 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
             holder->QueueFiling().queueDecisionCommitted = false;
         }
         if (owned.decisionCommitted[0]) {
-            Plan03PageGroupView initial{};
-            if (!timelinePool.ResolvePlan03GroupSliceProducer(record.prerequisiteMember, &initial) || initial.frontier == nullptr ||
+            SchedulePageGroupView initial{};
+            if (!timelinePool.ResolveScheduleGroupSliceProducer(record.prerequisiteMember, &initial) || initial.frontier == nullptr ||
                 !decisions.RollbackPreparedFrontierDecision(record.initialDecision,
                     child.pendingVariableReplacementEntry.coordinator, initial.frontier)) return false;
             owned.decisionCommitted[0] = false;
@@ -70385,7 +70370,7 @@ bool Engine::CancelPrivatePendingVariableQueueEntries(EngineActionPlayScratch& c
         }
         for (std::uint32_t native : {2u, 0u, 1u}) {
             if (!owned.groupBound[native]) continue;
-            if (!timelinePool.DetachPlan03GroupFrontier(child.pendingVariableReplacementGroups[owned.groupOffset + native], 0)) return false;
+            if (!timelinePool.DetachScheduleGroupFrontier(child.pendingVariableReplacementGroups[owned.groupOffset + native], 0)) return false;
             owned.groupBound[native] = false;
         }
         if (record.sourceTransitionBinding.Valid()) {
@@ -70433,7 +70418,7 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             !SameCanonicalDecision(record.memberDecision, holder->QueueFiling().queueDecision) ||
             (owned.continuation && !record.prerequisiteMemberPin.Valid()) || !queueInstances.Capture(record.queue, &queue) ||
             !CapturePendingVariableReplacementQueueOwner(child, *holder, &owner)) return false;
-        const auto findControl = [&](const Plan03GroupSliceIdentity& identity, ImmediateLaneEvent* out) noexcept {
+        const auto findControl = [&](const ScheduleGroupSliceIdentity& identity, ImmediateLaneEvent* out) noexcept {
             bool found = false;
             for (std::uint32_t ordinal = 0; ordinal < child.pendingVariableReplacementPlacedEventCount; ++ordinal) {
                 ImmediateLaneEvent event{};
@@ -70475,18 +70460,18 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             for (std::uint32_t control = 0; control < child.pendingVariableReplacementControlCount; ++control) {
                 const auto* service = ResolvePlayableService(child.pendingVariableReplacementControls[control].service);
                 if (service == nullptr || service->ownerInstance != owner.parent || service->ownerEpoch != owner.parentEpoch) continue;
-                Plan03PageGroupView parent{};
-                if (!timelinePool.ResolvePlan03GroupSliceProducer(child.pendingVariableReplacementGroups[control + 1u], &parent) ||
+                SchedulePageGroupView parent{};
+                if (!timelinePool.ResolveScheduleGroupSliceProducer(child.pendingVariableReplacementGroups[control + 1u], &parent) ||
                     parent.frontier == nullptr || !parent.frontier->variableSide.Valid() ||
                     !initial.queueDescendant.Freeze(child.pendingVariableReplacementGroups[control + 1u], parent.frontier->variableSide)) return false;
                 ++matches;
             }
             if (matches != 1) return false;
         }
-        if (!timelinePool.BindPlan03GroupFrontier(record.prerequisiteMember, initial)) return false;
+        if (!timelinePool.BindScheduleGroupFrontier(record.prerequisiteMember, initial)) return false;
         owned.groupBound[1] = true;
-        Plan03PageGroupView native{};
-        if (!timelinePool.ResolvePlan03GroupSliceProducer(record.prerequisiteMember, &native) || native.frontier == nullptr ||
+        SchedulePageGroupView native{};
+        if (!timelinePool.ResolveScheduleGroupSliceProducer(record.prerequisiteMember, &native) || native.frontier == nullptr ||
             native.lease == nullptr || native.memberCount != 0 ||
             !queueInstances.BindFrontierInitial(record.queue, *native.frontier, timelinePool) ||
             !decisions.BindFrontierDecision(record.initialDecision, *native.frontier, timelinePool)) return false;
@@ -70528,19 +70513,19 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             const auto& control = child.pendingVariableReplacementControls[controlIndex];
             const auto* service = ResolvePlayableService(control.service);
             const auto& source = child.voiceStarts[sourceIndex];
-            Plan03PageGroupView parent{};
+            SchedulePageGroupView parent{};
             const auto identity = child.pendingVariableReplacementGroups[controlIndex + 1u];
             if (service == nullptr || service->ownerInstance != owner.parent || service->ownerEpoch != owner.parentEpoch ||
                 !control.decision.Valid() || source.renderHandle != current.canonicalSourceRender ||
                 !(source.armPreparation.target == current.canonicalSourceTarget) ||
                 !SameCanonicalDecision(source.armPreparation.parentGroup.decision, control.decision) ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(identity, &parent) || parent.frontier == nullptr ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(identity, &parent) || parent.frontier == nullptr ||
                 !parent.frontier->variableSide.Valid() || parent.frontier->entry != outer.entry) return false;
             record.prerequisiteMember = identity;
             auto& original = *record.future;
             if (original.parentPin.Valid() || record.prerequisiteMemberPin.Valid() ||
                 !decisions.AcquireFuturePin(outer.entry.coordinator, &original.parentPin) ||
-                !timelinePool.AcquirePlan03GroupReader(record.prerequisiteMember, &record.prerequisiteMemberPin)) return false;
+                !timelinePool.AcquireScheduleGroupReader(record.prerequisiteMember, &record.prerequisiteMemberPin)) return false;
             original.parentEntry = outer.entry;
             original.bindingArmPinEntry = outer.entry;
         }
@@ -70561,7 +70546,7 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
         primary.operation.transport = timelinePool.Epoch();
         primary.operation.world = record.descriptor.worldGeneration;
         primary.operation.order = record.descriptor.order;
-        if (!timelinePool.BindPlan03GroupFrontier(record.primaryGroup, primary)) return false;
+        if (!timelinePool.BindScheduleGroupFrontier(record.primaryGroup, primary)) return false;
         owned.groupBound[0] = true;
         if (owned.natural) {
             if (record.continuation != nullptr) record.continuation->version = {queue.pendingVersion};
@@ -70569,8 +70554,8 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             if (!transitionInstances.Capture(holder->QueueFiling().queueTransition, &transition) ||
                 transition.state != TransitionAudibleGateState::Replaceable || transition.retiredAtAudioSequence != 0 ||
                 transition.audibleFrame != record.descriptor.order.executeFrame) return false;
-            std::array<Plan03PageGroupView, 2> pair{};
-            const std::array<Plan03GroupSliceIdentity, 2> identities{record.conditionalMember, record.targetMember};
+            std::array<SchedulePageGroupView, 2> pair{};
+            const std::array<ScheduleGroupSliceIdentity, 2> identities{record.conditionalMember, record.targetMember};
             for (std::uint32_t slice = 0; slice < 2u; ++slice) {
                 FrontierGroupBinding binding{};
                 binding.role = slice == 0u ? FrontierGroupRole::EntryMember : FrontierGroupRole::Future;
@@ -70600,9 +70585,9 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
                     }
                 }
                 const auto nativeIndex = (owned.continuation ? 2u : 1u) + slice;
-                if (!timelinePool.BindPlan03GroupFrontier(identities[slice], binding)) return false;
+                if (!timelinePool.BindScheduleGroupFrontier(identities[slice], binding)) return false;
                 owned.groupBound[nativeIndex] = true;
-                if (!timelinePool.ResolvePlan03GroupSliceProducer(identities[slice], &pair[slice]) ||
+                if (!timelinePool.ResolveScheduleGroupSliceProducer(identities[slice], &pair[slice]) ||
                     pair[slice].frontier == nullptr || pair[slice].lease == nullptr || pair[slice].memberCount != 2u ||
                     pair[slice].sourceControlCount != 1u ||
                     !(owned.continuation ?
@@ -70702,10 +70687,10 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
             conditional.transition = {holder->QueueFiling().queueTransition.slot, holder->QueueFiling().queueTransition.generation, transition.audibleFrame};
         }
         record.continuation->version = {queue.pendingVersion};
-        if (!timelinePool.BindPlan03GroupFrontier(record.conditionalMember, conditional)) return false;
+        if (!timelinePool.BindScheduleGroupFrontier(record.conditionalMember, conditional)) return false;
         owned.groupBound[2] = true;
-        Plan03PageGroupView native{};
-        if (!timelinePool.ResolvePlan03GroupSliceProducer(record.conditionalMember, &native) || native.frontier == nullptr ||
+        SchedulePageGroupView native{};
+        if (!timelinePool.ResolveScheduleGroupSliceProducer(record.conditionalMember, &native) || native.frontier == nullptr ||
             native.lease == nullptr || native.memberCount != future->queueSuccessorVoiceStartCount || native.sourceControlCount != 0 ||
             !queueInstances.BindFrontierConditional(record.queue, *native.frontier, timelinePool)) return false;
         if (holder->QueueFiling().queueTransition.Valid()) {
@@ -70856,15 +70841,15 @@ bool Engine::BindPrivatePendingVariableGroupEntry(EngineActionPlayScratch& produ
     if (!SameCanonicalDecision(committed, owned.coordinator) ||
         !decisions.PrepareFrontierActivation(owned.coordinator, descriptor, timelinePool)) return false;
     owned.activationPrepared = true;
-    if (!timelinePool.BindPlan03GroupFrontier(descriptor.primary, bindings[0])) return false;
+    if (!timelinePool.BindScheduleGroupFrontier(descriptor.primary, bindings[0])) return false;
     owned.primaryBound = true;
     for (std::uint32_t side = 0; side < child.pendingVariableReplacementControlCount; ++side) {
         const auto& identity = child.pendingVariableReplacementGroups[side + 1u];
         if (!identity.Valid()) continue;
-        Plan03PageGroupView native{};
-        if (!timelinePool.BindPlan03GroupFrontier(identity, bindings[side + 1u])) return false;
+        SchedulePageGroupView native{};
+        if (!timelinePool.BindScheduleGroupFrontier(identity, bindings[side + 1u])) return false;
         owned.groupBound[side] = true;
-        if (!timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier == nullptr ||
+        if (!timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.frontier == nullptr ||
             native.lease == nullptr ||
             !variableControlInstances.BindFrontierSide(child.pendingVariableReplacementControls[side].instance,
                 *native.frontier, timelinePool)) return false;
@@ -70945,9 +70930,9 @@ bool Engine::BindPrivatePendingVariableGroupEntry(EngineActionPlayScratch& produ
     for (std::uint32_t index = 0; index < child.voiceStartCount; ++index) {
         const auto arm = child.voiceStarts[index].arm;
         const auto side = child.pendingVariableReplacementLeaves[index].controlIndex;
-        Plan03PageGroupView native{};
+        SchedulePageGroupView native{};
         if (arm.slot >= initialFrontierArmPins.size() || !owned.sideCommitted[side] ||
-            !timelinePool.ResolvePlan03GroupSliceProducer(child.pendingVariableReplacementGroups[side + 1u], &native) ||
+            !timelinePool.ResolveScheduleGroupSliceProducer(child.pendingVariableReplacementGroups[side + 1u], &native) ||
             native.frontier == nullptr || native.lease == nullptr) return false;
         auto& pin = initialFrontierArmPins[arm.slot];
         if (pin.pin.Valid() || !timelineArms.PinFrontierReader(arm, &pin.pin)) return false;
@@ -70966,8 +70951,8 @@ bool Engine::BindPrivatePendingVariableGroupEntry(EngineActionPlayScratch& produ
     for (std::uint32_t index = 0; index < child.voiceStartCount; ++index) {
         const auto arm = child.voiceStarts[index].arm;
         const auto side = child.pendingVariableReplacementLeaves[index].controlIndex;
-        Plan03PageGroupView native{};
-        if (!timelinePool.ResolvePlan03GroupSliceProducer(child.pendingVariableReplacementGroups[side + 1u], &native) ||
+        SchedulePageGroupView native{};
+        if (!timelinePool.ResolveScheduleGroupSliceProducer(child.pendingVariableReplacementGroups[side + 1u], &native) ||
             native.frontier == nullptr || native.lease == nullptr) return false;
         std::uint32_t selected = UINT32_MAX;
         for (std::uint32_t ordinal = 0; ordinal < child.pendingVariableReplacementPlacedEventCount; ++ordinal) {
@@ -71020,9 +71005,9 @@ bool Engine::CancelPrivatePendingVariableGroupEntry(OriginalPendingVariableGroup
     for (std::uint32_t side = 0; side < child.pendingVariableReplacementControlCount; ++side) {
         const auto& identity = child.pendingVariableReplacementGroups[side + 1u];
         if (owned.sideCommitted[side]) {
-            Plan03PageGroupView native{};
+            SchedulePageGroupView native{};
             if (!owned.groupBound[side] || !owned.decisionBound[side] ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier == nullptr ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.frontier == nullptr ||
                 !decisions.RollbackPreparedFrontierDecision(identity.decision, owned.coordinator, native.frontier)) return false;
             owned.sideCommitted[side] = false;
         }
@@ -71035,8 +71020,8 @@ bool Engine::CancelPrivatePendingVariableGroupEntry(OriginalPendingVariableGroup
         if (!pin.pin.Valid() || !SameOriginalSingleArm(pin.arm, arm) || !(pin.entry == descriptor.entry)) return false;
         if (owned.admissionBound[index]) {
             const auto side = child.pendingVariableReplacementLeaves[index].controlIndex;
-            Plan03PageGroupView native{};
-            if (!timelinePool.ResolvePlan03GroupSliceProducer(child.pendingVariableReplacementGroups[side + 1u], &native) ||
+            SchedulePageGroupView native{};
+            if (!timelinePool.ResolveScheduleGroupSliceProducer(child.pendingVariableReplacementGroups[side + 1u], &native) ||
                 native.frontier == nullptr || native.lease == nullptr ||
                 !timelineArms.UnbindPrivatePendingFrontierAdmission(pin.pin, *native.frontier, *native.lease,
                     timelinePool, decisions)) return false;
@@ -71049,17 +71034,17 @@ bool Engine::CancelPrivatePendingVariableGroupEntry(OriginalPendingVariableGroup
     for (std::uint32_t side = 0; side < child.pendingVariableReplacementControlCount; ++side) {
         const auto& identity = child.pendingVariableReplacementGroups[side + 1u];
         if (owned.sideBound[side]) {
-            Plan03PageGroupView native{};
+            SchedulePageGroupView native{};
             const auto* activation = decisions.ResolveFrontierActivation(owned.coordinator);
             if (!owned.groupBound[side] || activation == nullptr ||
-                !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier == nullptr ||
+                !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.frontier == nullptr ||
                 !MatchesPendingVariableReplacementBoundSide(child, group, side, *native.frontier)) return false;
             if (side < 2u && !variableControlInstances.UnbindPrivateInitialFrontierSide(group.initialSides[side],
                     *native.frontier, timelinePool, decisions)) return false;
             owned.sideBound[side] = false;
         }
         if (owned.groupBound[side]) {
-            if (!timelinePool.DetachPlan03GroupFrontier(identity, 0)) return false;
+            if (!timelinePool.DetachScheduleGroupFrontier(identity, 0)) return false;
             owned.groupBound[side] = false;
         }
     }
@@ -71071,7 +71056,7 @@ bool Engine::CancelPrivatePendingVariableGroupEntry(OriginalPendingVariableGroup
         }
     }
     if (owned.primaryBound) {
-        if (!timelinePool.DetachPlan03GroupFrontier(descriptor.primary, 0)) return false;
+        if (!timelinePool.DetachScheduleGroupFrontier(descriptor.primary, 0)) return false;
         owned.primaryBound = false;
     }
     if (owned.entryReadUsePrepared) {
@@ -71155,7 +71140,7 @@ bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHold
         if (!CancelOriginalQueueLaneGroups(attempt->root, mixer.BlocksRendered())) return false;
         if (!CancelPendingVariableReplacementQueueLaneRecords(*child, *attempt)) return false;
         std::fill(child->pendingVariableReplacementGroups.begin(), child->pendingVariableReplacementGroups.end(),
-            Plan03GroupSliceIdentity{});
+            ScheduleGroupSliceIdentity{});
     }
     if (!CancelPendingVariableReplacementQueueLaneRecords(*child, *attempt)) return false;
     auto& entry = child->pendingVariableReplacementEntry;
@@ -71399,7 +71384,7 @@ bool Engine::BeginRegisteredPendingVariableCohortReprepare(EngineImmediateEntryA
     if (count > census.size() || count != attempt.originalLaneDemand.groups) return false;
     for (std::size_t index = 0; index < count; ++index) {
         const auto& identity = census[index].identity;
-        Plan03PageGroupView native{};
+        SchedulePageGroupView native{};
         std::uint32_t matches = 0;
         std::uint32_t queueMatches = 0;
         token = attempt.privateVcProducerHead;
@@ -71421,8 +71406,8 @@ bool Engine::BeginRegisteredPendingVariableCohortReprepare(EngineImmediateEntryA
         }
         if (matches != 1 || token.Valid() || !identity.Exact() || identity.committedRow >= originalQueueGroupHolders.size() ||
             !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(originalQueueGroupHolders[identity.committedRow], identity, attempt.root) ||
-            !timelinePool.PrivatePlan03GroupBindable(identity) ||
-            !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier != nullptr ||
+            !timelinePool.PrivateScheduleGroupBindable(identity) ||
+            !timelinePool.ResolveScheduleGroupSliceProducer(identity, &native) || native.frontier != nullptr ||
             native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready ||
             (queueMatches == 0 && native.sourceControlCount != 0) || census[index].laneSlot != attempt.lane.slot ||
             census[index].laneGeneration != attempt.lane.generation) return false;
@@ -71750,7 +71735,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
             !record.conditionalMember.Exact() ||
             record.sourceTransitionBinding.Valid() ||
             (continuation && (!record.prerequisiteMember.Exact() ||
-                !timelinePool.IsPlan03GroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember))) ||
+                !timelinePool.IsScheduleGroupReaderFor(record.prerequisiteMemberPin, record.prerequisiteMember))) ||
             queue->QueuePayload().queueUnplacedGroupCount != (continuation ? (record.targetMember.Exact() ? 3u : 2u) : 2u) ||
             queue->QueuePayload().queueInitialCurrentDelayedCount > queue->QueuePayload().queueInitialCurrentDelayedArms.size() ||
             queue->QueueFiling().queueTransitionGroupArmCount > queue->QueueFiling().queueTransitionGroupArms.size() ||
@@ -71758,7 +71743,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
             (queue->QueueFiling().queueSourceControlArmCount != 0 && !queue->QueueFiling().queueTransition.Valid())) return false;
         // Canonical parent bindings are acquired only by final entry preparation.
         if (!continuation && (record.future == nullptr || !record.targetMember.Exact() ||
-            record.prerequisiteMember != Plan03GroupSliceIdentity{} || record.prerequisiteMemberPin.Valid() ||
+            record.prerequisiteMember != ScheduleGroupSliceIdentity{} || record.prerequisiteMemberPin.Valid() ||
             record.future->bindingArmPinEntry != FrontierEntryReceiptRef{} ||
             record.future->exitedFutureBindings != 0 || record.future->parentPin.Valid() ||
             record.future->parentPin.Owner() != nullptr || record.future->parentEntry != FrontierEntryReceiptRef{}))
@@ -81459,13 +81444,13 @@ static PlayableControlStatus BeginPlayableCancellation(
                   : AudioSliceReasonCancel;
     const auto cancellationGroupIdentity = [&engine](
         DecisionToken decision, std::uint64_t frame,
-        PreparedGroupToken pages, Plan03GroupSliceIdentity lane,
-        Plan03GroupSliceIdentity* out) noexcept {
+        PreparedGroupToken pages, ScheduleGroupSliceIdentity lane,
+        ScheduleGroupSliceIdentity* out) noexcept {
         if (out == nullptr || !pages.Valid() ||
             engine.config.blockFrames == 0) return false;
         if (lane.Valid()) {
             if (!lane.Exact() ||
-                lane.backing != Plan03GroupBacking::ImmediateLane ||
+                lane.backing != ScheduleGroupBacking::ImmediateLane ||
                 lane.decision.slot != decision.slot ||
                 lane.decision.generation != decision.generation ||
                 lane.committedRow != pages.slot ||
@@ -81483,7 +81468,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         [&engine, row, sliceReasonBit, &cancellationGroupIdentity](
             bool committed, DecisionToken decision,
             std::uint64_t frame, PreparedGroupToken pages,
-            Plan03GroupSliceIdentity lane) {
+            ScheduleGroupSliceIdentity lane) {
             if (!committed) {
                 return true;
             }
@@ -81502,13 +81487,13 @@ static PlayableControlStatus BeginPlayableCancellation(
                 decisionSnapshot.pages.generation != pages.generation) {
                 return false;
             }
-            Plan03GroupSliceIdentity identity{};
+            ScheduleGroupSliceIdentity identity{};
             if (!cancellationGroupIdentity(
                     decision, frame, pages, lane, &identity)) return false;
-            Plan03PageGroupView group{};
-            if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+            SchedulePageGroupView group{};
+            if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     identity, &group) &&
-                !engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                !engine.timelinePool.ResolveScheduleGroupSliceProducer(
                     identity, &group)) {
                 // A fully consumed transient Start page may retire before
                 // its playing source or persistent controller is stopped.
@@ -81591,7 +81576,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         if (queueLease == QueueCancellationLeaseStatus::Deferred) {
             if (intent != PlayableCancellationIntent::Stop &&
                 (preflightOnly || !preparedCommit)) {
-                if (!preflightOnly && DropLivePlan03GroupMemberArms(engine,
+                if (!preflightOnly && DropLiveScheduleGroupMemberArms(engine,
                         engine.mixer.BlocksRendered(), true, row, false, sliceReason, true) ==
                     QueueCancellationLeaseStatus::Failed) engine.runtimeRecreateRequired = true;
                 engine.commands.NoteBackpressure();
@@ -81620,7 +81605,7 @@ engine.runtimeRecreateRequired = true;
         row->pendingCancellationFadeMs = fadeMs;
         return acceptCancellation();
     }
-    const auto cancelGuard = DropLivePlan03GroupMemberArms(engine, engine.mixer.BlocksRendered(),
+    const auto cancelGuard = DropLiveScheduleGroupMemberArms(engine, engine.mixer.BlocksRendered(),
         true, row, false, sliceReason, true);
     if (cancelGuard == QueueCancellationLeaseStatus::Failed) {
         engine.commands.NoteBackpressure();
@@ -81661,20 +81646,20 @@ engine.runtimeRecreateRequired = true;
                                                &cancellationGroupIdentity](
         bool committed, DecisionToken decision,
         std::uint64_t frame, PreparedGroupToken pages,
-        Plan03GroupSliceIdentity lane,
+        ScheduleGroupSliceIdentity lane,
         bool* outDeferred) {
         *outDeferred = false;
         if (!committed || !decision.Valid()) {
             return true;
         }
         if (pages.Valid() && engine.config.blockFrames != 0) {
-            Plan03PageGroupView group{};
-            Plan03GroupSliceIdentity identity{};
+            SchedulePageGroupView group{};
+            ScheduleGroupSliceIdentity identity{};
             if (!cancellationGroupIdentity(
                     decision, frame, pages, lane, &identity)) return false;
-            if ((engine.timelinePool.ResolvePlan03GroupSliceProducer(
+            if ((engine.timelinePool.ResolveScheduleGroupSliceProducer(
                      identity, &group) ||
-                 engine.timelinePool.ResolvePlan03GroupSliceProducer(
+                 engine.timelinePool.ResolveScheduleGroupSliceProducer(
                      identity, &group)) &&
                 group.lease != nullptr) {
                 const bool sameDeferredIdentity =
@@ -82024,10 +82009,10 @@ engine.runtimeRecreateRequired = true;
     } else {
         aborted = abortTimelineArm(row->arm);
     }
-    // Stop must not keep WindowStart pinned by Live Plan03 members. Abort the
+    // Stop must not keep WindowStart pinned by Live Schedule members. Abort the
     // actual captured group arms (CancelRequested) so Advance can slide the
     // consumed page; do not Drop/Reclaim them before mixer consumes cancel.
-    DropLivePlan03GroupMemberArms(engine, engine.mixer.BlocksRendered(), true,
+    DropLiveScheduleGroupMemberArms(engine, engine.mixer.BlocksRendered(), true,
                                   row, false, sliceReason);
     {
         forEachOwnedRender(
@@ -86677,7 +86662,7 @@ bool ReleaseImmediateActionPlay(
     auto& groupOwner = scratch->actionResourceOwnerContext;
     while (groupOwner.groupSlicesCommitted != 0) {
         const std::uint32_t index = groupOwner.groupSlicesCommitted - 1u;
-        if (!engine.timelinePool.RollbackCommittedPlan03GroupSlice(
+        if (!engine.timelinePool.RollbackCommittedScheduleGroupSlice(
                 &scratch->queueCommittedGroupSlices[index])) {
             released = false;
             break;
@@ -86691,7 +86676,7 @@ bool ReleaseImmediateActionPlay(
             continue;
         }
         preparedGroupsResolved =
-            engine.timelinePool.CancelPreparedPlan03GroupSlice(
+            engine.timelinePool.CancelPreparedScheduleGroupSlice(
                 &scratch->queueGroupSlices[index]) &&
             preparedGroupsResolved;
     }
@@ -87404,9 +87389,9 @@ bool RemovePublishedDeferredFrontierEntry(
         !owner.stoppingMember.Exact() || !owner.stoppingPrimary.Exact() ||
         removedPrograms == nullptr || scratch.initialFrontierSideCount != 1)
         return false;
-    harken::Plan03ExactGroupSnapshot group{};
-    if (engine.timelinePool.CaptureExactPlan03Group(owner.stoppingMember, &group) ||
-        engine.timelinePool.CaptureExactPlan03Group(owner.stoppingPrimary, &group))
+    harken::ScheduleExactGroupSnapshot group{};
+    if (engine.timelinePool.CaptureExactScheduleGroup(owner.stoppingMember, &group) ||
+        engine.timelinePool.CaptureExactScheduleGroup(owner.stoppingPrimary, &group))
         return false;
     for (const auto& pending : engine.actionPlayScratch) {
         if (pending.continuationExecution &&
@@ -87576,11 +87561,11 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         receipt.audioSequence != 0) return;
     if (!owner.unpublishedWitnessed) {
         auto& groups = engine.timelineGroupCaptureScratch;
-        const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+        const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
         if (count > groups.size()) return;
         std::uint32_t memberCount = 0;
         std::uint32_t primaryCount = 0;
-        harken::Plan03PageGroupView member{};
+        harken::SchedulePageGroupView member{};
         for (std::size_t index = 0; index < count; ++index) {
             const auto& group = groups[index];
             if (group.frontier == nullptr ||
@@ -87595,7 +87580,7 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         if (memberCount != 1 || primaryCount != 1 || member.memberCount == 0 ||
             member.members == nullptr || member.frontier == nullptr) return;
         owner.stoppingMember = member.identity;
-        if (DropLivePlan03GroupMemberArms(engine, engine.mixer.BlocksRendered(),
+        if (DropLiveScheduleGroupMemberArms(engine, engine.mixer.BlocksRendered(),
                 true, &row, false, harken::AudioSliceInvalidateReason::Cancel, true) !=
             QueueCancellationLeaseStatus::Clear) return;
         for (std::uint16_t index = 0; index < member.memberCount; ++index)
@@ -87603,14 +87588,14 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         const auto result = engine.timelinePool.BeginUnpublishedFrontierRetirement(
             owner.stoppingMember, owner.stoppingPrimary, owner.stoppingEntry,
             receipt, &owner.unpublishedRetirement);
-        if (result == harken::Plan03UnpublishedRetirementResult::Pending ||
-            result == harken::Plan03UnpublishedRetirementResult::Ready)
+        if (result == harken::ScheduleUnpublishedRetirementResult::Pending ||
+            result == harken::ScheduleUnpublishedRetirementResult::Ready)
             owner.unpublishedWitnessed = owner.unpublishedRetirement.Valid();
         return;
     }
-    harken::Plan03ExactGroupSnapshot primary{};
+    harken::ScheduleExactGroupSnapshot primary{};
     if (!owner.unpublishedGroupsRetired &&
-        !engine.timelinePool.CaptureExactPlan03Group(owner.stoppingPrimary, &primary)) {
+        !engine.timelinePool.CaptureExactScheduleGroup(owner.stoppingPrimary, &primary)) {
         owner.fault = true;
         engine.runtimeRecreateRequired = true;
         return;
@@ -87620,8 +87605,8 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
             const auto result = engine.timelinePool.BeginUnpublishedFrontierRetirement(
                 owner.stoppingMember, owner.stoppingPrimary, owner.stoppingEntry,
                 receipt, &owner.unpublishedRetirement);
-            if (result == harken::Plan03UnpublishedRetirementResult::Fault ||
-                result == harken::Plan03UnpublishedRetirementResult::Stale) {
+            if (result == harken::ScheduleUnpublishedRetirementResult::Fault ||
+                result == harken::ScheduleUnpublishedRetirementResult::Stale) {
                 owner.fault = true;
                 engine.runtimeRecreateRequired = true;
             }
@@ -87650,13 +87635,13 @@ void ServicePublishedDeferredOwner(harken::Engine& engine,
         return;
     }
     if (!owner.unpublishedGroupsRetired) {
-        if (DropLivePlan03GroupMemberArms(engine, engine.mixer.BlocksRendered(),
+        if (DropLiveScheduleGroupMemberArms(engine, engine.mixer.BlocksRendered(),
                 true, &row, true, harken::AudioSliceInvalidateReason::Cancel) !=
             QueueCancellationLeaseStatus::Clear) return;
         const auto result = engine.timelinePool.FinishUnpublishedFrontierRetirement(
             owner.unpublishedRetirement);
-        if (result == harken::Plan03UnpublishedRetirementResult::Pending) return;
-        if (result != harken::Plan03UnpublishedRetirementResult::Ready) {
+        if (result == harken::ScheduleUnpublishedRetirementResult::Pending) return;
+        if (result != harken::ScheduleUnpublishedRetirementResult::Ready) {
             owner.fault = true;
             engine.runtimeRecreateRequired = true;
             return;
@@ -89640,7 +89625,7 @@ bool PrepareQueueTransitionContinuation(
         return false;
     }
 
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = naturalEndPrelude
         ? sourcePhaseFrame : row.QueuePayload().queueCompletionFrame;
     group.decision = transitionDecision;
@@ -89650,24 +89635,24 @@ bool PrepareQueueTransitionContinuation(
     group.sourceControlCount =
         static_cast<std::uint16_t>(sourceControlCount);
     if (!row.queueTimingPending &&
-        engine.timelinePool.PreparePlan03GroupSlice(
+        engine.timelinePool.PrepareScheduleGroupSlice(
             group, engine.timelineArms,
             &scratch->queueGroupSlices[0]) !=
-            harken::Plan03GroupReserveStatus::Committed) {
+            harken::ScheduleGroupReserveStatus::Committed) {
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
     scratch->queueGroupSliceCount = row.queueTimingPending ? 0 : 1;
     if (sliceCount == 2) {
-        harken::Plan03GroupSliceInput second = group;
+        harken::ScheduleGroupSliceInput second = group;
         second.executeFrame = naturalEndPrelude
             ? row.QueuePayload().queueCompletionFrame : successorEntryFrame;
         second.sliceIndex = 1;
         if (!row.queueTimingPending &&
-            engine.timelinePool.PreparePlan03GroupSlice(
+            engine.timelinePool.PrepareScheduleGroupSlice(
                 second, engine.timelineArms,
                 &scratch->queueGroupSlices[1]) !=
-            harken::Plan03GroupReserveStatus::Committed) {
+            harken::ScheduleGroupReserveStatus::Committed) {
             (void)entry.ReleasePrefix(scratch);
             return false;
         }
@@ -89773,7 +89758,7 @@ bool PrepareQueueSameKeyContinuation(
         row.QueuePayload().queueInitialLaneArmGroup = scratch->queueInitialLaneArmGroup;
     }
 
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = row.QueuePayload().queueCompletionFrame;
     group.decision = conditionalDecision;
     if (row.queueTimingPending) {
@@ -89790,10 +89775,10 @@ bool PrepareQueueSameKeyContinuation(
             (void)entry.ReleasePrefix(scratch);
             return false;
         }
-    } else if (engine.timelinePool.PreparePlan03GroupSlice(
+    } else if (engine.timelinePool.PrepareScheduleGroupSlice(
             group, engine.timelineArms,
             &scratch->queueGroupSlices[0]) !=
-        harken::Plan03GroupReserveStatus::Committed) {
+        harken::ScheduleGroupReserveStatus::Committed) {
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
@@ -91286,16 +91271,16 @@ bool PrepareQueueContinuation(
         return false;
     }
 
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = row.QueuePayload().queueCompletionFrame;
     group.decision = QueueInitialGroupDecision(*scratch, row);
     group.members = groupMembers.data();
     group.memberCount = static_cast<std::uint16_t>(leafCount);
     if (!row.queueTimingPending &&
-        engine.timelinePool.PreparePlan03GroupSlice(
+        engine.timelinePool.PrepareScheduleGroupSlice(
             group, engine.timelineArms,
             &scratch->queueGroupSlices[0]) !=
-        harken::Plan03GroupReserveStatus::Committed) {
+        harken::ScheduleGroupReserveStatus::Committed) {
         (void)entry.ReleasePrefix(scratch);
         return false;
     }
@@ -99387,8 +99372,8 @@ bool DetachScheduleSourceCohort(harken::Engine& engine, harken::EngineScheduleSo
     if (cohort.bindingsReleased) return true;
     for (auto& side : cohort.sides) {
         if (!side->identity.Exact()) continue;
-        harken::Plan03PageGroupView group{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(side->identity, &group)) return false;
+        harken::SchedulePageGroupView group{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(side->identity, &group)) return false;
         if (cohort.cancelling && !cohort.published && group.lease != nullptr)
             (void)group.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel);
         for (const auto arm : side->members) {
@@ -99400,19 +99385,19 @@ bool DetachScheduleSourceCohort(harken::Engine& engine, harken::EngineScheduleSo
         }
         if (group.frontier != nullptr && group.frontier->Valid() &&
             !engine.timelinePool.FrontierMemberBindingDetached(side->identity, cohort.descriptor.entry, completed) &&
-            !engine.timelinePool.DetachPlan03GroupFrontier(side->identity, completed)) return false;
+            !engine.timelinePool.DetachScheduleGroupFrontier(side->identity, completed)) return false;
         if (engine.decisions.HasFrontierDecisionBinding(side->decision) &&
             !engine.decisions.ReleaseFrontierDecisionBinding(side->decision)) return false;
     }
     auto* activation = engine.decisions.ResolveFrontierActivation(cohort.decision);
     if (cohort.descriptor.primary.Exact()) {
-        harken::Plan03PageGroupView primary{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(cohort.descriptor.primary, &primary)) return false;
+        harken::SchedulePageGroupView primary{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(cohort.descriptor.primary, &primary)) return false;
         if (cohort.cancelling && !cohort.published && primary.lease != nullptr)
             (void)primary.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel);
         if (primary.frontier != nullptr && primary.frontier->Valid() &&
             !engine.timelinePool.FrontierMemberBindingDetached(cohort.descriptor.primary, cohort.descriptor.entry, completed) &&
-            !engine.timelinePool.DetachPlan03GroupFrontier(cohort.descriptor.primary, completed)) return false;
+            !engine.timelinePool.DetachScheduleGroupFrontier(cohort.descriptor.primary, completed)) return false;
     }
     if (activation != nullptr) {
         if (activation->State() == harken::FrontierReceiptState::Prepared) {
@@ -99431,8 +99416,8 @@ bool RollbackScheduleSourceCohortPages(harken::Engine& engine,
     harken::EngineScheduleSourceCohort& cohort) noexcept {
     if (cohort.published || !DetachScheduleSourceCohort(engine, cohort, engine.mixer.BlocksRendered())) return false;
     for (auto& side : cohort.sides)
-        if (side->page.Valid() && !engine.timelinePool.RollbackCommittedPlan03GroupSlice(&side->page)) return false;
-    return !cohort.page.Valid() || engine.timelinePool.RollbackCommittedPlan03GroupSlice(&cohort.page);
+        if (side->page.Valid() && !engine.timelinePool.RollbackCommittedScheduleGroupSlice(&side->page)) return false;
+    return !cohort.page.Valid() || engine.timelinePool.RollbackCommittedScheduleGroupSlice(&cohort.page);
 }
 
 bool PublishPrivateNativeAttemptLinks(harken::Engine& engine,
@@ -99538,8 +99523,8 @@ bool PrepareSourceCohortNativeDependencies(harken::Engine& engine,
             owned.primary = cohort.descriptor.primary;
             owned.member = root.frontierDescriptor.primary;
             return engine.decisions.AcquireFuturePin(owned.entry.coordinator, &owned.coordinatorPin) &&
-                engine.timelinePool.AcquirePlan03GroupReader(owned.primary, &owned.primaryPin) &&
-                engine.timelinePool.AcquirePlan03GroupReader(owned.member, &owned.memberPin) &&
+                engine.timelinePool.AcquireScheduleGroupReader(owned.primary, &owned.primaryPin) &&
+                engine.timelinePool.AcquireScheduleGroupReader(owned.member, &owned.memberPin) &&
                 MatchesNativeEntryDependency(engine, owned, row);
         });
     });
@@ -99647,26 +99632,26 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
         if (!engine.decisions.CommitPreparedReservation(&cohort.prepared, cohort.sequence, &cohort.decision) ||
             !engine.armGroups.Reserve(cohort.decision, nullptr, 0, &cohort.arms)) return refuse();
         const auto preparePage = [&](harken::DecisionToken decision, const std::vector<harken::TimelineArmToken>& members,
-            harken::CommittedPlan03GroupSlice& page, harken::Plan03GroupSliceIdentity& identity) noexcept {
-            harken::Plan03GroupSliceInput input{};
+            harken::CommittedScheduleGroupSlice& page, harken::ScheduleGroupSliceIdentity& identity) noexcept {
+            harken::ScheduleGroupSliceInput input{};
             input.executeFrame = cohort.onset;
             input.decision = decision;
             input.members = members.data();
             input.memberCount = static_cast<std::uint16_t>(members.size());
-            harken::PreparedPlan03GroupSlice prepared;
-            if (engine.timelinePool.PreparePlan03GroupSlice(input, engine.timelineArms, &prepared) !=
-                harken::Plan03GroupReserveStatus::Committed) return false;
-            if (!engine.timelinePool.CommitPreparedPlan03GroupSlice(&prepared, &page, true)) {
-                if (prepared.Valid()) (void)engine.timelinePool.CancelPreparedPlan03GroupSlice(&prepared);
+            harken::PreparedScheduleGroupSlice prepared;
+            if (engine.timelinePool.PrepareScheduleGroupSlice(input, engine.timelineArms, &prepared) !=
+                harken::ScheduleGroupReserveStatus::Committed) return false;
+            if (!engine.timelinePool.CommitPreparedScheduleGroupSlice(&prepared, &page, true)) {
+                if (prepared.Valid()) (void)engine.timelinePool.CancelPreparedScheduleGroupSlice(&prepared);
                 return false;
             }
             auto& groups = engine.timelineGroupCaptureScratch;
-            const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+            const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
             if (count > groups.size()) return false;
             for (std::size_t index = 0; index < count; ++index) {
                 const auto& candidate = groups[index].identity;
                 if (SameCanonicalDecision(candidate.decision, decision) && candidate.sliceIndex == 0 &&
-                    engine.timelinePool.MatchesCommittedPlan03GroupSlice(page, candidate)) {
+                    engine.timelinePool.MatchesCommittedScheduleGroupSlice(page, candidate)) {
                     identity = candidate;
                     return true;
                 }
@@ -99733,7 +99718,7 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
         std::vector<harken::TransactionRequest> requests(eventCount);
         std::size_t next = 0;
         const auto addEvent = [&](const harken::ProgramView* program, const harken::EventTemplate* original,
-            harken::TimelineTransactionProgramRef runtime, harken::Plan03GroupSliceIdentity group) {
+            harken::TimelineTransactionProgramRef runtime, harken::ScheduleGroupSliceIdentity group) {
             auto& event = events[next];
             event.executeFrame = cohort.onset;
             event.logicCommitSequence = cohort.sequence;
@@ -99796,7 +99781,7 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
         binding.operation.group = descriptor.primary;
         binding.operation.transport = cohort.transport;
         binding.operation.world = descriptor.worldGeneration;
-        if (!engine.timelinePool.BindPlan03GroupFrontier(descriptor.primary, binding)) return refuse();
+        if (!engine.timelinePool.BindScheduleGroupFrontier(descriptor.primary, binding)) return refuse();
         std::uint32_t pageIndex = UINT32_MAX;
         if (!engine.timelinePool.PageForFrame(cohort.onset, &pageIndex)) return refuse();
         std::size_t eventIndex = 1;
@@ -99808,9 +99793,9 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
             binding.operation.group = side->identity;
             binding.operation.order = {first.executeFrame, first.logicCommitSequence, first.executionOrdinal,
                 first.eventIndex, first.transactionOrdinal, first.subeventPhase, first.rowSequence};
-            if (!engine.timelinePool.BindPlan03GroupFrontier(side->identity, binding)) return refuse();
-            harken::Plan03PageGroupView group{};
-            if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(side->identity, &group) ||
+            if (!engine.timelinePool.BindScheduleGroupFrontier(side->identity, binding)) return refuse();
+            harken::SchedulePageGroupView group{};
+            if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(side->identity, &group) ||
                 group.frontier == nullptr || group.lease == nullptr ||
                 !engine.decisions.BindFrontierDecision(side->decision, *group.frontier, engine.timelinePool)) return refuse();
             for (const auto arm : side->members) {
@@ -99899,8 +99884,8 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
         if (!engine.decisions.PublishFrontierActivation(cohort.decision)) return refuse();
         cohort.sealed = cohort.published = true;
         for (auto& side : cohort.sides)
-            if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&side->page)) engine.runtimeRecreateRequired = true;
-        if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&cohort.page) ||
+            if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&side->page)) engine.runtimeRecreateRequired = true;
+        if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&cohort.page) ||
             !engine.timelinePool.ReleasePreparedTransactionPublication(&transactions)) engine.runtimeRecreateRequired = true;
         return !engine.runtimeRecreateRequired;
     } catch (const std::bad_alloc&) { return refuse(); }
@@ -101479,7 +101464,7 @@ bool CanPublishNativeScheduleTransition(NativeScheduleTransitionPreparation& nat
             (!attempt.actionResourceOwnerContext.transactionsCommitted ||
              !engine.timelinePool.CanReleasePreparedTransactionPublication(attempt.queueTransactions))) return false;
         for (std::uint32_t i = 0; i < attempt.actionResourceOwnerContext.groupSlicesCommitted; ++i)
-            if (!engine.timelinePool.CanReleaseCommittedPlan03GroupSliceOwnership(attempt.queueCommittedGroupSlices[i])) return false;
+            if (!engine.timelinePool.CanReleaseCommittedScheduleGroupSliceOwnership(attempt.queueCommittedGroupSlices[i])) return false;
         return true;
     });
     return native.publicationPrepared;
@@ -101497,7 +101482,7 @@ bool PublishNativeScheduleTransition(NativeScheduleTransitionPreparation& native
             attempt.actionResourceOwnerContext.transactionsCommitted = false;
             while (attempt.actionResourceOwnerContext.groupSlicesCommitted != 0) {
                 auto& count = attempt.actionResourceOwnerContext.groupSlicesCommitted;
-                if (!engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&attempt.queueCommittedGroupSlices[count - 1u])) return false;
+                if (!engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&attempt.queueCommittedGroupSlices[count - 1u])) return false;
                 --count;
             }
             attempt.queueGroupSliceCount = 0;
@@ -101912,7 +101897,7 @@ bool PrepareNativeQueueMusicCandidate(harken::Engine& engine,
     if (!starts.PrepareArmGroup(candidate.decision, candidate.arms.data(),
             static_cast<std::uint16_t>(native.count), &candidate.armGroup) ||
         !starts.PrepareDecision(row.rootInstance, audible, candidate.decision)) return false;
-    harken::Plan03GroupSliceInput slice{};
+    harken::ScheduleGroupSliceInput slice{};
     slice.executeFrame = audible;
     slice.decision = candidate.decision;
     slice.members = candidate.arms.data();
@@ -102077,7 +102062,7 @@ bool PrepareFollowingNativeQueueMusicTransition(harken::Engine& engine,
     if (!PrepareNativeQueueMusicCandidate(engine, row, program, world, source, candidate, false)) return false;
     harken::QueueInstanceTable::ContinuationSourceBinding proof;
     if (!engine.decisions.AcquireFuturePin(predecessor.lifetime.Token(), &candidate.exit->sourceAdmissionLifetime) ||
-        !engine.timelinePool.AcquirePlan03GroupReader(predecessor.targetAdmission, &candidate.exit->sourceAdmissionReader) ||
+        !engine.timelinePool.AcquireScheduleGroupReader(predecessor.targetAdmission, &candidate.exit->sourceAdmissionReader) ||
         !engine.queueInstances.ProveFollowingPageSource(predecessor.queueChain.original, engine.decisions,
             candidate.exit->sourceAdmissionLifetime, candidate.exit->sourceAdmissionReader, engine.timelinePool,
             candidate.exit->control.source, &proof)) return false;
@@ -102129,23 +102114,23 @@ bool PrepareQueueSignalNativeGroup(harken::Engine& engine,
     // An empty signal still advances its actual Queue and guards native children.
     if (count > UINT16_MAX || !engine.armGroups.Reserve(signal.decision, signal.members.data(),
             static_cast<std::uint16_t>(count), &signal.armGroup)) return false;
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = scratch.continuationOrder.executeFrame;
     group.decision = signal.decision;
     group.members = signal.members.data();
     group.memberCount = static_cast<std::uint16_t>(count);
-    if (engine.timelinePool.PreparePlan03GroupSlice(group, engine.timelineArms, &signal.prepared) !=
-        harken::Plan03GroupReserveStatus::Committed ||
-        !engine.timelinePool.CommitPreparedPlan03GroupSlice(&signal.prepared, &signal.committed, true)) return false;
+    if (engine.timelinePool.PrepareScheduleGroupSlice(group, engine.timelineArms, &signal.prepared) !=
+        harken::ScheduleGroupReserveStatus::Committed ||
+        !engine.timelinePool.CommitPreparedScheduleGroupSlice(&signal.prepared, &signal.committed, true)) return false;
     // A normal group receives its exact row identity only at commit. Keep the
     // original owner and publication hold in scratch throughout this check.
     auto& groups = engine.timelineGroupCaptureScratch;
-    const auto groupCount = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    const auto groupCount = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     if (groupCount > groups.size()) return false;
-    harken::Plan03GroupSliceIdentity identity{};
+    harken::ScheduleGroupSliceIdentity identity{};
     for (std::size_t index = 0; index < groupCount; ++index) {
         const auto& actual = groups[index];
-        if (!engine.timelinePool.MatchesCommittedPlan03GroupSlice(signal.committed, actual.identity)) continue;
+        if (!engine.timelinePool.MatchesCommittedScheduleGroupSlice(signal.committed, actual.identity)) continue;
         if (identity.Exact() || !SameCanonicalDecision(actual.identity.decision, signal.decision) ||
             actual.identity.sliceIndex != group.sliceIndex || actual.memberCount != group.memberCount ||
             actual.sourceControlCount != group.sourceControlCount ||
@@ -102421,7 +102406,7 @@ QueueContinuationPrepareStatus PrepareQueueScheduleSuccessor(
     }
     PublishInitialScheduleMonitorSelections(engine, scratch);
     if (signal.committed.Valid() &&
-        !engine.timelinePool.ReleaseCommittedPlan03GroupSliceOwnership(&signal.committed)) {
+        !engine.timelinePool.ReleaseCommittedScheduleGroupSliceOwnership(&signal.committed)) {
         engine.runtimeRecreateRequired = true;
         return Status::Failed;
     }
@@ -104220,7 +104205,7 @@ bool ComputeInitialActionLaneDemand(
         for (std::uint32_t item = 0; item < groupCount; ++item)
             sameGroups += groupQuanta[item] == quantum;
         if (sameEvents > engine.immediateActionLane.MaxEventsPerQuantum() ||
-            sameGroups > engine.config.maxPlan03GroupHeadersPerPage)
+            sameGroups > engine.config.maxScheduleGroupHeadersPerPage)
             return false;
         ++bucketCount;
     }
@@ -104235,7 +104220,7 @@ bool ComputeInitialActionLaneDemand(
         std::uint32_t sameGroups = 0;
         for (std::uint32_t item = 0; item < groupCount; ++item)
             sameGroups += groupQuanta[item] == quantum;
-        if (sameGroups > engine.config.maxPlan03GroupHeadersPerPage)
+        if (sameGroups > engine.config.maxScheduleGroupHeadersPerPage)
             return false;
         ++bucketCount;
     }
@@ -104885,7 +104870,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                 coordinator.expectedContinuationGeneration =
                     attempt.generation;
                 coordinator.sliceCount = 1;
-                harken::Plan03GroupSliceInput primary{};
+                harken::ScheduleGroupSliceInput primary{};
                 primary.executeFrame = plan->admittedImmediateFrame;
                 if (!engine.PrepareOriginalQueueDecisionReservation(
                         coordinator,
@@ -104960,7 +104945,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     plan->result = VN_BACKPRESSURE;
                     return false;
                 }
-                harken::Plan03GroupSliceInput primary{};
+                harken::ScheduleGroupSliceInput primary{};
                 primary.executeFrame = holder.QueuePayload().queueUnplacedGroupFrames[1];
                 primary.decision =
                     coordinatorReservation.Token();
@@ -105015,7 +105000,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     request.expectedContinuationGeneration =
                         attempt.generation;
                     request.sliceCount = 1;
-                    harken::Plan03GroupSliceInput primary{};
+                    harken::ScheduleGroupSliceInput primary{};
                     primary.executeFrame = holder.QueuePayload().queueUnplacedGroupFrames[0];
                     if (!engine.PrepareOriginalQueueDecisionReservation(request,
                             &record->coordinatorReservation)) {
@@ -105069,7 +105054,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                 }
                 for (std::uint32_t slice = 0;
                      slice < holder.QueuePayload().queueUnplacedGroupCount; ++slice) {
-                    harken::Plan03GroupSliceInput group{};
+                    harken::ScheduleGroupSliceInput group{};
                     group.executeFrame =
                         holder.QueuePayload().queueUnplacedGroupFrames[slice];
                     const bool initial = holder.queueFirstContinuationLane &&
@@ -105091,7 +105076,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                     group.sourceControlCount = initial ? 0u :
                         static_cast<std::uint16_t>(
                             holder.QueueFiling().queueSourceControlArmCount);
-                    harken::Plan03GroupSliceIdentity identity{};
+                    harken::ScheduleGroupSliceIdentity identity{};
                     const bool originalC0Member = engine.OriginalInitialC0FactoryRequested(attempt) &&
                         originalScratch != nullptr;
                     if (!(originalC0Member
@@ -105144,7 +105129,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
                         }
                         if (initial) {
                             record->prerequisiteMember = identity;
-                            if (!engine.timelinePool.AcquirePlan03GroupReader(
+                            if (!engine.timelinePool.AcquireScheduleGroupReader(
                                     identity,
                                     &record->prerequisiteMemberPin)) {
                                 ReleaseImmediateActionPlays(plan, count);
@@ -105595,7 +105580,7 @@ bool ProvePrivateInitialVcLaneTransfer(harken::Engine& engine,
         if (engine.privateInitialVcLaneTransferHookForTest != nullptr)
             engine.privateInitialVcLaneTransferHookForTest(engine, scratch, position,
                 engine.privateInitialVcLaneTransferContextForTest);
-        harken::Plan03GroupSliceInput primary{};
+        harken::ScheduleGroupSliceInput primary{};
         primary.executeFrame = held.frame;
         primary.decision = held.coordinator;
         const auto& descriptor = position < 2 ? held.descriptors[position] : primary;
@@ -105637,13 +105622,13 @@ bool ProvePrivateInitialVcPageTransfer(harken::Engine& engine,
         held.pageTransferScope.world != scratch.row->Invocation().worldGeneration ||
         held.pageTransferScope.attemptGeneration != scratch.storage.generation ||
         held.frame != scratch.row->startFrame) return refuse();
-    harken::Plan03GroupSliceInput primary{};
+    harken::ScheduleGroupSliceInput primary{};
     primary.executeFrame = held.frame;
     primary.decision = held.coordinator;
     for (std::size_t position = 0; position < held.pageTransferProofs.size(); ++position) {
         auto& original = position < 2 ? held.sides[position] : scratch.frontierPreparedPrimary;
         const auto& input = position < 2 ? held.descriptors[position] : primary;
-        harken::Plan03GroupSliceIdentity prospective{};
+        harken::ScheduleGroupSliceIdentity prospective{};
         if (!original.CaptureProspectiveIdentity(&prospective) ||
             !(prospective == held.pageProspectiveIdentities[position]) ||
             !engine.timelinePool.ProvePreparedPageGroupTransfer(original, held.pageTransferScope,
@@ -105987,8 +105972,8 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
     }
     if (!prepareLaneStorage()) return false;
     const auto sequence = engine.logicCommits.Current() + 1u;
-    const auto refuse = [&](harken::Plan03GroupReserveStatus status) noexcept {
-        plan.result = status == harken::Plan03GroupReserveStatus::PageGroupCapacity
+    const auto refuse = [&](harken::ScheduleGroupReserveStatus status) noexcept {
+        plan.result = status == harken::ScheduleGroupReserveStatus::PageGroupCapacity
             ? VN_BACKPRESSURE : VN_RUNTIME_RECREATE_REQUIRED;
         if (plan.result == VN_RUNTIME_RECREATE_REQUIRED)
             engine.runtimeRecreateRequired = true;
@@ -106037,11 +106022,11 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
                     return false;
                 }
             } else {
-                const auto status = engine.timelinePool.PreparePlan03GroupSlice(
+                const auto status = engine.timelinePool.PrepareScheduleGroupSlice(
                     descriptor, engine.timelineArms, &held.sides[side], &held.pageTransferScope);
-                if (status != harken::Plan03GroupReserveStatus::Committed) return refuse(status);
+                if (status != harken::ScheduleGroupReserveStatus::Committed) return refuse(status);
                 if (!held.sides[side].CaptureProspectiveIdentity(&held.pageProspectiveIdentities[side]))
-                    return refuse(harken::Plan03GroupReserveStatus::Invalid);
+                    return refuse(harken::ScheduleGroupReserveStatus::Invalid);
             }
         }
         scratch.continuationTransportEpoch = engine.timelinePool.Epoch();
@@ -106060,7 +106045,7 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
         }
         held.coordinator = scratch.frontierCoordinator;
         held.coordinatorGroup = scratch.frontierCoordinatorGroup;
-        harken::Plan03GroupSliceInput primary{};
+        harken::ScheduleGroupSliceInput primary{};
         primary.executeFrame = row.startFrame;
         primary.decision = scratch.frontierCoordinator;
         if (row.pendingImmediateEntry) {
@@ -106071,11 +106056,11 @@ bool PreparePrivateInitialVcPageCohorts(ImmediateActionPlan& plan) noexcept {
                 return false;
             }
         } else {
-            const auto status = engine.timelinePool.PreparePlan03GroupSlice(
+            const auto status = engine.timelinePool.PrepareScheduleGroupSlice(
                 primary, engine.timelineArms, &scratch.frontierPreparedPrimary, &held.pageTransferScope);
-            if (status != harken::Plan03GroupReserveStatus::Committed) return refuse(status);
+            if (status != harken::ScheduleGroupReserveStatus::Committed) return refuse(status);
             if (!scratch.frontierPreparedPrimary.CaptureProspectiveIdentity(&held.pageProspectiveIdentities[2]))
-                return refuse(harken::Plan03GroupReserveStatus::Invalid);
+                return refuse(harken::ScheduleGroupReserveStatus::Invalid);
         }
         harken::ReserveRefusal batchRefusal = harken::ReserveRefusal::None;
         if (!PreparePrivateInitialVcPageBatch(engine, scratch, &batchRefusal)) {
@@ -108297,7 +108282,7 @@ bool ReleaseImmediateActionQueueReplacement(
     for (std::uint16_t index = scratch.groupSliceCount;
          index-- > 0;) {
         if (scratch.groupSlices[index].Valid()) {
-            if (!engine.timelinePool.CancelPreparedPlan03GroupSliceReplacement(
+            if (!engine.timelinePool.CancelPreparedScheduleGroupSliceReplacement(
                     &scratch.groupSlices[index])) return retry();
         }
     }
@@ -108993,7 +108978,7 @@ bool PrepareImmediateActionQueueReplacement(
         (!oldCommitted && !engine.decisions.IsOpen(row.QueueFiling().queueDecision)))) {
         return false;
     }
-    std::array<harken::Plan03GroupSliceIdentity, 2> oldSlices{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> oldSlices{};
     for (std::uint16_t sliceIndex = 0;
          !native && sliceIndex < sliceCount; ++sliceIndex) {
         if (continuation != nullptr) oldSlices[sliceIndex] = continuation->GroupIdentity(sliceIndex);
@@ -109012,8 +108997,8 @@ bool PrepareImmediateActionQueueReplacement(
             sliceFrames[sliceIndex] / engine.config.blockFrames,
             header->pageGeneration, row.QueueFiling().queueDecision, sliceIndex};
         }
-        harken::Plan03PageGroupView oldGroup{};
-        if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(
+        harken::SchedulePageGroupView oldGroup{};
+        if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(
                 oldSlices[sliceIndex], &oldGroup) ||
             oldGroup.lease == nullptr ||
             oldGroup.lease->Capture().state !=
@@ -109840,7 +109825,7 @@ bool PrepareImmediateActionQueueReplacement(
     }
     for (std::uint16_t sliceIndex = 0;
          sliceIndex < sliceCount; ++sliceIndex) {
-        harken::Plan03GroupSliceInput newSlice{};
+        harken::ScheduleGroupSliceInput newSlice{};
         newSlice.executeFrame = sliceFrames[sliceIndex];
         newSlice.decision = replacementDecision;
         newSlice.sliceIndex = sliceIndex;
@@ -109859,10 +109844,10 @@ bool PrepareImmediateActionQueueReplacement(
             }
             continue;
         }
-        if (engine.timelinePool.PreparePlan03GroupSliceReplacement(
+        if (engine.timelinePool.PrepareScheduleGroupSliceReplacement(
                 oldSlices[sliceIndex], newSlice, engine.timelineArms,
                 &scratch.groupSlices[sliceIndex]) !=
-                harken::Plan03GroupReserveStatus::Committed) {
+                harken::ScheduleGroupReserveStatus::Committed) {
             (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
             return false;
         }
@@ -110733,7 +110718,7 @@ void CommitImmediateActionQueueReplacements(
         for (std::uint16_t sliceIndex = 0;
              sliceIndex < scratch.groupSliceCount; ++sliceIndex) {
             ok = engine.timelinePool.
-                     CommitPreparedPlan03GroupSliceReplacement(
+                     CommitPreparedScheduleGroupSliceReplacement(
                          &scratch.groupSlices[sliceIndex]) &&
                  ok;
         }
@@ -110920,13 +110905,13 @@ void ServiceNativeQueueReplacements(harken::Engine& engine, std::uint64_t comple
                 !engine.BindOriginalQueueReplacementCalendar(holder)) continue;
             if (!holder.calendarPinned) {
                 if (!holder.calendar.PinPrivate(engine.timelineArms, engine.decisions,
-                        engine.config.maxPlan03GroupHeadersPerPage)) continue;
+                        engine.config.maxScheduleGroupHeadersPerPage)) continue;
                 holder.calendarPinned = true;
             }
             if (!PublishNativeQueueResetStops(engine, holder, *row, completed)) continue;
             if (!row->QueueFiling().queueSameProgramKey && !holder.sourceArmPublished) {
-                harken::Plan03PageGroupView member{};
-                if (!engine.timelinePool.ResolvePlan03GroupSliceProducer(holder.groups[1], &member) ||
+                harken::SchedulePageGroupView member{};
+                if (!engine.timelinePool.ResolveScheduleGroupSliceProducer(holder.groups[1], &member) ||
                     member.frontier == nullptr || member.lease == nullptr ||
                     !engine.timelineArms.BindFrontierAdmission(row->QueueFiling().queueSuccessorArm, *member.frontier, *member.lease) ||
                     !engine.timelineArms.Publish(row->QueueFiling().queueSuccessorArm)) continue;
@@ -110938,9 +110923,9 @@ void ServiceNativeQueueReplacements(harken::Engine& engine, std::uint64_t comple
         if (original != nullptr && original->initialGroup != nullptr) {
             (void)engine.originalQueueConditionalHolders[index].projection.TryRetireNativeConditional(
                 engine.decisions, completed);
-            harken::Plan03PageGroupView current{};
+            harken::SchedulePageGroupView current{};
             harken::FrontierActivationReceipt receipt{};
-            if (engine.timelinePool.ResolvePlan03GroupSliceProducer(original->initialGroup->Identity(), &current) &&
+            if (engine.timelinePool.ResolveScheduleGroupSliceProducer(original->initialGroup->Identity(), &current) &&
                 current.frontier != nullptr &&
                 engine.decisions.ReconcileFrontierActivation(current.frontier->entry.coordinator,
                     current.frontier->entry, completed, &receipt) && receipt.outcome == harken::FrontierReceiptOutcome::Applied) {
@@ -113223,11 +113208,11 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
         return VN_NOT_INITIALIZED;
     }
     harken::VariableOperationScope variableOperation(engine);
-    const auto* companion = engine->packComposition.Published();
-    if (companion != nullptr && companion->setActivated) {
-        const auto revision = companion->ledger.setRevision;
+    const auto* published = engine->packComposition.Published();
+    if (published != nullptr && published->setActivated) {
+        const auto revision = published->ledger.setRevision;
         const auto result = harken::UnloadCanonicalPack(*engine, handle, flags);
-        auto trace = TraceStateful(engine, harken::kTraceCallUnloadCompanionPack);
+        auto trace = TraceStateful(engine, harken::kTraceCallUnloadPackV2);
         const auto* after = engine->packComposition.Published();
         trace.U32(1).U64(handle).U32(flags).U32(static_cast<std::uint32_t>(result))
             .U64(revision).U64(after != nullptr ? after->ledger.setRevision : 0);
@@ -130858,19 +130843,19 @@ VnResult ActivateCanonicalPackSetAttempt(
                     return VN_AUTHORITY_CONFLICT;
                 }
                 const auto* previous = previousHandle.get();
-                const bool companion = operations != nullptr;
+                const bool hasMemberOperations = operations != nullptr;
                 if (previous != nullptr && previous->initHandle != 0 &&
-                    previous->setActivated != companion) return VN_AUTHORITY_CONFLICT;
-                auto semanticKey = HashCanonicalPackSetSemanticKey(desc, !companion);
+                    previous->setActivated != hasMemberOperations) return VN_AUTHORITY_CONFLICT;
+                auto semanticKey = HashCanonicalPackSetSemanticKey(desc, !hasMemberOperations);
                 std::vector<AcquiredCanonicalSetMember> captured;
                 std::vector<std::vector<PackSoundStreamingRow>> demandRows;
                 std::vector<std::uint8_t> demandCollected;
                 CanonicalMediaDemand demand;
-                if (companion)
+                if (hasMemberOperations)
                     CollectCanonicalSetDemand(engine, desc, operations, previous, prepared.budget,
                                               &demandRows, &demandCollected, &demand);
                 const auto resolver = demand.Resolver();
-                if (companion) {
+                if (hasMemberOperations) {
                     detail::DecodeResize(captured, desc.memberCount, prepared.staging);
                     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
                         const auto operation = (*operations)[i];
@@ -130929,7 +130914,7 @@ VnResult ActivateCanonicalPackSetAttempt(
                 }
                 const auto preparedResult = PrepareCanonicalSetActivation(
                     engine, desc, semanticKey, previous, &prepared, operations,
-                    companion ? &captured : nullptr);
+                    hasMemberOperations ? &captured : nullptr);
                 if (preparedResult != VN_OK) {
                     return preparedResult;
                 }

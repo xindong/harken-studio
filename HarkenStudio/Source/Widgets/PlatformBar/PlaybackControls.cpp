@@ -12,7 +12,7 @@
 #include <QStylePainter>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 
 PlaybackControls::PlaybackControls(QWidget* parent)
     : QWidget(parent)

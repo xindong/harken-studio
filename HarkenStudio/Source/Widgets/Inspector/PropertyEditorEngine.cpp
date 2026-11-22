@@ -73,7 +73,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -372,7 +372,7 @@ std::optional<QJsonValue> editorWireValue(
     if (authoredId == 0) return QJsonValue(objectIdString({}));
     ProjectItem* item = ProjectManager::instance().findItemByObjectID(
         static_cast<uint32_t>(authoredId));
-    if (!item || harkenstudio::IsNull(item->runtimeId())
+    if (!item || harken::studio::types::IsNull(item->runtimeId())
         || !itemMatchesReferenceRole(*item, field.referenceRole)
         || ProjectManager::instance().findItemByRuntimeStableId(
                item->runtimeId()) != item)
@@ -385,9 +385,9 @@ std::optional<QVariant> editorValue(
 {
     if (!objectReferenceRole(field.referenceRole)) return value.toVariant();
     if (!value.isString()) return std::nullopt;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     if (!parseObjectIdJson(value, &stableId)) return std::nullopt;
-    if (harkenstudio::IsNull(stableId)) return QVariant::fromValue(static_cast<uint32_t>(0));
+    if (harken::studio::types::IsNull(stableId)) return QVariant::fromValue(static_cast<uint32_t>(0));
     ProjectItem* item = ProjectManager::instance().findItemByRuntimeStableId(stableId);
     if (!item || !itemMatchesReferenceRole(*item, field.referenceRole))
         return QVariant(value.toString());
@@ -400,9 +400,9 @@ QVariant playableBaseEditorValue(ProjectItem& owner,
 {
     if (PlayablePropertyAuthoringV1::isComponentStored(property.id)) {
         if (const auto* project = ProjectManager::instance().currentProject()) {
-            const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+            const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
             if (index && index->valid)
-                return HarkenEditor::Bridge::resolvedStudioSpatializationMix(owner, *index);
+                return harken::studio::bridge::resolvedStudioSpatializationMix(owner, *index);
         }
         const auto source = PlayablePropertyAuthoringV1::resolveSpatializationMix(owner);
         return source ? source->state.value.toVariant() : QVariant(1.0f);
@@ -1827,7 +1827,7 @@ bool PropertyEditorEngine::playablePropertyEventRelated(
     if (PlayablePropertyAuthoringV1::isComponentStored(property->id)) {
         const auto* project = ProjectManager::instance().currentProject();
         if (!project) return owner == currentItem_;
-        const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+        const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
         if (!index || !index->valid) return false;
         for (auto* ancestor = currentItem_; ancestor;) {
             if (ancestor == owner) return true;

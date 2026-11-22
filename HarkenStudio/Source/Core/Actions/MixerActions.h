@@ -3,7 +3,7 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 QString unsupportedBusPropertiesKey(const QJsonObject& args);
 

@@ -4,7 +4,7 @@
 #include "Core/Components/VVariable.h"
 #include "ProjectItemInspectorRows.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const PropertySchema& variableInspectorSchema()
 {

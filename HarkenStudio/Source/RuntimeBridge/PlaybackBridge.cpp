@@ -23,8 +23,8 @@
 #include <unordered_map>
 #include <utility>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 static_assert(kEngineBackpressure == static_cast<EngineResult>(VN_BACKPRESSURE),
               "kEngineBackpressure must mirror the harken_core result code");
@@ -45,7 +45,7 @@ namespace {
 constexpr uint32_t kPrimaryListenerId = 1;
 
 struct BusState {
-    harkenstudio::ObjectId parentId = kEngineMasterBusId;
+    harken::studio::types::ObjectId parentId = kEngineMasterBusId;
     QString name;
     float volumeDb = 0.0f;
     float outputVolumeDb = 0.0f;
@@ -53,9 +53,9 @@ struct BusState {
     bool solo = false;
 };
 
-using BusCache = std::unordered_map<harkenstudio::ObjectId, BusState>;
+using BusCache = std::unordered_map<harken::studio::types::ObjectId, BusState>;
 using BusSendCache =
-    std::map<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>, RuntimeBusSendDefinition>;
+    std::map<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>, RuntimeBusSendDefinition>;
 
 BusCache g_buses;
 BusSendCache g_busSends;
@@ -70,7 +70,7 @@ struct PendingConfirmedPropertyEdit {
     std::optional<bool> mute;
     std::optional<bool> solo;
 };
-std::unordered_map<harkenstudio::ObjectId, PendingConfirmedPropertyEdit>
+std::unordered_map<harken::studio::types::ObjectId, PendingConfirmedPropertyEdit>
     g_pendingConfirmedPropertyEdits;
 std::unique_ptr<Detail::BusTopologySync> g_busTopologySync;
 
@@ -88,14 +88,14 @@ const BusSendCache& desiredBusSendCache()
         : g_busSends;
 }
 
-void rememberBus(BusCache& buses, harkenstudio::ObjectId busId, harkenstudio::ObjectId parentBusId,
+void rememberBus(BusCache& buses, harken::studio::types::ObjectId busId, harken::studio::types::ObjectId parentBusId,
                  const QString& name)
 {
-    if (harkenstudio::IsNull(busId))
+    if (harken::studio::types::IsNull(busId))
         return;
     BusState& state = buses[busId];
     state.parentId = busId == kEngineMasterBusId
-        ? harkenstudio::ObjectId{} : parentBusId;
+        ? harken::studio::types::ObjectId{} : parentBusId;
     state.name = name;
 }
 
@@ -139,24 +139,24 @@ Detail::BusTopologyBackend makeBusTopologyBackend()
             return static_cast<EngineResult>(
                 Vn_ApplyBusTopology(&desc));
         };
-    backend.setVolume = [](harkenstudio::ObjectId busId, float volumeDb,
+    backend.setVolume = [](harken::studio::types::ObjectId busId, float volumeDb,
                            uint32_t fadeMs) {
         return static_cast<EngineResult>(
             Vn_SetBusVolume(toNative(busId), volumeDb,
                             fadeMs));
     };
-    backend.setOutputVolume = [](harkenstudio::ObjectId busId, float volumeDb,
+    backend.setOutputVolume = [](harken::studio::types::ObjectId busId, float volumeDb,
                                  uint32_t fadeMs) {
         return static_cast<EngineResult>(
             Vn_SetBusOutputVolume(toNative(busId), volumeDb,
                                   fadeMs));
     };
-    backend.setMute = [](harkenstudio::ObjectId busId, bool mute, uint32_t fadeMs) {
+    backend.setMute = [](harken::studio::types::ObjectId busId, bool mute, uint32_t fadeMs) {
         return static_cast<EngineResult>(
             Vn_SetBusMute(toNative(busId),
                           mute ? 1u : 0u, fadeMs));
     };
-    backend.setSolo = [](harkenstudio::ObjectId busId, bool solo, uint32_t fadeMs) {
+    backend.setSolo = [](harken::studio::types::ObjectId busId, bool solo, uint32_t fadeMs) {
         return static_cast<EngineResult>(
             Vn_SetBusSolo(toNative(busId),
                           solo ? 1u : 0u, fadeMs));
@@ -397,7 +397,7 @@ EngineResult EngineSession::releaseActionSeek(uint64_t operationId)
     return Detail::runtimeReleaseActionSeek(operationId);
 }
 
-bool EngineSession::hasActionProgram(harkenstudio::ObjectId actionId) const
+bool EngineSession::hasActionProgram(harken::studio::types::ObjectId actionId) const
 {
     return Detail::runtimeHasActionProgram(actionId);
 }
@@ -438,7 +438,6 @@ bool EngineSession::setListenerTransform(float px, float py, float pz,
         VnVec3{px, py, pz}, VnVec3{fx, fy, fz}, VnVec3{ux, uy, uz});
 }
 
-bool EngineSession::loadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeLoadPack(path, outResult); }
 bool EngineSession::loadCanonicalPack(const QString& path, const QByteArray& bytes,
                                       uint64_t packStableId, uint32_t packKind,
                                       EngineResult* outResult)
@@ -456,12 +455,12 @@ bool EngineSession::prepareMedia(uint32_t sourceId, const QString& absolutePath,
 }
 
 std::optional<PreparedPreviewMedia> preparePreviewMedia(
-    const VNX::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error)
+    const harken::studio::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error)
 {
     return Detail::runtimePreparePreviewMedia(artifact, error);
 }
 
-EngineResult registerPreviewMedia(harkenstudio::ObjectId soundId, const PreparedPreviewMedia& media)
+EngineResult registerPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media)
 {
     return static_cast<EngineResult>(Detail::runtimeRegisterPreviewMedia(soundId, media));
 }
@@ -474,13 +473,13 @@ bool EngineSession::swapMedia(uint32_t sourceId, const QString& newPath, uint64_
 
 void EngineSession::clearPreparedMedia() { mediaRegistryClear(); }
 
-harkenstudio::ObjectId EngineSession::mintRawPcmSoundId()
+harken::studio::types::ObjectId EngineSession::mintRawPcmSoundId()
 {
     return Detail::runtimeMintRawPcmSoundId();
 }
 
 EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
-    harkenstudio::ObjectId soundId, const QString& absolutePath,
+    harken::studio::types::ObjectId soundId, const QString& absolutePath,
     uint64_t startFrame, uint64_t frameCount, bool loops)
 {
     RawPcmSliceRegistration registration;
@@ -507,7 +506,7 @@ EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
 }
 
 EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
-    harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+    harken::studio::types::ObjectId soundId, std::vector<float> interleaved,
     int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount, bool loops)
 {
     RawPcmSliceRegistration registration;
@@ -527,7 +526,7 @@ EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
 }
 
 EngineSession::RawPcmSliceRegistration EngineSession::relocateRawPcmSlice(
-    harkenstudio::ObjectId soundId, uint64_t startFrame)
+    harken::studio::types::ObjectId soundId, uint64_t startFrame)
 {
     RawPcmSliceRegistration registration;
     registration.soundId = soundId;
@@ -555,12 +554,12 @@ EngineSession::RawPcmSliceRegistration EngineSession::relocateRawPcmSlice(
     return registration;
 }
 
-EngineResult EngineSession::unregisterRawPcm(harkenstudio::ObjectId soundId)
+EngineResult EngineSession::unregisterRawPcm(harken::studio::types::ObjectId soundId)
 {
     return Detail::runtimeUnregisterRawPcm(soundId);
 }
 
-uint64_t EngineSession::playRawPcm(harkenstudio::ObjectId soundId, bool loops, EngineResult* outResult)
+uint64_t EngineSession::playRawPcm(harken::studio::types::ObjectId soundId, bool loops, EngineResult* outResult)
 {
     return Detail::runtimePlayRawPcm(soundId, loops, outResult);
 }
@@ -570,29 +569,29 @@ bool EngineSession::stopRawPcm(uint64_t playbackHandle, uint32_t fadeMs)
     return Detail::runtimeStopRawPcm(playbackHandle, fadeMs);
 }
 
-void EngineSession::setBusMuteById(harkenstudio::ObjectId busId, bool mute)
+void EngineSession::setBusMuteById(harken::studio::types::ObjectId busId, bool mute)
 {
     BusCache& buses = desiredBusCache();
     const auto bus = buses.find(busId);
-    if (harkenstudio::IsNull(busId) || bus == buses.end()) return;
+    if (harken::studio::types::IsNull(busId) || bus == buses.end()) return;
     if (g_pendingBusCache && g_buses.find(busId) != g_buses.end())
         g_pendingConfirmedPropertyEdits[busId].mute = mute;
     bus->second.mute = mute;
     submitDesiredBusTopology();
 }
 
-void EngineSession::setBusSoloById(harkenstudio::ObjectId busId, bool solo)
+void EngineSession::setBusSoloById(harken::studio::types::ObjectId busId, bool solo)
 {
     BusCache& buses = desiredBusCache();
     const auto bus = buses.find(busId);
-    if (harkenstudio::IsNull(busId) || bus == buses.end()) return;
+    if (harken::studio::types::IsNull(busId) || bus == buses.end()) return;
     if (g_pendingBusCache && g_buses.find(busId) != g_buses.end())
         g_pendingConfirmedPropertyEdits[busId].solo = solo;
     bus->second.solo = solo;
     submitDesiredBusTopology();
 }
 
-bool EngineSession::busMeterPeakById(harkenstudio::ObjectId busId, float& l, float& r) const
+bool EngineSession::busMeterPeakById(harken::studio::types::ObjectId busId, float& l, float& r) const
 {
     return Detail::runtimeBusMeterPeak(busId, l, r);
 }
@@ -623,40 +622,40 @@ void EngineSession::setVoiceDistanceScaleByName(const QString& soundName, float 
 }
 
 void EngineSession::setVoiceSendsByName(const QString& soundName,
-                                        const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends)
+                                        const std::vector<std::pair<harken::studio::types::ObjectId, float>>& sends)
 {
     Detail::runtimeSetVoiceSendsByName(soundName, sends);
 }
 
-void EngineSession::setBusVolumeDbById(harkenstudio::ObjectId busId, float db)
+void EngineSession::setBusVolumeDbById(harken::studio::types::ObjectId busId, float db)
 {
     BusCache& buses = desiredBusCache();
     const auto bus = buses.find(busId);
-    if (harkenstudio::IsNull(busId) || bus == buses.end()) return;
+    if (harken::studio::types::IsNull(busId) || bus == buses.end()) return;
     if (g_pendingBusCache && g_buses.find(busId) != g_buses.end())
         g_pendingConfirmedPropertyEdits[busId].volumeDb = db;
     bus->second.volumeDb = db;
     submitDesiredBusTopology();
 }
 
-void EngineSession::setBusOutputVolumeDbById(harkenstudio::ObjectId busId, float db)
+void EngineSession::setBusOutputVolumeDbById(harken::studio::types::ObjectId busId, float db)
 {
     BusCache& buses = desiredBusCache();
     const auto bus = buses.find(busId);
-    if (harkenstudio::IsNull(busId) || bus == buses.end()) return;
+    if (harken::studio::types::IsNull(busId) || bus == buses.end()) return;
     if (g_pendingBusCache && g_buses.find(busId) != g_buses.end())
         g_pendingConfirmedPropertyEdits[busId].outputVolumeDb = db;
     bus->second.outputVolumeDb = db;
     submitDesiredBusTopology();
 }
 
-float EngineSession::busVolumeDbById(harkenstudio::ObjectId busId) const
+float EngineSession::busVolumeDbById(harken::studio::types::ObjectId busId) const
 {
     const auto it = g_buses.find(busId);
     return it == g_buses.end() ? 0.0f : it->second.volumeDb;
 }
 
-void EngineSession::setBusPanById(harkenstudio::ObjectId busId, float pan) { Q_UNUSED(busId); Q_UNUSED(pan); }
+void EngineSession::setBusPanById(harken::studio::types::ObjectId busId, float pan) { Q_UNUSED(busId); Q_UNUSED(pan); }
 
 void EngineSession::synchronizeBusTopology(
     const std::vector<RuntimeBusDefinition>& buses,
@@ -679,7 +678,7 @@ void EngineSession::confirmActiveBusTopologyWithoutApply(
     rememberBus(candidateBuses, kEngineMasterBusId, {},
                 QStringLiteral("Master"));
     for (const RuntimeBusDefinition& bus : buses) {
-        if (harkenstudio::IsNull(bus.id))
+        if (harken::studio::types::IsNull(bus.id))
             continue;
         rememberBus(candidateBuses, bus.id, bus.parentId, bus.name);
         BusState& state = candidateBuses[bus.id];
@@ -717,7 +716,7 @@ BusTopologyFailure EngineSession::busTopologyFailure() const
         : BusTopologyFailure{};
 }
 
-void EngineSession::renameBus(harkenstudio::ObjectId busId, const QString& newName)
+void EngineSession::renameBus(harken::studio::types::ObjectId busId, const QString& newName)
 {
     BusCache& buses = desiredBusCache();
     const auto bus = buses.find(busId);
@@ -725,14 +724,14 @@ void EngineSession::renameBus(harkenstudio::ObjectId busId, const QString& newNa
     bus->second.name = newName;
 }
 
-std::vector<harkenstudio::ObjectId> EngineSession::runtimeBusIds() const
+std::vector<harken::studio::types::ObjectId> EngineSession::runtimeBusIds() const
 {
     return g_busTopologySync
         ? g_busTopologySync->ConfirmedBusIds()
-        : std::vector<harkenstudio::ObjectId>{};
+        : std::vector<harken::studio::types::ObjectId>{};
 }
 
-void EngineSession::setMixerVolume(harkenstudio::ObjectId busId, float volumeDb) { setBusVolumeDbById(busId, volumeDb); }
+void EngineSession::setMixerVolume(harken::studio::types::ObjectId busId, float volumeDb) { setBusVolumeDbById(busId, volumeDb); }
 
 uint32_t EngineSession::addListener() { return UINT32_MAX; }
 void EngineSession::removeListener(uint32_t listenerId) { Q_UNUSED(listenerId); }
@@ -812,18 +811,6 @@ void pollEngineNotifications(std::vector<EngineNotification>& out)
         out.push_back(std::move(item));
 }
 
-void injectRuntimeNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp)
-{
-    Detail::runtimeInjectNotificationForTest(type, voiceHandle, blockTimestamp);
-}
-
-void invalidateRuntimeNotificationsForTest()
-{
-    Detail::runtimeInvalidateNotificationsForTest();
-}
-
 bool findModulatorPreset(const QString& name, ModulatorPresetDesc& out)
 {
     Q_UNUSED(name);
@@ -853,5 +840,5 @@ uint32_t modulatorPresetTotalCount()
     return 0;
 }
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

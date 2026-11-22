@@ -3,7 +3,7 @@
 #include "AssetPipeline/AssetTypes.h"
 #include "ProjectTypes.h"
 
-namespace VNX::SoundSourceEditing {
+namespace harken::studio::SoundSourceEditing {
 
 QString previewLanguage(const ProjectItem& item, const QString& contextLanguage);
 QString exportLanguage(const ProjectItem& item, const QString& variantLanguage);

@@ -8,7 +8,7 @@
 #include <QMap>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QJsonObject object(const QJsonObject& properties = {}, const QJsonArray& required = {})

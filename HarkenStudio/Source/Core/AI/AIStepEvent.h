@@ -3,7 +3,7 @@
 #include <QMetaType>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class AIStepPhase : quint8
 {
@@ -69,5 +69,5 @@ struct AIServiceDiagnostic
 
 }
 
-Q_DECLARE_METATYPE(VNX::AIStepEvent)
-Q_DECLARE_METATYPE(VNX::AIServiceDiagnostic)
+Q_DECLARE_METATYPE(harken::studio::AIStepEvent)
+Q_DECLARE_METATYPE(harken::studio::AIServiceDiagnostic)

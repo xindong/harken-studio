@@ -5,23 +5,23 @@
 
 #include <gtest/gtest.h>
 
-using VNX::ComponentType;
-using VNX::ProjectItem;
+using harken::studio::ComponentType;
+using harken::studio::ProjectItem;
 
 TEST(ResolveComponentTyped, EnumTableHitsExactlyAttachedComponents)
 {
-    for (ProjectItem::Type type : VNX::ItemTypeCatalog::allTypes())
+    for (ProjectItem::Type type : harken::studio::ItemTypeCatalog::allTypes())
     {
         ProjectItem item(QStringLiteral("Item"), type);
         item.attachDefaultComponents();
 
-        for (size_t i = 0; i < VNX::kMaxComponents; ++i)
+        for (size_t i = 0; i < harken::studio::kMaxComponents; ++i)
         {
             const auto ct = static_cast<ComponentType>(i);
-            VNX::IComponent* comp =
-                VNX::PropertyEditorEngine::resolveComponentTyped(&item, ct);
+            harken::studio::IComponent* comp =
+                harken::studio::PropertyEditorEngine::resolveComponentTyped(&item, ct);
             EXPECT_EQ(comp != nullptr, item.components.has(ct))
-                << VNX::ItemTypeCatalog::canonicalName(type).toStdString()
+                << harken::studio::ItemTypeCatalog::canonicalName(type).toStdString()
                 << " component " << static_cast<int>(ct);
             if (comp)
                 EXPECT_EQ(comp->getType(), ct);

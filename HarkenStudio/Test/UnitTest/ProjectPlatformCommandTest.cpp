@@ -17,7 +17,7 @@
 #include <QTemporaryDir>
 
 namespace {
-using namespace VNX;
+using namespace harken::studio;
 namespace Platforms = ProjectPlatformSemantics;
 
 class ProjectPlatformCommand : public testing::Test
@@ -329,7 +329,7 @@ TEST_F(ProjectPlatformCommand, DeletingReferencedAssetsRestoresDefaultsAndInheri
     const auto effective = buildFieldGroupEffectiveSnapshot(project(), toFieldGroupGuid(platform));
     ASSERT_TRUE(effective.ok());
     for (const auto* item : {layer, inherited, local})
-        EXPECT_TRUE(harkenprojectschema::IsNull(
+        EXPECT_TRUE(harken::studio::project_schema::IsNull(
             effective.definitions.at(toFieldGroupGuid(item->guid)).conversion.settingsRef));
     const auto deleted = authoredState();
     ASSERT_TRUE(manager().saveProject());

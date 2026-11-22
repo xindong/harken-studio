@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 bool validateBusHierarchyPlacement(const ProjectItem* parent,
                                    const ProjectItem* master,

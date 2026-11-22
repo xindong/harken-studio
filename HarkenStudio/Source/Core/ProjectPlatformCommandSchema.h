@@ -2,7 +2,7 @@
 
 #include "ProjectPlatform.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline QJsonObject projectPlatformIdSchema()
 {

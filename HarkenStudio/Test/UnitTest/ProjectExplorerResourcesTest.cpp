@@ -25,7 +25,7 @@
 #include <QtCore/qt_windows.h>
 #endif
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

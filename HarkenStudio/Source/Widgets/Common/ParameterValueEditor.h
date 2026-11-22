@@ -6,7 +6,7 @@
 class QComboBox;
 class QDoubleSpinBox;
 
-namespace VNX {
+namespace harken::studio {
 
 class DiscreteValueModel;
 class ParameterBinding;

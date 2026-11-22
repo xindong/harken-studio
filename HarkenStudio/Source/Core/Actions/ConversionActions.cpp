@@ -17,7 +17,7 @@
 #include <QDir>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 ActionResult success(const QJsonObject& data)
@@ -151,10 +151,10 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
         const auto found = platform ? groups.platforms.find(toFieldGroupGuid(*platform)) : groups.platforms.end();
         const auto* group = platform ? (found == groups.platforms.end() ? nullptr : &found->second) : &groups.shared;
         const auto local = group && group->localHistory
-            ? group->localHistory->settingsRef : harkenprojectschema::AuthoringGuid{};
+            ? group->localHistory->settingsRef : harken::studio::project_schema::AuthoringGuid{};
         QJsonObject result{{"object", item->guid.toString(QUuid::WithoutBraces)},
             {"inherit", group && group->mode == FieldGroupMode::Inherit},
-            {"settings", harkenprojectschema::IsNull(local) ? QJsonValue(QJsonValue::Null)
+            {"settings", harken::studio::project_schema::IsNull(local) ? QJsonValue(QJsonValue::Null)
                 : QJsonValue(fromFieldGroupGuid(local).toString(QUuid::WithoutBraces))}};
         if (platform) result.insert(QStringLiteral("platform_id"), ProjectPlatformSemantics::idString(*platform));
         return success(result);

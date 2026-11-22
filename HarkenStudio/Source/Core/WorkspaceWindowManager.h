@@ -14,7 +14,7 @@
 class QAction;
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class WorkspaceWindowManager
 {

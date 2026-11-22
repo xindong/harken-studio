@@ -6,7 +6,7 @@
 #include <QCheckBox>
 #include <QSignalBlocker>
 
-namespace VNX {
+namespace harken::studio {
 
 ExtensionPage::ExtensionPage(QWidget* parent)
     : SettingsPage(parent)

@@ -24,8 +24,8 @@
 
 #include <memory>
 
-using VNH::InstallRequest;
-using VNH::PackageReader;
+using harken::hub::InstallRequest;
+using harken::hub::PackageReader;
 using HarkenHubTest::baseManifestPayload;
 using HarkenHubTest::makeKeypair;
 using HarkenHubTest::signEnvelope;
@@ -63,7 +63,7 @@ QString buildPackage(const QString& path, bool legacyCapabilities = false)
 
     QJsonArray files;
     QJsonObject binaryRecord;
-    binaryRecord[QStringLiteral("path")] = VNH::studioBinaryRelativePath();
+    binaryRecord[QStringLiteral("path")] = harken::hub::studioBinaryRelativePath();
     binaryRecord[QStringLiteral("size")] = binary.size();
     binaryRecord[QStringLiteral("sha256")] = QString::fromLatin1(sha256Hex(binary));
     files.append(binaryRecord);
@@ -87,7 +87,7 @@ QString buildPackage(const QString& path, bool legacyCapabilities = false)
     }
 
     const std::vector<TestEntry> entries = {
-        {VNH::studioBinaryRelativePath().toUtf8(), binary},
+        {harken::hub::studioBinaryRelativePath().toUtf8(), binary},
         {QByteArrayLiteral("package-manifest.json"),
          QJsonDocument(manifest).toJson(QJsonDocument::Compact)},
         {QByteArrayLiteral("capabilities.json"),
@@ -167,11 +167,11 @@ TEST_F(InstallRequestTest, PrepareVerifiesAndPlacesHandoff)
     EXPECT_EQ(preparation.version, QStringLiteral("1.4.0"));
     EXPECT_EQ(preparation.buildId, QStringLiteral("run12.abcd1234"));
     EXPECT_TRUE(
-        VNH::HandoffArea::isValidTransactionId(preparation.transactionId));
+        harken::hub::HandoffArea::isValidTransactionId(preparation.transactionId));
     EXPECT_TRUE(QFile::exists(
-        VNH::HandoffArea::packagePath(preparation.transactionId)));
+        harken::hub::HandoffArea::packagePath(preparation.transactionId)));
     EXPECT_TRUE(QFile::exists(
-        VNH::HandoffArea::manifestPath(preparation.transactionId)));
+        harken::hub::HandoffArea::manifestPath(preparation.transactionId)));
 }
 
 TEST_F(InstallRequestTest, PreparedTransactionInstallsEndToEnd)
@@ -183,11 +183,11 @@ TEST_F(InstallRequestTest, PreparedTransactionInstallsEndToEnd)
         InstallRequest::prepare(packagePath, manifestPath, keys.publicKey, kNow);
     ASSERT_TRUE(preparation.ok) << preparation.error.toStdString();
 
-    const auto outcome = VNH::InstallExecutor::run(preparation.transactionId,
+    const auto outcome = harken::hub::InstallExecutor::run(preparation.transactionId,
                                                    keys.publicKey, kNow);
     ASSERT_TRUE(outcome.ok) << outcome.error.toStdString();
     EXPECT_TRUE(QFile::exists(outcome.installPath + QStringLiteral("/") +
-                              VNH::studioBinaryRelativePath()));
+                              harken::hub::studioBinaryRelativePath()));
 }
 
 TEST_F(InstallRequestTest, LegacyPackageInstallsRemainsAvailableAndCanBeRepaired)
@@ -198,16 +198,16 @@ TEST_F(InstallRequestTest, LegacyPackageInstallsRemainsAvailableAndCanBeRepaired
     const auto preparation =
         InstallRequest::prepare(packagePath, manifestPath, keys.publicKey, kNow);
     ASSERT_TRUE(preparation.ok) << preparation.error.toStdString();
-    const auto installed = VNH::InstallExecutor::run(preparation.transactionId, keys.publicKey, kNow, true);
+    const auto installed = harken::hub::InstallExecutor::run(preparation.transactionId, keys.publicKey, kNow, true);
     ASSERT_TRUE(installed.ok) << installed.error.toStdString();
-    const auto versions = VNH::VersionScanner::scanAvailable();
+    const auto versions = harken::hub::VersionScanner::scanAvailable();
     ASSERT_EQ(versions.size(), 1u);
     EXPECT_TRUE(versions.front().available);
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::setHealthState(installed.buildId, "NeedsRepair", &error));
-    const auto repaired = VNH::RepairExecutor::run(installed.buildId, kNow);
+    ASSERT_TRUE(harken::hub::InstallIndex::setHealthState(installed.buildId, "NeedsRepair", &error));
+    const auto repaired = harken::hub::RepairExecutor::run(installed.buildId, kNow);
     ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
-    ASSERT_EQ(VNH::VersionScanner::scanAvailable().size(), 1u);
+    ASSERT_EQ(harken::hub::VersionScanner::scanAvailable().size(), 1u);
 }
 
 TEST_F(InstallRequestTest, BadSignatureLeavesNoHandoff)
@@ -223,7 +223,7 @@ TEST_F(InstallRequestTest, BadSignatureLeavesNoHandoff)
     const auto preparation =
         InstallRequest::prepare(packagePath, manifestPath, keys.publicKey, kNow);
     EXPECT_FALSE(preparation.ok);
-    const QDir handoffDir(VNH::HandoffArea::rootDir());
+    const QDir handoffDir(harken::hub::HandoffArea::rootDir());
     EXPECT_TRUE(!handoffDir.exists() ||
                 handoffDir.entryList(QDir::Files).isEmpty());
 }

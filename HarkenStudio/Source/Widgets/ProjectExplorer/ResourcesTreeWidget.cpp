@@ -40,7 +40,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr auto kResourcePathsMime = "application/x-harken-source-paths";

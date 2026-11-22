@@ -5,7 +5,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class PackBuildState
 {
@@ -30,7 +30,7 @@ public:
 private:
     void deriveInputs(const QSet<QString>* successfulPaths = nullptr);
     bool savedPackMatches(const QString& relativePackPath) const;
-    bool savedCompanionMatches(const QString& relativePackPath) const;
+    bool savedPackMetadataMatches(const QString& relativePackPath) const;
 
     std::shared_ptr<const ProjectBuildSnapshot> snapshot_;
     QString compiler_;
@@ -45,7 +45,7 @@ private:
     QMap<QString, QString> inputs_;
     QMap<QString, QString> resources_;
     mutable QHash<QString, bool> packMatches_;
-    mutable QHash<QString, bool> companionMatches_;
+    mutable QHash<QString, bool> packMetadataMatches_;
     mutable QHash<QString, bool> current_;
     mutable QHash<QString, QString> waveformStates_;
     std::vector<ProjectPackExporter::PackBuildRecord> records_;

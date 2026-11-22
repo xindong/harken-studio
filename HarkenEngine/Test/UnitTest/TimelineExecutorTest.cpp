@@ -486,7 +486,7 @@ public:
         ++cancelCount;
         return true;
     }
-    void FailPlan03Deadline(harken::DecisionToken decision,
+    void FailScheduleDeadline(harken::DecisionToken decision,
                             std::uint64_t quantum) noexcept override {
         ++deadlineFailureCount;
         failedDecision = decision;
@@ -495,7 +495,7 @@ public:
             deadlineAfterAdmit = true;
         }
     }
-    bool ApplyPlan03Groups(std::uint64_t) noexcept override { return groupsApply; }
+    bool ApplyScheduleGroups(std::uint64_t) noexcept override { return groupsApply; }
     bool CollectFrontierGroups(std::uint64_t) noexcept override {
         return ++collectedPages <= collectPageLimit;
     }
@@ -610,7 +610,7 @@ void FileTimeline(
 
 TEST(TimelineExecutor, DeadlinePrepassRunsBeforeAdmissionAndFailsOnce) {
     auto config = PoolConfig();
-    config.maxPlan03GroupHeadersPerPage = 2;
+    config.maxScheduleGroupHeadersPerPage = 2;
     config.maxArmsPerGroup = 2;
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, 1));
@@ -648,16 +648,16 @@ TEST(TimelineExecutor, DeadlinePrepassRunsBeforeAdmissionAndFailsOnce) {
     payload.armGroup = {23, 29};
     ASSERT_TRUE(decisions.Commit(decision, payload));
 
-    harken::Plan03GroupSliceInput slice{};
+    harken::ScheduleGroupSliceInput slice{};
     slice.executeFrame = 0;
     slice.decision = decision;
     slice.members = members;
     slice.memberCount = 2;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(slice, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(slice, arms));
     slice.sliceIndex = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(slice, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(slice, arms));
     pool.Publish(256, nullptr, nullptr, &arms);
 
     Sink sink;
@@ -684,8 +684,8 @@ TEST(TimelineExecutor, DeadlinePrepassRunsBeforeAdmissionAndFailsOnce) {
     ASSERT_TRUE(decisions.CaptureCommitted(decision, &snapshot));
     EXPECT_EQ(harken::AudioGroupState::DeadlineInvalidated,
               snapshot.audioState);
-    harken::Plan03PageGroupView groups[2]{};
-    ASSERT_EQ(2u, pool.CapturePlan03PageGroupsRt(0, groups, 2));
+    harken::SchedulePageGroupView groups[2]{};
+    ASSERT_EQ(2u, pool.CaptureSchedulePageGroupsRt(0, groups, 2));
     EXPECT_EQ(harken::AudioSliceState::SliceInvalidated,
               groups[0].lease->Capture().state);
     EXPECT_EQ(harken::AudioSliceState::SliceInvalidated,

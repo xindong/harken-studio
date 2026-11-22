@@ -6,7 +6,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX::VorbisEncoder {
+namespace harken::studio::VorbisEncoder {
 
 inline constexpr uint32_t kSeekGrainFrames = 4096;
 inline constexpr uint32_t kFormatVersion = 1;

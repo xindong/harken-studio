@@ -10,7 +10,7 @@
 
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
                                                    const ProjectItem* excludedSubtree)
@@ -28,11 +28,11 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
         for (const auto& child : item->children) exclude(child.get());
     };
     exclude(excludedSubtree);
-    QSet<harkenstudio::ObjectId> ambiguous;
-    auto add = [&](harkenstudio::ObjectId id, const ProjectItem& owner,
+    QSet<harken::studio::types::ObjectId> ambiguous;
+    auto add = [&](harken::studio::types::ObjectId id, const ProjectItem& owner,
                    ProjectObjectLocation::Kind kind, const QString& name) {
-        if (harkenstudio::IsNull(id) || id == harkenstudio::kMasterBusObjectId
-            || runtimeObjectId(owner.guid) == harkenstudio::kMasterBusObjectId
+        if (harken::studio::types::IsNull(id) || id == harken::studio::types::kMasterBusObjectId
+            || runtimeObjectId(owner.guid) == harken::studio::types::kMasterBusObjectId
             || ambiguous.contains(id)) return;
         if (index.objects_.contains(id)) {
             index.objects_.remove(id);

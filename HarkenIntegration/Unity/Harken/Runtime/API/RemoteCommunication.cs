@@ -13,7 +13,6 @@ namespace Harken
         private static readonly uint StatusSize = (uint)Marshal.SizeOf<VnRemoteStatus>();
 
         public static unsafe VnResult Start(
-            // string applicationName, string bindAddress = "0.0.0.0", int port = 0,
             string applicationName, string bindAddress = "127.0.0.1", int port = 0,
             bool enableDiscovery = true, int discoveryPort = 0, string projectName = null)
         {

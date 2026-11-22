@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Harken
@@ -12,6 +13,82 @@ namespace Harken
         private const int HeaderBytes = 16;
         private const int DigestBytes = 32;
         private const int MaxPart = PackStorage.MaxGzipMemberBytes;
+
+        private static readonly bool IsWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, FileShare share,
+            IntPtr securityAttributes, FileMode mode, uint flags, IntPtr template);
+
+        private static SafeFileHandle OpenForIdentity(string path, FileShare share)
+        {
+            const uint genericRead = 0x80000000, openReparsePoint = 0x00200000;
+            var handle = CreateFileW(path, genericRead, share,
+                IntPtr.Zero, FileMode.Open, openReparsePoint, IntPtr.Zero);
+            if (!handle.IsInvalid) return handle;
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            if (error == 2 || error == 3) return null;
+            throw new IOException("Cannot reopen Pack input.", new System.ComponentModel.Win32Exception(error));
+        }
+
+        internal readonly struct FileIdentity : IEquatable<FileIdentity>
+        {
+            private readonly ulong device, inode, length, modified;
+            internal ulong Length => length;
+            internal void SetBatchIdentity(ref VnResidentPackVisitDescV1 directory, long changeTime)
+            {
+                directory.initVolumeId = device;
+                directory.initFileId = inode;
+                directory.initFileSize = length;
+                directory.initWriteTime = modified;
+                directory.initChangeTime = (ulong)changeTime;
+            }
+            private FileIdentity(ulong device, ulong inode, ulong length, ulong modified)
+            {
+                this.device = device;
+                this.inode = inode;
+                this.length = length;
+                this.modified = modified;
+            }
+            public bool Equals(FileIdentity other) => device == other.device && inode == other.inode &&
+                length == other.length && modified == other.modified;
+
+            internal static FileIdentity ReadWindows(SafeFileHandle handle)
+            {
+                if (!GetFileInformationByHandle(handle, out WindowsInfo info))
+                    throw new IOException("Cannot identify the opened Pack file.");
+                if ((info.Attributes & (uint)FileAttributes.ReparsePoint) != 0) throw new IOException("A Pack input must be a regular file.");
+                return new FileIdentity(info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow,
+                    ((ulong)info.SizeHigh << 32) | info.SizeLow, ((ulong)info.WriteHigh << 32) | info.WriteLow);
+            }
+
+            internal static string WindowsPath(SafeFileHandle handle, int pathLength)
+            {
+                const int maxPathChars = 32768;
+                var buffer = new StringBuilder(Math.Min(maxPathChars, Math.Max(260, pathLength + 16)));
+                uint count = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+                if (count >= buffer.Capacity && count <= maxPathChars)
+                {
+                    buffer = new StringBuilder((int)count);
+                    count = GetFinalPathNameByHandle(handle, buffer, count, 0);
+                }
+                if (count == 0 || count >= buffer.Capacity) throw new IOException("Cannot resolve Pack file identity.");
+                return buffer.ToString();
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct WindowsInfo
+            {
+                internal uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+                internal uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+            }
+            [DllImport("kernel32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out WindowsInfo info);
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+        }
 
         internal sealed class ResidentSelection
         {
@@ -148,11 +225,10 @@ namespace Harken
             return image;
         }
 
-        private VnResult CaptureResident(string name, VnObjectId project, byte[] init, out CompanionInput input)
+        private VnResult CaptureResident(string name, VnObjectId project, byte[] init, out PackMetadataInput input)
         {
             input = null;
             if (!IsWindows) return VnResult.VN_CAPABILITY_UNAVAILABLE;
-            if (Publishing()) return VnResult.VN_PACK_STALE_REVISION;
             string basename = name ?? "Init";
             string scope = name == null ? string.Empty : Language;
             string path = PathFor(basename, scope, ".hrp"), missing = null;
@@ -164,7 +240,7 @@ namespace Harken
                 path = PathFor(basename, scope, ".hrp");
                 handle = OpenForIdentity(path, FileShare.Read);
             }
-            if (handle == null) return Publishing() ? VnResult.VN_PACK_STALE_REVISION : VnResult.VN_CONTENT_NOT_LOADED;
+            if (handle == null) return VnResult.VN_CONTENT_NOT_LOADED;
             using (handle)
             {
                 FileIdentity identity = FileIdentity.ReadWindows(handle);
@@ -177,17 +253,17 @@ namespace Harken
                     ChangeTime = ReadChangeTime(handle) };
                 VnResult result = Unpack(ReadImage(handle, (int)identity.Length), out byte[] bytes, out byte[] json);
                 if (result != VnResult.VN_OK) return result;
-                result = PackCompanion.Parse(json, bytes, name, scope, project, out PackCompanion names);
+                result = PackMetadata.Parse(json, bytes, name, scope, project, out PackMetadata names);
                 if (result != VnResult.VN_OK) return result;
-                result = CompanionNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
+                result = PackMetadataNative.Inspect(bytes, init, names, out VnPackInspectReportV1 facts);
                 if (result != VnResult.VN_OK) return result;
                 names.ProjectId = facts.projectId;
-                input = new CompanionInput { Bytes = bytes, Json = json, Names = names, Facts = facts, Selection = selection };
+                input = new PackMetadataInput { Bytes = bytes, Json = json, Names = names, Facts = facts, Selection = selection };
                 return VnResult.VN_OK;
             }
         }
 
-        internal VnResult LockPublication(ResidentSelection init, ICollection<CompanionInput> changes,
+        internal VnResult LockPublication(ResidentSelection init, ICollection<PackMetadataInput> changes,
             out ResidentGuards guards)
         {
             guards = null;
@@ -213,7 +289,6 @@ namespace Harken
                         if (input.Selection.MissingPath != null && Exists(input.Selection.MissingPath))
                             return VnResult.VN_PACK_STALE_REVISION;
                 }
-                if (Publishing()) return VnResult.VN_PACK_STALE_REVISION;
                 guards = acquired;
                 return VnResult.VN_OK;
             }

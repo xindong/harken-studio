@@ -18,9 +18,8 @@
 #include <cmath>
 #include <climits>
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 QJsonObject IPCServer::queueDesktopOperation(QWidget* widget,
     std::function<QJsonObject(QWidget*)> operation, QJsonObject details)

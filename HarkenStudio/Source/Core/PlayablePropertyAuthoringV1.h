@@ -21,14 +21,14 @@
 #include <variant>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 enum class ProjectItemType;
 class PlayablePropertyAuthoringV1;
 
 using PlayablePropertyOccurrenceValueV1 =
-    std::variant<float, bool, uint32_t, harkenstudio::ObjectId, QJsonArray>;
+    std::variant<float, bool, uint32_t, harken::studio::types::ObjectId, QJsonArray>;
 
 struct PlayablePropertyOccurrenceV1
 {

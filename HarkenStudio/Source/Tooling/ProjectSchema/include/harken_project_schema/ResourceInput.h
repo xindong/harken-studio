@@ -5,7 +5,7 @@
 
 #include <map>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 struct ResourceFacts {
     bool valid = false;
@@ -26,6 +26,6 @@ struct ResourceInput {
 // stable id (through the compiled project) before keying this table.
 using ResourceTable = std::map<StableId, ResourceInput>;
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_RESOURCE_INPUT_H

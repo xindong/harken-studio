@@ -4,7 +4,7 @@
 
 #include "ProjectSchemaValidator.generated.h"
 
-namespace VNX {
+namespace harken::studio {
 
 bool ProjectSchemaValidator::supportsProjectVersion(int version)
 {

@@ -6,7 +6,7 @@
 #include <QSettings>
 #include <QLocale>
 
-namespace VNX {
+namespace harken::studio {
 
 LanguageManager& LanguageManager::instance()
 {

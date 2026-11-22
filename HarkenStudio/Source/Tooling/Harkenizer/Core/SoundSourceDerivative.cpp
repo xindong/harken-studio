@@ -22,7 +22,7 @@
 #include <future>
 #include <limits>
 
-namespace VNX::SoundSourceDerivative {
+namespace harken::studio::SoundSourceDerivative {
 namespace {
 
 constexpr quint32 kArtifactMagic = 0x4d435048;
@@ -349,7 +349,7 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
     std::vector<float> samples;
     int channels = 0;
     int sampleRate = 0;
-    if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(inputPath, samples,
+    if (!harken::studio::bridge::decodeAudioFileInterleaved(inputPath, samples,
                                                          channels, sampleRate)) {
         fail(error, QStringLiteral("failed to decode source"));
         return std::nullopt;
@@ -482,15 +482,15 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
         } else {
             artifact.samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
             artifact.outputBytes = static_cast<uint64_t>(artifact.samples->size()) * sizeof(float);
-            HarkenEditor::Bridge::PackMediaDesc description;
+            harken::studio::bridge::PackMediaDesc description;
             description.interleavedSamples = artifact.samples;
             description.sampleRate = artifact.sampleRate;
             description.channels = artifact.channels;
-            description.format = HarkenEditor::Bridge::PackMediaFormat::PcmFloat;
+            description.format = harken::studio::bridge::PackMediaFormat::PcmFloat;
             description.loopable = artifact.loopable;
             description.loopStartFrame = artifact.loopStartFrame;
             description.loopEndFrame = artifact.loopEndFrame;
-            if (!HarkenEditor::Bridge::computePackMediaContentRevision(description, &artifact.revision)) {
+            if (!harken::studio::bridge::computePackMediaContentRevision(description, &artifact.revision)) {
                 fail(creationError, QStringLiteral("Cannot compute converted media revision"));
                 return std::nullopt;
             }

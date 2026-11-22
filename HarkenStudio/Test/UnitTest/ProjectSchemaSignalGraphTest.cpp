@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 using fixtures::G;

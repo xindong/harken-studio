@@ -10,7 +10,7 @@
 #include <functional>
 #include <map>
 
-namespace VNX::RuntimeContainerLowering {
+namespace harken::studio::RuntimeContainerLowering {
 namespace {
 
 std::map<QUuid, const ProjectItem*> indexProject(const ProjectData& project)
@@ -39,7 +39,7 @@ RuntimeContainerLoweringResult lower(const ProjectItem& container,
                                      const ProjectData& project, PlatformScope scope)
 {
     if (container.type != ProjectItem::Type::Container
-        || harkenstudio::IsNull(container.runtimeId()))
+        || harken::studio::types::IsNull(container.runtimeId()))
         return refuse(QStringLiteral("Runtime Container requires a stable Container object"));
     const auto* selection = container.comp<VSelection>();
     if (!selection)
@@ -77,7 +77,7 @@ RuntimeContainerLoweringResult lower(const ProjectItem& container,
     for (const auto& occurrence : activeRows) {
         const auto child = projectIndex.find(occurrence.childGuid);
         if (child == projectIndex.end() || !child->second
-            || harkenstudio::IsNull(child->second->runtimeId()))
+            || harken::studio::types::IsNull(child->second->runtimeId()))
             return refuse(QStringLiteral("Container child has no stable runtime identity"));
         if (child->second->type != ProjectItem::Type::Sound
             && child->second->type != ProjectItem::Type::Container)
@@ -97,7 +97,7 @@ RuntimeContainerLoweringResult lower(const ProjectItem& container,
         const auto variable = projectIndex.find(grid.axes.front());
         if (variable == projectIndex.end()
             || variable->second->type != ProjectItem::Type::Variable
-            || harkenstudio::IsNull(variable->second->runtimeId()))
+            || harken::studio::types::IsNull(variable->second->runtimeId()))
             return refuse(QStringLiteral("Runtime Container axis Variable is missing"));
         result.plan.variableId = variable->second->runtimeId();
         std::map<uint32_t, QUuid> matches;

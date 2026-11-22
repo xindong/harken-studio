@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 bool NameValidator::isAllowedChar(QChar c)
 {

@@ -11,7 +11,7 @@
 #include <QJsonObject>
 #include <QUuid>
 
-namespace VNH {
+namespace harken::hub {
 namespace {
 
 QString hubTranslate(const QString& source)
@@ -156,7 +156,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.engineVersion = text.section(QStringLiteral("m_EditorVersion:"),
                                                 1).trimmed();
         }
-        auto discovery = VNX::UnityInstallation::discover(record.canonicalRoot);
+        auto discovery = harken::hub::unity::UnityInstallation::discover(record.canonicalRoot);
         if (discovery.installations.size() == 1)
             result.integrationInstallPath = root.relativeFilePath(discovery.installations.front().path);
         if (!discovery.errors.isEmpty() || discovery.installations.size() > 1) {
@@ -183,10 +183,10 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.canChangeIntegration = true;
             result.remediation = hubTranslate(QStringLiteral("No Integration Package is installed. Use Install Integration Package and select a complete Integration Package source. Uninstalling requires an existing installation."));
             const QString candidate = record.integrationInstallPath.isEmpty()
-                ? VNX::UnityInstallation::defaultRelativePath() : record.integrationInstallPath;
+                ? harken::hub::unity::UnityInstallation::defaultRelativePath() : record.integrationInstallPath;
             QString path;
             QString error;
-            if (VNX::UnityInstallation::resolveTarget(record.canonicalRoot, candidate, &path, &error)
+            if (harken::hub::unity::UnityInstallation::resolveTarget(record.canonicalRoot, candidate, &path, &error)
                 && QDir(path).exists() && !QDir(path).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot)) {
                 result.integrationInstallPath = candidate;
                 result.status = hubTranslate(QStringLiteral("Installation location is not empty"));
@@ -200,9 +200,9 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             QDir(packageRoot).filePath(QStringLiteral("package.json")), &packageOk);
         result.integrationVersion = package.value(QStringLiteral("version")).toString();
         QString validatedPath;
-        if (!VNX::UnityInstallation::resolveTarget(record.canonicalRoot, result.integrationInstallPath,
+        if (!harken::hub::unity::UnityInstallation::resolveTarget(record.canonicalRoot, result.integrationInstallPath,
                                                   &validatedPath, &result.error)
-            || !VNX::UnityInstallation::validateTree(packageRoot, &result.error)) {
+            || !harken::hub::unity::UnityInstallation::validateTree(packageRoot, &result.error)) {
             result.health = EngineTargetHealth::Incomplete;
             result.status = hubTranslate(QStringLiteral("Unsafe or unreadable Integration Package path"));
             result.remediation = hubTranslate(QStringLiteral("Resolve the reported path or permission problem. Integration Package folders must be real directories in the supported project locations, without symbolic links or junctions. Check again after correcting the path."));
@@ -293,7 +293,7 @@ EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& rec
     auto result = observeLayout(record);
     if (record.engineKind == EngineKind::Unity) {
         result.canRestorePrevious = result.validTarget
-            && !VNX::UnityIntegrationService::previousVersionBackup(record.canonicalRoot).isEmpty();
+            && !harken::hub::unity::UnityIntegrationService::previousVersionBackup(record.canonicalRoot).isEmpty();
         if (result.canRestorePrevious) {
             result.health = EngineTargetHealth::Incomplete;
             result.status = hubTranslate(QStringLiteral("Integration Package change unfinished"));

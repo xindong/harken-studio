@@ -18,7 +18,7 @@
 #include "EditorCommandCatalog.h"
 
 
-namespace VNX {
+namespace harken::studio {
 
 class UndoCommand;
 
@@ -109,7 +109,7 @@ signals:
     void actionExecuted(const QString& actionId,
                         const QJsonObject& args,
                         const QJsonObject& result,
-                        VNX::ActionSource source);
+                        harken::studio::ActionSource source);
 
 private:
     ActionManager();
@@ -142,11 +142,11 @@ class IPCServer;
 
 }
 
-namespace HarkenEditor {
+namespace harken::studio {
 class AuditionManager;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 void registerMixerActions(ActionManager& mgr,
                           AudioEngine* engine,
@@ -166,7 +166,7 @@ void registerEditorActions(ActionManager& mgr,
                            BlueprintCanvasWidget* blueprintCanvas,
                            IPCServer* ipcServer);
 void registerAuditionActions(ActionManager& mgr,
-                              HarkenEditor::AuditionManager* auditionManager,
+                              harken::studio::AuditionManager* auditionManager,
                               AudioEngine* engine = nullptr);
 void registerSpatialActions(ActionManager& mgr,
                             AudioEngine* engine,
@@ -180,7 +180,7 @@ void registerAssetActions(ActionManager& mgr,
 void registerRemoteActions(ActionManager& mgr);
 void registerSystemActions(ActionManager& mgr,
                            AudioEngine* engine,
-                           HarkenEditor::AuditionManager* audition,
+                           harken::studio::AuditionManager* audition,
                            QMap<quintptr, QJsonObject>* activePlaybacks);
 void registerReadonlyActions(ActionManager& mgr, IPCServer* ipcServer);
 

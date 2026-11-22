@@ -19,7 +19,7 @@
 #include <QSet>
 #include <stdexcept>
 
-namespace VNX {
+namespace harken::studio {
 
 QString inspectorCategoryTitle(PropertyCategory category)
 {

@@ -9,7 +9,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 void ensureApp()

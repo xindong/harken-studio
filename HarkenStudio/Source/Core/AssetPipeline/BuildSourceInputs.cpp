@@ -15,7 +15,7 @@
 #include <mutex>
 #include <shared_mutex>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -20,7 +20,7 @@
 #include <map>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class VMixNode : public ReflectedComponent<VMixNode>
 {
@@ -55,7 +55,7 @@ public:
 
     uint32_t outputBusId     = 0;
     float    outputBusVolume = 0.0f;
-    harkenstudio::ObjectId outputBusRef{};
+    harken::studio::types::ObjectId outputBusRef{};
 
     std::vector<Send> sends;
 
@@ -142,7 +142,7 @@ inline const PropertySchema& VMixNode::schema()
           } },
         { .field="outputBusId", .type=PropType::ObjectRef, .label="Target", .section=PropertySection::Output,
           .aliases={"outputbusid"}, .refFilter=static_cast<int>(ProjectItem::Type::Bus),
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               const auto* m = static_cast<const VMixNode*>(c);
               const ProjectItem* h = m->hostItem();
               if (h && h->type == ProjectItem::Type::Bus)
@@ -152,7 +152,7 @@ inline const PropertySchema& VMixNode::schema()
               }
               return QVariant(static_cast<qint64>(m->outputBusId));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* m = static_cast<VMixNode*>(c);
               const ProjectItem* h = m->hostItem();
               if (h && (h->type == ProjectItem::Type::Bus
@@ -160,16 +160,16 @@ inline const PropertySchema& VMixNode::schema()
               m->outputBusId = v.toUInt();
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusId != 0; } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusId != 0; } },
         { .field="outputBusRef", .type=PropType::ObjectRef, .label="Target", .section=PropertySection::Output,
           .flags={.serialize=false},
-          .get=[](const VNX::IComponent* c) { return QVariant::fromValue(
+          .get=[](const harken::studio::IComponent* c) { return QVariant::fromValue(
               static_cast<const VMixNode*>(c)->outputBusRef); },
           .set=[](IComponent* c, const QVariant& v) {
               auto* m = static_cast<VMixNode*>(c);
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
-              if (!v.canConvert<harkenstudio::ObjectId>()) return false;
-              m->outputBusRef = v.value<harkenstudio::ObjectId>();
+              if (!v.canConvert<harken::studio::types::ObjectId>()) return false;
+              m->outputBusRef = v.value<harken::studio::types::ObjectId>();
               return true;
           } },
         { .field="outputBusVolume", .type=PropType::Float, .label="Volume", .section=PropertySection::Output,
@@ -181,7 +181,7 @@ inline const PropertySchema& VMixNode::schema()
               m->outputBusVolume = v.toFloat();
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusVolume != 0.0f; } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return static_cast<const VMixNode*>(c)->outputBusVolume != 0.0f; } },
         { .field="sends", .type=PropType::List, .label="Sends", .section=PropertySection::Send,
           .elementSchema={
               { .field="targetBusID", .type=PropType::ObjectRef, .label="Target", .def=0u,
@@ -193,7 +193,7 @@ inline const PropertySchema& VMixNode::schema()
                 .options={{"Mix", 0}, {"Ducking", 1}, {"Sidechain", 2}},
                 .toolTip="Mix adds audio to the target bus. Ducking drives built-in ducking on the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
           },
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               QVariantList out;
               for (const Send& s : static_cast<const VMixNode*>(c)->sends) {
                   QVariantMap row{
@@ -206,7 +206,7 @@ inline const PropertySchema& VMixNode::schema()
               }
               return QVariant(out);
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* m = static_cast<VMixNode*>(c);
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
               std::vector<Send> sends;
@@ -226,7 +226,7 @@ inline const PropertySchema& VMixNode::schema()
               m->sends = std::move(sends);
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){ return !static_cast<const VMixNode*>(c)->sends.empty(); } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return !static_cast<const VMixNode*>(c)->sends.empty(); } },
         });
         constexpr std::array<PropertySection, 4> sections{
             PropertySection::FilterLowPass, PropertySection::FilterHighPass,

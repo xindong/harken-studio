@@ -368,7 +368,6 @@ endif()
 # engine. Must precede Source/Core: harken_editor_foundation links it; all
 # editor runtime access goes through it.
 add_subdirectory(Source/Tooling)
-include(Source/Tooling/Harkenizer/CompilerClient.cmake)
 add_subdirectory(Source/RuntimeBridge)
 add_subdirectory(Source/Core/Build)
 add_subdirectory(Source/Tooling/Harkenizer/Core)
@@ -576,9 +575,7 @@ if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
     Source/Tooling/StudioCli/SavedProjectBuild.cpp
-    Source/Tooling/StudioCli/SavedProjectBuild.h
-    Source/Tooling/StudioCli/ResourceWorker.cpp
-    Source/Tooling/StudioCli/ResourceWorker.h)
+    Source/Tooling/StudioCli/SavedProjectBuild.h)
 set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI")
 target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
 harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")

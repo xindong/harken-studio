@@ -7,7 +7,7 @@
 #include <QStringList>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectFileBinding;
 class TransactionalUndoCommand;

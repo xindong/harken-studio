@@ -5,7 +5,7 @@
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Inspector/SoundInspectorSchema.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void InspectorPanelPrivate::setupSoundPageEngine()
 {

@@ -11,7 +11,7 @@
 #define HARKEN_MONITOR_EDITOR_FIXTURE_DIR "."
 #endif
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace TestSupport {
 namespace {
@@ -112,4 +112,4 @@ LoadedFixture loadEditorFixture(const std::string& fileName)
 
 } // namespace TestSupport
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -2,7 +2,7 @@
 
 #include "ProjectManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 PreviewMediaModeService& PreviewMediaModeService::instance()
 {

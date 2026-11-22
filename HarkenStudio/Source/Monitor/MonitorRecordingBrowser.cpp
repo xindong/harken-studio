@@ -1,7 +1,7 @@
 #include "MonitorRecordingBrowser.h"
 #include "Monitor/MonitorTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -167,4 +167,4 @@ const char* recordingCommandEntry(MonitorRecordingCommand command)
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

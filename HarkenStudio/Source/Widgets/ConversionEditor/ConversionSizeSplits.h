@@ -8,7 +8,7 @@
 class QComboBox;
 class QLineEdit;
 
-namespace VNX {
+namespace harken::studio {
 
 class AxisIndicatorButton;
 

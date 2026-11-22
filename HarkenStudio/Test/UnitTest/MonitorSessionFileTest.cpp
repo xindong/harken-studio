@@ -7,9 +7,9 @@
 #include <QDir>
 #include <QTemporaryDir>
 
-using VNX::Monitor::MonitorSessionFile;
-using VNX::Monitor::MonitorSessionWriter;
-using VNX::Monitor::TestSupport::loadEditorFixture;
+using harken::studio::Monitor::MonitorSessionFile;
+using harken::studio::Monitor::MonitorSessionWriter;
+using harken::studio::Monitor::TestSupport::loadEditorFixture;
 
 TEST(MonitorSessionFile, WrittenRecordsRestoreInTheSameStudioVersion)
 {

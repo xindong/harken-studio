@@ -9,7 +9,7 @@
 #include <QStandardPaths>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr auto kInvalidCode = "AI_MEMORY_INVALID";

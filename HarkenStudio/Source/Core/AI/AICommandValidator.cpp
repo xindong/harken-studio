@@ -5,7 +5,7 @@
 #include <QJsonValue>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 void setError(QString* codeOut, QString* messageOut, const QString& code,

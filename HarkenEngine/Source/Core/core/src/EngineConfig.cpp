@@ -517,15 +517,15 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (!resolved.nullDevice || testCapacity.events == 0 ||
             testCapacity.events > resolved.maxEventsPerQuantum ||
             testCapacity.groups == 0 ||
-            testCapacity.groups > resolved.maxPlan03GroupHeadersPerPage ||
-            testCapacity.groups > kMaxPlan03GroupHeadersPerPageHard ||
+            testCapacity.groups > resolved.maxScheduleGroupHeadersPerPage ||
+            testCapacity.groups > kMaxScheduleGroupHeadersPerPageHard ||
             testCapacity.frameBatches == 0 ||
             testCapacity.frameBatches > resolved.maxFrameBatchesPerQuantum ||
             testCapacity.frameBatches > testCapacity.events) {
             return VN_INVALID_CONFIG;
         }
         resolved.maxEventsPerQuantum = testCapacity.events;
-        resolved.maxPlan03GroupHeadersPerPage = testCapacity.groups;
+        resolved.maxScheduleGroupHeadersPerPage = testCapacity.groups;
         resolved.maxFrameBatchesPerQuantum = testCapacity.frameBatches;
     }
 #endif

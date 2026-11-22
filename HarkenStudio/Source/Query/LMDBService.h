@@ -11,7 +11,7 @@
 #include <memory>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 class LMDBService {
 public:

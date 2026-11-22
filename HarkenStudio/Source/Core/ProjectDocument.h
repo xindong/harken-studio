@@ -3,7 +3,7 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ProjectDocumentContract {
     VersionedSchema,

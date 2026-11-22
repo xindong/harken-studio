@@ -6,7 +6,7 @@
 
 #include <QJsonObject>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectSerializer;
 

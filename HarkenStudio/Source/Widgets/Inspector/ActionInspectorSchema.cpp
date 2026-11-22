@@ -3,7 +3,7 @@
 #include "ProjectItemInspectorRows.h"
 #include "Core/Components/VAction.h"
 
-namespace VNX {
+namespace harken::studio {
 
 #if defined(__clang__)
 #  pragma clang diagnostic push

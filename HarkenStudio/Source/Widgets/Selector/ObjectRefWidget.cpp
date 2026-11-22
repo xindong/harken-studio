@@ -28,7 +28,7 @@
 #include <utility>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 ObjectRefWidget::ObjectRefWidget(QWidget* parent)
     : QWidget(parent)

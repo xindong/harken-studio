@@ -32,17 +32,17 @@ TEST(TimelineCapacityOverride, ResolvesBothPassesAndRestoresDefaultAfterInit) {
             &config, 0, 0, &second));
         for (const auto* resolved : {&first, &second}) {
             EXPECT_EQ(4u, resolved->maxEventsPerQuantum);
-            EXPECT_EQ(2u, resolved->maxPlan03GroupHeadersPerPage);
+            EXPECT_EQ(2u, resolved->maxScheduleGroupHeadersPerPage);
             EXPECT_EQ(2u, resolved->maxFrameBatchesPerQuantum);
         }
         ASSERT_EQ(VN_OK, Vn_Init(&config));
         auto* engine = harken::detail::ActiveEngine();
         ASSERT_NE(nullptr, engine);
         EXPECT_EQ(4u, engine->config.maxEventsPerQuantum);
-        EXPECT_EQ(2u, engine->config.maxPlan03GroupHeadersPerPage);
+        EXPECT_EQ(2u, engine->config.maxScheduleGroupHeadersPerPage);
         EXPECT_EQ(2u, engine->config.maxFrameBatchesPerQuantum);
         EXPECT_EQ(4u, engine->timelinePool.MaxEventsPerQuantum());
-        EXPECT_EQ(2u, engine->timelinePool.MaxPlan03GroupHeadersPerPage());
+        EXPECT_EQ(2u, engine->timelinePool.MaxScheduleGroupHeadersPerPage());
         EXPECT_EQ(4u, engine->immediateActionLane.MaxEventsPerQuantum());
         EXPECT_EQ(8u, engine->timelineExecutor.DecodedEventCapacityForTest());
         EXPECT_EQ(2u, engine->timelineExecutor.PageGroupCapacityForTest());
@@ -58,10 +58,10 @@ TEST(TimelineCapacityOverride, ResolvesBothPassesAndRestoresDefaultAfterInit) {
     auto* restored = harken::detail::ActiveEngine();
     ASSERT_NE(nullptr, restored);
     EXPECT_EQ(256u, restored->config.maxEventsPerQuantum);
-    EXPECT_EQ(64u, restored->config.maxPlan03GroupHeadersPerPage);
+    EXPECT_EQ(64u, restored->config.maxScheduleGroupHeadersPerPage);
     EXPECT_EQ(128u, restored->config.maxFrameBatchesPerQuantum);
     EXPECT_EQ(256u, restored->timelinePool.MaxEventsPerQuantum());
-    EXPECT_EQ(64u, restored->timelinePool.MaxPlan03GroupHeadersPerPage());
+    EXPECT_EQ(64u, restored->timelinePool.MaxScheduleGroupHeadersPerPage());
     EXPECT_EQ(256u, restored->immediateActionLane.MaxEventsPerQuantum());
     EXPECT_EQ(512u, restored->timelineExecutor.DecodedEventCapacityForTest());
     EXPECT_EQ(64u, restored->timelineExecutor.PageGroupCapacityForTest());
@@ -97,7 +97,7 @@ TEST(TimelineCapacityOverride, InvalidCapacityNeverConstructsAnEngine) {
         harken::EngineConfig restored{};
         ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &restored));
         EXPECT_EQ(256u, restored.maxEventsPerQuantum);
-        EXPECT_EQ(64u, restored.maxPlan03GroupHeadersPerPage);
+        EXPECT_EQ(64u, restored.maxScheduleGroupHeadersPerPage);
         EXPECT_EQ(128u, restored.maxFrameBatchesPerQuantum);
     }
 }

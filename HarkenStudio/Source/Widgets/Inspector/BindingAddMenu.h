@@ -9,7 +9,7 @@ class QMenu;
 #include "Core/UndoHistory.h"
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 
@@ -25,11 +25,11 @@ public:
     void show();
 
 signals:
-    void bindingAdded(harkenstudio::ObjectId id);
+    void bindingAdded(harken::studio::types::ObjectId id);
 
 private:
     void openVariableSelector();
-    QString addBinding(uint32_t objectId, VNX::UndoCommand* undoParent = nullptr);
+    QString addBinding(uint32_t objectId, harken::studio::UndoCommand* undoParent = nullptr);
     void openVariableCreation(VariableKind kind);
 
     QWidget* anchor_ = nullptr;

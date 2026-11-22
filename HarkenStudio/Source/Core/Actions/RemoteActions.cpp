@@ -11,11 +11,11 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
-using HarkenEditor::Bridge::RemoteConnectionState;
+using harken::studio::bridge::RemoteConnectionState;
 using Monitor::DesignerEventType;
 using Monitor::EventCaptureState;
 
@@ -58,7 +58,7 @@ QString eventTypeName(DesignerEventType type)
     return {};
 }
 
-QJsonObject targetJson(const HarkenEditor::Bridge::RemoteTarget& target)
+QJsonObject targetJson(const harken::studio::bridge::RemoteTarget& target)
 {
     return {{"instance_id", target.instanceId}, {"application", target.application},
             {"project", target.project}, {"machine", target.machine}, {"address", target.address},

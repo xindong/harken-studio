@@ -50,7 +50,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The result of a front-end compile. When diagnostics is empty, project holds
 // the canonical model, facts holds its normalization facts, resolution holds its
@@ -79,6 +79,6 @@ FrontEndResult CompileFrontEnd(const ProjectInput& input);
 FrontEndResult CompileFrontEnd(const ProjectInput& input,
                                std::uint32_t resolutionDepthCeiling);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_FRONT_END_H

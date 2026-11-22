@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 void MeterInteractionRenderer::render(QPainter& painter,
                                       const MeterStyle::Interaction& style,

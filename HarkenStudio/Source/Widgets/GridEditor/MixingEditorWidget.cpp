@@ -35,7 +35,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 MixingChildDef scaledCurve(MixingChildDef child, float scale)

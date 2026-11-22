@@ -7,7 +7,7 @@
 
 #include <optional>
 
-namespace VNH {
+namespace harken::hub {
 
 struct TableSortPreference
 {
@@ -31,9 +31,7 @@ public:
     static bool setThemePreference(const QString& preference);
     static bool setWindowGeometry(const QRect& geometry, int timeoutMs = -1);
     static QSize windowSize();
-    static bool setWindowSize(const QSize& size);
     static std::optional<QPoint> windowPosition();
-    static bool setWindowPosition(const QPoint& position);
     static TableSortPreference tableSort(const QString& table);
     static bool setTableSort(const QString& table, const TableSortPreference& sort, int timeoutMs = -1);
     static QString pendingUpdateNotesVersion();

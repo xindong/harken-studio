@@ -2,7 +2,7 @@
 #include "MemorySettingsStorage.h"
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 
 QString MemorySettingsStorage::resolvedKey(const QString& key) const
 {

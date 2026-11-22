@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace Harken
 {
-    internal static class GameplayNames
+    internal static class NameTable
     {
         internal readonly struct Action
         {
@@ -32,7 +32,7 @@ namespace Harken
         internal static PackBootstrapSession.DirectoryLease ActiveDirectory => current?.Directory;
         internal static ulong Generation => current?.Generation ?? 0;
 
-        internal static Table PrepareInit(VnObjectId project, PackCompanion init)
+        internal static Table PrepareInit(VnObjectId project, PackMetadata init)
         {
             var table = new Table
             {

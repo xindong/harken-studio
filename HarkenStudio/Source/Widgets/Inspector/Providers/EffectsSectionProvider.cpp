@@ -34,7 +34,7 @@
 #include <iterator>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class EffectsListWidget final : public QWidget
@@ -236,7 +236,7 @@ private:
         return !inspector_ || inspector_->currentContextItem() == boundItem();
     }
 
-    bool commit(std::vector<EffectEntry> effects, VNX::UndoCommand* undoParent = nullptr)
+    bool commit(std::vector<EffectEntry> effects, harken::studio::UndoCommand* undoParent = nullptr)
     {
         if (!canEdit() || !isCurrentContext()) return false;
         EffectChainLedger ledger;
@@ -383,7 +383,7 @@ private:
                     [&guid](const EffectEntry& effect) { return effect.guid == guid; });
                 if (found == effects.end() || found->mode != EffectMode::Custom)
                     return tr("The effect slot is no longer available.");
-                auto command = std::make_unique<VNX::UndoCommand>(tr("Save Effect As Preset"));
+                auto command = std::make_unique<harken::studio::UndoCommand>(tr("Save Effect As Preset"));
                 auto& manager = ProjectManager::instance();
                 auto* created = manager.createItem(
                     nullptr, name, ProjectItem::Type::Effect, folderPath, {}, command.get());

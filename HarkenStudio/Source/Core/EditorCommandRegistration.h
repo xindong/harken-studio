@@ -2,13 +2,13 @@
 
 #include "ActionManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct EditorCommandContext {
     AudioEngine* engine = nullptr;
     ProjectManager* project = nullptr;
     IPCServer* dispatcher = nullptr;
-    HarkenEditor::AuditionManager* audition = nullptr;
+    harken::studio::AuditionManager* audition = nullptr;
     std::function<bool(PhysicalFolder*)> selectFolder;
 };
 

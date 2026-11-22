@@ -283,7 +283,7 @@
     },
     "settings.publish.additional_material": {
       "title": "Additional Material",
-      "body": "Optionally export Project.json, metadata in each pack's companion JSON, and <hash>.vkd waveform buffers."
+      "body": "Optionally export Project.json, object metadata in each Pack's JSON file, and <hash>.vkd waveform buffers."
     },
     "settings.publish.project_information": {
       "title": "Export Project Information",

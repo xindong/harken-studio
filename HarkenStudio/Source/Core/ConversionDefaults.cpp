@@ -3,7 +3,7 @@
 #include "FieldGroupProjectAdapter.h"
 #include "ProjectTypes.h"
 
-namespace VNX::ConversionDefaults {
+namespace harken::studio::ConversionDefaults {
 
 QString lowQualityName()
 {

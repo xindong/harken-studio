@@ -6,7 +6,7 @@
 #include <QEventLoop>
 #include <functional>
 
-namespace VNX::TestSupport {
+namespace harken::studio::TestSupport {
 
 inline void ensureApp()
 {

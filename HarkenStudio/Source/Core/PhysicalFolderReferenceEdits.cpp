@@ -5,7 +5,7 @@
 
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool deleted(const QJsonValue& value, const QSet<QUuid>& guids)

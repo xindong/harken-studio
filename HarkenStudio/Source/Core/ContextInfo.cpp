@@ -4,7 +4,7 @@
 #include <QVariant>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 constexpr char kTopicProperty[] = "harkenContextTopic";
 

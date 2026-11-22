@@ -31,7 +31,7 @@ class PrivatePendingQueueFrontierBinding;
 class OriginalQueueFutureGroupRegistration;
 class QueueContinuationLane;
 struct ImmediateLaneEvent;
-struct Plan03PageGroupView;
+struct SchedulePageGroupView;
 
 enum class ArmState : std::uint8_t {
     Free = 0,
@@ -1096,10 +1096,10 @@ private:
         const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
         std::uint32_t eventOrdinal, bool control, std::uint64_t* frame) const noexcept;
     const Row* CapturePrivatePendingFrontierStartRow(const TimelineArmReaderPin& ownedReader,
-        const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease, const SchedulePageGroupView& native,
         const ImmediateLaneEvent& placed, std::uint64_t anchor, std::uint64_t* startFrame) const noexcept;
     bool UnbindPrivatePendingFrontierAdmissionRow(TimelineArmReaderPin& ownedReader,
-        const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native) noexcept;
+        const FrontierGroupBinding& binding, AudioSliceLease& lease, const SchedulePageGroupView& native) noexcept;
     bool FinalSourcePreparationEligible(const PreparedCommitProof& preparation) const noexcept;
     bool IssuePublicationAfterInstallation(const PreparedCommitProof& preparation,
         const OriginalArmRowOwner& original, const void* submission,
@@ -1196,7 +1196,7 @@ private:
     };
     // The pool owns one stable origin per group until its last original is returned.
     struct OriginalGroupIdentity {
-        Plan03GroupSliceIdentity group{};
+        ScheduleGroupSliceIdentity group{};
         GroupMemberReceiver* receiver = nullptr;
         std::uint64_t armTableIncarnation = 0;
         std::uint64_t receiverEpisode = 0;
@@ -1217,7 +1217,7 @@ private:
         std::uint64_t ReceiverEpisode() const noexcept {
             return groupIdentity_ == nullptr ? 0 : groupIdentity_->receiverEpisode;
         }
-        const Plan03GroupSliceIdentity& Group() const noexcept {
+        const ScheduleGroupSliceIdentity& Group() const noexcept {
             assert(groupIdentity_ != nullptr);
             return groupIdentity_->group;
         }

@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct SignalChainSource::ViewCache {
     SignalChainView view;
@@ -751,7 +751,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool dupSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const VNX::Send& s) { return s.targetBusID == toId && s.mode == SendMode::Mix; });
+                [&](const harken::studio::Send& s) { return s.targetBusID == toId && s.mode == SendMode::Mix; });
             if (dupSend) {
                 r.error = QStringLiteral("duplicate");
                 r.effectiveType = QStringLiteral("send");
@@ -952,7 +952,7 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool hasSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const VNX::Send& s) { return s.targetBusID == toId && s.mode == mode; });
+                [&](const harken::studio::Send& s) { return s.targetBusID == toId && s.mode == mode; });
             if (hasSend) {
                 undoMgr.beginMacro(QStringLiteral("Blueprint Disconnect (Send)"));
                 undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId, nullptr, mode));

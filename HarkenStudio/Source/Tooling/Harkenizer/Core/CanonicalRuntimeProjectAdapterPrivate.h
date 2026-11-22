@@ -15,63 +15,63 @@
 #include <unordered_set>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 class SegmentProgram;
 }
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 struct CanonicalRuntimeProjectSourceIndexV1
 {
-    std::vector<VNX::ProjectItem*> definitions;
-    std::vector<VNX::ProjectItem*> actions;
-    std::vector<VNX::ProjectItem*> buses;
-    std::unordered_map<std::uint32_t, VNX::ProjectItem*> byObjectId;
-    std::map<QUuid, VNX::ProjectItem*> byQtGuid;
-    std::map<harkenprojectschema::AuthoringGuid, VNX::ProjectItem*> byGuid;
-    std::unordered_map<VNX::ProjectItem*, VNX::ProjectItem*> parentDefinition;
-    std::unordered_map<VNX::ProjectItem*, std::vector<VNX::ProjectItem*>> children;
-    std::unordered_map<const VNX::ProjectItem*, std::string> documentPaths;
+    std::vector<harken::studio::ProjectItem*> definitions;
+    std::vector<harken::studio::ProjectItem*> actions;
+    std::vector<harken::studio::ProjectItem*> buses;
+    std::unordered_map<std::uint32_t, harken::studio::ProjectItem*> byObjectId;
+    std::map<QUuid, harken::studio::ProjectItem*> byQtGuid;
+    std::map<harken::studio::project_schema::AuthoringGuid, harken::studio::ProjectItem*> byGuid;
+    std::unordered_map<harken::studio::ProjectItem*, harken::studio::ProjectItem*> parentDefinition;
+    std::unordered_map<harken::studio::ProjectItem*, std::vector<harken::studio::ProjectItem*>> children;
+    std::unordered_map<const harken::studio::ProjectItem*, std::string> documentPaths;
     std::set<QUuid> duplicateGuids;
-    std::set<harkenstudio::ObjectId> duplicateStableIds;
+    std::set<harken::studio::types::ObjectId> duplicateStableIds;
     std::vector<ProjectInputDiagnostic> structureDiagnostics;
     bool valid = true;
 };
 
 std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1>
-    canonicalRuntimeProjectSourceIndex(const VNX::ProjectData& project);
+    canonicalRuntimeProjectSourceIndex(const harken::studio::ProjectData& project);
 
 float resolvedStudioSpatializationMix(
-    VNX::ProjectItem& item, const CanonicalRuntimeProjectSourceIndexV1& index);
+    harken::studio::ProjectItem& item, const CanonicalRuntimeProjectSourceIndexV1& index);
 
-std::unordered_set<VNX::ProjectItem*> canonicalRuntimeDefinitions(
-    const CanonicalRuntimeProjectSourceIndexV1& index, VNX::PlatformScope scope = std::nullopt);
+std::unordered_set<harken::studio::ProjectItem*> canonicalRuntimeDefinitions(
+    const CanonicalRuntimeProjectSourceIndexV1& index, harken::studio::PlatformScope scope = std::nullopt);
 
 bool copyStudioDefinitionPayload(
-    VNX::ProjectItem& item, VNX::PlatformScope scope,
+    harken::studio::ProjectItem& item, harken::studio::PlatformScope scope,
     const CanonicalRuntimeProjectSourceIndexV1& index,
-    const VNX::FieldGroupEffectiveSnapshot& groups,
-    const harkenprojectschema::RuntimeIdentityIndexV1& identity,
-    harkenprojectschema::InputNode* output, QString* error,
+    const harken::studio::FieldGroupEffectiveSnapshot& groups,
+    const harken::studio::project_schema::RuntimeIdentityIndexV1& identity,
+    harken::studio::project_schema::InputNode* output, QString* error,
     bool exportPresetReferences = false);
 
 bool copyStudioOccurrencePayload(
-    VNX::ProjectItem& owner, const VNX::PlayablePropertyLocatorV1& locator,
-    VNX::PlatformScope scope, harkenprojectschema::PlayablePropertyPayloadV1* output,
+    harken::studio::ProjectItem& owner, const harken::studio::PlayablePropertyLocatorV1& locator,
+    harken::studio::PlatformScope scope, harken::studio::project_schema::PlayablePropertyPayloadV1* output,
     QString* error);
 
 struct CanonicalRuntimeProjectContextV1
 {
     std::vector<ProjectInputDiagnostic> diagnostics;
     std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1> sourceIndex;
-    std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
+    std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1>
         identityIndex;
-    std::shared_ptr<const harkenprojectschema::CompileTargetProfileV1>
+    std::shared_ptr<const harken::studio::project_schema::CompileTargetProfileV1>
         compileTargetProfile;
-    std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> busResult;
-    const VNX::ProjectItem* previewTrack = nullptr;
-    harkenprojectschema::AuthoringGuid previewRootGuid{};
-    harkenstudio::ObjectId previewRootStableId = {};
+    std::shared_ptr<const harken::studio::bus_compiler::CompiledBusResultV1> busResult;
+    const harken::studio::ProjectItem* previewTrack = nullptr;
+    harken::studio::project_schema::AuthoringGuid previewRootGuid{};
+    harken::studio::types::ObjectId previewRootStableId = {};
 
     bool ok() const noexcept
     {
@@ -81,26 +81,26 @@ struct CanonicalRuntimeProjectContextV1
 };
 
 CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
-    VNX::ProjectData& project,
+    harken::studio::ProjectData& project,
     uint64_t projectGeneration = 0,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId = std::nullopt);
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId = std::nullopt);
 
 CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
-    VNX::ProjectData& project,
+    harken::studio::ProjectData& project,
     uint64_t projectGeneration,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
-    VNX::PlatformScope busPlatformScope);
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
+    harken::studio::PlatformScope busPlatformScope);
 
 CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
-    VNX::ProjectData& project,
+    harken::studio::ProjectData& project,
     uint64_t projectGeneration,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
-    VNX::PlatformScope busPlatformScope,
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
+    harken::studio::PlatformScope busPlatformScope,
     std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1> sourceIndex);
 
-const harkenprojectschema::SegmentProgram* compiledSegmentProgram(
+const harken::studio::project_schema::SegmentProgram* compiledSegmentProgram(
     const CompiledProjectSnapshot& snapshot);
-std::vector<harkenstudio::ObjectId> compiledSegmentIds(
+std::vector<harken::studio::types::ObjectId> compiledSegmentIds(
     const CompiledProjectSnapshot& snapshot);
 
 }

@@ -7,17 +7,17 @@
 #include <cstdint>
 #include <unordered_map>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 struct ContainerWorldInstallViewV1;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 
 bool WriteCurrentWorldArtifactV1(
     const QString& targetPath,
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world,
+    const harken::studio::build::ContainerWorldInstallViewV1& world,
     QString* error = nullptr);
 bool WriteCurrentWorldArtifactV1(
     ProjectData& project,
@@ -28,7 +28,7 @@ bool WriteCurrentWorldArtifactV1(
     ProjectData& project,
     PlatformScope scope,
     const QString& targetPath,
-    const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& soundRevisions,
+    const std::unordered_map<harken::studio::types::ObjectId, std::uint64_t>& soundRevisions,
     std::uint64_t* semanticFingerprint,
     QString* error = nullptr);
 

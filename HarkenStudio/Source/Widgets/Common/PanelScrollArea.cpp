@@ -4,7 +4,7 @@
 
 #include <QScrollBar>
 
-namespace VNX {
+namespace harken::studio {
 
 PanelScrollArea::PanelScrollArea(QWidget* parent)
     : QScrollArea(parent)

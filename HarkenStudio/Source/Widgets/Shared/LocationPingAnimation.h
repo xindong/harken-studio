@@ -2,7 +2,7 @@
 
 #include <QEasingCurve>
 
-namespace VNX::LocationPingAnimation {
+namespace harken::studio::LocationPingAnimation {
 
 inline constexpr int kDurationMs = 620;
 

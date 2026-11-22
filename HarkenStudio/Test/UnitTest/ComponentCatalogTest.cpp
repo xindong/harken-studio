@@ -4,13 +4,13 @@
 
 #include <set>
 
-namespace Catalog = VNX::ComponentCatalog;
-using VNX::ComponentType;
+namespace Catalog = harken::studio::ComponentCatalog;
+using harken::studio::ComponentType;
 
 TEST(ComponentCatalog, AllComponentTypesCoversEverySlotOnce)
 {
     const auto& all = Catalog::allComponentTypes();
-    EXPECT_EQ(all.size(), VNX::kMaxComponents);
+    EXPECT_EQ(all.size(), harken::studio::kMaxComponents);
     const std::set<ComponentType> unique(all.begin(), all.end());
     EXPECT_EQ(unique.size(), all.size());
     for (ComponentType t : all)

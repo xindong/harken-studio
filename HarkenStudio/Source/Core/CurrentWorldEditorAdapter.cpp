@@ -8,43 +8,43 @@
 #include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
-    VNX::ProjectData& project,
+    harken::studio::ProjectData& project,
     uint64_t projectGeneration,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId)
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId)
 {
     return canonicalRuntimeProjectContext(
         project, projectGeneration, previewTrackStableId,
-        VNX::currentWorldPlatformScope(VNX::PlatformContextService::instance().context()));
+        harken::studio::currentWorldPlatformScope(harken::studio::PlatformContextService::instance().context()));
 }
 
 ProjectInputCompileResult compileStudioProjectInput(
-    const VNX::ProjectData& project,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+    const harken::studio::ProjectData& project,
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
     uint64_t projectGeneration)
 {
     return compileStudioProjectInputForContext(project,
-        VNX::currentWorldPlatformScope(VNX::PlatformContextService::instance().context()),
-        VNX::LanguageContextService::instance().language(), previewTrackStableId, projectGeneration);
+        harken::studio::currentWorldPlatformScope(harken::studio::PlatformContextService::instance().context()),
+        harken::studio::LanguageContextService::instance().language(), previewTrackStableId, projectGeneration);
 }
 
 }
 
-VNX::CanonicalRuntimeProjectInputV1
-VNX::CanonicalRuntimeProjectAdapter::compile(
-    const VNX::ProjectData& project,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+harken::studio::CanonicalRuntimeProjectInputV1
+harken::studio::CanonicalRuntimeProjectAdapter::compile(
+    const harken::studio::ProjectData& project,
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
     uint64_t projectGeneration)
 {
-    return HarkenEditor::Bridge::compileStudioProjectInput(
+    return harken::studio::bridge::compileStudioProjectInput(
         project, previewTrackStableId, projectGeneration);
 }
 
-namespace VNX {
+namespace harken::studio {
 
-HarkenEditor::Build::CurrentWorldSyncRequestPtr
+harken::studio::build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
                              QString* error,
                              CurrentWorldBuildStatus* status,
@@ -75,12 +75,12 @@ bool WriteCurrentWorldArtifactV1(
     auto request = buildCurrentWorldSyncRequest(project, scope, error);
     if (!request)
         return false;
-    auto compiled = HarkenEditor::Build::compileCurrentWorldRequest(*request);
+    auto compiled = harken::studio::build::compileCurrentWorldRequest(*request);
     if (!compiled.ok()) {
         if (error) *error = QStringLiteral(
             "Current World project compilation failed (%1, stable id %2)")
                 .arg(static_cast<std::uint32_t>(compiled.status))
-                .arg(VNX::objectIdString(compiled.relatedStableId));
+                .arg(harken::studio::objectIdString(compiled.relatedStableId));
         return false;
     }
     return WriteCurrentWorldArtifactV1(targetPath, compiled.world->View(),
@@ -91,7 +91,7 @@ bool WriteCurrentWorldArtifactV1(
     ProjectData& project,
     PlatformScope scope,
     const QString& targetPath,
-    const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& soundRevisions,
+    const std::unordered_map<harken::studio::types::ObjectId, std::uint64_t>& soundRevisions,
     std::uint64_t* semanticFingerprint,
     QString* error)
 {
@@ -99,12 +99,12 @@ bool WriteCurrentWorldArtifactV1(
     if (!request)
         return false;
     request->soundContentRevisions = soundRevisions;
-    auto compiled = HarkenEditor::Build::compileCurrentWorldRequest(*request);
+    auto compiled = harken::studio::build::compileCurrentWorldRequest(*request);
     if (!compiled.ok()) {
         if (error) *error = QStringLiteral(
             "Current World project compilation failed (%1, stable id %2)")
                 .arg(static_cast<std::uint32_t>(compiled.status))
-                .arg(VNX::objectIdString(compiled.relatedStableId));
+                .arg(harken::studio::objectIdString(compiled.relatedStableId));
         return false;
     }
     const auto view = compiled.world->View();

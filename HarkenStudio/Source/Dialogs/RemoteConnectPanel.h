@@ -6,9 +6,9 @@ class QLabel;
 class QPushButton;
 class QToolButton;
 
-namespace HarkenEditor::Bridge { class RemoteConnection; }
+namespace harken::studio::bridge { class RemoteConnection; }
 
-namespace VNX {
+namespace harken::studio {
 
 class ProportionalTreeWidget;
 
@@ -17,7 +17,7 @@ class RemoteConnectPanel final : public QWidget
     Q_OBJECT
 
 public:
-    explicit RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* connection,
+    explicit RemoteConnectPanel(harken::studio::bridge::RemoteConnection* connection,
                                  QWidget* parent = nullptr);
     QSize sizeHint() const override;
 
@@ -28,7 +28,7 @@ private:
     void connectSelectedTarget();
     void openManualConnection();
 
-    HarkenEditor::Bridge::RemoteConnection* connection_ = nullptr;
+    harken::studio::bridge::RemoteConnection* connection_ = nullptr;
     ProportionalTreeWidget* targets_ = nullptr;
     QToolButton* manual_ = nullptr;
     QPushButton* connect_ = nullptr;

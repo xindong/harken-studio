@@ -8,7 +8,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 struct WorkspaceDockCreateSpec
 {

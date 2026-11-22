@@ -11,7 +11,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-namespace VNH {
+namespace harken::hub {
 
 InstallationSnapshot IntegrityChecker::snapshot(const QString& installPath)
 {

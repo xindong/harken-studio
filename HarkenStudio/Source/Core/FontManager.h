@@ -7,7 +7,7 @@
 #include <QFont>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class FontRole {
     Title,

@@ -8,7 +8,7 @@ namespace harkenizer::resourcecompiler {
 class MediaCache;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 namespace SoundSourceDerivative {
 class MaterializationCache;

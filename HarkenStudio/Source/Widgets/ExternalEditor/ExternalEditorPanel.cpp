@@ -21,7 +21,7 @@
 #include <QSplitter>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     : QWidget(parent)
@@ -147,7 +147,7 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
     case Kind::Binding: {
         const auto selectedCurve = selection.curve;
         bindings_->bind(boundItem(), selection_.bindingAddress);
-        if (selectedCurve.bindingStableId != harkenstudio::ObjectId{})
+        if (selectedCurve.bindingStableId != harken::studio::types::ObjectId{})
             bindings_->selectBinding(selectedCurve.hostGuid, selectedCurve.bindingStableId);
         showContent(curves_);
         break;

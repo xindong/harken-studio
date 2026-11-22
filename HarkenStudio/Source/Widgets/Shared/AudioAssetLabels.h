@@ -6,7 +6,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 QString assetDisplayName(const AssetInfo& asset);
 QString assetDisplayPath(const AssetInfo& asset);

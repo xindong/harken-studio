@@ -11,7 +11,7 @@ class QModelIndex;
 class QPushButton;
 class QShortcut;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class ConversionSizeSplits;

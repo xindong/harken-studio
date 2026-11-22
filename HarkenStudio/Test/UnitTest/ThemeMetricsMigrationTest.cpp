@@ -95,7 +95,7 @@ bool writeMetricsPackage(const QString& themesRoot, const QString& id, const QBy
         + "\"schemaVersion\":7,\"id\":\"" + id.toUtf8()
         + "\",\"displayName\":\"" + id.toUtf8()
         + "\",\"version\":\"1.0.0\",\"baseThemeId\":\""
-        + VNX::builtinThemeId().toUtf8() + "\""
+        + harken::studio::builtinThemeId().toUtf8() + "\""
         + ",\"compatibility\":{\"harkenVersion\":\">=0.1.0 <1.0.0\","
           "\"capabilities\":[\"curve-v1\",\"meter-v1\",\"waveform-v1\"]},"
           "\"entries\":{\"tokens\":\"tokens.json\",\"visuals\":{"
@@ -129,10 +129,10 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
     })json");
 }
 
-std::unique_ptr<VNX::ThemeManager> makeManager(const QString& root)
+std::unique_ptr<harken::studio::ThemeManager> makeManager(const QString& root)
 {
-    return std::make_unique<VNX::ThemeManager>(
-        root, std::make_unique<VNX::MemorySettingsStorage>());
+    return std::make_unique<harken::studio::ThemeManager>(
+        root, std::make_unique<harken::studio::MemorySettingsStorage>());
 }
 
 class StatefulMenuBar final : public QMenuBar
@@ -172,10 +172,10 @@ TEST(ThemeControlValidation, UnconstrainedEditorsPreserveDomainValidation)
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QLineEdit editor;
     QObject::connect(&editor, &QLineEdit::textChanged, &editor, [&] {
-        VNX::QtControlSkin::setSemanticProperty(&editor, "inputInvalid", editor.text().isEmpty());
+        harken::studio::QtControlSkin::setSemanticProperty(&editor, "inputInvalid", editor.text().isEmpty());
     });
     editor.setText(QStringLiteral("valid"));
     editor.setStyle(&style);
@@ -199,7 +199,7 @@ TEST(ThemeControlValidation, ValidatorsAndMasksInstalledAfterPolishKeepAutomatic
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QLineEdit validated;
     validated.setStyle(&style);
     validated.ensurePolished();
@@ -224,7 +224,7 @@ TEST(ThemeControlValidation, CollapsedTreesPreserveAccessibleIdentityAcrossPolis
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     static QTreeView* observedTree = nullptr;
     static int resetCount = 0;
     const auto previousHandler = QAccessible::installUpdateHandler([](QAccessibleEvent* event) {
@@ -249,8 +249,8 @@ TEST(ThemeControlValidation, CollapsedTreesPreserveAccessibleIdentityAcrossPolis
         std::unique_ptr<QTreeView> tree;
         switch (kind) {
         case 0: tree = std::make_unique<QTreeWidget>(); break;
-        case 1: tree = std::make_unique<VNX::ProportionalTreeWidget>(QList<int>{1, 1}, nullptr, manager.get()); break;
-        case 2: tree = std::make_unique<VNX::TreeExpansionWidget>(); break;
+        case 1: tree = std::make_unique<harken::studio::ProportionalTreeWidget>(QList<int>{1, 1}, nullptr, manager.get()); break;
+        case 2: tree = std::make_unique<harken::studio::TreeExpansionWidget>(); break;
         case 3: tree = std::make_unique<QTreeView>(); break;
         }
         if (auto* items = qobject_cast<QTreeWidget*>(tree.get())) {
@@ -320,7 +320,7 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QWidget panel;
     panel.setStyle(&style);
     auto* layout = new QVBoxLayout(&panel);
@@ -400,7 +400,7 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
     EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
     EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
-    VNX::QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("title"));
+    harken::studio::QtControlSkin::setSemanticProperty(label, "textRole", QStringLiteral("title"));
     EXPECT_EQ(label->palette().color(QPalette::WindowText), title);
     manager->cancelAppearancePreview();
     EXPECT_EQ(qApp->palette(), originalPalette);
@@ -419,7 +419,7 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
 TEST(ThemeMetricsMigration, MessagePresentationChangesPreserveReadingAndPendingInput)
 {
     ensureApp();
-    auto& theme = VNX::ThemeManager::instance();
+    auto& theme = harken::studio::ThemeManager::instance();
     const qreal originalScale = theme.snapshot()->uiScale * 100.0;
     const auto restore = qScopeGuard([&] { theme.setUIScale(originalScale); });
     theme.setUIScale(100);
@@ -428,7 +428,7 @@ TEST(ThemeMetricsMigration, MessagePresentationChangesPreserveReadingAndPendingI
         QTimer::singleShot(80, &loop, &QEventLoop::quit);
         loop.exec();
     };
-    VNX::AssistantPanel panel;
+    harken::studio::AssistantPanel panel;
     panel.resize(640, 640);
     panel.show();
     const QString message = QStringLiteral("Response **with emphasis** and `inline_code`. ").repeated(20);
@@ -476,7 +476,7 @@ TEST(ThemeMetricsMigration, MessagePresentationChangesPreserveReadingAndPendingI
         const auto code = document.find(QStringLiteral("inline_code"));
         ASSERT_FALSE(code.isNull());
         EXPECT_NEAR(code.charFormat().fontPointSize(),
-            VNX::FontManager::instance().getFont(VNX::FontRole::Mono).pointSizeF(), 0.01);
+            harken::studio::FontManager::instance().getFont(harken::studio::FontRole::Mono).pointSizeF(), 0.01);
     }
     list->verticalScrollBar()->setValue(list->verticalScrollBar()->value()
         + list->visualItemRect(anchor).height() / 3);
@@ -494,13 +494,13 @@ TEST(ThemeMetricsMigration, MessagePresentationChangesPreserveReadingAndPendingI
 TEST(ThemeMetricsMigration, StartupPresentationKeepsControlsInsideAvailableScreen)
 {
     ensureApp();
-    auto& theme = VNX::ThemeManager::instance();
+    auto& theme = harken::studio::ThemeManager::instance();
     const qreal originalScale = theme.snapshot()->uiScale * 100.0;
     const auto restore = qScopeGuard([&] { theme.setUIScale(originalScale); });
-    for (int percent : VNX::AppSettings::GLOBAL_SCALE_PRESETS) {
+    for (int percent : harken::studio::AppSettings::GLOBAL_SCALE_PRESETS) {
         SCOPED_TRACE(percent);
         theme.setUIScale(percent);
-        VNX::StartupLoadingWindow window;
+        harken::studio::StartupLoadingWindow window;
         window.setProjectName(QStringLiteral("A project with a long name ").repeated(12));
         window.show();
         QEventLoop loop;
@@ -525,7 +525,7 @@ TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QWidget panel;
     panel.setStyle(&style);
     auto* layout = new QVBoxLayout(&panel);
@@ -547,7 +547,7 @@ TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)
     auto* dimmed = addLabel(QStringLiteral("Navigable"));
     dimmed->setProperty("textRole", QStringLiteral("primary"));
     dimmed->setProperty("dimmed", true);
-    auto* table = new VNX::TableWidget(&panel, manager.get());
+    auto* table = new harken::studio::TableWidget(&panel, manager.get());
     table->setStyle(&style);
     table->setColumns(QStringLiteral("DisabledLabelTable"), {
         {QStringLiteral("index"), QStringLiteral("#"), 1}
@@ -589,7 +589,7 @@ TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)
     manager->cancelAppearancePreview();
     verify(original->ui.colors.textDisabled);
     for (auto* label : disabled) label->setEnabled(true);
-    VNX::QtControlSkin::setSemanticProperty(dimmed, "dimmed", false);
+    harken::studio::QtControlSkin::setSemanticProperty(dimmed, "dimmed", false);
     QCoreApplication::processEvents();
     for (const auto* label : {plain, primary, readOnly, number, dimmed})
         EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textPrimary);
@@ -603,7 +603,7 @@ TEST(ThemeMetricsMigration, BorderPreviewRepaintsOpaqueDescendantsWithoutRepolis
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QWidget window;
     window.setStyle(&style);
     auto* layout = new QVBoxLayout(&window);
@@ -690,7 +690,7 @@ TEST(ThemeMetricsMigration, PolishedDescendantsFollowAncestorChangesAcrossMoveDe
         #destination[active="true"] QLabel { color: #88aacc; }
         #destination[windowTitle="Native scope"] QLabel { color: #cc8844; }
     )qss"));
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     auto ancestor = std::make_unique<QWidget>();
     ancestor->setObjectName(QStringLiteral("surface"));
     ancestor->setProperty("active", true);
@@ -746,7 +746,7 @@ TEST(ThemeMetricsMigration, CheckedIndicatorsRemainDistinguishableAcrossPalettes
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QCheckBox check(QStringLiteral("Enabled setting"));
     check.setStyle(&style);
     check.resize(180, 28);
@@ -795,7 +795,7 @@ TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     StatefulMenuBar bar;
     bar.setObjectName(QStringLiteral("titleBarMenuBar"));
     bar.setStyle(&style);
@@ -843,7 +843,7 @@ TEST(ThemeMetricsMigration, MenuChecksIconsAndLabelsRemainIndependentAcrossDirec
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QMenu menu;
     menu.setStyle(&style);
     QPixmap glyph(manager->metrics().iconExtent, manager->metrics().iconExtent);
@@ -932,7 +932,7 @@ TEST(ThemeMetricsMigration, ButtonTextAlignmentMatchesNativeStyleWrapping)
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     std::unique_ptr<QStyle> nativeStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     QPushButton reference(QStringLiteral("Action label"));
     reference.setStyle(nativeStyle.get());
@@ -972,7 +972,7 @@ TEST(ThemeMetricsMigration, ToolbarSurfaceAndBorderSurviveNativeStyleWrapping)
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     for (const bool floating : {false, true}) {
         SCOPED_TRACE(floating ? "floating" : "docked");
         QMainWindow window;
@@ -1001,7 +1001,7 @@ TEST(ThemeMetricsMigration, OwnedPanelSurfaceSurvivesVisibilityAndColorPreview)
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QWidget window;
     window.setStyle(&style);
     auto* layout = new QVBoxLayout(&window);
@@ -1044,7 +1044,7 @@ TEST(ThemeMetricsMigration, ProgressContentsPreserveOuterBorderAcrossDirectionsA
     ensureApp();
     QTemporaryDir root;
     auto manager = makeManager(root.path());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), manager.get());
     QProgressBar progress;
     progress.setProperty("shellRole", QStringLiteral("statusProgress"));
     progress.setStyle(&style);
@@ -1100,7 +1100,7 @@ TEST(ThemeMetricsMigration, MatrixThemeChangesPreserveEditingState)
     auto manager = makeManager(root.path());
     const QString style = qApp->styleSheet();
     const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(style); });
-    VNX::MatrixTableWidget matrix(nullptr, manager.get());
+    harken::studio::MatrixTableWidget matrix(nullptr, manager.get());
     auto* view = matrix.table();
     view->setRowCount(2);
     view->setColumnCount(2);
@@ -1119,7 +1119,7 @@ TEST(ThemeMetricsMigration, MatrixThemeChangesPreserveEditingState)
     matrix.resize(640, 300);
     matrix.show();
     input->setCursorPosition(4);
-    for (const auto& theme : {QStringLiteral("matrix-dense"), VNX::builtinThemeId()}) {
+    for (const auto& theme : {QStringLiteral("matrix-dense"), harken::studio::builtinThemeId()}) {
         ASSERT_TRUE(manager->selectTheme(theme).ok());
         QCoreApplication::processEvents();
         matrix.refreshLayout();
@@ -1137,8 +1137,8 @@ TEST(ThemeMetricsMigration, TableThemeChangesPreserveEditingStateAcrossBodies)
     ASSERT_TRUE(directory.isValid());
     ASSERT_TRUE(writeDenseMetricsPackage(directory.path(), QStringLiteral("table-dense")));
     auto manager = makeManager(directory.path());
-    const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });
-    VNX::TableWidget table(nullptr, manager.get());
+    const auto restore = qScopeGuard([&] { manager->selectTheme(harken::studio::builtinThemeId()); });
+    harken::studio::TableWidget table(nullptr, manager.get());
     table.setColumns(QStringLiteral("ThemeTable"), {
         {QStringLiteral("Name"), QStringLiteral("Name"), 500},
         {QStringLiteral("Value"), QStringLiteral("Value"), 500}
@@ -1160,13 +1160,13 @@ TEST(ThemeMetricsMigration, TableThemeChangesPreserveEditingStateAcrossBodies)
     layout->addWidget(cell);
     table.registerRow(row, {name, cell});
     table.rowsLayout()->addWidget(row);
-    VNX::ProportionalTreeWidget native({500, 500}, nullptr, manager.get());
+    harken::studio::ProportionalTreeWidget native({500, 500}, nullptr, manager.get());
     native.setHeaderLabels({"Name", "Value"});
     auto* item = new QTreeWidgetItem(&native, {"Parameter", "value"});
     native.setCurrentItem(item);
-    VNX::TableWidget listTable(nullptr, manager.get());
+    harken::studio::TableWidget listTable(nullptr, manager.get());
     auto* list = listTable.createCustomView(QStringLiteral("ThemeList"),
-        [](QWidget* parent, VNX::ThemeManager*) { return new QListWidget(parent); });
+        [](QWidget* parent, harken::studio::ThemeManager*) { return new QListWidget(parent); });
     auto* listItem = new QListWidgetItem(QStringLiteral("Shelf item"), list);
     list->setCurrentItem(listItem);
     table.resize(600, 180);
@@ -1175,8 +1175,8 @@ TEST(ThemeMetricsMigration, TableThemeChangesPreserveEditingStateAcrossBodies)
     native.show();
     listTable.resize(600, 180);
     listTable.show();
-    for (const auto& theme : {VNX::builtinThemeId(), QStringLiteral("table-dense"),
-                              VNX::builtinThemeId()}) {
+    for (const auto& theme : {harken::studio::builtinThemeId(), QStringLiteral("table-dense"),
+                              harken::studio::builtinThemeId()}) {
         ASSERT_TRUE(manager->selectTheme(theme).ok());
         QCoreApplication::processEvents();
         table.refreshLayout();
@@ -1206,7 +1206,7 @@ TEST(ThemeMetricsMigration, ItemViewPaintedRowsRemainDisjointAfterPolishAndScale
     ensureApp();
     QTemporaryDir directory;
     auto manager = makeManager(directory.path());
-    qApp->setStyle(new VNX::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion")), manager.get()));
+    qApp->setStyle(new harken::studio::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion")), manager.get()));
     const auto restore = qScopeGuard([] { qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion"))); });
     for (const auto& name : {QString(), QStringLiteral("settingsCategoryList")}) {
         SCOPED_TRACE(name.toStdString());
@@ -1258,20 +1258,20 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
         }
     })json"));
     auto manager = makeManager(directory.path());
-    const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });
-    VNX::ParameterBinding binding;
+    const auto restore = qScopeGuard([&] { manager->selectTheme(harken::studio::builtinThemeId()); });
+    harken::studio::ParameterBinding binding;
     binding.setName(QStringLiteral("Gain"));
     binding.setValue(0.25);
     QWidget panel;
     auto* layout = new QVBoxLayout(&panel);
-    VNX::ThemeLayout::margins(layout, VNX::ThemeLayout::Space::Panel, *manager);
-    VNX::ThemeLayout::spacing(layout, VNX::ThemeLayout::Space::Section, *manager);
+    harken::studio::ThemeLayout::margins(layout, harken::studio::ThemeLayout::Space::Panel, *manager);
+    harken::studio::ThemeLayout::spacing(layout, harken::studio::ThemeLayout::Space::Section, *manager);
     auto* editor = new QLineEdit(QStringLiteral("unfinished input"), &panel);
     layout->addWidget(editor);
-    VNX::ThemeLayout::addSpacing(layout, VNX::ThemeLayout::Space::Section, *manager);
+    harken::studio::ThemeLayout::addSpacing(layout, harken::studio::ThemeLayout::Space::Section, *manager);
     const int spacerIndex = layout->count() - 1;
-    auto* slider = new VNX::LinearSliderPresenter(&binding, true, manager.get(), &panel);
-    auto* fader = new VNX::VerticalFaderPresenter(&binding, manager.get(), &panel);
+    auto* slider = new harken::studio::LinearSliderPresenter(&binding, true, manager.get(), &panel);
+    auto* fader = new harken::studio::VerticalFaderPresenter(&binding, manager.get(), &panel);
     layout->addWidget(slider);
     layout->addWidget(fader);
     panel.resize(700, 700);
@@ -1311,9 +1311,9 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
 
     QWidget fresh;
     auto* freshLayout = new QVBoxLayout(&fresh);
-    VNX::ThemeLayout::margins(freshLayout, VNX::ThemeLayout::Space::Panel, *manager);
-    VNX::ThemeLayout::spacing(freshLayout, VNX::ThemeLayout::Space::Section, *manager);
-    VNX::ThemeLayout::addSpacing(freshLayout, VNX::ThemeLayout::Space::Section, *manager);
+    harken::studio::ThemeLayout::margins(freshLayout, harken::studio::ThemeLayout::Space::Panel, *manager);
+    harken::studio::ThemeLayout::spacing(freshLayout, harken::studio::ThemeLayout::Space::Section, *manager);
+    harken::studio::ThemeLayout::addSpacing(freshLayout, harken::studio::ThemeLayout::Space::Section, *manager);
     EXPECT_EQ(layout->contentsMargins(), freshLayout->contentsMargins());
     EXPECT_EQ(layout->spacing(), freshLayout->spacing());
     EXPECT_EQ(layout->itemAt(spacerIndex)->sizeHint(), freshLayout->itemAt(0)->sizeHint());
@@ -1322,7 +1322,7 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     ASSERT_TRUE(manager->reloadTheme().ok());
     binding.cancelEdit();
     EXPECT_DOUBLE_EQ(binding.value(), 0.25);
-    ASSERT_TRUE(manager->selectTheme(VNX::builtinThemeId()).ok());
+    ASSERT_TRUE(manager->selectTheme(harken::studio::builtinThemeId()).ok());
     QCoreApplication::processEvents();
     EXPECT_EQ(layout->contentsMargins(), originalMargins);
     EXPECT_EQ(fader->slider()->minimumHeight(), originalFaderHeight);
@@ -1352,7 +1352,7 @@ TEST(ThemeMetricsMigration, InvalidTokenMetricsCannotReplaceTheActiveTheme)
         const auto result = manager->selectTheme(QStringLiteral("invalid-%1").arg(index));
         EXPECT_FALSE(result.ok());
         ASSERT_FALSE(result.diagnostics.isEmpty());
-        EXPECT_EQ(result.diagnostics.first().code, VNX::ThemePackageErrorCode::MetricOutOfRange);
+        EXPECT_EQ(result.diagnostics.first().code, harken::studio::ThemePackageErrorCode::MetricOutOfRange);
         EXPECT_EQ(manager->snapshot(), original);
         EXPECT_EQ(manager->appearance(), appearance);
     }
@@ -1361,34 +1361,34 @@ TEST(ThemeMetricsMigration, InvalidTokenMetricsCannotReplaceTheActiveTheme)
 TEST(ThemeMetricsMigration, WindowChromePreservesControlBoundsAndSurfaceAcrossPresentationChanges)
 {
     ensureApp();
-    auto& theme = VNX::ThemeManager::instance();
+    auto& theme = harken::studio::ThemeManager::instance();
     const qreal originalScale = theme.snapshot()->uiScale * 100;
     const auto restore = qScopeGuard([&] {
         theme.cancelAppearancePreview();
         theme.setUIScale(originalScale);
     });
     ASSERT_TRUE(theme.reloadTheme().ok());
-    VNX::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), &theme);
+    harken::studio::HarkenStyle style(QStyleFactory::create(QStringLiteral("Fusion")), &theme);
     QMainWindow main;
     QWidget floating;
     QDialog dialog;
-    auto* mainBar = new VNX::TitleBarWidget(&main);
+    auto* mainBar = new harken::studio::TitleBarWidget(&main);
     main.menuBar()->addMenu(QStringLiteral("File"));
     mainBar->embedMenuBar(main.menuBar());
     main.setMenuWidget(mainBar);
     auto* floatingLayout = new QVBoxLayout(&floating);
     floatingLayout->setContentsMargins(0, 0, 0, 0);
-    auto* floatingBar = new VNX::FloatingTitleBar(&floating);
+    auto* floatingBar = new harken::studio::FloatingTitleBar(&floating);
     floatingLayout->addWidget(floatingBar);
     floatingLayout->addStretch();
     auto* dialogLayout = new QVBoxLayout(&dialog);
-    auto* dialogBar = new VNX::DialogTitleBar(&dialog);
+    auto* dialogBar = new harken::studio::DialogTitleBar(&dialog);
     dialogBar->setTitle(QStringLiteral("Dialog"));
     dialogLayout->setMenuBar(dialogBar);
     dialogLayout->addStretch();
 
     const QList<QWidget*> windows{&main, &floating, &dialog};
-    const QList<VNX::TitleBarBase*> bars{mainBar, floatingBar, dialogBar};
+    const QList<harken::studio::TitleBarBase*> bars{mainBar, floatingBar, dialogBar};
     for (auto* window : windows) {
         window->setAttribute(Qt::WA_DontShowOnScreen);
         window->setStyle(&style);
@@ -1455,18 +1455,18 @@ TEST(ThemeMetricsMigration, TimeHandlePaintAndHitGeometryShareThemeDimensions)
         "metrics": {"spacing.medium": 28}
     })json"));
     auto manager = makeManager(directory.path());
-    const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });
-    for (const auto& theme : {VNX::builtinThemeId(), QStringLiteral("handles")}) {
+    const auto restore = qScopeGuard([&] { manager->selectTheme(harken::studio::builtinThemeId()); });
+    for (const auto& theme : {harken::studio::builtinThemeId(), QStringLiteral("handles")}) {
         ASSERT_TRUE(manager->selectTheme(theme).ok());
         const auto& geometry = manager->metrics().timeAxis;
         for (bool start : {false, true}) {
-            const auto shape = start ? VNX::TimelineMarkerShape::EntryHandle : VNX::TimelineMarkerShape::ExitHandle;
-            const QRect hit = VNX::TimelineRenderer::markerHandleRect(50, 100, shape, geometry);
-            EXPECT_EQ(hit, VNX::timeAxisHandleRect(50, 0, start, geometry));
+            const auto shape = start ? harken::studio::TimelineMarkerShape::EntryHandle : harken::studio::TimelineMarkerShape::ExitHandle;
+            const QRect hit = harken::studio::TimelineRenderer::markerHandleRect(50, 100, shape, geometry);
+            EXPECT_EQ(hit, harken::studio::timeAxisHandleRect(50, 0, start, geometry));
             QImage image(100, 100, QImage::Format_ARGB32_Premultiplied);
             image.fill(Qt::transparent);
             QPainter painter(&image);
-            VNX::drawTimeAxisHandle(painter, Qt::red, Qt::white, hit);
+            harken::studio::drawTimeAxisHandle(painter, Qt::red, Qt::white, hit);
             painter.end();
             QRect painted;
             for (int y = 0; y < image.height(); ++y)

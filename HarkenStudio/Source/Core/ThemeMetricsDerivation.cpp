@@ -2,7 +2,7 @@
 
 #include <QtGlobal>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 struct Scale

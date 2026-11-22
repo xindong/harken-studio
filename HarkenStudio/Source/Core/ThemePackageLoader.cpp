@@ -21,7 +21,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

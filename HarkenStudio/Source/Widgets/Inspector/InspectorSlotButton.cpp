@@ -5,7 +5,7 @@
 #include <QPainter>
 #include <QPainterPath>
 
-namespace VNX {
+namespace harken::studio {
 
 InspectorSlotButton::InspectorSlotButton(InspectorSlotKind kind, QWidget* parent)
     : QToolButton(parent)

@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 ConnectionPath::ConnectionPath(NodePin* startPin, NodePin* endPin, QGraphicsItem* parent)
     : QGraphicsPathItem(parent)

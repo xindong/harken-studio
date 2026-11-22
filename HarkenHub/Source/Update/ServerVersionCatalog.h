@@ -12,7 +12,7 @@
 
 class QNetworkReply;
 
-namespace VNH {
+namespace harken::hub {
 
 struct ServerVersionEntry
 {
@@ -40,8 +40,6 @@ class ServerVersionCatalog : public QObject
 public:
     explicit ServerVersionCatalog(QObject* parent = nullptr);
 
-    bool fetch(const QUrl& versionsUrl, const QString& product,
-               const QString& channel);
     bool fetch(const QList<QUrl>& versionsUrls, const QString& product,
                const QString& channel);
     bool isFetching() const;
@@ -55,7 +53,7 @@ public:
         const QDateTime& now);
 
 signals:
-    void finished(const VNH::ServerVersionList& result);
+    void finished(const harken::hub::ServerVersionList& result);
 
 private:
     void handleReplyFinished();

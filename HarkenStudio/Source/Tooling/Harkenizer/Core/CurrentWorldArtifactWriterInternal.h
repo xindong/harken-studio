@@ -6,7 +6,7 @@
 
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class CurrentWorldArtifactFile
 {
@@ -24,4 +24,4 @@ using CurrentWorldArtifactFileFactory =
 void setCurrentWorldArtifactFileFactoryForTesting(
     CurrentWorldArtifactFileFactory factory) noexcept;
 
-} // namespace VNX
+} // namespace harken::studio

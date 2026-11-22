@@ -18,7 +18,7 @@
 #include <cmath>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using Property = harkenplayableproperties::PlayablePropertyIdV1;

@@ -5,7 +5,7 @@
 #include <QHash>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;
@@ -29,7 +29,7 @@ public:
     static ProjectObjectIndex fromProject(const ProjectData* project,
                                            const ProjectItem* excludedSubtree = nullptr);
 
-    const ProjectObjectLocation* find(harkenstudio::ObjectId id) const
+    const ProjectObjectLocation* find(harken::studio::types::ObjectId id) const
     {
         const auto found = objects_.constFind(id);
         return found == objects_.cend() ? nullptr : &*found;
@@ -39,7 +39,7 @@ public:
 
 private:
     QUuid projectGuid_;
-    QHash<harkenstudio::ObjectId, ProjectObjectLocation> objects_;
+    QHash<harken::studio::types::ObjectId, ProjectObjectLocation> objects_;
 };
 
 }

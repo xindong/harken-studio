@@ -11,7 +11,7 @@
 #include <QNetworkRequest>
 #include <QUrl>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr qsizetype kMaximumResponseBytes = 1024 * 1024;

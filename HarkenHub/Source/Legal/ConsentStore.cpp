@@ -11,7 +11,7 @@
 #include <QSaveFile>
 #include <QLockFile>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

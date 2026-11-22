@@ -4,7 +4,7 @@
 #include <QTextStream>
 #include <QThread>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -85,7 +85,6 @@
 #include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "Widgets/Blueprint/BlueprintPanel.h"
-#include "Dialogs/NewProjectDialog.h"
 #include "Dialogs/AboutDialog.h"
 #include "Widgets/Assistant/AssistantPanel.h"
 #include "Widgets/Publisher/PublisherPanel.h"
@@ -98,7 +97,6 @@
 #include "Monitor/MonitorHostContext.h"
 #include "Monitor/MonitorPerformanceLiveHost.h"
 #include "Widgets/Monitor/MonitorPanel.h"
-#include "Widgets/Monitor/MonitorPanelKeys.h"
 #include "Widgets/Monitor/MonitorPerformancePanel.h"
 #include "Widgets/Monitor/MonitorBusesPanel.h"
 #include "Widgets/Monitor/MonitorBusesSource.h"
@@ -110,7 +108,6 @@
 #include "Widgets/Meter/MeterPanel.h"
 #include "Widgets/Monitor/MonitorRecordingPanel.h"
 #include "Widgets/Monitor/MonitorSessionComparePanel.h"
-#include "Widgets/Monitor/MonitorPlaceholderPage.h"
 #include "Widgets/Monitor/MonitorScopePanel.h"
 #include "Widgets/Monitor/MonitorScopeSource.h"
 #include "Widgets/Monitor/MonitorTapSelectPanel.h"
@@ -165,7 +162,6 @@
 #include <QSize>
 #include <QList>
 #include <memory>
-#include <QStandardPaths>
 #include <QScreen>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -190,7 +186,7 @@
 #include <QSet>
 #include "Widgets/TitleBar/FloatingTitleBar.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 #if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
@@ -416,8 +412,8 @@ void MainWindow::initializeStructure(
     if (startupProgress)
         startupProgress(StartupPhase::CreatingWorkspace);
     startupTrace(QStringLiteral("MainWindow: ctor begin"));
-    VNX::initializeEditorSingletons();
-    VNX::registerBuiltinInspectorCustomizations();
+    harken::studio::initializeEditorSingletons();
+    harken::studio::registerBuiltinInspectorCustomizations();
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
             this, [this](bool active) {
         if (!active) return;
@@ -466,7 +462,7 @@ void MainWindow::initializeStructure(
         inspectorInfo.label = tr("Inspector");
         inspectorInfo.dockObjectPrefix = QStringLiteral("InspectorDock");
         inspectorInfo.create = [this]() { createInspectorPanel(); };
-        inspectorInfo.recreate = [this](const VNX::DockInstanceSpec& s) {
+        inspectorInfo.recreate = [this](const harken::studio::DockInstanceSpec& s) {
             if (findInspectorPanel(s.instanceId)) {
                 applyWorkspacePanelRestoreSpec(s);
                 return;
@@ -481,7 +477,7 @@ void MainWindow::initializeStructure(
         hierarchyInfo.label = tr("Hierarchy");
         hierarchyInfo.dockObjectPrefix = QStringLiteral("HierarchyDock");
         hierarchyInfo.create = [this]() { createHierarchyPanel(); };
-        hierarchyInfo.recreate = [this](const VNX::DockInstanceSpec& s) {
+        hierarchyInfo.recreate = [this](const harken::studio::DockInstanceSpec& s) {
             if (!findHierarchyPanel(s.instanceId))
                 createHierarchyPanelWithId(s.instanceId, true, s.deleteOnClose);
             applyWorkspacePanelRestoreSpec(s);
@@ -904,12 +900,12 @@ void MainWindow::initializeStructure(
         v.blueprintDock      = blueprintDock_;
         busController_->setViews(v);
     }
-    layoutController_->setInstanceSnapshotProvider([this]() -> QList<VNX::DockInstanceSpec> {
+    layoutController_->setInstanceSnapshotProvider([this]() -> QList<harken::studio::DockInstanceSpec> {
         return workspaceWindowManager_
             ? workspaceWindowManager_->instanceSpecs()
-            : QList<VNX::DockInstanceSpec>();
+            : QList<harken::studio::DockInstanceSpec>();
     });
-    layoutController_->setInstanceRestoreFactory([this](const VNX::DockInstanceSpec& spec) {
+    layoutController_->setInstanceRestoreFactory([this](const harken::studio::DockInstanceSpec& spec) {
         return workspaceWindowManager_
             ? workspaceWindowManager_->restoreInstance(spec)
             : panelRegistry_->recreate(spec);
@@ -965,7 +961,7 @@ void MainWindow::initializeFinalState()
     startupTrace(QStringLiteral("MainWindow: ctor ready"));
 
 #ifdef HARKEN_HAS_QWINDOWKIT
-    m_titleBar    = new VNX::TitleBarWidget(this);
+    m_titleBar    = new harken::studio::TitleBarWidget(this);
     connect(m_titleBar, &QObject::destroyed, this, [this]() { m_titleBar = nullptr; });
     m_windowAgent = new QWK::WidgetWindowAgent(this);
     m_windowAgent->setup(this);
@@ -1413,7 +1409,7 @@ void MainWindow::setupMainToolBar()
     auto* button = toolbar->addLeadingAction(remoteAction, QStringLiteral("remoteConnectButton"));
 
     const auto refresh = [this, button, remoteAction] {
-        using HarkenEditor::Bridge::RemoteConnectionState;
+        using harken::studio::bridge::RemoteConnectionState;
         const auto state = remoteConnection_->state();
         const bool connected = state == RemoteConnectionState::Connected;
         remoteAction->setChecked(connected);
@@ -1426,7 +1422,7 @@ void MainWindow::setupMainToolBar()
         refresh();
         showRemoteConnect();
     });
-    connect(remoteConnection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
+    connect(remoteConnection_, &harken::studio::bridge::RemoteConnection::stateChanged,
             button, refresh);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, button, refresh);
     refresh();
@@ -1865,7 +1861,7 @@ void MainWindow::registerWorkspaceSingletonFactories()
             if (auto* panel = qobject_cast<MonitorPanel*>(content))
             {
                 panel->setCaptureController(eventCaptureController_);
-                panel->setJumpLocator([this](harkenstudio::ObjectId stableId) {
+                panel->setJumpLocator([this](harken::studio::types::ObjectId stableId) {
                     if (selectionRouter_) selectionRouter_->revealProjectObject(stableId);
                 });
             }
@@ -1975,34 +1971,6 @@ void MainWindow::registerWorkspaceSingletonFactories()
                 panel->applyState(Monitor::projectCompareUi(input));
             }
         }
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorStreaming"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Streaming"), QStringLiteral("G11"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorMemory"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Memory"), QStringLiteral("P6-5"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorGameModulate"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Game Modulate"), QStringLiteral("G6"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorEmitters"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Emitters"), QStringLiteral("G5"));
-        },
-        {},
-        {}
     });
 }
 
@@ -2161,10 +2129,10 @@ void MainWindow::refreshMonitorRecordingPanel()
     input.contractPresent = true;
     if (monitorAdapter_ && monitorAdapter_->hasOpenSession())
     {
-        VNX::Monitor::MonitorRecordingStatus status {};
+        harken::studio::Monitor::MonitorRecordingStatus status {};
         input.statusQuery =
             monitorAdapter_->getRecordingStatus(monitorAdapter_->sessionHandle(), &status);
-        if (input.statusQuery == VNX::Monitor::kOk)
+        if (input.statusQuery == harken::studio::Monitor::kOk)
             input.status = status;
     }
     panel->applyState(Monitor::projectRecordingBrowser(input));
@@ -2204,7 +2172,7 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
     if (!monitorAdapter_->hasOpenSession())
         return;
 
-    const VNX::Monitor::MonitorSessionHandle handle = monitorAdapter_->sessionHandle();
+    const harken::studio::Monitor::MonitorSessionHandle handle = monitorAdapter_->sessionHandle();
     const uint64_t epoch = monitorAdapter_->sessionEpoch();
     uint64_t leaseGeneration = monitorAdapter_->acquiredLeaseGeneration();
     if (leaseGeneration == 0)
@@ -2216,8 +2184,8 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
     {
         if (!Monitor::canApply(capture))
         {
-            VNX::Monitor::MonitorCaptureControlStatus lease {};
-            if (monitorAdapter_->acquireCaptureControl(handle, &lease, epoch) != VNX::Monitor::kOk)
+            harken::studio::Monitor::MonitorCaptureControlStatus lease {};
+            if (monitorAdapter_->acquireCaptureControl(handle, &lease, epoch) != harken::studio::Monitor::kOk)
                 break;
             leaseGeneration = lease.leaseGeneration;
             monitorCaptureControlHost_->openLayout();
@@ -2229,7 +2197,7 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
                 .filePath(QStringLiteral("session-%1.vnmon")
                               .arg(QDateTime::currentMSecsSinceEpoch()))
                 .toUtf8();
-        VNX::Monitor::MonitorRecordingDesc desc {};
+        harken::studio::Monitor::MonitorRecordingDesc desc {};
         desc.utf8Path = pathUtf8.constData();
         desc.fileByteBudget = 8ull * 1024ull * 1024ull;
         monitorAdapter_->startRecording(handle, leaseGeneration, &desc, epoch);
@@ -2240,7 +2208,7 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
         break;
     case Monitor::MonitorRecordingCommand::StopCapture:
     {
-        VNX::Monitor::MonitorEffectiveCapturePlan result {};
+        harken::studio::Monitor::MonitorEffectiveCapturePlan result {};
         monitorAdapter_->stopCapture(handle, leaseGeneration, &result, epoch);
         break;
     }
@@ -2435,8 +2403,8 @@ void MainWindow::connectWorkspaceWindowSignals()
                 selectionRouter_, &SelectionRouter::onBlueprintNodeDoubleClicked);
     }
 
-    auditionManager_ = new HarkenEditor::AuditionManager(&AudioEngine::instance(), this);
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStateChanged,
+    auditionManager_ = new harken::studio::AuditionManager(&AudioEngine::instance(), this);
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStateChanged,
             playbackControls_, [this](uint32_t, int) {
         const bool active = auditionManager_->hasActiveNonRawAudition();
         playbackControls_->setPlaying(active);
@@ -2445,17 +2413,17 @@ void MainWindow::connectWorkspaceWindowSignals()
             setStatusMessage(tr("Stopped"));
         }
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::allAuditionsStopped,
+    connect(auditionManager_, &harken::studio::AuditionManager::allAuditionsStopped,
             playbackControls_, [this] { playbackControls_->setPlaying(false); });
     for (QWidget* widget : panelRegistry_->allPanels(FileViewerPanel::typeId())) {
         if (auto* editor = qobject_cast<FileViewerPanel*>(widget))
             editor->setAuditionManager(auditionManager_);
     }
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStarted,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStarted,
             this, [this](uint32_t, const QString& objectName) {
         setStatusMessage(tr("Playing: %1").arg(objectName));
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStartFailed,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStartFailed,
             this, [this](uint32_t, const QString& objectName,
                          int32_t engineResult) {
         const QString message = engineResult == 0
@@ -2473,7 +2441,7 @@ void MainWindow::connectWorkspaceWindowSignals()
                 log->logError(LogCategory::Audio, message);
         }
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStopFailed,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStopFailed,
             this, [this](uint32_t, const QString& objectName, int32_t engineResult) {
         const QString message = tr("Could not stop '%1'. Try Stop again.").arg(objectName);
         setStatusMessage(message);
@@ -2481,7 +2449,7 @@ void MainWindow::connectWorkspaceWindowSignals()
             log->logError(LogCategory::Audio,
                 tr("%1 (engine result %2)").arg(message).arg(engineResult));
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionSeekFinished,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionSeekFinished,
             this, [this](uint32_t playingId, quint64 requestId,
                          int32_t engineResult, bool applied) {
         if (!ipcServer_)
@@ -2627,11 +2595,11 @@ int MainWindow::lastFocusedWorkspacePanelId(const QString& typeId) const
     return panelRegistry_ ? panelRegistry_->lastFocusedPanelId(typeId) : PanelInstanceRegistry::kNoFocus;
 }
 
-QList<VNX::DockInstanceSpec> MainWindow::workspaceWindowInstanceSpecs() const
+QList<harken::studio::DockInstanceSpec> MainWindow::workspaceWindowInstanceSpecs() const
 {
     return workspaceWindowManager_
         ? workspaceWindowManager_->instanceSpecs()
-        : QList<VNX::DockInstanceSpec>();
+        : QList<harken::studio::DockInstanceSpec>();
 }
 
 QList<QVariantMap> MainWindow::workspaceWindowSummaries() const
@@ -2896,7 +2864,7 @@ void MainWindow::registerStandaloneEditorType(const QString& type, StandaloneEdi
     pinfo.label = info.label;
     pinfo.dockObjectPrefix = info.dockObjectPrefix;
     pinfo.create = [this, type]() { createStandaloneEditorPanel(type); };
-    pinfo.recreate = [this, type](const VNX::DockInstanceSpec& s) {
+    pinfo.recreate = [this, type](const harken::studio::DockInstanceSpec& s) {
         if (panelRegistry_->findPanel(type, s.instanceId)) {
             applyWorkspacePanelRestoreSpec(s);
             return;
@@ -3908,7 +3876,7 @@ void MainWindow::connectSignals()
             if (!AudioFormatCatalog::containsExtension(ext))
                 continue;
             uint32_t sourceID =
-                HarkenEditor::Bridge::mediaRegistryFindSourceIdByPath(filePath);
+                harken::studio::bridge::mediaRegistryFindSourceIdByPath(filePath);
             if (sourceID == 0) {
                 const AssetInfo* asset = AssetRegistry::instance().findAssetByPath(filePath);
                 sourceID = asset ? asset->sourceID : 0;
@@ -4393,34 +4361,6 @@ bool MainWindow::createProjectFromConfig(
     setStatusMessage(tr("New project created: %1").arg(currentProjectPath_));
     LogPanel::logInfo(LogCategory::File, tr("New project created: %1").arg(currentProjectPath_));
     return true;
-}
-
-void MainWindow::onNewProject()
-{
-    if (!maybeSave())
-        return;
-
-    VNX::NewProjectDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    const auto dlgResult = dlg.result();
-    const QString projectName = dlgResult.projectName;
-
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Project Location"),
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
-    if (dir.isEmpty())
-        return;
-
-    saveProjectLayout();
-
-    ProjectConfig config;
-    config.name = projectName;
-    config.location = dir;
-    config.templateId   = dlgResult.templateId;
-    config.templateData = dlgResult.templateData.toJson();
-
-    createProjectFromConfig(config);
 }
 
 void MainWindow::onOpenProject()
@@ -4954,7 +4894,7 @@ ExternalEditorPanel* MainWindow::openCurveEditor(const CurveSelection& selection
         if (ProjectItem* host = ProjectManager::instance().findItemByGuid(selection.hostGuid)) {
             resolved.hostGuid = host->guid;
             if (const auto* mix = BindingEditing::ledgerHost(host, selection.address)) {
-                const ParameterBindingDef* binding = !harkenstudio::IsNull(selection.bindingStableId)
+                const ParameterBindingDef* binding = !harken::studio::types::IsNull(selection.bindingStableId)
                     ? mix->bindings.find(selection.bindingStableId)
                     : mix->bindings.findFirst(selection.address);
                 if (binding) {
@@ -5176,7 +5116,7 @@ void MainWindow::onPlayRequested()
         }
         else
         {
-            using HarkenEditor::Bridge::PlaybackFailure;
+            using harken::studio::bridge::PlaybackFailure;
             const PlaybackFailure failure =
                 auditionManager_->lastPlayFailure();
             QString message;
@@ -5264,7 +5204,7 @@ void MainWindow::refreshPlaybackResetEnabled()
         && selection
         && selection->mode != SelectionMode::Match
         && selection->mode != SelectionMode::Blend
-        && !harkenstudio::IsNull(item->runtimeId());
+        && !harken::studio::types::IsNull(item->runtimeId());
     playbackControls_->setResetEnabled(enabled);
 }
 

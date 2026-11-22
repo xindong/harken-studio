@@ -2,7 +2,6 @@ set(build_identity "${CMAKE_CURRENT_BINARY_DIR}/generated/$<CONFIG>/ProjectBuild
 set(build_identity_targets
     harkenizer_core
     harkenizer_resource_compiler
-    harkenizer_compiler_client
     harken_runtime_bridge
     harken_studio_build_pipeline
     harken_current_world_compiler

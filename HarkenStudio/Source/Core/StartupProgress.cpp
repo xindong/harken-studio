@@ -1,6 +1,6 @@
 #include "StartupProgress.h"
 
-namespace VNX {
+namespace harken::studio {
 
 StartupProgress startupProgressFor(StartupPhase phase)
 {

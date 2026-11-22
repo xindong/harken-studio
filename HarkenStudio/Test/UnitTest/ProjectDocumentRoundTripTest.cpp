@@ -43,7 +43,7 @@
 
 namespace {
 
-using namespace VNX;
+using namespace harken::studio;
 
 QByteArray readFile(const QString& path)
 {
@@ -183,7 +183,7 @@ TEST(ProjectDocumentModuleData, KnownBindingAndEffectEditsPreserveRawModuleField
     const QJsonObject futureData = extensionMetadata(QStringLiteral("module"));
     ParameterBindingDef binding = BindingSemantics::defaultBinding(
         BindingSemantics::volumeAddress(), QUuid::createUuid());
-    binding.guid = VNX::authoringUuid(harkentest::StudioObjectId(41));
+    binding.guid = harken::studio::authoringUuid(harkentest::StudioObjectId(41));
     binding.address.path = BindingPath{3};
     QJsonObject bindingJson = binding.toJson().toObject();
     QJsonObject address = bindingJson.value(QStringLiteral("address")).toObject();
@@ -769,7 +769,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             const auto effective = snapshot.definitions.find(toFieldGroupGuid(QUuid(sound.key())));
             ASSERT_NE(effective, snapshot.definitions.end());
             std::vector<ConversionRule> tiers;
-            if (!harkenprojectschema::IsNull(effective->second.conversion.settingsRef)) {
+            if (!harken::studio::project_schema::IsNull(effective->second.conversion.settingsRef)) {
                 const auto preset = snapshot.objects.find(effective->second.conversion.settingsRef);
                 ASSERT_NE(preset, snapshot.objects.end());
                 const auto* conversion = preset->second->comp<VConversion>();

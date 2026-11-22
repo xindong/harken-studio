@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace VNX {
+namespace harken::hub::unity {
 
 bool checkUnityProjectClosed(const QString& project, QString* error, bool* isOpen = nullptr);
 

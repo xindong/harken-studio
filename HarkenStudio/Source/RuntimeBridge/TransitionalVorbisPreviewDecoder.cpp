@@ -7,7 +7,7 @@
 #include <cmath>
 #include <limits>
 
-namespace HarkenEditor::Bridge::Detail {
+namespace harken::studio::bridge::Detail {
 namespace {
 
 struct Decoder
@@ -43,7 +43,7 @@ constexpr std::array<std::array<uint8_t, 8>, 8> kVorbisChannels{{
 }
 
 std::optional<std::vector<float>> decodeTransitionalVorbisPreview(
-    const VNX::VorbisEncoder::EncodedMedia& media, QString* error)
+    const harken::studio::VorbisEncoder::EncodedMedia& media, QString* error)
 {
     const auto fail = [&](const QString& message) -> std::optional<std::vector<float>> {
         if (error) *error = message;

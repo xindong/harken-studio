@@ -7,7 +7,7 @@
 class QLabel;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class InspectorLaunchEntry : public QWidget
 {

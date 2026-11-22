@@ -6,7 +6,7 @@
 
 class QMimeData;
 
-namespace VNX {
+namespace harken::studio {
 namespace ProjectItemMime {
 
 inline constexpr char kSingleFormat[] = "application/x-harken-project-item";

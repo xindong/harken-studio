@@ -1,6 +1,6 @@
 #include "LineageProjection.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool lineageAdjacencyPublished()
@@ -27,4 +27,4 @@ LineageProjection projectLineageFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

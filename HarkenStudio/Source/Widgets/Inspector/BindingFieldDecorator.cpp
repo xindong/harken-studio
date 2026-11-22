@@ -8,7 +8,7 @@
 #include "Core/ProjectTypes.h"
 #include "Core/QtControlSkin.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -33,7 +33,7 @@ BindingFieldDecorator::BindingFieldDecorator(const BindingAddress& address, QWid
         + BindingSemantics::slotName(address));
     setContextMenuPolicy(Qt::PreventContextMenu);
     addMenu_ = new BindingAddMenu(this);
-    connect(addMenu_, &BindingAddMenu::bindingAdded, this, [this](harkenstudio::ObjectId id) {
+    connect(addMenu_, &BindingAddMenu::bindingAdded, this, [this](harken::studio::types::ObjectId id) {
         if (!item_) return;
         QMetaObject::invokeMethod(this, [this, guid = item_->guid, address = address_, id] {
             if (item_ && item_->guid == guid && address_ == address)
@@ -111,10 +111,10 @@ void BindingFieldDecorator::activate()
         addMenu_->show();
 }
 
-void BindingFieldDecorator::showEditor(harkenstudio::ObjectId bindingId)
+void BindingFieldDecorator::showEditor(harken::studio::types::ObjectId bindingId)
 {
     if (isReadOnly()) return;
-    if (bindingId != harkenstudio::ObjectId{}) {
+    if (bindingId != harken::studio::types::ObjectId{}) {
         const auto* mix = BindingEditing::ledgerHost(item_, address_);
         const auto* binding = mix ? mix->bindings.find(bindingId) : nullptr;
         if (!binding || binding->address != address_) return;

@@ -5,17 +5,17 @@
 
 #include <cstdint>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
-bool MaterializeBindingCurveV1(const harkenstudiobuild::CurvePoint* points,
-                               const harkenstudiobuild::CurveHandlePair* handles,
+bool MaterializeBindingCurveV1(const harken::studio::build::CurvePoint* points,
+                               const harken::studio::build::CurveHandlePair* handles,
                                std::uint32_t pointCount,
-                               harkenstudiobuild::Curve* output) noexcept;
+                               harken::studio::build::Curve* output) noexcept;
 
 bool ValidateBindingTargetV1(std::uint32_t scopeKind,
                              std::uint32_t targetId,
                              std::uint32_t transitionMs) noexcept;
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_BINDING_MATERIALIZATION_H

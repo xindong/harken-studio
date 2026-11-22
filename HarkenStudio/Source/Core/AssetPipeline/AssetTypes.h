@@ -14,7 +14,7 @@
 
 #include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr uint32_t kMediaCacheArtifactVersion = 5;
 
@@ -291,9 +291,9 @@ inline MediaStatus mediaStatusFromString(const QString& s) {
 
 }
 
-inline size_t qHash(VNX::Platform key, size_t seed = 0) {
+inline size_t qHash(harken::studio::Platform key, size_t seed = 0) {
     return qHash(static_cast<uint8_t>(key), seed);
 }
 
-Q_DECLARE_METATYPE(VNX::MediaStatus)
-Q_DECLARE_METATYPE(VNX::Platform)
+Q_DECLARE_METATYPE(harken::studio::MediaStatus)
+Q_DECLARE_METATYPE(harken::studio::Platform)

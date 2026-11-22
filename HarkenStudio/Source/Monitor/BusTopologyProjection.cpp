@@ -6,7 +6,7 @@
 #include <cstring>
 #include <map>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -126,4 +126,4 @@ BusMonitorProjection projectBusRows(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

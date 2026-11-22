@@ -6,7 +6,7 @@
 #include <functional>
 #include "ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class NameValidator
 {

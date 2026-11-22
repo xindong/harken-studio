@@ -12,7 +12,7 @@
 #include <QDir>
 #include <QJsonDocument>
 
-namespace VNX {
+namespace harken::studio {
 
 void IPCServer::registerProjectHandlers()
 {
@@ -38,12 +38,12 @@ void setRuntimeStableIdField(QJsonObject& object, const ProjectItem* item)
 {
     object.insert(
         QStringLiteral("runtime_stable_id"),
-        objectIdString(item ? item->runtimeId() : harkenstudio::ObjectId{}));
+        objectIdString(item ? item->runtimeId() : harken::studio::types::ObjectId{}));
 }
 
-ProjectItem* findStable(ProjectData* project, harkenstudio::ObjectId stableId)
+ProjectItem* findStable(ProjectData* project, harken::studio::types::ObjectId stableId)
 {
-    if (!project || harkenstudio::IsNull(stableId)) return nullptr;
+    if (!project || harken::studio::types::IsNull(stableId)) return nullptr;
     for (auto* binding : project->allFileBindings()) {
         if (!binding || !binding->rootItem) continue;
         std::function<ProjectItem*(ProjectItem*)> visit = [&](ProjectItem* item) -> ProjectItem* {
@@ -94,8 +94,8 @@ QJsonObject IPCServer::handleGetActionPackPlan(const QJsonObject& args)
     if (!projectManager_ || !projectManager_->isProjectOpen())
         return errorResponse(QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is currently open"));
     auto* project = projectManager_->currentProject();
-    harkenstudio::ObjectId stableId{};
-    if (!parseObjectIdJson(args.value(QStringLiteral("actionStableId")), &stableId) || harkenstudio::IsNull(stableId))
+    harken::studio::types::ObjectId stableId{};
+    if (!parseObjectIdJson(args.value(QStringLiteral("actionStableId")), &stableId) || harken::studio::types::IsNull(stableId))
         return errorResponse(QStringLiteral("INVALID_ARGS"),
                              QStringLiteral("actionStableId must be an object UUID"));
     const ProjectItem* action = findStable(project, stableId);
@@ -157,12 +157,12 @@ QJsonObject IPCServer::handleGetActionPackPlan(const QJsonObject& args)
 
 QJsonObject IPCServer::handleGetRuntimeCapabilityMatrix(const QJsonObject& args)
 {
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     const auto value = args.contains(QStringLiteral("rootStableId"))
         ? args.value(QStringLiteral("rootStableId")) : args.value(QStringLiteral("actionStableId"));
     if (!value.isUndefined() && !parseObjectIdJson(value, &stableId))
         return errorResponse(QStringLiteral("INVALID_ARGS"), QStringLiteral("Expected an object UUID"));
-    if (!harkenstudio::IsNull(stableId)) {
+    if (!harken::studio::types::IsNull(stableId)) {
         if (!projectManager_ || !projectManager_->isProjectOpen())
             return errorResponse(QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is currently open"));
         auto* project = projectManager_->currentProject();

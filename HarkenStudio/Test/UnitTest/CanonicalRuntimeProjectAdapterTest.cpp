@@ -14,17 +14,17 @@
 #include <QDir>
 #include <QTemporaryDir>
 
-using namespace VNX;
-using namespace HarkenEditor::Bridge;
+using namespace harken::studio;
+using namespace harken::studio::bridge;
 
 namespace {
 
 std::shared_ptr<ProjectItem> makeItem(ProjectItem::Type type, uint32_t objectId,
-                                      harkenstudio::ObjectId stableId)
+                                      harken::studio::types::ObjectId stableId)
 {
     auto value = std::make_shared<ProjectItem>(QStringLiteral("Item"), type);
     value->objectID = objectId;
-    value->guid = VNX::authoringUuid(harkentest::StudioObjectId(stableId));
+    value->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(stableId));
     value->attachDefaultComponents();
     return value;
 }
@@ -159,7 +159,7 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
                                     PlatformScope{HarkenTest::PlatformIds::Android}}) {
         const auto groups = buildFieldGroupEffectiveSnapshot(project, toFieldGroupScope(scope));
         ASSERT_TRUE(groups.ok());
-        harkenprojectschema::InputNode node;
+        harken::studio::project_schema::InputNode node;
         QString error;
         ASSERT_TRUE(copyStudioDefinitionPayload(*sound, scope, *source, groups, *identity, &node, &error))
             << error.toStdString();

@@ -5,7 +5,7 @@
 #include <QString>
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace ThemeAssetIds {
 inline constexpr char AppIcon[] = "app.icon";

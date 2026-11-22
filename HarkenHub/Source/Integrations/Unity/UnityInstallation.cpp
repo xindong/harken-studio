@@ -14,7 +14,7 @@
 #include <functional>
 #include <filesystem>
 
-namespace VNX::UnityInstallation {
+namespace harken::hub::unity::UnityInstallation {
 namespace {
 
 QString pathKey(const QString& path)
@@ -44,7 +44,7 @@ struct DiscoveryBudget
 
     bool consume(const QString& path, int depth = 0, qint64 bytes = 0)
     {
-        VNH::IntegrationProgress::checkpoint();
+        harken::hub::IntegrationProgress::checkpoint();
         if (external) {
             if (!externalTimer.isValid()) externalTimer.start();
             externalBytes += bytes;
@@ -128,7 +128,7 @@ bool walk(const QString& root, bool importedOnly,
     const std::filesystem::directory_iterator end;
     while (!enumerationError && cursor != end) {
         const QFileInfo entry(QString::fromStdU16String(cursor->path().u16string()));
-        VNH::IntegrationProgress::inspectedEntry();
+        harken::hub::IntegrationProgress::inspectedEntry();
         if (budget && !budget->consume(entry.absoluteFilePath(), depth)) {
             *error = budget->error;
             return false;

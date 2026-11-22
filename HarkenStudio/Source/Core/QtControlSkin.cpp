@@ -33,20 +33,20 @@
 namespace {
 
 int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
-                    const VNX::ThemeMetrics& metrics)
+                    const harken::studio::ThemeMetrics& metrics)
 {
     QVariant mode;
     for (auto* owner = widget; owner && !mode.isValid(); owner = owner->parentWidget())
         mode = owner->property("popupIconColumn");
     const bool reserved = mode.isValid()
-        ? mode.toInt() == static_cast<int>(VNX::PopupIconColumn::Reserved)
+        ? mode.toInt() == static_cast<int>(harken::studio::PopupIconColumn::Reserved)
         : qobject_cast<const QMenu*>(widget) != nullptr;
     return reserved || item.menuHasCheckableItems
         ? qMax(metrics.popup.iconColumnWidth, item.maxIconWidth) : metrics.control.textPaddingX;
 }
 
 int popupCheckColumnWidth(const QStyleOptionMenuItem& item, const QWidget* widget,
-                          const VNX::ThemeMetrics& metrics)
+                          const harken::studio::ThemeMetrics& metrics)
 {
     return qobject_cast<const QMenu*>(widget) && item.menuHasCheckableItems && item.maxIconWidth > 0
         ? metrics.popup.iconColumnWidth : 0;
@@ -61,7 +61,7 @@ public:
                const QModelIndex& index) const override
     {
         const QVariant alignment = index.data(Qt::TextAlignmentRole);
-        VNX::QtControlSkin::current().paintPopupItem(*painter, menuOption(option, index), combo_,
+        harken::studio::QtControlSkin::current().paintPopupItem(*painter, menuOption(option, index), combo_,
             alignment.isValid() ? Qt::Alignment(alignment.toInt()) : Qt::AlignLeft);
     }
 
@@ -70,7 +70,7 @@ public:
         const auto menu = menuOption(option, index);
         const QSize contents = menu.fontMetrics.size(Qt::TextSingleLine | Qt::TextShowMnemonic,
                                                      menu.text);
-        return VNX::QtControlSkin::current().popupItemSize(menu, contents, combo_);
+        return harken::studio::QtControlSkin::current().popupItemSize(menu, contents, combo_);
     }
 
 private:
@@ -149,7 +149,7 @@ QColor contrastTextColor(const QColor& background)
     return QColor::fromRgbF(foreground, foreground, foreground);
 }
 
-QString styleSheetImagePath(const VNX::ThemeImageResource& resource)
+QString styleSheetImagePath(const harken::studio::ThemeImageResource& resource)
 {
     static QTemporaryDir directory(
         QDir::tempPath() + QStringLiteral("/harken-theme-icons-XXXXXX"));
@@ -177,7 +177,7 @@ QString styleSheetImagePath(const VNX::ThemeImageResource& resource)
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 QtControlSkin::QtControlSkin(ThemeSnapshotPtr snapshot,
                              ThemeAssetResolver* assetResolver)
@@ -579,7 +579,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
     replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
     replace(QStringLiteral("@lineEditPaddingX@"),
-            QString::number(std::max(0, fieldMargins.left() - VNX::QtControlSkin::LineEditTextMargin)));
+            QString::number(std::max(0, fieldMargins.left() - harken::studio::QtControlSkin::LineEditTextMargin)));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
     const auto& parameterMetrics = metrics().parameter;

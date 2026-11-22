@@ -5,7 +5,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ComponentRecipeHostId
 {

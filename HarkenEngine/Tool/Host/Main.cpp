@@ -77,7 +77,7 @@ struct Options {
     enum class Mode {
         Demo,
         StreamEndurance,
-        M2Scene,
+        SceneMix,
         M6Scene,
         M7S7Render,
         VariableWorldRun
@@ -101,7 +101,7 @@ void PrintUsage() {
         "       harken_host demo --synth [--seconds N] [--null]\n"
         "       harken_host stream-endurance [--seconds N] "
         "[--chunk-frames N] [--null]\n"
-        "       harken_host m2-scene [--seconds N] "
+        "       harken_host scene-mix [--seconds N] "
         "[--chunk-frames N] [--music <wav>] [--ambience <wav>] "
         "[--oneshot <wav>] [--null]\n"
         "       harken_host m6-scene [--seconds N] [--null]\n"
@@ -145,10 +145,10 @@ void PrintUsage() {
                  "writes it as a .stream container, streams it, polls\n"
                  "Vn_CaptureSnapshot, and exits on the ended notification.\n");
     std::fprintf(stderr,
-                 "\nm2-scene plays a streamed music sound, an in-memory\n"
+                 "\nscene-mix plays a streamed music sound, an in-memory\n"
                  "looping ambience sound, and a delayed one-shot together;\n"
                  "the three wav arguments override the synthesized defaults.\n"
-                 "m2-scene --seconds defaults to 40 and accepts [8, 300].\n"
+                 "scene-mix --seconds defaults to 40 and accepts [8, 300].\n"
                  "Override wavs play as authored with no normalization; hot\n"
                  "content can clip. --music must cover the one-shot trigger\n"
                  "(45%% of --seconds plus 0.10 s) and end by --seconds + 6 s.\n");
@@ -184,7 +184,7 @@ void PrintUsage() {
 
 bool ModeUsesStream(Options::Mode mode) {
     return mode == Options::Mode::StreamEndurance ||
-           mode == Options::Mode::M2Scene;
+           mode == Options::Mode::SceneMix;
 }
 
 bool ParseChunkFrames(const char* text, std::uint32_t* out) {
@@ -212,8 +212,8 @@ bool ParseOptions(int argc, char** argv, Options* out) {
     } else if (std::strcmp(argv[1], "stream-endurance") == 0) {
         out->mode = Options::Mode::StreamEndurance;
         out->seconds = 600.0;
-    } else if (std::strcmp(argv[1], "m2-scene") == 0) {
-        out->mode = Options::Mode::M2Scene;
+    } else if (std::strcmp(argv[1], "scene-mix") == 0) {
+        out->mode = Options::Mode::SceneMix;
         out->seconds = 40.0;
     } else if (std::strcmp(argv[1], "m6-scene") == 0) {
         out->mode = Options::Mode::M6Scene;
@@ -256,13 +256,13 @@ bool ParseOptions(int argc, char** argv, Options* out) {
             if (!ParseChunkFrames(argv[++i], &out->chunkFrames)) {
                 return false;
             }
-        } else if (out->mode == Options::Mode::M2Scene &&
+        } else if (out->mode == Options::Mode::SceneMix &&
                    arg == "--music" && i + 1 < argc) {
             out->musicPath = argv[++i];
-        } else if (out->mode == Options::Mode::M2Scene &&
+        } else if (out->mode == Options::Mode::SceneMix &&
                    arg == "--ambience" && i + 1 < argc) {
             out->ambiencePath = argv[++i];
-        } else if (out->mode == Options::Mode::M2Scene &&
+        } else if (out->mode == Options::Mode::SceneMix &&
                    arg == "--oneshot" && i + 1 < argc) {
             out->oneshotPath = argv[++i];
         } else {
@@ -286,7 +286,7 @@ bool ParseOptions(int argc, char** argv, Options* out) {
     if (out->mode == Options::Mode::VariableWorldRun) {
         return out->seconds > 0.0 && out->seconds <= kSceneMaxSeconds;
     }
-    if (out->mode == Options::Mode::M2Scene ||
+    if (out->mode == Options::Mode::SceneMix ||
         out->mode == Options::Mode::M6Scene) {
         if (out->seconds < kSceneMinSeconds ||
             out->seconds > kSceneMaxSeconds) {
@@ -2039,7 +2039,7 @@ int RunM6Scene(const Options& options) {
     return 0;
 }
 
-int RunM2Scene(const Options& options, char** argv) {
+int RunSceneMix(const Options& options, char** argv) {
     std::error_code ec;
     std::filesystem::create_directories(".temp", ec);
     if (ec) {
@@ -2053,10 +2053,10 @@ int RunM2Scene(const Options& options, char** argv) {
     constexpr VnSoundId kOneShotId{0x76656e7573686f73, 8103};
     const std::filesystem::path musicWavPath =
         options.musicPath.empty()
-            ? std::filesystem::path(".temp/harken_host_m2_music.wav")
+            ? std::filesystem::path(".temp/harken_host_scene_mix_music.wav")
             : std::filesystem::path(options.musicPath);
     const std::filesystem::path streamPath =
-        ".temp/harken_host_m2_scene.stream";
+        ".temp/harken_host_scene_mix.stream";
     const double oneShotStartSeconds =
         options.seconds * kSceneOneShotStartRatio;
     const double minMusicSeconds =
@@ -2101,7 +2101,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
 
     if (!WriteStreamFromWav(kMusicId, musicWavPath, streamPath, options.chunkFrames)) {
-        std::fprintf(stderr, "error: cannot write m2-scene stream\n");
+        std::fprintf(stderr, "error: cannot write scene-mix stream\n");
         return 1;
     }
 
@@ -2226,7 +2226,7 @@ int RunM2Scene(const Options& options, char** argv) {
         static_cast<int>((options.seconds + kSceneMusicMaxTailSeconds) /
                          kTickSeconds);
 
-    std::printf("m2-scene: %.2fs, one-shot at %.2fs, ambience fade %.2fs\n",
+    std::printf("scene-mix: %.2fs, one-shot at %.2fs, ambience fade %.2fs\n",
                 options.seconds, oneShotTick * kTickSeconds,
                 ambienceFadeTick * kTickSeconds);
 
@@ -2255,7 +2255,7 @@ int RunM2Scene(const Options& options, char** argv) {
                 break;
             }
             oneShotStarted = true;
-            std::printf("[m2 %.2fs] delayed one-shot triggered\n",
+            std::printf("[scene-mix %.2fs] delayed one-shot triggered\n",
                         tick * kTickSeconds);
         }
         if (tick == ambienceFadeTick) {
@@ -2265,7 +2265,7 @@ int RunM2Scene(const Options& options, char** argv) {
                 break;
             }
             ambienceFadeStarted = true;
-            std::printf("[m2 %.2fs] ambience fade-stop started\n",
+            std::printf("[scene-mix %.2fs] ambience fade-stop started\n",
                         tick * kTickSeconds);
         }
         notifications.currentTick = tick;
@@ -2308,7 +2308,7 @@ int RunM2Scene(const Options& options, char** argv) {
                 }
             }
             if (tick % kPrintEveryTicks == 0) {
-                std::printf("[m2 %.2fs] voices=%u peak=%.5f "
+                std::printf("[scene-mix %.2fs] voices=%u peak=%.5f "
                             "streamHW=%llu starved=%llu\n",
                             tick * kTickSeconds,
                             snapshot.activeVoiceCount,
@@ -2337,7 +2337,7 @@ int RunM2Scene(const Options& options, char** argv) {
 
     const std::uint64_t roundedRingFrames =
         RoundUpPow2Host(kStreamRingFrames);
-    std::printf("m2-scene summary: musicEnded=%s oneShotEnded=%s "
+    std::printf("scene-mix summary: musicEnded=%s oneShotEnded=%s "
                 "ambienceFadeDone=%s fadeStarted=%s "
                 "musicEndTick=%d musicEndElapsed=%.2f "
                 "concurrentSnapshots=%d maxPeak=%.5f maxConcurrentPeak=%.5f "
@@ -2364,7 +2364,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
     if (maxPeak < kSilenceFloor) {
         std::fprintf(stderr,
-                     "SILENT: m2-scene master peak stayed below %g "
+                     "SILENT: scene-mix master peak stayed below %g "
                      "(max %.6g)\n",
                      static_cast<double>(kSilenceFloor),
                      static_cast<double>(maxPeak));
@@ -2372,7 +2372,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
     if (concurrentSnapshots < 3) {
         std::fprintf(stderr,
-                     "error: m2-scene observed only %d concurrent snapshots "
+                     "error: scene-mix observed only %d concurrent snapshots "
                      "with streamed music, looping ambience, and one-shot "
                      "voices live\n",
                      concurrentSnapshots);
@@ -2380,7 +2380,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
     if (maxConcurrentPeak < kSilenceFloor) {
         std::fprintf(stderr,
-                     "SILENT: m2-scene concurrent-window peak stayed below "
+                     "SILENT: scene-mix concurrent-window peak stayed below "
                      "%g (max %.6g)\n",
                      static_cast<double>(kSilenceFloor),
                      static_cast<double>(maxConcurrentPeak));
@@ -2427,7 +2427,7 @@ int RunM2Scene(const Options& options, char** argv) {
     if (!notifications.musicEnded || !notifications.oneShotEnded ||
         !notifications.ambienceStoppedByFade) {
         std::fprintf(stderr,
-                     "error: m2-scene did not complete naturally "
+                     "error: scene-mix did not complete naturally "
                      "(musicEnded=%s oneShotEnded=%s ambienceFadeDone=%s)\n",
                      notifications.musicEnded ? "yes" : "no",
                      notifications.oneShotEnded ? "yes" : "no",
@@ -2467,7 +2467,7 @@ int RunM2Scene(const Options& options, char** argv) {
         snapshot.voiceStarvedCount != 0 || notifications.starved != 0 ||
         guardHits != 0) {
         std::fprintf(stderr,
-                     "error: m2-scene self-check counters failed "
+                     "error: scene-mix self-check counters failed "
                      "(streamHW=%llu ringHW=%llu voiceStarved=%llu "
                      "eventStarved=%llu memguardHits=%llu)\n",
                      static_cast<unsigned long long>(
@@ -2903,8 +2903,8 @@ int main(int argc, char** argv) {
     if (options.mode == Options::Mode::StreamEndurance) {
         return RunStreamEndurance(options, argv);
     }
-    if (options.mode == Options::Mode::M2Scene) {
-        return RunM2Scene(options, argv);
+    if (options.mode == Options::Mode::SceneMix) {
+        return RunSceneMix(options, argv);
     }
     if (options.mode == Options::Mode::M6Scene) {
         return RunM6Scene(options);

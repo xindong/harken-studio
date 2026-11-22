@@ -11,7 +11,7 @@
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 SettingsPanel::SettingsPanel(QWidget* parent)
     : QWidget(parent)

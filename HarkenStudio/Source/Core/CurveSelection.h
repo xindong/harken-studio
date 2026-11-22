@@ -7,7 +7,7 @@
 #include <QString>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 
 struct CurveSelection
 {
@@ -23,7 +23,7 @@ struct CurveSelection
     AttenuationDimension dimension = AttenuationDimension::Volume;
     QUuid hostGuid;
     BindingAddress address;
-    harkenstudio::ObjectId bindingStableId = {};
+    harken::studio::types::ObjectId bindingStableId = {};
 
     static CurveSelection attenuation(QUuid guid, QString name,
                                       AttenuationDimension dim)
@@ -37,7 +37,7 @@ struct CurveSelection
     }
 
     static CurveSelection binding(QUuid host, BindingAddress target,
-                                  harkenstudio::ObjectId stableId)
+                                  harken::studio::types::ObjectId stableId)
     {
         CurveSelection selection;
         selection.kind = Kind::Binding;
@@ -75,4 +75,4 @@ struct CurveSelection
 
 }
 
-Q_DECLARE_METATYPE(VNX::CurveSelection)
+Q_DECLARE_METATYPE(harken::studio::CurveSelection)

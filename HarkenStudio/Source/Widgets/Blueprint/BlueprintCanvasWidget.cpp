@@ -85,7 +85,7 @@
 #include <map>
 #include <unordered_map>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -158,10 +158,10 @@ NodePin* firstPinAt(QGraphicsScene* scene, const QPointF& scenePoint)
     return nullptr;
 }
 
-VNX::NodeItem* findOwningNodeItem(QGraphicsItem* hit)
+harken::studio::NodeItem* findOwningNodeItem(QGraphicsItem* hit)
 {
     while (hit) {
-        if (auto* node = dynamic_cast<VNX::NodeItem*>(hit)) {
+        if (auto* node = dynamic_cast<harken::studio::NodeItem*>(hit)) {
             return node;
         }
         hit = hit->parentItem();
@@ -1290,7 +1290,7 @@ bool BlueprintCanvasWidget::setNodeOverride(uint32_t itemId, bool override)
     uint32_t autoRoute = 0;
     const auto* mc = item->comp<VMixNode>();
     if (override && (mc ? mc->outputBusId : 0) == 0) {
-        autoRoute = VNX::kMasterBusID;
+        autoRoute = harken::studio::kMasterBusID;
     }
 
     if (autoRoute != 0

@@ -8,7 +8,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 SourceRangeEditor::SourceRangeEditor(const SoundSourceDef& source,
                                    const AssetInfo* asset,

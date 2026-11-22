@@ -12,7 +12,7 @@
 #include <QHBoxLayout>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 CollapsibleSection::CollapsibleSection(const QString& title,
                                        int animationDuration,

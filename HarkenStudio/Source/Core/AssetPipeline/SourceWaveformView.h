@@ -2,7 +2,7 @@
 
 #include "Core/Components/VSound.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class SourceWaveformView
 {

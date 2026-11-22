@@ -13,9 +13,9 @@
 
 #include "RuntimeBridge/PlaybackBridge.h"
 
-namespace VNX { class AudioEngine; struct ProjectItem; }
+namespace harken::studio { class AudioEngine; struct ProjectItem; }
 
-namespace HarkenEditor {
+namespace harken::studio {
 
 enum class AuditionMode { NamedPlayback, Preview, RawFile };
 enum class AuditionStopState { None, Pending, Stopping, Failed };
@@ -36,14 +36,14 @@ struct AuditionInfo
     bool     bIsDelayed     = false;
     bool     bIsFading      = false;
     AuditionStopState stopState = AuditionStopState::None;
-    HarkenEditor::Bridge::EngineResult stopResult = HarkenEditor::Bridge::kEngineOk;
+    harken::studio::bridge::EngineResult stopResult = harken::studio::bridge::kEngineOk;
     uint32_t stopFadeMs = 0;
     uint32_t stopAttempts = 0;
     bool     previewStartPending = false;
     bool     revisionPending = false;
     uint32_t previewPlayableKind = 0;
-    harkenstudio::ObjectId runtimeStableId = {};
-    QSet<harkenstudio::ObjectId> previewSounds;
+    harken::studio::types::ObjectId runtimeStableId = {};
+    QSet<harken::studio::types::ObjectId> previewSounds;
     uint64_t requiredRevision = 0;
     uint64_t projectSessionId = 0;
     uint64_t runtimeEpoch = 0;
@@ -83,15 +83,15 @@ struct AuditionSimulation
 struct AuditionSeekStartResult
 {
     uint64_t requestId = 0;
-    HarkenEditor::Bridge::EngineResult result =
-        HarkenEditor::Bridge::kEngineOk;
+    harken::studio::bridge::EngineResult result =
+        harken::studio::bridge::kEngineOk;
 };
 
 struct AuditionSeekStatus
 {
     uint32_t playingId = 0;
     int64_t samplePosition = 0;
-    HarkenEditor::Bridge::EngineResult result = HarkenEditor::Bridge::kEngineOk;
+    harken::studio::bridge::EngineResult result = harken::studio::bridge::kEngineOk;
     bool inProgress = true;
     bool applied = false;
 };
@@ -102,19 +102,19 @@ class AuditionManager : public QObject
 public:
     static constexpr int MAX_AUDITIONS = 64;
 
-    explicit AuditionManager(VNX::AudioEngine* engine, QObject* parent = nullptr);
+    explicit AuditionManager(harken::studio::AudioEngine* engine, QObject* parent = nullptr);
     ~AuditionManager() override;
 
     uint32_t play(const QString& objectPath, uint64_t gameObjectId = 0);
-    uint32_t playItem(const VNX::ProjectItem& item,
+    uint32_t playItem(const harken::studio::ProjectItem& item,
                       uint64_t gameObjectId = 0);
-    HarkenEditor::Bridge::PlaybackFailure lastPlayFailure() const {
+    harken::studio::bridge::PlaybackFailure lastPlayFailure() const {
         return lastPlayFailure_;
     }
-    HarkenEditor::Bridge::EngineResult lastPlayEngineResult() const {
+    harken::studio::bridge::EngineResult lastPlayEngineResult() const {
         return lastPlayEngineResult_;
     }
-    HarkenEditor::Bridge::BusTopologyFailure lastPlayTopologyFailure() const {
+    harken::studio::bridge::BusTopologyFailure lastPlayTopologyFailure() const {
         return lastPlayTopologyFailure_;
     }
     QString lastPlayReason() const { return lastPlayReason_; }
@@ -143,7 +143,7 @@ public:
     void  setPlaybackSpeed(uint32_t playingId, float speed);
     float getPlaybackSpeed(uint32_t playingId) const;
 
-    int32_t resetPreviewContainer(harkenstudio::ObjectId runtimeStableId);
+    int32_t resetPreviewContainer(harken::studio::types::ObjectId runtimeStableId);
     static bool previewResetSucceeded(int32_t status);
     static bool previewResetBackpressured(int32_t status);
 
@@ -197,9 +197,9 @@ private:
     void pollPendingActionSeeks();
     uint64_t allocateSeekRequestId();
     void finishActionSeek(const PendingActionSeek& pending,
-                          HarkenEditor::Bridge::EngineResult result, bool applied);
+                          harken::studio::bridge::EngineResult result, bool applied);
 
-    VNX::AudioEngine* engine_ = nullptr;
+    harken::studio::AudioEngine* engine_ = nullptr;
     QTimer pollTimer_;
     QTimer previewStartRetryTimer_;
     QTimer previewRevisionTimeoutTimer_;
@@ -221,20 +221,20 @@ private:
         }
     };
     QMap<SwitchKey, QString> simulatedSwitches_;
-    HarkenEditor::Bridge::PlaybackFailure lastPlayFailure_ =
-        HarkenEditor::Bridge::PlaybackFailure::None;
-    HarkenEditor::Bridge::EngineResult lastPlayEngineResult_ =
-        HarkenEditor::Bridge::kEngineOk;
-    HarkenEditor::Bridge::BusTopologyFailure lastPlayTopologyFailure_;
+    harken::studio::bridge::PlaybackFailure lastPlayFailure_ =
+        harken::studio::bridge::PlaybackFailure::None;
+    harken::studio::bridge::EngineResult lastPlayEngineResult_ =
+        harken::studio::bridge::kEngineOk;
+    harken::studio::bridge::BusTopologyFailure lastPlayTopologyFailure_;
     QString lastPlayReason_;
     bool lastPlayPending_ = false;
 
     uint32_t playResolved(const QString& objectName,
-                          const VNX::ProjectItem* item,
+                          const harken::studio::ProjectItem* item,
                           uint64_t gameObjectId);
     bool ensurePreviewOutput();
     uint32_t playAuthoredPreview(const QString& objectName,
-                                const VNX::ProjectItem& item,
+                                const harken::studio::ProjectItem& item,
                                 uint64_t gameObjectId);
     void requestTypedPreviewStop(AuditionInfo& info);
     void startLatchedTypedPreview(AuditionInfo& info);
@@ -242,7 +242,7 @@ private:
     bool queuePreviewStart(AuditionInfo& info, bool awaitingRevision,
                            const QString& reason);
     void failImmediatePlay(const QString& reason,
-                           HarkenEditor::Bridge::EngineResult result);
+                           harken::studio::bridge::EngineResult result);
     void failNotPlayable(const QString& reason);
     void removePreviewSlot(uint32_t playingId, QString objectName,
                            int32_t engineResult, bool emitStartFailed);

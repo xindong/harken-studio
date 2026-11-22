@@ -4,7 +4,7 @@
 #include <QEvent>
 #include <QObject>
 
-namespace VNX {
+namespace harken::studio {
 namespace FocusFilter {
 
 inline void installRecursively(QObject* host, QObject* root)

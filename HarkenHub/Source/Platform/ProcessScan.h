@@ -2,7 +2,7 @@
 
 #include <QStringList>
 
-namespace VNH {
+namespace harken::hub {
 
 struct RunningProcess
 {

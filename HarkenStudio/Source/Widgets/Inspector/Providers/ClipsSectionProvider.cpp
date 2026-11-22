@@ -30,7 +30,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 CoordinateResult initialClipDuration(const ProjectItem& track)

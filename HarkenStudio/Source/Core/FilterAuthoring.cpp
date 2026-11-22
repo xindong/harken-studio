@@ -3,7 +3,7 @@
 #include "Components/VMixNode.h"
 #include "ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace FilterAuthoring {
 
 bool isField(const QString& field)

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool samplesStrictlyIncreasing(const std::vector<TimeSeriesSample>& samples)
@@ -459,4 +459,4 @@ std::vector<TimeSeriesEnvelopeColumn> buildTimeSeriesEnvelope(
     return columns;
 }
 
-} // namespace VNX
+} // namespace harken::studio

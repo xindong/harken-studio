@@ -8,7 +8,7 @@
 #include <QRegularExpression>
 #include <QSet>
 
-namespace VNH {
+namespace harken::hub {
 
 PackageInventory PackageInventory::parse(const QByteArray& data, const QString& version,
                                           const QString& buildId, const QString& channel)

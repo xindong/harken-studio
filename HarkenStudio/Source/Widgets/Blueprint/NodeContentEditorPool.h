@@ -8,7 +8,7 @@
 
 class QGraphicsProxyWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class NodeContentEditorPool
 {

@@ -3,7 +3,7 @@
 #include "ProjectSerializer.h"
 #include "ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QJsonObject persistentState(const ProjectItem& item, QJsonObject state)

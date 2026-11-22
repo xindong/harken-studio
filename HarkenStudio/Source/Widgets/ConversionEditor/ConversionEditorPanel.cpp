@@ -43,7 +43,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr int kPrimaryFieldStretch = 7;

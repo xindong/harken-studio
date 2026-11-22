@@ -8,7 +8,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 enum class ChannelRole : std::uint8_t {
     FL = 0,
     FR = 1,
@@ -21,15 +21,15 @@ enum class ChannelRole : std::uint8_t {
 };
 inline std::uint32_t LayoutChannelCount(std::uint32_t layout) {
     switch (layout) {
-    case harkenstudio::kChannelLayoutMono:
+    case harken::studio::types::kChannelLayoutMono:
         return 1;
-    case harkenstudio::kChannelLayoutStereo:
+    case harken::studio::types::kChannelLayoutStereo:
         return 2;
-    case harkenstudio::kChannelLayoutQuad:
+    case harken::studio::types::kChannelLayoutQuad:
         return 4;
-    case harkenstudio::kChannelLayout5_1:
+    case harken::studio::types::kChannelLayout5_1:
         return 6;
-    case harkenstudio::kChannelLayout7_1:
+    case harken::studio::types::kChannelLayout7_1:
         return 8;
     default:
         return 0;
@@ -41,17 +41,17 @@ inline bool IsConcreteLayout(std::uint32_t layout) {
 inline std::uint32_t LayoutFromChannelCount(std::uint32_t count) {
     switch (count) {
     case 1:
-        return harkenstudio::kChannelLayoutMono;
+        return harken::studio::types::kChannelLayoutMono;
     case 2:
-        return harkenstudio::kChannelLayoutStereo;
+        return harken::studio::types::kChannelLayoutStereo;
     case 4:
-        return harkenstudio::kChannelLayoutQuad;
+        return harken::studio::types::kChannelLayoutQuad;
     case 6:
-        return harkenstudio::kChannelLayout5_1;
+        return harken::studio::types::kChannelLayout5_1;
     case 8:
-        return harkenstudio::kChannelLayout7_1;
+        return harken::studio::types::kChannelLayout7_1;
     default:
-        return harkenstudio::kChannelLayoutDefault;
+        return harken::studio::types::kChannelLayoutDefault;
     }
 }
 inline bool LayoutNarrowerOrEqual(std::uint32_t dst, std::uint32_t src) {
@@ -62,20 +62,20 @@ inline std::uint32_t LayoutRoles(std::uint32_t layout,
                                  ChannelRole* outRoles) {
     using R = ChannelRole;
     switch (layout) {
-    case harkenstudio::kChannelLayoutMono:
+    case harken::studio::types::kChannelLayoutMono:
         outRoles[0] = R::FC;
         return 1;
-    case harkenstudio::kChannelLayoutStereo:
+    case harken::studio::types::kChannelLayoutStereo:
         outRoles[0] = R::FL;
         outRoles[1] = R::FR;
         return 2;
-    case harkenstudio::kChannelLayoutQuad:
+    case harken::studio::types::kChannelLayoutQuad:
         outRoles[0] = R::FL;
         outRoles[1] = R::FR;
         outRoles[2] = R::BL;
         outRoles[3] = R::BR;
         return 4;
-    case harkenstudio::kChannelLayout5_1:
+    case harken::studio::types::kChannelLayout5_1:
         outRoles[0] = R::FL;
         outRoles[1] = R::FR;
         outRoles[2] = R::FC;
@@ -83,7 +83,7 @@ inline std::uint32_t LayoutRoles(std::uint32_t layout,
         outRoles[4] = R::BL;
         outRoles[5] = R::BR;
         return 6;
-    case harkenstudio::kChannelLayout7_1:
+    case harken::studio::types::kChannelLayout7_1:
         outRoles[0] = R::FL;
         outRoles[1] = R::FR;
         outRoles[2] = R::FC;
@@ -137,11 +137,11 @@ inline void DefaultDownmixMatrix(std::uint32_t srcLayout,
     }
     const float m3 = kDownmixMinus3dB;
     const float h3 = kDownmixHalfMinus3dB;
-    if (dstLayout == harkenstudio::kChannelLayoutMono) {
+    if (dstLayout == harken::studio::types::kChannelLayoutMono) {
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::FL, m3);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::FR, m3);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::FC, 1.0f);
-        const bool sevenOne = (srcLayout == harkenstudio::kChannelLayout7_1);
+        const bool sevenOne = (srcLayout == harken::studio::types::kChannelLayout7_1);
         const float back = sevenOne ? h3 : 0.5f;
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::BL, back);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::BR, back);
@@ -149,7 +149,7 @@ inline void DefaultDownmixMatrix(std::uint32_t srcLayout,
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::SR, h3);
         return;
     }
-    if (dstLayout == harkenstudio::kChannelLayoutStereo) {
+    if (dstLayout == harken::studio::types::kChannelLayoutStereo) {
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FL, R::FL, 1.0f);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FR, R::FR, 1.0f);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FL, R::FC, m3);
@@ -160,12 +160,12 @@ inline void DefaultDownmixMatrix(std::uint32_t srcLayout,
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FR, R::SR, m3);
         return;
     }
-    if (dstLayout == harkenstudio::kChannelLayoutQuad) {
+    if (dstLayout == harken::studio::types::kChannelLayoutQuad) {
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FL, R::FL, 1.0f);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FR, R::FR, 1.0f);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FL, R::FC, m3);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FR, R::FC, m3);
-        if (srcLayout == harkenstudio::kChannelLayout7_1) {
+        if (srcLayout == harken::studio::types::kChannelLayout7_1) {
             SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::BL, R::BL, m3);
             SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::BR, R::BR, m3);
             SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::BL, R::SL, m3);
@@ -176,7 +176,7 @@ inline void DefaultDownmixMatrix(std::uint32_t srcLayout,
         }
         return;
     }
-    if (dstLayout == harkenstudio::kChannelLayout5_1) {
+    if (dstLayout == harken::studio::types::kChannelLayout5_1) {
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FL, R::FL, 1.0f);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FR, R::FR, 1.0f);
         SetDownmixCoeff(coeffs, dstLayout, srcLayout, R::FC, R::FC, 1.0f);
@@ -189,6 +189,6 @@ inline void DefaultDownmixMatrix(std::uint32_t srcLayout,
     }
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_CHANNEL_LAYOUT_H

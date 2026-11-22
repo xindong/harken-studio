@@ -3,7 +3,7 @@
 #include "Monitor/MonitorPerformanceLiveHost.h"
 #include "TimeSeries/TimeSeriesChartModel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorCursorModel;
 class MonitorPerformancePanel;
@@ -30,4 +30,4 @@ private:
     MonitorPerformancePanel* panel_ = nullptr;
 };
 
-} // namespace VNX
+} // namespace harken::studio

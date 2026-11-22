@@ -13,7 +13,7 @@
 #include <functional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 Hierarchy::Hierarchy(QWidget* parent)
     : ProjectTreePanel(PanelId::Hierarchy, parent)

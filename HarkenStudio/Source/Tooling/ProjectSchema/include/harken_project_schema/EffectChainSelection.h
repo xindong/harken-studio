@@ -10,7 +10,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The chain selected for one clip occurrence. When declared is false no object on
 // the chain declared a graph: the occurrence runs no effects and references no
@@ -55,6 +55,6 @@ struct EffectChainSelectionResult {
 EffectChainSelectionResult BuildEffectChainSelection(
     const CanonicalProject& project, const NormalizedFacts& facts);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_EFFECT_CHAIN_SELECTION_H

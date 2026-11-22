@@ -16,7 +16,7 @@
 #include <QRandomGenerator>
 #include <QSaveFile>
 
-namespace VNX {
+namespace harken::studio {
 
 AssetRegistry& AssetRegistry::instance()
 {

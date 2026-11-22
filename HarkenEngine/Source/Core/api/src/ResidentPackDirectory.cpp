@@ -81,13 +81,6 @@ VnResult CheckMemberName(HANDLE handle, std::wstring_view expected) {
   if (!length || length >= name.size()) return VN_PACK_PROVIDER_FAILED;
   return compare({name.data(), length});
 }
-bool MarkerClear(const std::wstring &root) {
-  DWORD a = GetFileAttributesW((root + L"\\.harken-pack-publishing").c_str());
-  if (a != INVALID_FILE_ATTRIBUTES)
-    return false;
-  auto e = GetLastError();
-  return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND;
-}
 VnResult Identity(HANDLE file, const uint64_t *expected) {
   BY_HANDLE_FILE_INFORMATION i{};
   FILE_BASIC_INFO b{};
@@ -319,8 +312,6 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
     std::wstring names = Wide(desc->utf8Names);
     if (directory.empty() || names.empty())
       return VN_INVALID_ARG;
-    if (!MarkerClear(directory))
-      return VN_PACK_STALE_REVISION;
     const uint64_t identity[] = {desc->initVolumeId, desc->initFileId,
                                  desc->initFileSize, desc->initWriteTime,
                                  desc->initChangeTime};
@@ -493,8 +484,6 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
       status = prepareRange(0, count, names, staging, retained);
       if (status != VN_OK) return status;
     }
-    if (!MarkerClear(directory))
-      return VN_PACK_STALE_REVISION;
     VisitScope scope(owners, images, rows);
     harken::VorbisSetupBatch::Scope setupScope(warm ? &setupBatch : nullptr);
     submitted = true;

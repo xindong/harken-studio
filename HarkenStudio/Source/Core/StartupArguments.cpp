@@ -3,7 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 
-namespace VNX {
+namespace harken::studio {
 
 StartupArguments StartupArguments::parse(const QStringList& args)
 {

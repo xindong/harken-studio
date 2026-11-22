@@ -44,9 +44,9 @@ namespace Harken
             EnsureOwnerIndexes();
             bool initial = packs.Count == 0;
             var nextPacks = initial ? new Dictionary<ulong, SharedPack>(count) : packs;
-            var nextNames = initial ? new Dictionary<string, SharedPack>(count, StringComparer.Ordinal) : companionNames;
-            var names = GameplayNames.PrepareActions(initNames, count);
-            var metadata = new PackCompanion[count];
+            var nextNames = initial ? new Dictionary<string, SharedPack>(count, StringComparer.Ordinal) : metadataNames;
+            var names = NameTable.PrepareActions(initNames, count);
+            var metadata = new PackMetadata[count];
             var sortedOwners = new SharedPack[count];
             var order = new int[count];
             var roots = count > SmallBatchLimit ? new HashSet<VnObjectId>() : null;
@@ -73,17 +73,17 @@ namespace Harken
                     owner = new SharedPack();
                     nextPacks.Add(facts.packStableId, owner);
                     nextNames.Add(name, owner);
-                    metadata[i] = new PackCompanion { ProjectId = facts.projectId, RootId = facts.rootActionId, Name = name };
+                    metadata[i] = new PackMetadata { ProjectId = facts.projectId, RootId = facts.rootActionId, Name = name };
                 }
                 else
                 {
                     if (!nextNames.TryGetValue(name, out owner) || owner.StableId != facts.packStableId ||
                         owner.Names.RootId != facts.rootActionId) return VnResult.VN_CAPABILITY_UNAVAILABLE;
                     metadata[i] = owner.Names.Language.Length == 0 ? owner.Names :
-                        new PackCompanion { ProjectId = facts.projectId, RootId = facts.rootActionId, Name = name };
+                        new PackMetadata { ProjectId = facts.projectId, RootId = facts.rootActionId, Name = name };
                 }
                 call.Owners[i] = owner;
-                names.Actions.Add(name, new GameplayNames.Action(facts.rootActionId, ++revision, facts.executionFingerprint, owner));
+                names.Actions.Add(name, new NameTable.Action(facts.rootActionId, ++revision, facts.executionFingerprint, owner));
                 order[i] = i;
             }
 
@@ -114,16 +114,16 @@ namespace Harken
                 {
                     int index = order[i];
                     sortedOwners[i] = call.Owners[index];
-                    ref var member = ref companionKeepMembers[i + 1];
+                    ref var member = ref packKeepMembers[i + 1];
                     member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV2);
                     member.operation = VnConstants.VN_PACK_MEMBER_CONTENT;
                     member.source = rows[index].provider;
-                    companionKeepResults[i + 1].structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
+                    packKeepResults[i + 1].structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
                 }
                 call.Cancel.ThrowIfCancellationRequested();
                 call.Submitted = true;
                 mutationPhase = MutationPhase.ApplyingNative;
-                var result = CompanionNative.ActivatePrepared(companionKeepMembers, companionKeepResults,
+                var result = PackMetadataNative.ActivatePrepared(packKeepMembers, packKeepResults,
                     count + 1, InitPack, SetRevision, out var report);
                 if (result != VnResult.VN_OK) return result;
                 for (int i = 0; i < count; ++i)
@@ -131,7 +131,7 @@ namespace Harken
                     int index = order[i];
                     var owner = sortedOwners[i];
                     ref var row = ref rows[index];
-                    owner.Handle = new Pack(companionKeepResults[i + 1].handle);
+                    owner.Handle = new Pack(packKeepResults[i + 1].handle);
                     owner.StableId = row.facts.packStableId;
                     owner.ContentHash = row.facts.contentHash;
                     owner.ByteCount = (int)row.byteCount;
@@ -141,18 +141,18 @@ namespace Harken
                     ++owner.Requests;
                 }
                 nameRevision = revision;
-                companionOwners = sortedOwners;
+                packOwners = sortedOwners;
                 packs = nextPacks;
-                companionNames = nextNames;
+                metadataNames = nextNames;
                 InitPack = new Pack(report.initHandle);
                 SetRevision = report.resultSetRevision;
-                GameplayNames.Publish(names);
+                NameTable.Publish(names);
                 return VnResult.VN_OK;
             }
             finally
             {
                 // Provider pointers belong to the native visit and cannot outlive this callback.
-                Array.Clear(companionKeepMembers, 1, count);
+                Array.Clear(packKeepMembers, 1, count);
             }
         }
 
@@ -164,7 +164,7 @@ namespace Harken
                 try
                 {
                     // This only selects a reader. Capture and activation must still validate the entire set.
-                    using var file = File.Open(Path.Combine(companionSource.Root, name + ".hrp"),
+                    using var file = File.Open(Path.Combine(packSource.Root, name + ".hrp"),
                         FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     if (file.Read(header, 0, header.Length) == header.Length &&
                         header[0] == 'H' && header[1] == 'R' && header[2] == 'P' && header[3] == '2') return true;
@@ -207,7 +207,7 @@ namespace Harken
             internal SharedPack[] Scope;
             internal ulong Revision;
 
-            internal VnResult Find(string name, VnObjectId id, out GameplayNames.Action action)
+            internal VnResult Find(string name, VnObjectId id, out NameTable.Action action)
             {
                 if (Scope != null)
                 {
@@ -216,7 +216,7 @@ namespace Harken
                         ref var row = ref Rows[i];
                         if (name != null ? Names[i] == name : row.rootActionId == id)
                         {
-                            action = new GameplayNames.Action(row.rootActionId, Revision + (ulong)i + 1,
+                            action = new NameTable.Action(row.rootActionId, Revision + (ulong)i + 1,
                                 row.executionFingerprint, null);
                             return VnResult.VN_OK;
                         }
@@ -244,13 +244,13 @@ namespace Harken
             if (lease == null) return;
             var owners = new SharedPack[lease.Names.Length];
             var ordered = new SharedPack[owners.Length];
-            var table = new GameplayNames.Table { Project = initNames.Project, Variables = initNames.Variables,
+            var table = new NameTable.Table { Project = initNames.Project, Variables = initNames.Variables,
                 Labels = initNames.Labels, SmallActions = ordered };
             for (int i = 0; i < owners.Length; ++i)
             {
                 ref var row = ref lease.Rows[i];
                 var owner = new SharedPack { Binding = row, Requests = lease.Scope == null ? 0 : 1,
-                    Names = new PackCompanion { Name = lease.Names[i], RootId = row.rootActionId, ProjectId = initNames.Project },
+                    Names = new PackMetadata { Name = lease.Names[i], RootId = row.rootActionId, ProjectId = initNames.Project },
                     NameRevision = lease.Revision + (ulong)i + 1 };
                 owners[i] = owner;
                 int j = i;
@@ -262,11 +262,11 @@ namespace Harken
                 ordered[j] = owner;
             }
             if (lease.Scope != null) Array.Copy(owners, lease.Scope, owners.Length);
-            companionOwners = ordered;
+            packOwners = ordered;
             packs = null;
-            companionNames = null;
+            metadataNames = null;
             directoryLease = null;
-            GameplayNames.Expand(lease, table);
+            NameTable.Expand(lease, table);
         }
 
         internal VnResult ReleaseDirectoryLease(SharedPack[] scope, out bool released)
@@ -274,13 +274,13 @@ namespace Harken
             released = false;
             var lease = directoryLease;
             if (lease == null || !ReferenceEquals(scope, lease.Scope)) return VnResult.VN_OK;
-            var allowed = CompanionMutationAllowed();
+            var allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             try
             {
                 SetKeepMember(0, Inspection.PackStableId, VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, InitPack);
                 mutationPhase = MutationPhase.ApplyingNative;
-                var result = CompanionNative.ActivatePrepared(companionKeepMembers, companionKeepResults, 1,
+                var result = PackMetadataNative.ActivatePrepared(packKeepMembers, packKeepResults, 1,
                     InitPack, SetRevision, out var report);
                 if (result != VnResult.VN_OK)
                 {
@@ -306,7 +306,7 @@ namespace Harken
                 int count = names.Length;
                 var rows = new VnResidentDirectoryMemberV1[count];
                 var next = new DirectoryLease { Names = names, Rows = rows, Scope = acquired, Revision = nameRevision };
-                var table = new GameplayNames.Table { Project = initNames.Project, Variables = initNames.Variables,
+                var table = new NameTable.Table { Project = initNames.Project, Variables = initNames.Variables,
                     Labels = initNames.Labels, Directory = next };
                 int length = 0;
                 for (int i = 0; i < count; ++i)
@@ -335,12 +335,12 @@ namespace Harken
                         foreach (char ch in names[i]) list[offset++] = (byte)ch;
                         list[offset++] = i + 1 == count ? (byte)0 : (byte)10;
                     }
-                    path = EncodeDirectory(companionSource.Root);
+                    path = EncodeDirectory(packSource.Root);
                 }
                 ReserveKeepBuffers(count + 1);
                 var report = new VnCanonicalPackSetActivationReportV1 { structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1) };
                 mutationPhase = MutationPhase.ApplyingNative;
-                fixed (char* wideDirectory = companionSource.Root, wideActions = wideNames)
+                fixed (char* wideDirectory = packSource.Root, wideActions = wideNames)
                 fixed (VnResidentDirectoryMemberV1* output = rows)
                 fixed (byte* init = initBytes, root = path, actions = list, keys = next.Keys)
                 {
@@ -352,7 +352,7 @@ namespace Harken
                         directory = DescribeDirectory(count, init, root, actions)
                     };
                     var result = named
-                        ? HarkenNative.Vn_ActivateNamedResidentDirectoryV1(desc, (ushort*)wideDirectory, (uint)companionSource.Root.Length,
+                        ? HarkenNative.Vn_ActivateNamedResidentDirectoryV1(desc, (ushort*)wideDirectory, (uint)packSource.Root.Length,
                             (ushort*)wideActions, (uint)wideNames.Length,
                             keys, (uint)next.Keys.Length, ref report)
                         : HarkenNative.Vn_ActivateResidentPackDirectoryV1(desc, ref report);
@@ -365,7 +365,7 @@ namespace Harken
                 SetRevision = report.resultSetRevision;
                 nameRevision += (ulong)count;
                 directoryLease = next;
-                GameplayNames.Publish(table);
+                NameTable.Publish(table);
                 return VnResult.VN_OK;
             }
             catch (EntryPointNotFoundException)
@@ -384,7 +384,7 @@ namespace Harken
             mutationPhase = MutationPhase.ReadingContent;
             try
             {
-                var path = EncodeDirectory(companionSource.Root);
+                var path = EncodeDirectory(packSource.Root);
                 var list = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", names) + "\0");
                 VnResult result;
                 fixed (byte* init = initBytes, root = path, actions = list)

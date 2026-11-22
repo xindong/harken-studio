@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 enum class ControlValueKindV1 : std::uint8_t {
     Discrete = 0,
@@ -35,7 +35,7 @@ struct ControlValueRangeV1 {
 };
 
 struct VariableExecutionDefinitionV1 {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     ControlValueKindV1 kind = ControlValueKindV1::Discrete;
     VariableScopePolicyV1 scopePolicy = VariableScopePolicyV1::GlobalWithEmitterOverride;
     VariableWriterMaskV1 writers = VariableWriterGame;
@@ -44,7 +44,7 @@ struct VariableExecutionDefinitionV1 {
 };
 
 struct VariablePolicyOverlayV1 {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     VariableWriterMaskV1 writers = VariableWriterGame;
     std::uint8_t reserved0 = 0;
     std::uint16_t reserved1 = 0;
@@ -54,11 +54,11 @@ struct VariablePolicyOverlayV1 {
 struct ControlDefinitionRequirementV1 {
     ControlIdentityClassV1 identityClass =
         ControlIdentityClassV1::PersistentVariable;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t expectedExecutionFingerprint = 0;
 };
 
-using VariableCatalogLabelV1 = harkenstudiobuild::VariableLabelDefinitionV1;
+using VariableCatalogLabelV1 = harken::studio::build::VariableLabelDefinitionV1;
 
 struct VariableCatalogBlockV1 {
     std::string codeName;
@@ -68,7 +68,7 @@ struct VariableCatalogBlockV1 {
     std::int32_t precision = 0;
     std::uint8_t displayScale = 0;
     std::uint8_t deprecated01 = 0;
-    harkenstudio::ObjectId replacementId{};
+    harken::studio::types::ObjectId replacementId{};
     std::vector<VariableCatalogLabelV1> labels;
     std::uint64_t ownerInitPackId = 0;
 };
@@ -116,8 +116,8 @@ bool EncodeVariableContractArtifactJsonV1(
     const VariableContractArtifactV1& artifact, std::string* outJson);
 
 std::uint64_t ComputeVariableCatalogFingerprintV1(
-    harkenstudio::ObjectId variableId, const VariableCatalogBlockV1& catalog);
+    harken::studio::types::ObjectId variableId, const VariableCatalogBlockV1& catalog);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_VARIABLE_CONTRACT_H

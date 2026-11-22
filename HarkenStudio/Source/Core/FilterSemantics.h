@@ -7,7 +7,7 @@
 #include <optional>
 #include <span>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class FilterKind { LowPass, HighPass, LowShelf, HighShelf };
 enum class FilterParameter { Frequency, Q, Gain };

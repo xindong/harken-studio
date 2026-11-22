@@ -7,7 +7,7 @@
 #include <limits>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 std::uint32_t ReadU32(const std::vector<std::uint8_t>& bytes, std::size_t at) {
@@ -50,7 +50,7 @@ std::size_t FirstLabelCountOffset(const std::vector<std::uint8_t>& bytes) {
         at = SkipPaddedBytes(bytes, at);
     }
     return at + sizeof(std::int32_t) + 2u * sizeof(std::uint8_t) +
-           sizeof(std::uint16_t) + sizeof(harkenstudio::ObjectId);
+           sizeof(std::uint16_t) + sizeof(harken::studio::types::ObjectId);
 }
 
 VariableContractRecordV1 DiscreteHealth() {

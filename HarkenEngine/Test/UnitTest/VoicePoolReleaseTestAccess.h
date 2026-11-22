@@ -85,10 +85,12 @@ struct VoicePoolReleaseTestAccess {
         pool.m_cancelTimelineReadContext.store(context, std::memory_order_relaxed);
         pool.m_cancelTimelineReadHook.store(hook, std::memory_order_release);
     }
+#if defined(HARKEN_TEST_VOICE_RELEASE_HOOK)
     static void SetReleaseHeldHook(VoicePool& pool, void (*hook)(void*), void* context) {
         pool.m_releaseHeldContextForTest.store(context, std::memory_order_relaxed);
         pool.m_releaseHeldHookForTest.store(hook, std::memory_order_release);
     }
+#endif
     static void SetReleaseSequence(VoicePool& pool, std::uint64_t sequence) {
         const bool prepared = pool.m_slots.ConstructThrough(1);
         assert(prepared);

@@ -12,7 +12,7 @@
 #include <QTimer>
 #include <QWidget>
 
-namespace VNH::HubTheme {
+namespace harken::hub::HubTheme {
 
 namespace {
 

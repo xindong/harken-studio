@@ -8,7 +8,7 @@
 #include <limits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool fail(QString* error, const QString& message)

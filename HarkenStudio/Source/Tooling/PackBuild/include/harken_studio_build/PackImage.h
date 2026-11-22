@@ -14,7 +14,7 @@
 #include <span>
 #include <vector>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 struct PackLogicImage {
     std::uint32_t packKind = HK_PACK_KIND_CONTENT;
 
@@ -25,14 +25,14 @@ struct PackLogicImage {
     std::vector<PackEffectDynamicRouteEntry> dynamicRoutes;
 
     struct Attenuation {
-        harkenstudio::ObjectId id{};
-        harkenstudiobuild::AttenuationDefinition desc{};
+        harken::studio::types::ObjectId id{};
+        harken::studio::build::AttenuationDefinition desc{};
     };
     std::vector<Attenuation> attenuations;
 
     struct BindingDefinition {
-        harkenstudio::ObjectId id{};
-        harkenstudiobuild::BindingDefinition desc{};
+        harken::studio::types::ObjectId id{};
+        harken::studio::build::BindingDefinition desc{};
     };
     std::vector<BindingDefinition> bindingDefinitions;
 
@@ -50,12 +50,12 @@ struct PackLogicImage {
         PackVoiceRecipeSpatial spatial{};
         PackVoiceRecipePlayback playback{};
         std::vector<PackVoiceRecipeInstall> installs;
-        std::vector<harkenstudio::ObjectId> bindings;
+        std::vector<harken::studio::types::ObjectId> bindings;
     };
     std::vector<VoiceRecipe> voiceRecipes;
     struct Stamp {
         std::uint32_t kind = 0;
-        harkenstudio::ObjectId id{};
+        harken::studio::types::ObjectId id{};
         std::uint64_t checksum = 0;
     };
     std::vector<Stamp> stamps;
@@ -80,7 +80,7 @@ struct PackCanonicalImage {
     std::vector<std::uint8_t> partitionBody;
     std::vector<PackDependencyEdge> dependencyEdges;
     struct VariablePolicyOverlay {
-        harkenstudio::ObjectId variableId{};
+        harken::studio::types::ObjectId variableId{};
         std::uint8_t writers = 0;
         std::uint64_t executionFingerprint = 0;
         std::vector<std::int32_t> discreteAnchors;
@@ -92,7 +92,7 @@ struct PackCanonicalImage {
     bool hasVariablePolicyOverlay = false;
     struct VariableRequirement {
         std::uint8_t identityClass = 0;
-        harkenstudio::ObjectId stableId{};
+        harken::studio::types::ObjectId stableId{};
         std::uint64_t expectedExecutionFingerprint = 0;
         std::uint64_t expectedLabelMappingFingerprint = 0;
     };
@@ -117,9 +117,9 @@ struct PackCanonicalImage {
     std::vector<float> busDefinitionCoefficients;
 };
 
-harkenstudiobuild::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
+harken::studio::build::PackResult ParsePackV2Image(const std::uint8_t* bytes, std::uint64_t fileBytes,
                           PackLogicImage* out);
-harkenstudiobuild::PackResult ValidateCanonicalInitDependency(
+harken::studio::build::PackResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,
     std::uint64_t expectedInitPackStableId) noexcept;
 
@@ -190,7 +190,7 @@ inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& ima
     const auto u32 = [&](std::uint32_t value) { busfingerprint::AppendU32(byte, value); };
     const auto u64 = [&](std::uint64_t value) { busfingerprint::AppendU64(byte, value); };
     const auto f32 = [&](float value) { u32(busfingerprint::CanonicalFloatBits(value)); };
-    const auto id = [&](harkenstudio::ObjectId value) {
+    const auto id = [&](harken::studio::types::ObjectId value) {
         std::uint8_t bytes[16];
         StoreObjectId(bytes, value);
         for (std::uint8_t valueByte : bytes) byte(valueByte);
@@ -258,14 +258,14 @@ inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& ima
 inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
     return CanonicalVolumeBusFingerprint(image, {}, {});
 }
-harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
+harken::studio::build::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                                  std::uint64_t fileBytes,
                                  PackCanonicalImage* out);
 struct PackClosureResolver {
     void* ctx = nullptr;
-    bool (*playableExists)(void* ctx, harkenstudio::ObjectId id) = nullptr;
-    bool (*busExists)(void* ctx, harkenstudio::ObjectId id) = nullptr;
-    bool (*bindingExists)(void* ctx, harkenstudio::ObjectId id) = nullptr;
+    bool (*playableExists)(void* ctx, harken::studio::types::ObjectId id) = nullptr;
+    bool (*busExists)(void* ctx, harken::studio::types::ObjectId id) = nullptr;
+    bool (*bindingExists)(void* ctx, harken::studio::types::ObjectId id) = nullptr;
 };
 enum class PackClosureRef : std::uint32_t {
     SendBus = 1,          // a send edge's from/to bus
@@ -281,12 +281,12 @@ enum class PackClosureRef : std::uint32_t {
     DynamicRouteTarget = 14, // a route's target bus
     DynamicRouteSource = 15  // a route's source bus
 };
-harkenstudiobuild::PackResult CheckPackClosure(const PackLogicImage& image,
+harken::studio::build::PackResult CheckPackClosure(const PackLogicImage& image,
                           const PackClosureResolver& resolver,
                           PackClosureRef* outRefClass,
-                          harkenstudio::ObjectId* outReferrerId,
-                          harkenstudio::ObjectId* outMissingId);
+                          harken::studio::types::ObjectId* outReferrerId,
+                          harken::studio::types::ObjectId* outMissingId);
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_PACK_LOGIC_IMAGE_H

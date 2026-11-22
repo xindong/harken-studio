@@ -11,7 +11,7 @@
 #include <QRegularExpression>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject ProjectPlatform::toJson() const
 {

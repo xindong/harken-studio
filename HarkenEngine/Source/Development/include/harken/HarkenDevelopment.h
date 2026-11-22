@@ -749,8 +749,9 @@ enum {
     VN_MONITOR_MEASURE_SCOPE = 7,
     VN_MONITOR_MEASURE_SPECTRUM = 8,
     VN_MONITOR_MEASURE_LUFS_MOMENTARY = 9,
-    VN_MONITOR_MEASURE_LUFS_SHORT_TERM = 10,
-    VN_MONITOR_MEASURE_LUFS_INTEGRATED = 11
+    /* Deprecated. Both names retire next version. IDs 10 and 11 are permanently reserved. */
+    VN_MONITOR_MEASURE_LUFS_SHORT_TERM HARKEN_DEPRECATED("Reserved measurement kind.") = 10,
+    VN_MONITOR_MEASURE_LUFS_INTEGRATED HARKEN_DEPRECATED("Reserved measurement kind.") = 11
 };
 
 enum {
@@ -2656,8 +2657,10 @@ enum {
 
 VnPreviewPrepareStatus VnPreview_PrepareProject(
     const VnPreviewProjectDescV1* desc, VnPreviewProjectHandle* outHandle);
+HARKEN_DEPRECATED("Use VnPreview_PrepareProjectV4.")
 VnPreviewPrepareStatus VnPreview_PrepareProjectV2(
     const VnPreviewProjectDescV2* desc, VnPreviewProjectHandle* outHandle);
+HARKEN_DEPRECATED("Use VnPreview_PrepareProjectV4.")
 VnPreviewPrepareStatus VnPreview_PrepareProjectV3(
     const VnPreviewProjectDescV3* desc, VnPreviewProjectHandle* outHandle);
 VnPreviewPrepareStatus VnPreview_PrepareProjectV4(

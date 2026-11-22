@@ -9,7 +9,7 @@
 #include <cstring>
 #include <unordered_map>
 
-namespace VNX {
+namespace harken::studio {
 
 uint64_t LMDBQueryPipeline::fnv1aHash(const QString& str)
 {

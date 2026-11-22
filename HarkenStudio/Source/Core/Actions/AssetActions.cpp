@@ -20,13 +20,13 @@
 #include <limits>
 #include <optional>
 
-namespace VNX { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
-namespace VNX {
+namespace harken::studio { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
+namespace harken::studio {
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
 uint32_t itemShortID(const ProjectItem* item);
 }
 
-namespace VNX {
+namespace harken::studio {
 
 
 static std::optional<QMap<uint32_t, QString>> replacementMapFromArgs(const QJsonObject& args)
@@ -139,7 +139,7 @@ void registerAssetActions(ActionManager& mgr,
             const auto normalized = ProjectLanguageSemantics::normalize({lang});
             if (!normalized.ok())
                 return {false, {}, "INVALID_ARGS", normalized.error};
-            uint32_t langId = HarkenEditor::Bridge::packLanguageIdFromName(lang);
+            uint32_t langId = harken::studio::bridge::packLanguageIdFromName(lang);
             if (engine)
                 engine->setRuntimeLanguage(lang);
             return {true, QJsonObject{

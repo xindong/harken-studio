@@ -4,7 +4,7 @@
 #include <QMap>
 #include <QStringList>
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 namespace {
 
 QString jsonValueText(const QJsonValue& value)

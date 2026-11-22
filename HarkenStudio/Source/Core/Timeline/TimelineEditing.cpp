@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 uint32_t itemShortID(const ProjectItem* item);
 

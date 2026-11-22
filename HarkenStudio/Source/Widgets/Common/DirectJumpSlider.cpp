@@ -4,7 +4,7 @@
 #include <QStyle>
 #include <QStyleOptionSlider>
 
-namespace VNX {
+namespace harken::studio {
 
 DirectJumpSlider::DirectJumpSlider(Qt::Orientation orientation, QWidget* parent)
     : QSlider(orientation, parent)

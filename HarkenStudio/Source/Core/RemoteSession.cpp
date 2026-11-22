@@ -6,7 +6,7 @@
 #include "Monitor/EventCaptureController.h"
 #include "RuntimeBridge/RemoteConnection.h"
 
-namespace VNX {
+namespace harken::studio {
 
 RemoteSession& RemoteSession::instance()
 {
@@ -14,7 +14,7 @@ RemoteSession& RemoteSession::instance()
     return *session;
 }
 
-HarkenEditor::Bridge::RemoteConnection& RemoteSession::connection()
+harken::studio::bridge::RemoteConnection& RemoteSession::connection()
 {
     ensure();
     return *connection_;
@@ -74,9 +74,9 @@ void RemoteSession::shutdown()
 void RemoteSession::ensure()
 {
     if (connection_) return;
-    connection_ = new HarkenEditor::Bridge::RemoteConnection(this);
+    connection_ = new harken::studio::bridge::RemoteConnection(this);
     capture_ = new Monitor::EventCaptureController(connection_, this);
-    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::eventRecordsReceived, this,
+    connect(connection_, &harken::studio::bridge::RemoteConnection::eventRecordsReceived, this,
             [this](const QByteArray& records) {
         if (recorder_.isOpen())
             recorder_.append(reinterpret_cast<const uint8_t*>(records.constData()),

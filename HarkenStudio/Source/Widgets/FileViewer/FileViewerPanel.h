@@ -9,11 +9,11 @@
 
 class QFocusEvent;
 
-namespace HarkenEditor {
+namespace harken::studio {
 class AuditionManager;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 class FileViewerWidget;
 
@@ -38,7 +38,7 @@ public:
     QString previewObjectName() const;
     uint32_t sourceId() const;
     void bindSource(uint32_t sourceId);
-    void setAuditionManager(HarkenEditor::AuditionManager* audition);
+    void setAuditionManager(harken::studio::AuditionManager* audition);
     bool handlePlayStopShortcut();
     void clearEditor();
     QVariantMap snapshotState() const;

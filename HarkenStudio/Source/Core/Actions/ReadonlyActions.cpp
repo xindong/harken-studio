@@ -5,7 +5,7 @@
 #include "../IPC/IPCServer.h"
 #include <QDebug>
 
-namespace VNX {
+namespace harken::studio {
 
 static QString humanizeCommandName(const QString& cmd)
 {

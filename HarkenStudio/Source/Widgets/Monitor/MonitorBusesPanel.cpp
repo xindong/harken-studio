@@ -12,7 +12,7 @@
 
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorBusesPanel::MonitorBusesPanel(QWidget* parent)
     : QWidget(parent)
@@ -153,10 +153,10 @@ void MonitorBusesPanel::syncCursorRetainedWindow()
     std::optional<std::int64_t> maxFrame;
     for (const auto& rec : snapshot_->records)
     {
-        if (rec.header.entityKind != VNX::Monitor::kMonitorEntityBus)
+        if (rec.header.entityKind != harken::studio::Monitor::kMonitorEntityBus)
             continue;
-        if (rec.header.recordKind != VNX::Monitor::kMonitorRecordStateUpsert
-            && rec.header.recordKind != VNX::Monitor::kMonitorRecordStateTombstone)
+        if (rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateUpsert
+            && rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateTombstone)
             continue;
         if (rec.header.executeFrame > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
             continue;
@@ -228,4 +228,4 @@ void MonitorBusesPanel::onSharedCursor(const MonitorCursorSnapshot&)
     rebuildVisibleRows();
 }
 
-} // namespace VNX
+} // namespace harken::studio

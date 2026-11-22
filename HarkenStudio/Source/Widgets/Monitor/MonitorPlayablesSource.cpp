@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorPlayablesPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorPlayablesSource::attach(MonitorPlayablesPanel* panel, MonitorCursorModel* sharedCursor)
 {
@@ -27,4 +27,4 @@ void MonitorPlayablesSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

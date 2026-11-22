@@ -5,7 +5,7 @@
 #include <QSet>
 #include <climits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QJsonObject text(const QString& description = {})

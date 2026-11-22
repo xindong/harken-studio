@@ -7,7 +7,7 @@ class QMenu;
 class QPushButton;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class MenuActionButton final : public QWidget
 {

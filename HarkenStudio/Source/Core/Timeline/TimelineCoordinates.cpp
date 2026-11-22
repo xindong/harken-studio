@@ -3,7 +3,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 uint64_t magnitude(int64_t value)

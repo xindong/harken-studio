@@ -5,7 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 
-namespace VNX {
+namespace harken::studio {
 
 class PathUtils
 {

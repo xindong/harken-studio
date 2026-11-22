@@ -3,7 +3,7 @@
 #include "Components/VConversion.h"
 #include "ProjectPlatform.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;

@@ -78,7 +78,7 @@ struct VariableTimelineStartAuthority {
     bool Valid() const noexcept { return ready != nullptr; }
 };
 
-struct Plan03ScratchDecisionState {
+struct ScratchDecisionState {
     std::uint32_t generation = 0;
     bool currentSliceClaimed = false;
 };
@@ -495,7 +495,7 @@ public:
     bool AdmitTimelineQuantum(
         std::uint32_t arenaAvailableBytes, std::uint32_t blockFrames,
         const DecisionTable* decisions,
-        const Plan03ScratchDecisionState* currentSlices,
+        const ScratchDecisionState* currentSlices,
         std::uint32_t currentSliceCount,
         const std::uint32_t* controlRenderGenerations = nullptr,
         std::uint32_t controlRenderCount = 0) const noexcept;
@@ -1329,8 +1329,10 @@ private:
     DynamicRouteSystem& m_dynamicRoutes;
     std::atomic<void (*)(void*)> m_cancelTimelineReadHook{nullptr};
     std::atomic<void*> m_cancelTimelineReadContext{nullptr};
+#if defined(HARKEN_TEST_VOICE_RELEASE_HOOK)
     std::atomic<void (*)(void*)> m_releaseHeldHookForTest{nullptr};
     std::atomic<void*> m_releaseHeldContextForTest{nullptr};
+#endif
     TimelineArmTable* m_timelineArms = nullptr;
     StreamSeekHandoffTable* m_streamSeekHandoffs = nullptr;
     const SourceCommandInstallProof* m_commandMetadataProof = nullptr;

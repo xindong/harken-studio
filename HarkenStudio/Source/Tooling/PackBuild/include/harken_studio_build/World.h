@@ -11,7 +11,7 @@
 #include <array>
 #include <cstdint>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 struct VariableDefinitionV1;
 
@@ -90,10 +90,10 @@ enum class PlayableKindV1 : std::uint32_t {
 struct PlayableRefV1 {
     PlayableKindV1 kind = PlayableKindV1::Sound;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t expectedProgramSemanticFingerprint = 0;
     std::uint64_t contentRevision = 0;
-    harkenstudio::ObjectId routeStableId{};
+    harken::studio::types::ObjectId routeStableId{};
     std::uint64_t compatibilityFingerprint = 0;
 };
 
@@ -135,7 +135,7 @@ struct TransitionRuleViewV1 {
     TransitionFadeV1 bridgeFadeOut{};
     TransitionFadeV1 targetFade{};
     std::uint64_t requiredClockFingerprint = 0;
-    harkenstudio::ObjectId requiredMarkerStableId{};
+    harken::studio::types::ObjectId requiredMarkerStableId{};
     std::uint64_t samePositionCompatibilityFingerprint = 0;
     std::uint32_t authoredStableOrder = 0;
     std::uint32_t reserved2 = 0;
@@ -143,13 +143,13 @@ struct TransitionRuleViewV1 {
 
 struct PropertyScalarV1 {
     std::uint64_t bits = 0;
-    harkenstudio::ObjectId objectId{};
+    harken::studio::types::ObjectId objectId{};
 };
 
 struct SendV1 {
     std::uint32_t stableSendOrdinal = 0;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId targetBusId{};
+    harken::studio::types::ObjectId targetBusId{};
     float sendLevel = 0.0f;
     std::uint32_t reserved2 = 0;
 };
@@ -169,9 +169,9 @@ struct EffectNodeV1 {
     std::uint32_t effectType = 0;
     std::uint32_t paramCount = 0;
     const EffectParamV1* params = nullptr;
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t flags = 0;
-    harkenstudio::ObjectId presetId{};
+    harken::studio::types::ObjectId presetId{};
 };
 
 struct EffectEdgeV1 {
@@ -180,7 +180,7 @@ struct EffectEdgeV1 {
 };
 
 struct LayerAncestorRefV1 {
-    harkenstudio::ObjectId layerStableId{};
+    harken::studio::types::ObjectId layerStableId{};
     std::uint64_t layerProgramSemanticFingerprint = 0;
 };
 
@@ -203,7 +203,7 @@ struct StructuralAncestorRefV1 {
     playableproperties::ContentPropertyKindV1 contentPropertyKind =
         playableproperties::ContentPropertyKindV1::Layer;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t programSemanticFingerprint = 0;
     PlayablePropertyPayloadViewV1 payload{};
 };
@@ -212,10 +212,10 @@ struct PlayablePropertyProgramViewV1 {
     playableproperties::ContentPropertyKindV1 contentPropertyKind =
         playableproperties::ContentPropertyKindV1::Sound;
     std::uint32_t authoredStableOrder = 0;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t programSemanticFingerprint = 0;
     std::uint64_t contentRevision = 0;
-    harkenstudio::ObjectId routeStableId{};
+    harken::studio::types::ObjectId routeStableId{};
     std::uint64_t compatibilityFingerprint = 0;
     std::uint32_t organizationLayerAncestorCount = 0;
     const LayerAncestorRefV1* organizationLayerAncestors = nullptr;
@@ -228,7 +228,7 @@ struct PlayableOccurrencePropertyViewV1 {
     playableproperties::ContentPropertyKindV1 parentKind =
         playableproperties::ContentPropertyKindV1::Track;
     std::uint32_t stableOccurrenceOrdinal = 0;
-    harkenstudio::ObjectId parentStableId{};
+    harken::studio::types::ObjectId parentStableId{};
     std::uint64_t parentProgramSemanticFingerprint = 0;
     PlayableRefV1 childPlayable{};
     std::uint64_t occurrenceSemanticFingerprint = 0;
@@ -332,7 +332,7 @@ enum class ActionIfSilentV1 : std::uint32_t {
 struct ActionObjectRefV1 {
     ActionTargetKindV1 kind = ActionTargetKindV1::Sound;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t expectedProgramSemanticFingerprint = 0;
 };
 
@@ -354,7 +354,7 @@ struct ActionStepProgramViewV1 {
 };
 
 struct ActionProgramViewV1 {
-    harkenstudio::ObjectId actionStableId{};
+    harken::studio::types::ObjectId actionStableId{};
     std::uint64_t programSemanticFingerprint = 0;
     const ActionStepProgramViewV1* steps = nullptr;
     std::uint32_t stepCount = 0;
@@ -368,14 +368,14 @@ struct StableAuthoredPathStepV1 {
     PlayableRefV1 playable{};
     std::uint32_t stableChildOrdinal = 0;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId trackId{};
-    harkenstudio::ObjectId clipId{};
+    harken::studio::types::ObjectId trackId{};
+    harken::studio::types::ObjectId clipId{};
     std::uint64_t clipGuidHigh = 0;
     std::uint64_t clipGuidLow = 0;
 };
 
 struct TransitionProgramViewV1 {
-    harkenstudio::ObjectId ownerContainerStableId{};
+    harken::studio::types::ObjectId ownerContainerStableId{};
     std::uint32_t ruleCount = 0;
     std::uint32_t defaultRuleIndex = 0;
     std::uint32_t downwardPathStepCount = 0;
@@ -421,7 +421,7 @@ struct ScheduleClipPlacementV1 {
     std::int64_t authoredDuration = 0;
     std::int64_t authoredFadeIn = 0;
     std::int64_t authoredFadeOut = 0;
-    harkenstudio::ObjectId clipId{};
+    harken::studio::types::ObjectId clipId{};
     std::uint64_t clipGuidHigh = 0;
     std::uint64_t clipGuidLow = 0;
 };
@@ -442,7 +442,7 @@ struct ScheduleTrackRefV1 {
 };
 
 struct ScheduleMarkerV1 {
-    harkenstudio::ObjectId stableMarkerId{};
+    harken::studio::types::ObjectId stableMarkerId{};
     std::uint32_t markerId = 0;
     std::uint32_t markerKind = 0;
     std::int64_t position = 0;
@@ -467,7 +467,7 @@ struct SegmentScheduleProgramViewV1 {
 struct TrackSegmentScheduleKeyV1 {
     PlayableKindV1 kind = PlayableKindV1::Track;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t scheduleSemanticFingerprint = 0;
 };
 
@@ -501,7 +501,7 @@ struct ChildTimingHintV2 {
 };
 
 inline ChildTimingHintV2 MakeScheduleReferenceTimingHint(
-    PlayableKindV1 kind, harkenstudio::ObjectId stableId,
+    PlayableKindV1 kind, harken::studio::types::ObjectId stableId,
     std::uint64_t scheduleSemanticFingerprint) noexcept {
     ChildTimingHintV2 hint{};
     hint.kind = ChildTimingHintKindV2::ScheduleReference;
@@ -534,7 +534,7 @@ enum class ContinuousCellKindV1 : std::uint32_t {
 struct GridAxisV1 {
     std::uint32_t stableAxisOrdinal = 0;
     std::uint32_t authoredColumnOrder = 0;
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
 };
 
 struct DiscreteGridCellV1 {
@@ -570,7 +570,7 @@ struct ContinuousGridRowViewV1 {
 };
 
 struct ContainerProgramViewV3 {
-    harkenstudio::ObjectId containerStableId{};
+    harken::studio::types::ObjectId containerStableId{};
     std::uint64_t programSemanticFingerprint = 0;
     ContainerModeV1 mode = ContainerModeV1::Random;
     RandomDisciplineV1 randomDiscipline = RandomDisciplineV1::Draw;
@@ -620,7 +620,7 @@ struct WorldIdentityV1 {
     std::uint64_t runtimeSemanticFingerprint = 0;
     WorldFormatIdentityV1 format{};
     std::uint64_t capabilityMask = 0;
-    harkenstudio::ObjectId projectId{};
+    harken::studio::types::ObjectId projectId{};
 };
 
 struct WorldCapacitySummaryV1 {
@@ -715,14 +715,14 @@ enum class SignalConsumerKindV1 : std::uint32_t { Ducking = 1 };
 struct SignalEndpointRefV1 {
     SignalEndpointKindV1 kind = SignalEndpointKindV1::Bus;
     std::uint32_t reserved = 0;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t expectedPropertyFingerprint = 0;
     std::uint64_t expectedProgramFingerprint = 0;
     bool operator==(const SignalEndpointRefV1&) const noexcept = default;
 };
 
 struct SignalRelationV1 {
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     SignalEndpointRefV1 source{};
     SignalEndpointRefV1 target{};
     SignalConsumerKindV1 consumer = SignalConsumerKindV1::Ducking;
@@ -920,6 +920,6 @@ TransitionProgramClassV1 ClassifyTransitionProgramV1(
 WorldInstallStatus ValidateCurrentWorldV1(
     const ContainerWorldInstallViewV1& world) noexcept;
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_CURRENT_WORLD_H

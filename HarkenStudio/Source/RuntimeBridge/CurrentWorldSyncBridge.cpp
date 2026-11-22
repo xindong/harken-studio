@@ -13,15 +13,13 @@
 #include <optional>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 namespace {
 
 struct PreparedProjectGenerationHold {
     Detail::RuntimePreparedProject prepared;
     CurrentWorldSyncToken token;
     VnPreviewProjectDescV1 view{};
-    VnPreviewProjectDescV2 volumeView{};
-    VnPreviewProjectDescV3 sendView{};
     VnPreviewProjectDescV4 effectView{};
     std::vector<std::uint8_t> body;
     std::vector<VnPreviewBusV1> buses;
@@ -53,7 +51,7 @@ struct PublishedBusEffectValues {
     std::vector<float> parameters;
     bool bypass = false;
 };
-std::map<harkenstudio::ObjectId, PublishedBusEffectValues> publishedBusEffectValues;
+std::map<harken::studio::types::ObjectId, PublishedBusEffectValues> publishedBusEffectValues;
 std::map<std::uint64_t, PreviewEffectDefinitions> publishedVoiceEffects;
 std::uint64_t publishedVoiceEffectEpoch = 0;
 std::uint64_t publishedVoiceEffectGeneration = 0;
@@ -352,7 +350,7 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.voiceEffects = std::move(artifact.voiceEffects);
     if (publishedEffects && publishedOwnerId == ownerId
         && publishedRuntimeEpoch == token.runtimeEpoch) {
-        std::map<harkenstudio::ObjectId, harkenstudio::ObjectId> definitions;
+        std::map<harken::studio::types::ObjectId, harken::studio::types::ObjectId> definitions;
         for (const auto& effect : *publishedEffects)
             definitions.emplace(effect.effectId, effect.definitionId);
         hold.effectDefinitionChanged = std::any_of(hold.artifactEffects.begin(),
@@ -401,22 +399,18 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.view.ownerId = ownerId;
     hold.view.ownerBaseRevision = ownerBaseRevision;
     hold.view.ownerRevision = token.authoringRevision;
-    hold.volumeView.base = hold.view;
-    hold.volumeView.base.structSize = sizeof(hold.volumeView);
-    hold.volumeView.busVolumes = hold.volumes.data();
-    hold.volumeView.busVolumeCount = static_cast<std::uint32_t>(hold.volumes.size());
+    hold.effectView.base.base.base = hold.view;
+    hold.effectView.base.base.busVolumes = hold.volumes.data();
+    hold.effectView.base.base.busVolumeCount = static_cast<std::uint32_t>(hold.volumes.size());
     if (artifact.profile) {
-        hold.volumeView.profileVintage = artifact.profile->vintage;
-        hold.volumeView.renderSampleRateHz = artifact.profile->sampleRate;
-        hold.volumeView.mixLayout = artifact.profile->mixLayout;
-        hold.volumeView.deviceLayout = artifact.profile->deviceLayout;
-        hold.volumeView.runtimeCapabilityMask = artifact.profile->capabilityMask;
+        hold.effectView.base.base.profileVintage = artifact.profile->vintage;
+        hold.effectView.base.base.renderSampleRateHz = artifact.profile->sampleRate;
+        hold.effectView.base.base.mixLayout = artifact.profile->mixLayout;
+        hold.effectView.base.base.deviceLayout = artifact.profile->deviceLayout;
+        hold.effectView.base.base.runtimeCapabilityMask = artifact.profile->capabilityMask;
     }
-    hold.sendView.base = hold.volumeView;
-    hold.sendView.base.base.structSize = sizeof(hold.sendView);
-    hold.sendView.busSendLevelsDb = hold.sendLevelsDb.data();
-    hold.sendView.busSendLevelCount = static_cast<std::uint32_t>(hold.sendLevelsDb.size());
-    hold.effectView.base = hold.sendView;
+    hold.effectView.base.busSendLevelsDb = hold.sendLevelsDb.data();
+    hold.effectView.base.busSendLevelCount = static_cast<std::uint32_t>(hold.sendLevelsDb.size());
     hold.effectView.base.base.base.structSize = sizeof(hold.effectView);
     hold.effectView.busEffects = hold.effects.data();
     hold.effectView.busEffectCount = static_cast<std::uint32_t>(hold.effects.size());
@@ -677,8 +671,8 @@ bool queryRuntimeLiveOwnerRevision(std::uint64_t ownerId,
 }
 
 bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t authoringRevision,
-    harkenstudio::ObjectId busId,
-    harkenstudio::ObjectId definitionId, const PreviewEffectSource& effect)
+    harken::studio::types::ObjectId busId,
+    harken::studio::types::ObjectId definitionId, const PreviewEffectSource& effect)
 {
     if (!publishedEffects || runtimeEpoch != publishedRuntimeEpoch) return false;
     const auto installed = std::find_if(publishedEffects->begin(),
@@ -706,7 +700,7 @@ bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t author
 }
 
 bool captureInstalledPreviewEffects(std::uint64_t generation,
-    harkenstudio::ObjectId soundId, std::vector<PreviewEffectSource>& effects)
+    harken::studio::types::ObjectId soundId, std::vector<PreviewEffectSource>& effects)
 {
     effects.clear();
     for (auto it = publishedVoiceEffects.begin(); it != publishedVoiceEffects.end();) {
@@ -722,4 +716,4 @@ bool captureInstalledPreviewEffects(std::uint64_t generation,
     return true;
 }
 
-} // namespace HarkenEditor::Bridge
+} // namespace harken::studio::bridge

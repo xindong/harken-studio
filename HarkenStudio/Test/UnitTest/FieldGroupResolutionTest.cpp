@@ -6,10 +6,10 @@
 #include <array>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using namespace harkenprojectschema;
+using namespace harken::studio::project_schema;
 
 using Group = FieldGroupId;
 using Mode = FieldGroupMode;

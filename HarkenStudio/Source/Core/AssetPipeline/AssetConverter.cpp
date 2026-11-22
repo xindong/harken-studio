@@ -15,7 +15,7 @@
 
 #include <CDSPResampler.h>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

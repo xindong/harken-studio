@@ -21,7 +21,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 
 static ProjectItem* findItemByObjectIDRecursive(ProjectItem* root, uint32_t objectID)

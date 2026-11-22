@@ -10,7 +10,7 @@
 #include <QListWidget>
 #include <QPushButton>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectPlatformDialog::ProjectPlatformDialog(QWidget* parent)
     : BaseDialog(parent)

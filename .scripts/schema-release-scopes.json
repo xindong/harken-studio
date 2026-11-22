@@ -62,7 +62,7 @@
       ".scripts/schema-release-scopes.json",
       ".scripts/schema_lock.py",
       ".scripts/schema_release_audit.py",
-      "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs",
+      "HarkenIntegration/Unity/Harken/Runtime/API/PackMetadata.cs",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackDirectorySource.cs",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs",
       "HarkenStudio/Source/Core/Build/PackagingBridge.*",

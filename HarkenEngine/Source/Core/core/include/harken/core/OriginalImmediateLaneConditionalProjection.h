@@ -45,7 +45,7 @@ public:
         OriginalImmediateLaneConditionalProjection* out) noexcept;
     bool BindPrepared() noexcept;
     bool OwnsUnpublishedGroup(const ImmediateActionLane& lane, ImmediateLaneHandle handle,
-        const Plan03GroupSliceIdentity& group) const noexcept;
+        const ScheduleGroupSliceIdentity& group) const noexcept;
     // Return this producer's structural loans after the real C1 Applied receipt
     // and a later completed callback. Native Lane/group retirement stays separate.
     bool ReturnAfterApplied(const ImmediateActionLane& lane, ImmediateLaneHandle handle,

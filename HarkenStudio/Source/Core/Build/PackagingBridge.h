@@ -34,10 +34,10 @@ namespace harkenizer::resourcecompiler {
 class MediaCache;
 }
 
-namespace VNX::VorbisEncoder { struct EncodedMedia; }
+namespace harken::studio::VorbisEncoder { struct EncodedMedia; }
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 //==============================================================================
 // Frozen legacy-contract accessors.
@@ -85,113 +85,6 @@ struct AudioFileInfoData
 AudioFileInfoData audioFileInfo(const QString& path);
 
 //==============================================================================
-// Pack codec side-table inspection.
-//
-// Read-only parsing of the pack container's codec metadata (CODC) and shared
-// codebook (CDBK) sections for the asset inspector. The section payloads are
-// raw bytes read by the editor's own container walk (the container layout is
-// a frozen wire format); the record layouts, versions, and identity strings
-// live inside the bridge.
-//==============================================================================
-
-struct PackCodecEntryInfo
-{
-    uint32_t sourceId = 0;
-    uint16_t codecId = 0;
-    uint16_t containerId = 0;
-    uint16_t channels = 0;
-    uint32_t sampleRate = 0;
-    uint32_t channelLayoutMask = 0;
-    uint64_t frameCount = 0;
-    uint64_t loopStartFrame = 0;
-    uint64_t loopEndFrame = 0;
-    uint32_t packetTableOffset = 0;
-    uint32_t packetTableCount = 0;
-    uint32_t seekTableOffset = 0;
-    uint32_t seekTableCount = 0;
-    uint32_t codebookId = 0;
-    uint32_t codebookHash = 0;
-    uint32_t decodeAllocBytes = 0;
-    uint32_t flags = 0;
-};
-
-struct PackCodecCodebookInfo
-{
-    uint32_t codebookId = 0;
-    uint32_t codebookHash = 0;
-    uint32_t offset = 0;
-    uint32_t size = 0;
-};
-
-struct PackCodecFlagsView
-{
-    bool fullDecodeFallback = false;
-    bool compressedResident = false;
-    bool hasPacketTable = false;
-    bool hasSeekTable = false;
-    bool hasSharedCodebook = false;
-    bool loopEnabled = false;
-    bool vorbisVbrQuality = false;
-    bool vorbisManagedBitrate = false;
-};
-
-QString packCodecName(uint16_t codecId);            // display identity, incl. persisted codec strings
-QString packCodecContainerName(uint16_t containerId);
-PackCodecFlagsView decodePackCodecFlags(uint32_t flags);
-bool parsePackCodecMetadataSection(const QByteArray& payload,
-                                   std::vector<PackCodecEntryInfo>& out,
-                                   QString* error);
-bool parsePackCodecCodebookSection(const QByteArray& payload,
-                                   std::vector<PackCodecCodebookInfo>& out,
-                                   QString* error);
-bool isPackCodecMetadataSection(uint32_t chunkFourcc);   // codec metadata section id
-bool isPackCodecCodebookSection(uint32_t chunkFourcc);   // shared codebook section id
-
-//==============================================================================
-// Pack codec conversion.
-//==============================================================================
-
-/// Opaque per-media codec metadata produced by the pack encoders. The blob is
-/// the runtime's fixed-size codec metadata record; the named fields mirror
-/// the few values editor logic needs to read (loop validation, shared
-/// codebook identity) without exposing the record layout.
-struct PackCodecMetadata
-{
-    std::vector<uint8_t> entryBlob;
-    uint64_t frameCount = 0;
-    uint32_t codebookId = 0;
-    uint32_t codebookHash = 0;
-    bool isValid() const { return !entryBlob.empty(); }
-};
-
-struct PackVorbisEncodeSettings
-{
-    bool managedBitrate = false; // false: VBR quality mode
-    float vbrQuality = 0.6f;     // 0..1, VBR mode only
-    uint32_t averageBitrate = 0; // managed mode; required non-zero
-    uint32_t minBitrate = 0;     // managed mode; 0 = unconstrained
-    uint32_t maxBitrate = 0;     // managed mode; 0 = unconstrained
-};
-
-bool encodePackVorbis(const std::vector<float>& interleaved,
-                      int channels, int sampleRate,
-                      const PackVorbisEncodeSettings& settings,
-                      std::vector<uint8_t>& outData,
-                      PackCodecMetadata& outMetadata,
-                      std::vector<uint8_t>* outSharedCodebook = nullptr);
-
-bool encodePackOpus(const std::vector<float>& interleaved,
-                    int channels, int sampleRate,
-                    std::vector<uint8_t>& outData,
-                    PackCodecMetadata& outMetadata);
-
-/// Stamp a loop region onto already-produced codec metadata. The caller
-/// validates the region against frameCount before calling.
-void applyLoopRegion(PackCodecMetadata& metadata,
-                     uint64_t loopStartFrame,
-                     uint64_t loopEndFrame);
-
-//==============================================================================
 // Pack building -- editor-owned mirrors of the pack build inputs plus a
 // build session that owns the runtime pack builder behind a pimpl.
 //==============================================================================
@@ -202,14 +95,14 @@ enum class PackMediaFormat : uint8_t { Pcm16, PcmFloat, Adpcm, Vorbis };
 
 struct PackEffectPreset
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     uint32_t type = 0;
     std::vector<float> parameters;
 };
 
 struct PackBusEffect
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     uint32_t type = 0;
     bool bypass = false;
     std::vector<float> parameters;
@@ -217,10 +110,10 @@ struct PackBusEffect
 
 struct PackBus
 {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     // A root bus may parent to itself or to 0; the bridge normalizes both
     // spellings to the runtime master bus when emitting the manifest.
-    harkenstudio::ObjectId parentId = {};
+    harken::studio::types::ObjectId parentId = {};
     QString name;
     float volume = 0.0f;
     float outputBusVolume = 0.0f;
@@ -231,8 +124,8 @@ struct PackBus
 
 struct PackBusSend
 {
-    harkenstudio::ObjectId fromBusId = {};
-    harkenstudio::ObjectId toBusId = {};
+    harken::studio::types::ObjectId fromBusId = {};
+    harken::studio::types::ObjectId toBusId = {};
     float levelDb = 0.0f;
 };
 
@@ -280,16 +173,16 @@ struct PackModulator
 
 struct PackMeterWiring
 {
-    harkenstudio::ObjectId busId = {};
-    harkenstudio::ObjectId variableId = {};
+    harken::studio::types::ObjectId busId = {};
+    harken::studio::types::ObjectId variableId = {};
     uint32_t attackMs = 0;
     uint32_t releaseMs = 0;
 };
 
 struct PackParameterBinding
 {
-    harkenstudio::ObjectId id{};
-    harkenstudio::ObjectId variableId = {};
+    harken::studio::types::ObjectId id{};
+    harken::studio::types::ObjectId variableId = {};
     uint8_t scope = 0; // runtime target-scope ordinal (0 voice, 1 bus)
     uint32_t target = 0;
     uint32_t transitionMs = 0;
@@ -305,18 +198,18 @@ struct PackParameterBinding
 
 struct PackBindingAttachment
 {
-    harkenstudio::ObjectId bindingId{};
+    harken::studio::types::ObjectId bindingId{};
     uint8_t scope = 0; // runtime target-scope ordinal (0 voice, 1 bus)
-    harkenstudio::ObjectId objectId = {};
+    harken::studio::types::ObjectId objectId = {};
 };
 
 struct PackMediaDesc
 {
-    harkenstudio::ObjectId sourceId = {}; // new .pack entry id (runtime stable sound id)
+    harken::studio::types::ObjectId sourceId = {}; // new .pack entry id (runtime stable sound id)
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
     QString sourcePath;
     std::shared_ptr<const std::vector<float>> interleavedSamples;
-    std::shared_ptr<const VNX::VorbisEncoder::EncodedMedia> encodedMedia;
+    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
     QString contentHash;
     bool downmixToMono = false;
     bool loopable = false;
@@ -326,10 +219,6 @@ struct PackMediaDesc
     uint32_t sampleRate = 0;
     uint16_t channels = 0;
     PackMediaFormat format = PackMediaFormat::Pcm16;
-    // Empty blob => the bridge synthesizes a full-decode-fallback metadata
-    // entry from the format/channels/sampleRate above.
-    PackCodecMetadata codecMetadata;
-    std::vector<uint8_t> sharedCodebook;
 };
 
 bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revision);
@@ -348,17 +237,16 @@ public:
 
     void addBus(const PackBus& bus);
     void addBusSend(const PackBusSend& send);
-    void addModulatorBinding(harkenstudio::ObjectId targetObjectId, const PackModulator& modulator);
+    void addModulatorBinding(harken::studio::types::ObjectId targetObjectId, const PackModulator& modulator);
     void addAttenuation(const PackAttenuation& attenuation);
     void addEffectPreset(const PackEffectPreset& preset);
-    void addDiscreteVariable(harkenstudio::ObjectId variableId);
+    void addDiscreteVariable(harken::studio::types::ObjectId variableId);
     void addMeterWiring(const PackMeterWiring& wiring);
     void addBinding(const PackParameterBinding& binding);
     void addBindingAttachment(const PackBindingAttachment& attachment);
     void addMedia(const PackMediaDesc& media);
     void addWarning(const QString& warning);
 
-    bool buildToFile(const QString& outputPath);
     QString inputFingerprint();
 
     enum class CanonicalPackKind : uint32_t { Init = 2, CanonicalContent = 3 };
@@ -367,7 +255,7 @@ public:
     {
         uint32_t kind = 0;
         uint32_t vintage = 1;
-        harkenstudio::ObjectId id{};
+        harken::studio::types::ObjectId id{};
         uint64_t relationOrdinal = 0;
         std::vector<uint8_t> payload;
         std::shared_ptr<const std::vector<float>> media;
@@ -413,5 +301,5 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

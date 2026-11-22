@@ -21,7 +21,7 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>HarkenAbiFidelity</AssemblyName>
+    <AssemblyName>HarkenContractTest</AssemblyName>
     <RootNamespace>Harken.Test</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <DefineConstants>$(DefineConstants);HARKEN_NATIVE_DEVELOPMENT</DefineConstants>
@@ -37,8 +37,8 @@
     <Compile Include="Program.cs" />
     <Compile Include="VariableApiContract.cs" />
     <Compile Include="RemoteCommunicationContract.cs" />
-    <Compile Include="RepositoryPublicationContract.cs" />
-    <Compile Include="CompanionVersionContract.cs" />
+    <Compile Include="ExportedPackContract.cs" />
+    <Compile Include="PackMetadataVersionContract.cs" />
     <Compile Include="ArchivePublicationContract.cs" />
   </ItemGroup>
 

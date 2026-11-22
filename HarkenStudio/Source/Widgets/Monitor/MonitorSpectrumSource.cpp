@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorSpectrumPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorSpectrumSource::attach(MonitorSpectrumPanel* panel,
                                    MonitorCursorModel* sharedCursor)
@@ -29,4 +29,4 @@ void MonitorSpectrumSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

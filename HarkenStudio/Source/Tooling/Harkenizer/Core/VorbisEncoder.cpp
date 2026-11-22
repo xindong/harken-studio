@@ -7,7 +7,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX::VorbisEncoder {
+namespace harken::studio::VorbisEncoder {
 namespace {
 
 struct CodecState

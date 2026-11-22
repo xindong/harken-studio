@@ -21,7 +21,7 @@
 #include <QTextStream>
 #include <QThread>
 
-namespace VNX {
+namespace harken::studio {
 
 static QColor logLevelColor(LogEntry::Level level)
 {

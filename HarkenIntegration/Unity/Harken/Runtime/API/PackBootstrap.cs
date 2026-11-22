@@ -51,7 +51,7 @@ namespace Harken
             preparing = true;
             try
             {
-                VnResult result = owner.AcquireCompanions(names, owners, refresh);
+                VnResult result = owner.AcquireActionPacks(names, owners, refresh);
                 if (result == VnResult.VN_OK)
                 {
                     count = owners.Length;
@@ -78,7 +78,7 @@ namespace Harken
             preparing = true;
             try
             {
-                VnResult result = await owner.AcquireCompanionsAsync(names, owners, refresh, cancellation);
+                VnResult result = await owner.AcquireActionPacksAsync(names, owners, refresh, cancellation);
                 if (result == VnResult.VN_OK)
                 {
                     count = owners.Length;
@@ -123,7 +123,7 @@ namespace Harken
             while (count > 0)
             {
                 int index = count - 1;
-                VnResult result = owner.ReleaseCompanion(owners[index]);
+                VnResult result = owner.ReleaseActionPack(owners[index]);
                 // Keep dependencies alive while their dependent Pack still belongs to this scope.
                 if (result != VnResult.VN_OK) return LastReleaseResult = result;
                 owners[index] = null;
@@ -147,7 +147,7 @@ namespace Harken
         internal sealed class SharedPack
         {
             internal VnResidentDirectoryMemberV1 Binding;
-            internal PackCompanion Names;
+            internal PackMetadata Names;
             internal ulong NameRevision;
             internal ulong StableId { get => Binding.packStableId; set => Binding.packStableId = value; }
             internal ulong ContentHash { get => Binding.contentHash; set => Binding.contentHash = value; }
@@ -156,8 +156,8 @@ namespace Harken
             internal Pack Handle { get => new Pack(Binding.handle); set => Binding.handle = value.Handle; }
             public int Requests;
             public byte[] Bytes;
-            internal GameplayNames.Action Action =>
-                new GameplayNames.Action(Names.RootId, NameRevision, CallableFingerprint, this);
+            internal NameTable.Action Action =>
+                new NameTable.Action(Names.RootId, NameRevision, CallableFingerprint, this);
         }
 
         internal PackBootstrapSession(
@@ -182,7 +182,6 @@ namespace Harken
         public bool IsActive => active;
         public string ContainmentRoot { get; }
         public string Language { get; private set; }
-        public GameplayPublication Publication => null;
         /// <summary>The actual project identified by the session's validated Init Pack.</summary>
         public string ProjectId { get; private set; }
         public VnResult StartupResult { get; private set; } = VnResult.VN_NOT_INITIALIZED;
@@ -207,7 +206,7 @@ namespace Harken
 
         public VnResult AcquirePack(ulong packStableId, out Pack pack)
         {
-            return AcquireCompanionPack(packStableId, out pack);
+            return AcquireRawPack(packStableId, out pack);
         }
 
         /// <summary>On failure, a non-null scope still owns any references whose rollback could not finish.</summary>
@@ -216,7 +215,7 @@ namespace Harken
             if (active && names != null && projectId == ProjectId && CanAcquireNamedDirectory(names.Length))
             {
                 preparation = null;
-                var allowed = CompanionMutationAllowed();
+                var allowed = PackMutationAllowed();
                 if (allowed != VnResult.VN_OK) return allowed;
                 try
                 {
@@ -230,17 +229,17 @@ namespace Harken
                 }
                 catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             }
-            return PrepareCompanions(names, projectId, false, out preparation);
+            return PrepareActionPacks(names, projectId, false, out preparation);
         }
 
         public VnResult ReleasePack(ulong packStableId, Pack pack)
         {
-            return ReleaseCompanionPack(packStableId, pack);
+            return ReleaseRawPack(packStableId, pack);
         }
 
         public VnResult ReplacePack(ulong packStableId, Pack pack)
         {
-            return ReplaceCompanionPack(packStableId, pack);
+            return ReplaceRawPack(packStableId, pack);
         }
 
         public VnResult PrepareStartupPacks()
@@ -299,21 +298,21 @@ namespace Harken
                 {
                     active = false;
                     packs?.Clear();
-                    companionNames?.Clear();
-                    rawCompanionLeases.Clear();
-                    CancelCompanionReads();
+                    metadataNames?.Clear();
+                    rawPackLeases.Clear();
+                    CancelPackReads();
                     CancelLanguageSwitch();
                     // Pending captures own their inputs until their real completion.
                     // An inactive session only retains its public diagnostic state.
                     initBytes = null;
-                    companionSource = null;
+                    packSource = null;
                     ownedArchive?.Dispose();
                     ownedArchive = null;
-                    companionLocators = null;
+                    packLocators = null;
                     directoryLease = null;
-                    companionOwners = Array.Empty<SharedPack>();
-                    companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
-                    companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
+                    packOwners = Array.Empty<SharedPack>();
+                    packKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
+                    packKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
                     Array.Clear(startupPacks, 0, startupPacks.Length);
                 }
                 return term;

@@ -39,7 +39,7 @@
 #include <QTimer>
 #include <algorithm>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 namespace {
 
 QJsonObject manifestJson(const ReleaseManifest& manifest)
@@ -113,7 +113,7 @@ ServerVersionList serverVersions()
     QEventLoop loop;
     ServerVersionList result;
     QObject::connect(&catalog, &ServerVersionCatalog::finished, &loop, [&](const auto& response) { result = response; loop.quit(); });
-    require(catalog.fetch(ServerEndpoints::manifestUrls(ServerEndpoints::resolvedBaseUrl(), "harken", ServerEndpoints::hostChannel()), "harken", ServerEndpoints::hostChannel()), "Could not start server version lookup");
+    require(catalog.fetch(ServerEndpoints::manifestUrls(ServerEndpoints::resolvedBaseUrl(), "harken"), "harken", ServerEndpoints::hostChannel()), "Could not start server version lookup");
     loop.exec();
     require(result.ok, result.error);
     return result;
@@ -180,7 +180,7 @@ UpdateCheckResult checkUpdate(const QString& product)
 {
     UpdateChecker checker;
     UpdateChecker::Options options;
-    auto urls = ServerEndpoints::manifestUrls(ServerEndpoints::resolvedBaseUrl(), product, ServerEndpoints::hostChannel());
+    auto urls = ServerEndpoints::manifestUrls(ServerEndpoints::resolvedBaseUrl(), product);
     require(!urls.isEmpty(), "No valid update manifest URLs");
     options.latestUrl = urls.takeFirst();
     options.fallbackUrls = urls;

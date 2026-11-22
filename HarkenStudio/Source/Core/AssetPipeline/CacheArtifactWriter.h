@@ -7,7 +7,7 @@
 
 class QIODevice;
 
-namespace VNX {
+namespace harken::studio {
 
 namespace VorbisEncoder { struct EncodedMedia; }
 

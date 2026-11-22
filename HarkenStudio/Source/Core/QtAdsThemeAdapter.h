@@ -10,7 +10,7 @@ namespace ads {
 class CDockManager;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeAssetResolver;
 

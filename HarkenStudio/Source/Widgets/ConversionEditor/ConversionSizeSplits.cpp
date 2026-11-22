@@ -25,7 +25,7 @@
 #include <limits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr quint64 kMaxBytes = std::numeric_limits<qint64>::max();

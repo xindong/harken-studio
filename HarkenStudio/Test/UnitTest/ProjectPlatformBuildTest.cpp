@@ -17,7 +17,6 @@
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "Core/RuntimeContentBundleBuilderInternal.h"
 #include "Core/UndoCommands.h"
-#include "Tooling/Harkenizer/ResourceCompilerClient.h"
 
 #include "harken_studio_build/PackFormat.h"
 #include "harken_studio_build/PackFormatV2.h"
@@ -37,9 +36,6 @@
 
 #ifdef Q_OS_WIN
 #include <QtCore/qt_windows.h>
-#else
-#include <cerrno>
-#include <csignal>
 #endif
 
 #include <algorithm>
@@ -49,7 +45,7 @@
 #include <vector>
 
 namespace {
-using namespace VNX;
+using namespace harken::studio;
 namespace Platforms = ProjectPlatformSemantics;
 
 QByteArray bytes(const QString& path)
@@ -70,128 +66,6 @@ QMap<QString, QByteArray> directoryContents(const QString& root, const QStringLi
             result.insert(relative, bytes(path));
     }
     return result;
-}
-
-bool workerProcessAlive(qint64 pid)
-{
-#ifdef Q_OS_WIN
-    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
-    if (!process) return false;
-    const bool alive = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
-    CloseHandle(process);
-    return alive;
-#else
-    return kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM;
-#endif
-}
-
-bool writeWorkerCommand(const QString& path, const QString& mode, const QString& token)
-{
-    QFile control(path);
-    if (!control.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    const auto json = QJsonDocument(QJsonObject{{"mode", mode}, {"token", token}}).toJson();
-    return control.write(json) == json.size();
-}
-
-TEST(ResourceCompilerWorker, RefusalDoesNotContaminateReusedWorkerAndShutdownIsClean)
-{
-    using Client = Harkenizer::ResourceCompilerClient;
-    QTemporaryDir directory;
-    ASSERT_TRUE(directory.isValid());
-    const auto command = directory.filePath("control.json");
-    qint64 pid = 0;
-    {
-        Client client(QString::fromUtf8(HARKEN_RESOURCE_COMPILER_PROCESS_PATH), 1000);
-        for (const auto& mode : {QString("success"), QString("refuse"), QString("success")}) {
-            const QString token = QUuid::createUuid().toString();
-            ASSERT_TRUE(writeWorkerCommand(command, mode, token));
-            const auto result = client.compile(command, directory.filePath("output.bytes"));
-            const bool success = mode == "success";
-            ASSERT_EQ(result.status, success ? Client::Status::Succeeded : Client::Status::Refused)
-                << result.error.toStdString();
-            EXPECT_EQ(result.outputLog, token);
-            EXPECT_EQ(result.error, success ? QString() : token + " refused");
-            EXPECT_EQ(result.diagnosticLog, success ? QString() : token + " diagnostics");
-        }
-        const auto requests = bytes(directory.filePath("requests.log")).trimmed().split('\n');
-        ASSERT_EQ(requests.size(), 3);
-        EXPECT_EQ(requests[0], requests[1]);
-        EXPECT_EQ(requests[1], requests[2]);
-        pid = requests[0].toLongLong();
-        ASSERT_GT(pid, 0);
-        EXPECT_TRUE(workerProcessAlive(pid));
-    }
-    EXPECT_FALSE(workerProcessAlive(pid));
-    EXPECT_EQ(bytes(directory.filePath(QString::number(pid) + ".stopped")), QByteArray::number(pid));
-}
-
-TEST(ResourceCompilerWorker, BrokenWorkerIsStoppedAndNextRequestRestarts)
-{
-    using Client = Harkenizer::ResourceCompilerClient;
-    const std::vector<std::pair<QString, Client::Status>> failures{
-        {"crash", Client::Status::Crashed}, {"timeout", Client::Status::TimedOut},
-        {"invalid-json", Client::Status::InvalidResponse}, {"invalid-result", Client::Status::InvalidResponse}};
-    for (const auto& [mode, expected] : failures) {
-        SCOPED_TRACE(mode.toStdString());
-        QTemporaryDir directory;
-        ASSERT_TRUE(directory.isValid());
-        const auto command = directory.filePath("control.json");
-        qint64 replacementPid = 0;
-        {
-            Client client(QString::fromUtf8(HARKEN_RESOURCE_COMPILER_PROCESS_PATH), 1000);
-            ASSERT_TRUE(writeWorkerCommand(command, "success", "first"));
-            ASSERT_EQ(client.compile(command, "first.bytes").status, Client::Status::Succeeded);
-            const auto originalPid = bytes(directory.filePath("requests.log")).trimmed().toLongLong();
-            ASSERT_GT(originalPid, 0);
-            ASSERT_TRUE(writeWorkerCommand(command, mode, "broken"));
-            const auto failed = client.compile(command, "broken.bytes");
-            EXPECT_EQ(failed.status, expected) << failed.error.toStdString();
-            EXPECT_FALSE(failed.error.isEmpty());
-            EXPECT_FALSE(workerProcessAlive(originalPid));
-
-            ASSERT_TRUE(writeWorkerCommand(command, "success", "recovered"));
-            const auto recovered = client.compile(command, "recovered.bytes");
-            ASSERT_EQ(recovered.status, Client::Status::Succeeded) << recovered.error.toStdString();
-            EXPECT_EQ(recovered.outputLog, QString("recovered"));
-            EXPECT_TRUE(recovered.error.isEmpty());
-            EXPECT_TRUE(recovered.diagnosticLog.isEmpty());
-            const auto requests = bytes(directory.filePath("requests.log")).trimmed().split('\n');
-            ASSERT_EQ(requests.size(), 3);
-            EXPECT_EQ(requests[0], requests[1]);
-            replacementPid = requests[2].toLongLong();
-            ASSERT_GT(replacementPid, 0);
-            EXPECT_TRUE(workerProcessAlive(replacementPid));
-        }
-        EXPECT_FALSE(workerProcessAlive(replacementPid));
-        EXPECT_EQ(bytes(directory.filePath(QString::number(replacementPid) + ".stopped")),
-            QByteArray::number(replacementPid));
-    }
-}
-
-TEST(ResourceCompilerWorker, CacheIdentityRequiresMatchingWorkerAndRecoversAfterMismatch)
-{
-    using Client = Harkenizer::ResourceCompilerClient;
-    QTemporaryDir directory;
-    ASSERT_TRUE(directory.isValid());
-    const QByteArray name("HARKEN_TEST_RESOURCE_COMPILER_IDENTITY");
-    const bool originallySet = qEnvironmentVariableIsSet(name.constData());
-    const auto original = qgetenv(name.constData());
-    const auto restoreEnvironment = qScopeGuard([&] {
-        if (originallySet) qputenv(name.constData(), original);
-        else qunsetenv(name.constData());
-    });
-    Client client(QString::fromUtf8(HARKEN_RESOURCE_COMPILER_PROCESS_PATH), 1000);
-    ASSERT_TRUE(qputenv(name.constData(), "incompatible-compiler"));
-    QString error;
-    EXPECT_TRUE(client.identity(&error).isEmpty());
-    EXPECT_FALSE(error.isEmpty());
-    ASSERT_TRUE(qunsetenv(name.constData()));
-    EXPECT_EQ(client.identity(nullptr), QByteArray(Harkenizer::resourceCompilerIdentity()));
-    const auto command = directory.filePath("control.json");
-    ASSERT_TRUE(writeWorkerCommand(command, "success", "matched"));
-    const auto result = client.compile(command, "matched.bytes");
-    EXPECT_EQ(result.status, Client::Status::Succeeded) << result.error.toStdString();
-    EXPECT_EQ(result.outputLog, QString("matched"));
 }
 
 struct StudioCliResult
@@ -215,19 +89,19 @@ StudioCliResult runStudioCli(const QStringList& arguments)
         process.readAllStandardOutput(), process.readAllStandardError()};
 }
 
-QVector<harkenstudiobuild::PackTocEntry> mediaEntries(const QString& path)
+QVector<harken::studio::build::PackTocEntry> mediaEntries(const QString& path)
 {
-    QVector<harkenstudiobuild::PackTocEntry> result;
+    QVector<harken::studio::build::PackTocEntry> result;
     const auto content = bytes(path);
-    if (content.size() < static_cast<qsizetype>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) return result;
+    if (content.size() < static_cast<qsizetype>(harken::studio::build::kPackBytes<HkPackFileHeader>)) return result;
     const auto* data = reinterpret_cast<const uint8_t*>(content.constData());
-    harkenstudiobuild::PackFileHeader header;
-    if (!harkenstudiobuild::ReadPackFileHeader(data, &header)) return result;
+    harken::studio::build::PackFileHeader header;
+    if (!harken::studio::build::ReadPackFileHeader(data, &header)) return result;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
-            data + header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+        const auto entry = harken::studio::build::ReadPackDirectoryEntry(
+            data + header.directoryOffset + i * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
         if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA)
-            result.append(harkenstudiobuild::ReadPackMedia(data + entry.offset));
+            result.append(harken::studio::build::ReadPackMedia(data + entry.offset));
     }
     return result;
 }
@@ -525,10 +399,10 @@ TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases
     ASSERT_TRUE(ledger.ensure(low)->properties.setValue(
         harkenplayableproperties::PlayablePropertyIdV1::Volume, -6.0f));
     sound->platformOverrides = ledger;
-    EXPECT_TRUE(container->comp<VNX::VSelection>()->selections.shared.setOccurrenceRows({{child->guid, 0, 50}}));
-    container->comp<VNX::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
-    container->comp<VNX::VSelection>()->selections.editTable(low).entries.front().occurrences.front().weight = 25;
-    const auto selectionsJson = container->comp<VNX::VSelection>()->selections.toJson();
+    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.shared.setOccurrenceRows({{child->guid, 0, 50}}));
+    container->comp<harken::studio::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
+    container->comp<harken::studio::VSelection>()->selections.editTable(low).entries.front().occurrences.front().weight = 25;
+    const auto selectionsJson = container->comp<harken::studio::VSelection>()->selections.toJson();
     Clip clip;
     clip.clipGuid = QUuid::createUuid();
     clip.targetGuid = container->guid;
@@ -556,7 +430,7 @@ TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases
     EXPECT_EQ(sound->platformOverrides, ledger);
     EXPECT_EQ(sound->comp<VSound>()->toJson(), soundJson);
     EXPECT_EQ(track->comp<VTrack>()->toJson(), trackJson);
-    EXPECT_EQ(container->comp<VNX::VSelection>()->selections.toJson(), selectionsJson);
+    EXPECT_EQ(container->comp<harken::studio::VSelection>()->selections.toJson(), selectionsJson);
 }
 
 TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedPairs)

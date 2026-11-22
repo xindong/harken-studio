@@ -2,7 +2,7 @@
 
 #include <QCoreApplication>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectPlatformActivity& ProjectPlatformActivity::instance()
 {

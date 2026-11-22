@@ -4,17 +4,17 @@
 
 #include <array>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
-std::uint32_t channelCount(harkenstudio::ChannelLayout layout) noexcept
+std::uint32_t channelCount(harken::studio::types::ChannelLayout layout) noexcept
 {
     switch (layout) {
-    case harkenstudio::kChannelLayoutMono: return 1;
-    case harkenstudio::kChannelLayoutStereo: return 2;
-    case harkenstudio::kChannelLayoutQuad: return 4;
-    case harkenstudio::kChannelLayout5_1: return 6;
-    case harkenstudio::kChannelLayout7_1: return 8;
+    case harken::studio::types::kChannelLayoutMono: return 1;
+    case harken::studio::types::kChannelLayoutStereo: return 2;
+    case harken::studio::types::kChannelLayoutQuad: return 4;
+    case harken::studio::types::kChannelLayout5_1: return 6;
+    case harken::studio::types::kChannelLayout7_1: return 8;
     default: return 0;
     }
 }
@@ -45,14 +45,14 @@ std::uint64_t compileTargetProfileFingerprintV1(
     append32(bytes, offset, profile.mixLayout);
     append32(bytes, offset, profile.deviceLayout);
     append64(bytes, offset, profile.capabilityMask);
-    return harkenstudiobuild::busfingerprint::HashBytes(bytes.data(), bytes.size());
+    return harken::studio::build::busfingerprint::HashBytes(bytes.data(), bytes.size());
 }
 
 std::shared_ptr<const CompileTargetProfileV1> MakeCompileTargetProfileV1(
     std::uint32_t vintage,
     std::uint32_t sampleRate,
-    harkenstudio::ChannelLayout mixLayout,
-    harkenstudio::ChannelLayout deviceLayout,
+    harken::studio::types::ChannelLayout mixLayout,
+    harken::studio::types::ChannelLayout deviceLayout,
     std::uint64_t capabilityMask) noexcept
 {
     if (vintage != 1 || sampleRate == 0 || sampleRate > 384000
@@ -70,4 +70,4 @@ std::shared_ptr<const CompileTargetProfileV1> MakeCompileTargetProfileV1(
     return profile;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

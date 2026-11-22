@@ -7,7 +7,7 @@
 #include <QSslCertificate>
 #include <QSslKey>
 
-namespace VNX::TestSupport {
+namespace harken::studio::TestSupport {
 namespace {
 
 QByteArray reasonPhrase(int status)

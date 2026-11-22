@@ -16,7 +16,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-namespace VNH {
+namespace harken::hub {
 
 QString ConsentDialog::hubDocumentId()
 {

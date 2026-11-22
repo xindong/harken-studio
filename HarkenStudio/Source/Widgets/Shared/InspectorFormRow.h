@@ -6,7 +6,7 @@
 class QWidget;
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 struct InspectorFormRow
 {

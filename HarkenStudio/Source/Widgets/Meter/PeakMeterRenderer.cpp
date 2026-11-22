@@ -9,7 +9,7 @@
 #include <QPainter>
 #include <QPen>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 void renderBar(QPainter& painter,

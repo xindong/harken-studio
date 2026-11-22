@@ -45,7 +45,7 @@
 #include <QToolButton>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

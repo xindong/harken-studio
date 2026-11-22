@@ -110,29 +110,29 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        auto& engine = VNX::AudioEngine::instance();
+        auto& engine = harken::studio::AudioEngine::instance();
         engine.shutdown();
-        auto& pm = VNX::ProjectManager::instance();
+        auto& pm = harken::studio::ProjectManager::instance();
         if (pm.isProjectOpen()) pm.closeProject();
-        HarkenEditor::Bridge::EngineSessionConfig engineConfig;
-        engineConfig.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+        harken::studio::bridge::EngineSessionConfig engineConfig;
+        engineConfig.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
         ASSERT_TRUE(engine.initialize(engineConfig));
         ASSERT_FALSE(engine.isSimulationMode());
         ASSERT_TRUE(engine.startOutput());
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::ActionManager::instance().clearAllForTesting();
         ASSERT_TRUE(directory_.isValid());
-        window_ = std::make_unique<VNX::MainWindow>();
-        VNX::ProjectConfig config;
+        window_ = std::make_unique<harken::studio::MainWindow>();
+        harken::studio::ProjectConfig config;
         config.name = QStringLiteral("EditorDockLayout");
         config.location = directory_.path();
         ASSERT_TRUE(pm.createProject(config));
-        controller_ = window_->findChild<VNX::LayoutController*>();
+        controller_ = window_->findChild<harken::studio::LayoutController*>();
         ASSERT_NE(controller_, nullptr);
         controller_->loadProjectLayout();
         QEventLoop startup;
         bool presentationFinished = false;
         bool presentationShown = false;
-        QObject::connect(window_.get(), &VNX::MainWindow::startupPresentationFinished,
+        QObject::connect(window_.get(), &harken::studio::MainWindow::startupPresentationFinished,
                          &startup, [&](bool shown) {
             presentationFinished = true;
             presentationShown = shown;
@@ -152,13 +152,13 @@ protected:
 
     void TearDown() override
     {
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
         if (window_)
-            QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window_.get(), nullptr);
+            QObject::disconnect(&harken::studio::UndoRedoManager::instance(), nullptr, window_.get(), nullptr);
         window_.reset();
-        VNX::ActionManager::instance().setTransactionCallbacks({});
-        VNX::ActionManager::instance().clearAllForTesting();
-        auto& pm = VNX::ProjectManager::instance();
+        harken::studio::ActionManager::instance().setTransactionCallbacks({});
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        auto& pm = harken::studio::ProjectManager::instance();
         if (pm.isProjectOpen()) pm.closeProject();
         drainEvents();
     }
@@ -183,9 +183,9 @@ protected:
         drainEvents();
     }
 
-    static void selectChildRow(VNX::GridEditorPanel* panel, int index)
+    static void selectChildRow(harken::studio::GridEditorPanel* panel, int index)
     {
-        auto* list = panel->findChild<VNX::SelectionListWidget*>();
+        auto* list = panel->findChild<harken::studio::SelectionListWidget*>();
         if (list && list->isVisible()) {
             for (auto* row : list->findChildren<QWidget*>(QStringLiteral("selectionChildRow"))) {
                 if (row->property("rowIndex").toInt() != index) continue;
@@ -205,36 +205,36 @@ protected:
     }
 
     QTemporaryDir directory_;
-    std::unique_ptr<VNX::MainWindow> window_;
-    VNX::LayoutController* controller_ = nullptr;
+    std::unique_ptr<harken::studio::MainWindow> window_;
+    harken::studio::LayoutController* controller_ = nullptr;
 };
 
 }
 
 TEST_F(EditorDockLayoutTest, PackWarningsKeepTheirOwnershipAcrossBuildAndReuse)
 {
-    auto& manager = VNX::ProjectManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
     for (const auto& name : {QStringLiteral("FirstEmpty"), QStringLiteral("SecondEmpty")})
-        ASSERT_NE(manager.createItem(nullptr, name, VNX::ProjectItem::Type::Action), nullptr);
-    const auto created = VNX::ActionManager::instance().execute(
+        ASSERT_NE(manager.createItem(nullptr, name, harken::studio::ProjectItem::Type::Action), nullptr);
+    const auto created = harken::studio::ActionManager::instance().execute(
         QStringLiteral("create_project_platform"),
         {{QStringLiteral("name"), QStringLiteral("OtherPlatform")},
          {QStringLiteral("base_platform"), QStringLiteral("Android")}});
     ASSERT_TRUE(created.success) << created.errorMessage.toStdString();
     const auto& platforms = manager.currentProject()->platforms;
-    const QStringList selected{VNX::ProjectPlatformSemantics::idString(platforms.front().id),
-                              VNX::ProjectPlatformSemantics::idString(platforms.back().id)};
+    const QStringList selected{harken::studio::ProjectPlatformSemantics::idString(platforms.front().id),
+                              harken::studio::ProjectPlatformSemantics::idString(platforms.back().id)};
     ASSERT_TRUE(window_->setWorkspaceWindowVisible(QStringLiteral("Publisher"), true));
-    auto* publisher = window_->findChild<VNX::PublisherPanel*>();
+    auto* publisher = window_->findChild<harken::studio::PublisherPanel*>();
     ASSERT_NE(publisher, nullptr);
-    auto& store = VNX::PackGenerationRecordStore::instance();
-    auto* log = VNX::LogService::globalModel();
+    auto& store = harken::studio::PackGenerationRecordStore::instance();
+    auto* log = harken::studio::LogService::globalModel();
     for (int run = 0; run < 2; ++run) {
         SCOPED_TRACE(run);
         store.clear();
         log->clear();
         QEventLoop completion;
-        QObject::connect(&store, &VNX::PackGenerationRecordStore::exportActivityChanged,
+        QObject::connect(&store, &harken::studio::PackGenerationRecordStore::exportActivityChanged,
             &completion, [&](bool active) { if (!active) completion.quit(); });
         emit publisher->exportRequested(selected, {}, true, false, false);
         if (store.isExporting()) {
@@ -243,7 +243,7 @@ TEST_F(EditorDockLayoutTest, PackWarningsKeepTheirOwnershipAcrossBuildAndReuse)
         }
         ASSERT_FALSE(store.isExporting());
         drainEvents();
-        const auto entries = log->entries(VNX::LogEntry::Warning, QStringLiteral("Pack"));
+        const auto entries = log->entries(harken::studio::LogEntry::Warning, QStringLiteral("Pack"));
         int warningCount = 0;
         for (const auto& record : store.records()) {
             EXPECT_TRUE(record.success) << record.errors.toStdString();
@@ -267,7 +267,7 @@ TEST_F(EditorDockLayoutTest, PackWarningsKeepTheirOwnershipAcrossBuildAndReuse)
 
 TEST_F(EditorDockLayoutTest, ShellKeepsBufferedCommandsWhenClosingIsRejected)
 {
-    ASSERT_TRUE(VNX::ProjectManager::instance().saveProject());
+    ASSERT_TRUE(harken::studio::ProjectManager::instance().saveProject());
     QFile input(directory_.filePath(QStringLiteral("shell-input.txt")));
     ASSERT_TRUE(input.open(QIODevice::WriteOnly));
     ASSERT_GT(input.write("exit\nget_project_info\nexit\n"), 0);
@@ -293,28 +293,28 @@ TEST_F(EditorDockLayoutTest, ShellKeepsBufferedCommandsWhenClosingIsRejected)
     ASSERT_GE(replaceDescriptor(input.handle(), inputDescriptor), 0);
     std::clearerr(stdin);
 
-    auto& records = VNX::PackGenerationRecordStore::instance();
+    auto& records = harken::studio::PackGenerationRecordStore::instance();
     auto canceled = std::make_shared<std::atomic_bool>(false);
     const auto runId = records.beginProgress(canceled);
     const auto finishProgress = qScopeGuard([&] { records.finishProgress(runId, true); });
-    HarkenStudioCli::StudioSession session(*window_->ipcServer());
+    harken::studio::cli::StudioSession session(*window_->ipcServer());
     volatile std::sig_atomic_t interrupted = 0;
-    HarkenStudioCli::ShellExitRequest request;
+    harken::studio::cli::ShellExitRequest request;
     QVector<QJsonObject> responses;
     int closeAttempts = 0;
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, qApp, &QCoreApplication::quit);
     timeout.start(5000);
-    const int code = HarkenStudioCli::runShell(session, 1000, true, interrupted,
+    const int code = harken::studio::cli::runShell(session, 1000, true, interrupted,
         [&](QJsonObject response) { responses.append(response); }, &request,
-        [&](HarkenStudioCli::ShellExitRequest) -> QJsonObject {
+        [&](harken::studio::cli::ShellExitRequest) -> QJsonObject {
             ++closeAttempts;
             const bool closed = window_->closeFromShell(false);
             if (!closed) {
                 EXPECT_TRUE(canceled->load());
                 records.finishProgress(runId, true);
-                return HarkenStudioCli::failure(QStringLiteral("EXIT_NOT_COMPLETED"), QStringLiteral("Export is stopping."));
+                return harken::studio::cli::failure(QStringLiteral("EXIT_NOT_COMPLETED"), QStringLiteral("Export is stopping."));
             }
             return {{QStringLiteral("status"), QStringLiteral("ok")}};
         });
@@ -322,7 +322,7 @@ TEST_F(EditorDockLayoutTest, ShellKeepsBufferedCommandsWhenClosingIsRejected)
     timeout.stop();
     EXPECT_EQ(code, 0);
     EXPECT_EQ(closeAttempts, 2);
-    EXPECT_EQ(request, HarkenStudioCli::ShellExitRequest::Close);
+    EXPECT_EQ(request, harken::studio::cli::ShellExitRequest::Close);
     ASSERT_EQ(responses.size(), 3);
     EXPECT_EQ(responses[0].value(QStringLiteral("code")).toString(), QStringLiteral("EXIT_NOT_COMPLETED"));
     EXPECT_EQ(responses[1].value(QStringLiteral("command")).toString(), QStringLiteral("get_project_info"));
@@ -333,28 +333,28 @@ TEST_F(EditorDockLayoutTest, ShellKeepsBufferedCommandsWhenClosingIsRejected)
 
 TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem)
 {
-    auto& project = VNX::ProjectManager::instance();
-    ASSERT_NE(project.createItem(nullptr, QStringLiteral("ColorPreviewNode"), VNX::ProjectItem::Type::Sound), nullptr);
-    auto* blueprint = window_->findChild<VNX::BlueprintCanvasWidget*>();
+    auto& project = harken::studio::ProjectManager::instance();
+    ASSERT_NE(project.createItem(nullptr, QStringLiteral("ColorPreviewNode"), harken::studio::ProjectItem::Type::Sound), nullptr);
+    auto* blueprint = window_->findChild<harken::studio::BlueprintCanvasWidget*>();
     ASSERT_NE(blueprint, nullptr);
     blueprint->setSoundsFiltered(false);
     blueprint->rebuildFromProject();
     drainEvents();
     drainEvents();
 
-    QList<QPointer<VNX::NodeContentEditor>> editors;
+    QList<QPointer<harken::studio::NodeContentEditor>> editors;
     for (auto* widget : QApplication::allWidgets()) {
-        auto* editor = qobject_cast<VNX::NodeContentEditor*>(widget);
+        auto* editor = qobject_cast<harken::studio::NodeContentEditor*>(widget);
         if (editor && editor->isHidden() && editor->parentWidget()
             && !editor->parentWidget()->parentWidget()) editors.append(editor);
     }
     ASSERT_FALSE(editors.isEmpty());
 
-    VNX::NodeContentRenderer renderer;
-    VNX::NodeContentInfo content;
+    harken::studio::NodeContentRenderer renderer;
+    harken::studio::NodeContentInfo content;
     content.volume = -3.0f;
     const auto initialDrawing = renderer.presentation(content, content.fields(), std::nullopt, true);
-    const auto image = [](const VNX::NodeContentPresentation& presentation) {
+    const auto image = [](const harken::studio::NodeContentPresentation& presentation) {
         QImage result(presentation.size, QImage::Format_ARGB32_Premultiplied);
         result.fill(Qt::transparent);
         QPainter painter(&result);
@@ -370,7 +370,7 @@ TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRe
     drainEvents();
     for (const auto& editor : editors) EXPECT_FALSE(editor.isNull());
 
-    auto& theme = VNX::ThemeManager::instance();
+    auto& theme = harken::studio::ThemeManager::instance();
     const auto restore = qScopeGuard([&] {
         theme.cancelAppearancePreview();
         blueprint->viewport()->setPalette(originalPalette);
@@ -399,17 +399,17 @@ TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRe
 
 TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNodeActivation)
 {
-    using Authoring = VNX::PlayablePropertyAuthoringV1;
-    auto& manager = VNX::ProjectManager::instance();
-    auto& undo = VNX::UndoRedoManager::instance();
-    auto& platforms = VNX::PlatformContextService::instance();
+    using Authoring = harken::studio::PlayablePropertyAuthoringV1;
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    auto& platforms = harken::studio::PlatformContextService::instance();
     const auto originalContext = platforms.context();
     const auto restore = qScopeGuard([&] {
         platforms.setSelected(originalContext.selected, originalContext.primary, originalContext.all);
     });
     platforms.setAll(true);
-    auto* first = manager.createItem(nullptr, QStringLiteral("FirstEditTarget"), VNX::ProjectItem::Type::Sound);
-    auto* second = manager.createItem(nullptr, QStringLiteral("SecondEditTarget"), VNX::ProjectItem::Type::Sound);
+    auto* first = manager.createItem(nullptr, QStringLiteral("FirstEditTarget"), harken::studio::ProjectItem::Type::Sound);
+    auto* second = manager.createItem(nullptr, QStringLiteral("SecondEditTarget"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     const auto firstLocator = Authoring::definitionLocator(*first);
@@ -430,13 +430,13 @@ TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNode
     ASSERT_TRUE(initialSecond);
     undo.clearHistory();
 
-    auto canvas = std::make_unique<VNX::BlueprintCanvasWidget>();
+    auto canvas = std::make_unique<harken::studio::BlueprintCanvasWidget>();
     canvas->setSoundsFiltered(false);
     canvas->rebuildFromProject();
     drainEvents();
-    const auto findNode = [&](const VNX::ProjectItem* target) -> VNX::NodeItem* {
+    const auto findNode = [&](const harken::studio::ProjectItem* target) -> harken::studio::NodeItem* {
         for (auto* item : canvas->scene()->items())
-            if (auto* node = dynamic_cast<VNX::NodeItem*>(item); node && node->objectID() == target->objectID)
+            if (auto* node = dynamic_cast<harken::studio::NodeItem*>(item); node && node->objectID() == target->objectID)
                 return node;
         return nullptr;
     };
@@ -444,9 +444,9 @@ TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNode
     auto* secondNode = findNode(second);
     ASSERT_NE(firstNode, nullptr);
     ASSERT_NE(secondNode, nullptr);
-    auto* editor = qobject_cast<VNX::NodeContentEditor*>(firstNode->ensureContentWidget());
+    auto* editor = qobject_cast<harken::studio::NodeContentEditor*>(firstNode->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
-    auto* binding = editor->binding(VNX::NodeContentField::Volume);
+    auto* binding = editor->binding(harken::studio::NodeContentField::Volume);
     ASSERT_NE(binding, nullptr);
     binding->beginEdit();
     binding->previewEdit(-6.0);
@@ -465,9 +465,9 @@ TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNode
     EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
     EXPECT_EQ(secondState(), initialSecond);
 
-    editor = qobject_cast<VNX::NodeContentEditor*>(secondNode->ensureContentWidget());
+    editor = qobject_cast<harken::studio::NodeContentEditor*>(secondNode->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
-    binding = editor->binding(VNX::NodeContentField::Volume);
+    binding = editor->binding(harken::studio::NodeContentField::Volume);
     ASSERT_NE(binding, nullptr);
     EXPECT_DOUBLE_EQ(binding->value(), initialSecond->value.toDouble());
     binding->beginEdit();
@@ -493,16 +493,16 @@ TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNode
     EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
     drainEvents();
 
-    editor = qobject_cast<VNX::NodeContentEditor*>(findNode(first)->ensureContentWidget());
+    editor = qobject_cast<harken::studio::NodeContentEditor*>(findNode(first)->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
-    binding = editor->binding(VNX::NodeContentField::Volume);
+    binding = editor->binding(harken::studio::NodeContentField::Volume);
     ASSERT_NE(binding, nullptr);
     EXPECT_DOUBLE_EQ(binding->value(), -6.0);
     binding->beginEdit();
     binding->previewEdit(-3.0);
     EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -3.0);
     EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
-    QPointer<VNX::NodeContentEditor> activeEditor = editor;
+    QPointer<harken::studio::NodeContentEditor> activeEditor = editor;
     canvas.reset();
     drainEvents();
     EXPECT_TRUE(activeEditor.isNull());
@@ -512,11 +512,11 @@ TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNode
 
 TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWindows)
 {
-    auto& settings = VNX::AppSettings::instance();
-    auto& shortcuts = VNX::ShortcutManager::instance();
+    auto& settings = harken::studio::AppSettings::instance();
+    auto& shortcuts = harken::studio::ShortcutManager::instance();
     const int originalLevel = settings.globalUIZoomLevel();
-    const auto originalIn = shortcuts.info(VNX::Shortcuts::ZoomIn);
-    const auto originalOut = shortcuts.info(VNX::Shortcuts::ZoomOut);
+    const auto originalIn = shortcuts.info(harken::studio::Shortcuts::ZoomIn);
+    const auto originalOut = shortcuts.info(harken::studio::Shortcuts::ZoomOut);
     const auto restore = qScopeGuard([&] {
         settings.setGlobalUIZoomLevel(originalLevel);
         for (const auto& info : {originalIn, originalOut}) {
@@ -524,8 +524,8 @@ TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWind
             else shortcuts.resetToDefault(info.id);
         }
     });
-    shortcuts.resetToDefault(VNX::Shortcuts::ZoomIn);
-    shortcuts.resetToDefault(VNX::Shortcuts::ZoomOut);
+    shortcuts.resetToDefault(harken::studio::Shortcuts::ZoomIn);
+    shortcuts.resetToDefault(harken::studio::Shortcuts::ZoomOut);
     settings.setGlobalUIZoomLevel(0);
     sendShortcut(window_.get(), Qt::Key_Equal);
     EXPECT_EQ(settings.globalUIZoomLevel(), 1);
@@ -550,7 +550,7 @@ TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWind
         EXPECT_EQ(settings.globalUIZoomLevel(), 1);
     }
 
-    VNX::SettingsPanel floating;
+    harken::studio::SettingsPanel floating;
     floating.show();
     drainEvents();
     auto* search = floating.findChild<QLineEdit*>();
@@ -589,63 +589,63 @@ TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWind
 
     edit->setFocus();
     edit->setSelection(2, 5);
-    shortcuts.setShortcut(VNX::Shortcuts::ZoomIn, QKeySequence(QStringLiteral("Ctrl+Alt+=")));
+    shortcuts.setShortcut(harken::studio::Shortcuts::ZoomIn, QKeySequence(QStringLiteral("Ctrl+Alt+=")));
     sendShortcut(edit, Qt::Key_Equal);
     sendShortcut(edit, Qt::Key_Plus);
     EXPECT_EQ(settings.globalUIZoomLevel(), 1);
     sendShortcut(edit, Qt::Key_Equal, Qt::ControlModifier | Qt::AltModifier);
     EXPECT_EQ(settings.globalUIZoomLevel(), 2);
-    shortcuts.setShortcut(VNX::Shortcuts::ZoomIn, {});
+    shortcuts.setShortcut(harken::studio::Shortcuts::ZoomIn, {});
     sendShortcut(edit, Qt::Key_Equal, Qt::ControlModifier | Qt::AltModifier);
     EXPECT_EQ(settings.globalUIZoomLevel(), 2);
-    shortcuts.resetToDefault(VNX::Shortcuts::ZoomIn);
+    shortcuts.resetToDefault(harken::studio::Shortcuts::ZoomIn);
     sendShortcut(edit, Qt::Key_Plus);
     EXPECT_EQ(settings.globalUIZoomLevel(), 3);
     EXPECT_EQ(edit->text(), QStringLiteral("unfinished value"));
     EXPECT_EQ(edit->selectedText(), QStringLiteral("finis"));
     QObject observation;
     int changes = 0;
-    QObject::connect(&settings, &VNX::AppSettings::globalUIScaleChanged,
+    QObject::connect(&settings, &harken::studio::AppSettings::globalUIScaleChanged,
                      &observation, [&] { ++changes; });
-    settings.setGlobalUIZoomLevel(VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
+    settings.setGlobalUIZoomLevel(harken::studio::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
     changes = 0;
     sendShortcut(edit, Qt::Key_Equal);
-    EXPECT_EQ(settings.globalUIZoomLevel(), VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
+    EXPECT_EQ(settings.globalUIZoomLevel(), harken::studio::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
     EXPECT_EQ(changes, 0);
-    settings.setGlobalUIZoomLevel(VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
+    settings.setGlobalUIZoomLevel(harken::studio::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
     changes = 0;
     sendShortcut(edit, Qt::Key_Minus);
-    EXPECT_EQ(settings.globalUIZoomLevel(), VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
+    EXPECT_EQ(settings.globalUIZoomLevel(), harken::studio::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
     EXPECT_EQ(changes, 0);
 }
 
 TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndActiveEdits)
 {
-    qApp->setStyle(new VNX::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
+    qApp->setStyle(new harken::studio::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
     const auto restoreStyle = qScopeGuard([] { qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion"))); });
-    auto& settings = VNX::AppSettings::instance();
+    auto& settings = harken::studio::AppSettings::instance();
     const int previousLevel = settings.globalUIZoomLevel();
     const auto restore = qScopeGuard([&] { settings.setGlobalUIZoomLevel(previousLevel); });
     settings.setGlobalUIZoomLevel(0);
-    auto& project = VNX::ProjectManager::instance();
-    auto* sound = project.createItem(nullptr, QStringLiteral("ScaleNode"), VNX::ProjectItem::Type::Sound);
+    auto& project = harken::studio::ProjectManager::instance();
+    auto* sound = project.createItem(nullptr, QStringLiteral("ScaleNode"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(sound, nullptr);
-    VNX::BlueprintCanvasWidget canvas;
+    harken::studio::BlueprintCanvasWidget canvas;
     canvas.resize(1000, 700);
     canvas.setSoundsFiltered(false);
     canvas.rebuildFromProject();
     canvas.show();
     canvas.setZoomFactor(0.75);
     drainEvents();
-    VNX::NodeItem* node = nullptr;
+    harken::studio::NodeItem* node = nullptr;
     for (auto* item : canvas.scene()->items()) {
-        auto* candidate = dynamic_cast<VNX::NodeItem*>(item);
+        auto* candidate = dynamic_cast<harken::studio::NodeItem*>(item);
         if (candidate && candidate->objectID() == sound->objectID) node = candidate;
     }
     ASSERT_NE(node, nullptr);
-    auto* editor = qobject_cast<VNX::NodeContentEditor*>(node->ensureContentWidget());
+    auto* editor = qobject_cast<harken::studio::NodeContentEditor*>(node->ensureContentWidget());
     ASSERT_NE(editor, nullptr);
-    auto* binding = editor->binding(VNX::NodeContentField::Volume);
+    auto* binding = editor->binding(harken::studio::NodeContentField::Volume);
     ASSERT_NE(binding, nullptr);
     node->setSelected(true);
     const auto position = node->pos();
@@ -653,7 +653,7 @@ TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndAct
     auto* pin = node->outputPin();
     ASSERT_NE(pin, nullptr);
     const auto pinSize = pin->mapRectToScene(pin->boundingRect()).size();
-    auto* host = editor->findChild<VNX::ParameterControlHost*>(QStringLiteral("nodeSlider_volume"));
+    auto* host = editor->findChild<harken::studio::ParameterControlHost*>(QStringLiteral("nodeSlider_volume"));
     ASSERT_NE(host, nullptr);
     const auto presenter = host->presenter();
     QPointer<QSlider> slider = host->findChild<QSlider*>();
@@ -669,7 +669,7 @@ TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndAct
     const qreal displayedWidth = canvas.viewportTransform().mapRect(body).width();
     for (int level : {1, 3, -1, 0}) {
         SCOPED_TRACE(level);
-        const auto factor = VNX::AppSettings::uiScaleForZoomLevel(level) / 100.0;
+        const auto factor = harken::studio::AppSettings::uiScaleForZoomLevel(level) / 100.0;
         settings.setGlobalUIZoomLevel(level);
         drainEvents();
         drainEvents();
@@ -690,12 +690,12 @@ TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndAct
         EXPECT_NEAR(pin->mapRectToScene(pin->boundingRect()).width(), pinSize.width(), 0.01);
         EXPECT_TRUE(canvas.scene()->items(pin->scenePos()).contains(pin));
         for (auto* item : canvas.scene()->items()) {
-            auto* connection = dynamic_cast<VNX::ConnectionPath*>(item);
+            auto* connection = dynamic_cast<harken::studio::ConnectionPath*>(item);
             if (!connection || !connection->startPin() || !connection->endPin()) continue;
             EXPECT_EQ(connection->path().pointAtPercent(0), connection->startPin()->scenePos());
             EXPECT_EQ(connection->path().pointAtPercent(1), connection->endPin()->scenePos());
         }
-        VNX::BlueprintCanvasView fresh;
+        harken::studio::BlueprintCanvasView fresh;
         EXPECT_DOUBLE_EQ(fresh.zoomFactor(), 1.0);
         EXPECT_DOUBLE_EQ(fresh.transform().m11(), factor);
     }
@@ -722,14 +722,14 @@ TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndAct
     ASSERT_NE(title, nullptr);
     title->setText(QStringLiteral("unfinished title"));
     title->setSelection(2, 5);
-    auto& shortcuts = VNX::ShortcutManager::instance();
-    const auto previousShortcut = shortcuts.info(VNX::Shortcuts::ZoomIn);
+    auto& shortcuts = harken::studio::ShortcutManager::instance();
+    const auto previousShortcut = shortcuts.info(harken::studio::Shortcuts::ZoomIn);
     const auto restoreShortcut = qScopeGuard([&] {
         if (previousShortcut.isCustom)
             shortcuts.setShortcut(previousShortcut.id, previousShortcut.currentShortcut);
         else shortcuts.resetToDefault(previousShortcut.id);
     });
-    shortcuts.resetToDefault(VNX::Shortcuts::ZoomIn);
+    shortcuts.resetToDefault(harken::studio::Shortcuts::ZoomIn);
     sendShortcut(title, Qt::Key_Equal);
     drainEvents();
     EXPECT_EQ(settings.globalUIZoomLevel(), 1);
@@ -740,9 +740,9 @@ TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndAct
     EXPECT_EQ(title->selectedText(), QStringLiteral("finis"));
     node->finishTitleEditing(false);
     drainEvents();
-    QMap<VNX::NodeItem*, QPointF> positions;
+    QMap<harken::studio::NodeItem*, QPointF> positions;
     for (auto* item : canvas.scene()->items())
-        if (auto* candidate = dynamic_cast<VNX::NodeItem*>(item)) positions.insert(candidate, candidate->pos());
+        if (auto* candidate = dynamic_cast<harken::studio::NodeItem*>(item)) positions.insert(candidate, candidate->pos());
     emit project.itemPropertyChanged(sound, QStringLiteral("volume"));
     drainEvents();
     for (auto it = positions.cbegin(); it != positions.cend(); ++it)
@@ -772,9 +772,9 @@ TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndAct
 
 TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcrossUndoAndReopen)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto& undo = VNX::UndoRedoManager::instance();
-    auto* sound = manager.createItem(nullptr, QStringLiteral("LayoutNode"), VNX::ProjectItem::Type::Sound);
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    auto* sound = manager.createItem(nullptr, QStringLiteral("LayoutNode"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(sound, nullptr);
     const auto guid = sound->guid;
     const auto id = sound->objectID;
@@ -802,12 +802,12 @@ TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcros
         return result;
     };
     const auto saved = documents();
-    auto canvas = std::make_unique<VNX::BlueprintCanvasWidget>();
+    auto canvas = std::make_unique<harken::studio::BlueprintCanvasWidget>();
     canvas->setGridSnapEnabled(false);
     canvas->useSignalChain(sound);
-    VNX::NodeItem* node = nullptr;
+    harken::studio::NodeItem* node = nullptr;
     for (auto* item : canvas->scene()->items()) {
-        auto* candidate = dynamic_cast<VNX::NodeItem*>(item);
+        auto* candidate = dynamic_cast<harken::studio::NodeItem*>(item);
         if (candidate && candidate->objectID() == id) node = candidate;
     }
     ASSERT_NE(node, nullptr);
@@ -861,12 +861,12 @@ TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcros
     EXPECT_EQ(documents(), saved);
 
     undo.clearHistory();
-    canvas = std::make_unique<VNX::BlueprintCanvasWidget>();
+    canvas = std::make_unique<harken::studio::BlueprintCanvasWidget>();
     canvas->useSignalChain(sound);
     EXPECT_EQ(canvas->nodePosition(id), moved);
     ASSERT_TRUE(manager.closeProject());
     ASSERT_TRUE(manager.loadProject(projectPath));
-    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] { return manager.findItemByGuid(guid) != nullptr; }));
+    ASSERT_TRUE(harken::studio::TestSupport::spinUntil([&] { return manager.findItemByGuid(guid) != nullptr; }));
     sound = manager.findItemByGuid(guid);
     ASSERT_NE(sound, nullptr);
     canvas->useSignalChain(sound);
@@ -878,18 +878,18 @@ TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcros
 
 TEST_F(EditorDockLayoutTest, AuditionTargetInvalidatesWithDeletedSubtreesAndProjectClosure)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* parent = manager.createItem(nullptr, QStringLiteral("AuditionRoot"), VNX::ProjectItem::Type::Container);
-    auto* nested = manager.createItem(parent, QStringLiteral("NestedAudition"), VNX::ProjectItem::Type::Container);
-    auto* child = manager.createItem(nested, QStringLiteral("NestedChild"), VNX::ProjectItem::Type::Sound);
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* parent = manager.createItem(nullptr, QStringLiteral("AuditionRoot"), harken::studio::ProjectItem::Type::Container);
+    auto* nested = manager.createItem(parent, QStringLiteral("NestedAudition"), harken::studio::ProjectItem::Type::Container);
+    auto* child = manager.createItem(nested, QStringLiteral("NestedChild"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(parent, nullptr);
     ASSERT_NE(nested, nullptr);
     ASSERT_NE(child, nullptr);
-    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    auto* router = window_->findChild<harken::studio::SelectionRouter*>();
     ASSERT_NE(router, nullptr);
     router->onProjectItemDoubleClicked(parent);
     drainEvents();
-    auto* panel = qobject_cast<VNX::GridEditorPanel*>(
+    auto* panel = qobject_cast<harken::studio::GridEditorPanel*>(
         window_->activeStandaloneEditorPanel(QStringLiteral("GridEditor")));
     ASSERT_NE(panel, nullptr);
     panel->drillInto(nested->guid);
@@ -910,12 +910,12 @@ TEST_F(EditorDockLayoutTest, AuditionTargetInvalidatesWithDeletedSubtreesAndProj
 
 TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjectChanges)
 {
-    auto& manager = VNX::ProjectManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
     auto* first = window_->createHierarchyPanel();
     auto* second = window_->createHierarchyPanel();
-    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* explorer = window_->findChild<harken::studio::ProjectExplorer*>();
     auto* inspector = window_->createInspectorPanel();
-    auto* blueprint = window_->findChild<VNX::BlueprintCanvasWidget*>();
+    auto* blueprint = window_->findChild<harken::studio::BlueprintCanvasWidget*>();
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     ASSERT_NE(explorer, nullptr);
@@ -923,10 +923,10 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
     ASSERT_NE(blueprint, nullptr);
     blueprint->setFixedSize(640, 480);
     window_->setLastFocusedInspectorPanelId(inspector->panelId());
-    auto* firstItem = manager.createItem(nullptr, QStringLiteral("FirstSelection"), VNX::ProjectItem::Type::Sound);
-    auto* secondItem = manager.createItem(nullptr, QStringLiteral("SecondSelection"), VNX::ProjectItem::Type::Sound);
-    auto* explorerItem = manager.createItem(nullptr, QStringLiteral("ExplorerSelection"), VNX::ProjectItem::Type::Sound);
-    auto* bus = manager.createItem(manager.getMasterBusItem(), QStringLiteral("NavigationBus"), VNX::ProjectItem::Type::Bus);
+    auto* firstItem = manager.createItem(nullptr, QStringLiteral("FirstSelection"), harken::studio::ProjectItem::Type::Sound);
+    auto* secondItem = manager.createItem(nullptr, QStringLiteral("SecondSelection"), harken::studio::ProjectItem::Type::Sound);
+    auto* explorerItem = manager.createItem(nullptr, QStringLiteral("ExplorerSelection"), harken::studio::ProjectItem::Type::Sound);
+    auto* bus = manager.createItem(manager.getMasterBusItem(), QStringLiteral("NavigationBus"), harken::studio::ProjectItem::Type::Bus);
     ASSERT_NE(firstItem, nullptr);
     ASSERT_NE(secondItem, nullptr);
     ASSERT_NE(explorerItem, nullptr);
@@ -944,20 +944,20 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
     const QTransform initialViewport = blueprint->viewportTransform();
     ASSERT_TRUE(first->selectProjectItem(firstItem));
     drainEvents();
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{explorerItem});
     EXPECT_EQ(blueprint->viewportTransform(), initialViewport);
     EXPECT_EQ(inspector->currentContextItem(), firstItem);
     EXPECT_EQ(window_->auditionTarget(), firstItem);
 
     ASSERT_TRUE(first->selectProjectItem(bus));
     drainEvents();
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{bus});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{bus});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{explorerItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{explorerItem});
     EXPECT_EQ(blueprint->viewportTransform(), initialViewport);
     EXPECT_EQ(inspector->currentContextItem(), bus);
     EXPECT_EQ(window_->auditionTarget(), bus);
@@ -965,9 +965,9 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
 
     ASSERT_TRUE(explorer->selectProjectItem(secondItem));
     drainEvents();
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{secondItem});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{secondItem});
     EXPECT_EQ(blueprint->viewportTransform(), initialViewport);
     EXPECT_EQ(inspector->currentContextItem(), secondItem);
     EXPECT_EQ(window_->auditionTarget(), secondItem);
@@ -979,9 +979,9 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
     blueprint->scene()->clearSelection();
     selectedNode->setSelected(true);
     drainEvents();
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{explorerItem});
     EXPECT_EQ(blueprint->scene()->selectedItems(), QList<QGraphicsItem*>{selectedNode});
     EXPECT_EQ(blueprint->viewportTransform(), selectedViewport);
     EXPECT_EQ(inspector->currentContextItem(), explorerItem);
@@ -1012,9 +1012,9 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
     QApplication::sendEvent(tree->viewport(), &release);
     drainEvents();
     ASSERT_NE(window_->inspectorShowingItem(firstItem), nullptr);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{explorerItem});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{explorerItem});
     EXPECT_EQ(blueprint->viewportTransform(), hierarchyViewport);
     EXPECT_EQ(window_->auditionTarget(), firstItem);
 
@@ -1024,10 +1024,10 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
     EXPECT_GT(window_->allInspectorPanels().size(), inspectorsBefore.size());
     ASSERT_NE(window_->activeInspectorPanel(), nullptr);
     EXPECT_EQ(window_->activeInspectorPanel()->currentContextItem(), firstItem);
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{explorerItem});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{firstItem});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{explorerItem});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{explorerItem});
     EXPECT_EQ(blueprint->viewportTransform(), hierarchyViewport);
     EXPECT_EQ(window_->auditionTarget(), firstItem);
 
@@ -1047,18 +1047,18 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
                                 Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(explorerTree->viewport(), &explorerRelease);
     drainEvents();
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{explorerItem});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{firstItem});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{explorerItem});
     EXPECT_DOUBLE_EQ(blueprint->transform().m11(), 1.0);
     EXPECT_NE(blueprint->viewportTransform(), hierarchyViewport);
 
-    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    auto* router = window_->findChild<harken::studio::SelectionRouter*>();
     ASSERT_NE(router, nullptr);
     QObject activationObserver;
     int activationCount = 0;
-    QObject::connect(router, &VNX::SelectionRouter::selectionChanged, &activationObserver,
-                     [&](VNX::ProjectItem*) { ++activationCount; });
+    QObject::connect(router, &harken::studio::SelectionRouter::selectionChanged, &activationObserver,
+                     [&](harken::studio::ProjectItem*) { ++activationCount; });
     for (auto* target : {explorerItem, bus}) {
         ASSERT_TRUE(explorer->selectProjectItem(target));
         window_->dockOfPanel(blueprint)->setAsCurrentTab();
@@ -1070,7 +1070,7 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
         ASSERT_NE(currentInspector, nullptr);
         ASSERT_EQ(currentInspector->currentContextItem(), firstItem);
         ASSERT_EQ(blueprint->scene()->selectedItems().size(), 1);
-        auto* node = dynamic_cast<VNX::NodeItem*>(blueprint->scene()->selectedItems().front());
+        auto* node = dynamic_cast<harken::studio::NodeItem*>(blueprint->scene()->selectedItems().front());
         ASSERT_NE(node, nullptr);
         ASSERT_EQ(node->objectID(), target->objectID);
         const QPoint nodePosition = blueprint->mapFromScene(node->mapToScene(node->titleRect().center()));
@@ -1084,30 +1084,30 @@ TEST_F(EditorDockLayoutTest, NavigationViewsKeepLocalSelectionsAcrossActiveObjec
         EXPECT_EQ(router->activeItem(), target);
         EXPECT_EQ(currentInspector->currentContextItem(), target);
         EXPECT_EQ(window_->auditionTarget(), target);
-        EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{firstItem});
-        EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{secondItem});
-        EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{target});
-        EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{target});
+        EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{firstItem});
+        EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{secondItem});
+        EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{target});
+        EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{target});
     }
 }
 
 TEST_F(EditorDockLayoutTest, BackgroundProjectChangesPreserveActiveContextUntilItsObjectIsDeleted)
 {
-    auto& manager = VNX::ProjectManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
     auto* first = window_->createHierarchyPanel();
     auto* second = window_->createHierarchyPanel();
-    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* explorer = window_->findChild<harken::studio::ProjectExplorer*>();
     auto* inspector = window_->createInspectorPanel();
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     ASSERT_NE(explorer, nullptr);
     ASSERT_NE(inspector, nullptr);
     window_->setLastFocusedInspectorPanelId(inspector->panelId());
-    auto* parent = manager.createItem(nullptr, QStringLiteral("InactiveBranch"), VNX::ProjectItem::Type::Container);
+    auto* parent = manager.createItem(nullptr, QStringLiteral("InactiveBranch"), harken::studio::ProjectItem::Type::Container);
     ASSERT_NE(parent, nullptr);
-    auto* inactive = manager.createItem(parent, QStringLiteral("InactiveSelection"), VNX::ProjectItem::Type::Sound);
-    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveSelection"), VNX::ProjectItem::Type::Sound);
-    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedExplorerSelection"), VNX::ProjectItem::Type::Sound);
+    auto* inactive = manager.createItem(parent, QStringLiteral("InactiveSelection"), harken::studio::ProjectItem::Type::Sound);
+    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveSelection"), harken::studio::ProjectItem::Type::Sound);
+    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedExplorerSelection"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(inactive, nullptr);
     ASSERT_NE(active, nullptr);
     ASSERT_NE(parked, nullptr);
@@ -1115,26 +1115,26 @@ TEST_F(EditorDockLayoutTest, BackgroundProjectChangesPreserveActiveContextUntilI
     ASSERT_TRUE(first->selectProjectItem(inactive));
     ASSERT_TRUE(second->selectProjectItem(active));
 
-    ASSERT_NE(manager.createItem(nullptr, QStringLiteral("BackgroundCreation"), VNX::ProjectItem::Type::Sound), nullptr);
+    ASSERT_NE(manager.createItem(nullptr, QStringLiteral("BackgroundCreation"), harken::studio::ProjectItem::Type::Sound), nullptr);
     drainEvents();
-    EXPECT_EQ(first->selectedItems(), QList<VNX::ProjectItem*>{inactive});
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{active});
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(first->selectedItems(), QList<harken::studio::ProjectItem*>{inactive});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(inspector->currentContextItem(), active);
     EXPECT_EQ(window_->auditionTarget(), active);
 
     ASSERT_TRUE(manager.deleteItem(parent));
     drainEvents();
     EXPECT_TRUE(first->selectedItems().isEmpty());
-    EXPECT_EQ(second->selectedItems(), QList<VNX::ProjectItem*>{active});
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(second->selectedItems(), QList<harken::studio::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(inspector->currentContextItem(), active);
     EXPECT_EQ(window_->auditionTarget(), active);
 
     ASSERT_TRUE(manager.deleteItem(active));
     drainEvents();
     EXPECT_TRUE(second->selectedItems().isEmpty());
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(inspector->currentContextItem(), nullptr);
     EXPECT_EQ(window_->auditionTarget(), nullptr);
     EXPECT_EQ(window_->findChild<ControlPanel*>()->boundItem(), nullptr);
@@ -1142,11 +1142,11 @@ TEST_F(EditorDockLayoutTest, BackgroundProjectChangesPreserveActiveContextUntilI
 
 TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
 {
-    auto& manager = VNX::ProjectManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
     auto* hierarchy = window_->createHierarchyPanel();
     auto* otherHierarchy = window_->createHierarchyPanel();
-    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
-    auto* blueprint = window_->findChild<VNX::BlueprintCanvasWidget*>();
+    auto* explorer = window_->findChild<harken::studio::ProjectExplorer*>();
+    auto* blueprint = window_->findChild<harken::studio::BlueprintCanvasWidget*>();
     auto* inspector = window_->createInspectorPanel();
     ASSERT_NE(hierarchy, nullptr);
     ASSERT_NE(otherHierarchy, nullptr);
@@ -1155,11 +1155,11 @@ TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
     ASSERT_NE(inspector, nullptr);
     blueprint->setFixedSize(640, 480);
     window_->setLastFocusedInspectorPanelId(inspector->panelId());
-    auto* parent = manager.createItem(nullptr, QStringLiteral("InputBranch"), VNX::ProjectItem::Type::Container);
+    auto* parent = manager.createItem(nullptr, QStringLiteral("InputBranch"), harken::studio::ProjectItem::Type::Container);
     ASSERT_NE(parent, nullptr);
-    auto* first = manager.createItem(parent, QStringLiteral("FirstInput"), VNX::ProjectItem::Type::Sound);
-    auto* second = manager.createItem(parent, QStringLiteral("SecondInput"), VNX::ProjectItem::Type::Sound);
-    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedInput"), VNX::ProjectItem::Type::Sound);
+    auto* first = manager.createItem(parent, QStringLiteral("FirstInput"), harken::studio::ProjectItem::Type::Sound);
+    auto* second = manager.createItem(parent, QStringLiteral("SecondInput"), harken::studio::ProjectItem::Type::Sound);
+    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedInput"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     ASSERT_NE(parked, nullptr);
@@ -1185,8 +1185,8 @@ TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
     clickWidget(tree->viewport(), firstPosition);
     EXPECT_EQ(inspector->currentContextItem(), first);
     EXPECT_EQ(window_->auditionTarget(), first);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
 
     QKeyEvent downPress(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
@@ -1197,8 +1197,8 @@ TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
     ASSERT_EQ(hierarchy->selectedItem(), second);
     EXPECT_EQ(inspector->currentContextItem(), second);
     EXPECT_EQ(window_->auditionTarget(), second);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
 
     const QPoint rightPosition = tree->visualItemRect(firstRow).center();
@@ -1214,15 +1214,15 @@ TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
     ASSERT_EQ(hierarchy->selectedItem(), first);
     EXPECT_EQ(inspector->currentContextItem(), second);
     EXPECT_EQ(window_->auditionTarget(), second);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
 
     clickWidget(tree->viewport(), tree->visualItemRect(firstRow).center());
     EXPECT_EQ(inspector->currentContextItem(), first);
     EXPECT_EQ(window_->auditionTarget(), first);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
 
     ASSERT_TRUE(otherHierarchy->selectProjectItem(second));
@@ -1230,17 +1230,17 @@ TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
     clickWidget(tree->viewport(), tree->visualItemRect(firstRow).center());
     EXPECT_EQ(inspector->currentContextItem(), first);
     EXPECT_EQ(window_->auditionTarget(), first);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
 
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(tree, &escape);
     drainEvents();
     EXPECT_TRUE(hierarchy->selectedItems().isEmpty());
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(otherHierarchy->selectedItems(), QList<VNX::ProjectItem*>{second});
-    EXPECT_EQ(blueprint->selectedProjectItems(), QList<VNX::ProjectItem*>{parked});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(otherHierarchy->selectedItems(), QList<harken::studio::ProjectItem*>{second});
+    EXPECT_EQ(blueprint->selectedProjectItems(), QList<harken::studio::ProjectItem*>{parked});
     EXPECT_EQ(blueprint->viewportTransform(), blueprintViewport);
     EXPECT_EQ(inspector->currentContextItem(), nullptr);
     EXPECT_EQ(window_->auditionTarget(), nullptr);
@@ -1248,22 +1248,22 @@ TEST_F(EditorDockLayoutTest, ActiveObjectChangesFollowExplicitNavigationInput)
 
 TEST_F(EditorDockLayoutTest, DeletedActiveObjectDoesNotClearIndependentEditorAndAuditionContexts)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveObject"), VNX::ProjectItem::Type::Sound);
-    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), VNX::ProjectItem::Type::Sound);
-    auto* container = manager.createItem(nullptr, QStringLiteral("IndependentAudition"), VNX::ProjectItem::Type::Container);
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveObject"), harken::studio::ProjectItem::Type::Sound);
+    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), harken::studio::ProjectItem::Type::Sound);
+    auto* container = manager.createItem(nullptr, QStringLiteral("IndependentAudition"), harken::studio::ProjectItem::Type::Container);
     ASSERT_NE(active, nullptr);
     ASSERT_NE(inspected, nullptr);
     ASSERT_NE(container, nullptr);
-    auto* auditioned = manager.createItem(container, QStringLiteral("AuditionChild"), VNX::ProjectItem::Type::Sound);
+    auto* auditioned = manager.createItem(container, QStringLiteral("AuditionChild"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(auditioned, nullptr);
-    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    auto* router = window_->findChild<harken::studio::SelectionRouter*>();
     ASSERT_NE(router, nullptr);
     router->selectItem(active, false);
-    window_->openItemInNewInspector(inspected, VNX::MainWindow::PreferredOpenArea::CentralTab, false);
+    window_->openItemInNewInspector(inspected, harken::studio::MainWindow::PreferredOpenArea::CentralTab, false);
     auto* inspector = window_->inspectorShowingItem(inspected);
     ASSERT_NE(inspector, nullptr);
-    auto* editor = qobject_cast<VNX::GridEditorPanel*>(
+    auto* editor = qobject_cast<harken::studio::GridEditorPanel*>(
         window_->openStandaloneEditor(QStringLiteral("GridEditor"), container));
     ASSERT_NE(editor, nullptr);
     drainEvents();
@@ -1283,18 +1283,18 @@ TEST_F(EditorDockLayoutTest, DeletedActiveObjectDoesNotClearIndependentEditorAnd
 
 TEST_F(EditorDockLayoutTest, UndoRedoRestoresObjectsWithoutRestoringActiveContexts)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), VNX::ProjectItem::Type::Sound);
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* inspected = manager.createItem(nullptr, QStringLiteral("IndependentInspector"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(inspected, nullptr);
-    window_->openItemInNewInspector(inspected, VNX::MainWindow::PreferredOpenArea::CentralTab, false);
+    window_->openItemInNewInspector(inspected, harken::studio::MainWindow::PreferredOpenArea::CentralTab, false);
     auto* inspector = window_->inspectorShowingItem(inspected);
     ASSERT_NE(inspector, nullptr);
     inspector->setPinned(true);
-    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    auto* router = window_->findChild<harken::studio::SelectionRouter*>();
     ASSERT_NE(router, nullptr);
-    auto& undo = VNX::UndoRedoManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
     undo.clear();
-    const auto created = VNX::ActionManager::instance().execute(
+    const auto created = harken::studio::ActionManager::instance().execute(
         QStringLiteral("create_attenuation"),
         QJsonObject{{QStringLiteral("name"), QStringLiteral("ActiveAttenuation")}});
     ASSERT_TRUE(created.success) << created.errorMessage.toStdString();
@@ -1333,28 +1333,28 @@ TEST_F(EditorDockLayoutTest, UndoRedoRestoresObjectsWithoutRestoringActiveContex
 
 TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExplicitInspection)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* segment = manager.createItem(nullptr, QStringLiteral("ClipSegment"), VNX::ProjectItem::Type::Segment);
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* segment = manager.createItem(nullptr, QStringLiteral("ClipSegment"), harken::studio::ProjectItem::Type::Segment);
     ASSERT_NE(segment, nullptr);
-    auto* track = manager.createItem(segment, QStringLiteral("ClipTrack"), VNX::ProjectItem::Type::Track);
+    auto* track = manager.createItem(segment, QStringLiteral("ClipTrack"), harken::studio::ProjectItem::Type::Track);
     ASSERT_NE(track, nullptr);
-    auto* sound = manager.createItem(track, QStringLiteral("ClipTarget"), VNX::ProjectItem::Type::Sound);
-    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveOutsideTimeline"), VNX::ProjectItem::Type::Sound);
-    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedOutsideTimeline"), VNX::ProjectItem::Type::Sound);
+    auto* sound = manager.createItem(track, QStringLiteral("ClipTarget"), harken::studio::ProjectItem::Type::Sound);
+    auto* active = manager.createItem(nullptr, QStringLiteral("ActiveOutsideTimeline"), harken::studio::ProjectItem::Type::Sound);
+    auto* parked = manager.createItem(nullptr, QStringLiteral("ParkedOutsideTimeline"), harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(sound, nullptr);
     ASSERT_NE(active, nullptr);
     ASSERT_NE(parked, nullptr);
-    track->comp<VNX::VTrack>()->clips = {};
+    track->comp<harken::studio::VTrack>()->clips = {};
     auto* hierarchy = window_->createHierarchyPanel();
-    auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
+    auto* explorer = window_->findChild<harken::studio::ProjectExplorer*>();
     auto* inspector = window_->createInspectorPanel();
-    auto* router = window_->findChild<VNX::SelectionRouter*>();
+    auto* router = window_->findChild<harken::studio::SelectionRouter*>();
     ASSERT_NE(hierarchy, nullptr);
     ASSERT_NE(explorer, nullptr);
     ASSERT_NE(inspector, nullptr);
     ASSERT_NE(router, nullptr);
     window_->setLastFocusedInspectorPanelId(inspector->panelId());
-    auto* timeline = qobject_cast<VNX::TimelineEditorPanel*>(
+    auto* timeline = qobject_cast<harken::studio::TimelineEditorPanel*>(
         window_->openStandaloneEditor(QStringLiteral("TimelineEditor"), track));
     ASSERT_NE(timeline, nullptr);
     ASSERT_TRUE(timeline->placeItem(sound, 0, 0, true));
@@ -1367,7 +1367,7 @@ TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExpli
     ASSERT_TRUE(hierarchy->selectProjectItem(active));
     window_->dockOfPanel(timeline)->setAsCurrentTab();
     drainEvents();
-    auto* canvas = timeline->findChild<VNX::TimelineCanvas*>(QStringLiteral("timelineLaneViewport"));
+    auto* canvas = timeline->findChild<harken::studio::TimelineCanvas*>(QStringLiteral("timelineLaneViewport"));
     ASSERT_NE(canvas, nullptr);
     canvas->repaint();
     ASSERT_EQ(canvas->lastRenderData().clipItems.size(), 1);
@@ -1381,16 +1381,16 @@ TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExpli
     EXPECT_EQ(router->activeItem(), active);
     EXPECT_EQ(inspector->currentContextItem(), active);
     EXPECT_EQ(window_->auditionTarget(), active);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{parked});
-    EXPECT_EQ(hierarchy->selectedItems(), QList<VNX::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{parked});
+    EXPECT_EQ(hierarchy->selectedItems(), QList<harken::studio::ProjectItem*>{active});
 
     ASSERT_TRUE(timeline->inspectClip(0, clip));
     drainEvents();
     EXPECT_EQ(router->activeItem(), sound);
     EXPECT_EQ(inspector->currentContextItem(), sound);
     EXPECT_EQ(window_->auditionTarget(), sound);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{sound});
-    EXPECT_EQ(hierarchy->selectedItems(), QList<VNX::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{sound});
+    EXPECT_EQ(hierarchy->selectedItems(), QList<harken::studio::ProjectItem*>{active});
     ASSERT_NE(inspector->placementContext(), nullptr);
     ASSERT_FALSE(inspector->placementContext()->empty());
     EXPECT_EQ(inspector->placementContext()->occurrences().front().clipGuid, clip);
@@ -1404,8 +1404,8 @@ TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExpli
     EXPECT_EQ(router->activeItem(), sound);
     EXPECT_EQ(inspector->currentContextItem(), sound);
     EXPECT_EQ(window_->auditionTarget(), sound);
-    EXPECT_EQ(explorer->selectedItems(), QList<VNX::ProjectItem*>{sound});
-    EXPECT_EQ(hierarchy->selectedItems(), QList<VNX::ProjectItem*>{active});
+    EXPECT_EQ(explorer->selectedItems(), QList<harken::studio::ProjectItem*>{sound});
+    EXPECT_EQ(hierarchy->selectedItems(), QList<harken::studio::ProjectItem*>{active});
     ASSERT_NE(inspector->placementContext(), nullptr);
     ASSERT_FALSE(inspector->placementContext()->empty());
     EXPECT_EQ(inspector->placementContext()->occurrences().front().clipGuid, clip);
@@ -1413,10 +1413,10 @@ TEST_F(EditorDockLayoutTest, LocalTimelineSelectionPreservesNavigationUntilExpli
 
 TEST_F(EditorDockLayoutTest, EventIdentityIndexSurvivesObjectEdits)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* variable = manager.createItem(nullptr, QStringLiteral("Intensity"), VNX::ProjectItem::Type::Variable);
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* variable = manager.createItem(nullptr, QStringLiteral("Intensity"), harken::studio::ProjectItem::Type::Variable);
     ASSERT_NE(variable, nullptr);
-    VNX::Monitor::CapturedEvent event;
+    harken::studio::Monitor::CapturedEvent event;
     event.header.stableId = variable->runtimeId();
     event.objectGuid = variable->guid;
     event.projectGuid = QUuid(manager.currentProject()->projectId);
@@ -1443,22 +1443,22 @@ TEST(StandaloneEditorIpcEventTest,
      AuditionSeekRequestIdentitySurvivesIpc)
 {
     ensureApp();
-    auto& projects = VNX::ProjectManager::instance();
+    auto& projects = harken::studio::ProjectManager::instance();
     if (projects.isProjectOpen())
         projects.closeProject();
-    VNX::ActionManager::instance().clearAllForTesting();
+    harken::studio::ActionManager::instance().clearAllForTesting();
 
     QTcpSocket socket;
-    auto window = std::make_unique<VNX::MainWindow>();
+    auto window = std::make_unique<harken::studio::MainWindow>();
     const auto cleanup = qScopeGuard([&]() {
         socket.abort();
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
         if (projects.isProjectOpen())
             projects.closeProject();
-        QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window.get(), nullptr);
+        QObject::disconnect(&harken::studio::UndoRedoManager::instance(), nullptr, window.get(), nullptr);
         window.reset();
-        VNX::ActionManager::instance().setTransactionCallbacks({});
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::ActionManager::instance().setTransactionCallbacks({});
+        harken::studio::ActionManager::instance().clearAllForTesting();
         QApplication::processEvents();
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     });
@@ -1471,7 +1471,7 @@ TEST(StandaloneEditorIpcEventTest,
 
     socket.connectToHost(QHostAddress::LocalHost,
                          static_cast<quint16>(server->port()));
-    ASSERT_TRUE(VNX::TestSupport::spinUntil([&]() {
+    ASSERT_TRUE(harken::studio::TestSupport::spinUntil([&]() {
         return socket.state() == QAbstractSocket::ConnectedState
             && server->clientCount() == 1;
     }));
@@ -1480,8 +1480,8 @@ TEST(StandaloneEditorIpcEventTest,
     ASSERT_NE(audition, nullptr);
     for (const quint64 requestId : {9007199254740993ULL, 9007199254740995ULL}) {
         audition->auditionSeekFinished(
-            42, requestId, HarkenEditor::Bridge::kEngineOk, true);
-        ASSERT_TRUE(VNX::TestSupport::spinUntil(
+            42, requestId, harken::studio::bridge::kEngineOk, true);
+        ASSERT_TRUE(harken::studio::TestSupport::spinUntil(
             [&]() { return socket.canReadLine(); }));
 
         QJsonParseError error;

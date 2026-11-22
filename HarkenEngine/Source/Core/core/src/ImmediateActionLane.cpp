@@ -1707,7 +1707,7 @@ bool ImmediateActionLane::DeclareAcceptedPrivateVariableControlEntry(
         firstOwnedGroup += prior.ownedGroupCount;
     }
     if (scope.groupCount > originalDemand.groups - firstOwnedGroup) return false;
-    const auto owns = [&](const Plan03GroupSliceIdentity& identity) noexcept {
+    const auto owns = [&](const ScheduleGroupSliceIdentity& identity) noexcept {
         std::uint32_t matches = 0;
         for (std::uint32_t index = 0; index < scope.groupCount; ++index)
             matches += scope.groups[index].schedule.identity == identity;
@@ -1724,7 +1724,7 @@ bool ImmediateActionLane::DeclareAcceptedPrivateVariableControlEntry(
             captured.selectedFutureDomain != group.scope.selectedFutureDomain ||
             group.scope.cohortRoot != root || group.scope.provisionalAnchorFrame != scope.provisionalFrame ||
             !group.original->MatchesOriginalScope(root, scope.provisionalFrame, group.scope.input, arms) ||
-            !pool.PrivatePlan03GroupBindable(group.schedule.identity) ||
+            !pool.PrivateScheduleGroupBindable(group.schedule.identity) ||
             !ResolveLaneDue(group.schedule, scope.provisionalFrame, &due) ||
             due != captured.input.executeFrame || !owns(group.schedule.identity)) return false;
         std::uint32_t declaredMatches = 0;
@@ -2200,11 +2200,11 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
     };
     for (std::uint32_t i = 0; i < liveCount; ++i) {
         const auto identity = groups[i].identity;
-        Plan03PageGroupView view{};
+        SchedulePageGroupView view{};
         if (!identity.Exact() || groups[i].dueQuantum == UINT64_MAX ||
-            !pool.ResolvePlan03GroupSliceProducer(identity, &view) ||
+            !pool.ResolveScheduleGroupSliceProducer(identity, &view) ||
             (queue != nullptr ? !queue->Owns(view) : view.frontier == nullptr) ||
-            !pool.AcquirePlan03GroupReader(identity, &groupPins[count])) {
+            !pool.AcquireScheduleGroupReader(identity, &groupPins[count])) {
             rollback();
             return false;
         }
@@ -2264,8 +2264,8 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
     std::uint32_t memberCount = 0;
     for (std::uint32_t groupIndex = 0; groupIndex < count; ++groupIndex) {
         groups[groupIndex].futureDependent = false;
-        Plan03PageGroupView view{};
-        if (!pool.ResolvePlan03GroupSliceProducer(groups[groupIndex].identity,
+        SchedulePageGroupView view{};
+        if (!pool.ResolveScheduleGroupSliceProducer(groups[groupIndex].identity,
                 &view) || (queue != nullptr ? !queue->Owns(view) : view.frontier == nullptr)) {
             rollback();
             return false;
@@ -2585,7 +2585,7 @@ bool ImmediateActionLane::FreezePrivateEntryAdmission(ImmediateLaneHandle handle
             cell.outcome.store(ImmediateLaneEntryOutcome::Dormant, std::memory_order_relaxed);
             return true;
         };
-        const auto owns = [&](const Plan03GroupSliceIdentity& identity) noexcept {
+        const auto owns = [&](const ScheduleGroupSliceIdentity& identity) noexcept {
             if (entry.ownedGroupCount == 0)
                 return std::find(entry.groups.begin(), entry.groups.end(), identity) != entry.groups.end();
             const auto* ownedGroupRowsRead = groupState_.At(offset) + entry.firstOwnedGroup;
@@ -3054,7 +3054,7 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
     ImmediateLanePrivateVariableControlEntryMapping mapping{};
     mapping.firstMember = entry.firstMember;
     mapping.memberCount = entry.memberCount;
-    std::array<Plan03PageGroupView, 3> views{};
+    std::array<SchedulePageGroupView, 3> views{};
     std::array<std::uint32_t, 2> sideBases{};
     std::uint32_t memberBase = 0;
     for (std::uint32_t side = 0; side < views.size(); ++side) {
@@ -3070,7 +3070,7 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
                 !groupRowsRead[index].decision.Valid() || groupRowsRead[index].decision.Owner() != entry.decisions ||
                 groupRowsRead[index].decision.Token().slot != entry.groups[side].decision.slot ||
                 groupRowsRead[index].decision.Token().generation != entry.groups[side].decision.generation ||
-                !entry.pool->ResolvePlan03GroupSliceProducer(entry.groups[side], &views[side]))
+                !entry.pool->ResolveScheduleGroupSliceProducer(entry.groups[side], &views[side]))
                 return false;
             mapping.groups[side] = index;
         }
@@ -3252,7 +3252,7 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
     const auto* groups = GroupBase(handle.slot);
     const auto* events = EventBase(handle.slot);
     const auto* members = MemberBase(handle.slot) + entry.firstMember;
-    const auto owns = [&](const Plan03GroupSliceIdentity& identity) noexcept {
+    const auto owns = [&](const ScheduleGroupSliceIdentity& identity) noexcept {
         std::uint32_t matches = 0;
         for (std::uint32_t index = 0; index < entry.ownedGroupCount; ++index)
             matches += ownedGroupRowsRead[index].privateOwnedIndex < attempt.declaredGroupCount &&
@@ -3274,7 +3274,7 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
                 if (actualIndex != UINT32_MAX) return false;
                 actualIndex = index;
             }
-        Plan03PageGroupView view{};
+        SchedulePageGroupView view{};
         std::uint64_t due = 0;
         if (actualIndex == UINT32_MAX || !ResolveLaneDue(original, attempt.anchorFrame, &due) ||
             groups[actualIndex].laneSlot != handle.slot || groups[actualIndex].laneGeneration != handle.generation ||
@@ -3286,7 +3286,7 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
             groupState_[offset + actualIndex].decision.Owner() != entry.decisions ||
             groupState_[offset + actualIndex].decision.Token().slot != original.identity.decision.slot ||
             groupState_[offset + actualIndex].decision.Token().generation != original.identity.decision.generation ||
-            !entry.pool->ResolvePlan03GroupSliceProducer(original.identity, &view) ||
+            !entry.pool->ResolveScheduleGroupSliceProducer(original.identity, &view) ||
             view.frontier == nullptr || view.lease == nullptr || !view.frontier->Valid()) return false;
         const auto& binding = *view.frontier;
         if (!owns(binding.primary) || !(binding.operation.group == original.identity) ||
@@ -3316,9 +3316,9 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
     for (const auto index : mapping.groups) if (index == UINT32_MAX) return false;
     const auto* activation = entry.decisions->ResolveFrontierActivation(entry.entry.coordinator);
     DecisionCommittedSnapshot committed{};
-    Plan03PageGroupView primary{};
+    SchedulePageGroupView primary{};
     if (activation == nullptr || !entry.decisions->CaptureCommitted(entry.entry.coordinator, &committed) ||
-        !entry.pool->ResolvePlan03GroupSliceProducer(entry.groups[2], &primary) || primary.frontier == nullptr)
+        !entry.pool->ResolveScheduleGroupSliceProducer(entry.groups[2], &primary) || primary.frontier == nullptr)
         return false;
     const auto& descriptor = activation->Descriptor();
     if (!descriptor.Valid() || !(descriptor.entry == entry.entry) || !(descriptor.primary == entry.groups[2]) ||
@@ -3338,9 +3338,9 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
             participant.kind != DecisionParticipantKind::Subdecision) return false;
         std::uint32_t matches = 0;
         for (std::uint32_t group = 0; group < entry.ownedGroupCount; ++group) {
-            Plan03PageGroupView view{};
+            SchedulePageGroupView view{};
             const auto& identity = declaredGroups[ownedGroupRowsRead[group].privateOwnedIndex].identity;
-            if (!entry.pool->ResolvePlan03GroupSliceProducer(identity, &view) || view.frontier == nullptr)
+            if (!entry.pool->ResolveScheduleGroupSliceProducer(identity, &view) || view.frontier == nullptr)
                 return false;
             if (view.frontier->entry == entry.entry && view.frontier->role == FrontierGroupRole::EntryMember &&
                 participant.slot == identity.decision.slot &&
@@ -3357,9 +3357,9 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
         const auto& lane = events[index];
         const auto& event = lane.event;
         if (!owns(event.frontier.group)) continue;
-        Plan03PageGroupView view{};
+        SchedulePageGroupView view{};
         std::uint64_t due = 0;
-        if (!event.frontier.Valid() || !entry.pool->ResolvePlan03GroupSliceProducer(event.frontier.group, &view) ||
+        if (!event.frontier.Valid() || !entry.pool->ResolveScheduleGroupSliceProducer(event.frontier.group, &view) ||
             view.frontier == nullptr || !(event.frontier.entry == view.frontier->entry) ||
             !(event.frontier.owner == view.frontier->operation.owner) || event.frontier.world != request.world ||
             event.frontier.transport != request.transport || !ResolveLaneDue(lane, attempt.anchorFrame, &due) ||
@@ -3421,7 +3421,7 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
     if (mapping.ownedEventCount == 0) return false;
     // Use the same semantic spans as the audio finalizer. Queue fades may be
     // typed Dependent events in an Entry, or a separate later slice operation.
-    const auto entryEvent = [](const ConsumedEvent& event, const Plan03PageGroupView& view) noexcept {
+    const auto entryEvent = [](const ConsumedEvent& event, const SchedulePageGroupView& view) noexcept {
         if (event.frontier.kind == FrontierOperationKind::Entry) return true;
         return event.frontier.kind == FrontierOperationKind::Dependent &&
             view.frontier->role == FrontierGroupRole::EntryMember &&
@@ -3430,8 +3430,8 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
               (view.sourceControlCount == 0u || view.identity.sliceIndex == 0u)));
     };
     for (std::uint32_t group = 0; group < entry.ownedGroupCount; ++group) {
-        Plan03PageGroupView view{};
-        if (!entry.pool->ResolvePlan03GroupSliceProducer(declaredGroups[ownedGroupRowsRead[group].privateOwnedIndex].identity, &view) ||
+        SchedulePageGroupView view{};
+        if (!entry.pool->ResolveScheduleGroupSliceProducer(declaredGroups[ownedGroupRowsRead[group].privateOwnedIndex].identity, &view) ||
             view.frontier == nullptr) return false;
         const bool coordinator = view.frontier->role == FrontierGroupRole::Coordinator;
         if (view.frontier->role == FrontierGroupRole::EntryMember && view.frontier->variableSide.Valid()) {
@@ -3464,8 +3464,8 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
                 actualDecision.participantCount != actualActivation->Descriptor().expectedMemberCount) return false;
             std::uint32_t participantCount = 0;
             for (std::uint32_t member = 0; member < entry.ownedGroupCount; ++member) {
-                Plan03PageGroupView side{};
-                if (!entry.pool->ResolvePlan03GroupSliceProducer(declaredGroups[ownedGroupRowsRead[member].privateOwnedIndex].identity, &side) ||
+                SchedulePageGroupView side{};
+                if (!entry.pool->ResolveScheduleGroupSliceProducer(declaredGroups[ownedGroupRowsRead[member].privateOwnedIndex].identity, &side) ||
                     side.frontier == nullptr) return false;
                 if (side.frontier->role != FrontierGroupRole::EntryMember ||
                     !(side.frontier->entry == view.frontier->entry)) continue;
@@ -3490,8 +3490,8 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
             const auto& lane = events[index];
             const auto& event = lane.event;
             if (!owns(event.frontier.group)) continue;
-            Plan03PageGroupView source{};
-            if (!entry.pool->ResolvePlan03GroupSliceProducer(event.frontier.group, &source) ||
+            SchedulePageGroupView source{};
+            if (!entry.pool->ResolveScheduleGroupSliceProducer(event.frontier.group, &source) ||
                 source.frontier == nullptr) return false;
             const bool initial = entryEvent(event, source);
             const auto operation = initial ? source.frontier->primary : source.identity;
@@ -3526,8 +3526,8 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
             for (std::uint32_t prior = 0; prior < index; ++prior) {
                 const auto& previous = events[prior].event;
                 if (!owns(previous.frontier.group)) continue;
-                Plan03PageGroupView previousSource{};
-                if (!entry.pool->ResolvePlan03GroupSliceProducer(previous.frontier.group, &previousSource) ||
+                SchedulePageGroupView previousSource{};
+                if (!entry.pool->ResolveScheduleGroupSliceProducer(previous.frontier.group, &previousSource) ||
                     previousSource.frontier == nullptr) return false;
                 const bool previousInitial = entryEvent(previous, previousSource);
                 const auto previousOperation = previousInitial ? previousSource.frontier->primary : previousSource.identity;
@@ -3630,7 +3630,7 @@ bool ImmediateActionLane::CapturePrivatePlacedLastQuantum(
 
 bool ImmediateActionLane::CapturePrivatePinGroup(
     ImmediateLaneHandle handle, std::uint32_t index,
-    Plan03GroupSliceIdentity* out) const noexcept {
+    ScheduleGroupSliceIdentity* out) const noexcept {
     const auto* attempt = Resolve(handle);
     if (attempt == nullptr || out == nullptr ||
         index >= attempt->pinGroupManifestCount ||
@@ -3717,10 +3717,10 @@ bool ImmediateActionLane::PrivateInstalledInitialStartsRollbackShape(
         for (std::uint32_t group = 0; group < attempt->groupCount; ++group) {
             const auto& original = groups[group];
             if (!(original.identity == event.frontier.group)) continue;
-            Plan03PageGroupView native{};
+            SchedulePageGroupView native{};
             if (original.laneSlot != handle.slot || original.laneGeneration != handle.generation ||
                 !pool.PrivateImmediateLaneFrontierRollbackReady(original.identity) ||
-                !pool.ResolvePlan03GroupSliceProducer(original.identity, &native) ||
+                !pool.ResolveScheduleGroupSliceProducer(original.identity, &native) ||
                 native.frontier == nullptr || native.lease == nullptr ||
                 !(native.frontier->entry == event.frontier.entry) ||
                 !(native.frontier->operation.owner == event.frontier.owner) ||
@@ -3754,7 +3754,7 @@ bool ImmediateActionLane::PrivateInstalledInitialArmRollbackReady(
     const auto state = attempt->state.load(std::memory_order_acquire);
     if (state != ImmediateLaneAttemptState::Prepared &&
         state != ImmediateLaneAttemptState::PrivateCancelled) return false;
-    Plan03PageGroupView actual{};
+    SchedulePageGroupView actual{};
     bool ownGroup = false;
     const auto* groups = GroupBase(handle.slot);
     for (std::uint32_t index = 0; index < attempt->groupCount; ++index) {
@@ -3764,7 +3764,7 @@ bool ImmediateActionLane::PrivateInstalledInitialArmRollbackReady(
     }
     if (!ownGroup || binding.role != FrontierGroupRole::EntryMember ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &actual) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &actual) ||
         actual.frontier != &binding || actual.lease != &lease ||
         (actual.memberCount != 0 && actual.members == nullptr)) return false;
     bool actualMember = false;
@@ -3829,10 +3829,10 @@ bool ImmediateActionLane::ReleaseCancelledPrivateInitialPins(
     const auto* events = EventBase(handle.slot);
     // Validate the complete immutable original manifest before returning any prefix.
     for (std::uint32_t index = 0; index < attempt->groupCount; ++index) {
-        Plan03PageGroupView actual{};
+        SchedulePageGroupView actual{};
         if (!groups[index].identity.Exact() || groups[index].laneSlot != handle.slot ||
             groups[index].laneGeneration != handle.generation ||
-            !pool.ResolvePlan03GroupSliceProducer(groups[index].identity, &actual) ||
+            !pool.ResolveScheduleGroupSliceProducer(groups[index].identity, &actual) ||
             !(actual.identity == groups[index].identity) ||
             !pool.PrivateImmediateLaneFrontierRollbackReady(groups[index].identity) ||
             actual.frontier == nullptr || actual.lease == nullptr ||
@@ -3879,11 +3879,11 @@ bool ImmediateActionLane::ReleaseCancelledPrivateInitialPins(
         const auto* installedBinding = row.frontierAdmission;
         auto* installedLease = row.frontierAdmissionLease;
         const auto& originalEvent = events[index].event;
-        Plan03PageGroupView actual{};
+        SchedulePageGroupView actual{};
         bool ownBoundGroup = false;
         for (std::uint32_t group = 0; group < attempt->groupCount; ++group) {
             if (!(groups[group].identity == originalEvent.frontier.group)) continue;
-            if (!pool.ResolvePlan03GroupSliceProducer(groups[group].identity, &actual) ||
+            if (!pool.ResolveScheduleGroupSliceProducer(groups[group].identity, &actual) ||
                 actual.frontier == nullptr || actual.lease == nullptr) return finish(false);
             ownBoundGroup = true;
             break;
@@ -4577,9 +4577,9 @@ bool ImmediateActionLane::SuspendCaptureForSourceWait(std::uint32_t slot,
                 EventBase(slot)[bucket->firstEvent + index].event.frontier.entry == identity);
         for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
             if (!IsGroupAdmitted(slot, bucket, bucket->firstGroup + index)) continue;
-            Plan03PageGroupView group{};
+            SchedulePageGroupView group{};
             if (attempt.pinGroupPool == nullptr ||
-                !attempt.pinGroupPool->ResolvePlan03GroupSliceRt(GroupBase(slot)[bucket->firstGroup + index].identity, &group) ||
+                !attempt.pinGroupPool->ResolveScheduleGroupSliceRt(GroupBase(slot)[bucket->firstGroup + index].identity, &group) ||
                 group.frontier == nullptr) return fail();
             admitted = admitted || group.frontier->entry == identity;
         }
@@ -4620,9 +4620,9 @@ void ImmediateActionLane::PreserveSourceWaitSuccessors(std::uint32_t slot) noexc
         for (std::uint32_t event = 0; event < successor.eventCount; ++event)
             related = retained(EventBase(slot)[successor.firstEvent + event].event.frontier.entry) || related;
         for (std::uint32_t group = 0; group < successor.groupCount; ++group) {
-            Plan03PageGroupView view{};
+            SchedulePageGroupView view{};
             if (attempt.pinGroupPool != nullptr &&
-                attempt.pinGroupPool->ResolvePlan03GroupSliceRt(GroupBase(slot)[successor.firstGroup + group].identity, &view) &&
+                attempt.pinGroupPool->ResolveScheduleGroupSliceRt(GroupBase(slot)[successor.firstGroup + group].identity, &view) &&
                 view.frontier != nullptr)
                 related = retained(view.frontier->entry) ||
                     (view.frontier->role == FrontierGroupRole::Coordinator &&
@@ -4711,7 +4711,7 @@ bool ImmediateActionLane::ValidateClaimReceipt(
 
 bool ImmediateActionLane::ValidateGroupClaimReceipt(
     const ImmediateLaneBucketClaimReceipt& receipt,
-    const Plan03GroupSliceIdentity& group,
+    const ScheduleGroupSliceIdentity& group,
     std::uint32_t bucketOrdinal,
     std::uint32_t groupIndex) const noexcept {
     if (!valid_ || !receipt.Valid() || !group.Exact() ||
@@ -4837,8 +4837,8 @@ bool ImmediateActionLane::CapturePrivatePlacedInitialSource(
             !(event.frontier.entry == initial.entry) || event.frontier.world != initial.operation.world ||
             event.frontier.transport != initial.operation.transport ||
             (event.frontier.group != initial.operation.group && event.frontier.group != initial.primary)) return false;
-        Plan03PageGroupView admission{};
-        if (!pool.ResolvePlan03GroupSliceProducer(event.frontier.group, &admission) ||
+        SchedulePageGroupView admission{};
+        if (!pool.ResolveScheduleGroupSliceProducer(event.frontier.group, &admission) ||
             admission.frontier == nullptr || !admission.frontier->Valid() || admission.lease == nullptr ||
             row->frontierAdmission != admission.frontier || row->frontierAdmissionLease != admission.lease ||
             !(admission.frontier->entry == initial.entry) ||
@@ -4875,7 +4875,7 @@ bool ImmediateActionLane::CapturePrivatePlacedC0Source(
     TimelineArmToken source, std::uint64_t* outFrame) const noexcept {
     if (outFrame == nullptr || !MatchesPrivatePlacementProof(placement) ||
         !source.Valid() || !initial.Valid() || !initial.queueInitial.Valid()) return false;
-    Plan03PageGroupView actualPrimary{}, actualInitial{};
+    SchedulePageGroupView actualPrimary{}, actualInitial{};
     if (!primary.Valid() || primary.role != FrontierGroupRole::Coordinator ||
         primary.operation.kind != FrontierOperationKind::Entry ||
         primary.primary != primary.operation.group || primary.queueInitial.Valid() ||
@@ -4886,8 +4886,8 @@ bool ImmediateActionLane::CapturePrivatePlacedC0Source(
         initial.queueConditional.Valid() || initial.variableSide.Valid() ||
         initial.operation.world != primary.operation.world ||
         initial.operation.transport != primary.operation.transport ||
-        !pool.ResolvePlan03GroupSliceProducer(primary.operation.group, &actualPrimary) ||
-        !pool.ResolvePlan03GroupSliceProducer(initial.operation.group, &actualInitial) ||
+        !pool.ResolveScheduleGroupSliceProducer(primary.operation.group, &actualPrimary) ||
+        !pool.ResolveScheduleGroupSliceProducer(initial.operation.group, &actualInitial) ||
         actualPrimary.frontier != &primary || actualInitial.frontier != &initial ||
         actualPrimary.memberCount != 0 || actualPrimary.sourceControlCount != 0 ||
         actualPrimary.lease == nullptr || actualInitial.lease != actualPrimary.lease) return false;
@@ -4949,8 +4949,8 @@ bool ImmediateActionLane::CapturePrivatePlacedC0Source(
             !(event.frontier.entry == initial.entry) || event.frontier.world != initial.operation.world ||
             event.frontier.transport != initial.operation.transport ||
             event.frontier.group != sourceGroup) return false;
-        Plan03PageGroupView admission{};
-        if (!pool.ResolvePlan03GroupSliceProducer(event.frontier.group, &admission) ||
+        SchedulePageGroupView admission{};
+        if (!pool.ResolveScheduleGroupSliceProducer(event.frontier.group, &admission) ||
             admission.frontier == nullptr || !admission.frontier->Valid() || admission.lease == nullptr ||
             row->frontierAdmission != admission.frontier || row->frontierAdmissionLease != admission.lease ||
             !(admission.frontier->entry == initial.entry) ||
@@ -4981,7 +4981,7 @@ bool ImmediateActionLane::CapturePrivatePlacedC0Source(
 
 bool ImmediateActionLane::ProvePrivateGroupPlacement(
     ImmediateLaneHandle handle,
-    const Plan03GroupSliceIdentity& group,
+    const ScheduleGroupSliceIdentity& group,
     std::uint32_t bucketOrdinal,
     std::uint32_t groupIndex) const noexcept {
     const auto* attempt = Resolve(handle);
@@ -5268,7 +5268,7 @@ const ImmediateLaneGroupRef* ImmediateActionLane::Groups(
 
 bool ImmediateActionLane::FutureMember(std::uint32_t slot,
     std::uint32_t attemptGeneration,
-    const Plan03GroupSliceIdentity& group, std::uint16_t memberIndex,
+    const ScheduleGroupSliceIdentity& group, std::uint16_t memberIndex,
     TimelineArmToken arm, const ImmediateLaneEvent** event,
     std::uint16_t* eventSpanCount) const noexcept {
     if (!valid_ || slot >= attempts_.size() || event == nullptr ||
@@ -5313,8 +5313,8 @@ bool ImmediateActionLane::FutureMember(std::uint32_t slot,
 }
 
 bool ImmediateActionLane::CaptureFrozenFutureTarget(
-    ImmediateLaneHandle handle, const Plan03GroupSliceIdentity& source,
-    const Plan03GroupSliceIdentity& target,
+    ImmediateLaneHandle handle, const ScheduleGroupSliceIdentity& source,
+    const ScheduleGroupSliceIdentity& target,
     ImmediateLaneMemberManifest* out, std::uint16_t memberIndex) const noexcept {
     const auto* attempt = Resolve(handle);
     if (attempt == nullptr || out == nullptr || !source.Exact() || !target.Exact() ||
@@ -5634,7 +5634,7 @@ void ImmediateActionLane::EndConditionalProjection(std::uint32_t slot) noexcept 
 }
 
 bool ImmediateActionLane::BeforeConditionalProjectionNativeWrite(
-    ImmediateLaneHandle handle, const Plan03GroupSliceIdentity& group) const noexcept {
+    ImmediateLaneHandle handle, const ScheduleGroupSliceIdentity& group) const noexcept {
     if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size()) return false;
     auto& row = attempts_[handle.slot];
     if (row.generation != handle.generation) return false;
@@ -6587,7 +6587,7 @@ bool OriginalImmediateLaneConditionalProjection::BindPrepared() noexcept {
 
 bool OriginalImmediateLaneConditionalProjection::OwnsUnpublishedGroup(
     const ImmediateActionLane& lane, ImmediateLaneHandle handle,
-    const Plan03GroupSliceIdentity& group) const noexcept {
+    const ScheduleGroupSliceIdentity& group) const noexcept {
     if (!withdrawalOwner_ || !Valid() || lane_.lane_ != &lane ||
         lane_.handle_.slot != handle.slot || lane_.handle_.generation != handle.generation ||
         !lane.OwnsPrivate(handle, lane_.root_) || !group.Exact() ||
@@ -6630,7 +6630,7 @@ bool OriginalImmediateLaneConditionalProjection::BindDeclared(bool commit) noexc
         row->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Prepared) return false;
     AttemptReadAccess access(*row);
     if (!access) return false;
-    Plan03PageGroupView primary{}, member{};
+    SchedulePageGroupView primary{}, member{};
     for (const auto& original : groups_) {
         const auto identity = original.Identity();
         if (!identity.Exact() || identity.committedRow >= pool_->immediateLaneGroups_.ConstructedCount()) return false;
@@ -6639,8 +6639,8 @@ bool OriginalImmediateLaneConditionalProjection::BindDeclared(bool commit) noexc
             native.laneGeneration != lane_.handle_.generation || native.cohortRoot != lane_.root_ ||
             native.selectedFutureDomain != 0) return false;
     }
-    if (!pool_->ResolvePlan03GroupSliceProducer(groups_[0].Identity(), &primary) ||
-        !pool_->ResolvePlan03GroupSliceProducer(groups_[1].Identity(), &member) ||
+    if (!pool_->ResolveScheduleGroupSliceProducer(groups_[0].Identity(), &primary) ||
+        !pool_->ResolveScheduleGroupSliceProducer(groups_[1].Identity(), &member) ||
         primary.frontier == nullptr || member.frontier == nullptr ||
         primary.frontier->role != FrontierGroupRole::Coordinator ||
         member.frontier->role != FrontierGroupRole::EntryMember ||
@@ -6658,8 +6658,8 @@ bool OriginalImmediateLaneConditionalProjection::BindDeclared(bool commit) noexc
         !SameOccurrence(q.current, original.current) || !SameOccurrence(q.successor, original.successor) ||
         member.identity.decision.slot != original.decision.slot ||
         member.identity.decision.generation != original.decision.generation) return false;
-    Plan03PageGroupView current{};
-    if (!pool_->ResolvePlan03GroupSliceProducer(original.clockGroups[0].Identity(), &current) ||
+    SchedulePageGroupView current{};
+    if (!pool_->ResolveScheduleGroupSliceProducer(original.clockGroups[0].Identity(), &current) ||
         current.frontier == nullptr || current.frontier->role != FrontierGroupRole::EntryMember ||
         !current.frontier->queueInitial.Valid() ||
         current.frontier->queueInitial.slot != original.queue.slot ||
@@ -6681,8 +6681,8 @@ bool OriginalImmediateLaneConditionalProjection::BindDeclared(bool commit) noexc
     if (groupCount != 2 || row->conditionalProjectionDecisions == nullptr) return false;
     for (std::uint32_t i = 0; i < row->groupCount; ++i) {
         if (groups[i].identity == primary.identity || groups[i].identity == member.identity) continue;
-        Plan03PageGroupView sibling{};
-        if (!pool_->ResolvePlan03GroupSliceProducer(groups[i].identity, &sibling) ||
+        SchedulePageGroupView sibling{};
+        if (!pool_->ResolveScheduleGroupSliceProducer(groups[i].identity, &sibling) ||
             sibling.lease == primary.lease) return false;
     }
     TimelineTransactionProgramRef controller{};
@@ -6771,9 +6771,9 @@ bool OriginalImmediateLaneConditionalProjection::CapturedWithdrawalExcludesPair(
             !lane.IsGroupAdmitted(handle.slot, bucket, declaration.groupIndex);
     };
     if (!originalDeclaration(primary) || !originalDeclaration(member)) return false;
-    Plan03PageGroupView primaryView{}, memberView{};
-    if (!pool.ResolvePlan03GroupSliceRt(primary.identity, &primaryView) ||
-        !pool.ResolvePlan03GroupSliceRt(member.identity, &memberView) ||
+    SchedulePageGroupView primaryView{}, memberView{};
+    if (!pool.ResolveScheduleGroupSliceRt(primary.identity, &primaryView) ||
+        !pool.ResolveScheduleGroupSliceRt(member.identity, &memberView) ||
         primaryView.frontier == nullptr || memberView.frontier == nullptr ||
         primaryView.lease == nullptr || primaryView.lease != memberView.lease)
         return false;

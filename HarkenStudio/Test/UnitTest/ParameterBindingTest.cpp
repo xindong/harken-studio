@@ -4,12 +4,12 @@
 
 TEST(ParameterBinding, CommitPreservesMixedStateSetByItsCallback)
 {
-    VNX::ParameterBinding binding;
+    harken::studio::ParameterBinding binding;
     binding.setRange(0.0, 100.0);
     binding.setValue(20.0);
     binding.setMixedValue(true);
     int commits = 0;
-    QObject::connect(&binding, &VNX::ParameterBinding::valueCommitted, &binding,
+    QObject::connect(&binding, &harken::studio::ParameterBinding::valueCommitted, &binding,
                      [&](double) {
                          ++commits;
                          binding.setMixedValue(true);
@@ -22,11 +22,11 @@ TEST(ParameterBinding, CommitPreservesMixedStateSetByItsCallback)
 TEST(ParameterBinding, DomainChangesAllowExplicitCommitOfNormalizedValues)
 {
     for (const bool quantized : {false, true}) {
-        VNX::ParameterBinding binding;
+        harken::studio::ParameterBinding binding;
         binding.setRange(0.0, 100.0);
         binding.setValue(75.5);
         int commits = 0;
-        QObject::connect(&binding, &VNX::ParameterBinding::valueCommitted, &binding,
+        QObject::connect(&binding, &harken::studio::ParameterBinding::valueCommitted, &binding,
             [&](double) { ++commits; });
         if (quantized) binding.setQuantum(1.0);
         else binding.setRange(0.0, 10.0);

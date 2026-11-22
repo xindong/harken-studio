@@ -6,7 +6,7 @@
 
 #include <functional>
 
-namespace VNH {
+namespace harken::hub {
 
 struct UninstallOutcome
 {

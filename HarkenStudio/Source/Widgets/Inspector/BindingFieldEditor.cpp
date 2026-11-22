@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -170,7 +170,7 @@ BindingFieldEditor::BindingFieldEditor(QWidget* parent)
     add_ = footer->addButton();
     add_->setObjectName(QStringLiteral("bindingAdd"));
     addMenu_ = new BindingAddMenu(add_);
-    connect(addMenu_, &BindingAddMenu::bindingAdded, this, [this](harkenstudio::ObjectId id) {
+    connect(addMenu_, &BindingAddMenu::bindingAdded, this, [this](harken::studio::types::ObjectId id) {
         selectedId_ = id;
     });
     remove_ = footer->removeButton();
@@ -223,7 +223,7 @@ void BindingFieldEditor::bind(ProjectItem* item, const BindingAddress& address)
     reload();
 }
 
-void BindingFieldEditor::selectBinding(const QUuid& owner, harkenstudio::ObjectId stableId)
+void BindingFieldEditor::selectBinding(const QUuid& owner, harken::studio::types::ObjectId stableId)
 {
     if (!item_ || owner != item_->guid) return;
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i)
@@ -315,7 +315,7 @@ QWidget* BindingFieldEditor::buildRow(int index)
 void BindingFieldEditor::selectRow(int index)
 {
     selected_ = index >= 0 && index < static_cast<int>(entries_.size()) ? index : -1;
-    selectedId_ = selected_ >= 0 ? entries_[selected_].binding.runtimeId() : harkenstudio::ObjectId{};
+    selectedId_ = selected_ >= 0 ? entries_[selected_].binding.runtimeId() : harken::studio::types::ObjectId{};
     for (int i = 0; i < static_cast<int>(entries_.size()); ++i)
         if (entries_[i].widget)
             QtControlSkin::setSemanticProperty(entries_[i].widget, "selected", i == selected_);

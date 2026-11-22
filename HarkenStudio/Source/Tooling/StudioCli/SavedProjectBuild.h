@@ -5,7 +5,7 @@
 
 class QCommandLineParser;
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 
 QJsonObject runSavedProjectBuild(const QCommandLineParser& parser,
                                 const std::function<bool()>& canceled);

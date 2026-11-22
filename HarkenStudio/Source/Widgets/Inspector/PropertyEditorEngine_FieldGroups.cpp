@@ -22,7 +22,7 @@
 #include <QSignalBlocker>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class InheritCheckBox final : public QCheckBox {

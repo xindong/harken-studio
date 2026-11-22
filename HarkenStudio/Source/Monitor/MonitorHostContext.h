@@ -4,7 +4,7 @@
 #include "Monitor/MonitorTypes.h"
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 struct MonitorPrincipal
@@ -24,4 +24,4 @@ struct MonitorHostContext
 };
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

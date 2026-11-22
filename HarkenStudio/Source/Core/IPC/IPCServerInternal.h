@@ -49,10 +49,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace VNX {
+namespace harken::studio {
 
-inline uint32_t fnv1a_hash(const char* str) { return HarkenEditor::hashString(str); }
-inline uint32_t fnv1a_hash(const QString& str) { return HarkenEditor::hashString(str.toUtf8().constData()); }
+inline uint32_t fnv1a_hash(const char* str) { return harken::studio::hashString(str); }
+inline uint32_t fnv1a_hash(const QString& str) { return harken::studio::hashString(str.toUtf8().constData()); }
 
 ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path);
 

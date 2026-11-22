@@ -12,9 +12,9 @@
 #include <atomic>
 #include <thread>
 
-using VNH::LocalBuildRecord;
-using VNH::LocalBuildRegistry;
-using VNH::VersionScanner;
+using harken::hub::LocalBuildRecord;
+using harken::hub::LocalBuildRegistry;
+using harken::hub::VersionScanner;
 
 namespace {
 

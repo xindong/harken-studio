@@ -10,7 +10,7 @@
 #include <memory>
 #include <optional>
 
-namespace VNX::ConversionResults {
+namespace harken::studio::ConversionResults {
 
 struct FileProperties
 {

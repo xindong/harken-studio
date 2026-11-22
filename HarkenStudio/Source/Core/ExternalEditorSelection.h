@@ -5,7 +5,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ExternalEditorSelection
 {
@@ -84,4 +84,4 @@ struct ExternalEditorSelection
 
 }
 
-Q_DECLARE_METATYPE(VNX::ExternalEditorSelection)
+Q_DECLARE_METATYPE(harken::studio::ExternalEditorSelection)

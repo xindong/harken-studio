@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class NodeContentField {
     Volume = 0x1,

@@ -11,7 +11,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using Property = harkenplayableproperties::PlayablePropertyIdV1;
@@ -146,7 +146,7 @@ std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain() const
 QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const QString& fieldName) const
 {
     if (!valid) return diagnostics.join(QLatin1Char('\n'));
-    const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     QStringList lines;
     for (const auto& target : perScope) {
         const auto& source = target.resolved.source;
@@ -199,7 +199,7 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
         return result;
     }
     result.expectedBefore = *authored->groups;
-    result.canInherit = !harkenprojectschema::IsNull(authored->parentGuid);
+    result.canInherit = !harken::studio::project_schema::IsNull(authored->parentGuid);
     const auto* master = project.busses.empty() ? nullptr : project.busses.front().rootItem.get();
     if (!master || master->type != ProjectItem::Type::Bus || master->guid.isNull()) {
         result.diagnostics.append(QStringLiteral("Project Master Bus must have a valid persistent GUID"));

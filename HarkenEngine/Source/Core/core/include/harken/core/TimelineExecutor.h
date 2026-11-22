@@ -69,7 +69,7 @@ class TimelineExecutorSink {
 public:
     virtual ~TimelineExecutorSink() = default;
     virtual bool BeginQuantum(std::uint64_t quantumIndex) noexcept = 0;
-    virtual bool ApplyPlan03Groups(std::uint64_t quantumIndex) noexcept {
+    virtual bool ApplyScheduleGroups(std::uint64_t quantumIndex) noexcept {
         (void)quantumIndex;
         return true;
     }
@@ -130,7 +130,7 @@ public:
         (void)order;
         return ApplyAuthoredStopFence(descriptor, quantumIndex);
     }
-    virtual void FailPlan03Deadline(DecisionToken decision,
+    virtual void FailScheduleDeadline(DecisionToken decision,
                                     std::uint64_t quantumIndex) noexcept {
         (void)decision;
         (void)quantumIndex;
@@ -206,7 +206,7 @@ private:
                    const TimelineSemanticTarget* resolvedTarget = nullptr)
         noexcept;
     void CleanupCancelledArms(std::uint64_t audioSequence) noexcept;
-    void PrepassPlan03Deadlines(std::uint64_t absoluteQuantum,
+    void PrepassScheduleDeadlines(std::uint64_t absoluteQuantum,
                                 const TimelineExecutionPlan& plan) noexcept;
     bool PrepareEventStorage(ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept;
 
@@ -221,7 +221,7 @@ private:
     std::vector<TransactionScratch> transactions_;
     std::vector<std::uint32_t> touchedTransactions_;
     std::vector<TimelineSinkEvent> sinkEvents_;
-    std::vector<Plan03PageGroupView> pageGroups_;
+    std::vector<SchedulePageGroupView> pageGroups_;
     StableRowStorage<TimelineDigestRecord, std::size_t> deferredDigest_;
     ScheduledTransactionPool::PendingEventStorageRegistration eventStorageRegistration_;
     std::size_t deferredDigestCount_ = 0;

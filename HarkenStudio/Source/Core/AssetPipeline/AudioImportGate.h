@@ -5,7 +5,7 @@
 
 class QMimeData;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 

@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 class VSpatial : public ReflectedComponent<VSpatial>
 {
@@ -46,7 +46,7 @@ public:
     float spatializationMix = 1.0f;
     bool spatializationMixPresent = true;
     float attenuationDistanceScaling = 1.0f;
-    harkenstudio::ObjectId attenuationRef{};
+    harken::studio::types::ObjectId attenuationRef{};
 };
 
 #if defined(__clang__)
@@ -100,16 +100,16 @@ inline const PropertySchema& VSpatial::schema()
               return true;
           },
           .coerce=[](const QVariant& v){ return QVariant(qBound(0.1f, v.toFloat(), 10.0f)); },
-          .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VSpatial*>(c)->attenuationDistanceScaling != 1.0f; } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return static_cast<const VSpatial*>(c)->attenuationDistanceScaling != 1.0f; } },
         { .field="attenuationRef", .type=PropType::ObjectRef, .label="Attenuation", .section=PropertySection::Rating,
           .flags={.serialize=false},
-          .get=[](const VNX::IComponent* c) { return QVariant::fromValue(
+          .get=[](const harken::studio::IComponent* c) { return QVariant::fromValue(
               static_cast<const VSpatial*>(c)->attenuationRef); },
           .set=[](IComponent* c, const QVariant& v) {
               auto* s = static_cast<VSpatial*>(c);
               if (s->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(s->hostItem()->type)) return false;
-              if (!v.canConvert<harkenstudio::ObjectId>()) return false;
-              s->attenuationRef = v.value<harkenstudio::ObjectId>();
+              if (!v.canConvert<harken::studio::types::ObjectId>()) return false;
+              s->attenuationRef = v.value<harken::studio::types::ObjectId>();
               return true;
           } },
     });

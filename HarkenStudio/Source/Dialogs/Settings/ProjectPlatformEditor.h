@@ -8,9 +8,9 @@
 class QComboBox;
 class QLineEdit;
 
-namespace VNX { class DialogFormLayout; }
+namespace harken::studio { class DialogFormLayout; }
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectPlatformEditor : public QWidget
 {

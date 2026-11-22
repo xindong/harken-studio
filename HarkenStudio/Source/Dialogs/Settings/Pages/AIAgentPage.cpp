@@ -20,7 +20,7 @@
 #include <QSpinBox>
 #include <QUrl>
 
-namespace VNX {
+namespace harken::studio {
 
 AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     : SettingsPage(parent)

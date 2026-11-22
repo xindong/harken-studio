@@ -1,7 +1,7 @@
 #include "FloatingTitleBar.h"
 #include "Core/ThemeLayout.h"
 
-namespace VNX {
+namespace harken::studio {
 
 FloatingTitleBar::FloatingTitleBar(QWidget* parent)
     : TitleBarBase(Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint, parent) {

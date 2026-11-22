@@ -8,7 +8,7 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "harken_project_schema/ProjectInput.h"
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace fixtures {
 
 // A GUID from a small integer, so a fixture reads by number and two objects are
@@ -803,6 +803,6 @@ inline ProjectInput MusicalOverflowTick() {
 }
 
 }  // namespace fixtures
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_TEST_FIXTURES_H

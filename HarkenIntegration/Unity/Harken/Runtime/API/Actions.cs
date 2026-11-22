@@ -113,7 +113,7 @@ namespace Harken
         public VnObjectId ActionId => actionId;
         public ulong NameBindingRevision => revision;
         public ulong CallableFingerprint => fingerprint;
-        public ulong PublicationGeneration => generation;
+        public ulong NameTableGeneration => generation;
     }
 
     public static class Actions
@@ -145,8 +145,8 @@ namespace Harken
                                     out ActionFiring firing)
         {
             firing = default;
-            if (!PackCompanion.IsName(actionName)) return VnResult.VN_INVALID_ARG;
-            var directory = GameplayNames.ActiveDirectory;
+            if (!PackMetadata.IsName(actionName)) return VnResult.VN_INVALID_ARG;
+            var directory = NameTable.ActiveDirectory;
             var nameKeys = directory?.Keys;
             if (nameKeys != null)
             {
@@ -171,7 +171,7 @@ namespace Harken
                     catch (EntryPointNotFoundException) { directory.Keys = null; }
                 }
             }
-            VnResult result = GameplayNames.FindAction(actionName, default, out GameplayNames.Action action);
+            VnResult result = NameTable.FindAction(actionName, default, out NameTable.Action action);
             return result == VnResult.VN_OK ? Post(action.Id, emitter, callerSeed, out firing) : result;
         }
 
@@ -180,7 +180,7 @@ namespace Harken
                                     out ActionFiring firing)
         {
             firing = default;
-            if (!PackCompanion.IsName(pinned.ExpectedName) ||
+            if (!PackMetadata.IsName(pinned.ExpectedName) ||
                 pinned.ProjectGuid == null || pinned.ProjectGuid.Length != 16 || pinned.ActionId.IsNull)
             {
                 return VnResult.VN_INVALID_ARG;
@@ -191,10 +191,10 @@ namespace Harken
                 high = (high << 8) | pinned.ProjectGuid[i];
                 low = (low << 8) | pinned.ProjectGuid[i + 8];
             }
-            VnResult result = GameplayNames.FindAction(pinned.ExpectedName, new VnObjectId(high, low),
-                out GameplayNames.Action action);
+            VnResult result = NameTable.FindAction(pinned.ExpectedName, new VnObjectId(high, low),
+                out NameTable.Action action);
             if (result == VnResult.VN_UNKNOWN_ID &&
-                GameplayNames.FindAction(pinned.ActionId, out _) == VnResult.VN_OK)
+                NameTable.FindAction(pinned.ActionId, out _) == VnResult.VN_OK)
                 return VnResult.VN_GAMEPLAY_NAME_RETIRED;
             if (result != VnResult.VN_OK) return result;
             if (action.Id != pinned.ActionId) return VnResult.VN_GAMEPLAY_NAME_RETIRED;
@@ -223,12 +223,12 @@ namespace Harken
                                         out ActionResolved resolved)
         {
             resolved = default;
-            if (!PackCompanion.IsName(actionName))
+            if (!PackMetadata.IsName(actionName))
                 return VnResult.VN_INVALID_ARG;
-            VnResult result = GameplayNames.FindAction(actionName, project, out GameplayNames.Action action);
+            VnResult result = NameTable.FindAction(actionName, project, out NameTable.Action action);
             if (result == VnResult.VN_OK)
                 resolved = new ActionResolved(action.Id, action.Revision, action.Fingerprint,
-                    GameplayNames.Generation);
+                    NameTable.Generation);
             return result;
         }
 
@@ -237,9 +237,9 @@ namespace Harken
         {
             firing = default;
             if (resolved.ActionId.IsNull) return VnResult.VN_INVALID_ARG;
-            VnResult result = GameplayNames.FindAction(resolved.ActionId, out GameplayNames.Action action);
+            VnResult result = NameTable.FindAction(resolved.ActionId, out NameTable.Action action);
             if (result != VnResult.VN_OK) return result;
-            if (resolved.PublicationGeneration != GameplayNames.Generation)
+            if (resolved.NameTableGeneration != NameTable.Generation)
                 return VnResult.VN_STALE_HANDLE;
             if (action.Revision != resolved.NameBindingRevision ||
                 action.Fingerprint != resolved.CallableFingerprint)
@@ -275,7 +275,7 @@ namespace Harken
                 case VnResult.VN_PACK_STALE_REVISION:
                 case VnResult.VN_PACK_HASH_MISMATCH:
                     return "Action " + quoted +
-                           " publication pairing failed (" + code + ").";
+                           " Pack pairing failed (" + code + ").";
                 case VnResult.VN_CAPABILITY_UNAVAILABLE:
                     return "Action " + quoted +
                            " name lookup capability is unavailable (" +

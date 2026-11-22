@@ -32,7 +32,7 @@
 #include <string>
 #include <vector>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 
@@ -64,11 +64,11 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
         QApplication::processEvents();
         AssetRegistry::instance().clear();
     });
-    HarkenEditor::Bridge::EngineSessionConfig config;
+    harken::studio::bridge::EngineSessionConfig config;
     config.sampleRate = 48000;
     config.bufferSize = 64;
     config.maxVoices = 8;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(config));
     ASSERT_TRUE(engine.startOutput());
     ProjectConfig projectConfig;
@@ -168,8 +168,8 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
     ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
     std::array<quint64, 2> handles{};
     for (auto& handle : handles) {
-        const auto started = engine.playPreviewPlayable(HarkenEditor::Bridge::kPreviewPlayableContainer, container->runtimeId());
-        ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, started.status);
+        const auto started = engine.playPreviewPlayable(harken::studio::bridge::kPreviewPlayableContainer, container->runtimeId());
+        ASSERT_EQ(harken::studio::bridge::kPreviewOk, started.status);
         handle = started.handle;
         ASSERT_NE(handle, 0u);
     }

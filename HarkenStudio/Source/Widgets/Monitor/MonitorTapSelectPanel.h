@@ -12,7 +12,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorTapSelectPanel : public QWidget
 {
@@ -52,4 +52,4 @@ private:
     std::uint64_t boundGeneration_ = 0;
 };
 
-} // namespace VNX
+} // namespace harken::studio

@@ -6,7 +6,7 @@
 #include <QFocusEvent>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 QString FileViewerPanel::typeId()
 {
@@ -78,7 +78,7 @@ void FileViewerPanel::bindSource(uint32_t sourceId)
     viewer_->bindSource(sourceId);
 }
 
-void FileViewerPanel::setAuditionManager(HarkenEditor::AuditionManager* audition)
+void FileViewerPanel::setAuditionManager(harken::studio::AuditionManager* audition)
 {
     viewer_->setAuditionManager(audition);
 }

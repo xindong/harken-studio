@@ -3,7 +3,7 @@
 
 #include <QFile>
 
-namespace VNH::LegalDocuments {
+namespace harken::hub::LegalDocuments {
 
 QStringList texts()
 {

@@ -16,7 +16,7 @@
 #include <QStandardItemModel>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 
 SplitButton::SplitButton(QWidget* parent)
     : QWidget(parent)

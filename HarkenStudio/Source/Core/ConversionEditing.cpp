@@ -9,7 +9,7 @@
 #include <QSet>
 #include <algorithm>
 
-namespace VNX::ConversionEditing {
+namespace harken::studio::ConversionEditing {
 namespace {
 
 bool fail(QString* error, const QString& message)

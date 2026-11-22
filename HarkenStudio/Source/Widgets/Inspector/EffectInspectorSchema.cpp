@@ -2,7 +2,7 @@
 
 #include "ProjectItemInspectorRows.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const PropertySchema& effectInspectorSchema()
 {

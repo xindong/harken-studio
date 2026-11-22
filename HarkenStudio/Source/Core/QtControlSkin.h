@@ -16,7 +16,7 @@ class QFontMetrics;
 class QStyleOptionMenuItem;
 class QStyleOptionToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeAssetResolver;
 
