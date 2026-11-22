@@ -1329,7 +1329,9 @@ namespace Harken.Unity
 
         private void HandleRuntimeFault(RuntimeFaultInfo info)
         {
-            Debug.LogError(info.ToString(), this);
+            Debug.LogError(info.Category == VnRuntimeFaultCategory.VN_RUNTIME_FAULT_NONE
+                ? "Runtime recreation required; fault details unavailable."
+                : info.ToString(), this);
             RuntimeRecreationRequired?.Invoke(this, info);
         }
 

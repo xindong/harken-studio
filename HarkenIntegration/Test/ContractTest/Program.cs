@@ -569,7 +569,8 @@ namespace Harken.Test
             {
                 RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_OK);
                 passed = reports == 0 && HarkenEngine.QueryRuntimeFault(out var none) == VnResult.VN_OK &&
-                    none.Category == VnRuntimeFaultCategory.VN_RUNTIME_FAULT_NONE;
+                    none.Category == VnRuntimeFaultCategory.VN_RUNTIME_FAULT_NONE &&
+                    none.ToString() == "No runtime fault recorded.";
                 // Drive the actual managed callback thunks; native first-fault capture is covered in Runtime tests.
                 notifyThunk((IntPtr)(&fault), config.notificationUserData);
                 logThunk(config.logUserData, (uint)VnLogLevel.VN_LOG_ERROR,

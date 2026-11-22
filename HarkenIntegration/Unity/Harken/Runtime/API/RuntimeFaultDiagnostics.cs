@@ -22,7 +22,7 @@ namespace Harken
         }
 
         public override string ToString() => Category == VnRuntimeFaultCategory.VN_RUNTIME_FAULT_NONE
-            ? "Runtime recreation required; fault details unavailable."
+            ? "No runtime fault recorded."
             : "Runtime recreation required: " + Category + " at " + File + ":" + Line +
                 " in " + Function + " (repeated=" + RepeatCount + ").";
     }
